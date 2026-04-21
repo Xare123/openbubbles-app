@@ -24,7 +24,6 @@ import java.io.ByteArrayOutputStream
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
 import java.security.SecureRandom
-import java.security.Signature
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
 import java.util.UUID
@@ -102,6 +101,7 @@ class CredentialCreateActivity : FragmentActivity() {
             val challenge = requestJson.getString("challenge")
 
             val origin = CredentialService.appInfoToOrigin(this, request.callingAppInfo)
+            val packageName = request.callingAppInfo.packageName
             val userJson = requestJson.getJSONObject("user")
 
             val credentialId = ByteArray(20)
@@ -115,14 +115,21 @@ class CredentialCreateActivity : FragmentActivity() {
             val tag = encodeUserTag(userJson)
             val userId = if (userJson.has("id")) base64UrlDecode(userJson.getString("id")) else null
 
-            val clientDataJson = JSONObject()
+            val clientDataJsonPlain = JSONObject()
                 .put("type", "webauthn.create")
                 .put("challenge", challenge)
                 .put("origin", origin)
+                .apply {
+                    if (origin.startsWith("android:apk-key-hash:")) {
+                        put("androidPackageName", packageName)
+                    }
+                }
                 .toString().replace("\\/", "/")
-                .toByteArray(Charsets.UTF_8)
-
-            val clientDataHash = credentialRequest.clientDataHash ?: MessageDigest.getInstance("SHA-256").digest(clientDataJson)
+            val clientDataJson = if (credentialRequest.clientDataHash != null) {
+                "{}".toByteArray(Charsets.UTF_8)
+            } else {
+                clientDataJsonPlain.toByteArray(Charsets.UTF_8)
+            }
 
             val rpIdHash = MessageDigest.getInstance("SHA-256").digest(rpId.toByteArray(Charsets.UTF_8))
             val flags = (0x01 or 0x04 or 0x08 or 0x10 or 0x40).toByte() // UP + AT
@@ -142,23 +149,10 @@ class CredentialCreateActivity : FragmentActivity() {
                 write(coseKey)
             }.toByteArray()
 
-            val signature = Signature.getInstance("SHA256withECDSA").apply {
-                initSign(keyPair.private)
-                update(authData)
-                update(clientDataHash)
-            }.sign()
-
-
             val attestationObject = CBORObject.NewMap().apply {
-                Add("fmt", "packed")
+                Add("fmt", "none")
                 Add("authData", authData)
-                Add(
-                    "attStmt",
-                    CBORObject.NewMap().apply {
-                        Add("alg", -7)
-                        Add("sig", signature)
-                    }
-                )
+                Add("attStmt", CBORObject.NewMap())
             }.EncodeToBytes()
 
             val publicKeyDer = keyPair.public.encoded

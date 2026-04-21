@@ -7,7 +7,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.CancellationSignal
 import android.os.OutcomeReceiver
-import android.util.Base64
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.credentials.exceptions.ClearCredentialException
@@ -197,6 +196,7 @@ class CredentialService : CredentialProviderService() {
                             putExtra(EXTRA_CRED_ID, saved.credId)
                             putExtra(EXTRA_TYPE, TYPE_PASSWORD)
                             putExtra(EXTRA_ORIGIN, callingOrigin)
+                            putExtra(EXTRA_PACKAGE_NAME, callingAppInfo.packageName)
                         }
                         val pending = PendingIntent.getActivity(
                             this@CredentialService,
@@ -230,6 +230,7 @@ class CredentialService : CredentialProviderService() {
                             putExtra(EXTRA_CRED_ID, saved.credId)
                             putExtra(EXTRA_TYPE, TYPE_PASSKEY)
                             putExtra(EXTRA_ORIGIN, callingOrigin)
+                            putExtra(EXTRA_PACKAGE_NAME, callingAppInfo.packageName)
                             if (passkeyRequestJson != null) {
                                 putExtra(EXTRA_REQUEST_JSON, passkeyRequestJson)
                             }
@@ -274,6 +275,7 @@ class CredentialService : CredentialProviderService() {
         const val EXTRA_CRED_ID = "credential.cred_id"
         const val EXTRA_TYPE = "credential.type"
         const val EXTRA_ORIGIN = "credential.origin"
+        const val EXTRA_PACKAGE_NAME = "credential.package_name"
         const val EXTRA_REQUEST_JSON = "credential.request_json"
         const val EXTRA_CLIENT_DATA_HASH = "credential.client_data_hash"
         const val TYPE_PASSWORD = "password"
@@ -290,7 +292,7 @@ class CredentialService : CredentialProviderService() {
             val md = MessageDigest.getInstance("SHA-256")
             val certHash = md.digest(cert)
             // This is the format for origin
-            return "android:apk-key-hash:${Base64.encodeToString(certHash, Base64.NO_WRAP)}"
+            return "android:apk-key-hash:${base64UrlEncode(certHash)}"
         }
     }
 }

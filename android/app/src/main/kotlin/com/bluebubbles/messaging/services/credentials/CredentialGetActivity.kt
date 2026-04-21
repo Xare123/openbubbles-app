@@ -76,6 +76,7 @@ class CredentialGetActivity : FragmentActivity() {
         val credId = intent.getStringExtra(CredentialService.EXTRA_CRED_ID) ?: ""
         val type = intent.getStringExtra(CredentialService.EXTRA_TYPE) ?: ""
         val origin = intent.getStringExtra(CredentialService.EXTRA_ORIGIN) ?: ""
+        val packageName = intent.getStringExtra(CredentialService.EXTRA_PACKAGE_NAME)
         val requestJson = intent.getStringExtra(CredentialService.EXTRA_REQUEST_JSON)
         val clientDataHash = intent.getByteArrayExtra(CredentialService.EXTRA_CLIENT_DATA_HASH)
 
@@ -122,8 +123,17 @@ class CredentialGetActivity : FragmentActivity() {
                                 .put("type", "webauthn.get")
                                 .put("challenge", challenge)
                                 .put("origin", origin)
+                                .apply {
+                                    if (origin.startsWith("android:apk-key-hash:") && packageName != null) {
+                                        put("androidPackageName", packageName)
+                                    }
+                                }
                                 .toString().replace("\\/", "/")
-                            val clientDataJson = clientDataJsonPlain.toByteArray(Charsets.UTF_8)
+                            val clientDataJson = if (clientDataHash != null) {
+                                "{}".toByteArray(Charsets.UTF_8)
+                            } else {
+                                clientDataJsonPlain.toByteArray(Charsets.UTF_8)
+                            }
 
                             Log.i("Client data", clientDataJsonPlain)
                             Log.i("orign", origin)
