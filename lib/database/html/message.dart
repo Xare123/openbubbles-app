@@ -187,7 +187,8 @@ class Message {
       groupActionType: json["groupActionType"] ?? 0,
       balloonBundleId: json["balloonBundleId"],
       associatedMessageGuid: json["associatedMessageGuid"]?.toString().replaceAll("bp:", "").split("/").last,
-      associatedMessagePart: json["associatedMessagePart"] ?? int.tryParse(json["associatedMessageGuid"].toString().replaceAll("p:", "").split("/").first),
+      associatedMessagePart: json["associatedMessagePart"] ??
+          int.tryParse(json["associatedMessageGuid"].toString().replaceAll("p:", "").split("/").first),
       associatedMessageType: json["associatedMessageType"],
       expressiveSendStyleId: json["expressiveSendStyleId"],
       handle: json['handle'] != null ? Handle.fromMap(json['handle']) : null,
@@ -243,7 +244,8 @@ class Message {
     return [];
   }
 
-  static Future<Message> replaceMessage(String? oldGuid, Message newMessage, {bool awaitNewMessageEvent = true, Chat? chat}) async {
+  static Future<Message> replaceMessage(String? oldGuid, Message newMessage,
+      {bool awaitNewMessageEvent = true, Chat? chat}) async {
     if (newMessage.handle == null && newMessage.handleId != null) {
       newMessage.handle = Handle.findOne(originalROWID: newMessage.handleId);
     }
@@ -256,12 +258,12 @@ class Message {
     return this;
   }
 
-  Message setPlayedDate({ DateTime? timestamp }) {
+  Message setPlayedDate({DateTime? timestamp}) {
     datePlayed = timestamp ?? DateTime.now().toUtc();
     return this;
   }
 
-  List<Attachment?>? fetchAttachments({ChatLifecycleManager? currentChat}) {
+  List<Attachment?>? fetchAttachments() {
     return attachments;
   }
 
@@ -270,12 +272,12 @@ class Message {
   }
 
   Message fetchAssociatedMessages({MessagesService? service, bool shouldRefresh = false}) {
-    associatedMessages = (service?.struct.reactions.where((element) => element.associatedMessageGuid == guid).toList() ?? []).cast<Message>();
+    associatedMessages =
+        (service?.struct.reactions.where((element) => element.associatedMessageGuid == guid).toList() ?? [])
+            .cast<Message>();
     if (threadOriginatorGuid != null) {
       final existing = service?.struct.getMessage(threadOriginatorGuid!);
       final threadOriginator = existing;
-      // ignore: argument_type_not_assignable, return_of_invalid_type, invalid_assignment, for_in_of_invalid_element_type
-      threadOriginator?.handle ??= Handle.findOne(originalROWID: threadOriginator.handleId);
       // ignore: argument_type_not_assignable, return_of_invalid_type, invalid_assignment, for_in_of_invalid_element_type
       if (threadOriginator != null) associatedMessages.add(threadOriginator);
       if (existing == null && threadOriginator != null) service?.struct.addThreadOriginator(threadOriginator);
@@ -286,7 +288,7 @@ class Message {
 
   Handle? getHandle() {
     // ignore: argument_type_not_assignable, return_of_invalid_type, invalid_assignment, for_in_of_invalid_element_type
-    return chats.webCachedHandles.firstWhereOrNull((element) => element.originalROWID == handleId);
+    return ChatsSvc.webCachedHandles.firstWhereOrNull((element) => element.originalROWID == handleId);
   }
 
   static Message? findOne({String? guid, String? associatedMessageGuid}) {
@@ -308,8 +310,9 @@ class Message {
   String get fullText => sanitizeString([subject, text].where((e) => !isNullOrEmpty(e)).join("\n"));
 
   // first condition is for macOS < 11 and second condition is for macOS >= 11
-  bool get isLegacyUrlPreview => (balloonBundleId == "com.apple.messages.URLBalloonProvider" && hasDdResults!)
-      || (hasDdResults! && (text ?? "").trim().isURL);
+  bool get isLegacyUrlPreview =>
+      (balloonBundleId == "com.apple.messages.URLBalloonProvider" && hasDdResults!) ||
+      (hasDdResults! && (text ?? "").trim().isURL);
 
   String? get url => text?.replaceAll("\n", " ").split(" ").firstWhereOrNull((String e) => e.hasUrl);
 
@@ -317,7 +320,8 @@ class Message {
 
   String get interactiveText {
     String text = "";
-    final temp = balloonBundleIdMap[balloonBundleId?.split(":").first] ?? (balloonBundleId?.split(":").first ?? "Unknown");
+    final temp =
+        balloonBundleIdMap[balloonBundleId?.split(":").first] ?? (balloonBundleId?.split(":").first ?? "Unknown");
     if (temp is Map) {
       text = temp[balloonBundleId?.split(":").last] ?? ((balloonBundleId?.split(":").last ?? "Unknown"));
     } else {
@@ -333,9 +337,15 @@ class Message {
   bool get isGroupEvent => groupTitle != null || (itemType ?? 0) > 0 || (groupActionType ?? 0) > 0;
 
   String get groupEventText {
-    String text = "Unknown group event";
     handle ??= getHandle();
-    String name = handle?.displayName ?? 'You';
+    final name = handle?.displayName ?? (isFromMe! ? 'You' : 'Unknown');
+    return buildGroupEventText(name);
+  }
+
+  /// Build the group-event description string with a pre-resolved [senderName].
+  String buildGroupEventText(String senderName) {
+    String text = "Unknown group event";
+    final name = senderName;
 
     String? other = "someone";
     if (otherHandle != null && isParticipantEvent) {
@@ -343,41 +353,47 @@ class Message {
     }
 
     if (itemType == 1 && groupActionType == 1) {
-      text = "$name removed $other from the conversation";
+      text = "$name removed $other from the conversation.";
     } else if (itemType == 1 && groupActionType == 0) {
-      text = "$name added $other to the conversation";
+      text = "$name added $other to the conversation.";
     } else if (itemType == 3 && (groupActionType ?? 0) > 0) {
-      text = "$name changed the group photo";
+      text = "$name changed the group photo.";
     } else if (itemType == 3) {
-      text = "$name left the conversation";
+      text = "$name left the conversation.";
     } else if (itemType == 2 && groupTitle != null) {
-      text = "$name named the conversation \"$groupTitle\"";
+      text = "$name named the conversation \"$groupTitle\".";
+    } else if (itemType == 2 && groupTitle == null) {
+      text = "$name removed the name from the conversation.";
     } else if (itemType == 6) {
-      text = "$name started a FaceTime call";
+      text = "$name started a FaceTime call.";
     } else if (itemType == 4 && groupActionType == 0) {
-      text = "$name shared ${name == "You" ? "your" : "their"} location";
+      text = "$name shared ${name == "You" ? "your" : "their"} location.";
     }
 
     return text;
   }
 
-  bool get isParticipantEvent => isGroupEvent && ((itemType == 1 && [0, 1].contains(groupActionType)) || [2, 3].contains(itemType));
+  bool get isParticipantEvent =>
+      isGroupEvent && ((itemType == 1 && [0, 1].contains(groupActionType)) || [2, 3].contains(itemType));
 
   bool get isBigEmoji => bigEmoji ?? MessageHelper.shouldShowBigEmoji(fullText);
 
-  List<Attachment> get realAttachments => attachments.where((e) => e != null && e.mimeType != null).cast<Attachment>().toList();
+  List<Attachment> get realAttachments =>
+      attachments.where((e) => e != null && e.mimeType != null).cast<Attachment>().toList();
 
-  List<Attachment> get previewAttachments => attachments.where((e) => e != null && e.mimeType == null).cast<Attachment>().toList();
+  List<Attachment> get previewAttachments =>
+      attachments.where((e) => e != null && e.mimeType == null).cast<Attachment>().toList();
 
-  List<Message> get reactions => associatedMessages.where((item) =>
-      ReactionTypes.toList().contains(item.associatedMessageType?.replaceAll("-", ""))).toList();
+  List<Message> get reactions => associatedMessages
+      .where((item) => ReactionTypes.toList().contains(item.associatedMessageType?.replaceAll("-", "")))
+      .toList();
 
-  Indicator get indicatorToShow {
-    if (!isFromMe!) return Indicator.NONE;
-    if (dateRead != null) return Indicator.READ;
-    if (dateDelivered != null) return Indicator.DELIVERED;
-    if (dateCreated != null) return Indicator.SENT;
-    return Indicator.NONE;
+  MessageStatusIndicator get indicatorToShow {
+    if (!isFromMe!) return MessageStatusIndicator.NONE;
+    if (dateRead != null) return MessageStatusIndicator.READ;
+    if (dateDelivered != null) return MessageStatusIndicator.DELIVERED;
+    if (dateCreated != null) return MessageStatusIndicator.SENT;
+    return MessageStatusIndicator.NONE;
   }
 
   bool showTail(Message? newer) {
@@ -388,7 +404,8 @@ class Message {
   }
 
   bool sameSender(Message? other) {
-    return (isFromMe! && isFromMe == other?.isFromMe) || (!isFromMe! && !(other?.isFromMe ?? true) && handleId == other?.handleId);
+    return (isFromMe! && isFromMe == other?.isFromMe) ||
+        (!isFromMe! && !(other?.isFromMe ?? true) && handleId == other?.handleId);
   }
 
   void generateTempGuid() {
@@ -425,7 +442,9 @@ class Message {
     // we only want lines ending at messages to me to connect downwards (this
     // helps simplify some things and prevent rendering mistakes)
     if (getLineType(olderMessage, threadOriginator) == LineType.meToOther ||
-        getLineType(olderMessage, threadOriginator) == LineType.otherToOther) return false;
+        getLineType(olderMessage, threadOriginator) == LineType.otherToOther) {
+      return false;
+    }
     // if the lower message isn't from me, then draw the connecting line
     // (if the message is from me, that message will draw a connecting line up
     // rather than this message drawing one downwards).
@@ -438,20 +457,24 @@ class Message {
 
   bool showUpperMessage(Message olderMessage) {
     // find the part count of the older message
-    final olderPartCount = getActiveMwc(olderMessage.guid!)?.parts.length ?? 1;
+    final olderPartCount = chat.target?.guid != null
+        ? MessagesSvc(chat.target!.guid).getMessageStateIfExists(olderMessage.guid!)?.parts.length ?? 1
+        : 1;
     // make sure the older message is none of the following:
     // 1) thread originator
     // 2) part of the thread
     // OR
     // 1) It is the thread originator but the part is not the last part of the older message
     // 2) It is part of the thread but has multiple parts
-    return (olderMessage.guid != threadOriginatorGuid && olderMessage.threadOriginatorGuid != threadOriginatorGuid)
-        || (olderMessage.guid == threadOriginatorGuid && normalizedThreadPart != olderPartCount - 1)
-        || (olderMessage.threadOriginatorGuid == threadOriginatorGuid && olderPartCount > 1);
+    return (olderMessage.guid != threadOriginatorGuid && olderMessage.threadOriginatorGuid != threadOriginatorGuid) ||
+        (olderMessage.guid == threadOriginatorGuid && normalizedThreadPart != olderPartCount - 1) ||
+        (olderMessage.threadOriginatorGuid == threadOriginatorGuid && olderPartCount > 1);
   }
 
   bool connectToLower(Message newerMessage) {
-    final thisPartCount = getActiveMwc(guid!)?.parts.length ?? 1;
+    final thisPartCount = chat.target?.guid != null
+        ? MessagesSvc(chat.target!.guid).getMessageStateIfExists(guid!)?.parts.length ?? 1
+        : 1;
     if (newerMessage.isFromMe != isFromMe) return false;
     if (newerMessage.normalizedThreadPart != thisPartCount - 1) return false;
     if (threadOriginatorGuid != null) {
@@ -477,7 +500,9 @@ class Message {
     if (upperIsThreadOriginatorBubble(olderMessage) ||
         (!threadOriginator.isFromMe! && isFromMe!) ||
         getLineType(olderMessage, threadOriginator) == LineType.meToMe ||
-        getLineType(olderMessage, threadOriginator) == LineType.otherToMe) return true;
+        getLineType(olderMessage, threadOriginator) == LineType.otherToMe) {
+      return true;
+    }
     // if the upper message is from me, then draw the connecting line
     // (if the message is not from me, that message will draw a connecting line
     // down rather than this message drawing one upwards).
@@ -605,8 +630,8 @@ class Message {
     return existing;
   }
 
-  Map<String, dynamic> toMap({bool includeObjects = false}) {
-    final map = {
+  Map<String, dynamic> toMap() {
+    return {
       "ROWID": id,
       "originalROWID": originalROWID,
       "guid": guid,
@@ -618,7 +643,7 @@ class Message {
       "_error": _error.value,
       "dateCreated": dateCreated?.millisecondsSinceEpoch,
       "dateRead": _dateRead.value?.millisecondsSinceEpoch,
-      "dateDelivered":  _dateDelivered.value?.millisecondsSinceEpoch,
+      "dateDelivered": _dateDelivered.value?.millisecondsSinceEpoch,
       "isFromMe": isFromMe!,
       "hasDdResults": hasDdResults!,
       "datePlayed": datePlayed?.millisecondsSinceEpoch,
@@ -642,14 +667,10 @@ class Message {
       "wasDeliveredQuietly": wasDeliveredQuietly,
       "didNotifyRecipient": didNotifyRecipient,
       "isBookmarked": isBookmarked,
+      "attachments": attachments.map((e) => e!.toMap()).toList(),
+      "attributedBody": attributedBody.map((e) => e.toMap()).toList(),
+      "messageSummaryInfo": messageSummaryInfo.map((e) => e.toJson()).toList(),
+      "payloadData": payloadData?.toJson(),
     };
-    if (includeObjects) {
-      map['attachments'] = (attachments).map((e) => e!.toMap()).toList();
-      map['handle'] = handle?.toMap();
-      map['attributedBody'] = attributedBody.map((e) => e.toMap()).toList();
-      map['messageSummaryInfo'] = messageSummaryInfo.map((e) => e.toJson()).toList();
-      map['payloadData'] = payloadData?.toJson();
-    }
-    return map;
   }
 }

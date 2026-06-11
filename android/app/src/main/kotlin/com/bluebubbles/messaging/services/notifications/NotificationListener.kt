@@ -16,15 +16,19 @@ import java.io.ByteArrayOutputStream
 /// Class used to listen for media notifications and fetch album art to update app theming
 class NotificationListener: NotificationListenerService() {
     companion object {
-        private var hasInit: Boolean = false
+        private val initLock = Any()
+        @Volatile private var hasInit: Boolean = false
 
         fun init(context: Context) {
             if (hasInit) return
-            val manager: MediaSessionManager = context.getSystemService(MediaSessionManager::class.java)
-            val sessionListener = MediaSessionListener()
-            sessionListener.init(context)
-            manager.addOnActiveSessionsChangedListener(sessionListener, ComponentName(context, this::class.java))
-            hasInit = true
+            synchronized(initLock) {
+                if (hasInit) return
+                val manager: MediaSessionManager = context.getSystemService(MediaSessionManager::class.java)
+                val sessionListener = MediaSessionListener()
+                sessionListener.init(context)
+                manager.addOnActiveSessionsChangedListener(sessionListener, ComponentName(context, this::class.java))
+                hasInit = true
+            }
         }
     }
 }

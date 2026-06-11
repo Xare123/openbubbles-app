@@ -10,39 +10,38 @@ import 'package:get/get_utils/src/extensions/context_extensions.dart';
 import 'package:window_manager/window_manager.dart';
 
 class TitleBarWrapper extends StatelessWidget {
-  TitleBarWrapper({super.key, required this.child});
+  const TitleBarWrapper({super.key, required this.child});
 
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
     if (!kIsDesktop) {
-      return Stack(
-        children: <Widget>[
-          child,
-          if (ss.settings.showConnectionIndicator.value) const ConnectionIndicator(),
-        ],
-      );
+      return Obx(() => Stack(
+            children: <Widget>[
+              child,
+              if (SettingsSvc.settings.showConnectionIndicator.value) const ConnectionIndicator(),
+            ],
+          ));
     }
 
-    return Obx(() => (ss.settings.useCustomTitleBar.value && Platform.isLinux) || (kIsDesktop && !Platform.isLinux) ? WindowBorder(
-        color: Colors.transparent,
-        width: 0,
-        child: Stack(
-          children: <Widget>[
-            child,
-            const TitleBar(),
-            if (ss.settings.showConnectionIndicator.value)
-              const ConnectionIndicator(),
-          ]
-        ),
-      ) : Stack(
-        children: <Widget>[
-          child,
-          if (ss.settings.showConnectionIndicator.value)
-            const ConnectionIndicator(),
-        ],
-      ),
+    return Obx(
+      () => (SettingsSvc.settings.useCustomTitleBar.value && Platform.isLinux) || (kIsDesktop && !Platform.isLinux)
+          ? WindowBorder(
+              color: Colors.transparent,
+              width: 0,
+              child: Stack(children: <Widget>[
+                child,
+                const TitleBar(),
+                if (SettingsSvc.settings.showConnectionIndicator.value) const ConnectionIndicator(),
+              ]),
+            )
+          : Stack(
+              children: <Widget>[
+                child,
+                if (SettingsSvc.settings.showConnectionIndicator.value) const ConnectionIndicator(),
+              ],
+            ),
     );
   }
 }
@@ -86,7 +85,8 @@ class WindowButtons extends StatelessWidget {
       children: [
         MinimizeWindowButton(
           colors: buttonColors,
-          onPressed: () async => ss.settings.minimizeToTray.value ? await windowManager.hide() : await windowManager.minimize(),
+          onPressed: () async =>
+              SettingsSvc.settings.minimizeToTray.value ? await windowManager.hide() : await windowManager.minimize(),
           animate: true,
         ),
         MaximizeWindowButton(

@@ -77,7 +77,7 @@ class FindMyDevice {
   final dynamic lostDevice;
   final dynamic lostModeEnabled;
   final String? deviceDisplayName;
-  final List<dynamic>? safeLocations;
+  final List<SafeLocation> safeLocations;
   final String? name;
   final dynamic canWipeAfterLock;
   final dynamic isMac;
@@ -100,104 +100,106 @@ class FindMyDevice {
   final Map<String, dynamic>? lostModeMetadata;
 
   factory FindMyDevice.fromJson(Map<String, dynamic> json) => FindMyDevice(
-    deviceModel: json["deviceModel"],
-    lowPowerMode: json["lowPowerMode"],
-    passcodeLength: json["passcodeLength"],
-    itemGroup: json["itemGroup"],
-    id: json["id"],
-    batteryStatus: json["batteryStatus"],
-    audioChannels: json["audioChannels"] ?? [],
-    lostModeCapable: json["lostModeCapable"],
-    snd: json["snd"],
-    batteryLevel: json["batteryLevel"]?.toDouble(),
-    locationEnabled: json["locationEnabled"],
-    isConsideredAccessory: json["isConsideredAccessory"] ?? false,
-    address: json["address"] == null ? null : Address.fromJson(json["address"]),
-    location: json["location"] == null ? null : Location.fromJson(json["location"]),
-    modelDisplayName: json["modelDisplayName"],
-    deviceColor: json["deviceColor"],
-    activationLocked: json["activationLocked"],
-    rm2State: json["rm2State"],
-    locFoundEnabled: json["locFoundEnabled"],
-    nwd: json["nwd"],
-    deviceStatus: json["deviceStatus"],
-    remoteWipe: json["remoteWipe"],
-    fmlyShare: json["fmlyShare"],
-    thisDevice: json["thisDevice"],
-    lostDevice: json["lostDevice"],
-    lostModeEnabled: json["lostModeEnabled"],
-    deviceDisplayName: json["deviceDisplayName"],
-    safeLocations: json["safeLocations"],
-    name: json["name"],
-    canWipeAfterLock: json["canWipeAfterLock"],
-    isMac: json["isMac"],
-    rawDeviceModel: json["rawDeviceModel"],
-    baUuid: json["baUUID"],
-    trackingInfo: json["trackingInfo"],
-    features: json["features"]?.cast<String, bool?>(),
-    deviceDiscoveryId: json["deviceDiscoveryId"],
-    prsId: json["prsId"],
-    scd: json["scd"],
-    locationCapable: json["locationCapable"],
-    remoteLock: json["remoteLock"],
-    wipeInProgress: json["wipeInProgress"],
-    darkWake: json["darkWake"],
-    deviceWithYou: json["deviceWithYou"],
-    maxMsgChar: json["maxMsgChar"],
-    deviceClass: json["deviceClass"],
-    crowdSourcedLocation: json["crowdSourcedLocation"],
-    role: json["role"],
-    lostModeMetadata: json["lostModeMetadata"],
-  );
+        deviceModel: json["deviceModel"],
+        lowPowerMode: json["lowPowerMode"],
+        passcodeLength: json["passcodeLength"],
+        itemGroup: json["itemGroup"],
+        id: json["id"],
+        batteryStatus: json["batteryStatus"],
+        audioChannels: json["audioChannels"] ?? [],
+        lostModeCapable: json["lostModeCapable"],
+        snd: json["snd"],
+        batteryLevel: json["batteryLevel"]?.toDouble(),
+        locationEnabled: json["locationEnabled"],
+        isConsideredAccessory: json["isConsideredAccessory"] ?? false,
+        address: json["address"] == null ? null : Address.fromJson(json["address"]),
+        location: json["location"] == null ? null : Location.fromJson(json["location"]),
+        modelDisplayName: json["modelDisplayName"],
+        deviceColor: json["deviceColor"],
+        activationLocked: json["activationLocked"],
+        rm2State: json["rm2State"],
+        locFoundEnabled: json["locFoundEnabled"],
+        nwd: json["nwd"],
+        deviceStatus: json["deviceStatus"],
+        remoteWipe: json["remoteWipe"],
+        fmlyShare: json["fmlyShare"],
+        thisDevice: json["thisDevice"],
+        lostDevice: json["lostDevice"],
+        lostModeEnabled: json["lostModeEnabled"],
+        deviceDisplayName: json["deviceDisplayName"],
+        safeLocations: json["safeLocations"] == null
+            ? []
+            : List<SafeLocation>.from(json["safeLocations"].map((x) => SafeLocation.fromJson(x))),
+        name: json["name"],
+        canWipeAfterLock: json["canWipeAfterLock"],
+        isMac: json["isMac"],
+        rawDeviceModel: json["rawDeviceModel"],
+        baUuid: json["baUUID"],
+        trackingInfo: json["trackingInfo"],
+        features: json["features"]?.cast<String, bool?>(),
+        deviceDiscoveryId: json["deviceDiscoveryId"],
+        prsId: json["prsId"],
+        scd: json["scd"],
+        locationCapable: json["locationCapable"],
+        remoteLock: json["remoteLock"],
+        wipeInProgress: json["wipeInProgress"],
+        darkWake: json["darkWake"],
+        deviceWithYou: json["deviceWithYou"],
+        maxMsgChar: json["maxMsgChar"],
+        deviceClass: json["deviceClass"],
+        crowdSourcedLocation: json["crowdSourcedLocation"],
+        role: json["role"],
+        lostModeMetadata: json["lostModeMetadata"],
+      );
 
   Map<String, dynamic> toJson() => {
-    "deviceModel": deviceModel,
-    "lowPowerMode": lowPowerMode,
-    "passcodeLength": passcodeLength,
-    "itemGroup": itemGroup,
-    "id": id,
-    "batteryStatus": batteryStatus,
-    "audioChannels": audioChannels,
-    "lostModeCapable": lostModeCapable,
-    "snd": snd,
-    "batteryLevel": batteryLevel,
-    "locationEnabled": locationEnabled,
-    "isConsideredAccessory": isConsideredAccessory,
-    "address": address?.toJson(),
-    "location": location?.toJson(),
-    "modelDisplayName": modelDisplayName,
-    "deviceColor": deviceColor,
-    "activationLocked": activationLocked,
-    "rm2State": rm2State,
-    "locFoundEnabled": locFoundEnabled,
-    "nwd": nwd,
-    "deviceStatus": deviceStatus,
-    "remoteWipe": remoteWipe,
-    "fmlyShare": fmlyShare,
-    "thisDevice": thisDevice,
-    "lostDevice": lostDevice,
-    "lostModeEnabled": lostModeEnabled,
-    "deviceDisplayName": deviceDisplayName,
-    "safeLocations": safeLocations,
-    "name": name,
-    "canWipeAfterLock": canWipeAfterLock,
-    "isMac": isMac,
-    "rawDeviceModel": rawDeviceModel,
-    "baUUID": baUuid,
-    "trackingInfo": trackingInfo,
-    "features": features,
-    "deviceDiscoveryId": deviceDiscoveryId,
-    "prsId": prsId,
-    "scd": scd,
-    "locationCapable": locationCapable,
-    "remoteLock": remoteLock,
-    "wipeInProgress": wipeInProgress,
-    "darkWake": darkWake,
-    "deviceWithYou": deviceWithYou,
-    "maxMsgChar": maxMsgChar,
-    "deviceClass": deviceClass,
-    "crowdSourcedLocation": crowdSourcedLocation,
-  };
+        "deviceModel": deviceModel,
+        "lowPowerMode": lowPowerMode,
+        "passcodeLength": passcodeLength,
+        "itemGroup": itemGroup,
+        "id": id,
+        "batteryStatus": batteryStatus,
+        "audioChannels": audioChannels,
+        "lostModeCapable": lostModeCapable,
+        "snd": snd,
+        "batteryLevel": batteryLevel,
+        "locationEnabled": locationEnabled,
+        "isConsideredAccessory": isConsideredAccessory,
+        "address": address?.toJson(),
+        "location": location?.toJson(),
+        "modelDisplayName": modelDisplayName,
+        "deviceColor": deviceColor,
+        "activationLocked": activationLocked,
+        "rm2State": rm2State,
+        "locFoundEnabled": locFoundEnabled,
+        "nwd": nwd,
+        "deviceStatus": deviceStatus,
+        "remoteWipe": remoteWipe,
+        "fmlyShare": fmlyShare,
+        "thisDevice": thisDevice,
+        "lostDevice": lostDevice,
+        "lostModeEnabled": lostModeEnabled,
+        "deviceDisplayName": deviceDisplayName,
+        "safeLocations": safeLocations,
+        "name": name,
+        "canWipeAfterLock": canWipeAfterLock,
+        "isMac": isMac,
+        "rawDeviceModel": rawDeviceModel,
+        "baUUID": baUuid,
+        "trackingInfo": trackingInfo,
+        "features": features,
+        "deviceDiscoveryId": deviceDiscoveryId,
+        "prsId": prsId,
+        "scd": scd,
+        "locationCapable": locationCapable,
+        "remoteLock": remoteLock,
+        "wipeInProgress": wipeInProgress,
+        "darkWake": darkWake,
+        "deviceWithYou": deviceWithYou,
+        "maxMsgChar": maxMsgChar,
+        "deviceClass": deviceClass,
+        "crowdSourcedLocation": crowdSourcedLocation,
+      };
 }
 
 class Address {
@@ -217,8 +219,9 @@ class Address {
     required this.country,
   });
 
+  String? label;
+
   final String? subAdministrativeArea;
-  final String? label;
   final String? streetAddress;
   final String? countryCode;
   final String? stateCode;
@@ -234,36 +237,36 @@ class Address {
   String get uniqueValue => (label ?? mapItemFullAddress)!;
 
   factory Address.fromJson(Map<String, dynamic> json) => Address(
-    subAdministrativeArea: json["subAdministrativeArea"],
-    label: json["label"],
-    streetAddress: json["streetAddress"],
-    countryCode: json["countryCode"],
-    stateCode: json["stateCode"],
-    administrativeArea: json["administrativeArea"],
-    streetName: json["streetName"],
-    formattedAddressLines: json["formattedAddressLines"]?.cast<String>() ?? <String>[],
-    mapItemFullAddress: json["mapItemFullAddress"],
-    fullThroroughfare: json["fullThroroughfare"],
-    areaOfInterest: json["areaOfInterest"] ?? [],
-    locality: json["locality"],
-    country: json["country"],
-  );
+        subAdministrativeArea: json["subAdministrativeArea"],
+        label: json["label"],
+        streetAddress: json["streetAddress"],
+        countryCode: json["countryCode"],
+        stateCode: json["stateCode"],
+        administrativeArea: json["administrativeArea"],
+        streetName: json["streetName"],
+        formattedAddressLines: json["formattedAddressLines"]?.cast<String>() ?? <String>[],
+        mapItemFullAddress: json["mapItemFullAddress"],
+        fullThroroughfare: json["fullThroroughfare"],
+        areaOfInterest: json["areaOfInterest"] ?? [],
+        locality: json["locality"],
+        country: json["country"],
+      );
 
   Map<String, dynamic> toJson() => {
-    "subAdministrativeArea": subAdministrativeArea,
-    "label": label,
-    "streetAddress": streetAddress,
-    "countryCode": countryCode,
-    "stateCode": stateCode,
-    "administrativeArea": administrativeArea,
-    "streetName": streetName,
-    "formattedAddressLines": formattedAddressLines,
-    "mapItemFullAddress": mapItemFullAddress,
-    "fullThroroughfare": fullThroroughfare,
-    "areaOfInterest": areaOfInterest,
-    "locality": locality,
-    "country": country,
-  };
+        "subAdministrativeArea": subAdministrativeArea,
+        "label": label,
+        "streetAddress": streetAddress,
+        "countryCode": countryCode,
+        "stateCode": stateCode,
+        "administrativeArea": administrativeArea,
+        "streetName": streetName,
+        "formattedAddressLines": formattedAddressLines,
+        "mapItemFullAddress": mapItemFullAddress,
+        "fullThroroughfare": fullThroroughfare,
+        "areaOfInterest": areaOfInterest,
+        "locality": locality,
+        "country": country,
+      };
 }
 
 class Location {
@@ -294,31 +297,65 @@ class Location {
   final bool? locationFinished;
 
   factory Location.fromJson(Map<String, dynamic> json) => Location(
-    positionType: json["positionType"],
-    verticalAccuracy: json["verticalAccuracy"],
-    longitude: json["longitude"]?.toDouble(),
-    floorLevel: json["floorLevel"],
-    isInaccurate: json["isInaccurate"],
-    isOld: json["isOld"],
-    horizontalAccuracy: json["horizontalAccuracy"]?.toDouble(),
-    latitude: json["latitude"]?.toDouble(),
-    timeStamp: json["timeStamp"],
-    altitude: json["altitude"],
-    locationFinished: json["locationFinished"],
-  );
+        positionType: json["positionType"],
+        verticalAccuracy: json["verticalAccuracy"],
+        longitude: json["longitude"]?.toDouble(),
+        floorLevel: json["floorLevel"],
+        isInaccurate: json["isInaccurate"],
+        isOld: json["isOld"],
+        horizontalAccuracy: json["horizontalAccuracy"]?.toDouble(),
+        latitude: json["latitude"]?.toDouble(),
+        timeStamp: json["timeStamp"],
+        altitude: json["altitude"],
+        locationFinished: json["locationFinished"],
+      );
 
   Map<String, dynamic> toJson() => {
-    "positionType": positionType,
-    "verticalAccuracy": verticalAccuracy,
-    "longitude": longitude,
-    "floorLevel": floorLevel,
-    "isInaccurate": isInaccurate,
-    "isOld": isOld,
-    "horizontalAccuracy": horizontalAccuracy,
-    "latitude": latitude,
-    "timeStamp": timeStamp,
-    "altitude": altitude,
-    "locationFinished": locationFinished,
-  };
+        "positionType": positionType,
+        "verticalAccuracy": verticalAccuracy,
+        "longitude": longitude,
+        "floorLevel": floorLevel,
+        "isInaccurate": isInaccurate,
+        "isOld": isOld,
+        "horizontalAccuracy": horizontalAccuracy,
+        "latitude": latitude,
+        "timeStamp": timeStamp,
+        "altitude": altitude,
+        "locationFinished": locationFinished,
+      };
 }
 
+class SafeLocation {
+  SafeLocation(
+      {required this.type,
+      required this.approvalState,
+      required this.name,
+      required this.identifier,
+      required this.location,
+      required this.address});
+
+  final int? type;
+  final int? approvalState;
+  final String? name;
+  final String identifier;
+  final Location location;
+  final Address address;
+
+  factory SafeLocation.fromJson(Map<String, dynamic> json) => SafeLocation(
+        type: json["type"],
+        approvalState: json["approvalState"],
+        name: json["name"],
+        identifier: json["identifier"],
+        location: Location.fromJson(json["location"]),
+        address: Address.fromJson(json["address"]),
+      );
+
+  Map<String, dynamic> toJson() => {
+        "type": type,
+        "approvalState": approvalState,
+        "name": name,
+        "identifier": identifier,
+        "location": location.toJson(),
+        "address": address.toJson(),
+      };
+}

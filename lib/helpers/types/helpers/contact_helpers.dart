@@ -3,7 +3,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:dlibphonenumber/dlibphonenumber.dart';
 import 'package:get/get.dart';
 
-Future<String> formatPhoneNumber(dynamic item) async {
+String formatPhoneNumber(dynamic item) {
   String cc = Get.deviceLocale?.countryCode ?? "US";
   String? address;
 

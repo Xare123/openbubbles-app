@@ -33,12 +33,26 @@ class NotificationChannelHandler: MethodCallHandlerImpl() {
         val channelDescription: String = call.argument("channel_description")!!
         val channelId: String = call.argument("channel_id")!!
         Log.d(Constants.logTag, "Creating channel with name $channelName")
-        // check if the channel exists
-        if (notificationManager.getNotificationChannel(channelId) != null) {
+        // For the new messages channel, delete and recreate it if vibration was not explicitly
+        // enabled — IMPORTANCE_HIGH alone does not guarantee shouldVibrate() returns true on all
+        // devices, so existing channels previously created without enableVibration(true) will
+        // silently skip vibration.
+        if (channelId == "com.bluebubbles.new_messages") {
+            val existing = notificationManager.getNotificationChannel(channelId)
+            if (existing != null && !existing.shouldVibrate()) {
+                Log.d(Constants.logTag, "New messages channel exists without vibration — recreating")
+                notificationManager.deleteNotificationChannel(channelId)
+            } else if (existing != null) {
+                Log.d(Constants.logTag, "Notification channel already exists! Ignoring...")
+                result.success(null)
+                return
+            }
+        } else if (notificationManager.getNotificationChannel(channelId) != null) {
             Log.d(Constants.logTag, "Notification channel already exists! Ignoring...")
             result.success(null)
             return
         }
+
         // setup channel with parameters
         val channel = NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_HIGH)
         channel.description = channelDescription
@@ -49,6 +63,7 @@ class NotificationChannelHandler: MethodCallHandlerImpl() {
             }
             channel.setBypassDnd(true)
             channel.setShowBadge(true)
+            channel.enableVibration(true)
         // set 'Foreground Service' channel to low importance (avoid heads-up notification)
         } else if (channelId == "com.bluebubbles.foreground_service") {
             channel.importance = NotificationManager.IMPORTANCE_LOW

@@ -5,10 +5,8 @@ import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/backend/sync/sync_manager_impl.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
-import 'package:collection/collection.dart';
 import 'package:dio/dio.dart';
-import 'package:get/get.dart' hide Response;
-import 'package:tuple/tuple.dart';
+import 'package:bluebubbles/models/models.dart' show HandleSyncPage;
 import 'package:universal_io/io.dart';
 import 'package:windows_taskbar/windows_taskbar.dart';
 
@@ -43,10 +41,8 @@ class HandleSyncManager extends SyncManager {
     }
 
     // Check if the user is on v1.5.2 or newer
-    int serverVersion = (await ss.getServerDetails()).item4;
-    // 100(major) + 21(minor) + 1(bug)
-    bool isMin1_5_2 = serverVersion >= 207; // Server: v1.5.2
-    if (!isMin1_5_2) {
+    final serverDetails = SettingsSvc.serverDetails;
+    if (!serverDetails.supportsHandleSync) {
       throw Exception("Please update your server to v1.5.2 or newer!");
     }
 
@@ -92,10 +88,10 @@ class HandleSyncManager extends SyncManager {
       }
 
       addToOutput("Streaming handles from server...");
-      bool hasContactAccess = await cs.hasContactAccess;
+      // Contact matching is now handled automatically by ContactServiceV2
       await for (final handleEvent in streamHandlePages(totalHandles)) {
-        double handleProgress = handleEvent.item1;
-        List<Handle> serverHandles = handleEvent.item2;
+        double handleProgress = handleEvent.progress;
+        List<Handle> serverHandles = handleEvent.handles;
 
         addToOutput('Saving chunk of ${serverHandles.length} handles(s)...');
 
@@ -111,13 +107,12 @@ class HandleSyncManager extends SyncManager {
             h.formattedAddress = await formatPhoneNumber(h.address);
           }
 
-          if (hasContactAccess) {
-            h.contactRelation.target ??= cs.matchHandleToContact(h);
-          }
+          // Contact matching is now handled automatically by ContactServiceV2
+          // through the many-to-many relationship
         }
 
         // Save the new handles to the DB
-        List<Handle> handles = Handle.bulkSave(serverHandles, matchOnOriginalROWID: true);
+        List<Handle> handles = await Handle.bulkSaveAsync(serverHandles, matchOnOriginalROWID: true);
         handlesSynced += handles.length;
 
         // Save the new handles to a cache
@@ -163,7 +158,7 @@ class HandleSyncManager extends SyncManager {
   }
 
   Future<int?> getHandleCount() async {
-    Response handleCountResponse = await http.handleCount();
+    Response handleCountResponse = await HttpSvc.handleCount();
     Map<String, dynamic> res = handleCountResponse.data;
     if (handleCountResponse.statusCode == 200) {
       return res["data"]["total"];
@@ -193,8 +188,8 @@ class HandleSyncManager extends SyncManager {
   cacheChatHandleRelationships(List<Chat> chats) {
     addToOutput("Caching chat participants...");
     for (Chat c in chats) {
-      List<Handle> handles = c.participants;
-      List<int> rowIds = handles.map((e) => e.originalROWID).whereNotNull().toList();
+      List<Handle> handles = c.handles;
+      List<int> rowIds = handles.map((e) => e.originalROWID).nonNulls.toList();
       chatHandleCache[c] = rowIds;
     }
   }
@@ -220,13 +215,13 @@ class HandleSyncManager extends SyncManager {
   rebuildRelationships(Map<int, Handle> handleMap) {
     addToOutput("Re-creating chat <-> handle relationships");
     chatHandleCache.forEach((key, value) {
-      List<Handle> relations = value.map((e) => handleMap[e]).whereNotNull().toList();
+      List<Handle> relations = value.map((e) => handleMap[e]).nonNulls.toList();
       key.handles.addAll(relations);
       key.handles.applyToDb();
     });
   }
 
-  Stream<Tuple2<double, List<Handle>>> streamHandlePages(int? count, {int batchSize = 200}) async* {
+  Stream<HandleSyncPage> streamHandlePages(int? count, {int batchSize = 200}) async* {
     // Set some default sync values
     int batches = 1;
     int countPerBatch = batchSize;
@@ -241,7 +236,7 @@ class HandleSyncManager extends SyncManager {
     for (int i = 0; i < batches; i++) {
       // Fetch the handles and throw an error if we don't get back a good response.
       // Throwing an error should cancel the sync
-      Response handlePage = await http.handles(offset: i * countPerBatch, limit: countPerBatch);
+      Response handlePage = await HttpSvc.handles(offset: i * countPerBatch, limit: countPerBatch);
       dynamic data = handlePage.data;
       if (handlePage.statusCode != 200) {
         throw HandleRequestException(
@@ -251,7 +246,7 @@ class HandleSyncManager extends SyncManager {
       // Convert the returned handle dictionaries to a list of Handle Objects
       List<dynamic> handleResponse = data["data"];
       List<Handle> handles = handleResponse.map((e) => Handle.fromMap(e)).toList();
-      yield Tuple2<double, List<Handle>>((i + 1) / batches, handles);
+      yield HandleSyncPage((i + 1) / batches, handles);
     }
   }
 
@@ -266,8 +261,9 @@ class HandleSyncManager extends SyncManager {
     rebuildRelationships(newHandles);
     addToOutput("Successfully synced $handlesSynced handle(s)!");
     addToOutput("Reloading your chats...");
-    Get.reload<ChatsService>(force: true);
-    await chats.init(force: true);
+
+    ChatsSvc.reset();
+    await ChatsSvc.init(force: true);
     await super.complete();
   }
 }

@@ -1,24 +1,24 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:isolate';
 
 import 'package:archive/archive_io.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/utils/logger/outputs/log_stream_output.dart';
 import 'package:flutter/foundation.dart';
-import 'package:get/get.dart';
 import 'package:logger/logger.dart';
 import 'package:path/path.dart';
 import 'package:universal_io/io.dart';
+import 'package:get_it/get_it.dart';
 
 // ignore: library_prefixes
 import 'package:logger/logger.dart' as LoggerFactory;
 
 import 'outputs/debug_console_output.dart';
+import 'outputs/file_output_wrapper.dart';
 
 // ignore: non_constant_identifier_names
-BaseLogger Logger = Get.isRegistered<BaseLogger>()
-    ? Get.find<BaseLogger>()
-    : Get.put(BaseLogger());
+BaseLogger get Logger => GetIt.I<BaseLogger>();
 
 enum LogLevel { INFO, WARN, ERROR, DEBUG, TRACE, FATAL }
 
@@ -31,29 +31,32 @@ const Map<Level, bool> defaultExcludeBoxes = {
   LoggerFactory.Level.fatal: false,
 };
 
-class BaseLogger extends GetxService {
+class BaseLogger {
   LoggerFactory.Logger _logger = LoggerFactory.Logger();
 
-  final StreamController<String> logStream =
-      StreamController<String>.broadcast();
+  final StreamController<String> logStream = StreamController<String>.broadcast();
   final latestLogName = 'bluebubbles-latest.log';
 
   LoggerFactory.LogOutput get fileOutput {
-    return LoggerFactory.AdvancedFileOutput(
+    final baseFileOutput = LoggerFactory.AdvancedFileOutput(
         path: logDir,
         maxFileSizeKB: 1024, // 1 MB
-        
         maxRotatedFilesCount: 5,
         maxDelay: const Duration(seconds: 5),
         latestFileName: latestLogName,
+        overrideExisting: false,
+        encoding: utf8,
         fileNameFormatter: (timestamp) {
           final now = DateTime.now();
           return 'bluebubbles-${now.toIso8601String().split('T').first}-${now.millisecondsSinceEpoch ~/ 1000}.log';
         });
+
+    // Wrap with ANSI stripper to ensure file is valid UTF-8
+    return FileOutputWrapper(baseFileOutput);
   }
 
   LoggerFactory.LogOutput get defaultOutput {
-    List<LogOutput> outputs = [DebugConsoleOutput()];
+    List<LogOutput> outputs = kDebugMode ? [DebugConsoleOutput()] : [];
     if (!kIsWeb) outputs.add(fileOutput);
     return LoggerFactory.MultiOutput(outputs);
   }
@@ -110,21 +113,34 @@ class BaseLogger extends GetxService {
   }
 
   String get logDir {
-    return join(fs.appDocDir.path, 'logs');
+    return FilesystemSvc.logsPath;
   }
 
   LoggerFactory.Logger get logger {
     return _logger;
   }
 
-  Future<void> init() async {
-    _logger = createLogger();
+  String _isolateName = "Main";
 
-    if (ss.initCompleted.isCompleted) {
-      currentLevel = ss.settings.logLevel.value;
+  Future<void> init() async {
+    // Ensure log directory and latest log file exist before AdvancedFileOutput
+    // initializes — it calls file.length() which throws PathNotFoundException if
+    // the file has not been created yet (e.g. first run or after cache clear).
+    if (!kIsWeb) {
+      final dir = Directory(logDir);
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+      final latestLog = File(join(logDir, latestLogName));
+      if (!latestLog.existsSync()) latestLog.createSync();
+    }
+
+    _logger = createLogger();
+    _isolateName = Isolate.current.debugName ?? "Main";
+
+    if (SettingsSvc.initCompleted.isCompleted) {
+      currentLevel = SettingsSvc.settings.logLevel.value;
     } else {
-      ss.initCompleted.future.then((_) {
-        currentLevel = ss.settings.logLevel.value;
+      SettingsSvc.initCompleted.future.then((_) {
+        currentLevel = SettingsSvc.settings.logLevel.value;
       });
     }
 
@@ -137,7 +153,7 @@ class BaseLogger extends GetxService {
       filter: currentFilter,
       printer: LoggerFactory.PrettyPrinter(
         methodCount: 0,
-        errorMethodCount: 10,
+        errorMethodCount: 25,
         lineLength: 120,
         colors: showColors,
         printEmojis: false,
@@ -166,8 +182,8 @@ class BaseLogger extends GetxService {
     _showColors = null;
     _excludeBoxes = null;
 
-    if (ss.initCompleted.isCompleted) {
-      _currentLevel = ss.settings.logLevel.value;
+    if (SettingsSvc.initCompleted.isCompleted) {
+      _currentLevel = SettingsSvc.settings.logLevel.value;
     }
 
     _logger = createLogger();
@@ -188,107 +204,132 @@ class BaseLogger extends GetxService {
   }
 
   String compressLogs() {
-    final Directory logDir = Directory(Logger.logDir);
-    final date = DateTime.now().toIso8601String().split('T').first;
-    final File zippedLogFile =
-        File("${fs.appDocDir.path}/bluebubbles-logs-$date.zip");
-    if (zippedLogFile.existsSync()) zippedLogFile.deleteSync();
+    try {
+      final Directory logDir = Directory(Logger.logDir);
+      if (!logDir.existsSync()) {
+        throw Exception("Log directory does not exist");
+      }
 
-    final List<FileSystemEntity> files = logDir.listSync();
-    final List<FileSystemEntity> logFiles =
-        files.where((file) => file.path.endsWith(".log")).toList();
-    final List<String> logPaths = logFiles.map((file) => file.path).toList();
+      final date = DateTime.now().toIso8601String().split('T').first;
+      final File zippedLogFile = File(join(FilesystemSvc.appDocDir.path, "bluebubbles-logs-$date.zip"));
+      if (zippedLogFile.existsSync()) zippedLogFile.deleteSync();
 
-    final encoder = ZipFileEncoder();
-    encoder.create(zippedLogFile.path);
-    for (final logPath in logPaths) {
-      encoder.addFile(File(logPath));
+      final List<FileSystemEntity> files = logDir.listSync();
+      final List<FileSystemEntity> logFiles = files.where((file) => file.path.endsWith(".log")).toList();
+
+      if (logFiles.isEmpty) {
+        throw Exception("No log files found to compress");
+      }
+
+      final List<String> logPaths = logFiles.map((file) => file.path).toList();
+
+      final encoder = ZipFileEncoder();
+      encoder.create(zippedLogFile.path);
+      for (final logPath in logPaths) {
+        encoder.addFile(File(logPath));
+      }
+      encoder.close();
+
+      return zippedLogFile.path;
+    } catch (e, stackTrace) {
+      error("Failed to compress logs", error: e, trace: stackTrace);
+      rethrow;
     }
-    encoder.close();
-
-    return zippedLogFile.path;
   }
 
   Future<List<String>> getLogs({maxLines = 1000}) async {
-    final Directory logDir = Directory(Logger.logDir);
-    if (!logDir.existsSync()) return [];
+    try {
+      final Directory logDir = Directory(Logger.logDir);
+      if (!logDir.existsSync()) return [];
 
-    final List<FileSystemEntity> files = logDir.listSync();
-    final List<FileSystemEntity> logFiles =
-        files.where((file) => file.path.endsWith(latestLogName)).toList();
-    if (logFiles.isEmpty) return [];
+      final List<FileSystemEntity> files = logDir.listSync();
+      final List<FileSystemEntity> logFiles = files.where((file) => file.path.endsWith(latestLogName)).toList();
+      if (logFiles.isEmpty) return [];
 
-    final File logFile = logFiles.first as File;
-    List<String> lines = await logFile.readAsLines(encoding: Encoding.getByName("latin1")!);
+      final File logFile = logFiles.first as File;
+      if (!logFile.existsSync()) return [];
 
-    // Combine lines that are part of the same log message
-    List<String> logs = [];
-    String currentLog = "";
-    for (final log in lines) {
-      // Remove ansi colors
-      String line = log.replaceAll(RegExp(r'\x1B\[[0-?]*[ -/]*[@-~]'), '');
+      List<String> lines = await logFile.readAsLines(encoding: Encoding.getByName("latin1")!);
 
-      // If the log starts with a date, then it's a new log
-      if (line.startsWith(RegExp(r"\d{4}-\d{2}-\d{2}"))) {
-        if (currentLog.isNotEmpty) logs.add(currentLog);
-        currentLog = line;
-      } else {
-        currentLog += "\n$line";
+      // Combine lines that are part of the same log message
+      List<String> logs = [];
+      String currentLog = "";
+      for (final log in lines) {
+        // Remove ansi colors (defensive, should already be stripped)
+        String line = log.replaceAll(RegExp(r'\x1B\[[0-?]*[ -/]*[@-~]'), '');
+
+        // If the log starts with a date, then it's a new log
+        if (line.startsWith(RegExp(r"\d{4}-\d{2}-\d{2}"))) {
+          if (currentLog.isNotEmpty) logs.add(currentLog);
+          currentLog = line;
+        } else {
+          currentLog += "\n$line";
+        }
       }
-    }
 
-    // Take the last [maxLines] logs.
-    // We only want the logs starting from the end. But we want to keep the order of the logs.
-    logs = logs.reversed.take(maxLines).toList().reversed.toList();
-    return logs;
+      // Don't forget to add the last log entry
+      if (currentLog.isNotEmpty) logs.add(currentLog);
+
+      // Take the last [maxLines] logs.
+      // We only want the logs starting from the end. But we want to keep the order of the logs.
+      logs = logs.reversed.take(maxLines).toList().reversed.toList();
+      return logs;
+    } catch (e, stackTrace) {
+      // Log the error but don't use the logger to avoid recursion
+      debugPrint("Error reading logs: $e\n$stackTrace");
+      return [];
+    }
   }
 
   void clearLogs() {
-    final Directory logDir = Directory(Logger.logDir);
-    if (!logDir.existsSync()) return;
+    try {
+      final Directory logDir = Directory(Logger.logDir);
+      if (!logDir.existsSync()) return;
 
-    for (final file in logDir.listSync()) {
-      if (file is File) {
-        file.deleteSync();
+      for (final file in logDir.listSync()) {
+        if (file is File) {
+          file.deleteSync();
+        }
       }
+    } catch (e, stackTrace) {
+      debugPrint("Error clearing logs: $e\n$stackTrace");
     }
   }
 
+  /// Dispose of resources when the logger is no longer needed
+  Future<void> dispose() async {
+    await logStream.close();
+    // Close the underlying logger output if needed
+    await currentOutput.destroy();
+  }
+
   void info(dynamic log, {String? tag, Object? error, StackTrace? trace}) =>
-      logger.i(
-          "${DateTime.now().toUtc().toIso8601String()} [INFO] [${tag ?? "BlueBubblesApp"}] $log",
-          error: error,
-          stackTrace: trace);
+      logger.i("${DateTime.now().toUtc().toIso8601String()} [INFO] [$_isolateName] [${tag ?? "BlueBubblesApp"}] $log",
+          error: error, stackTrace: trace);
 
   void warn(dynamic log, {String? tag, Object? error, StackTrace? trace}) =>
-      logger.w(
-          "${DateTime.now().toUtc().toIso8601String()} [WARN] [${tag ?? "BlueBubblesApp"}] $log",
-          error: error,
-          stackTrace: trace);
+      logger.w("${DateTime.now().toUtc().toIso8601String()} [WARN] [$_isolateName] [${tag ?? "BlueBubblesApp"}] $log",
+          error: error, stackTrace: trace);
 
   void debug(dynamic log, {String? tag, Object? error, StackTrace? trace}) =>
-      logger.d(
-          "${DateTime.now().toUtc().toIso8601String()} [DEBUG] [${tag ?? "BlueBubblesApp"}] $log",
-          error: error,
-          stackTrace: trace);
+      logger.d("${DateTime.now().toUtc().toIso8601String()} [DEBUG] [$_isolateName] [${tag ?? "BlueBubblesApp"}] $log",
+          error: error, stackTrace: trace);
 
   void error(dynamic log, {String? tag, Object? error, StackTrace? trace}) =>
-      logger.e(
-          "${DateTime.now().toUtc().toIso8601String()} [ERROR] [${tag ?? "BlueBubblesApp"}] $log",
-          error: error,
-          stackTrace: trace);
+      logger.e("${DateTime.now().toUtc().toIso8601String()} [ERROR] [$_isolateName] [${tag ?? "BlueBubblesApp"}] $log",
+          error: error, stackTrace: trace);
 
   void trace(dynamic log, {String? tag, Object? error, StackTrace? trace}) =>
-      logger.t(
-          "${DateTime.now().toUtc().toIso8601String()} [TRACE] [${tag ?? "BlueBubblesApp"}] $log",
-          error: error ?? Traceback(),
-          stackTrace: trace);
+      logger.t("${DateTime.now().toUtc().toIso8601String()} [TRACE] [$_isolateName] [${tag ?? "BlueBubblesApp"}] $log",
+          error: error ?? Traceback(), stackTrace: trace);
 
   void fatal(dynamic log, {String? tag, Object? error, StackTrace? trace}) =>
-      logger.f(
-          "${DateTime.now().toUtc().toIso8601String()} [FATAL] [${tag ?? "BlueBubblesApp"}] $log",
-          error: error,
-          stackTrace: trace);
+      logger.f("${DateTime.now().toUtc().toIso8601String()} [FATAL] [$_isolateName] [${tag ?? "BlueBubblesApp"}] $log",
+          error: error, stackTrace: trace);
+
+  void test(dynamic log, {String? tag, Object? error, StackTrace? trace}) =>
+      logger.f("${DateTime.now().toUtc().toIso8601String()} [TEST] [$_isolateName] [${tag ?? "BlueBubblesApp"}] $log",
+          error: error, stackTrace: trace);
 }
 
 class Traceback implements Exception {

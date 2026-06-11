@@ -5,19 +5,18 @@ import 'package:bluebubbles/app/layouts/conversation_list/widgets/conversation_l
 import 'package:bluebubbles/app/layouts/conversation_list/widgets/footer/samsung_footer.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/widgets/header/samsung_header.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/widgets/tile/list_item.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/app/wrappers/scrollbar_wrapper.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
+import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart';
 import 'package:get/get.dart';
-import 'package:bluebubbles/database/models.dart';
 
 class SamsungConversationList extends StatefulWidget {
-  const SamsungConversationList({Key? key, required this.parentController});
+  const SamsungConversationList({super.key, required this.parentController});
 
   final ConversationListController parentController;
 
@@ -25,15 +24,15 @@ class SamsungConversationList extends StatefulWidget {
   State<SamsungConversationList> createState() => _SamsungConversationListState();
 }
 
-class _SamsungConversationListState extends OptimizedState<SamsungConversationList> {
+class _SamsungConversationListState extends State<SamsungConversationList> with ThemeHelpers {
   bool get showArchived => widget.parentController.showArchivedChats;
   bool get showUnknown => widget.parentController.showUnknownSenders;
   bool get showDeleted => widget.parentController.showDeletedMessages;
-
   RxList<Chat> get deletedChats => widget.parentController.deletedChats;
   Color get backgroundColor =>
-      ss.settings.windowEffect.value == WindowEffect.disabled ? headerColor : Colors.transparent;
-  Color get _tileColor => ss.settings.windowEffect.value == WindowEffect.disabled ? tileColor : Colors.transparent;
+      SettingsSvc.settings.windowEffect.value == WindowEffect.disabled ? headerColor : Colors.transparent;
+  Color get _tileColor =>
+      SettingsSvc.settings.windowEffect.value == WindowEffect.disabled ? tileColor : Colors.transparent;
   ConversationListController get controller => widget.parentController;
 
   @override
@@ -41,7 +40,7 @@ class _SamsungConversationListState extends OptimizedState<SamsungConversationLi
     super.initState();
     // update widget when background color changes
     if (kIsDesktop) {
-      ss.settings.windowEffect.listen((WindowEffect effect) {
+      SettingsSvc.settings.windowEffect.listen((WindowEffect effect) {
         setState(() {});
       });
     }
@@ -90,16 +89,25 @@ class _SamsungConversationListState extends OptimizedState<SamsungConversationLi
               showScrollbar: true,
               controller: controller.samsungScrollController,
               child: Obx(() {
-                final _chats = showDeleted ? deletedChats : chats.chats
-                    .archivedHelper(controller.showArchivedChats)
-                    .unknownSendersHelper(controller.showUnknownSenders);
+                // Force reactivity by accessing observable values first
+                final loaded = ChatsSvc.loadedFirstChatBatch.value;
+                // Observe chat list version to trigger rebuild when order changes
+                final _ = ChatsSvc.chatListVersion.value;
+                final _chats = showDeleted
+                    ? deletedChats
+                    : ChatsSvc.getFilteredChats(
+                        showArchived: controller.showArchivedChats,
+                        showUnknown: controller.showUnknownSenders,
+                      );
+                final _pinnedChats = _chats.where((e) => e.isPinned ?? false).toList();
+                final _unpinnedChats = _chats.where((e) => !(e.isPinned ?? false)).toList();
 
                 return CustomScrollView(
                   physics: ThemeSwitcher.getScrollPhysics(),
                   controller: controller.samsungScrollController,
                   slivers: [
                     SamsungHeader(parentController: controller),
-                    if (!chats.loadedChatBatch.value || _chats.isEmpty)
+                    if (!loaded || _unpinnedChats.isEmpty)
                       SliverToBoxAdapter(
                         child: Center(
                           child: Padding(
@@ -109,26 +117,26 @@ class _SamsungConversationListState extends OptimizedState<SamsungConversationLi
                                 Padding(
                                   padding: const EdgeInsets.all(8.0),
                                   child: Text(
-                                    !chats.loadedChatBatch.value
+                                    !loaded
                                         ? "Loading chats..."
                                         : showArchived
                                             ? "You have no archived chats"
                                             : showUnknown
                                                 ? "You have no messages from unknown senders :)"
-                                                : showDeleted 
-                                                  ? "You have no deleted chats" 
-                                                  : "Future chats will show here",
+                                                : showDeleted
+                                                    ? "You have no deleted chats"
+                                                    : "Future chats will show here",
                                     style: context.theme.textTheme.labelLarge,
                                     textAlign: TextAlign.center,
                                   ),
                                 ),
-                                if (!chats.loadedChatBatch.value) buildProgressIndicator(context, size: 15),
+                                if (!loaded) buildProgressIndicator(context, size: 15),
                               ],
                             ),
                           ),
                         ),
                       ),
-                    if (_chats.bigPinHelper(true).isNotEmpty)
+                    if (_pinnedChats.isNotEmpty)
                       SliverPadding(
                         padding: const EdgeInsets.only(bottom: 15),
                         sliver: SliverDecoration(
@@ -137,7 +145,7 @@ class _SamsungConversationListState extends OptimizedState<SamsungConversationLi
                           sliver: SliverList(
                               delegate: SliverChildBuilderDelegate(
                             (context, index) {
-                              final chat = _chats.bigPinHelper(true)[index];
+                              final chat = _pinnedChats[index];
                               return ListItem(
                                   chat: chat,
                                   controller: controller,
@@ -147,7 +155,7 @@ class _SamsungConversationListState extends OptimizedState<SamsungConversationLi
                                     setState(() {});
                                   });
                             },
-                            childCount: _chats.bigPinHelper(true).length,
+                            childCount: _pinnedChats.length,
                           )),
                         ),
                       ),
@@ -159,17 +167,17 @@ class _SamsungConversationListState extends OptimizedState<SamsungConversationLi
                         sliver: SliverList(
                           delegate: SliverChildBuilderDelegate(
                             (context, index) {
-                              final chat = _chats.bigPinHelper(false)[index];
+                              final chat = _unpinnedChats[index];
                               return ListItem(
                                   chat: chat,
                                   controller: controller,
                                   showDeleted: showDeleted,
-                                  autofocus: _chats.bigPinHelper(true).isEmpty && index == 0,
+                                  autofocus: _pinnedChats.isEmpty && index == 0,
                                   update: () {
                                     setState(() {});
                                   });
                             },
-                            childCount: _chats.bigPinHelper(false).length,
+                            childCount: _unpinnedChats.length,
                           ),
                         ),
                       ),

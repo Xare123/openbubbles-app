@@ -23,49 +23,34 @@ GZipWrapperChatProto encodeChatproto({required ChatProto chat}) =>
 MessageProto decodeMessageproto({required GZipWrapperMessageProto wrapped}) =>
     RustLib.instance.api.crateApiApiDecodeMessageproto(wrapped: wrapped);
 
-GZipWrapperMessageProto encodeMessageproto(
-        {required MessageProto messageproto}) =>
-    RustLib.instance.api
-        .crateApiApiEncodeMessageproto(messageproto: messageproto);
+GZipWrapperMessageProto encodeMessageproto({required MessageProto messageproto}) =>
+    RustLib.instance.api.crateApiApiEncodeMessageproto(messageproto: messageproto);
 
-MessageProto2 decodeMessageproto2(
-        {required GZipWrapperMessageProto2 wrapped}) =>
+MessageProto2 decodeMessageproto2({required GZipWrapperMessageProto2 wrapped}) =>
     RustLib.instance.api.crateApiApiDecodeMessageproto2(wrapped: wrapped);
 
-GZipWrapperMessageProto2 encodeMessageproto2(
-        {required MessageProto2 messageproto2}) =>
-    RustLib.instance.api
-        .crateApiApiEncodeMessageproto2(messageproto2: messageproto2);
+GZipWrapperMessageProto2 encodeMessageproto2({required MessageProto2 messageproto2}) =>
+    RustLib.instance.api.crateApiApiEncodeMessageproto2(messageproto2: messageproto2);
 
-MessageProto3 decodeMessageproto3(
-        {required GZipWrapperMessageProto3 wrapped}) =>
+MessageProto3 decodeMessageproto3({required GZipWrapperMessageProto3 wrapped}) =>
     RustLib.instance.api.crateApiApiDecodeMessageproto3(wrapped: wrapped);
 
-GZipWrapperMessageProto3 encodeMessageproto3(
-        {required MessageProto3 messageproto3}) =>
-    RustLib.instance.api
-        .crateApiApiEncodeMessageproto3(messageproto3: messageproto3);
+GZipWrapperMessageProto3 encodeMessageproto3({required MessageProto3 messageproto3}) =>
+    RustLib.instance.api.crateApiApiEncodeMessageproto3(messageproto3: messageproto3);
 
-MessageProto4 decodeMessageproto4(
-        {required GZipWrapperMessageProto4 wrapped}) =>
+MessageProto4 decodeMessageproto4({required GZipWrapperMessageProto4 wrapped}) =>
     RustLib.instance.api.crateApiApiDecodeMessageproto4(wrapped: wrapped);
 
-GZipWrapperMessageProto4 encodeMessageproto4(
-        {required MessageProto4 messageproto4}) =>
-    RustLib.instance.api
-        .crateApiApiEncodeMessageproto4(messageproto4: messageproto4);
+GZipWrapperMessageProto4 encodeMessageproto4({required MessageProto4 messageproto4}) =>
+    RustLib.instance.api.crateApiApiEncodeMessageproto4(messageproto4: messageproto4);
 
-AttachmentMeta decodeAttachmentmeta(
-        {required GZipWrapperAttachmentMeta wrapped}) =>
+AttachmentMeta decodeAttachmentmeta({required GZipWrapperAttachmentMeta wrapped}) =>
     RustLib.instance.api.crateApiApiDecodeAttachmentmeta(wrapped: wrapped);
 
-GZipWrapperAttachmentMeta encodeAttachmentmeta(
-        {required AttachmentMeta attachmentmeta}) =>
-    RustLib.instance.api
-        .crateApiApiEncodeAttachmentmeta(attachmentmeta: attachmentmeta);
+GZipWrapperAttachmentMeta encodeAttachmentmeta({required AttachmentMeta attachmentmeta}) =>
+    RustLib.instance.api.crateApiApiEncodeAttachmentmeta(attachmentmeta: attachmentmeta);
 
-Future<void> doFirstTimeInit({required String path}) =>
-    RustLib.instance.api.crateApiApiDoFirstTimeInit(path: path);
+Future<void> doFirstTimeInit({required String path}) => RustLib.instance.api.crateApiApiDoFirstTimeInit(path: path);
 
 IdsngmIdentity decodeIdentity({required List<int> identity}) =>
     RustLib.instance.api.crateApiApiDecodeIdentity(identity: identity);
@@ -79,24 +64,17 @@ ExtensionApp decodeExtensionApp({required List<int> bp, required String bid}) =>
 Future<SharedPushState?> serviceFromPtr({required String ptr}) =>
     RustLib.instance.api.crateApiApiServiceFromPtr(ptr: ptr);
 
-IdsngmIdentity newNgmIdentity() =>
-    RustLib.instance.api.crateApiApiNewNgmIdentity();
+IdsngmIdentity newNgmIdentity() => RustLib.instance.api.crateApiApiNewNgmIdentity();
 
-SavedHardwareState? readHardware({required String path}) =>
-    RustLib.instance.api.crateApiApiReadHardware(path: path);
+SavedHardwareState? readHardware({required String path}) => RustLib.instance.api.crateApiApiReadHardware(path: path);
 
-void resetAnisette({required String path}) =>
-    RustLib.instance.api.crateApiApiResetAnisette(path: path);
+void resetAnisette({required String path}) => RustLib.instance.api.crateApiApiResetAnisette(path: path);
 
 Future<ArcAnisetteClientDefaultAnisetteProvider> makeAnisette(
-        {required String path,
-        required JoinedOsConfig config,
-        required ApsConnection conn}) =>
-    RustLib.instance.api
-        .crateApiApiMakeAnisette(path: path, config: config, conn: conn);
+        {required String path, required JoinedOsConfig config, required ApsConnection conn}) =>
+    RustLib.instance.api.crateApiApiMakeAnisette(path: path, config: config, conn: conn);
 
-List<IdsUser>? restoreUsers({required String path}) =>
-    RustLib.instance.api.crateApiApiRestoreUsers(path: path);
+List<IdsUser>? restoreUsers({required String path}) => RustLib.instance.api.crateApiApiRestoreUsers(path: path);
 
 void saveUsers({required List<IdsUser> users, required String path}) =>
     RustLib.instance.api.crateApiApiSaveUsers(users: users, path: path);
@@ -106,11 +84,9 @@ Future<ArcImClient> makeImclient(
         required ApsConnection conn,
         required List<IdsUser> users,
         required IdsngmIdentity identity}) =>
-    RustLib.instance.api.crateApiApiMakeImclient(
-        path: path, conn: conn, users: users, identity: identity);
+    RustLib.instance.api.crateApiApiMakeImclient(path: path, conn: conn, users: users, identity: identity);
 
-(Sender, ArcSenderPushMessage, ApsWatcher) buildWatcher(
-        {required ApsConnection conn, required ArcImClient client}) =>
+(Sender, ArcSenderPushMessage, ApsWatcher) buildWatcher({required ApsConnection conn, required ArcImClient client}) =>
     RustLib.instance.api.crateApiApiBuildWatcher(conn: conn, client: client);
 
 (Sender, ArcSenderPushMessage, ApsWatcher) importWatcher(
@@ -120,12 +96,10 @@ Future<ArcImClient> makeImclient(
 ReceiverApsMessage subscribeConn({required ApsConnection conn}) =>
     RustLib.instance.api.crateApiApiSubscribeConn(conn: conn);
 
-(String, SharedPushState) sendDaemon(
-        {required SharedPushState state, required ApsWatcher watcher}) =>
+(String, SharedPushState) sendDaemon({required SharedPushState state, required ApsWatcher watcher}) =>
     RustLib.instance.api.crateApiApiSendDaemon(state: state, watcher: watcher);
 
-(ArcSharedPushState, SharedPushState) dupDaemonDesk(
-        {required SharedPushState state}) =>
+(ArcSharedPushState, SharedPushState) dupDaemonDesk({required SharedPushState state}) =>
     RustLib.instance.api.crateApiApiDupDaemonDesk(state: state);
 
 Future<ArcIdmsAuthListener> makeIdms({required ApsConnection conn}) =>
@@ -135,22 +109,18 @@ ArcMutexOptionCircleClientSessionDefaultAnisetteProvider makeClientSession(
         {CircleClientSessionDefaultAnisetteProvider? circle}) =>
     RustLib.instance.api.crateApiApiMakeClientSession(circle: circle);
 
-ArcMutexVecActiveCircleSession makeCircleSessions() =>
-    RustLib.instance.api.crateApiApiMakeCircleSessions();
+ArcMutexVecActiveCircleSession makeCircleSessions() => RustLib.instance.api.crateApiApiMakeCircleSessions();
 
 Future<ArcMutexAppleAccountDefaultAnisetteProvider?> restoreAccount(
         {required String path,
         required ArcAnisetteClientDefaultAnisetteProvider anisette,
         required JoinedOsConfig config,
         required ApsConnection conn}) =>
-    RustLib.instance.api.crateApiApiRestoreAccount(
-        path: path, anisette: anisette, config: config, conn: conn);
+    RustLib.instance.api.crateApiApiRestoreAccount(path: path, anisette: anisette, config: config, conn: conn);
 
 ArcTokenProviderDefaultAnisetteProvider makeTokenProvider(
-        {required ArcMutexAppleAccountDefaultAnisetteProvider account,
-        required JoinedOsConfig config}) =>
-    RustLib.instance.api
-        .crateApiApiMakeTokenProvider(account: account, config: config);
+        {required ArcMutexAppleAccountDefaultAnisetteProvider account, required JoinedOsConfig config}) =>
+    RustLib.instance.api.crateApiApiMakeTokenProvider(account: account, config: config);
 
 Future<SyncManagerDefaultAnisetteProviderMyFilePackager?> makeSharedStreams(
         {required String path,
@@ -158,23 +128,16 @@ Future<SyncManagerDefaultAnisetteProviderMyFilePackager?> makeSharedStreams(
         required ArcAnisetteClientDefaultAnisetteProvider anisette,
         required JoinedOsConfig config,
         required ArcTokenProviderDefaultAnisetteProvider token}) =>
-    RustLib.instance.api.crateApiApiMakeSharedStreams(
-        path: path,
-        conn: conn,
-        anisette: anisette,
-        config: config,
-        token: token);
+    RustLib.instance.api
+        .crateApiApiMakeSharedStreams(path: path, conn: conn, anisette: anisette, config: config, token: token);
 
 Future<ArcCloudKitClientDefaultAnisetteProvider?> makeCloudkit(
         {required String path,
         required ArcAnisetteClientDefaultAnisetteProvider anisette,
         required JoinedOsConfig config,
         required ArcTokenProviderDefaultAnisetteProvider tokenProvider}) =>
-    RustLib.instance.api.crateApiApiMakeCloudkit(
-        path: path,
-        anisette: anisette,
-        config: config,
-        tokenProvider: tokenProvider);
+    RustLib.instance.api
+        .crateApiApiMakeCloudkit(path: path, anisette: anisette, config: config, tokenProvider: tokenProvider);
 
 Future<ArcProfilesClientDefaultAnisetteProvider> makeProfiles(
         {required ArcCloudKitClientDefaultAnisetteProvider cloudkit}) =>
@@ -186,25 +149,15 @@ Future<ArcPasswordManagerDefaultAnisetteProvider> makePasswords(
         required ArcCloudKitClientDefaultAnisetteProvider cloudkit,
         required ArcImClient client,
         required ApsConnection conn}) =>
-    RustLib.instance.api.crateApiApiMakePasswords(
-        path: path,
-        keychain: keychain,
-        cloudkit: cloudkit,
-        client: client,
-        conn: conn);
+    RustLib.instance.api
+        .crateApiApiMakePasswords(path: path, keychain: keychain, cloudkit: cloudkit, client: client, conn: conn);
 
 Future<void> syncWifiPasswords(
-        {required ArcPasswordManagerDefaultAnisetteProvider manager,
-        required bool userApprove}) =>
-    RustLib.instance.api.crateApiApiSyncWifiPasswords(
-        manager: manager, userApprove: userApprove);
+        {required ArcPasswordManagerDefaultAnisetteProvider manager, required bool userApprove}) =>
+    RustLib.instance.api.crateApiApiSyncWifiPasswords(manager: manager, userApprove: userApprove);
 
-Future<ArcFtClient> makeFacetime(
-        {required String path,
-        required ApsConnection conn,
-        required ArcImClient client}) =>
-    RustLib.instance.api
-        .crateApiApiMakeFacetime(path: path, conn: conn, client: client);
+Future<ArcFtClient> makeFacetime({required String path, required ApsConnection conn, required ArcImClient client}) =>
+    RustLib.instance.api.crateApiApiMakeFacetime(path: path, conn: conn, client: client);
 
 Future<ArcStatusKitClientDefaultAnisetteProvider> makeStatuskit(
         {required String path,
@@ -212,12 +165,8 @@ Future<ArcStatusKitClientDefaultAnisetteProvider> makeStatuskit(
         required ApsConnection conn,
         required JoinedOsConfig config,
         required ArcImClient client}) =>
-    RustLib.instance.api.crateApiApiMakeStatuskit(
-        path: path,
-        provider: provider,
-        conn: conn,
-        config: config,
-        client: client);
+    RustLib.instance.api
+        .crateApiApiMakeStatuskit(path: path, provider: provider, conn: conn, config: config, client: client);
 
 ArcKeychainClientDefaultAnisetteProvider? makeKeychain(
         {required String path,
@@ -226,17 +175,12 @@ ArcKeychainClientDefaultAnisetteProvider? makeKeychain(
         required JoinedOsConfig config,
         required ArcTokenProviderDefaultAnisetteProvider tokenProvider}) =>
     RustLib.instance.api.crateApiApiMakeKeychain(
-        path: path,
-        cloudkit: cloudkit,
-        anisette: anisette,
-        config: config,
-        tokenProvider: tokenProvider);
+        path: path, cloudkit: cloudkit, anisette: anisette, config: config, tokenProvider: tokenProvider);
 
 ArcCloudMessagesClientDefaultAnisetteProvider makeCloudMessagesClient(
         {required ArcCloudKitClientDefaultAnisetteProvider cloudkit,
         required ArcKeychainClientDefaultAnisetteProvider keychain}) =>
-    RustLib.instance.api.crateApiApiMakeCloudMessagesClient(
-        cloudkit: cloudkit, keychain: keychain);
+    RustLib.instance.api.crateApiApiMakeCloudMessagesClient(cloudkit: cloudkit, keychain: keychain);
 
 Future<ArcFindMyClientDefaultAnisetteProvider?> makeFindmy(
         {required String path,
@@ -257,8 +201,7 @@ Future<ArcFindMyClientDefaultAnisetteProvider?> makeFindmy(
         config: config,
         client: client);
 
-IdsUser duplicateUser({required IdsUser user}) =>
-    RustLib.instance.api.crateApiApiDuplicateUser(user: user);
+IdsUser duplicateUser({required IdsUser user}) => RustLib.instance.api.crateApiApiDuplicateUser(user: user);
 
 Future<(List<IdsUser>?, SupportAlert?)> registerIds(
         {required String path,
@@ -266,83 +209,63 @@ Future<(List<IdsUser>?, SupportAlert?)> registerIds(
         required ApsConnection aps,
         required IdsngmIdentity identity,
         required List<IdsUser> users}) =>
-    RustLib.instance.api.crateApiApiRegisterIds(
-        path: path, config: config, aps: aps, identity: identity, users: users);
+    RustLib.instance.api.crateApiApiRegisterIds(path: path, config: config, aps: aps, identity: identity, users: users);
 
 Future<void> setIdentity(
-        {required String statePath,
-        required JoinedOsConfig config,
-        required IdsngmIdentity identity}) =>
-    RustLib.instance.api.crateApiApiSetIdentity(
-        statePath: statePath, config: config, identity: identity);
+        {required String statePath, required JoinedOsConfig config, required IdsngmIdentity identity}) =>
+    RustLib.instance.api.crateApiApiSetIdentity(statePath: statePath, config: config, identity: identity);
 
 Future<(ApsConnection, PushError?)> setupPush(
         {required JoinedOsConfig config,
         required IdsngmIdentity identity,
         ApsState? state,
         required String statePath}) =>
-    RustLib.instance.api.crateApiApiSetupPush(
-        config: config, identity: identity, state: state, statePath: statePath);
+    RustLib.instance.api.crateApiApiSetupPush(config: config, identity: identity, state: state, statePath: statePath);
 
 Future<void> configureAppReview({required String path}) =>
     RustLib.instance.api.crateApiApiConfigureAppReview(path: path);
 
-Future<String> encodeHex({required List<int> bytes}) =>
-    RustLib.instance.api.crateApiApiEncodeHex(bytes: bytes);
+Future<String> encodeHex({required List<int> bytes}) => RustLib.instance.api.crateApiApiEncodeHex(bytes: bytes);
 
 Future<String> generateUdid() => RustLib.instance.api.crateApiApiGenerateUdid();
 
-Future<JoinedOsConfig> configFromValidationData(
-        {required List<int> data, required HwExtra extra}) =>
-    RustLib.instance.api
-        .crateApiApiConfigFromValidationData(data: data, extra: extra);
+Future<JoinedOsConfig> configFromValidationData({required List<int> data, required HwExtra extra}) =>
+    RustLib.instance.api.crateApiApiConfigFromValidationData(data: data, extra: extra);
 
-Future<JoinedOsConfig> configFromRelay(
-        {required String code, required String host, String? token}) =>
-    RustLib.instance.api
-        .crateApiApiConfigFromRelay(code: code, host: host, token: token);
+Future<JoinedOsConfig> configFromRelay({required String code, required String host, String? token}) =>
+    RustLib.instance.api.crateApiApiConfigFromRelay(code: code, host: host, token: token);
 
 Future<String?> validateRelay({required JoinedOsConfig configRef}) =>
     RustLib.instance.api.crateApiApiValidateRelay(configRef: configRef);
 
-Future<SimplifiedTranscriptPoster> parseTranscriptPoster(
-        {required List<int> payload}) =>
+Future<SimplifiedTranscriptPoster> parseTranscriptPoster({required List<int> payload}) =>
     RustLib.instance.api.crateApiApiParseTranscriptPoster(payload: payload);
 
-Future<Uint8List> packTranscriptPoster(
-        {required SimplifiedTranscriptPoster payload}) =>
+Future<Uint8List> packTranscriptPoster({required SimplifiedTranscriptPoster payload}) =>
     RustLib.instance.api.crateApiApiPackTranscriptPoster(payload: payload);
 
-Future<SimplifiedIncomingCallPoster> parsePoster(
-        {required IMessagePosterRecord poster}) =>
+Future<SimplifiedIncomingCallPoster> parsePoster({required IMessagePosterRecord poster}) =>
     RustLib.instance.api.crateApiApiParsePoster(poster: poster);
 
-Future<IMessagePosterRecord> fromPoster(
-        {required SimplifiedIncomingCallPoster poster}) =>
+Future<IMessagePosterRecord> fromPoster({required SimplifiedIncomingCallPoster poster}) =>
     RustLib.instance.api.crateApiApiFromPoster(poster: poster);
 
-SimplifiedIncomingCallPoster clonePoster(
-        {required SimplifiedIncomingCallPoster poster}) =>
+SimplifiedIncomingCallPoster clonePoster({required SimplifiedIncomingCallPoster poster}) =>
     RustLib.instance.api.crateApiApiClonePoster(poster: poster);
 
-SimplifiedTranscriptPoster cloneTranscriptPoster(
-        {required SimplifiedTranscriptPoster poster}) =>
+SimplifiedTranscriptPoster cloneTranscriptPoster({required SimplifiedTranscriptPoster poster}) =>
     RustLib.instance.api.crateApiApiCloneTranscriptPoster(poster: poster);
 
-Future<Uint8List> transcriptPosterSave(
-        {required SimplifiedTranscriptPoster poster}) =>
+Future<Uint8List> transcriptPosterSave({required SimplifiedTranscriptPoster poster}) =>
     RustLib.instance.api.crateApiApiTranscriptPosterSave(poster: poster);
 
-Future<SimplifiedTranscriptPoster> fromTranscriptPosterSave(
-        {required List<int> poster}) =>
+Future<SimplifiedTranscriptPoster> fromTranscriptPosterSave({required List<int> poster}) =>
     RustLib.instance.api.crateApiApiFromTranscriptPosterSave(poster: poster);
 
-Future<Uint8List> parsePosterSave(
-        {required SimplifiedIncomingCallPoster poster}) =>
+Future<Uint8List> parsePosterSave({required SimplifiedIncomingCallPoster poster}) =>
     RustLib.instance.api.crateApiApiParsePosterSave(poster: poster);
 
-Future<SimplifiedIncomingCallPoster> fromPosterSave(
-        {required List<int> poster}) =>
+Future<SimplifiedIncomingCallPoster> fromPosterSave({required List<int> poster}) =>
     RustLib.instance.api.crateApiApiFromPosterSave(poster: poster);
 
 Future<DeviceInfo> getDeviceInfo({required JoinedOsConfig config}) =>
@@ -351,20 +274,15 @@ Future<DeviceInfo> getDeviceInfo({required JoinedOsConfig config}) =>
 Future<JoinedOsConfig> configFromEncoded({required List<int> encoded}) =>
     RustLib.instance.api.crateApiApiConfigFromEncoded(encoded: encoded);
 
-Future<PushMessage?> ptrToDart({required String ptr}) =>
-    RustLib.instance.api.crateApiApiPtrToDart(ptr: ptr);
+Future<PushMessage?> ptrToDart({required String ptr}) => RustLib.instance.api.crateApiApiPtrToDart(ptr: ptr);
 
-Future<void> completeMsg({required String ptr}) =>
-    RustLib.instance.api.crateApiApiCompleteMsg(ptr: ptr);
+Future<void> completeMsg({required String ptr}) => RustLib.instance.api.crateApiApiCompleteMsg(ptr: ptr);
 
-Attachment restoreAttachment({required String data}) =>
-    RustLib.instance.api.crateApiApiRestoreAttachment(data: data);
+Attachment restoreAttachment({required String data}) => RustLib.instance.api.crateApiApiRestoreAttachment(data: data);
 
-Future<String> saveAttachment({required Attachment att}) =>
-    RustLib.instance.api.crateApiApiSaveAttachment(att: att);
+Future<String> saveAttachment({required Attachment att}) => RustLib.instance.api.crateApiApiSaveAttachment(att: att);
 
-Future<NsArrayLpImageMetadata> createImageArray(
-        {required LPImageMetadata img}) =>
+Future<NsArrayLpImageMetadata> createImageArray({required LPImageMetadata img}) =>
     RustLib.instance.api.crateApiApiCreateImageArray(img: img);
 
 Future<NsArrayLpIconMetadata> createIconArray({required LPIconMetadata img}) =>
@@ -373,10 +291,8 @@ Future<NsArrayLpIconMetadata> createIconArray({required LPIconMetadata img}) =>
 Uint8List nsNull() => RustLib.instance.api.crateApiApiNsNull();
 
 Future<void> syncPasswords(
-        {required ArcPasswordManagerDefaultAnisetteProvider passwords,
-        required ApsConnection conn}) =>
-    RustLib.instance.api
-        .crateApiApiSyncPasswords(passwords: passwords, conn: conn);
+        {required ArcPasswordManagerDefaultAnisetteProvider passwords, required ApsConnection conn}) =>
+    RustLib.instance.api.crateApiApiSyncPasswords(passwords: passwords, conn: conn);
 
 Future<Map<String, (String?, PasswordRawEntry)>> getPasswords(
         {required ArcPasswordManagerDefaultAnisetteProvider passwords}) =>
@@ -386,8 +302,7 @@ Future<Map<String, (String?, PasswordManagerMeta)>> getPasswordsMeta(
         {required ArcPasswordManagerDefaultAnisetteProvider passwords}) =>
     RustLib.instance.api.crateApiApiGetPasswordsMeta(passwords: passwords);
 
-Future<Map<String, (String?, Passkey)>> getPasskeys(
-        {required ArcPasswordManagerDefaultAnisetteProvider passwords}) =>
+Future<Map<String, (String?, Passkey)>> getPasskeys({required ArcPasswordManagerDefaultAnisetteProvider passwords}) =>
     RustLib.instance.api.crateApiApiGetPasskeys(passwords: passwords);
 
 Future<Map<String, (String?, WifiPassword)>> getWifiPasswords(
@@ -399,134 +314,91 @@ Future<void> savePassword(
         required String id,
         required PasswordRawEntry entry,
         String? group}) =>
-    RustLib.instance.api.crateApiApiSavePassword(
-        passwords: passwords, id: id, entry: entry, group: group);
+    RustLib.instance.api.crateApiApiSavePassword(passwords: passwords, id: id, entry: entry, group: group);
 
 Future<void> savePasswordMeta(
         {required ArcPasswordManagerDefaultAnisetteProvider passwords,
         required String id,
         required PasswordManagerMeta entry,
         String? group}) =>
-    RustLib.instance.api.crateApiApiSavePasswordMeta(
-        passwords: passwords, id: id, entry: entry, group: group);
+    RustLib.instance.api.crateApiApiSavePasswordMeta(passwords: passwords, id: id, entry: entry, group: group);
 
 Future<void> savePasskey(
         {required ArcPasswordManagerDefaultAnisetteProvider passwords,
         required String id,
         required Passkey entry,
         String? group}) =>
-    RustLib.instance.api.crateApiApiSavePasskey(
-        passwords: passwords, id: id, entry: entry, group: group);
+    RustLib.instance.api.crateApiApiSavePasskey(passwords: passwords, id: id, entry: entry, group: group);
 
 Future<void> saveWifiPassword(
         {required ArcPasswordManagerDefaultAnisetteProvider passwords,
         required String id,
         required WifiPassword entry,
         String? group}) =>
-    RustLib.instance.api.crateApiApiSaveWifiPassword(
-        passwords: passwords, id: id, entry: entry, group: group);
+    RustLib.instance.api.crateApiApiSaveWifiPassword(passwords: passwords, id: id, entry: entry, group: group);
 
 Future<void> deletePassword(
-        {required ArcPasswordManagerDefaultAnisetteProvider passwords,
-        required String id,
-        String? group}) =>
-    RustLib.instance.api
-        .crateApiApiDeletePassword(passwords: passwords, id: id, group: group);
+        {required ArcPasswordManagerDefaultAnisetteProvider passwords, required String id, String? group}) =>
+    RustLib.instance.api.crateApiApiDeletePassword(passwords: passwords, id: id, group: group);
 
 Future<void> deletePasswordMeta(
-        {required ArcPasswordManagerDefaultAnisetteProvider passwords,
-        required String id,
-        String? group}) =>
-    RustLib.instance.api.crateApiApiDeletePasswordMeta(
-        passwords: passwords, id: id, group: group);
+        {required ArcPasswordManagerDefaultAnisetteProvider passwords, required String id, String? group}) =>
+    RustLib.instance.api.crateApiApiDeletePasswordMeta(passwords: passwords, id: id, group: group);
 
 Future<void> deletePasskey(
-        {required ArcPasswordManagerDefaultAnisetteProvider passwords,
-        required String id,
-        String? group}) =>
-    RustLib.instance.api
-        .crateApiApiDeletePasskey(passwords: passwords, id: id, group: group);
+        {required ArcPasswordManagerDefaultAnisetteProvider passwords, required String id, String? group}) =>
+    RustLib.instance.api.crateApiApiDeletePasskey(passwords: passwords, id: id, group: group);
 
 Future<void> deleteWifiPassword(
-        {required ArcPasswordManagerDefaultAnisetteProvider passwords,
-        required String id,
-        String? group}) =>
-    RustLib.instance.api.crateApiApiDeleteWifiPassword(
-        passwords: passwords, id: id, group: group);
+        {required ArcPasswordManagerDefaultAnisetteProvider passwords, required String id, String? group}) =>
+    RustLib.instance.api.crateApiApiDeleteWifiPassword(passwords: passwords, id: id, group: group);
 
-Future<(String, Map<String, GroupSummary>, Map<String, ShareInviteContentData>)>
-    getGroups({required ArcPasswordManagerDefaultAnisetteProvider passwords}) =>
-        RustLib.instance.api.crateApiApiGetGroups(passwords: passwords);
+Future<(String, Map<String, GroupSummary>, Map<String, ShareInviteContentData>)> getGroups(
+        {required ArcPasswordManagerDefaultAnisetteProvider passwords}) =>
+    RustLib.instance.api.crateApiApiGetGroups(passwords: passwords);
 
-Future<String> createGroup(
-        {required ArcPasswordManagerDefaultAnisetteProvider passwords,
-        required String name}) =>
-    RustLib.instance.api
-        .crateApiApiCreateGroup(passwords: passwords, name: name);
+Future<String> createGroup({required ArcPasswordManagerDefaultAnisetteProvider passwords, required String name}) =>
+    RustLib.instance.api.crateApiApiCreateGroup(passwords: passwords, name: name);
 
-Future<void> deleteGroup(
-        {required ArcPasswordManagerDefaultAnisetteProvider passwords,
-        required String gid}) =>
+Future<void> deleteGroup({required ArcPasswordManagerDefaultAnisetteProvider passwords, required String gid}) =>
     RustLib.instance.api.crateApiApiDeleteGroup(passwords: passwords, gid: gid);
 
 Future<void> inviteUser(
-        {required ArcPasswordManagerDefaultAnisetteProvider passwords,
-        required String gid,
-        required String handle}) =>
-    RustLib.instance.api
-        .crateApiApiInviteUser(passwords: passwords, gid: gid, handle: handle);
+        {required ArcPasswordManagerDefaultAnisetteProvider passwords, required String gid, required String handle}) =>
+    RustLib.instance.api.crateApiApiInviteUser(passwords: passwords, gid: gid, handle: handle);
 
 Future<void> removeUser(
-        {required ArcPasswordManagerDefaultAnisetteProvider passwords,
-        required String gid,
-        required String handle}) =>
-    RustLib.instance.api
-        .crateApiApiRemoveUser(passwords: passwords, gid: gid, handle: handle);
+        {required ArcPasswordManagerDefaultAnisetteProvider passwords, required String gid, required String handle}) =>
+    RustLib.instance.api.crateApiApiRemoveUser(passwords: passwords, gid: gid, handle: handle);
 
 Future<void> renameGroup(
-        {required ArcPasswordManagerDefaultAnisetteProvider passwords,
-        required String gid,
-        required String newname}) =>
-    RustLib.instance.api.crateApiApiRenameGroup(
-        passwords: passwords, gid: gid, newname: newname);
+        {required ArcPasswordManagerDefaultAnisetteProvider passwords, required String gid, required String newname}) =>
+    RustLib.instance.api.crateApiApiRenameGroup(passwords: passwords, gid: gid, newname: newname);
 
-Future<void> acceptInvite(
-        {required ArcPasswordManagerDefaultAnisetteProvider passwords,
-        required String inviteId}) =>
-    RustLib.instance.api
-        .crateApiApiAcceptInvite(passwords: passwords, inviteId: inviteId);
+Future<void> acceptInvite({required ArcPasswordManagerDefaultAnisetteProvider passwords, required String inviteId}) =>
+    RustLib.instance.api.crateApiApiAcceptInvite(passwords: passwords, inviteId: inviteId);
 
-Future<void> declineInvite(
-        {required ArcPasswordManagerDefaultAnisetteProvider passwords,
-        required String inviteId}) =>
-    RustLib.instance.api
-        .crateApiApiDeclineInvite(passwords: passwords, inviteId: inviteId);
+Future<void> declineInvite({required ArcPasswordManagerDefaultAnisetteProvider passwords, required String inviteId}) =>
+    RustLib.instance.api.crateApiApiDeclineInvite(passwords: passwords, inviteId: inviteId);
 
-Future<bool> queryHandle(
-        {required ArcPasswordManagerDefaultAnisetteProvider passwords,
-        required String handle}) =>
-    RustLib.instance.api
-        .crateApiApiQueryHandle(passwords: passwords, handle: handle);
+Future<bool> queryHandle({required ArcPasswordManagerDefaultAnisetteProvider passwords, required String handle}) =>
+    RustLib.instance.api.crateApiApiQueryHandle(passwords: passwords, handle: handle);
 
 Future<(String, UpdateAccountFinish)> updateAccountHeaders(
-        {required ArcMutexAppleAccountDefaultAnisetteProvider account,
-        required JoinedOsConfig config}) =>
-    RustLib.instance.api
-        .crateApiApiUpdateAccountHeaders(account: account, config: config);
+        {required ArcMutexAppleAccountDefaultAnisetteProvider account, required JoinedOsConfig config}) =>
+    RustLib.instance.api.crateApiApiUpdateAccountHeaders(account: account, config: config);
 
 Future<Map<String, String>> getAnisetteHeaders(
-        {required ArcAnisetteClientDefaultAnisetteProvider state,
-        required JoinedOsConfig config}) =>
-    RustLib.instance.api
-        .crateApiApiGetAnisetteHeaders(state: state, config: config);
+        {required ArcAnisetteClientDefaultAnisetteProvider state, required JoinedOsConfig config}) =>
+    RustLib.instance.api.crateApiApiGetAnisetteHeaders(state: state, config: config);
 
 Future<Map<String, String>> getContactsHeaders(
         {required String path,
         required ArcAnisetteClientDefaultAnisetteProvider state,
         required ArcTokenProviderDefaultAnisetteProvider tokenProvider,
         required JoinedOsConfig config}) =>
-    RustLib.instance.api.crateApiApiGetContactsHeaders(
-        path: path, state: state, tokenProvider: tokenProvider, config: config);
+    RustLib.instance.api
+        .crateApiApiGetContactsHeaders(path: path, state: state, tokenProvider: tokenProvider, config: config);
 
 Future<IdsUser> getEntitlements(
         {required JoinedOsConfig config,
@@ -544,121 +416,86 @@ Future<IdsUser> getEntitlements(
         processChallenge: processChallenge);
 
 Future<(List<SharedAlbum>, List<String>)> getAlbums(
-        {required SyncManagerDefaultAnisetteProviderMyFilePackager lock,
-        required bool refresh}) =>
+        {required SyncManagerDefaultAnisetteProviderMyFilePackager lock, required bool refresh}) =>
     RustLib.instance.api.crateApiApiGetAlbums(lock: lock, refresh: refresh);
 
 Future<List<SharedAlbum>> subscribe(
-        {required SyncManagerDefaultAnisetteProviderMyFilePackager lock,
-        required String guid}) =>
+        {required SyncManagerDefaultAnisetteProviderMyFilePackager lock, required String guid}) =>
     RustLib.instance.api.crateApiApiSubscribe(lock: lock, guid: guid);
 
 Future<List<SharedAlbum>> unsubscribe(
-        {required SyncManagerDefaultAnisetteProviderMyFilePackager lock,
-        required String guid}) =>
+        {required SyncManagerDefaultAnisetteProviderMyFilePackager lock, required String guid}) =>
     RustLib.instance.api.crateApiApiUnsubscribe(lock: lock, guid: guid);
 
 Future<List<SharedAlbum>> subscribeToken(
-        {required SyncManagerDefaultAnisetteProviderMyFilePackager lock,
-        required String token}) =>
+        {required SyncManagerDefaultAnisetteProviderMyFilePackager lock, required String token}) =>
     RustLib.instance.api.crateApiApiSubscribeToken(lock: lock, token: token);
 
 Future<List<SharedAlbum>> addAlbum(
         {required SyncManagerDefaultAnisetteProviderMyFilePackager lock,
         required String guid,
         required String folder}) =>
-    RustLib.instance.api
-        .crateApiApiAddAlbum(lock: lock, guid: guid, folder: folder);
+    RustLib.instance.api.crateApiApiAddAlbum(lock: lock, guid: guid, folder: folder);
 
 Future<List<SharedAlbum>> removeAlbum(
-        {required SyncManagerDefaultAnisetteProviderMyFilePackager lock,
-        required String guid}) =>
+        {required SyncManagerDefaultAnisetteProviderMyFilePackager lock, required String guid}) =>
     RustLib.instance.api.crateApiApiRemoveAlbum(lock: lock, guid: guid);
 
 Future<(Map<String, SyncStatus>, (String, BigInt)?)> getSyncstatus(
         {required SyncManagerDefaultAnisetteProviderMyFilePackager lock}) =>
     RustLib.instance.api.crateApiApiGetSyncstatus(lock: lock);
 
-Future<void> syncNow(
-        {required SyncManagerDefaultAnisetteProviderMyFilePackager lock}) =>
+Future<void> syncNow({required SyncManagerDefaultAnisetteProviderMyFilePackager lock}) =>
     RustLib.instance.api.crateApiApiSyncNow(lock: lock);
 
 Future<List<FTSession>> ftSessions({required ArcFtClient facetime}) =>
     RustLib.instance.api.crateApiApiFtSessions(facetime: facetime);
 
-Future<String> getFtLink(
-        {required ArcFtClient facetime, required String usage}) =>
+Future<String> getFtLink({required ArcFtClient facetime, required String usage}) =>
     RustLib.instance.api.crateApiApiGetFtLink(facetime: facetime, usage: usage);
 
-Future<void> useLinkFor(
-        {required ArcFtClient facetime,
-        required String oldUsage,
-        required String usage}) =>
-    RustLib.instance.api.crateApiApiUseLinkFor(
-        facetime: facetime, oldUsage: oldUsage, usage: usage);
+Future<void> useLinkFor({required ArcFtClient facetime, required String oldUsage, required String usage}) =>
+    RustLib.instance.api.crateApiApiUseLinkFor(facetime: facetime, oldUsage: oldUsage, usage: usage);
 
 Future<void> clearLinks({required ArcFtClient facetime}) =>
     RustLib.instance.api.crateApiApiClearLinks(facetime: facetime);
 
-Future<int> get2FaCode(
-        {required ArcAnisetteClientDefaultAnisetteProvider anisette}) =>
+Future<int> get2FaCode({required ArcAnisetteClientDefaultAnisetteProvider anisette}) =>
     RustLib.instance.api.crateApiApiGet2FaCode(anisette: anisette);
 
 Future<void> teardown2Fa(
         {required ArcMutexAppleAccountDefaultAnisetteProvider account,
         required String action,
         required String txnid}) =>
-    RustLib.instance.api
-        .crateApiApiTeardown2Fa(account: account, action: action, txnid: txnid);
+    RustLib.instance.api.crateApiApiTeardown2Fa(account: account, action: action, txnid: txnid);
 
-Future<void> answerFtRequest(
-        {required ArcFtClient facetime,
-        required LetMeInRequest request,
-        String? approvedGroup}) =>
-    RustLib.instance.api.crateApiApiAnswerFtRequest(
-        facetime: facetime, request: request, approvedGroup: approvedGroup);
+Future<void> answerFtRequest({required ArcFtClient facetime, required LetMeInRequest request, String? approvedGroup}) =>
+    RustLib.instance.api.crateApiApiAnswerFtRequest(facetime: facetime, request: request, approvedGroup: approvedGroup);
 
-Future<void> declineFacetime(
-        {required ArcFtClient facetime, required String guid}) =>
-    RustLib.instance.api
-        .crateApiApiDeclineFacetime(facetime: facetime, guid: guid);
+Future<void> declineFacetime({required ArcFtClient facetime, required String guid}) =>
+    RustLib.instance.api.crateApiApiDeclineFacetime(facetime: facetime, guid: guid);
 
 Future<void> createFacetime(
         {required ArcFtClient facetime,
         required String uuid,
         required String handle,
         required List<String> participants}) =>
-    RustLib.instance.api.crateApiApiCreateFacetime(
-        facetime: facetime,
-        uuid: uuid,
-        handle: handle,
-        participants: participants);
-
-Future<void> cancelFacetime(
-        {required ArcFtClient facetime, required String guid}) =>
     RustLib.instance.api
-        .crateApiApiCancelFacetime(facetime: facetime, guid: guid);
+        .crateApiApiCreateFacetime(facetime: facetime, uuid: uuid, handle: handle, participants: participants);
+
+Future<void> cancelFacetime({required ArcFtClient facetime, required String guid}) =>
+    RustLib.instance.api.crateApiApiCancelFacetime(facetime: facetime, guid: guid);
 
 Future<List<String>> validateTargetsFacetime(
-        {required ArcImClient state,
-        required List<String> targets,
-        required String sender}) =>
-    RustLib.instance.api.crateApiApiValidateTargetsFacetime(
-        state: state, targets: targets, sender: sender);
+        {required ArcImClient state, required List<String> targets, required String sender}) =>
+    RustLib.instance.api.crateApiApiValidateTargetsFacetime(state: state, targets: targets, sender: sender);
 
-Future<void> certifyDelivery(
-        {required ArcImClient state,
-        required CertifiedContext context,
-        required bool notify}) =>
-    RustLib.instance.api.crateApiApiCertifyDelivery(
-        state: state, context: context, notify: notify);
+Future<void> certifyDelivery({required ArcImClient state, required CertifiedContext context, required bool notify}) =>
+    RustLib.instance.api.crateApiApiCertifyDelivery(state: state, context: context, notify: notify);
 
 Future<void> reportMessages(
-        {required ArcImClient state,
-        required String handle,
-        required List<ReportMessage> messages}) =>
-    RustLib.instance.api.crateApiApiReportMessages(
-        state: state, handle: handle, messages: messages);
+        {required ArcImClient state, required String handle, required List<ReportMessage> messages}) =>
+    RustLib.instance.api.crateApiApiReportMessages(state: state, handle: handle, messages: messages);
 
 Future<String> encodeProfileMessage({required ShareProfileMessage p}) =>
     RustLib.instance.api.crateApiApiEncodeProfileMessage(p: p);
@@ -667,55 +504,41 @@ Future<ShareProfileMessage> decodeProfileMessage({required String s}) =>
     RustLib.instance.api.crateApiApiDecodeProfileMessage(s: s);
 
 Future<IMessageNicknameRecord> fetchProfile(
-        {required ArcProfilesClientDefaultAnisetteProvider profiles,
-        required ShareProfileMessage message}) =>
-    RustLib.instance.api
-        .crateApiApiFetchProfile(profiles: profiles, message: message);
+        {required ArcProfilesClientDefaultAnisetteProvider profiles, required ShareProfileMessage message}) =>
+    RustLib.instance.api.crateApiApiFetchProfile(profiles: profiles, message: message);
 
 Future<ShareProfileMessage> setProfile(
         {required ArcProfilesClientDefaultAnisetteProvider profiles,
         required IMessageNicknameRecord record,
         ShareProfileMessage? existing}) =>
-    RustLib.instance.api.crateApiApiSetProfile(
-        profiles: profiles, record: record, existing: existing);
+    RustLib.instance.api.crateApiApiSetProfile(profiles: profiles, record: record, existing: existing);
 
 Future<void> inviteToChannel(
         {required ArcStatusKitClientDefaultAnisetteProvider status,
         required String handle,
         required Map<String, StatusKitPersonalConfig> to}) =>
-    RustLib.instance.api
-        .crateApiApiInviteToChannel(status: status, handle: handle, to: to);
+    RustLib.instance.api.crateApiApiInviteToChannel(status: status, handle: handle, to: to);
 
-Future<void> resetChannelKeys(
-        {required ArcStatusKitClientDefaultAnisetteProvider status}) =>
+Future<void> resetChannelKeys({required ArcStatusKitClientDefaultAnisetteProvider status}) =>
     RustLib.instance.api.crateApiApiResetChannelKeys(status: status);
 
 Future<ChannelInterestToken?> requestHandles(
-        {required ArcStatusKitClientDefaultAnisetteProvider status,
-        required List<String> to}) =>
+        {required ArcStatusKitClientDefaultAnisetteProvider status, required List<String> to}) =>
     RustLib.instance.api.crateApiApiRequestHandles(status: status, to: to);
 
-Future<void> setStatus(
-        {required ArcStatusKitClientDefaultAnisetteProvider status,
-        String? newStatus}) =>
-    RustLib.instance.api
-        .crateApiApiSetStatus(status: status, newStatus: newStatus);
+Future<void> setStatus({required ArcStatusKitClientDefaultAnisetteProvider status, String? newStatus}) =>
+    RustLib.instance.api.crateApiApiSetStatus(status: status, newStatus: newStatus);
 
 Future<int> approveCircle(
         {required ArcMutexVecActiveCircleSession state,
         required ArcMutexAppleAccountDefaultAnisetteProvider account,
         required String txnid}) =>
-    RustLib.instance.api
-        .crateApiApiApproveCircle(state: state, account: account, txnid: txnid);
+    RustLib.instance.api.crateApiApiApproveCircle(state: state, account: account, txnid: txnid);
 
-Future<PollResult> recvWait(
-        {required ApsWatcher watcher, required ArcSharedPushState state}) =>
+Future<PollResult> recvWait({required ApsWatcher watcher, required ArcSharedPushState state}) =>
     RustLib.instance.api.crateApiApiRecvWait(watcher: watcher, state: state);
 
-Future<bool> send(
-        {required ArcImClient state,
-        required ArcSenderPushMessage local,
-        required MessageInst msg}) =>
+Future<bool> send({required ArcImClient state, required ArcSenderPushMessage local, required MessageInst msg}) =>
     RustLib.instance.api.crateApiApiSend(state: state, local: local, msg: msg);
 
 Future<List<String>> getHandles({required ArcImClient state}) =>
@@ -724,39 +547,25 @@ Future<List<String>> getHandles({required ArcImClient state}) =>
 Future<List<String>> getMyPhoneHandles({required ArcImClient state}) =>
     RustLib.instance.api.crateApiApiGetMyPhoneHandles(state: state);
 
-Future<void> doReregister({required ArcImClient state}) =>
-    RustLib.instance.api.crateApiApiDoReregister(state: state);
+Future<void> doReregister({required ArcImClient state}) => RustLib.instance.api.crateApiApiDoReregister(state: state);
 
 Future<MessageInst> newMsg(
-        {required ConversationData conversation,
-        required String sender,
-        required Message message}) =>
-    RustLib.instance.api.crateApiApiNewMsg(
-        conversation: conversation, sender: sender, message: message);
+        {required ConversationData conversation, required String sender, required Message message}) =>
+    RustLib.instance.api.crateApiApiNewMsg(conversation: conversation, sender: sender, message: message);
 
 Future<List<String>> validateTargets(
-        {required ArcImClient state,
-        required List<String> targets,
-        required String sender}) =>
-    RustLib.instance.api.crateApiApiValidateTargets(
-        state: state, targets: targets, sender: sender);
+        {required ArcImClient state, required List<String> targets, required String sender}) =>
+    RustLib.instance.api.crateApiApiValidateTargets(state: state, targets: targets, sender: sender);
 
 Stream<TransferProgress> downloadAttachment(
-        {required ApsConnection aps,
-        required Attachment attachment,
-        required String path}) =>
-    RustLib.instance.api.crateApiApiDownloadAttachment(
-        aps: aps, attachment: attachment, path: path);
+        {required ApsConnection aps, required Attachment attachment, required String path}) =>
+    RustLib.instance.api.crateApiApiDownloadAttachment(aps: aps, attachment: attachment, path: path);
 
 Stream<TransferProgress> downloadMmcs(
-        {required ApsConnection aps,
-        required MMCSFile attachment,
-        required String path}) =>
-    RustLib.instance.api
-        .crateApiApiDownloadMmcs(aps: aps, attachment: attachment, path: path);
+        {required ApsConnection aps, required MMCSFile attachment, required String path}) =>
+    RustLib.instance.api.crateApiApiDownloadMmcs(aps: aps, attachment: attachment, path: path);
 
-Stream<MMCSTransferProgress> uploadMmcs(
-        {required ApsConnection aps, required String path}) =>
+Stream<MMCSTransferProgress> uploadMmcs({required ApsConnection aps, required String path}) =>
     RustLib.instance.api.crateApiApiUploadMmcs(aps: aps, path: path);
 
 Stream<TransferProgress> uploadAttachment(
@@ -765,17 +574,13 @@ Stream<TransferProgress> uploadAttachment(
         required String mime,
         required String uti,
         required String name}) =>
-    RustLib.instance.api.crateApiApiUploadAttachment(
-        aps: aps, path: path, mime: mime, uti: uti, name: name);
+    RustLib.instance.api.crateApiApiUploadAttachment(aps: aps, path: path, mime: mime, uti: uti, name: name);
 
-Future<Uint8List> getToken({required ApsConnection state}) =>
-    RustLib.instance.api.crateApiApiGetToken(state: state);
+Future<Uint8List> getToken({required ApsConnection state}) => RustLib.instance.api.crateApiApiGetToken(state: state);
 
-Future<String> saveUser({required IdsUser user}) =>
-    RustLib.instance.api.crateApiApiSaveUser(user: user);
+Future<String> saveUser({required IdsUser user}) => RustLib.instance.api.crateApiApiSaveUser(user: user);
 
-Future<IdsUser> restoreUser({required String user}) =>
-    RustLib.instance.api.crateApiApiRestoreUser(user: user);
+Future<IdsUser> restoreUser({required String user}) => RustLib.instance.api.crateApiApiRestoreUser(user: user);
 
 Future<FindMyPhoneClientDefaultAnisetteProvider> makeFindMyPhone(
         {required String path,
@@ -783,22 +588,15 @@ Future<FindMyPhoneClientDefaultAnisetteProvider> makeFindMyPhone(
         required ApsConnection aps,
         required ArcAnisetteClientDefaultAnisetteProvider anisette,
         required ArcTokenProviderDefaultAnisetteProvider provider}) =>
-    RustLib.instance.api.crateApiApiMakeFindMyPhone(
-        path: path,
-        config: config,
-        aps: aps,
-        anisette: anisette,
-        provider: provider);
+    RustLib.instance.api
+        .crateApiApiMakeFindMyPhone(path: path, config: config, aps: aps, anisette: anisette, provider: provider);
 
-Future<List<FoundDevice>> getDevices(
-        {required FindMyPhoneClientDefaultAnisetteProvider client}) =>
+Future<List<FoundDevice>> getDevices({required FindMyPhoneClientDefaultAnisetteProvider client}) =>
     RustLib.instance.api.crateApiApiGetDevices(client: client);
 
 Future<List<FoundDevice>> refreshDevices(
-        {required JoinedOsConfig config,
-        required FindMyPhoneClientDefaultAnisetteProvider client}) =>
-    RustLib.instance.api
-        .crateApiApiRefreshDevices(config: config, client: client);
+        {required JoinedOsConfig config, required FindMyPhoneClientDefaultAnisetteProvider client}) =>
+    RustLib.instance.api.crateApiApiRefreshDevices(config: config, client: client);
 
 Future<FindMyFriendsClientDefaultAnisetteProvider> makeFindMyFriends(
         {required String path,
@@ -806,70 +604,44 @@ Future<FindMyFriendsClientDefaultAnisetteProvider> makeFindMyFriends(
         required ApsConnection aps,
         required ArcAnisetteClientDefaultAnisetteProvider anisette,
         required ArcTokenProviderDefaultAnisetteProvider provider}) =>
-    RustLib.instance.api.crateApiApiMakeFindMyFriends(
-        path: path,
-        config: config,
-        aps: aps,
-        anisette: anisette,
-        provider: provider);
-
-Future<void> acceptBeaconShare(
-        {required ArcFindMyClientDefaultAnisetteProvider items,
-        required String share}) =>
     RustLib.instance.api
-        .crateApiApiAcceptBeaconShare(items: items, share: share);
+        .crateApiApiMakeFindMyFriends(path: path, config: config, aps: aps, anisette: anisette, provider: provider);
 
-Future<void> deleteBeaconShare(
-        {required ArcFindMyClientDefaultAnisetteProvider items,
-        required String share}) =>
-    RustLib.instance.api
-        .crateApiApiDeleteBeaconShare(items: items, share: share);
+Future<void> acceptBeaconShare({required ArcFindMyClientDefaultAnisetteProvider items, required String share}) =>
+    RustLib.instance.api.crateApiApiAcceptBeaconShare(items: items, share: share);
 
-Future<List<DartBeacon>> getBeaconItems(
-        {required ArcFindMyClientDefaultAnisetteProvider items}) =>
+Future<void> deleteBeaconShare({required ArcFindMyClientDefaultAnisetteProvider items, required String share}) =>
+    RustLib.instance.api.crateApiApiDeleteBeaconShare(items: items, share: share);
+
+Future<List<DartBeacon>> getBeaconItems({required ArcFindMyClientDefaultAnisetteProvider items}) =>
     RustLib.instance.api.crateApiApiGetBeaconItems(items: items);
 
 Future<void> updateBeaconName(
-        {required ArcFindMyClientDefaultAnisetteProvider items,
-        required BeaconNamingRecord namingRecord}) =>
-    RustLib.instance.api
-        .crateApiApiUpdateBeaconName(items: items, namingRecord: namingRecord);
+        {required ArcFindMyClientDefaultAnisetteProvider items, required BeaconNamingRecord namingRecord}) =>
+    RustLib.instance.api.crateApiApiUpdateBeaconName(items: items, namingRecord: namingRecord);
 
-Future<List<Follow>> getFollowing(
-        {required FindMyFriendsClientDefaultAnisetteProvider client}) =>
+Future<List<Follow>> getFollowing({required FindMyFriendsClientDefaultAnisetteProvider client}) =>
     RustLib.instance.api.crateApiApiGetFollowing(client: client);
 
 Future<List<Follow>> refreshFollowing(
-        {required JoinedOsConfig config,
-        required FindMyFriendsClientDefaultAnisetteProvider client}) =>
-    RustLib.instance.api
-        .crateApiApiRefreshFollowing(config: config, client: client);
+        {required JoinedOsConfig config, required FindMyFriendsClientDefaultAnisetteProvider client}) =>
+    RustLib.instance.api.crateApiApiRefreshFollowing(config: config, client: client);
 
 Future<List<Follow>> selectFriend(
-        {required JoinedOsConfig config,
-        required FindMyFriendsClientDefaultAnisetteProvider client,
-        String? friend}) =>
-    RustLib.instance.api.crateApiApiSelectFriend(
-        config: config, client: client, friend: friend);
+        {required JoinedOsConfig config, required FindMyFriendsClientDefaultAnisetteProvider client, String? friend}) =>
+    RustLib.instance.api.crateApiApiSelectFriend(config: config, client: client, friend: friend);
 
-Future<List<Follow>> selectBackgroundFriend(
-        {required ArcFindMyClientDefaultAnisetteProvider fmfd,
-        String? friend}) =>
-    RustLib.instance.api
-        .crateApiApiSelectBackgroundFriend(fmfd: fmfd, friend: friend);
+Future<List<Follow>> selectBackgroundFriend({required ArcFindMyClientDefaultAnisetteProvider fmfd, String? friend}) =>
+    RustLib.instance.api.crateApiApiSelectBackgroundFriend(fmfd: fmfd, friend: friend);
 
-Future<List<Follow>> getBackgroundFollowing(
-        {required ArcFindMyClientDefaultAnisetteProvider fmfd}) =>
+Future<List<Follow>> getBackgroundFollowing({required ArcFindMyClientDefaultAnisetteProvider fmfd}) =>
     RustLib.instance.api.crateApiApiGetBackgroundFollowing(fmfd: fmfd);
 
 Future<List<Follow>> refreshBackgroundFollowing(
-        {required ArcFindMyClientDefaultAnisetteProvider state,
-        required JoinedOsConfig config}) =>
-    RustLib.instance.api
-        .crateApiApiRefreshBackgroundFollowing(state: state, config: config);
+        {required ArcFindMyClientDefaultAnisetteProvider state, required JoinedOsConfig config}) =>
+    RustLib.instance.api.crateApiApiRefreshBackgroundFollowing(state: state, config: config);
 
-Future<QuotaInfo> getQuotaInfo(
-        {required ArcTokenProviderDefaultAnisetteProvider info}) =>
+Future<QuotaInfo> getQuotaInfo({required ArcTokenProviderDefaultAnisetteProvider info}) =>
     RustLib.instance.api.crateApiApiGetQuotaInfo(info: info);
 
 Future<IdsUser> doLogin(
@@ -877,11 +649,9 @@ Future<IdsUser> doLogin(
         required ArcMutexAppleAccountDefaultAnisetteProvider account,
         UpdateAccountFinish? finish,
         required JoinedOsConfig osConfig}) =>
-    RustLib.instance.api.crateApiApiDoLogin(
-        path: path, account: account, finish: finish, osConfig: osConfig);
+    RustLib.instance.api.crateApiApiDoLogin(path: path, account: account, finish: finish, osConfig: osConfig);
 
-String? getAvailableUser({required String path}) =>
-    RustLib.instance.api.crateApiApiGetAvailableUser(path: path);
+String? getAvailableUser({required String path}) => RustLib.instance.api.crateApiApiGetAvailableUser(path: path);
 
 Future<(ArcMutexAppleAccountDefaultAnisetteProvider, LoginState)> tryAuth(
         {required String path,
@@ -889,33 +659,26 @@ Future<(ArcMutexAppleAccountDefaultAnisetteProvider, LoginState)> tryAuth(
         required ApsConnection conn,
         required ArcAnisetteClientDefaultAnisetteProvider anisette,
         (String, String)? creds}) =>
-    RustLib.instance.api.crateApiApiTryAuth(
-        path: path, conf: conf, conn: conn, anisette: anisette, creds: creds);
+    RustLib.instance.api.crateApiApiTryAuth(path: path, conf: conf, conn: conn, anisette: anisette, creds: creds);
 
 Future<IdsUser?> tryIcloudLogin(
         {required String path,
         required JoinedOsConfig conf,
         required ArcMutexAppleAccountDefaultAnisetteProvider account}) =>
-    RustLib.instance.api
-        .crateApiApiTryIcloudLogin(path: path, conf: conf, account: account);
+    RustLib.instance.api.crateApiApiTryIcloudLogin(path: path, conf: conf, account: account);
 
 Future<IdsUser> authPhone(
         {required ApsConnection conn,
         required JoinedOsConfig config,
         required String number,
         required List<int> sig}) =>
-    RustLib.instance.api.crateApiApiAuthPhone(
-        conn: conn, config: config, number: number, sig: sig);
+    RustLib.instance.api.crateApiApiAuthPhone(conn: conn, config: config, number: number, sig: sig);
 
-Future<(CircleClientSessionDefaultAnisetteProvider, LoginState, String?)>
-    send2FaToDevices(
-            {required ArcMutexAppleAccountDefaultAnisetteProvider state,
-            required ApsConnection conn}) =>
-        RustLib.instance.api
-            .crateApiApiSend2FaToDevices(state: state, conn: conn);
+Future<(CircleClientSessionDefaultAnisetteProvider, LoginState, String?)> send2FaToDevices(
+        {required ArcMutexAppleAccountDefaultAnisetteProvider state, required ApsConnection conn}) =>
+    RustLib.instance.api.crateApiApiSend2FaToDevices(state: state, conn: conn);
 
-Future<bool> isInClique(
-        {required ArcKeychainClientDefaultAnisetteProvider keychain}) =>
+Future<bool> isInClique({required ArcKeychainClientDefaultAnisetteProvider keychain}) =>
     RustLib.instance.api.crateApiApiIsInClique(keychain: keychain);
 
 Future<void> joinCliqueWithBottle(
@@ -924,22 +687,16 @@ Future<void> joinCliqueWithBottle(
         required String password,
         required String devicePassword}) =>
     RustLib.instance.api.crateApiApiJoinCliqueWithBottle(
-        keychain: keychain,
-        bottle: bottle,
-        password: password,
-        devicePassword: devicePassword);
+        keychain: keychain, bottle: bottle, password: password, devicePassword: devicePassword);
 
 Future<void> resetClique(
         {required ArcKeychainClientDefaultAnisetteProvider keychain,
         required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessages,
         required String devicePassword}) =>
-    RustLib.instance.api.crateApiApiResetClique(
-        keychain: keychain,
-        cloudMessages: cloudMessages,
-        devicePassword: devicePassword);
+    RustLib.instance.api
+        .crateApiApiResetClique(keychain: keychain, cloudMessages: cloudMessages, devicePassword: devicePassword);
 
-Future<List<ViableBottle>> getBottles(
-        {required ArcKeychainClientDefaultAnisetteProvider keychain}) =>
+Future<List<ViableBottle>> getBottles({required ArcKeychainClientDefaultAnisetteProvider keychain}) =>
     RustLib.instance.api.crateApiApiGetBottles(keychain: keychain);
 
 Future<Uint8List> encodeSummaryInfo({required MessageSummaryInfo info}) =>
@@ -957,55 +714,37 @@ Uint8List nscoderEncode({required List<StCollapsedValue> value}) =>
 List<StCollapsedValue> nscoderDecode({required List<int> data}) =>
     RustLib.instance.api.crateApiApiNscoderDecode(data: data);
 
-Uint8List saveCloudChat({required CloudChat value}) =>
-    RustLib.instance.api.crateApiApiSaveCloudChat(value: value);
+Uint8List saveCloudChat({required CloudChat value}) => RustLib.instance.api.crateApiApiSaveCloudChat(value: value);
 
-CloudChat restoreCloudChat({required List<int> data}) =>
-    RustLib.instance.api.crateApiApiRestoreCloudChat(data: data);
+CloudChat restoreCloudChat({required List<int> data}) => RustLib.instance.api.crateApiApiRestoreCloudChat(data: data);
 
 Future<(Uint8List, Map<String, CloudChat?>, int)> syncChats(
-        {required ArcCloudMessagesClientDefaultAnisetteProvider
-            cloudMessagesClient,
-        Uint8List? continuationToken}) =>
-    RustLib.instance.api.crateApiApiSyncChats(
-        cloudMessagesClient: cloudMessagesClient,
-        continuationToken: continuationToken);
+        {required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient, Uint8List? continuationToken}) =>
+    RustLib.instance.api
+        .crateApiApiSyncChats(cloudMessagesClient: cloudMessagesClient, continuationToken: continuationToken);
 
 Future<Map<String, bool>> saveChats(
-        {required ArcCloudMessagesClientDefaultAnisetteProvider
-            cloudMessagesClient,
+        {required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
         required Map<String, CloudChat> chats}) =>
-    RustLib.instance.api.crateApiApiSaveChats(
-        cloudMessagesClient: cloudMessagesClient, chats: chats);
+    RustLib.instance.api.crateApiApiSaveChats(cloudMessagesClient: cloudMessagesClient, chats: chats);
 
 Future<void> deleteChats(
-        {required ArcCloudMessagesClientDefaultAnisetteProvider
-            cloudMessagesClient,
-        required List<String> chats}) =>
-    RustLib.instance.api.crateApiApiDeleteChats(
-        cloudMessagesClient: cloudMessagesClient, chats: chats);
+        {required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient, required List<String> chats}) =>
+    RustLib.instance.api.crateApiApiDeleteChats(cloudMessagesClient: cloudMessagesClient, chats: chats);
 
 Future<(Uint8List, Map<String, CloudMessage?>, int)> syncMessages(
-        {required ArcCloudMessagesClientDefaultAnisetteProvider
-            cloudMessagesClient,
-        Uint8List? continuationToken}) =>
-    RustLib.instance.api.crateApiApiSyncMessages(
-        cloudMessagesClient: cloudMessagesClient,
-        continuationToken: continuationToken);
+        {required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient, Uint8List? continuationToken}) =>
+    RustLib.instance.api
+        .crateApiApiSyncMessages(cloudMessagesClient: cloudMessagesClient, continuationToken: continuationToken);
 
 Future<Map<String, bool>> saveMessages(
-        {required ArcCloudMessagesClientDefaultAnisetteProvider
-            cloudMessagesClient,
+        {required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
         required Map<String, CloudMessage> messages}) =>
-    RustLib.instance.api.crateApiApiSaveMessages(
-        cloudMessagesClient: cloudMessagesClient, messages: messages);
+    RustLib.instance.api.crateApiApiSaveMessages(cloudMessagesClient: cloudMessagesClient, messages: messages);
 
 Future<void> deleteMessages(
-        {required ArcCloudMessagesClientDefaultAnisetteProvider
-            cloudMessagesClient,
-        required List<String> messages}) =>
-    RustLib.instance.api.crateApiApiDeleteMessages(
-        cloudMessagesClient: cloudMessagesClient, messages: messages);
+        {required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient, required List<String> messages}) =>
+    RustLib.instance.api.crateApiApiDeleteMessages(cloudMessagesClient: cloudMessagesClient, messages: messages);
 
 MessageSummaryInfo decodeMessageInfo({required List<int> data}) =>
     RustLib.instance.api.crateApiApiDecodeMessageInfo(data: data);
@@ -1014,87 +753,65 @@ Uint8List encodeMessageInfo({required MessageSummaryInfo info}) =>
     RustLib.instance.api.crateApiApiEncodeMessageInfo(info: info);
 
 Future<(Uint8List, Map<String, CloudAttachment?>, int)> syncAttachments(
-        {required ArcCloudMessagesClientDefaultAnisetteProvider
-            cloudMessagesClient,
-        Uint8List? continuationToken}) =>
-    RustLib.instance.api.crateApiApiSyncAttachments(
-        cloudMessagesClient: cloudMessagesClient,
-        continuationToken: continuationToken);
+        {required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient, Uint8List? continuationToken}) =>
+    RustLib.instance.api
+        .crateApiApiSyncAttachments(cloudMessagesClient: cloudMessagesClient, continuationToken: continuationToken);
 
 Future<Map<String, bool>> saveAttachments(
-        {required ArcCloudMessagesClientDefaultAnisetteProvider
-            cloudMessagesClient,
+        {required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
         required Map<String, CloudAttachment> attachments}) =>
-    RustLib.instance.api.crateApiApiSaveAttachments(
-        cloudMessagesClient: cloudMessagesClient, attachments: attachments);
+    RustLib.instance.api.crateApiApiSaveAttachments(cloudMessagesClient: cloudMessagesClient, attachments: attachments);
 
 Future<void> deleteAttachments(
-        {required ArcCloudMessagesClientDefaultAnisetteProvider
-            cloudMessagesClient,
+        {required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
         required List<String> attachments}) =>
-    RustLib.instance.api.crateApiApiDeleteAttachments(
-        cloudMessagesClient: cloudMessagesClient, attachments: attachments);
+    RustLib.instance.api
+        .crateApiApiDeleteAttachments(cloudMessagesClient: cloudMessagesClient, attachments: attachments);
 
 Future<CloudMessageSummary> countRecords(
-        {required ArcCloudMessagesClientDefaultAnisetteProvider
-            cloudMessagesClient}) =>
-    RustLib.instance.api
-        .crateApiApiCountRecords(cloudMessagesClient: cloudMessagesClient);
+        {required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient}) =>
+    RustLib.instance.api.crateApiApiCountRecords(cloudMessagesClient: cloudMessagesClient);
 
 Future<void> downloadCloudAttachments(
-        {required ArcCloudMessagesClientDefaultAnisetteProvider
-            cloudMessagesClient,
+        {required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
         required List<(String, String)> files}) =>
-    RustLib.instance.api.crateApiApiDownloadCloudAttachments(
-        cloudMessagesClient: cloudMessagesClient, files: files);
+    RustLib.instance.api.crateApiApiDownloadCloudAttachments(cloudMessagesClient: cloudMessagesClient, files: files);
 
-int systemtimeToMillis({required SystemTime time}) =>
-    RustLib.instance.api.crateApiApiSystemtimeToMillis(time: time);
+int systemtimeToMillis({required SystemTime time}) => RustLib.instance.api.crateApiApiSystemtimeToMillis(time: time);
 
 SystemTime utmNow() => RustLib.instance.api.crateApiApiUtmNow();
 
 Date dateNow() => RustLib.instance.api.crateApiApiDateNow();
 
-int dateToMs({required Date date}) =>
-    RustLib.instance.api.crateApiApiDateToMs(date: date);
+int dateToMs({required Date date}) => RustLib.instance.api.crateApiApiDateToMs(date: date);
 
-Date msToDate({required int ms}) =>
-    RustLib.instance.api.crateApiApiMsToDate(ms: ms);
+Date msToDate({required int ms}) => RustLib.instance.api.crateApiApiMsToDate(ms: ms);
 
 Future<void> downloadCloudGroupPhotos(
-        {required ArcCloudMessagesClientDefaultAnisetteProvider
-            cloudMessagesClient,
+        {required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
         required List<(String, String)> files}) =>
-    RustLib.instance.api.crateApiApiDownloadCloudGroupPhotos(
-        cloudMessagesClient: cloudMessagesClient, files: files);
+    RustLib.instance.api.crateApiApiDownloadCloudGroupPhotos(cloudMessagesClient: cloudMessagesClient, files: files);
 
 Future<Map<String, Asset>> uploadCloudAttachments(
-        {required ArcCloudMessagesClientDefaultAnisetteProvider
-            cloudMessagesClient,
+        {required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
         required List<(String, String)> files}) =>
-    RustLib.instance.api.crateApiApiUploadCloudAttachments(
-        cloudMessagesClient: cloudMessagesClient, files: files);
+    RustLib.instance.api.crateApiApiUploadCloudAttachments(cloudMessagesClient: cloudMessagesClient, files: files);
 
 Future<Map<String, Asset>> uploadGroupPhoto(
-        {required ArcCloudMessagesClientDefaultAnisetteProvider
-            cloudMessagesClient,
+        {required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
         required List<(String, String)> files}) =>
-    RustLib.instance.api.crateApiApiUploadGroupPhoto(
-        cloudMessagesClient: cloudMessagesClient, files: files);
+    RustLib.instance.api.crateApiApiUploadGroupPhoto(cloudMessagesClient: cloudMessagesClient, files: files);
 
 Future<void> changeEscrowPassword(
-        {required ArcKeychainClientDefaultAnisetteProvider keychain,
-        required String devicePassword}) =>
-    RustLib.instance.api.crateApiApiChangeEscrowPassword(
-        keychain: keychain, devicePassword: devicePassword);
+        {required ArcKeychainClientDefaultAnisetteProvider keychain, required String devicePassword}) =>
+    RustLib.instance.api.crateApiApiChangeEscrowPassword(keychain: keychain, devicePassword: devicePassword);
 
 Future<bool> circleSetupClique(
-        {required ArcMutexOptionCircleClientSessionDefaultAnisetteProvider
-            client,
+        {required ArcMutexOptionCircleClientSessionDefaultAnisetteProvider client,
         required ArcKeychainClientDefaultAnisetteProvider keychain,
         required String devicePassword}) =>
-    RustLib.instance.api.crateApiApiCircleSetupClique(
-        client: client, keychain: keychain, devicePassword: devicePassword);
+    RustLib.instance.api
+        .crateApiApiCircleSetupClique(client: client, keychain: keychain, devicePassword: devicePassword);
 
 Future<(LoginState, IdsUser?)> verify2Fa(
         {required String path,
@@ -1123,8 +840,7 @@ Future<LoginState> send2FaSms(
         {CircleClientSessionDefaultAnisetteProvider? locked,
         required ArcMutexAppleAccountDefaultAnisetteProvider account,
         required int phoneId}) =>
-    RustLib.instance.api.crateApiApiSend2FaSms(
-        locked: locked, account: account, phoneId: phoneId);
+    RustLib.instance.api.crateApiApiSend2FaSms(locked: locked, account: account, phoneId: phoneId);
 
 Future<(LoginState, IdsUser?)> verify2FaSms(
         {required String path,
@@ -1134,19 +850,12 @@ Future<(LoginState, IdsUser?)> verify2FaSms(
         required VerifyBody body,
         required String code}) =>
     RustLib.instance.api.crateApiApiVerify2FaSms(
-        path: path,
-        accountMut: accountMut,
-        anisette: anisette,
-        config: config,
-        body: body,
-        code: code);
+        path: path, accountMut: accountMut, anisette: anisette, config: config, body: body, code: code);
 
-Future<List<String>> validateCert(
-        {required ApsConnection conn, required IdsUser user}) =>
+Future<List<String>> validateCert({required ApsConnection conn, required IdsUser user}) =>
     RustLib.instance.api.crateApiApiValidateCert(conn: conn, user: user);
 
-void cancelPoll({required Sender cancel}) =>
-    RustLib.instance.api.crateApiApiCancelPoll(cancel: cancel);
+void cancelPoll({required Sender cancel}) => RustLib.instance.api.crateApiApiCancelPoll(cancel: cancel);
 
 Future<void> resetState(
         {required Sender cancel,
@@ -1157,47 +866,30 @@ Future<void> resetState(
         required bool resetHw,
         required bool logout}) =>
     RustLib.instance.api.crateApiApiResetState(
-        cancel: cancel,
-        path: path,
-        config: config,
-        aps: aps,
-        account: account,
-        resetHw: resetHw,
-        logout: logout);
+        cancel: cancel, path: path, config: config, aps: aps, account: account, resetHw: resetHw, logout: logout);
 
 Future<void> invalidateIdCache({required ArcImClient client}) =>
     RustLib.instance.api.crateApiApiInvalidateIdCache(client: client);
 
-void closeClient({required ArcImClient client}) =>
-    RustLib.instance.api.crateApiApiCloseClient(client: client);
+void closeClient({required ArcImClient client}) => RustLib.instance.api.crateApiApiCloseClient(client: client);
 
-void closeAps({required ApsConnection aps}) =>
-    RustLib.instance.api.crateApiApiCloseAps(aps: aps);
+void closeAps({required ApsConnection aps}) => RustLib.instance.api.crateApiApiCloseAps(aps: aps);
 
-void closeSyncmanager(
-        {required SyncManagerDefaultAnisetteProviderMyFilePackager shared}) =>
+void closeSyncmanager({required SyncManagerDefaultAnisetteProviderMyFilePackager shared}) =>
     RustLib.instance.api.crateApiApiCloseSyncmanager(shared: shared);
 
-Future<String> getUserName(
-        {required ArcMutexAppleAccountDefaultAnisetteProvider state}) =>
+Future<String> getUserName({required ArcMutexAppleAccountDefaultAnisetteProvider state}) =>
     RustLib.instance.api.crateApiApiGetUserName(state: state);
 
 Future<RegisterState> getRegstate({required ArcImClient state}) =>
     RustLib.instance.api.crateApiApiGetRegstate(state: state);
 
-Future<String> convertTokenToUuid(
-        {required ArcImClient state,
-        required String handle,
-        required List<int> token}) =>
-    RustLib.instance.api.crateApiApiConvertTokenToUuid(
-        state: state, handle: handle, token: token);
+Future<String> convertTokenToUuid({required ArcImClient state, required String handle, required List<int> token}) =>
+    RustLib.instance.api.crateApiApiConvertTokenToUuid(state: state, handle: handle, token: token);
 
 Future<List<PrivateDeviceInfo>> getSmsTargets(
-        {required ArcImClient state,
-        required String handle,
-        required bool refresh}) =>
-    RustLib.instance.api.crateApiApiGetSmsTargets(
-        state: state, handle: handle, refresh: refresh);
+        {required ArcImClient state, required String handle, required bool refresh}) =>
+    RustLib.instance.api.crateApiApiGetSmsTargets(state: state, handle: handle, refresh: refresh);
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<APSWatcher>>
 abstract class ApsWatcher implements RustOpaqueInterface {}
@@ -1209,8 +901,7 @@ abstract class Asset implements RustOpaqueInterface {}
 abstract class ChannelInterestToken implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CircleClientSession < DefaultAnisetteProvider >>>
-abstract class CircleClientSessionDefaultAnisetteProvider
-    implements RustOpaqueInterface {}
+abstract class CircleClientSessionDefaultAnisetteProvider implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ConversationLink>>
 abstract class ConversationLink implements RustOpaqueInterface {}
@@ -1225,12 +916,10 @@ abstract class Date implements RustOpaqueInterface {}
 abstract class EscrowData implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<FindMyFriendsClient < DefaultAnisetteProvider >>>
-abstract class FindMyFriendsClientDefaultAnisetteProvider
-    implements RustOpaqueInterface {}
+abstract class FindMyFriendsClientDefaultAnisetteProvider implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<FindMyPhoneClient < DefaultAnisetteProvider >>>
-abstract class FindMyPhoneClientDefaultAnisetteProvider
-    implements RustOpaqueInterface {}
+abstract class FindMyPhoneClientDefaultAnisetteProvider implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<GZipWrapper < AttachmentMeta >>>
 abstract class GZipWrapperAttachmentMeta implements RustOpaqueInterface {}
@@ -1409,10 +1098,7 @@ class AkData {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is AkData &&
-          runtimeType == other.runtimeType &&
-          lat == other.lat &&
-          lng == other.lng;
+      other is AkData && runtimeType == other.runtimeType && lat == other.lat && lng == other.lng;
 }
 
 class ApsAlert {
@@ -1431,12 +1117,7 @@ class ApsAlert {
   });
 
   @override
-  int get hashCode =>
-      title.hashCode ^
-      body.hashCode ^
-      sbdy.hashCode ^
-      defbtn.hashCode ^
-      albtn.hashCode;
+  int get hashCode => title.hashCode ^ body.hashCode ^ sbdy.hashCode ^ defbtn.hashCode ^ albtn.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1462,10 +1143,7 @@ class ApsData {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ApsData &&
-          runtimeType == other.runtimeType &&
-          alert == other.alert;
+      identical(this, other) || other is ApsData && runtimeType == other.runtimeType && alert == other.alert;
 }
 
 class Attachment {
@@ -1491,12 +1169,7 @@ class Attachment {
 
   @override
   int get hashCode =>
-      aType.hashCode ^
-      part_.hashCode ^
-      utiType.hashCode ^
-      mime.hashCode ^
-      name.hashCode ^
-      iris.hashCode;
+      aType.hashCode ^ part_.hashCode ^ utiType.hashCode ^ mime.hashCode ^ name.hashCode ^ iris.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1643,12 +1316,7 @@ class Balloon {
 
   @override
   int get hashCode =>
-      url.hashCode ^
-      session.hashCode ^
-      layout.hashCode ^
-      ldText.hashCode ^
-      isLive.hashCode ^
-      icon.hashCode;
+      url.hashCode ^ session.hashCode ^ layout.hashCode ^ ldText.hashCode ^ isLive.hashCode ^ icon.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1694,12 +1362,7 @@ class BeaconAttributes {
   });
 
   @override
-  int get hashCode =>
-      name.hashCode ^
-      roleId.hashCode ^
-      emoji.hashCode ^
-      systemVersion.hashCode ^
-      serialNumber.hashCode;
+  int get hashCode => name.hashCode ^ roleId.hashCode ^ emoji.hashCode ^ systemVersion.hashCode ^ serialNumber.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1727,11 +1390,7 @@ class BeaconNamingRecord {
   });
 
   @override
-  int get hashCode =>
-      emoji.hashCode ^
-      name.hashCode ^
-      associatedBeacon.hashCode ^
-      roleId.hashCode;
+  int get hashCode => emoji.hashCode ^ name.hashCode ^ associatedBeacon.hashCode ^ roleId.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1763,12 +1422,7 @@ class CertifiedContext {
 
   @override
   int get hashCode =>
-      version.hashCode ^
-      receipt.hashCode ^
-      sender.hashCode ^
-      target.hashCode ^
-      uuid.hashCode ^
-      token.hashCode;
+      version.hashCode ^ receipt.hashCode ^ sender.hashCode ^ target.hashCode ^ uuid.hashCode ^ token.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1816,10 +1470,7 @@ class ChatProto {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ChatProto &&
-          runtimeType == other.runtimeType &&
-          unk1 == other.unk1;
+      identical(this, other) || other is ChatProto && runtimeType == other.runtimeType && unk1 == other.unk1;
 }
 
 class CloudAttachment {
@@ -1837,10 +1488,7 @@ class CloudAttachment {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is CloudAttachment &&
-          runtimeType == other.runtimeType &&
-          cm == other.cm &&
-          lqa == other.lqa;
+      other is CloudAttachment && runtimeType == other.runtimeType && cm == other.cm && lqa == other.lqa;
 }
 
 class CloudChat {
@@ -2013,10 +1661,7 @@ class CloudMessageSummary {
   });
 
   @override
-  int get hashCode =>
-      messagesSummary.hashCode ^
-      chatSummary.hashCode ^
-      attachmentSummary.hashCode;
+  int get hashCode => messagesSummary.hashCode ^ chatSummary.hashCode ^ attachmentSummary.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2040,10 +1685,7 @@ class CloudParticipant {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is CloudParticipant &&
-          runtimeType == other.runtimeType &&
-          uri == other.uri;
+      identical(this, other) || other is CloudParticipant && runtimeType == other.runtimeType && uri == other.uri;
 }
 
 class CloudProp {
@@ -2088,8 +1730,7 @@ class CloudProp {
           runtimeType == other.runtimeType &&
           gpufc == other.gpufc &&
           pv == other.pv &&
-          numberOfTimesRespondedtoThread ==
-              other.numberOfTimesRespondedtoThread &&
+          numberOfTimesRespondedtoThread == other.numberOfTimesRespondedtoThread &&
           shouldForceToSms == other.shouldForceToSms &&
           lastSeenMessageGuid == other.lastSeenMessageGuid &&
           messageHandshakeState == other.messageHandshakeState &&
@@ -2111,9 +1752,7 @@ class CloudProp001 {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is CloudProp001 &&
-          runtimeType == other.runtimeType &&
-          syndicationType == other.syndicationType;
+      other is CloudProp001 && runtimeType == other.runtimeType && syndicationType == other.syndicationType;
 }
 
 class ConversationData {
@@ -2130,11 +1769,7 @@ class ConversationData {
   });
 
   @override
-  int get hashCode =>
-      participants.hashCode ^
-      cvName.hashCode ^
-      senderGuid.hashCode ^
-      afterGuid.hashCode;
+  int get hashCode => participants.hashCode ^ cvName.hashCode ^ senderGuid.hashCode ^ afterGuid.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2210,8 +1845,7 @@ class DartBeaconShareInfo {
   });
 
   @override
-  int get hashCode =>
-      shareId.hashCode ^ acceptanceState.hashCode ^ ownerHandle.hashCode;
+  int get hashCode => shareId.hashCode ^ acceptanceState.hashCode ^ ownerHandle.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2249,11 +1883,7 @@ class DeviceInfo {
   });
 
   @override
-  int get hashCode =>
-      name.hashCode ^
-      serial.hashCode ^
-      osVersion.hashCode ^
-      encodedData.hashCode;
+  int get hashCode => name.hashCode ^ serial.hashCode ^ osVersion.hashCode ^ encodedData.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2328,8 +1958,7 @@ class ExtensionApp {
   });
 
   @override
-  int get hashCode =>
-      name.hashCode ^ appId.hashCode ^ bundleId.hashCode ^ balloon.hashCode;
+  int get hashCode => name.hashCode ^ appId.hashCode ^ bundleId.hashCode ^ balloon.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2345,16 +1974,14 @@ class ExtensionApp {
 class FFIFilePackager {
   const FFIFilePackager();
 
-  static Future<FFIFilePackager> default_() =>
-      RustLib.instance.api.crateApiApiFfiFilePackagerDefault();
+  static Future<FFIFilePackager> default_() => RustLib.instance.api.crateApiApiFfiFilePackagerDefault();
 
   @override
   int get hashCode => 0;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is FFIFilePackager && runtimeType == other.runtimeType;
+      identical(this, other) || other is FFIFilePackager && runtimeType == other.runtimeType;
 }
 
 class Follow {
@@ -2434,8 +2061,7 @@ class Follow {
           onlyInEvent == other.onlyInEvent &&
           personIdHash == other.personIdHash &&
           secureLocationsCapable == other.secureLocationsCapable &&
-          shallowOrLiveSecureLocationsCapable ==
-              other.shallowOrLiveSecureLocationsCapable &&
+          shallowOrLiveSecureLocationsCapable == other.shallowOrLiveSecureLocationsCapable &&
           source == other.source &&
           tkPermission == other.tkPermission &&
           updateTimestamp == other.updateTimestamp &&
@@ -2615,10 +2241,7 @@ class FTMember {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is FTMember &&
-          runtimeType == other.runtimeType &&
-          nickname == other.nickname &&
-          handle == other.handle;
+      other is FTMember && runtimeType == other.runtimeType && nickname == other.nickname && handle == other.handle;
 }
 
 @freezed
@@ -2687,11 +2310,7 @@ class FTParticipant {
 
   @override
   int get hashCode =>
-      token.hashCode ^
-      handle.hashCode ^
-      participantId.hashCode ^
-      lastJoinDate.hashCode ^
-      active.hashCode;
+      token.hashCode ^ handle.hashCode ^ participantId.hashCode ^ lastJoinDate.hashCode ^ active.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2780,8 +2399,7 @@ class GroupSummary {
   });
 
   @override
-  int get hashCode =>
-      displayName.hashCode ^ isOwner.hashCode ^ members.hashCode;
+  int get hashCode => displayName.hashCode ^ isOwner.hashCode ^ members.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2807,8 +2425,7 @@ class GroupSummaryMember {
   });
 
   @override
-  int get hashCode =>
-      name.hashCode ^ handle.hashCode ^ userId.hashCode ^ isJoined.hashCode;
+  int get hashCode => name.hashCode ^ handle.hashCode ^ userId.hashCode ^ isJoined.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2838,11 +2455,7 @@ class HwExtra {
 
   @override
   int get hashCode =>
-      version.hashCode ^
-      protocolVersion.hashCode ^
-      deviceId.hashCode ^
-      icloudUa.hashCode ^
-      aoskitVersion.hashCode;
+      version.hashCode ^ protocolVersion.hashCode ^ deviceId.hashCode ^ icloudUa.hashCode ^ aoskitVersion.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2965,12 +2578,7 @@ class IdmsCircleMessage {
   });
 
   @override
-  int get hashCode =>
-      step.hashCode ^
-      atxnid.hashCode ^
-      pake.hashCode ^
-      ec.hashCode ^
-      idmsdata.hashCode;
+  int get hashCode => step.hashCode ^ atxnid.hashCode ^ pake.hashCode ^ ec.hashCode ^ idmsdata.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -3014,8 +2622,7 @@ class IdmsRequestedSignIn {
   });
 
   @override
-  int get hashCode =>
-      aps.hashCode ^ txnid.hashCode ^ akdata.hashCode ^ adsid.hashCode;
+  int get hashCode => aps.hashCode ^ txnid.hashCode ^ akdata.hashCode ^ adsid.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -3110,10 +2717,7 @@ class LinkMeta {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is LinkMeta &&
-          runtimeType == other.runtimeType &&
-          data == other.data &&
-          attachments == other.attachments;
+      other is LinkMeta && runtimeType == other.runtimeType && data == other.data && attachments == other.attachments;
 }
 
 class Location {
@@ -3197,8 +2801,7 @@ sealed class LoginState with _$LoginState {
 
   const factory LoginState.loggedIn() = LoginState_LoggedIn;
   const factory LoginState.needsDevice2Fa() = LoginState_NeedsDevice2FA;
-  const factory LoginState.needs2FaVerification() =
-      LoginState_Needs2FAVerification;
+  const factory LoginState.needs2FaVerification() = LoginState_Needs2FAVerification;
   const factory LoginState.needsSms2Fa() = LoginState_NeedsSMS2FA;
   const factory LoginState.needsSms2FaVerification(
     VerifyBody field0,
@@ -3224,10 +2827,7 @@ class LPIconMetadata {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is LPIconMetadata &&
-          runtimeType == other.runtimeType &&
-          url == other.url &&
-          version == other.version;
+      other is LPIconMetadata && runtimeType == other.runtimeType && url == other.url && version == other.version;
 }
 
 class LPImageMetadata {
@@ -3466,11 +3066,7 @@ class MessageEdit {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is MessageEdit &&
-          runtimeType == other.runtimeType &&
-          t == other.t &&
-          d == other.d &&
-          bcg == other.bcg;
+      other is MessageEdit && runtimeType == other.runtimeType && t == other.t && d == other.d && bcg == other.bcg;
 }
 
 class MessageEditRange {
@@ -3488,10 +3084,7 @@ class MessageEditRange {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is MessageEditRange &&
-          runtimeType == other.runtimeType &&
-          lo == other.lo &&
-          le == other.le;
+      other is MessageEditRange && runtimeType == other.runtimeType && lo == other.lo && le == other.le;
 }
 
 class MessageInst {
@@ -3572,8 +3165,7 @@ class MessageParts {
     required this.field0,
   });
 
-  Future<String> rawText() =>
-      RustLib.instance.api.crateApiApiMessagePartsRawText(
+  Future<String> rawText() => RustLib.instance.api.crateApiApiMessagePartsRawText(
         that: this,
       );
 
@@ -3582,10 +3174,7 @@ class MessageParts {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is MessageParts &&
-          runtimeType == other.runtimeType &&
-          field0 == other.field0;
+      identical(this, other) || other is MessageParts && runtimeType == other.runtimeType && field0 == other.field0;
 }
 
 class MessageProto {
@@ -3668,8 +3257,7 @@ class MessageProto {
           unk14 == other.unk14 &&
           associatedMessageType == other.associatedMessageType &&
           associatedMessageGuid == other.associatedMessageGuid &&
-          associatedMessageRangeLocation ==
-              other.associatedMessageRangeLocation &&
+          associatedMessageRangeLocation == other.associatedMessageRangeLocation &&
           associatedMessageRangeLength == other.associatedMessageRangeLength;
 }
 
@@ -3685,10 +3273,7 @@ class MessageProto2 {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is MessageProto2 &&
-          runtimeType == other.runtimeType &&
-          reply == other.reply;
+      identical(this, other) || other is MessageProto2 && runtimeType == other.runtimeType && reply == other.reply;
 }
 
 class MessageProto3 {
@@ -3709,10 +3294,7 @@ class MessageProto3 {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is MessageProto3 &&
-          runtimeType == other.runtimeType &&
-          unk2 == other.unk2 &&
-          unk3 == other.unk3;
+      other is MessageProto3 && runtimeType == other.runtimeType && unk2 == other.unk2 && unk3 == other.unk3;
 }
 
 class MessageProto4 {
@@ -3924,12 +3506,7 @@ class MMCSFile {
   });
 
   @override
-  int get hashCode =>
-      signature.hashCode ^
-      object.hashCode ^
-      url.hashCode ^
-      key.hashCode ^
-      size.hashCode;
+  int get hashCode => signature.hashCode ^ object.hashCode ^ url.hashCode ^ key.hashCode ^ size.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -3992,8 +3569,7 @@ class MonogramData {
       identical(this, other) ||
       other is MonogramData &&
           runtimeType == other.runtimeType &&
-          topBackgroundColorDescription ==
-              other.topBackgroundColorDescription &&
+          topBackgroundColorDescription == other.topBackgroundColorDescription &&
           backgroundColorDescription == other.backgroundColorDescription &&
           initials == other.initials &&
           monogramSupportedForName == other.monogramSupportedForName;
@@ -4023,16 +3599,14 @@ class MoveToRecycleBinMessage {
 class MyAsyncRuntime {
   const MyAsyncRuntime();
 
-  static Future<MyAsyncRuntime> default_() =>
-      RustLib.instance.api.crateApiApiMyAsyncRuntimeDefault();
+  static Future<MyAsyncRuntime> default_() => RustLib.instance.api.crateApiApiMyAsyncRuntimeDefault();
 
   @override
   int get hashCode => 0;
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is MyAsyncRuntime && runtimeType == other.runtimeType;
+      identical(this, other) || other is MyAsyncRuntime && runtimeType == other.runtimeType;
 }
 
 class NormalMessage {
@@ -4106,8 +3680,7 @@ class NSAttributedString {
   static NSAttributedString decode({required StCollapsedValue val}) =>
       RustLib.instance.api.crateApiApiNsAttributedStringDecode(val: val);
 
-  StCollapsedValue encode() =>
-      RustLib.instance.api.crateApiApiNsAttributedStringEncode(
+  StCollapsedValue encode() => RustLib.instance.api.crateApiApiNsAttributedStringEncode(
         that: this,
       );
 
@@ -4117,10 +3690,7 @@ class NSAttributedString {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is NSAttributedString &&
-          runtimeType == other.runtimeType &&
-          text == other.text &&
-          ranges == other.ranges;
+      other is NSAttributedString && runtimeType == other.runtimeType && text == other.text && ranges == other.ranges;
 }
 
 enum NSDictionaryClass {
@@ -4142,9 +3712,7 @@ class NSDictionaryTypedCoder {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is NSDictionaryTypedCoder &&
-          runtimeType == other.runtimeType &&
-          field0 == other.field0;
+      other is NSDictionaryTypedCoder && runtimeType == other.runtimeType && field0 == other.field0;
 }
 
 class NSNumber {
@@ -4154,8 +3722,7 @@ class NSNumber {
     required this.field0,
   });
 
-  static NSNumber decode({required StCollapsedValue val}) =>
-      RustLib.instance.api.crateApiApiNsNumberDecode(val: val);
+  static NSNumber decode({required StCollapsedValue val}) => RustLib.instance.api.crateApiApiNsNumberDecode(val: val);
 
   StCollapsedValue encode() => RustLib.instance.api.crateApiApiNsNumberEncode(
         that: this,
@@ -4166,10 +3733,7 @@ class NSNumber {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is NSNumber &&
-          runtimeType == other.runtimeType &&
-          field0 == other.field0;
+      identical(this, other) || other is NSNumber && runtimeType == other.runtimeType && field0 == other.field0;
 }
 
 class NSString {
@@ -4179,8 +3743,7 @@ class NSString {
     required this.field0,
   });
 
-  static NSString decode({required StCollapsedValue val}) =>
-      RustLib.instance.api.crateApiApiNsStringDecode(val: val);
+  static NSString decode({required StCollapsedValue val}) => RustLib.instance.api.crateApiApiNsStringDecode(val: val);
 
   StCollapsedValue encode() => RustLib.instance.api.crateApiApiNsStringEncode(
         that: this,
@@ -4191,10 +3754,7 @@ class NSString {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is NSString &&
-          runtimeType == other.runtimeType &&
-          field0 == other.field0;
+      identical(this, other) || other is NSString && runtimeType == other.runtimeType && field0 == other.field0;
 }
 
 class NSURL {
@@ -4212,10 +3772,7 @@ class NSURL {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is NSURL &&
-          runtimeType == other.runtimeType &&
-          base == other.base &&
-          relative == other.relative;
+      other is NSURL && runtimeType == other.runtimeType && base == other.base && relative == other.relative;
 }
 
 @freezed
@@ -4310,13 +3867,7 @@ class Passkey {
 
   @override
   int get hashCode =>
-      cdat.hashCode ^
-      mdat.hashCode ^
-      agrp.hashCode ^
-      labl.hashCode ^
-      data.hashCode ^
-      atag.hashCode ^
-      klbl.hashCode;
+      cdat.hashCode ^ mdat.hashCode ^ agrp.hashCode ^ labl.hashCode ^ data.hashCode ^ atag.hashCode ^ klbl.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -4345,9 +3896,7 @@ class PasswordManagerAltDomain {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is PasswordManagerAltDomain &&
-          runtimeType == other.runtimeType &&
-          domain == other.domain;
+      other is PasswordManagerAltDomain && runtimeType == other.runtimeType && domain == other.domain;
 }
 
 class PasswordManagerMeta {
@@ -4370,19 +3919,12 @@ class PasswordManagerMeta {
   static Uint8List getData({required PasswordManagerMetaData data}) =>
       RustLib.instance.api.crateApiApiPasswordManagerMetaGetData(data: data);
 
-  PasswordManagerMetaData getPasswordData() =>
-      RustLib.instance.api.crateApiApiPasswordManagerMetaGetPasswordData(
+  PasswordManagerMetaData getPasswordData() => RustLib.instance.api.crateApiApiPasswordManagerMetaGetPasswordData(
         that: this,
       );
 
   @override
-  int get hashCode =>
-      cdat.hashCode ^
-      mdat.hashCode ^
-      srvr.hashCode ^
-      acct.hashCode ^
-      agrp.hashCode ^
-      data.hashCode;
+  int get hashCode => cdat.hashCode ^ mdat.hashCode ^ srvr.hashCode ^ acct.hashCode ^ agrp.hashCode ^ data.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -4504,9 +4046,7 @@ class PasswordManagerMetaDataCtx {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is PasswordManagerMetaDataCtx &&
-          runtimeType == other.runtimeType &&
-          lastUsed == other.lastUsed;
+      other is PasswordManagerMetaDataCtx && runtimeType == other.runtimeType && lastUsed == other.lastUsed;
 }
 
 class PasswordManagerMetaDataFormerlyShared {
@@ -4519,8 +4059,7 @@ class PasswordManagerMetaDataFormerlyShared {
   });
 
   @override
-  int get hashCode =>
-      groupName.hashCode ^ passwordManagerCredentialIdentifier.hashCode;
+  int get hashCode => groupName.hashCode ^ passwordManagerCredentialIdentifier.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -4528,8 +4067,7 @@ class PasswordManagerMetaDataFormerlyShared {
       other is PasswordManagerMetaDataFormerlyShared &&
           runtimeType == other.runtimeType &&
           groupName == other.groupName &&
-          passwordManagerCredentialIdentifier ==
-              other.passwordManagerCredentialIdentifier;
+          passwordManagerCredentialIdentifier == other.passwordManagerCredentialIdentifier;
 }
 
 class PasswordManagerTotp {
@@ -4553,8 +4091,7 @@ class PasswordManagerTotp {
     this.originalUrl,
   });
 
-  (int, BigInt) generateOtp() =>
-      RustLib.instance.api.crateApiApiPasswordManagerTotpGenerateOtp(
+  (int, BigInt) generateOtp() => RustLib.instance.api.crateApiApiPasswordManagerTotpGenerateOtp(
         that: this,
       );
 
@@ -4602,13 +4139,7 @@ class PasswordRawEntry {
   });
 
   @override
-  int get hashCode =>
-      cdat.hashCode ^
-      mdat.hashCode ^
-      srvr.hashCode ^
-      acct.hashCode ^
-      agrp.hashCode ^
-      data.hashCode;
+  int get hashCode => cdat.hashCode ^ mdat.hashCode ^ srvr.hashCode ^ acct.hashCode ^ agrp.hashCode ^ data.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -4682,8 +4213,7 @@ class PhotoPosterContentsFrame {
   });
 
   @override
-  int get hashCode =>
-      width.hashCode ^ height.hashCode ^ x.hashCode ^ y.hashCode;
+  int get hashCode => width.hashCode ^ height.hashCode ^ x.hashCode ^ y.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -4731,11 +4261,7 @@ class PhotoPosterLayer {
   });
 
   @override
-  int get hashCode =>
-      frame.hashCode ^
-      filename.hashCode ^
-      zPosition.hashCode ^
-      identifier.hashCode;
+  int get hashCode => frame.hashCode ^ filename.hashCode ^ zPosition.hashCode ^ identifier.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -4882,8 +4408,7 @@ class PosterColor {
   });
 
   @override
-  int get hashCode =>
-      alpha.hashCode ^ blue.hashCode ^ green.hashCode ^ red.hashCode;
+  int get hashCode => alpha.hashCode ^ blue.hashCode ^ green.hashCode ^ red.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -4939,11 +4464,7 @@ class PRPosterColor {
   });
 
   @override
-  int get hashCode =>
-      preferredStyle.hashCode ^
-      identifier.hashCode ^
-      suggested.hashCode ^
-      color.hashCode;
+  int get hashCode => preferredStyle.hashCode ^ identifier.hashCode ^ suggested.hashCode ^ color.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -4990,8 +4511,7 @@ class PRPosterSystemTimeFontConfiguration {
   });
 
   @override
-  int get hashCode =>
-      isSystemItem.hashCode ^ timeFontIdentifier.hashCode ^ weight.hashCode;
+  int get hashCode => isSystemItem.hashCode ^ timeFontIdentifier.hashCode ^ weight.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -5106,8 +4626,7 @@ enum ProvisionedFlavor {
   ios,
   ;
 
-  static Future<ProvisionedFlavor> default_() =>
-      RustLib.instance.api.crateApiApiProvisionedFlavorDefault();
+  static Future<ProvisionedFlavor> default_() => RustLib.instance.api.crateApiApiProvisionedFlavorDefault();
 }
 
 @freezed
@@ -5159,8 +4678,7 @@ class QuotaInfo {
   });
 
   @override
-  int get hashCode =>
-      totalBytes.hashCode ^ availableBytes.hashCode ^ messagesBytes.hashCode;
+  int get hashCode => totalBytes.hashCode ^ availableBytes.hashCode ^ messagesBytes.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -5189,11 +4707,7 @@ class ReactMessage {
 
   @override
   int get hashCode =>
-      toUuid.hashCode ^
-      toPart.hashCode ^
-      reaction.hashCode ^
-      toText.hashCode ^
-      embeddedProfile.hashCode;
+      toUuid.hashCode ^ toPart.hashCode ^ reaction.hashCode ^ toText.hashCode ^ embeddedProfile.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -5267,10 +4781,7 @@ class RenameMessage {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is RenameMessage &&
-          runtimeType == other.runtimeType &&
-          newName == other.newName;
+      identical(this, other) || other is RenameMessage && runtimeType == other.runtimeType && newName == other.newName;
 }
 
 class ReportMessage {
@@ -5290,11 +4801,7 @@ class ReportMessage {
 
   @override
   int get hashCode =>
-      guid.hashCode ^
-      sender.hashCode ^
-      conversationSize.hashCode ^
-      parts.hashCode ^
-      timeOfMessage.hashCode;
+      guid.hashCode ^ sender.hashCode ^ conversationSize.hashCode ^ parts.hashCode ^ timeOfMessage.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -5318,8 +4825,7 @@ class RichLinkImageAttachmentSubstitute {
   });
 
   @override
-  int get hashCode =>
-      mimeType.hashCode ^ richLinkImageAttachmentSubstituteIndex.hashCode;
+  int get hashCode => mimeType.hashCode ^ richLinkImageAttachmentSubstituteIndex.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -5327,8 +4833,7 @@ class RichLinkImageAttachmentSubstitute {
       other is RichLinkImageAttachmentSubstitute &&
           runtimeType == other.runtimeType &&
           mimeType == other.mimeType &&
-          richLinkImageAttachmentSubstituteIndex ==
-              other.richLinkImageAttachmentSubstituteIndex;
+          richLinkImageAttachmentSubstituteIndex == other.richLinkImageAttachmentSubstituteIndex;
 }
 
 class ScheduleMode {
@@ -5346,15 +4851,11 @@ class ScheduleMode {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is ScheduleMode &&
-          runtimeType == other.runtimeType &&
-          ms == other.ms &&
-          schedule == other.schedule;
+      other is ScheduleMode && runtimeType == other.runtimeType && ms == other.ms && schedule == other.schedule;
 }
 
 @freezed
-sealed class SetTranscriptBackgroundMessage
-    with _$SetTranscriptBackgroundMessage {
+sealed class SetTranscriptBackgroundMessage with _$SetTranscriptBackgroundMessage {
   const SetTranscriptBackgroundMessage._();
 
   const factory SetTranscriptBackgroundMessage.remove({
@@ -5428,10 +4929,7 @@ class ShareProfileMessage {
   });
 
   @override
-  int get hashCode =>
-      cloudKitDecryptionRecordKey.hashCode ^
-      cloudKitRecordKey.hashCode ^
-      poster.hashCode;
+  int get hashCode => cloudKitDecryptionRecordKey.hashCode ^ cloudKitRecordKey.hashCode ^ poster.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -5561,8 +5059,7 @@ class SharedPoster {
   });
 
   @override
-  int get hashCode =>
-      lowResWallpaperTag.hashCode ^ wallpaperTag.hashCode ^ messageTag.hashCode;
+  int get hashCode => lowResWallpaperTag.hashCode ^ wallpaperTag.hashCode ^ messageTag.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -5603,8 +5100,7 @@ class SharedPushState {
     required this.clientSession,
   });
 
-  static Future<(SharedPushState, ApsWatcher)?> restore(
-          {required String path}) =>
+  static Future<(SharedPushState, ApsWatcher)?> restore({required String path}) =>
       RustLib.instance.api.crateApiApiSharedPushStateRestore(path: path);
 
   @override
@@ -5677,8 +5173,7 @@ class SimplifiedPoster {
   });
 
   @override
-  int get hashCode =>
-      titleConfiguration.hashCode ^ type.hashCode ^ role.hashCode;
+  int get hashCode => titleConfiguration.hashCode ^ type.hashCode ^ role.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -5735,9 +5230,7 @@ class StatusKitPersonalConfig {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is StatusKitPersonalConfig &&
-          runtimeType == other.runtimeType &&
-          allowedModes == other.allowedModes;
+      other is StatusKitPersonalConfig && runtimeType == other.runtimeType && allowedModes == other.allowedModes;
 }
 
 class SupportAction {
@@ -5755,10 +5248,7 @@ class SupportAction {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is SupportAction &&
-          runtimeType == other.runtimeType &&
-          url == other.url &&
-          button == other.button;
+      other is SupportAction && runtimeType == other.runtimeType && url == other.url && button == other.button;
 }
 
 class SupportAlert {
@@ -5814,9 +5304,7 @@ class TeardownSignIn {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is TeardownSignIn &&
-          runtimeType == other.runtimeType &&
-          prevtxnid == other.prevtxnid;
+      other is TeardownSignIn && runtimeType == other.runtimeType && prevtxnid == other.prevtxnid;
 }
 
 enum TextEffect {
@@ -5845,11 +5333,7 @@ class TextFlags {
   });
 
   @override
-  int get hashCode =>
-      bold.hashCode ^
-      italic.hashCode ^
-      underline.hashCode ^
-      strikethrough.hashCode;
+  int get hashCode => bold.hashCode ^ italic.hashCode ^ underline.hashCode ^ strikethrough.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -5887,9 +5371,7 @@ class TranscriptDynamicUserData {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is TranscriptDynamicUserData &&
-          runtimeType == other.runtimeType &&
-          identifier == other.identifier;
+      other is TranscriptDynamicUserData && runtimeType == other.runtimeType && identifier == other.identifier;
 }
 
 class TransferProgress {
@@ -5930,11 +5412,7 @@ class TrustedPhoneNumber {
   });
 
   @override
-  int get hashCode =>
-      numberWithDialCode.hashCode ^
-      lastTwoDigits.hashCode ^
-      pushMode.hashCode ^
-      id.hashCode;
+  int get hashCode => numberWithDialCode.hashCode ^ lastTwoDigits.hashCode ^ pushMode.hashCode ^ id.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -5962,10 +5440,7 @@ class TypingApp {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is TypingApp &&
-          runtimeType == other.runtimeType &&
-          bundleId == other.bundleId &&
-          icon == other.icon;
+      other is TypingApp && runtimeType == other.runtimeType && bundleId == other.bundleId && icon == other.icon;
 }
 
 @freezed
@@ -6011,10 +5486,7 @@ class UnsendMessage {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is UnsendMessage &&
-          runtimeType == other.runtimeType &&
-          tuuid == other.tuuid &&
-          editPart == other.editPart;
+      other is UnsendMessage && runtimeType == other.runtimeType && tuuid == other.tuuid && editPart == other.editPart;
 }
 
 @freezed
@@ -6081,8 +5553,7 @@ class UpdateProfileSharingMessage {
   });
 
   @override
-  int get hashCode =>
-      sharedDismissed.hashCode ^ sharedAll.hashCode ^ version.hashCode;
+  int get hashCode => sharedDismissed.hashCode ^ sharedAll.hashCode ^ version.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -6152,10 +5623,7 @@ class WatchBackground {
 
   @override
   int get hashCode =>
-      isHighKey.hashCode ^
-      luminance.hashCode ^
-      backgroundImageData.hashCode ^
-      extensionIdentifier.hashCode;
+      isHighKey.hashCode ^ luminance.hashCode ^ backgroundImageData.hashCode ^ extensionIdentifier.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -6184,12 +5652,7 @@ class WifiPassword {
   });
 
   @override
-  int get hashCode =>
-      cdat.hashCode ^
-      mdat.hashCode ^
-      acct.hashCode ^
-      svce.hashCode ^
-      data.hashCode;
+  int get hashCode => cdat.hashCode ^ mdat.hashCode ^ acct.hashCode ^ svce.hashCode ^ data.hashCode;
 
   @override
   bool operator ==(Object other) =>

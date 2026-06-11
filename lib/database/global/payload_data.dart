@@ -1,9 +1,6 @@
-import 'dart:convert';
-import 'dart:typed_data';
-
 import 'package:bluebubbles/helpers/helpers.dart';
+import 'package:bluebubbles/services/ui/extension_service.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
-import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -52,10 +49,10 @@ class PayloadData {
   }
 
   Map<String, dynamic> toJson() => {
-    "type": type.index,
-    "urlData": urlData?.map((e) => e.toJson()).toList(),
-    "appData": appData?.map((e) => e.toJson()).toList(),
-  };
+        "type": type.index,
+        "urlData": urlData?.map((e) => e.toJson()).toList(),
+        "appData": appData?.map((e) => e.toJson()).toList(),
+      };
 }
 
 class UrlPreviewData {
@@ -82,34 +79,38 @@ class UrlPreviewData {
   String? siteName;
 
   factory UrlPreviewData.fromJson(Map<String, dynamic> json) => UrlPreviewData(
-    imageMetadata: json["imageMetadata"] == null
-        ? (json["specialization"]?["artwork"] != null ? MediaMetadata(size: const Size.square(1), url: json["specialization"]?["artwork"]?["NS.relative"]) : null)
-        : MediaMetadata.fromJson(Map<String, dynamic>.from(json["imageMetadata"])),
-    videoMetadata: json["videoMetadata"] == null ? null : MediaMetadata.fromJson(Map<String, dynamic>.from(json["videoMetadata"])),
-    iconMetadata: json["iconMetadata"] == null ? null : MediaMetadata.fromJson(Map<String, dynamic>.from(json["iconMetadata"])),
-    itemType: json["itemType"],
-    originalUrl: json["originalURL"]?["NS.relative"],
-    url: json["URL"]?["NS.relative"],
-    title: json["title"] ?? json["specialization"]?["name"],
-    summary: json["summary"] ?? json["specialization"]?["album"],
-    siteName: json["siteName"],
-  );
+        imageMetadata: json["imageMetadata"] == null
+            ? (json["specialization"]?["artwork"] != null
+                ? MediaMetadata(size: const Size.square(1), url: json["specialization"]?["artwork"]?["NS.relative"])
+                : null)
+            : MediaMetadata.fromJson(Map<String, dynamic>.from(json["imageMetadata"])),
+        videoMetadata: json["videoMetadata"] == null
+            ? null
+            : MediaMetadata.fromJson(Map<String, dynamic>.from(json["videoMetadata"])),
+        iconMetadata: json["iconMetadata"] == null
+            ? null
+            : MediaMetadata.fromJson(Map<String, dynamic>.from(json["iconMetadata"])),
+        itemType: json["itemType"],
+        originalUrl: json["originalURL"]?["NS.relative"],
+        url: json["URL"]?["NS.relative"],
+        title: json["title"] ?? json["specialization"]?["name"],
+        summary: json["summary"] ?? json["specialization"]?["album"],
+        siteName: json["siteName"],
+      );
 
   Map<String, dynamic> toJson() => {
-    "imageMetadata": imageMetadata?.toJson(),
-    "videoMetadata": videoMetadata?.toJson(),
-    "iconMetadata": iconMetadata?.toJson(),
-    "itemType": itemType,
-    "originalURL": {
-      "NS.relative": originalUrl
-    },
-    "URL": {
-      "NS.relative": url,
-    },
-    "title": title,
-    "summary": summary,
-    "siteName": siteName,
-  };
+        "imageMetadata": imageMetadata?.toJson(),
+        "videoMetadata": videoMetadata?.toJson(),
+        "iconMetadata": iconMetadata?.toJson(),
+        "itemType": itemType,
+        "originalURL": {"NS.relative": originalUrl},
+        "URL": {
+          "NS.relative": url,
+        },
+        "title": title,
+        "summary": summary,
+        "siteName": siteName,
+      };
 }
 
 class MediaMetadata {
@@ -133,9 +134,11 @@ class MediaMetadata {
     }
 
     if (json["size"] is String && json["size"].contains(",")) {
-      size = Size(double.parse(json["size"].split(",").first.toString().numericOnly()), double.parse(json["size"].split(",").last.toString().numericOnly()));
+      size = Size(double.parse(json["size"].split(",").first.toString().numericOnly()),
+          double.parse(json["size"].split(",").last.toString().numericOnly()));
     } else if (json["size"] is Map) {
-      size = Size(double.parse(json["size"]["width"].toString().numericOnly()), double.parse(json["size"]["height"].toString().numericOnly()));
+      size = Size(double.parse(json["size"]["width"].toString().numericOnly()),
+          double.parse(json["size"]["height"].toString().numericOnly()));
     } else if (json["size"] is Size) {
       size = json['size'];
     } else {
@@ -149,11 +152,11 @@ class MediaMetadata {
   }
 
   Map<String, dynamic> toJson() => {
-    "size": (size == null) ? "0,0" : "${size!.width},${size!.height}",
-    "URL": {
-      "NS.relative": url,
-    },
-  };
+        "size": (size == null) ? "0,0" : "${size!.width},${size!.height}",
+        "URL": {
+          "NS.relative": url,
+        },
+      };
 }
 
 // ignore: camel_case_types
@@ -166,97 +169,93 @@ class iMessageAppData {
     this.session,
     this.appIcon,
     this.appId,
+    String? bundleId,
     this.isLive,
-  });
+  }) : _bundleId = bundleId;
 
   String? appName;
   String? ldText;
   String? url;
-  int? appId;
-  UserInfo? userInfo;
   String? session;
   String? appIcon;
+  int? appId;
+  String? _bundleId;
   bool? isLive;
+  UserInfo? userInfo;
 
-  String get bundleId {
-    // TODO figure out a better way to do this
-    if (appId == null && appName == "Polls") {
-      return "com.apple.messages.MSMessageExtensionBalloonPlugin:0000000000:com.apple.messages.Polls";
+  String? get icon {
+    if (appId == null) return appIcon;
+    for (final app in ExtensionSvc.cachedStatus) {
+      if (app.appId == appId) {
+        return app.available?.icon ?? appIcon;
+      }
     }
-    return es.getExtensionBundle(appId!);
+    return appIcon;
   }
 
   bool get isSupported {
     if (url?.startsWith("http") ?? false) return true;
     if (appId == null) return false;
-    return es.isAppSupported(appId!);
+    return ExtensionSvc.isAppSupported(appId!);
   }
 
-  String? get icon {
-    if (appId == null) return appIcon;
-    var app = es.cachedStatus.firstWhereOrNull((a) => a.appId == appId);
-    if (app == null || app.available == null) return appIcon;
-    return app.available!.icon;
+  String get bundleId {
+    if (_bundleId != null) return _bundleId!;
+    if (appId == null && appName == "Polls") {
+      return "com.apple.messages.MSMessageExtensionBalloonPlugin:0000000000:com.apple.messages.Polls";
+    }
+    return ExtensionSvc.getExtensionBundle(appId!);
   }
 
   factory iMessageAppData.fromJson(Map<String, dynamic> json) => iMessageAppData(
-    appName: json["an"],
-    ldText: json["ldtext"],
-    userInfo: json["userInfo"] == null ? null : UserInfo.fromJson(Map<String, dynamic>.from(json["userInfo"])),
-    url: json["URL"]?["NS.relative"],
-    session: json["session"],
-    appIcon: json['appIcon'],
-    appId: json['appId'],
-    isLive: json['isLive'],
-  );
+        appName: json["an"],
+        ldText: json["ldtext"],
+        userInfo: json["userInfo"] == null ? null : UserInfo.fromJson(Map<String, dynamic>.from(json["userInfo"])),
+        url: json["URL"]?["NS.relative"],
+        session: json["session"],
+        appIcon: json["appIcon"],
+        appId: json["appId"],
+        bundleId: json["bundleId"],
+        isLive: json["isLive"],
+      );
 
   Map<String, dynamic> toJson() => {
-    "an": appName,
-    "ldtext": ldText,
-    "URL": {
-      "NS.relative": url,
-    },
-    "userInfo": userInfo?.toJson(),
-    "session": session,
-    "appIcon": appIcon,
-    "appId": appId,
-    "isLive": isLive,
-  };
+        "an": appName,
+        "ldtext": ldText,
+        "URL": {
+          "NS.relative": url,
+        },
+        "session": session,
+        "appIcon": appIcon,
+        "appId": appId,
+        "bundleId": _bundleId,
+        "isLive": isLive,
+        "userInfo": userInfo?.toJson(),
+      };
 
-  factory iMessageAppData.fromNative(Map<String, dynamic> args, App app) => iMessageAppData(
-    appName: app.madridName,
-    ldText: args["ldText"],
-    url: args["url"],
-    session: args["session"],
-    appIcon: app.available!.icon,
-    appId: app.appId,
-    isLive: args["isLive"],
-    userInfo: UserInfo(
-      imageSubtitle: args["imageSubtitle"],
-      imageTitle: args["imageTitle"],
-      caption: args["caption"],
-      secondarySubcaption: args["secondaryCaption"],
-      tertiarySubcaption: args["tertiaryCaption"],
-      subcaption: args["subcaption"],
-    )
-  );
+  factory iMessageAppData.fromNative(Map<String, dynamic> json, dynamic app) => iMessageAppData(
+        appName: app.madridName ?? app.name,
+        ldText: json["ldText"] ?? json["ldtext"],
+        url: json["url"],
+        session: json["session"] ?? json["amkSessionId"],
+        appIcon: json["imageBase64"] ?? app.available?.icon,
+        appId: app.appId,
+        bundleId: app.madridBundleId,
+        isLive: json["isLive"],
+        userInfo: json["userInfo"] == null ? null : UserInfo.fromJson(Map<String, dynamic>.from(json["userInfo"])),
+      );
 
-  Map<String, dynamic> toNative(String? image) => {
-    "ldText": ldText,
-    "url": url,
-    "session": session,
-    
-    "imageBase64": image,
-    "imageSubtitle": userInfo?.imageSubtitle,
-    "imageTitle": userInfo?.imageTitle,
-    "caption": userInfo?.caption,
-    "secondaryCaption": userInfo?.secondarySubcaption,
-    "tertiaryCaption": userInfo?.tertiarySubcaption,
-    "subcaption": userInfo?.subcaption,
-    "appId": appId,
-
-    "isLive": isLive,
-  };
+  Map<String, dynamic> toNative(dynamic _) => {
+        "appId": appId,
+        "bundleId": bundleId,
+        "appName": appName,
+        "ldText": ldText,
+        "url": url,
+        "session": session,
+        "imageBase64": appIcon,
+        "isLive": isLive,
+        "userInfo": userInfo?.toJson(),
+      };
 }
 
 class UserInfo {
@@ -277,22 +276,22 @@ class UserInfo {
   String? subcaption;
 
   factory UserInfo.fromJson(Map<String, dynamic> json) => UserInfo(
-    imageSubtitle: json["image-subtitle"],
-    imageTitle: json["image-title"],
-    caption: json["caption"],
-    secondarySubcaption: json["secondary-subcaption"],
-    tertiarySubcaption: json["tertiary-subcaption"],
-    subcaption: json["subcaption"],
-  );
+        imageSubtitle: json["image-subtitle"],
+        imageTitle: json["image-title"],
+        caption: json["caption"],
+        secondarySubcaption: json["secondary-subcaption"],
+        tertiarySubcaption: json["tertiary-subcaption"],
+        subcaption: json["subcaption"],
+      );
 
   Map<String, dynamic> toJson() => {
-    "image-subtitle": imageSubtitle,
-    "image-title": imageTitle,
-    "caption": caption,
-    "secondary-subcaption": secondarySubcaption,
-    "tertiary-subcaption": tertiarySubcaption,
-    "subcaption": subcaption,
-  };
+        "image-subtitle": imageSubtitle,
+        "image-title": imageTitle,
+        "caption": caption,
+        "secondary-subcaption": secondarySubcaption,
+        "tertiary-subcaption": tertiarySubcaption,
+        "subcaption": subcaption,
+      };
 }
 
 dynamic replaceDollar<T>(T element, {bool isValue = false}) {
@@ -303,14 +302,14 @@ dynamic replaceDollar<T>(T element, {bool isValue = false}) {
       newList.add(replaceDollar(item, isValue: true));
     }
     return newList;
-  // if map, traverse thru each key & value
+    // if map, traverse thru each key & value
   } else if (element is Map) {
     final newMap = {};
     for (MapEntry item in element.entries) {
       newMap[replaceDollar(item.key)] = replaceDollar(item.value, isValue: true);
     }
     return newMap;
-  // only replace $ at beginning of string
+    // only replace $ at beginning of string
   } else if (element is String && !isValue) {
     if (element.startsWith("\$")) {
       element = element.replaceFirst("\$", "") as T;
@@ -337,7 +336,7 @@ dynamic extractUIDs<T>(T element, List objects) {
         item = extractUIDs(item, objects);
       }
       return item;
-    // if map is nested bplist, extract the data
+      // if map is nested bplist, extract the data
     } else if (element["archiver"] == "NSKeyedArchiver") {
       // nested bplist will have its own objects
       objects = element['objects'];
@@ -350,7 +349,7 @@ dynamic extractUIDs<T>(T element, List objects) {
       }
       data = extractUIDs(data, objects);
       return data;
-    // if map is {"NS.keys": [...], "NS.objects": [...], ...}
+      // if map is {"NS.keys": [...], "NS.objects": [...], ...}
     } else if (element.containsKey("NS.keys") && element.containsKey("NS.objects")) {
       // fins keys and values from original objects
       final nsKeys = element["NS.keys"].map((e) => e["UID"]).toList();
@@ -364,7 +363,7 @@ dynamic extractUIDs<T>(T element, List objects) {
       }
       data = extractUIDs(data, objects);
       return data;
-    // if regular map, extract data from any values
+      // if regular map, extract data from any values
     } else {
       final newMap = {};
       for (MapEntry item in element.entries) {

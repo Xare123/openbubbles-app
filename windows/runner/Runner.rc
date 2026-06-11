@@ -59,8 +59,8 @@ IDI_APP_ICON            ICON                    "resources\\app_icon.ico"
 //
 // Version
 //
-#define VERSION_AS_NUMBER 1,15,0,0
-#define VERSION_AS_STRING "1.15.0.0"
+#define VERSION_AS_NUMBER 1,15,5,0
+#define VERSION_AS_STRING "1.15.5.0"
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION VERSION_AS_NUMBER
@@ -79,13 +79,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "OpenBubbles" "\0"
-            VALUE "FileDescription", "OpenBubbles" "\0"
+            VALUE "CompanyName", "BlueBubbles" "\0"
+            VALUE "FileDescription", "BlueBubbles" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "openbubbles" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2024 OpenBubbles. All rights reserved." "\0"
-            VALUE "OriginalFilename", "openbubbles.exe" "\0"
-            VALUE "ProductName", "openbubbles" "\0"
+            VALUE "InternalName", "bluebubbles" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2024 BlueBubbles. All rights reserved." "\0"
+            VALUE "OriginalFilename", "bluebubbles.exe" "\0"
+            VALUE "ProductName", "bluebubbles" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

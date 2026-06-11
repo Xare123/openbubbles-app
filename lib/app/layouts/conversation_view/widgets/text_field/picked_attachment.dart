@@ -3,7 +3,6 @@ import 'dart:typed_data';
 
 import 'package:animations/animations.dart';
 import 'package:bluebubbles/app/layouts/fullscreen_media/fullscreen_holder.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/helpers/ui/theme_helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
@@ -14,22 +13,27 @@ import 'package:mime_type/mime_type.dart';
 import 'package:universal_io/io.dart';
 
 class PickedAttachment extends StatefulWidget {
-  PickedAttachment({
+  const PickedAttachment({
     super.key,
     required this.data,
     required this.controller,
     required this.onRemove,
+    required this.pickedAttachmentIndex,
   });
   final PlatformFile data;
   final ConversationViewController? controller;
   final Function(PlatformFile) onRemove;
+  final int pickedAttachmentIndex;
 
   @override
   State<PickedAttachment> createState() => _PickedAttachmentState();
 }
 
-class _PickedAttachmentState extends OptimizedState<PickedAttachment> with AutomaticKeepAliveClientMixin {
-  Uint8List? image;
+class _PickedAttachmentState extends State<PickedAttachment> with AutomaticKeepAliveClientMixin, ThemeHelpers {
+  Uint8List? imageBytes;
+  String? imagePath;
+  bool isLoading = true;
+  bool isEmpty = false;
 
   @override
   void initState() {
@@ -42,27 +46,48 @@ class _PickedAttachmentState extends OptimizedState<PickedAttachment> with Autom
     final mimeType = mime(widget.data.name) ?? "";
     if (mimeType.startsWith("video/") && Platform.isAndroid) {
       try {
-        image = await as.getVideoThumbnail(file.path!, useCachedFile: false);
+        imageBytes = await AttachmentsSvc.getVideoThumbnail(file.path!, useCachedFile: false);
       } catch (ex) {
-        image = fs.noVideoPreviewIcon;
+        imageBytes = FilesystemSvc.noVideoPreviewIcon;
       }
-      setState(() {});
-    } else if (mimeType == "image/heic"
-        || mimeType == "image/heif"
-        || mimeType == "image/tif"
-        || mimeType == "image/tiff") {
-      final fakeAttachment = Attachment(
-        transferName: file.path,
-        mimeType: mimeType,
-      );
-      image = await as.loadAndGetProperties(fakeAttachment, actualPath: file.path, onlyFetchData: true);
-      setState(() {});
+      setState(() {
+        isLoading = false;
+      });
+    } else if (mimeType == "image/heic" ||
+        mimeType == "image/heif" ||
+        mimeType == "image/tif" ||
+        mimeType == "image/tiff") {
+      // Use ensureImageCompatibility to get a compatible file path
+      try {
+        final fakeAttachment = Attachment(
+          transferName: file.path,
+          mimeType: mimeType,
+          metadata: widget.data.path == null ? null : {'source_path': widget.data.path},
+        );
+        imagePath = await AttachmentsSvc.ensureImageCompatibility(fakeAttachment);
+        if (imagePath == null && file.bytes != null) {
+          // Fallback to bytes if conversion returns null
+          imageBytes = file.bytes;
+        }
+      } catch (ex) {
+        // Fallback to bytes if conversion fails
+        imageBytes = await file.getBytes();
+      }
+      setState(() {
+        isLoading = false;
+      });
     } else if (mimeType.startsWith("image/")) {
-      image = await file.getBytes();
-      setState(() { });
+      imageBytes = await file.getBytes();
+      setState(() {
+        if (imageBytes == null || imageBytes!.isEmpty) {
+          isEmpty = true;
+        }
+        isLoading = false;
+      });
     } else {
       setState(() {
-        image = Uint8List.fromList([]);
+        isEmpty = true;
+        isLoading = false;
       });
     }
   }
@@ -79,90 +104,97 @@ class _PickedAttachmentState extends OptimizedState<PickedAttachment> with Autom
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(20),
             ),
-            constraints: BoxConstraints(maxWidth: image == null ? 0 : (image?.isEmpty ?? false) ? 100 : 200),
+            constraints: BoxConstraints(
+                maxWidth: isLoading
+                    ? 0
+                    : isEmpty
+                        ? 100
+                        : 200),
             clipBehavior: Clip.antiAlias,
             child: OpenContainer(
-              tappable: false,
-              openColor: Colors.black,
-              closedColor: context.theme.colorScheme.background,
-              openBuilder: (_, closeContainer) {
-                final fakeAttachment = Attachment(
-                  transferName: widget.data.name,
-                  mimeType: mime(widget.data.name) ?? "",
-                  bytes: widget.data.bytes,
-                  sourcePath: widget.data.path,
-                );
-                return FullscreenMediaHolder(
-                  attachment: fakeAttachment,
-                  showInteractions: false,
-                );
-              },
-              closedBuilder: (_, openContainer) {
-                return InkWell(
-                  onTap: mime(widget.data.name)?.startsWith("image") ?? false ? openContainer : null,
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    alignment: Alignment.topRight,
-                    children: <Widget>[
-                      if (image?.isNotEmpty ?? false)
-                        Image.memory(
-                          image!,
-                          key: ValueKey(widget.data.path),
-                          gaplessPlayback: true,
-                          fit: iOS ? BoxFit.fitHeight : BoxFit.cover,
-                          height: iOS ? 150 : 75,
-                          width: iOS ? null : 75,
-                          cacheWidth: 300,
-                        ),
-                      if (image?.isEmpty ?? false)
-                        Positioned.fill(
-                          child: Container(
-                            color: context.theme.colorScheme.properSurface,
-                            alignment: Alignment.center,
-                            child: Padding(
-                              padding: const EdgeInsets.all(8.0),
-                              child: Text(
-                                widget.data.name,
-                                maxLines: 3,
-                                textAlign: TextAlign.center,
+                tappable: false,
+                openColor: Colors.black,
+                closedColor: context.theme.colorScheme.surface,
+                openBuilder: (_, closeContainer) {
+                  // Use the full file path as transferName so getContent can locate
+                  // the file on disk when bytes are not pre-loaded (e.g. gallery picker).
+                  // Prefer state-cached bytes (imageBytes) over the raw widget bytes so
+                  // that HEIC/TIFF files, which have already been decoded into imagePath,
+                  // still have their fallback bytes available.
+                  final fakeAttachment = Attachment(
+                    transferName: widget.data.path ?? widget.data.name,
+                    mimeType: mime(widget.data.name) ?? "",
+                    bytes: imageBytes ?? widget.data.bytes,
+                    metadata: widget.data.path == null ? null : {'source_path': widget.data.path},
+                  );
+                  return FullscreenMediaHolder(
+                    attachment: fakeAttachment,
+                    showInteractions: false,
+                  );
+                },
+                closedBuilder: (_, openContainer) {
+                  return InkWell(
+                    onTap: mime(widget.data.name)?.startsWith("image") ?? false ? openContainer : null,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      alignment: Alignment.topRight,
+                      children: <Widget>[
+                        if (!isEmpty && !isLoading) _buildImage(),
+                        if (isEmpty)
+                          Positioned.fill(
+                            child: Container(
+                              color: context.theme.colorScheme.surfaceContainerHighest,
+                              alignment: Alignment.center,
+                              child: Padding(
+                                padding: const EdgeInsets.all(8.0),
+                                child: Text(
+                                  widget.data.name,
+                                  maxLines: 3,
+                                  textAlign: TextAlign.center,
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      if (image != null && iOS)
-                        Positioned(
-                          top: 5,
-                          right: 5,
-                          child: TextButton(
-                            style: TextButton.styleFrom(
-                              backgroundColor: context.theme.colorScheme.outline,
-                              shape: const CircleBorder(),
-                              padding: const EdgeInsets.all(0),
-                              maximumSize: const Size(32, 32),
-                              minimumSize: const Size(32, 32),
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        if (!isLoading && iOS)
+                          Positioned(
+                            top: 5,
+                            right: 5,
+                            child: TextButton(
+                              style: TextButton.styleFrom(
+                                backgroundColor: context.theme.colorScheme.outline,
+                                shape: const CircleBorder(),
+                                padding: const EdgeInsets.all(0),
+                                maximumSize: const Size(32, 32),
+                                minimumSize: const Size(32, 32),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: const Icon(
+                                CupertinoIcons.xmark,
+                                color: Colors.white,
+                                size: 18,
+                              ),
+                              onPressed: () {
+                                if (widget.controller != null) {
+                                  widget.controller!.pickedAttachments.removeAt(widget.pickedAttachmentIndex);
+                                  final remaining = widget.controller!.pickedAttachments
+                                      .where((e) => e.path != null)
+                                      .map((e) => e.path!)
+                                      .toList();
+                                  unawaited(ChatsSvc.setChatTextFieldAttachments(widget.controller!.chat, remaining));
+                                  // Don't request focus if attachment picker is open
+                                  if (!widget.controller!.showAttachmentPicker) {
+                                    widget.controller!.lastFocusedNode.requestFocus();
+                                  }
+                                } else {
+                                  widget.onRemove.call(widget.data);
+                                }
+                              },
                             ),
-                            child: const Icon(
-                              CupertinoIcons.xmark,
-                              color: Colors.white,
-                              size: 18,
-                            ),
-                            onPressed: () {
-                              if (widget.controller != null) {
-                                widget.controller!.pickedAttachments.removeWhere((e) => e.path == widget.data.path);
-                                widget.controller!.chat.textFieldAttachments.removeWhere((e) => e == widget.data.path);
-                                widget.controller!.chat.save(updateTextFieldAttachments: true);
-                              } else {
-                                widget.onRemove.call(widget.data);
-                              }
-                            },
                           ),
-                        ),
-                    ],
-                  ),
-                );
-              }
-            ),
+                      ],
+                    ),
+                  );
+                }),
           ),
           if (!iOS)
             Positioned(
@@ -171,9 +203,7 @@ class _PickedAttachmentState extends OptimizedState<PickedAttachment> with Autom
               child: TextButton(
                 style: TextButton.styleFrom(
                   backgroundColor: context.theme.colorScheme.secondary,
-                  shape: CircleBorder(
-                    side: BorderSide(color: context.theme.colorScheme.properSurface)
-                  ),
+                  shape: CircleBorder(side: BorderSide(color: context.theme.colorScheme.surfaceContainerHighest)),
                   padding: const EdgeInsets.all(0),
                   maximumSize: const Size(25, 25),
                   minimumSize: const Size(25, 25),
@@ -181,14 +211,19 @@ class _PickedAttachmentState extends OptimizedState<PickedAttachment> with Autom
                 ),
                 child: Icon(
                   Icons.close,
-                  color: context.theme.colorScheme.background,
+                  color: context.theme.colorScheme.surface,
                   size: 18,
                 ),
                 onPressed: () {
                   if (widget.controller != null) {
-                    widget.controller!.pickedAttachments.removeWhere((e) => e.path == widget.data.path);
-                    widget.controller!.chat.textFieldAttachments.removeWhere((e) => e == widget.data.path);
-                    widget.controller!.chat.save(updateTextFieldAttachments: true);
+                    widget.controller!.pickedAttachments.removeAt(widget.pickedAttachmentIndex);
+                    final remaining =
+                        widget.controller!.pickedAttachments.where((e) => e.path != null).map((e) => e.path!).toList();
+                    unawaited(ChatsSvc.setChatTextFieldAttachments(widget.controller!.chat, remaining));
+                    // Don't request focus if attachment picker is open
+                    if (!widget.controller!.showAttachmentPicker) {
+                      widget.controller!.lastFocusedNode.requestFocus();
+                    }
                   } else {
                     widget.onRemove.call(widget.data);
                   }
@@ -198,6 +233,36 @@ class _PickedAttachmentState extends OptimizedState<PickedAttachment> with Autom
         ],
       ),
     );
+  }
+
+  Widget _buildImage() {
+    // Use Image.file when we have a path (memory efficient)
+    if (imagePath != null) {
+      return Image.file(
+        File(imagePath!),
+        key: ValueKey(widget.data.path),
+        gaplessPlayback: true,
+        fit: iOS ? BoxFit.fitHeight : BoxFit.cover,
+        height: iOS ? 150 : 75,
+        width: iOS ? null : 75,
+        cacheWidth: 300,
+      );
+    }
+
+    // Fall back to Image.memory when we have bytes
+    if (imageBytes != null) {
+      return Image.memory(
+        imageBytes!,
+        key: ValueKey(widget.data.path),
+        gaplessPlayback: true,
+        fit: iOS ? BoxFit.fitHeight : BoxFit.cover,
+        height: iOS ? 150 : 75,
+        width: iOS ? null : 75,
+        cacheWidth: 300,
+      );
+    }
+
+    return const SizedBox.shrink();
   }
 
   @override

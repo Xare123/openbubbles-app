@@ -52,13 +52,18 @@ class DeleteNotificationHandler: MethodCallHandlerImpl() {
             val channelTag: String? = notification?.tag ?: tag
             Log.d(Constants.logTag, "Using Channel Tag: $channelTag (Notif: ${notification?.tag}; Param: $tag)")
             if (channelTag != null) {
-                // Get all notifications of the same tag/channel
-                val leftoverNotifications = notificationManager.activeNotifications.filter { it.tag == channelTag }
+                // Get all notifications of the same tag/channel, excluding the one we just cancelled
+                val leftoverNotifications = notificationManager.activeNotifications.filter { 
+                    it.tag == channelTag && it.id != notificationId 
+                }
 
-                // If the number of notifications is 1 and the ID of the notification is 0, it's a summary notification.
-                // We should cancel it.
-                if (leftoverNotifications.size == 0 || (leftoverNotifications.size == 1 && leftoverNotifications.first().id == 0)) {
-                    Log.d(Constants.logTag, "Cancelling notification summary")
+                Log.d(Constants.logTag, "Found ${leftoverNotifications.size} leftover notifications after deleting ID $notificationId")
+
+                // If there are no non-summary notifications left, or only the summary notification (ID = 0) remains,
+                // we should cancel the summary notification
+                val nonSummaryNotifications = leftoverNotifications.filter { it.id != 0 }
+                if (nonSummaryNotifications.isEmpty()) {
+                    Log.d(Constants.logTag, "No non-summary notifications remaining, cancelling notification summary")
                     notificationManager.cancel(channelTag, 0)
                 }
             }

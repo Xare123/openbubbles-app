@@ -48,10 +48,12 @@ Color darken(Color color, [double amount = .1]) {
 
 Color uiColorToColor(api.UIColor color) {
   if (color is api.UIColor_GrayscaleAlphaColorSpace) {
-    return Color.fromRGBO((color.white * 255).round(), (color.white * 255).round(), (color.white * 255).round(), color.alpha);
+    return Color.fromRGBO(
+        (color.white * 255).round(), (color.white * 255).round(), (color.white * 255).round(), color.alpha);
   }
   if (color is api.UIColor_RGBAColorSpace) {
-    return Color.fromRGBO((color.red * 255).round(), (color.green * 255).round(), (color.blue * 255).round(), color.alpha);
+    return Color.fromRGBO(
+        (color.red * 255).round(), (color.green * 255).round(), (color.blue * 255).round(), color.alpha);
   }
 
   throw Exception("Unknown color type $color");
@@ -66,22 +68,35 @@ Alignment parseAlignment(String alignment) {
 }
 
 Map<String, AvailableFont> availableFonts = {
-  "PRTimeFontIdentifierSFPro": AvailableFont(timeIdentifier: "PRTimeFontIdentifierSFPro", font: const TextStyle(fontFamily: "Inter"), name: (weight) => ".SFUI-Regular_wdth_opsz110000_GRAD_wght${weight.round().toRadixString(16).toUpperCase().padRight(7, "0")}"),
-  "PRTimeFontIdentifierSFRounded": AvailableFont(timeIdentifier: "PRTimeFontIdentifierSFRounded", font: const TextStyle(fontFamily: "Nunito"), name: (weight) => ".SFUIRounded-Regular_GRAD_wght${weight.round().toRadixString(16).toUpperCase().padRight(7, "0")}"),
-  "PRTimeFontIdentifierNewYorkAlpha": AvailableFont(timeIdentifier: "PRTimeFontIdentifierNewYorkAlpha", font: const TextStyle(fontFamily: "Alegreya"), name: (weight) => ".NewYork-Regular_opszC0000_wght${weight.round().toRadixString(16).toUpperCase().padRight(7, "0")}_GRAD"),
-  "PRTimeFontIdentifierSFCondensed": AvailableFont(timeIdentifier: "PRTimeFontIdentifierSFCondensed", font: const TextStyle(fontFamily: "RobotoCondensed"), name: (weight) => ".SFUI-Regular_wdth3C0000_opsz110000_GRAD_wght${weight.round().toRadixString(16).toUpperCase().padRight(7, "0")}"),
+  "PRTimeFontIdentifierSFPro": AvailableFont(
+      timeIdentifier: "PRTimeFontIdentifierSFPro",
+      font: const TextStyle(fontFamily: "Inter"),
+      name: (weight) =>
+          ".SFUI-Regular_wdth_opsz110000_GRAD_wght${weight.round().toRadixString(16).toUpperCase().padRight(7, "0")}"),
+  "PRTimeFontIdentifierSFRounded": AvailableFont(
+      timeIdentifier: "PRTimeFontIdentifierSFRounded",
+      font: const TextStyle(fontFamily: "Nunito"),
+      name: (weight) =>
+          ".SFUIRounded-Regular_GRAD_wght${weight.round().toRadixString(16).toUpperCase().padRight(7, "0")}"),
+  "PRTimeFontIdentifierNewYorkAlpha": AvailableFont(
+      timeIdentifier: "PRTimeFontIdentifierNewYorkAlpha",
+      font: const TextStyle(fontFamily: "Alegreya"),
+      name: (weight) =>
+          ".NewYork-Regular_opszC0000_wght${weight.round().toRadixString(16).toUpperCase().padRight(7, "0")}_GRAD"),
+  "PRTimeFontIdentifierSFCondensed": AvailableFont(
+      timeIdentifier: "PRTimeFontIdentifierSFCondensed",
+      font: const TextStyle(fontFamily: "RobotoCondensed"),
+      name: (weight) =>
+          ".SFUI-Regular_wdth3C0000_opsz110000_GRAD_wght${weight.round().toRadixString(16).toUpperCase().padRight(7, "0")}"),
 };
 
 void drawPosterText(Canvas canvas, Size size, List<TextSpan> text, api.SimplifiedPoster poster) {
   final textPainter = TextPainter(
     text: TextSpan(
       style: availableFonts[poster.titleConfiguration.timeFontConfiguration.timeFontIdentifier]?.font.copyWith(
-        color: Colors.white,
-        height: 1.1,
-        fontVariations: [
-          FontVariation.weight(poster.titleConfiguration.timeFontConfiguration.weight)
-        ]
-      ),
+          color: Colors.white,
+          height: 1.1,
+          fontVariations: [FontVariation.weight(poster.titleConfiguration.timeFontConfiguration.weight)]),
       children: text,
     ),
     textDirection: TextDirection.ltr,
@@ -98,75 +113,63 @@ void drawPosterText(Canvas canvas, Size size, List<TextSpan> text, api.Simplifie
   var config = poster.titleConfiguration.titleStyle!;
   if (config is api.PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle) {
     var color = uiColorToColor(config.colors.first);
-    shader = LinearGradient(
-      colors: [color, color]
-    ).createShader(textOffset & textPainter.size);
+    shader = LinearGradient(colors: [color, color]).createShader(textOffset & textPainter.size);
   }
   if (config is api.PRPosterContentMaterialStyle_PRPosterContentGradientStyle) {
     shader = LinearGradient(
-      colors: config.colors.map((color) => uiColorToColor(color)).toList(),
-      begin: parseAlignment(config.startPoint),
-      end: parseAlignment(config.endPoint),
-      stops: config.locations
-    ).createShader(textOffset & textPainter.size);
+            colors: config.colors.map((color) => uiColorToColor(color)).toList(),
+            begin: parseAlignment(config.startPoint),
+            end: parseAlignment(config.endPoint),
+            stops: config.locations)
+        .createShader(textOffset & textPainter.size);
   }
   if (config is api.PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle) {
     var color = uiColorToColor(poster.titleConfiguration.titleColor.color);
-    shader = LinearGradient(
-      colors: [color, color]
-    ).createShader(textOffset & textPainter.size);
+    shader = LinearGradient(colors: [color, color]).createShader(textOffset & textPainter.size);
   }
 
-  canvas.drawRect(textOffset & textPainter.size, Paint()
-    ..shader = shader
-    ..blendMode = BlendMode.srcIn);
+  canvas.drawRect(
+      textOffset & textPainter.size,
+      Paint()
+        ..shader = shader
+        ..blendMode = BlendMode.srcIn);
   canvas.restore();
 }
 
 Widget posterText(api.SimplifiedPoster poster, double fontSize, String text, {bool color = true}) {
-  var t = Text(
-      text, 
+  var t = Text(text,
       textAlign: TextAlign.center,
       overflow: TextOverflow.ellipsis,
       style: availableFonts[poster.titleConfiguration.timeFontConfiguration.timeFontIdentifier]?.font.copyWith(
-        fontSize: fontSize,
-        color: Colors.white,
-        height: 1.3,
-        fontVariations: [
-          FontVariation.weight(poster.titleConfiguration.timeFontConfiguration.weight)
-        ]
-      )
-  );
+          fontSize: fontSize,
+          color: Colors.white,
+          height: 1.3,
+          fontVariations: [FontVariation.weight(poster.titleConfiguration.timeFontConfiguration.weight)]));
   if (!color) return t;
 
   return ShaderMask(
-    blendMode: BlendMode.srcIn,
-    shaderCallback: (Rect bounds) {
-      var config = poster.titleConfiguration.titleStyle!;
-      if (config is api.PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle) {
-        var color = uiColorToColor(config.colors.first);
-        return LinearGradient(
-          colors: [color, color]
-        ).createShader(bounds);
-      }
-      if (config is api.PRPosterContentMaterialStyle_PRPosterContentGradientStyle) {
-        return LinearGradient(
-          colors: config.colors.map((color) => uiColorToColor(color)).toList(),
-          begin: parseAlignment(config.startPoint),
-          end: parseAlignment(config.endPoint),
-          stops: config.locations
-        ).createShader(bounds);
-      }
-      if (config is api.PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle) {
-        var color = uiColorToColor(poster.titleConfiguration.titleColor.color);
-        return LinearGradient(
-          colors: [color, color]
-        ).createShader(bounds);
-      }
-      throw Exception();
-    },
-    child: t
-  );
+      blendMode: BlendMode.srcIn,
+      shaderCallback: (Rect bounds) {
+        var config = poster.titleConfiguration.titleStyle!;
+        if (config is api.PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle) {
+          var color = uiColorToColor(config.colors.first);
+          return LinearGradient(colors: [color, color]).createShader(bounds);
+        }
+        if (config is api.PRPosterContentMaterialStyle_PRPosterContentGradientStyle) {
+          return LinearGradient(
+                  colors: config.colors.map((color) => uiColorToColor(color)).toList(),
+                  begin: parseAlignment(config.startPoint),
+                  end: parseAlignment(config.endPoint),
+                  stops: config.locations)
+              .createShader(bounds);
+        }
+        if (config is api.PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle) {
+          var color = uiColorToColor(poster.titleConfiguration.titleColor.color);
+          return LinearGradient(colors: [color, color]).createShader(bounds);
+        }
+        throw Exception();
+      },
+      child: t);
 }
 
 double getPosterPadding(api.PosterAsset asset) {
@@ -174,18 +177,23 @@ double getPosterPadding(api.PosterAsset asset) {
 }
 
 Color posterColorToColor(api.PosterColor color) {
-  return Color.fromARGB((color.alpha * 255).toInt(), (color.red * 255).toInt(), (color.green * 255).toInt(), (color.blue * 255).toInt());
+  return Color.fromARGB(
+      (color.alpha * 255).toInt(), (color.red * 255).toInt(), (color.green * 255).toInt(), (color.blue * 255).toInt());
 }
 
 api.PosterColor colorToPosterColor(Color color) {
-  return api.PosterColor(alpha: color.alpha.toDouble() / 255, blue: color.blue.toDouble() / 255, green: color.green.toDouble() / 255, red: color.red.toDouble() / 255);
+  return api.PosterColor(
+      alpha: color.alpha.toDouble() / 255,
+      blue: color.blue.toDouble() / 255,
+      green: color.green.toDouble() / 255,
+      red: color.red.toDouble() / 255);
 }
 
 Future<Map<String, ui.Image>> loadAssetImages(String path, api.PosterAsset asset) async {
   Map<String, ui.Image> images = {};
   for (var file in asset.files.entries) {
     print("Decoding image");
-    var data = await pushService.fileForAsset(path, asset, file.key, friendly: true).readAsBytes();
+    var data = await PushSvc.fileForAsset(path, asset, file.key, friendly: true).readAsBytes();
     images[file.key] = await decodeImageFromBytes(data);
   }
   return images;
@@ -208,13 +216,12 @@ Future<Map<String, ui.Image>> loadPosterImages(String path, api.SimplifiedPoster
 }
 
 class _ImagePosterState extends State<ImagePoster> {
-
   @override
   Widget build(BuildContext context) {
     return CustomPaint(
-              painter: PosterPainter(poster: widget.poster, images: widget.images, name: widget.name, desc: widget.desc),
-              child: const SizedBox.expand(),
-            );
+      painter: PosterPainter(poster: widget.poster, images: widget.images, name: widget.name, desc: widget.desc),
+      child: const SizedBox.expand(),
+    );
   }
 }
 
@@ -226,7 +233,7 @@ Future restorePoster(api.SimplifiedPoster? poster, String posterPath) async {
     for (var asset in photo.assets) {
       Map<String, Uint8List> entries = {};
       for (var file in asset.files.entries) {
-        File f = pushService.fileForAsset(posterPath, asset, file.key);
+        File f = PushSvc.fileForAsset(posterPath, asset, file.key);
         entries[file.key] = await f.readAsBytes();
       }
       asset.files = entries;
@@ -243,33 +250,37 @@ api.SimplifiedPoster createNewPoster(api.PosterType type, Color randomColor, api
   return api.SimplifiedPoster(
     role: role,
     titleConfiguration: api.PRPosterTitleStyleConfiguration(
-      alternateDateEnabled: false, 
-      contentsLuminence: 0, 
-      groupName: "PREditingLook", 
-      preferredTitleAlignment: 0, 
-      preferredTitleLayout: 0, 
-      timeFontConfiguration: api.PRPosterSystemTimeFontConfiguration(
-        isSystemItem: true, 
-        timeFontIdentifier: "PRTimeFontIdentifierSFPro", 
-        weight: 400,
-      ), 
-      titleColor: api.PRPosterColor(
-        preferredStyle: 2, 
-        identifier: "vibrantMaterialColor", 
-        suggested: false, 
-        color: api.UIColor.grayscaleAlphaColorSpace(colorComponents: 2, white: 1, alpha: 0.5, bin: base64Decode("MSAwLjU="), colorSpace: 4, class_: "PRPosterColor"),
-      ), 
-      titleContentStyle: Uint8List.fromList([]), 
-      userConfigured: false,
-      timeNumberingSystem: api.nsNull(),
-      titleStyle: api.PRPosterContentMaterialStyle.prPosterContentDiscreteColorsStyle(
-        variation: 0, 
-        colors: [colorToUIColor(saturateColor(randomColor))], 
-        vibrant: true, 
-        supportsVariation: true, 
-        needsToResolveVariation: false
-        )
-    ),
+        alternateDateEnabled: false,
+        contentsLuminence: 0,
+        groupName: "PREditingLook",
+        preferredTitleAlignment: 0,
+        preferredTitleLayout: 0,
+        timeFontConfiguration: api.PRPosterSystemTimeFontConfiguration(
+          isSystemItem: true,
+          timeFontIdentifier: "PRTimeFontIdentifierSFPro",
+          weight: 400,
+        ),
+        titleColor: api.PRPosterColor(
+          preferredStyle: 2,
+          identifier: "vibrantMaterialColor",
+          suggested: false,
+          color: api.UIColor.grayscaleAlphaColorSpace(
+              colorComponents: 2,
+              white: 1,
+              alpha: 0.5,
+              bin: base64Decode("MSAwLjU="),
+              colorSpace: 4,
+              class_: "PRPosterColor"),
+        ),
+        titleContentStyle: Uint8List.fromList([]),
+        userConfigured: false,
+        timeNumberingSystem: api.nsNull(),
+        titleStyle: api.PRPosterContentMaterialStyle.prPosterContentDiscreteColorsStyle(
+            variation: 0,
+            colors: [colorToUIColor(saturateColor(randomColor))],
+            vibrant: true,
+            supportsVariation: true,
+            needsToResolveVariation: false)),
     type: type,
   );
 }
@@ -293,18 +304,20 @@ Future<Color?> getVibrantColor(ui.Image image) async {
   return palette.lightVibrantColor?.color;
 }
 
-void drawAsset(Map<String, ui.Image> images, Canvas canvas, api.PosterAsset asset, Map<String, double> alphas, {bool Function(api.PhotoPosterLayer)? predicate}) {
+void drawAsset(Map<String, ui.Image> images, Canvas canvas, api.PosterAsset asset, Map<String, double> alphas,
+    {bool Function(api.PhotoPosterLayer)? predicate}) {
   asset.contents.layers.sort((a, b) => ((a.zPosition - b.zPosition) * 1000).round());
   var paint = Paint();
   for (var layer in asset.contents.layers) {
     if (!(predicate ?? (_) => true)(layer)) continue;
-    var imagerect2 = Rect.fromLTWH(0, 0, images[layer.filename]!.width.toDouble(), images[layer.filename]!.height.toDouble());
+    var imagerect2 =
+        Rect.fromLTWH(0, 0, images[layer.filename]!.width.toDouble(), images[layer.filename]!.height.toDouble());
     var alpha = alphas[layer.identifier] ?? 1;
     paint.color = Color.fromRGBO(0, 0, 0, alpha);
     canvas.drawImageRect(
-      images[layer.filename]!, 
-      imagerect2, 
-      Rect.fromLTWH(layer.frame.x, layer.frame.y, layer.frame.width, layer.frame.height), 
+      images[layer.filename]!,
+      imagerect2,
+      Rect.fromLTWH(layer.frame.x, layer.frame.y, layer.frame.width, layer.frame.height),
       paint,
     );
   }
@@ -322,7 +335,7 @@ void drawMonogram(api.PosterType_Monogram type, Size size, Canvas canvas) {
       ],
     ).createShader(rect);
   canvas.drawRect(rect, paint);
-  
+
   final textPainter = TextPainter(
     text: TextSpan(
       text: type.data.initials,
@@ -335,16 +348,18 @@ void drawMonogram(api.PosterType_Monogram type, Size size, Canvas canvas) {
   canvas.saveLayer(Offset.zero & size, Paint());
   Offset textOffset = Offset((size.width - textPainter.width) / 2, (size.height - textPainter.height) / 2);
   textPainter.paint(canvas, textOffset);
-  canvas.drawRect(textOffset & textPainter.size, Paint()
-    ..shader = LinearGradient(
-      begin: Alignment.topCenter,
-      end: Alignment.bottomCenter,
-      colors: [
-        saturateColor(posterColorToColor(type.data.topBackgroundColorDescription)),
-        saturateColor(posterColorToColor(type.data.backgroundColorDescription)),
-      ],
-    ).createShader(rect)
-    ..blendMode = BlendMode.srcIn);
+  canvas.drawRect(
+      textOffset & textPainter.size,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            saturateColor(posterColorToColor(type.data.topBackgroundColorDescription)),
+            saturateColor(posterColorToColor(type.data.backgroundColorDescription)),
+          ],
+        ).createShader(rect)
+        ..blendMode = BlendMode.srcIn);
   canvas.restore();
 }
 
@@ -370,11 +385,12 @@ Future<Uint8List> drawMonogramProfile(api.PosterType_Monogram type) async {
       colors: colors,
     ).createShader(rect);
   canvas.drawRect(rect, paint);
-  
+
   final textPainter = TextPainter(
     text: TextSpan(
       text: type.data.initials,
-      style: const TextStyle(color: Colors.white, fontSize: 280, fontVariations: [FontVariation.weight(500)], fontFamily: "Nunito"),
+      style: const TextStyle(
+          color: Colors.white, fontSize: 280, fontVariations: [FontVariation.weight(500)], fontFamily: "Nunito"),
     ),
     textDirection: TextDirection.ltr,
   );
@@ -388,21 +404,19 @@ Future<Uint8List> drawMonogramProfile(api.PosterType_Monogram type) async {
   return await imageToJpeg(image);
 }
 
-
 api.UIColor colorToUIColor(Color color) {
   var green = color.green.toDouble() / 255;
   var blue = color.blue.toDouble() / 255;
   var red = color.red.toDouble() / 255;
   return api.UIColor.rgbaColorSpace(
-    colorComponents: 4, 
-    green: green,
-    blue: blue, 
-    red: red, 
-    alpha: color.opacity,
-    rgb: utf8.encode("${red.toStringAsFixed(3)} ${green.toStringAsFixed(3)} ${blue.toStringAsFixed(3)}"),
-    colorSpace: 2,
-    class_: "UIColor"
-  );
+      colorComponents: 4,
+      green: green,
+      blue: blue,
+      red: red,
+      alpha: color.opacity,
+      rgb: utf8.encode("${red.toStringAsFixed(3)} ${green.toStringAsFixed(3)} ${blue.toStringAsFixed(3)}"),
+      colorSpace: 2,
+      class_: "UIColor");
 }
 
 class PosterPainter extends CustomPainter {
@@ -417,17 +431,18 @@ class PosterPainter extends CustomPainter {
     this.name,
     this.desc,
   });
-  
+
   @override
   void paint(Canvas canvas, Size size) {
-    
     canvas.clipRect(Rect.fromLTWH(0, 0, size.width, size.height));
 
     List<TextSpan> textParts = [];
     if (name != null) {
       var parts = name!.split(" ");
       if (desc != null) {
-        textParts.add(TextSpan(text: "$desc\n", style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600, fontFamily: "Roboto", height: 5)));
+        textParts.add(TextSpan(
+            text: "$desc\n",
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600, fontFamily: "Roboto", height: 5)));
         textParts.add(TextSpan(text: parts.first, style: const TextStyle(fontSize: 70)));
       } else {
         if (parts.length == 1) {
@@ -439,13 +454,11 @@ class PosterPainter extends CustomPainter {
       }
     }
 
-
-
     if (poster.type is api.PosterType_Photo) {
       var asset = (poster.type as api.PosterType_Photo).assets[0];
-    
+
       final layout = asset.contents.properties.portraitLayout;
-      
+
       // Scale to cover
       final scaleX = size.width / layout.visibleFrame.width;
       final scaleY = size.height / layout.visibleFrame.height;
@@ -457,10 +470,12 @@ class PosterPainter extends CustomPainter {
         translateX = (layout.visibleFrame.width - size.width / scale) / 2;
       } else {
         scale = scaleX;
-        translateY = (layout.visibleFrame.height - size.height / scale) / 3; // not / 2 to bias up, because faces are normally up
+        translateY =
+            (layout.visibleFrame.height - size.height / scale) / 3; // not / 2 to bias up, because faces are normally up
       }
 
-      final y = layout.imageSize.height - layout.visibleFrame.y - layout.visibleFrame.height; // starts counting from bottom
+      final y =
+          layout.imageSize.height - layout.visibleFrame.y - layout.visibleFrame.height; // starts counting from bottom
       // Translate and scale to focus only on the viewport part of the image
 
       canvas.save();
@@ -468,36 +483,34 @@ class PosterPainter extends CustomPainter {
       canvas.translate(-layout.visibleFrame.x, -y);
       canvas.translate(-translateX, -translateY); // center vertically
       drawAsset(images, canvas, asset, {},
-        predicate: (layer) => (poster.type as api.PosterType_Photo).assets[0].contents.properties.portraitLayout.clockLayerOrder != "ClockAboveBackground" || !layer.identifier.startsWith("foreground"));
+          predicate: (layer) =>
+              (poster.type as api.PosterType_Photo).assets[0].contents.properties.portraitLayout.clockLayerOrder !=
+                  "ClockAboveBackground" ||
+              !layer.identifier.startsWith("foreground"));
       canvas.restore();
 
       if (name != null) {
         drawPosterText(canvas, size, textParts, poster);
       }
 
-      if ((poster.type as api.PosterType_Photo).assets[0].contents.properties.portraitLayout.clockLayerOrder == "ClockAboveBackground") {
+      if ((poster.type as api.PosterType_Photo).assets[0].contents.properties.portraitLayout.clockLayerOrder ==
+          "ClockAboveBackground") {
         canvas.scale(scale, scale);
         canvas.translate(-layout.visibleFrame.x, -y);
         canvas.translate(-translateX, -translateY); // center vertically
-        drawAsset(images, canvas, asset, {},
-          predicate: (layer) => layer.identifier.startsWith("foreground"));
+        drawAsset(images, canvas, asset, {}, predicate: (layer) => layer.identifier.startsWith("foreground"));
       }
     } else if (poster.type is api.PosterType_Monogram) {
       drawMonogram(poster.type as api.PosterType_Monogram, size, canvas);
       drawPosterText(canvas, size, textParts, poster);
     } else if (poster.type is api.PosterType_Memoji) {
       var type = poster.type as api.PosterType_Memoji;
-      canvas.drawRect(Offset.zero & size, Paint()
-        ..color = posterColorToColor(type.background));
+      canvas.drawRect(Offset.zero & size, Paint()..color = posterColorToColor(type.background));
       var image = images["memoji"]!;
       var scale = size.width / image.width.toDouble();
       var imageHeight = image.height.toDouble() * scale;
-      canvas.drawImageRect(
-        image, 
-        Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()), 
-        Rect.fromLTWH(0, (size.height - imageHeight) / 2, size.width, imageHeight), 
-        Paint()
-      );
+      canvas.drawImageRect(image, Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+          Rect.fromLTWH(0, (size.height - imageHeight) / 2, size.width, imageHeight), Paint());
       drawPosterText(canvas, size, textParts, poster);
     }
   }

@@ -8,8 +8,8 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:get/get.dart';
 import 'package:metadata_fetch/metadata_fetch.dart';
-import 'package:share_plus/share_plus.dart' as sp;
-import 'package:tuple/tuple.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:bluebubbles/models/models.dart' show LocationAttachmentData;
 import 'package:universal_io/io.dart';
 
 class Share {
@@ -18,13 +18,22 @@ class Share {
     if (kIsDesktop) {
       showSnackbar("Unsupported", "Can't share files on desktop yet!");
     } else {
-      await sp.Share.shareXFiles([sp.XFile(filepath)], text: subject);
+      await SharePlus.instance.share(ShareParams(files: [XFile(filepath)], text: subject));
+    }
+  }
+
+  /// Share files with other apps.
+  static void files(List<String> filepaths) async {
+    if (kIsDesktop) {
+      showSnackbar("Unsupported", "Can't share files on desktop yet!");
+    } else {
+      await SharePlus.instance.share(ShareParams(files: filepaths.map((String path) => XFile(path)).toList()));
     }
   }
 
   /// Share text with other apps.
-  static void text(String subject, String text) {
-    sp.Share.share(text, subject: subject);
+  static void text(String text) async {
+    await SharePlus.instance.share(ShareParams(text: text));
   }
 
   static Future<void> location(Chat chat) async {
@@ -37,7 +46,7 @@ class Share {
       await showDialog(
           context: Get.context!,
           builder: (context) => AlertDialog(
-                backgroundColor: Get.theme.colorScheme.properSurface,
+                backgroundColor: Get.theme.colorScheme.surfaceContainerHighest,
                 title: Text(
                   "Location Services",
                   style: Get.textTheme.titleLarge,
@@ -49,16 +58,22 @@ class Share {
                 actions: [
                   if (!kIsDesktop || !Platform.isLinux)
                     TextButton(
-                        onPressed: () => Get.back(),
-                        child: Text("Cancel", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary))),
+                        onPressed: () => Navigator.of(Get.context!, rootNavigator: true).pop(),
+                        child: Text("Cancel",
+                            style:
+                                context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary))),
                   if (!kIsDesktop || !Platform.isLinux)
                     TextButton(
                         onPressed: () async => await Geolocator.openLocationSettings(),
-                        child: Text("Open Settings", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary))),
+                        child: Text("Open Settings",
+                            style:
+                                context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary))),
                   if (kIsDesktop && Platform.isLinux)
                     TextButton(
-                        onPressed: () => Get.back(),
-                        child: Text("OK", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary))),
+                        onPressed: () => Navigator.of(Get.context!, rootNavigator: true).pop(),
+                        child: Text("OK",
+                            style:
+                                context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary))),
                 ],
               ));
       if (!_serviceEnabled) {
@@ -75,7 +90,7 @@ class Share {
         await showDialog(
             context: Get.context!,
             builder: (context) => AlertDialog(
-                  backgroundColor: Get.theme.colorScheme.properSurface,
+                  backgroundColor: Get.theme.colorScheme.surfaceContainerHighest,
                   title: Text("Location Permission", style: Get.textTheme.titleLarge),
                   content: Text(
                     "BlueBubbles needs the Location permission to send Locations",
@@ -83,11 +98,13 @@ class Share {
                   ),
                   actions: [
                     TextButton(
-                        onPressed: () => Get.back(),
-                        child: Text("Cancel", style: Get.textTheme.bodyLarge!.copyWith(color: Get.theme.colorScheme.primary))),
+                        onPressed: () => Navigator.of(Get.context!, rootNavigator: true).pop(),
+                        child: Text("Cancel",
+                            style: Get.textTheme.bodyLarge!.copyWith(color: Get.theme.colorScheme.primary))),
                     TextButton(
                         onPressed: () async => await Geolocator.openLocationSettings(),
-                        child: Text("Open Settings", style: Get.textTheme.bodyLarge!.copyWith(color: Get.theme.colorScheme.primary)))
+                        child: Text("Open Settings",
+                            style: Get.textTheme.bodyLarge!.copyWith(color: Get.theme.colorScheme.primary)))
                   ],
                 ));
         if (_permissionGranted == LocationPermission.denied || _permissionGranted == LocationPermission.deniedForever) {
@@ -98,24 +115,25 @@ class Share {
 
     String? _attachmentGuid;
     String? fileName;
-    late final Uint8List bytes;
+    Uint8List? bytes;
     String? url;
     String? title;
 
-    Future<Tuple5<String, String, Uint8List, String, String?>> getLocationPreview() async {
+    Future<LocationAttachmentData> getLocationPreview() async {
       _locationData = await Geolocator.getCurrentPosition();
-      String vcfString = as.createAppleLocation(_locationData.latitude, _locationData.longitude);
+      String vcfString = AttachmentsSvc.createAppleLocation(_locationData.latitude, _locationData.longitude);
 
       // Build out the file we are going to send
       String _attachmentGuid = "temp-${randomString(8)}";
       String fileName = "$_attachmentGuid-CL.loc.vcf";
-      final bytes = Uint8List.fromList(utf8.encode(vcfString));
-      final meta = await MetadataFetch.extract(
-          "https://maps.apple.com/?ll=${_locationData.latitude},${_locationData.longitude}&q=${_locationData.latitude},${_locationData.longitude}");
-      String url = meta!.image!;
+      Uint8List bytes = Uint8List.fromList(utf8.encode(vcfString));
+
+      Metadata meta = await MetadataHelper.getLocationMetadata(_locationData);
+      String url = meta.image!;
       String? title = meta.title;
 
-      return Tuple5(_attachmentGuid, fileName, bytes, url, title);
+      return LocationAttachmentData(
+          guid: _attachmentGuid, fileName: fileName, bytes: bytes, mapImageUrl: url, title: title);
     }
 
     bool send = false;
@@ -128,25 +146,25 @@ class Share {
             future: getLocationPreview(),
             builder: (context, snapshot) {
               if (snapshot.data != null) {
-                _attachmentGuid = snapshot.data!.item1;
-                fileName = snapshot.data!.item2;
-                bytes = snapshot.data!.item3;
-                url = snapshot.data!.item4;
-                title = snapshot.data!.item5;
+                _attachmentGuid = snapshot.data!.guid;
+                fileName = snapshot.data!.fileName;
+                bytes = snapshot.data!.bytes;
+                url = snapshot.data!.mapImageUrl;
+                title = snapshot.data!.title;
               }
               if (url == null) {
                 return AbsorbPointer(
                   child: AlertDialog(
-                    backgroundColor: Get.theme.colorScheme.properSurface,
+                    backgroundColor: Get.theme.colorScheme.surfaceContainerHighest,
                     title: Text("Loading Location...", style: Get.textTheme.titleLarge),
                     content: buildProgressIndicator(context),
                   ),
                 );
               }
               return AlertDialog(
-                backgroundColor: Get.theme.colorScheme.properSurface,
+                backgroundColor: Get.theme.colorScheme.surfaceContainerHighest,
                 title: Text("Send Location?", style: Get.textTheme.titleLarge),
-                content: Container(
+                content: SizedBox(
                   width: 150,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -181,14 +199,16 @@ class Share {
                 ),
                 actions: [
                   TextButton(
-                      onPressed: () => Get.back(),
-                      child: Text("Cancel", style: Get.textTheme.bodyLarge!.copyWith(color: Get.theme.colorScheme.primary))),
+                      onPressed: () => Navigator.of(Get.context!, rootNavigator: true).pop(),
+                      child: Text("Cancel",
+                          style: Get.textTheme.bodyLarge!.copyWith(color: Get.theme.colorScheme.primary))),
                   TextButton(
                       onPressed: () {
                         send = true;
-                        Get.back();
+                        Navigator.of(Get.context!, rootNavigator: true).pop();
                       },
-                      child: Text("Send", style: Get.textTheme.bodyLarge!.copyWith(color: Get.theme.colorScheme.primary)))
+                      child:
+                          Text("Send", style: Get.textTheme.bodyLarge!.copyWith(color: Get.theme.colorScheme.primary)))
                 ],
               );
             }));
@@ -197,6 +217,7 @@ class Share {
     }
 
     if (!send) return;
+    if (bytes == null) return;
 
     final message = Message(
       guid: _attachmentGuid,
@@ -211,14 +232,14 @@ class Share {
           uti: "public.vlocation",
           bytes: bytes,
           transferName: fileName,
-          totalBytes: bytes.length,
+          totalBytes: bytes!.length,
         ),
       ],
       isFromMe: true,
       handleId: 0,
     );
 
-    outq.queue(OutgoingItem(
+    OutgoingMsgHandler.queue(OutgoingItem(
       type: QueueType.sendAttachment,
       chat: chat,
       message: message,

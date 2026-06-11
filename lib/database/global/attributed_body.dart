@@ -8,26 +8,27 @@ class AttributedBody {
   final List<Run> runs;
 
   factory AttributedBody.empty() => AttributedBody(
-    string: "",
-    runs: []
-  );
+        string: "",
+        runs: [],
+      );
 
   factory AttributedBody.raw(String string) => AttributedBody(
-    string: string,
-    runs: [
-      Run(range: [0, string.length], attributes: Attributes(messagePart: 0))
-    ]
-  );
+        string: string,
+        runs: [
+          Run(range: [0, string.length], attributes: Attributes(messagePart: 0)),
+        ],
+      );
 
   factory AttributedBody.fromMap(Map<String, dynamic> json) => AttributedBody(
-    string: json["string"],
-    runs: json["runs"] == null ? [] : List<Run>.from(json["runs"].map((x) => Run.fromMap(x!.cast<String, Object>()))),
-  );
+        string: json["string"],
+        runs:
+            json["runs"] == null ? [] : List<Run>.from(json["runs"].map((x) => Run.fromMap(x!.cast<String, Object>()))),
+      );
 
   Map<String, dynamic> toMap() => {
-    "string": string,
-    "runs": List<Map<String, dynamic>>.from(runs.map((x) => x.toMap())),
-  };
+        "string": string,
+        "runs": List<Map<String, dynamic>>.from(runs.map((x) => x.toMap())),
+      };
 }
 
 class Run {
@@ -43,14 +44,14 @@ class Run {
   bool get hasMention => attributes?.mention != null;
 
   factory Run.fromMap(Map<String, dynamic> json) => Run(
-    range: json["range"] == null ? [] : List<int>.from(json["range"].map((x) => x)),
-    attributes: json["attributes"] == null ? null : Attributes.fromMap(json["attributes"]!.cast<String, Object>()),
-  );
+        range: json["range"] == null ? [] : List<int>.from(json["range"].map((x) => x)),
+        attributes: json["attributes"] == null ? null : Attributes.fromMap(json["attributes"]!.cast<String, Object>()),
+      );
 
   Map<String, dynamic> toMap() => {
-    "range": range,
-    "attributes": attributes?.toMap(),
-  };
+        "range": range,
+        "attributes": attributes?.toMap(),
+      };
 }
 
 class Attributes {
@@ -72,7 +73,6 @@ class Attributes {
   final String? mention;
   final String? audioTranscript;
   final StickerData? stickerData;
-
   final int? textEffect;
   final bool? bold;
   final bool? italic;
@@ -89,17 +89,17 @@ class Attributes {
   static const int JITTER = 10;
 
   factory Attributes.fromMap(Map<String, dynamic> json) => Attributes(
-    messagePart: json["__kIMMessagePartAttributeName"],
-    attachmentGuid: json["__kIMFileTransferGUIDAttributeName"],
-    mention: json["__kIMMentionConfirmedMention"],
-    audioTranscript: json["IMAudioTranscription"],
-    stickerData: json["sticker"] != null ? StickerData.fromMap(json["sticker"]) : null,
-    textEffect: json["__kIMTextEffectAttributeName"],
-    bold: json["__kIMTextBoldAttributeName"] == 1,
-    italic: json["__kIMTextItalicAttributeName"] == 1,
-    strikethrough: json["__kIMTextStrikethroughAttributeName"] == 1,
-    underline: json["__kIMTextUnderlineAttributeName"] == 1,
-  );
+        messagePart: json["__kIMMessagePartAttributeName"],
+        attachmentGuid: json["__kIMFileTransferGUIDAttributeName"],
+        mention: json["__kIMMentionConfirmedMention"],
+        audioTranscript: json["IMAudioTranscription"],
+        stickerData: json["sticker"] != null ? StickerData.fromMap(json["sticker"]) : null,
+        textEffect: json["__kIMTextEffectAttributeName"],
+        bold: json["__kIMTextBoldAttributeName"] == 1,
+        italic: json["__kIMTextItalicAttributeName"] == 1,
+        strikethrough: json["__kIMTextStrikethroughAttributeName"] == 1,
+        underline: json["__kIMTextUnderlineAttributeName"] == 1,
+      );
 
   Map<String, dynamic> toMap() {
     // Only include non-null values
@@ -119,37 +119,37 @@ class Attributes {
 }
 
 class StickerData {
-    double msgWidth;
-    double rotation;
-    int sai;
-    double scale;
-    bool? update;
-    int sli;
-    double normalizedX;
-    double normalizedY;
-    int version;
-    String hash;
-    int safi;
-    int effectType;
-    String stickerId;
+  double msgWidth;
+  double rotation;
+  int sai;
+  double scale;
+  bool? update;
+  int sli;
+  double normalizedX;
+  double normalizedY;
+  int version;
+  String hash;
+  int safi;
+  int effectType;
+  String stickerId;
 
-    StickerData({
-        required this.msgWidth,
-        required this.rotation,
-        required this.sai,
-        required this.scale,
-        required this.update,
-        required this.sli,
-        required this.normalizedX,
-        required this.normalizedY,
-        required this.version,
-        required this.hash,
-        required this.safi,
-        required this.effectType,
-        required this.stickerId,
-    });
+  StickerData({
+    required this.msgWidth,
+    required this.rotation,
+    required this.sai,
+    required this.scale,
+    required this.update,
+    required this.sli,
+    required this.normalizedX,
+    required this.normalizedY,
+    required this.version,
+    required this.hash,
+    required this.safi,
+    required this.effectType,
+    required this.stickerId,
+  });
 
-    factory StickerData.fromMap(Map<String, dynamic> json) => StickerData(
+  factory StickerData.fromMap(Map<String, dynamic> json) => StickerData(
         msgWidth: json["msgWidth"]?.toDouble(),
         rotation: json["rotation"]?.toDouble(),
         sai: json["sai"],
@@ -163,9 +163,9 @@ class StickerData {
         safi: json["safi"],
         effectType: json["effectType"],
         stickerId: json["stickerId"],
-    );
+      );
 
-    Map<String, dynamic> toMap() => {
+  Map<String, dynamic> toMap() => {
         "msgWidth": msgWidth,
         "rotation": rotation,
         "sai": sai,
@@ -179,5 +179,5 @@ class StickerData {
         "safi": safi,
         "effectType": effectType,
         "stickerId": stickerId,
-    };
+      };
 }

@@ -1,19 +1,15 @@
-import 'dart:async';
 import 'dart:math';
 import 'dart:ui';
 import 'package:bluebubbles/app/layouts/conversation_list/widgets/tile/conversation_tile.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
-import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
-import 'package:faker/faker.dart' hide Color;
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 class PinnedTileTextBubble extends CustomStateful<ConversationTileController> {
-  PinnedTileTextBubble({
+  const PinnedTileTextBubble({
     super.key,
     required this.chat,
     required this.size,
@@ -29,96 +25,37 @@ class PinnedTileTextBubble extends CustomStateful<ConversationTileController> {
 
 class PinnedTileTextBubbleState extends CustomState<PinnedTileTextBubble, void, ConversationTileController> {
   final bool leftSide = Random().nextBool();
-  Message? lastMessage;
-  String subtitle = "Unknown";
-  String fakeText = faker.lorem.words(1).join(" ");
-  late final StreamSubscription sub;
-  String? cachedLatestMessageGuid = "";
-  DateTime? cachedDateCreated;
 
   Chat get chat => widget.chat;
   double get size => widget.size;
-  bool get showTail => !chat.isGroup;
+  // Groups always place the tail on the left (pointing toward the sender icon).
+  bool get effectiveLeftSide => chat.isGroup ? true : leftSide;
 
   @override
   void initState() {
     super.initState();
-
     tag = "${controller.chat.guid}-pinned";
     // keep controller in memory since the widget is part of a list
     // (it will be disposed when scrolled out of view)
     forceDelete = false;
-    subtitle = MessageHelper.getNotificationText(controller.chat.latestMessage);
-    lastMessage = controller.chat.latestMessage;
-    cachedLatestMessageGuid = controller.chat.latestMessage.guid!;
-    fakeText = faker.lorem.words(subtitle.split(" ").length).join(" ");
-    // run query after render has completed
-    if (!kIsWeb) {
-      updateObx(() {
-        final latestMessageQuery = (Database.messages.query(Message_.dateDeleted.isNull())
-              ..link(Message_.chat, Chat_.guid.equals(controller.chat.guid))
-              ..order(Message_.dateCreated, flags: Order.descending))
-            .watch();
-
-        sub = latestMessageQuery.listen((Query<Message> query) async {
-          final message = await runAsync(() {
-            return query.findFirst();
-          });
-          // check if we really need to update this widget
-          if (message != null && message.guid != cachedLatestMessageGuid) {
-            message.handle = message.getHandle();
-            lastMessage = message;
-            String newSubtitle = MessageHelper.getNotificationText(message);
-            if (newSubtitle != subtitle) {
-              setState(() {
-                subtitle = newSubtitle;
-                fakeText = faker.lorem.words(subtitle.split(" ").length).join(" ");
-              });
-            }
-          }
-          cachedLatestMessageGuid = message?.guid;
-        });
-      });
-    } else {
-      sub = WebListeners.newMessage.listen((tuple) {
-        final message = tuple.item1;
-        if (tuple.item2?.guid == controller.chat.guid &&
-            (cachedDateCreated == null || message.dateCreated!.isAfter(cachedDateCreated!))) {
-          if (message.guid != cachedLatestMessageGuid) {
-            String newSubtitle = MessageHelper.getNotificationText(message);
-            if (newSubtitle != subtitle) {
-              setState(() {
-                subtitle = newSubtitle;
-                fakeText = faker.lorem.words(subtitle.split(" ").length).join(" ");
-              });
-            }
-          }
-          cachedDateCreated = message.dateCreated;
-          cachedLatestMessageGuid = message.guid;
-        }
-      });
-    }
   }
 
-  @override
-  void dispose() {
-    sub.cancel();
-    super.dispose();
-  }
-
-  List<Color> getBubbleColors() {
+  List<Color> getBubbleColors(Message? lastMessage) {
+    // Default to the received-bubble color (same as text_bubble.dart for incoming messages).
     List<Color> bubbleColors = [
-      context.theme.colorScheme.bubble(context, chat.isIMessage),
-      context.theme.colorScheme.bubble(context, chat.isIMessage)
+      context.theme.colorScheme.surfaceContainerHighest,
+      context.theme.colorScheme.surfaceContainerHighest,
     ];
     if (lastMessage == null) return bubbleColors;
-    if (!ss.settings.colorfulAvatars.value && ss.settings.colorfulBubbles.value && !lastMessage!.isFromMe!) {
-      if (lastMessage!.handle?.color == null) {
-        bubbleColors = toColorGradient(lastMessage!.handle?.address);
+    if (!SettingsSvc.settings.colorfulAvatars.value &&
+        SettingsSvc.settings.colorfulBubbles.value &&
+        !lastMessage.isFromMe!) {
+      if (lastMessage.handleRelation.target?.color == null) {
+        bubbleColors = toColorGradient(lastMessage.handleRelation.target?.address);
       } else {
         bubbleColors = [
-          HexColor(lastMessage!.handle!.color!),
-          HexColor(lastMessage!.handle!.color!).lightenAmount(0.075),
+          HexColor(lastMessage.handleRelation.target!.color!),
+          HexColor(lastMessage.handleRelation.target!.color!).lightenAmount(0.075),
         ];
       }
     }
@@ -128,75 +65,93 @@ class PinnedTileTextBubbleState extends CustomState<PinnedTileTextBubble, void, 
   @override
   Widget build(BuildContext context) {
     return Obx(() {
-      final hideInfo = ss.settings.redactedMode.value && ss.settings.hideMessageContent.value;
-      String _subtitle = hideInfo ? fakeText : subtitle;
+      final chatState = ChatsSvc.getChatState(controller.chat.guid);
+      final lastMessage = chatState?.latestMessage.value;
+      final subtitle = chatState?.subtitle.value ?? '';
 
-      final unread = GlobalChatService.unreadState(controller.chat.guid).value;
-      if (!unread || lastMessage?.associatedMessageGuid != null || lastMessage!.isFromMe! || isNullOrEmpty(_subtitle)) {
+      final unread = chatState?.hasUnreadMessage.value ?? false;
+      // Null-safe isFromMe: treat null as false (unknown sender → show the bubble)
+      final isFromMe = lastMessage?.isFromMe == true;
+      if (!unread || lastMessage?.associatedMessageGuid != null || isFromMe || isNullOrEmpty(subtitle)) {
         return const SizedBox.shrink();
       }
 
-      final background = getBubbleColors().first.withOpacity(0.7);
+      final background = getBubbleColors(lastMessage).first.withValues(alpha: 0.95);
       return Align(
-        alignment: showTail
-            ? leftSide
-                ? Alignment.centerLeft
-                : Alignment.centerRight
-            : Alignment.center,
+        // Groups: bubble grows up from its Positioned anchor → top-left align.
+        // DMs: center the bubble on the appropriate side.
+        alignment:
+            chat.isGroup ? Alignment.topLeft : (effectiveLeftSide ? Alignment.centerLeft : Alignment.centerRight),
         child: Padding(
           padding: EdgeInsets.only(
-            left: showTail
-                ? leftSide
-                    ? size * 0.06
-                    : size * 0.02
-                : size * 0.04,
-            right: showTail
-                ? leftSide
-                    ? size * 0.02
-                    : size * 0.06
-                : size * 0.04,
+            left: effectiveLeftSide ? size * 0.06 : size * 0.02,
+            right: effectiveLeftSide ? size * 0.02 : size * 0.06,
           ),
           child: Stack(
             clipBehavior: Clip.none,
             children: <Widget>[
-              if (showTail)
-                Positioned(
-                  top: -size * 0.08,
-                  right: leftSide ? null : size * 0.05,
-                  left: leftSide ? size * 0.05 : null,
-                  child: CustomPaint(
-                    size: Size(size * 0.21, size * 0.105),
-                    painter: TailPainter(leftSide: leftSide, background: background),
-                  ),
-                ),
               ConstrainedBox(
-                constraints: BoxConstraints(minWidth: showTail ? size * 0.3 : 0),
-                child: ClipRRect(
-                  clipBehavior: Clip.antiAlias,
-                  borderRadius: BorderRadius.circular(size * 0.125),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 2, sigmaY: 2),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 3.0,
-                        horizontal: 6.0,
+                constraints: BoxConstraints(minWidth: size * 0.3),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(size * 0.125),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.15),
+                        blurRadius: 8,
+                        spreadRadius: 2,
+                        offset: const Offset(0, 2),
                       ),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(size * 0.125),
-                        color: background,
-                      ),
-                      child: Text(
-                        _subtitle,
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: clampDouble((size ~/ 30).toDouble(), 1, 3).toInt(),
-                        textAlign: TextAlign.center,
-                        style: context.theme.textTheme.bodySmall!.copyWith(
-                            fontSize: (size / 10).clamp(context.theme.textTheme.bodySmall!.fontSize!, double.infinity),
-                            color: context.theme.colorScheme
-                                .onBubble(context, chat.isIMessage)
-                                .withOpacity(ss.settings.colorfulBubbles.value ? 1 : 0.85)),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    clipBehavior: Clip.antiAlias,
+                    borderRadius: BorderRadius.circular(size * 0.125),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 2, sigmaY: 2),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 3.0,
+                          horizontal: 6.0,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(size * 0.125),
+                          color: background,
+                        ),
+                        child: Text(
+                          subtitle,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: clampDouble((size ~/ 30).toDouble(), 1, 2).toInt(),
+                          textAlign: TextAlign.center,
+                          style: context.theme.textTheme.bodySmall!.copyWith(
+                            fontSize: (size / 12).clamp(
+                              context.theme.textTheme.bodySmall!.fontSize! * 0.85,
+                              double.infinity,
+                            ),
+                            color: SettingsSvc.settings.colorfulBubbles.value
+                                ? getBubbleColors(lastMessage).first.oppositeLightenOrDarken(75)
+                                : context.theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
                       ),
                     ),
+                  ),
+                ),
+              ),
+              // Tail renders after the bubble so it paints above the shadow.
+              Positioned(
+                bottom: -size * 0.06,
+                right: effectiveLeftSide ? null : size * 0.05,
+                left: effectiveLeftSide ? size * 0.05 : null,
+                child: Transform.scale(
+                  // scaleY: -1 flips the tail to point downward (it's below the bubble).
+                  // scaleX: -1 additionally mirrors horizontally for groups so the
+                  // tail points left toward the sender icon.
+                  scaleX: chat.isGroup ? -1 : 1,
+                  scaleY: -1,
+                  child: CustomPaint(
+                    size: Size(size * 0.15, size * 0.075),
+                    painter: TailPainter(leftSide: effectiveLeftSide, background: background),
                   ),
                 ),
               ),

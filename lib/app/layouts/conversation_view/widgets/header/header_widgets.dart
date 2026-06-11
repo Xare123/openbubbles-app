@@ -1,23 +1,25 @@
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:bluebubbles/app/layouts/chat_creator/chat_creator.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
+import 'package:bluebubbles/app/layouts/chat_creator/new_chat_creator.dart';
+import 'package:bluebubbles/app/state/chat_state_scope.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/src/rust/api/api.dart' as api;
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:universal_io/io.dart';
-import 'package:bluebubbles/services/network/backend_service.dart';
-import 'package:bluebubbles/src/rust/api/api.dart' as api;
-import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+bool get iOS => SettingsSvc.settings.skin.value == Skins.iOS;
+
 class ManualMark extends StatefulWidget {
-  const ManualMark({required this.controller});
+  const ManualMark({super.key, required this.controller});
 
   final ConversationViewController controller;
 
@@ -25,7 +27,7 @@ class ManualMark extends StatefulWidget {
   State<StatefulWidget> createState() => ManualMarkState();
 }
 
-class ManualMarkState extends OptimizedState<ManualMark> {
+class ManualMarkState extends State<ManualMark> with ThemeHelpers {
   bool marked = false;
   bool marking = false;
 
@@ -33,7 +35,9 @@ class ManualMarkState extends OptimizedState<ManualMark> {
 
   @override
   Widget build(BuildContext context) {
-    final manualMark = ss.settings.enablePrivateAPI.value && ss.settings.privateManualMarkAsRead.value && !(chat.autoSendReadReceipts ?? false);
+    final manualMark = SettingsSvc.settings.enablePrivateAPI.value &&
+        SettingsSvc.settings.privateManualMarkAsRead.value &&
+        !(chat.autoSendReadReceipts ?? false);
     return Obx(() {
       if (!manualMark && !widget.controller.inSelectMode.value) return const SizedBox.shrink();
       return Row(
@@ -41,23 +45,30 @@ class ManualMarkState extends OptimizedState<ManualMark> {
         children: [
           IconButton(
             icon: Icon(
-              widget.controller.inSelectMode.value ? (iOS ? CupertinoIcons.trash : Icons.delete_outlined)
-                  : marking ? (iOS ? CupertinoIcons.arrow_2_circlepath : Icons.sync)
-                  : marked ? (iOS ? CupertinoIcons.app : Icons.mark_chat_read_outlined)
-                  : (iOS ? CupertinoIcons.app_badge : Icons.mark_chat_unread_outlined),
-              color: !iOS ? context.theme.colorScheme.onBackground
+              widget.controller.inSelectMode.value
+                  ? (iOS ? CupertinoIcons.trash : Icons.delete_outlined)
+                  : marking
+                      ? (iOS ? CupertinoIcons.arrow_2_circlepath : Icons.sync)
+                      : marked
+                          ? (iOS ? CupertinoIcons.app : Icons.mark_chat_read_outlined)
+                          : (iOS ? CupertinoIcons.app_badge : Icons.mark_chat_unread_outlined),
+              color: !iOS
+                  ? context.theme.colorScheme.onSurface
                   : (!marked && !marking || widget.controller.inSelectMode.value)
-                  ? context.theme.colorScheme.primary
-                  : context.theme.colorScheme.outline,
+                      ? context.theme.colorScheme.primary
+                      : context.theme.colorScheme.outline,
             ),
-            tooltip: widget.controller.inSelectMode.value ? "Delete"
-              : marking ? null
-              : marked ? "Mark Unread"
-              : "Mark Read",
+            tooltip: widget.controller.inSelectMode.value
+                ? "Delete"
+                : marking
+                    ? null
+                    : marked
+                        ? "Mark Unread"
+                        : "Mark Read",
             onPressed: () async {
               if (widget.controller.inSelectMode.value) {
                 for (Message m in widget.controller.selected) {
-                  ms(chat.guid).removeMessage(m);
+                  MessagesSvc(chat.guid).removeMessage(m);
                   Message.softDelete(m.guid!);
                 }
                 widget.controller.inSelectMode.value = false;
@@ -69,9 +80,9 @@ class ManualMarkState extends OptimizedState<ManualMark> {
                 marking = true;
               });
               if (!marked) {
-                await backend.markRead(chat, ss.settings.privateMarkChatAsRead.value);
+                await BackendSvc.markRead(chat, SettingsSvc.settings.privateMarkChatAsRead.value);
               } else {
-                await backend.markUnread(chat);
+                await BackendSvc.markUnread(chat);
               }
               setState(() {
                 marking = false;
@@ -83,16 +94,16 @@ class ManualMarkState extends OptimizedState<ManualMark> {
             IconButton(
               icon: Icon(
                 iOS ? CupertinoIcons.arrow_right : Icons.forward_outlined,
-                color: !iOS ? context.theme.colorScheme.onBackground : context.theme.colorScheme.primary,
+                color: !iOS ? context.theme.colorScheme.onSurface : context.theme.colorScheme.primary,
               ),
               onPressed: () async {
                 List<PlatformFile> attachments = [];
                 String text = "";
                 widget.controller.selected.sort((a, b) => Message.sort(a, b, descending: false));
                 for (Message m in widget.controller.selected) {
-                  final _attachments = m.attachments
-                      .where((e) => as.getContent(e!, autoDownload: false) is PlatformFile)
-                      .map((e) => as.getContent(e!, autoDownload: false) as PlatformFile);
+                  final _attachments = m.dbAttachments
+                      .where((e) => AttachmentsSvc.getContent(e, autoDownload: false) is PlatformFile)
+                      .map((e) => AttachmentsSvc.getContent(e, autoDownload: false) as PlatformFile);
                   for (PlatformFile a in _attachments) {
                     Uint8List? bytes = a.bytes;
                     bytes ??= await File(a.path!).readAsBytes();
@@ -113,9 +124,9 @@ class ManualMarkState extends OptimizedState<ManualMark> {
                 }
                 widget.controller.inSelectMode.value = false;
                 widget.controller.selected.clear();
-                ns.pushAndRemoveUntil(
+                NavigationSvc.pushAndRemoveUntil(
                   context,
-                  ChatCreator(
+                  NewChatCreator(
                     initialText: text,
                     initialAttachments: attachments,
                   ),
@@ -129,9 +140,8 @@ class ManualMarkState extends OptimizedState<ManualMark> {
   }
 }
 
-
 class FaceTimeBtn extends StatefulWidget {
-  const FaceTimeBtn({required this.controller});
+  const FaceTimeBtn({super.key, required this.controller});
 
   final ConversationViewController controller;
 
@@ -139,32 +149,43 @@ class FaceTimeBtn extends StatefulWidget {
   State<StatefulWidget> createState() => FaceTimeBtnState();
 }
 
-class FaceTimeBtnState extends OptimizedState<FaceTimeBtn> {
+class FaceTimeBtnState extends State<FaceTimeBtn> {
   bool marked = false;
   bool marking = false;
-
   List<String> ftSupportedParticipants = [];
 
+  Chat get chat => widget.controller.chat;
 
   @override
   void initState() {
     super.initState();
     (() async {
-      var data = await chat.getConversationData();
-      ftSupportedParticipants = await api.validateTargetsFacetime(state: pushService.state!.client, targets: data.participants, sender: await chat.ensureHandle());
-      setState(() { });
+      final data = await chat.getConversationData();
+      ftSupportedParticipants = await api.validateTargetsFacetime(
+        state: PushSvc.state!.client,
+        targets: data.participants,
+        sender: await chat.ensureHandle(),
+      );
+      if (mounted) {
+        setState(() {});
+      }
     })();
   }
 
-  Chat get chat => widget.controller.chat;
-
   @override
   Widget build(BuildContext context) {
-    if (ftSupportedParticipants.length != (chat.participants.length + 1)) return const SizedBox.shrink();
+    if (ftSupportedParticipants.length != (chat.handles.length + 1)) {
+      return const SizedBox.shrink();
+    }
+
     return Obx(() {
-      // first active FT session that contains *all* of our chat's members
-      final session = pushService.activeSessions.firstWhereOrNull((s) => chat.participants.every((p) => s.members.any((m) => m.handle == RustPushBBUtils.bbHandleToRust(p))));
+      final session = PushSvc.activeSessions.firstWhereOrNull(
+        (s) => chat.handles.every(
+          (p) => s.members.any((m) => m.handle == RustPushBBUtils.bbHandleToRust(p)),
+        ),
+      );
       Logger.info("Guid $session");
+
       if (session != null) {
         return Padding(
           padding: iOS ? const EdgeInsets.only(top: 15) : const EdgeInsets.symmetric(horizontal: 5),
@@ -173,28 +194,31 @@ class FaceTimeBtnState extends OptimizedState<FaceTimeBtn> {
             color: context.theme.colorScheme.bubble(context, false),
             child: InkWell(
               onTap: () async {
-                var participants = session.members.where((a) => !session.myHandles.contains(a.handle)).map((a) {
+                final participants = session.members.where((a) => !session.myHandles.contains(a.handle)).map((a) {
                   if (a.nickname != null) {
                     return Handle(address: "Maybe: ${a.nickname}");
-                  } else {
-                    return RustPushBBUtils.rustHandleToBB(a.handle);
                   }
+                  return RustPushBBUtils.rustHandleToBB(a.handle);
                 }).toList();
-                pushService.chosenFTRoomGuid = session.groupId;
-                // should be cached
-                var link = await api.getFtLink(facetime: pushService.state!.ftClient, usage: "next");
-                var desc = participants.map((p) => p.displayName).join(" & ");
-                // rotate link
-                pushService.rotateLink().catchError((e, s) {
+
+                PushSvc.chosenFTRoomGuid = session.groupId;
+                final link = await api.getFtLink(facetime: PushSvc.state!.ftClient, usage: "next");
+                final desc = participants.map((p) => p.displayName).join(" & ");
+
+                PushSvc.rotateLink().catchError((e, s) {
                   Logger.error("Failed to rotate link", error: e, trace: s);
                 });
 
                 if (Platform.isAndroid) {
-                  await mcs.invokeMethod("launch-facetime", {'link': link, 'desc': desc, 'callUuid': session.groupId});
+                  await MethodChannelSvc.invokeMethod("launch-facetime", {
+                    'link': link,
+                    'desc': desc,
+                    'callUuid': session.groupId,
+                  });
                 } else {
                   await launchUrl(
-                      Uri.parse(link),
-                      mode: LaunchMode.externalApplication
+                    Uri.parse(link),
+                    mode: LaunchMode.externalApplication,
                   );
                 }
               },
@@ -207,37 +231,47 @@ class FaceTimeBtnState extends OptimizedState<FaceTimeBtn> {
                     mainAxisSize: MainAxisSize.min,
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(iOS ? CupertinoIcons.video_camera_solid : Icons.video_call,
-                          color: context.theme.colorScheme.onBubble(context, false), size: 20),
+                      Icon(
+                        iOS ? CupertinoIcons.video_camera_solid : Icons.video_call,
+                        color: context.theme.colorScheme.onBubble(context, false),
+                        size: 20,
+                      ),
                       const SizedBox(width: 2.5),
-                      Text("Join",
-                          style: context.theme.textTheme.bodyMedium!.copyWith(color: context.theme.colorScheme.onBubble(context, false), fontSize: 15)),
+                      Text(
+                        "Join",
+                        style: context.theme.textTheme.bodyMedium!.copyWith(
+                          color: context.theme.colorScheme.onBubble(context, false),
+                          fontSize: 15,
+                        ),
+                      ),
                     ],
                   ),
                 ),
               ),
             ),
-          )
+          ),
         );
       }
+
       return Padding(
         padding: iOS ? const EdgeInsets.only(top: 5) : EdgeInsets.zero,
         child: IconButton(
           icon: Icon(
-            (iOS ? CupertinoIcons.video_camera : Icons.videocam_outlined),
-            color: !iOS ? context.theme.colorScheme.onBackground
+            iOS ? CupertinoIcons.video_camera : Icons.videocam_outlined,
+            color: !iOS
+                ? context.theme.colorScheme.onSurface
                 : (!marked && !marking || widget.controller.inSelectMode.value)
-                ? context.theme.colorScheme.primary
-                : context.theme.colorScheme.outline,
+                    ? context.theme.colorScheme.primary
+                    : context.theme.colorScheme.outline,
             size: iOS ? 35 : null,
           ),
           tooltip: "FaceTime Call",
           onPressed: () async {
-            var data = await chat.getConversationData();
-            var handle = await chat.ensureHandle();
-            var handles = data.participants;
+            final data = await chat.getConversationData();
+            final handle = await chat.ensureHandle();
+            final handles = data.participants;
             handles.remove(handle);
-            await pushService.placeOutgoingCall(handle, handles);
+            await PushSvc.placeOutgoingCall(handle, handles);
           },
         ),
       );
@@ -246,29 +280,68 @@ class FaceTimeBtnState extends OptimizedState<FaceTimeBtn> {
 }
 
 class ConnectionIndicator extends StatelessWidget {
-  const ConnectionIndicator();
+  const ConnectionIndicator({super.key});
 
-  bool get noniOS => ss.settings.skin.value != Skins.iOS;
+  bool get noniOS => SettingsSvc.settings.skin.value != Skins.iOS;
 
   @override
   Widget build(BuildContext context) {
     return Align(
       alignment: Alignment.topCenter,
       child: Obx(() => AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        height: 0,
-        decoration: BoxDecoration(
-          boxShadow: [
-            BoxShadow(
-              color: getIndicatorColor(socket.state.value).withOpacity(0.4),
-              spreadRadius: socket.state.value != SocketState.connected && (ls.isAlive || kIsDesktop)
-                  ? max(MediaQuery.of(context).viewPadding.top, 40).clamp(0, noniOS ? 30 : double.infinity).toDouble()
-                  : 0,
-              blurRadius: max(MediaQuery.of(context).viewPadding.top, 40).clamp(0, noniOS ? 30 : double.infinity).toDouble(),
+            duration: const Duration(milliseconds: 300),
+            height: 0,
+            decoration: BoxDecoration(
+              boxShadow: [
+                BoxShadow(
+                  color: getIndicatorColor(SocketSvc.state.value).withValues(alpha: 0.4),
+                  spreadRadius: SocketSvc.state.value != SocketState.connected && (LifecycleSvc.isAlive || kIsDesktop)
+                      ? max(MediaQuery.of(context).viewPadding.top, 40)
+                          .clamp(0, noniOS ? 30 : double.infinity)
+                          .toDouble()
+                      : 0,
+                  blurRadius: max(MediaQuery.of(context).viewPadding.top, 40)
+                      .clamp(0, noniOS ? 30 : double.infinity)
+                      .toDouble(),
+                ),
+              ],
             ),
-          ],
-        ),
-      )),
+          )),
     );
+  }
+}
+
+/// A send-progress [LinearProgressIndicator] shared by both header skins.
+///
+/// Reads [Chat.sendProgress] from [ChatStateScope] so it never needs a
+/// [Chat] constructor parameter.  Place it in a [Positioned] at the bottom
+/// of the header stack.
+class HeaderProgressIndicator extends StatelessWidget {
+  const HeaderProgressIndicator({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final chat = ChatStateScope.chatOf(context);
+    return Obx(() => TweenAnimationBuilder<double>(
+          duration: chat.sendProgress.value == 0
+              ? Duration.zero
+              : chat.sendProgress.value == 1
+                  ? const Duration(milliseconds: 250)
+                  : const Duration(seconds: 10),
+          curve: chat.sendProgress.value == 1 ? Curves.easeInOut : Curves.easeOutExpo,
+          tween: Tween<double>(
+            begin: 0,
+            end: chat.sendProgress.value,
+          ),
+          builder: (context, value, _) => AnimatedOpacity(
+            opacity: value == 1 ? 0 : 1,
+            duration: const Duration(milliseconds: 250),
+            child: LinearProgressIndicator(
+              value: value,
+              backgroundColor: Colors.transparent,
+              minHeight: 3,
+            ),
+          ),
+        ));
   }
 }

@@ -15,6 +15,7 @@ enum DetailsMenuAction {
   OpenInBrowser,
   OpenInNewTab,
   CopyText,
+  CopyAttachment,
   SaveOriginal,
   SaveLivePhoto,
   OpenDirectMessage,
@@ -51,6 +52,7 @@ const Map<DetailsMenuAction, PlatformSupport> _actionPlatformSupport = {
   DetailsMenuAction.OpenInBrowser: PlatformSupport(true, false, false, false),
   DetailsMenuAction.OpenInNewTab: PlatformSupport(false, false, false, true),
   DetailsMenuAction.CopyText: PlatformSupport(true, true, true, true),
+  DetailsMenuAction.CopyAttachment: PlatformSupport(false, true, true, false),
   DetailsMenuAction.SaveOriginal: PlatformSupport(true, true, true, true),
   DetailsMenuAction.SaveLivePhoto: PlatformSupport(true, true, true, true),
   DetailsMenuAction.OpenDirectMessage: PlatformSupport(true, true, true, true),
@@ -78,6 +80,7 @@ const Map<DetailsMenuAction, (IconData, IconData)> _actionToIcon = {
   DetailsMenuAction.OpenInBrowser: (CupertinoIcons.macwindow, Icons.open_in_browser),
   DetailsMenuAction.OpenInNewTab: (CupertinoIcons.macwindow, Icons.open_in_browser),
   DetailsMenuAction.CopyText: (CupertinoIcons.doc_on_clipboard, Icons.content_copy),
+  DetailsMenuAction.CopyAttachment: (CupertinoIcons.doc_on_clipboard, Icons.content_copy),
   DetailsMenuAction.SaveOriginal: (CupertinoIcons.cloud_download, Icons.file_download),
   DetailsMenuAction.SaveLivePhoto: (CupertinoIcons.photo, Icons.motion_photos_on_outlined),
   DetailsMenuAction.OpenDirectMessage: (CupertinoIcons.arrow_up_right_square, Icons.open_in_new),
@@ -105,6 +108,7 @@ const Map<DetailsMenuAction, String> _actionToText = {
   DetailsMenuAction.OpenInBrowser: "Open In Browser",
   DetailsMenuAction.OpenInNewTab: "Open In New Tab",
   DetailsMenuAction.CopyText: "Copy",
+  DetailsMenuAction.CopyAttachment: "Copy Attachment",
   DetailsMenuAction.SaveOriginal: "Save Original",
   DetailsMenuAction.SaveLivePhoto: "Save Live Photo",
   DetailsMenuAction.OpenDirectMessage: "Open Direct Message",
@@ -142,12 +146,13 @@ class _DetailsMenuActionUtils {
 
 extension DetailsMenuActionExtension on List<DetailsMenuAction> {
   List<DetailsMenuAction> get platformSupportedActions => (kIsWeb
-      ? where((action) => _DetailsMenuActionUtils._webActions.contains(action))
-      : Platform.isAndroid
-          ? where((action) => _DetailsMenuActionUtils._androidActions.contains(action))
-          : Platform.isWindows
-              ? where((action) => _DetailsMenuActionUtils._windowsActions.contains(action))
-              : where((action) => _DetailsMenuActionUtils._linuxActions.contains(action))).toList();
+          ? where((action) => _DetailsMenuActionUtils._webActions.contains(action))
+          : Platform.isAndroid
+              ? where((action) => _DetailsMenuActionUtils._androidActions.contains(action))
+              : Platform.isWindows
+                  ? where((action) => _DetailsMenuActionUtils._windowsActions.contains(action))
+                  : where((action) => _DetailsMenuActionUtils._linuxActions.contains(action)))
+      .toList();
 }
 
 class CustomDetailsMenuActionWidget extends StatelessWidget {
@@ -157,7 +162,7 @@ class CustomDetailsMenuActionWidget extends StatelessWidget {
   final IconData nonIosIcon;
   final bool? shouldDisable;
 
-  CustomDetailsMenuActionWidget({
+  const CustomDetailsMenuActionWidget({
     super.key,
     this.onTap,
     required this.title,
@@ -169,7 +174,7 @@ class CustomDetailsMenuActionWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     bool isDisabled = shouldDisable ?? false;
-    Color color = isDisabled ? Colors.grey : context.theme.colorScheme.properOnSurface;
+    Color color = isDisabled ? Colors.grey : context.theme.colorScheme.onSurfaceVariant;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -182,7 +187,7 @@ class CustomDetailsMenuActionWidget extends StatelessWidget {
             style: context.theme.textTheme.bodyLarge!.copyWith(color: color),
           ),
           trailing: Icon(
-            ss.settings.skin.value == Skins.iOS ? iosIcon : nonIosIcon,
+            SettingsSvc.settings.skin.value == Skins.iOS ? iosIcon : nonIosIcon,
             color: color,
           ),
         ),

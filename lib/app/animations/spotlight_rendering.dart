@@ -1,4 +1,3 @@
-
 import 'dart:math';
 
 import 'package:bluebubbles/app/animations/spotlight_classes.dart';
@@ -6,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 class Spotlight extends LeafRenderObjectWidget {
-  Spotlight({
+  const Spotlight({
     super.key,
     required this.controller,
   });
@@ -29,7 +28,7 @@ class Spotlight extends LeafRenderObjectWidget {
 class RenderSpotlight extends RenderBox {
   RenderSpotlight({
     required SpotlightController controller,
-  })   : _controller = controller;
+  }) : _controller = controller;
 
   SpotlightController get controller => _controller;
   SpotlightController _controller;
@@ -96,22 +95,22 @@ class RenderSpotlight extends RenderBox {
       double size = controller.spotlight!.size;
       double stop = controller.spotlight!.stop;
       double screenWidth = controller.windowSize.width;
-      p.addArc(Rect.fromCenter(
-        center: Offset(centerX, centerY),
-        height: size,
-        width: size,
-      ), 0, 2 * pi);
+      p.addArc(
+          Rect.fromCenter(
+            center: Offset(centerX, centerY),
+            height: size,
+            width: size,
+          ),
+          0,
+          2 * pi);
       if (stop == 1) {
-        canvas.drawPath(p, Paint()
-          ..style = PaintingStyle.fill
-          ..shader = RadialGradient(
-              colors: [
-                Colors.white.withOpacity(0.5),
-                Colors.white.withOpacity(0.3)
-              ],
-              stops: [0, 0.7]
-          ).createShader(Rect.fromCircle(center: Offset(centerX, centerY), radius: size))
-        );
+        canvas.drawPath(
+            p,
+            Paint()
+              ..style = PaintingStyle.fill
+              ..shader = RadialGradient(
+                  colors: [Colors.white.withValues(alpha: 0.5), Colors.white.withValues(alpha: 0.3)],
+                  stops: [0, 0.7]).createShader(Rect.fromCircle(center: Offset(centerX, centerY), radius: size)));
       }
       double pointX = screenWidth - (controller.spotlight!.originalPosition.y - controller.spotlight!.position.y);
       double pointY = 0;
@@ -130,21 +129,24 @@ class RenderSpotlight extends RenderBox {
       final Path p2 = Path();
       p2.moveTo(pointX, 0);
       p2.lineTo(min(tangent1X, tangent2X), min(tangent1Y, tangent2Y));
-      p2.arcToPoint(Offset(centerX, centerY + size / 2), radius: Radius.circular(size / 2), largeArc: false, clockwise: false);
-      p2.arcToPoint(Offset(max(tangent1X, tangent2X), max(tangent1Y, tangent2Y)), radius: Radius.circular(size / 2), largeArc: false, clockwise: false);
+      p2.arcToPoint(Offset(centerX, centerY + size / 2),
+          radius: Radius.circular(size / 2), largeArc: false, clockwise: false);
+      p2.arcToPoint(Offset(max(tangent1X, tangent2X), max(tangent1Y, tangent2Y)),
+          radius: Radius.circular(size / 2), largeArc: false, clockwise: false);
       p2.lineTo(pointX, 0);
-      canvas.drawPath(p2, Paint()
-        ..style = PaintingStyle.fill
-        ..shader = RadialGradient(
-            colors: [
-              Colors.white.withOpacity(0.5),
-              Colors.white.withOpacity(0.3),
-              if (stop != 1)
-                Colors.transparent,
-            ],
-            stops: [0, stop == 1 ? 0.7 : stop - 0.1, if (stop != 1) stop]
-        ).createShader(Rect.fromCircle(center: Offset(screenWidth, 0), radius: controller.spotlight!.position.y))
-      );
+      canvas.drawPath(
+          p2,
+          Paint()
+            ..style = PaintingStyle.fill
+            ..shader = RadialGradient(colors: [
+              Colors.white.withValues(alpha: 0.5),
+              Colors.white.withValues(alpha: 0.3),
+              if (stop != 1) Colors.transparent,
+            ], stops: [
+              0,
+              stop == 1 ? 0.7 : stop - 0.1,
+              if (stop != 1) stop
+            ]).createShader(Rect.fromCircle(center: Offset(screenWidth, 0), radius: controller.spotlight!.position.y)));
     }
   }
 }

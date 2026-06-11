@@ -4,24 +4,24 @@ import 'package:bluebubbles/app/layouts/conversation_details/dialogs/timeframe_p
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/reply/reply_thread_popup.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/poster_edit.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/posterkit.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
-import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
+import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/settings_widgets.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/theming/avatar/avatar_crop.dart';
+import 'package:bluebubbles/app/layouts/settings/pages/theming/background/background_crop.dart';
 import 'package:bluebubbles/database/models.dart';
-import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
+import 'package:bluebubbles/main.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:universal_io/io.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
+import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'dart:math' as math;
 
@@ -31,10 +31,10 @@ class ChatOptions extends StatefulWidget {
   final Chat chat;
 
   @override
-  OptimizedState createState() => _ChatOptionsState();
+  State<StatefulWidget> createState() => _ChatOptionsState();
 }
 
-class _ChatOptionsState extends OptimizedState<ChatOptions> {
+class _ChatOptionsState extends State<ChatOptions> with ThemeHelpers {
   Chat get chat => widget.chat;
 
   @override
@@ -54,7 +54,7 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
             SettingsSection(
               backgroundColor: tileColor,
               children: [
-                if (!kIsWeb && !kIsDesktop && (fs.androidInfo?.version.sdkInt ?? 0) >= 30)
+                if (!kIsWeb && !kIsDesktop && (FilesystemSvc.androidInfo?.version.sdkInt ?? 0) >= 30)
                   SettingsTile(
                     title: "Notification Settings",
                     subtitle: "Customize notification sounds, importance, and more for this specific chat",
@@ -66,7 +66,7 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                     ),
                     isThreeLine: true,
                     onTap: () async {
-                      await mcs.invokeMethod("open-conversation-notification-settings",
+                      await MethodChannelSvc.invokeMethod("open-conversation-notification-settings",
                           {"channel_id": chat.guid, "display_name": chat.getTitle()});
                     },
                   ),
@@ -76,7 +76,7 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                     trailing: Padding(
                       padding: const EdgeInsets.only(right: 15.0),
                       child: Icon(
-                        ss.settings.skin.value == Skins.iOS ? CupertinoIcons.person : Icons.person_outlined,
+                        SettingsSvc.settings.skin.value == Skins.iOS ? CupertinoIcons.person : Icons.person_outlined,
                       ),
                     ),
                     onTap: () {
@@ -85,7 +85,7 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                           context: context,
                           builder: (BuildContext context) {
                             return AlertDialog(
-                                backgroundColor: context.theme.colorScheme.properSurface,
+                                backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
                                 title: Text("Custom Avatar", style: context.theme.textTheme.titleLarge),
                                 content: Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
@@ -102,7 +102,7 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                                         style: context.theme.textTheme.bodyLarge!
                                             .copyWith(color: context.theme.colorScheme.primary)),
                                     onPressed: () {
-                                      Navigator.of(context).pop();
+                                      Navigator.of(context, rootNavigator: true).pop();
                                     },
                                   ),
                                   TextButton(
@@ -113,8 +113,8 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                                       File file = File(chat.customAvatarPath!);
                                       file.delete();
                                       chat.customAvatarPath = null;
-                                      chat.save(updateCustomAvatarPath: true);
-                                      Get.back();
+                                      chat.saveAsync(updateCustomAvatarPath: true);
+                                      Navigator.of(context, rootNavigator: true).pop();
                                     },
                                   ),
                                   TextButton(
@@ -122,7 +122,7 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                                         style: context.theme.textTheme.bodyLarge!
                                             .copyWith(color: context.theme.colorScheme.primary)),
                                     onPressed: () {
-                                      Navigator.of(context).pop();
+                                      Navigator.of(context, rootNavigator: true).pop();
                                       Get.to(() => AvatarCrop(chat: chat));
                                     },
                                   ),
@@ -134,57 +134,133 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                       }
                     },
                   ),
-                SettingsTile(
-                    title: chat.transcriptPosterPath != null ? "Change Chat Background" : "Set Chat Background",
+                if (!kIsWeb && !usingRustPush)
+                  SettingsTile(
+                    title: "Custom Background",
                     trailing: Padding(
                       padding: const EdgeInsets.only(right: 15.0),
                       child: Icon(
-                        ss.settings.skin.value == Skins.iOS ? CupertinoIcons.photo : Icons.photo,
+                        iOS ? CupertinoIcons.photo : Icons.wallpaper,
                       ),
                     ),
                     onTap: () {
-                      var randomColor = Color((math.Random().nextDouble() * 0xFFFFFF).toInt()).withOpacity(1.0);
-                      Navigator.of(context).push(
-                        ThemeSwitcher.buildPageRoute(
-                          builder: (context) => PosterEdit(transcriptPoster: cvc(chat).backgroundPoster.value ?? api.SimplifiedTranscriptPoster(
-                              poster: createNewPoster(const api.PosterType.transcriptDynamic(data: api.TranscriptDynamicUserData(identifier: "")), randomColor, api.PosterRole.prPosterRoleBackdrop), 
-                              watch: api.WatchBackground(isHighKey: false, luminance: 0, backgroundImageData: Uint8List(0), extensionIdentifier: "com.apple.ContactsUI.MonogramPosterExtension")
-                            ), 
-                            activePath: chat.transcriptPosterPath, 
-                            posterEdited: (newPath) async {
-                              if (chat.transcriptPosterPath != newPath && chat.transcriptPosterPath != null) {
-                                await pushService.deletePoster(chat.transcriptPosterPath!);
-                              }
-                              
-                              chat.transcriptPosterPath = newPath;
-                              chat.save(updateTranscriptPosterPath: true);
-                              cvc(chat).updatePoster();
-                              setState(() { });
-                              await pushService.updateChatPoster(chat);
-                            },),
-                        ),
-                      );
+                      if (chat.customBackgroundPath != null) {
+                        showDialog(
+                          context: context,
+                          builder: (BuildContext context) {
+                            return AlertDialog(
+                              backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+                              title: Text("Custom Background", style: context.theme.textTheme.titleLarge),
+                              content: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    "You already have a custom background for this chat. What would you like to do?",
+                                    style: context.theme.textTheme.bodyLarge,
+                                  ),
+                                ],
+                              ),
+                              actions: <Widget>[
+                                TextButton(
+                                  child: Text("Cancel",
+                                      style: context.theme.textTheme.bodyLarge!
+                                          .copyWith(color: context.theme.colorScheme.primary)),
+                                  onPressed: () {
+                                    Navigator.of(context, rootNavigator: true).pop();
+                                  },
+                                ),
+                                TextButton(
+                                  child: Text("Remove",
+                                      style: context.theme.textTheme.bodyLarge!
+                                          .copyWith(color: context.theme.colorScheme.error)),
+                                  onPressed: () async {
+                                    final File bgFile = File(chat.customBackgroundPath!);
+                                    if (await bgFile.exists()) bgFile.delete();
+                                    await ChatsSvc.setChatCustomBackgroundPath(chat, null);
+                                    if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
+                                  },
+                                ),
+                                TextButton(
+                                  child: Text("Set New",
+                                      style: context.theme.textTheme.bodyLarge!
+                                          .copyWith(color: context.theme.colorScheme.primary)),
+                                  onPressed: () {
+                                    Navigator.of(context, rootNavigator: true).pop();
+                                    Get.to(() => BackgroundCrop(chat: chat));
+                                  },
+                                ),
+                              ],
+                            );
+                          },
+                        );
+                      } else {
+                        Get.to(() => BackgroundCrop(chat: chat));
+                      }
                     },
                   ),
-                  if (chat.transcriptPosterPath != null)
+                SettingsTile(
+                  title: chat.transcriptPosterPath != null ? "Change Chat Background" : "Set Chat Background",
+                  trailing: Padding(
+                    padding: const EdgeInsets.only(right: 15.0),
+                    child: Icon(
+                      SettingsSvc.settings.skin.value == Skins.iOS ? CupertinoIcons.photo : Icons.photo,
+                    ),
+                  ),
+                  onTap: () {
+                    var randomColor = Color((math.Random().nextDouble() * 0xFFFFFF).toInt()).withOpacity(1.0);
+                    Navigator.of(context).push(
+                      ThemeSwitcher.buildPageRoute(
+                        builder: (context) => PosterEdit(
+                          transcriptPoster: cvc(chat).backgroundPoster.value ??
+                              api.SimplifiedTranscriptPoster(
+                                  poster: createNewPoster(
+                                      const api.PosterType.transcriptDynamic(
+                                          data: api.TranscriptDynamicUserData(identifier: "")),
+                                      randomColor,
+                                      api.PosterRole.prPosterRoleBackdrop),
+                                  watch: api.WatchBackground(
+                                      isHighKey: false,
+                                      luminance: 0,
+                                      backgroundImageData: Uint8List(0),
+                                      extensionIdentifier: "com.apple.ContactsUI.MonogramPosterExtension")),
+                          activePath: chat.transcriptPosterPath,
+                          posterEdited: (newPath) async {
+                            if (chat.transcriptPosterPath != newPath && chat.transcriptPosterPath != null) {
+                              await PushSvc.deletePoster(chat.transcriptPosterPath!);
+                            }
+
+                            chat.transcriptPosterPath = newPath;
+                            chat.save(updateTranscriptPosterPath: true);
+                            cvc(chat).updatePoster();
+                            setState(() {});
+                            await PushSvc.updateChatPoster(chat);
+                          },
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                if (chat.transcriptPosterPath != null)
                   SettingsTile(
                     title: "Remove Chat Background",
                     trailing: Padding(
                       padding: const EdgeInsets.only(right: 15.0),
                       child: Icon(
-                        ss.settings.skin.value == Skins.iOS ? CupertinoIcons.clear : Icons.clear,
+                        SettingsSvc.settings.skin.value == Skins.iOS ? CupertinoIcons.clear : Icons.clear,
                       ),
                     ),
                     onTap: () async {
                       if (chat.transcriptPosterPath != null) {
-                        await pushService.deletePoster(chat.transcriptPosterPath!);
+                        await PushSvc.deletePoster(chat.transcriptPosterPath!);
                       }
-                      
+
                       chat.transcriptPosterPath = null;
                       chat.save(updateTranscriptPosterPath: true);
                       cvc(chat).updatePoster();
-                      setState(() { });
-                      await pushService.updateChatPoster(chat);
+                      setState(() {});
+                      await PushSvc.updateChatPoster(chat);
                     },
                   ),
                 if (iOS)
@@ -199,7 +275,7 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                       onTap: () async {
                         showBookmarksThread(cvc(widget.chat), context);
                       }),
-                if (backend.getRemoteService() != null)
+                if (BackendSvc.getRemoteService() != null)
                   SettingsTile(
                       title: "Fetch Chat Details",
                       subtitle: "Get the latest chat title and participants from the server",
@@ -209,10 +285,10 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                         child: Icon(iOS ? CupertinoIcons.chat_bubble : Icons.sms),
                       ),
                       onTap: () async {
-                        await cm.fetchChat(chat.guid);
+                        await ChatsSvc.fetchChat(chat.guid);
                         showSnackbar("Notice", "Fetched details!");
                       }),
-                if (backend.getRemoteService() != null)
+                if (BackendSvc.getRemoteService() != null)
                   SettingsTile(
                     title: "Fetch More Messages",
                     subtitle: "Fetches up to 100 messages after the last message stored locally",
@@ -234,7 +310,7 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                       );
                     },
                   ),
-                if (backend.getRemoteService() != null)
+                if (BackendSvc.getRemoteService() != null)
                   SettingsTile(
                     title: "Sync Last 25 Messages",
                     subtitle: "Resyncs the 25 most recent messages from the server",
@@ -251,136 +327,205 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                       );
                     },
                   ),
-                if (!kIsWeb && ss.settings.enablePrivateAPI.value) const SettingsDivider(),
-                if (!kIsWeb && ss.settings.enablePrivateAPI.value)
-                  SettingsSwitch(
-                    title: "Send Typing Indicators",
-                    initialVal: chat.autoSendTypingIndicators ?? ss.settings.privateSendTypingIndicators.value,
-                    onChanged: (value) {
-                      chat.toggleAutoType(value);
-                      setState(() {});
-                    },
-                    backgroundColor: tileColor,
-                  ),
-                if (!kIsWeb && ss.settings.enablePrivateAPI.value)
-                  SettingsSwitch(
+                if (!kIsWeb && SettingsSvc.settings.enablePrivateAPI.value) const SettingsDivider(),
+                if (!kIsWeb && SettingsSvc.settings.enablePrivateAPI.value)
+                  Obx(() {
+                    final chatState = ChatsSvc.getChatState(chat.guid);
+                    return SettingsSwitch(
+                      title: "Send Typing Indicators",
+                      initialVal: chatState?.autoSendTypingIndicators.value ??
+                          SettingsSvc.settings.privateSendTypingIndicators.value,
+                      onChanged: (value) {
+                        if (chatState != null) {
+                          ChatsSvc.setChatAutoSendTypingIndicators(chatState.chat, value);
+                        } else {
+                          chat.toggleAutoTypeAsync(value);
+                        }
+                      },
+                      backgroundColor: tileColor,
+                    );
+                  }),
+                if (!kIsWeb && SettingsSvc.settings.enablePrivateAPI.value)
+                  Obx(() {
+                    final chatState = ChatsSvc.getChatState(chat.guid);
+                    return SettingsSwitch(
                       title: "Follow Global Setting",
                       subtitle:
-                          "Typing Indicators ${ss.settings.privateSendTypingIndicators.value ? "Enabled" : "Disabled"}",
-                      initialVal: chat.autoSendTypingIndicators == null,
+                          "Typing Indicators ${SettingsSvc.settings.privateSendTypingIndicators.value ? "Enabled" : "Disabled"}",
+                      initialVal: chatState?.autoSendTypingIndicators.value == null,
                       onChanged: (value) {
-                        if (!value) {
-                          chat.toggleAutoType(ss.settings.privateSendTypingIndicators.value);
+                        if (chatState != null) {
+                          ChatsSvc.setChatAutoSendTypingIndicators(
+                            chatState.chat,
+                            value ? null : SettingsSvc.settings.privateSendTypingIndicators.value,
+                          );
                         } else {
-                          chat.toggleAutoType(null);
+                          chat.toggleAutoTypeAsync(
+                              value ? null : SettingsSvc.settings.privateSendTypingIndicators.value);
                         }
-                        setState(() {});
-                      }),
-                if (!kIsWeb && !chat.isGroup && ss.settings.enablePrivateAPI.value) const SettingsDivider(),
-                if (!kIsWeb && !chat.isGroup && ss.settings.enablePrivateAPI.value)
-                  SettingsSwitch(
-                    title: "${ss.settings.privateManualMarkAsRead.value ? "Automatically " : ""}Send Read Receipts",
-                    initialVal: chat.autoSendReadReceipts ?? ss.settings.privateMarkChatAsRead.value,
-                    onChanged: (value) {
-                      chat.toggleAutoRead(value);
-                      setState(() {});
-                    },
-                    backgroundColor: tileColor,
-                  ),
-                if (!kIsWeb && !chat.isGroup && ss.settings.enablePrivateAPI.value)
-                  SettingsSwitch(
-                    title: "Follow Global Setting",
-                    subtitle:
-                        "${ss.settings.privateManualMarkAsRead.value ? "Automatic " : ""}Read Receipts ${ss.settings.privateMarkChatAsRead.value ? "Enabled" : "Disabled"}",
-                    initialVal: chat.autoSendReadReceipts == null,
-                    onChanged: (value) {
-                      if (!value) {
-                        chat.toggleAutoRead(ss.settings.privateMarkChatAsRead.value);
-                      } else {
-                        chat.toggleAutoRead(null);
-                      }
-                      setState(() {});
-                    },
-                  ),
-                if ((!kIsWeb && !chat.isGroup && ss.settings.enablePrivateAPI.value) || chat.isGroup)
+                      },
+                    );
+                  }),
+                if (!kIsWeb && SettingsSvc.settings.enablePrivateAPI.value) const SettingsDivider(),
+                if (!kIsWeb && SettingsSvc.settings.enablePrivateAPI.value)
+                  Obx(() {
+                    final chatState = ChatsSvc.getChatState(chat.guid);
+                    return SettingsSwitch(
+                      title:
+                          "${SettingsSvc.settings.privateManualMarkAsRead.value ? "Automatically " : ""}Send Read Receipts",
+                      initialVal:
+                          chatState?.autoSendReadReceipts.value ?? SettingsSvc.settings.privateMarkChatAsRead.value,
+                      onChanged: (value) {
+                        if (chatState != null) {
+                          ChatsSvc.setChatAutoSendReadReceipts(chatState.chat, value);
+                        } else {
+                          chat.toggleAutoReadAsync(value);
+                        }
+                      },
+                      backgroundColor: tileColor,
+                    );
+                  }),
+                if (!kIsWeb && SettingsSvc.settings.enablePrivateAPI.value)
+                  Obx(() {
+                    final chatState = ChatsSvc.getChatState(chat.guid);
+                    return SettingsSwitch(
+                      title: "Follow Global Setting",
+                      subtitle:
+                          "${SettingsSvc.settings.privateManualMarkAsRead.value ? "Automatic " : ""}Read Receipts ${SettingsSvc.settings.privateMarkChatAsRead.value ? "Enabled" : "Disabled"}",
+                      initialVal: chatState?.autoSendReadReceipts.value == null,
+                      onChanged: (value) {
+                        if (chatState != null) {
+                          ChatsSvc.setChatAutoSendReadReceipts(
+                            chatState.chat,
+                            value ? null : SettingsSvc.settings.privateMarkChatAsRead.value,
+                          );
+                        } else {
+                          chat.toggleAutoReadAsync(value ? null : SettingsSvc.settings.privateMarkChatAsRead.value);
+                        }
+                      },
+                    );
+                  }),
+                if ((!kIsWeb && !chat.isGroup && SettingsSvc.settings.enablePrivateAPI.value) || chat.isGroup)
                   const SettingsDivider(),
-                if (chat.isGroup)
-                  SettingsSwitch(
-                    title: "Lock Chat Name",
-                    subtitle: "Keep the current chat name on this device, even if someone else in the chat changes it",
-                    initialVal: chat.lockChatName,
-                    onChanged: (value) {
-                      chat.lockChatName = value;
-                      chat.save(updateLockChatName: true);
-                      setState(() {});
-                    },
-                  ),
-                if (chat.isGroup)
-                  SettingsSwitch(
-                    title: "Lock Chat Icon",
-                    subtitle: "Keep the current chat icon on this device, even if someone else in the chat changes it",
-                    initialVal: chat.lockChatIcon,
-                    onChanged: (value) {
-                      chat.lockChatIcon = value;
-                      chat.save(updateLockChatIcon: true);
-                      setState(() {});
-                    },
-                  ),
-                if (chat.isGroup) const SettingsDivider(),
-                if (!kIsWeb && !chat.isGroup && ss.settings.enablePrivateAPI.value && ss.settings.enableShareZen.value && chat.participants.firstOrNull?.contact?.isShared == false)
+                if (!kIsWeb &&
+                    !chat.isGroup &&
+                    SettingsSvc.settings.enablePrivateAPI.value &&
+                    (() {
+                      final contact = ContactV2.findOne(address: chat.handles.firstOrNull?.address);
+                      return contact != null && !contact.isSharedSuggestion;
+                    })())
                   SettingsSwitch(
                     title: "Share Status",
-                    initialVal: chat.shareZenMode ?? ss.settings.enableShareZen.value,
+                    initialVal: chat.shareZenMode ?? SettingsSvc.settings.enableShareZen.value,
                     onChanged: (value) async {
+                      if (!SettingsSvc.settings.enableShareZen.value) {
+                        if (!await PushSvc.setupZenMode(true)) return;
+                      }
                       chat.shareZenMode = value;
-                      chat.save(updateShareZenMode: true);
+                      await chat.saveAsync(updateShareZenMode: true);
                       setState(() {});
                       chat.fixZenModeShared();
                     },
                     backgroundColor: tileColor,
                   ),
+                if (chat.isGroup)
+                  Obx(() {
+                    final chatState = ChatsSvc.getChatState(chat.guid);
+                    return SettingsSwitch(
+                      title: "Lock Chat Name",
+                      subtitle:
+                          "Keep the current chat name on this device, even if someone else in the chat changes it",
+                      initialVal: chatState?.lockChatName.value ?? chat.lockChatName,
+                      onChanged: (value) {
+                        if (chatState != null) {
+                          ChatsSvc.setChatLockName(chatState.chat, value);
+                        } else {
+                          chat.lockChatName = value;
+                          chat.saveAsync(updateLockChatName: true);
+                        }
+                      },
+                    );
+                  }),
+                if (chat.isGroup)
+                  Obx(() {
+                    final chatState = ChatsSvc.getChatState(chat.guid);
+                    return SettingsSwitch(
+                      title: "Lock Chat Icon",
+                      subtitle:
+                          "Keep the current chat icon on this device, even if someone else in the chat changes it",
+                      initialVal: chatState?.lockChatIcon.value ?? chat.lockChatIcon,
+                      onChanged: (value) {
+                        if (chatState != null) {
+                          ChatsSvc.setChatLockIcon(chatState.chat, value);
+                        } else {
+                          chat.lockChatIcon = value;
+                          chat.saveAsync(updateLockChatIcon: true);
+                        }
+                      },
+                    );
+                  }),
+                if (chat.isGroup) const SettingsDivider(),
                 if (!kIsWeb)
-                  SettingsSwitch(
-                    title: "Pin Conversation",
-                    initialVal: chat.isPinned!,
-                    onChanged: (value) {
-                      chat.togglePin(!chat.isPinned!);
-                      setState(() {});
-                    },
-                    backgroundColor: tileColor,
-                  ),
+                  Obx(() {
+                    final chatState = ChatsSvc.getChatState(chat.guid);
+                    return SettingsSwitch(
+                      title: "Pin Conversation",
+                      initialVal: chatState?.isPinned.value ?? chat.isPinned!,
+                      onChanged: (value) {
+                        if (chatState != null) {
+                          ChatsSvc.setChatPinned(chatState.chat, !chatState.isPinned.value);
+                        } else {
+                          ChatsSvc.toggleChatPin(chat, !chat.isPinned!);
+                        }
+                      },
+                      backgroundColor: tileColor,
+                    );
+                  }),
                 if (!kIsWeb)
-                  SettingsSwitch(
-                    title: "Mute Conversation",
-                    initialVal: chat.muteType == "mute",
-                    onChanged: (value) {
-                      chat.toggleMute(value);
-                      setState(() {});
-                    },
-                    backgroundColor: tileColor,
-                  ),
+                  Obx(() {
+                    final chatState = ChatsSvc.getChatState(chat.guid);
+                    return SettingsSwitch(
+                      title: "Mute Conversation",
+                      initialVal: (chatState?.muteType.value ?? chat.muteType) == "mute",
+                      onChanged: (value) {
+                        if (chatState != null) {
+                          ChatsSvc.setChatMuted(chatState.chat, value);
+                        } else {
+                          chat.toggleMuteAsync(value);
+                        }
+                      },
+                      backgroundColor: tileColor,
+                    );
+                  }),
                 if (!kIsWeb)
-                  SettingsSwitch(
-                    title: "Archive Conversation",
-                    initialVal: chat.isArchived!,
-                    onChanged: (value) {
-                      chat.toggleArchived(value);
-                      setState(() {});
-                    },
-                    backgroundColor: tileColor,
-                  ),
-                if (!kIsWeb && !chat.isGroup && chat.participants.length == 1)
+                  Obx(() {
+                    final chatState = ChatsSvc.getChatState(chat.guid);
+                    return SettingsSwitch(
+                      title: "Archive Conversation",
+                      initialVal: chatState?.isArchived.value ?? chat.isArchived!,
+                      onChanged: (value) {
+                        if (chatState != null) {
+                          ChatsSvc.setChatArchived(chatState.chat, value);
+                        } else {
+                          ChatsSvc.toggleChatArchive(chat, value);
+                        }
+                      },
+                      backgroundColor: tileColor,
+                    );
+                  }),
+                if (!kIsWeb && !chat.isGroup && chat.handles.length == 1)
                   SettingsSwitch(
                     title: "Block Sender",
-                    initialVal: chat.participants.first.isBlocked(),
+                    initialVal: chat.handles.first.isBlocked(),
                     onChanged: (value) {
                       if (value) {
                         showDialog(
                           context: context,
                           builder: (BuildContext context) {
                             return AlertDialog(
-                                backgroundColor: context.theme.colorScheme.properSurface,
-                                title: Text("Are you sure you want to block?", style: context.theme.textTheme.titleLarge),
+                                backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+                                title:
+                                    Text("Are you sure you want to block?", style: context.theme.textTheme.titleLarge),
                                 content: Text(
                                   'You will not receive notifications or calls from this user, and their messages will not be marked as delivered.',
                                   style: context.theme.textTheme.bodyLarge,
@@ -391,7 +536,7 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                                         style: context.theme.textTheme.bodyLarge!
                                             .copyWith(color: context.theme.colorScheme.primary)),
                                     onPressed: () {
-                                      Navigator.of(context).pop();
+                                      Navigator.of(context, rootNavigator: true).pop();
                                     },
                                   ),
                                   TextButton(
@@ -399,8 +544,8 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                                         style: context.theme.textTheme.bodyLarge!
                                             .copyWith(color: context.theme.colorScheme.primary)),
                                     onPressed: () async {
-                                      Navigator.of(context).pop();
-                                      chat.participants.first.setBlocked(true);
+                                      Navigator.of(context, rootNavigator: true).pop();
+                                      chat.handles.first.setBlocked(true);
                                       setState(() {});
                                     },
                                   ),
@@ -409,9 +554,9 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                                         style: context.theme.textTheme.bodyLarge!
                                             .copyWith(color: context.theme.colorScheme.primary)),
                                     onPressed: () async {
-                                      Navigator.of(context).pop();
-                                      chat.participants.first.setBlocked(true);
-                                      chat.toggleArchived(true);
+                                      Navigator.of(context, rootNavigator: true).pop();
+                                      chat.handles.first.setBlocked(true);
+                                      await ChatsSvc.toggleChatArchive(chat, true);
                                       setState(() {});
                                     },
                                   ),
@@ -419,8 +564,8 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                           },
                         );
                       } else {
-                        chat.participants.first.setBlocked(false);
-                        chat.toggleArchived(false);
+                        chat.handles.first.setBlocked(false);
+                        ChatsSvc.toggleChatArchive(chat, false);
                         setState(() {});
                       }
                     },
@@ -439,7 +584,7 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                         context: context,
                         builder: (BuildContext context) {
                           return AlertDialog(
-                              backgroundColor: context.theme.colorScheme.properSurface,
+                              backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
                               title: Text("Are You Sure?", style: context.theme.textTheme.titleLarge),
                               content: Text(
                                 'Clearing the transcript will permanently delete all messages in this chat. It will also prevent any previous messages from being loaded by the app, until you perform a full reset.',
@@ -451,7 +596,7 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                                       style: context.theme.textTheme.bodyLarge!
                                           .copyWith(color: context.theme.colorScheme.primary)),
                                   onPressed: () {
-                                    Navigator.of(context).pop();
+                                    Navigator.of(context, rootNavigator: true).pop();
                                   },
                                 ),
                                 TextButton(
@@ -459,9 +604,9 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                                       style: context.theme.textTheme.bodyLarge!
                                           .copyWith(color: context.theme.colorScheme.primary)),
                                   onPressed: () async {
-                                    Navigator.of(context).pop();
+                                    Navigator.of(context, rootNavigator: true).pop();
                                     chat.clearTranscript();
-                                    eventDispatcher.emit("refresh-messagebloc", {"chatGuid": chat.guid});
+                                    EventDispatcherSvc.emit("refresh-messagebloc", {"chatGuid": chat.guid});
                                   },
                                 ),
                               ]);
@@ -498,7 +643,7 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                               buildProgressIndicator(context),
                             ],
                           ),
-                          backgroundColor: context.theme.colorScheme.properSurface,
+                          backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
                         ),
                         barrierDismissible: false,
                       );
@@ -506,7 +651,7 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                           .reversed
                           .where((e) => e.dateCreated!.isAfter(date));
                       if (messages.isEmpty) {
-                        Get.back();
+                        Navigator.of(context, rootNavigator: true).pop();
                         showSnackbar("Error", "No messages found!");
                         return;
                       }
@@ -516,21 +661,17 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                         final deliveredStr =
                             m.dateDelivered != null ? "Delivered: ${buildFullDate(m.dateDelivered!)}, " : "";
                         final sentStr = "Sent: ${buildFullDate(m.dateCreated!)}";
-                        final text = MessageHelper.getNotificationText(m, withSender: true);
+                        final text = m.getNotificationText(withSender: true);
                         final line = "($readStr$deliveredStr$sentStr) $text";
                         lines.add(line);
                       }
                       final now = DateTime.now().toLocal();
-                      String filePath = "/storage/emulated/0/Download/";
-                      if (kIsDesktop) {
-                        filePath = (await getDownloadsDirectory())!.path;
-                      }
-                      filePath = p.join(filePath,
-                          "${(chat.title ?? "Unknown Chat").replaceAll(RegExp(r'[<>:"/\\|?*]'), "")}-transcript-${now.year}${now.month}${now.day}_${now.hour}${now.minute}${now.second}.txt");
+                      final filePath = p.join(await FilesystemSvc.downloadsDirectory,
+                          "${chat.getTitle().replaceAll(RegExp(r'[<>:"/\\|?*]'), "")}-transcript-${now.year}${now.month}${now.day}_${now.hour}${now.minute}${now.second}.txt");
                       File file = File(filePath);
                       await file.create(recursive: true);
                       await file.writeAsString(lines.join('\n'));
-                      Get.back();
+                      Navigator.of(context, rootNavigator: true).pop();
                       showSnackbar("Success", "Saved transcript to the downloads folder");
                     },
                     onLongPress: () async {
@@ -550,7 +691,7 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                                 ),
                                 buildProgressIndicator(context),
                               ]),
-                          backgroundColor: context.theme.colorScheme.properSurface,
+                          backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
                         ),
                         barrierDismissible: false,
                       );
@@ -558,7 +699,7 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                           .reversed
                           .where((e) => e.dateCreated!.isAfter(date));
                       if (messages.isEmpty) {
-                        Get.back();
+                        Navigator.of(context, rootNavigator: true).pop();
                         showSnackbar("Error", "No messages found!");
                         return;
                       }
@@ -572,25 +713,26 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                             m.dateDelivered != null ? "Delivered: ${buildFullDate(m.dateDelivered!)}, " : "";
                         final sentStr = "Sent: ${buildFullDate(m.dateCreated!)}";
                         if (m.hasAttachments) {
-                          final attachments = m.attachments.where(
-                              (e) => e?.guid != null && ["image/png", "image/jpg", "image/jpeg"].contains(e!.mimeType));
-                          final files =
-                              attachments.map((e) => as.getContent(e!, autoDownload: false)).whereType<PlatformFile>();
+                          final attachments = m.dbAttachments.where(
+                              (e) => e.guid != null && ["image/png", "image/jpg", "image/jpeg"].contains(e.mimeType));
+                          final files = attachments
+                              .map((e) => AttachmentsSvc.getContent(e, autoDownload: false))
+                              .whereType<PlatformFile>();
                           if (files.isNotEmpty) {
                             for (PlatformFile f in files) {
-                              final a = attachments.firstWhere((e) => e!.transferName == f.name);
+                              final a = attachments.firstWhere((e) => e.transferName == f.name);
                               timestamps.add(readStr + deliveredStr + sentStr);
                               content.add(pw.MemoryImage(await File(f.path!).readAsBytes()));
-                              final aspectRatio = (a!.width ?? 150.0) / (a.height ?? 150.0);
+                              final aspectRatio = (a.width ?? 150.0) / (a.height ?? 150.0);
                               dimensions.add(Size(400, aspectRatio * 400));
                             }
                           }
                           timestamps.add(readStr + deliveredStr + sentStr);
-                          content.add(MessageHelper.getNotificationText(m, withSender: true));
+                          content.add(m.getNotificationText(withSender: true));
                           dimensions.add(null);
                         } else {
                           timestamps.add(readStr + deliveredStr + sentStr);
-                          content.add(MessageHelper.getNotificationText(m, withSender: true));
+                          content.add(m.getNotificationText(withSender: true));
                           dimensions.add(null);
                         }
                       }
@@ -599,7 +741,7 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                           maxPages: 1000,
                           header: (pw.Context context) => pw.Padding(
                               padding: const pw.EdgeInsets.only(bottom: 10),
-                              child: pw.Text(chat.title ?? "Unknown Chat",
+                              child: pw.Text(chat.getTitle(),
                                   textScaleFactor: 2,
                                   style: pw.Theme.of(context)
                                       .defaultTextStyle
@@ -633,16 +775,12 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                                 ]),
                               ]));
                       final now = DateTime.now().toLocal();
-                      String filePath = "/storage/emulated/0/Download/";
-                      if (kIsDesktop) {
-                        filePath = (await getDownloadsDirectory())!.path;
-                      }
-                      filePath = p.join(filePath,
-                          "${(chat.title ?? "Unknown Chat").replaceAll(RegExp(r'[<>:"/\\|?*]'), "")}-transcript-${now.year}${now.month}${now.day}_${now.hour}${now.minute}${now.second}.pdf");
+                      final filePath = p.join(await FilesystemSvc.downloadsDirectory,
+                          "${chat.getTitle().replaceAll(RegExp(r'[<>:"/\\|?*]'), "")}-transcript-${now.year}${now.month}${now.day}_${now.hour}${now.minute}${now.second}.pdf");
                       File file = File(filePath);
                       await file.create(recursive: true);
                       await file.writeAsBytes(await doc.save());
-                      Get.back();
+                      Navigator.of(context, rootNavigator: true).pop();
                       showSnackbar("Success", "Saved transcript to the downloads folder");
                     },
                   ),

@@ -45,7 +45,7 @@ pub fn init_logger(path: &Path) {
         .write_mode(WriteMode::BufferAndFlush)
         .build().unwrap();
     
-    multi_log::MultiLogger::init(vec![Box::new(system), logger], log::Level::Trace).expect("No init?");
+    let _ = multi_log::MultiLogger::init(vec![Box::new(system), logger], log::Level::Trace);
 }
 
 mod native;

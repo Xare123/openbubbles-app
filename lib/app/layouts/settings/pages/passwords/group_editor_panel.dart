@@ -27,7 +27,7 @@ class GroupEditorPanel extends StatefulWidget {
   State<GroupEditorPanel> createState() => _GroupEditorPanelState();
 }
 
-class _GroupEditorPanelState extends OptimizedState<GroupEditorPanel> {
+class _GroupEditorPanelState extends State<GroupEditorPanel> with ThemeHelpers {
   late final TextEditingController _nameController;
   late api.GroupSummary _summary;
   bool _busy = false;
@@ -98,11 +98,7 @@ class _GroupEditorPanelState extends OptimizedState<GroupEditorPanel> {
     if (handles == null || handles.isEmpty) {
       return;
     }
-    final normalized = handles
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toSet()
-        .toList(growable: false);
+    final normalized = handles.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet().toList(growable: false);
     if (normalized.isEmpty) {
       return;
     }
@@ -154,9 +150,7 @@ class _GroupEditorPanelState extends OptimizedState<GroupEditorPanel> {
   void _confirmDeleteGroup() {
     if (!_canDeleteGroup || _busy) return;
     final title = _isOwner ? "Delete Group?" : "Leave Group?";
-    final content = _isOwner
-        ? "This will permanently delete the group."
-        : "You will be removed from this group.";
+    final content = _isOwner ? "This will permanently delete the group." : "You will be removed from this group.";
     showDialog(
       context: context,
       builder: (context) => areYouSure(
@@ -269,9 +263,7 @@ class _GroupEditorPanelState extends OptimizedState<GroupEditorPanel> {
                   ] else
                     SettingsTile(
                       backgroundColor: tileColor,
-                      title: _summary.displayName.trim().isEmpty
-                          ? "(unknown group)"
-                          : _summary.displayName,
+                      title: _summary.displayName.trim().isEmpty ? "(unknown group)" : _summary.displayName,
                       subtitle: "Group Name",
                     ),
                 ],
@@ -294,8 +286,7 @@ class _GroupEditorPanelState extends OptimizedState<GroupEditorPanel> {
                         color: context.theme.colorScheme.primary,
                       ),
                     ),
-                  if (_canEditGroup && members.isNotEmpty)
-                    const SettingsDivider(),
+                  if (_canEditGroup && members.isNotEmpty) const SettingsDivider(),
                   if (members.isEmpty)
                     SettingsTile(
                       backgroundColor: tileColor,
@@ -305,9 +296,8 @@ class _GroupEditorPanelState extends OptimizedState<GroupEditorPanel> {
                     ...() {
                       final member = members[i];
                       final isOwner = _isOwnerMember(member);
-                      final titleBase = member.name?.trim().isNotEmpty == true
-                          ? member.name!
-                          : _displayHandle(member.handle);
+                      final titleBase =
+                          member.name?.trim().isNotEmpty == true ? member.name! : _displayHandle(member.handle);
                       final title = isOwner ? "$titleBase (Owner)" : titleBase;
                       return [
                         SettingsTile(
@@ -317,13 +307,9 @@ class _GroupEditorPanelState extends OptimizedState<GroupEditorPanel> {
                           trailing: !_canEditGroup || isOwner
                               ? null
                               : IconButton(
-                                  onPressed: _busy
-                                      ? null
-                                      : () => _removeParticipant(member.handle),
+                                  onPressed: _busy ? null : () => _removeParticipant(member.handle),
                                   icon: Icon(
-                                    iOS
-                                        ? CupertinoIcons.minus_circle
-                                        : Icons.remove_circle_outline,
+                                    iOS ? CupertinoIcons.minus_circle : Icons.remove_circle_outline,
                                     color: context.theme.colorScheme.error,
                                   ),
                                 ),

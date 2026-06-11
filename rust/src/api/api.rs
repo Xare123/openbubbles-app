@@ -1742,6 +1742,7 @@ pub async fn recv_wait(watcher: &mut APSWatcher, state: &Arc<SharedPushState>) -
     select! {
         msg = watcher.inq_queue.recv() => {
             let msg = msg.unwrap();
+            info!("Got inq cue");
             if let Some(icloud) = &state.icloud_services {
                 if let Some(fmfd) = &icloud.fmfd {
                     match fmfd.handle(msg.clone()).await {

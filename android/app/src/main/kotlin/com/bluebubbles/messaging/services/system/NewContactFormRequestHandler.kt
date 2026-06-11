@@ -28,6 +28,9 @@ class NewContactFormRequestHandler: MethodCallHandlerImpl() {
         val address: String = call.argument("address")!!
         val addressType: String = call.argument("address_type")!!
         val name: String? = call.argument("name")
+        val firstName: String? = call.argument("first_name")
+        val middleName: String? = call.argument("middle_name")
+        val lastName: String? = call.argument("last_name")
         val image: String? = call.argument("image")
         val existing: String? = call.argument("existing")
 
@@ -44,7 +47,15 @@ class NewContactFormRequestHandler: MethodCallHandlerImpl() {
         }
 
         if (existing != null) {
-            ContactUpdater.updateContact(context, existing.toLong(), name!!, compressedImage)
+            ContactUpdater.updateContact(
+                context,
+                existing.toLong(),
+                name!!,
+                firstName,
+                middleName,
+                lastName,
+                compressedImage
+            )
             result.success(null)
             return
         }
@@ -62,19 +73,45 @@ class NewContactFormRequestHandler: MethodCallHandlerImpl() {
             intent.putExtra(ContactsContract.Intents.Insert.NAME, it)
         }
 
-        compressedImage?.let {
-            val row = ContentValues().apply {
-                put(ContactsContract.CommonDataKinds.Photo.PHOTO, it)
-                put(ContactsContract.Data.MIMETYPE,
-                    ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
-            }
+        val data = arrayListOf<ContentValues>()
 
-            val data = arrayListOf(row)
-            intent.putParcelableArrayListExtra(
-                ContactsContract.Intents.Insert.DATA, data)
+        if (name != null) {
+            data.add(
+                ContentValues().apply {
+                    put(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
+                    put(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, name)
+                    putNullableString(ContactsContract.CommonDataKinds.StructuredName.GIVEN_NAME, firstName)
+                    putNullableString(ContactsContract.CommonDataKinds.StructuredName.MIDDLE_NAME, middleName)
+                    putNullableString(ContactsContract.CommonDataKinds.StructuredName.FAMILY_NAME, lastName)
+                }
+            )
+        }
+
+        compressedImage?.let {
+            data.add(
+                ContentValues().apply {
+                    put(ContactsContract.CommonDataKinds.Photo.PHOTO, it)
+                    put(
+                        ContactsContract.Data.MIMETYPE,
+                        ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE
+                    )
+                }
+            )
+        }
+
+        if (data.isNotEmpty()) {
+            intent.putParcelableArrayListExtra(ContactsContract.Intents.Insert.DATA, data)
         }
 
         context.startActivity(intent)
         result.success(null)
+    }
+
+    private fun ContentValues.putNullableString(key: String, value: String?) {
+        if (value == null) {
+            putNull(key)
+        } else {
+            put(key, value)
+        }
     }
 }

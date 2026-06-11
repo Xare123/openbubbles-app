@@ -8,7 +8,7 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 flutter_rust_bridge = "=2.3.0"
-rustpush = { path = "../rustpush", features = ["macos-validation-data", "remote-anisette-v3"] }
+rustpush = { path = "../rustpush", features = ["macos-validation-data", "remote-clearadi"] }
 keystore = { path = "../rustpush/keystore" }
 plist = "1.5.0"
 tokio = { version = "1", features = ["full"] }
@@ -31,6 +31,9 @@ sha2 = "0.10.8"
 rasn = "0.16.0"
 openssl = { version = "0.10.56", features = ["vendored"] }
 aes-gcm = "0.10.3"
+
+[patch.crates-io]
+quinn = { path = "../../quinn/quinn" }
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.14.1"

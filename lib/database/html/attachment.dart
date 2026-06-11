@@ -110,11 +110,12 @@ class Attachment {
 
   bool get hasValidSize => (width ?? 0) > 0 && (height ?? 0) > 0;
 
-  double get aspectRatio => hasValidSize ? (_isPortrait && height! < width! ?  (height! / width!).abs() : (width! / height!).abs()) : 0.78;
+  double get aspectRatio =>
+      hasValidSize ? (_isPortrait && height! < width! ? (height! / width!).abs() : (width! / height!).abs()) : 0.78;
 
   String? get mimeStart => mimeType?.split("/").first;
 
-  static String get baseDirectory => "${fs.appDocDir.path}/attachments";
+  static String get baseDirectory => FilesystemSvc.attachmentsPath;
 
   String get directory => "$baseDirectory/$guid";
 
@@ -148,21 +149,21 @@ class Attachment {
   }
 
   Map<String, dynamic> toMap() => {
-    "ROWID": id,
-    "originalROWID": originalROWID,
-    "guid": guid,
-    "uti": uti,
-    "mimeType": mimeType,
-    "isOutgoing": isOutgoing!,
-    "transferName": transferName,
-    "totalBytes": totalBytes,
-    "height": height,
-    "width": width,
-    "metadata": jsonEncode(metadata),
-    "hasLivePhoto": hasLivePhoto,
-  };
+        "ROWID": id,
+        "originalROWID": originalROWID,
+        "guid": guid,
+        "uti": uti,
+        "mimeType": mimeType,
+        "isOutgoing": isOutgoing!,
+        "transferName": transferName,
+        "totalBytes": totalBytes,
+        "height": height,
+        "width": width,
+        "metadata": jsonEncode(metadata),
+        "hasLivePhoto": hasLivePhoto,
+      };
 
-  bool  get _isPortrait {
+  bool get _isPortrait {
     if (metadata?['orientation'] == '1') return true;
     if (metadata?['orientation'] == 1) return true;
     if (metadata?['orientation'] == 'portrait') return true;

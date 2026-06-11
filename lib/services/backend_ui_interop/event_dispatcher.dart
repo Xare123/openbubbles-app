@@ -1,23 +1,20 @@
 import 'dart:async';
 
-import 'package:flutter/widgets.dart';
-import 'package:get/get.dart';
-import 'package:tuple/tuple.dart';
+import 'package:bluebubbles/models/models.dart';
+import 'package:get_it/get_it.dart';
 
-EventDispatcher eventDispatcher = Get.isRegistered<EventDispatcher>() ? Get.find<EventDispatcher>() : Get.put(EventDispatcher());
+// ignore: non_constant_identifier_names
+EventDispatcher get EventDispatcherSvc => GetIt.I<EventDispatcher>();
 
-class EventDispatcher extends GetxService with WidgetsBindingObserver {
-  final StreamController<Tuple2<String, dynamic>> _stream = StreamController<Tuple2<String, dynamic>>.broadcast();
-  
-  Stream<Tuple2<String, dynamic>> get stream => _stream.stream;
-  
-  @override
-  void onClose() {
+class EventDispatcher {
+  final StreamController<DispatchedEvent> _stream = StreamController<DispatchedEvent>.broadcast();
+  Stream<DispatchedEvent> get stream => _stream.stream;
+
+  void close() {
     _stream.close();
-    super.onClose();
   }
 
   void emit(String type, [dynamic data]) {
-    _stream.sink.add(Tuple2(type, data));
+    _stream.sink.add(DispatchedEvent(type, data));
   }
 }

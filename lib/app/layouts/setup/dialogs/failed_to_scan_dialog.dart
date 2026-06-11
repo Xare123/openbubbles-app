@@ -1,5 +1,4 @@
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
-import 'package:bluebubbles/helpers/ui/theme_helpers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
@@ -21,24 +20,23 @@ class FailedToScanDialog extends StatelessWidget {
         title,
         style: context.theme.textTheme.titleLarge,
       ),
-      backgroundColor: context.theme.colorScheme.properSurface,
+      backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
       content: SingleChildScrollView(
         physics: ThemeSwitcher.getScrollPhysics(),
-        child: Text(
-          error,
-          style: context.theme.textTheme.bodyLarge
-        ),
+        child: Text(error, style: context.theme.textTheme.bodyLarge),
       ),
       actions: [
         TextButton(
-          child: Text("Copy", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
+          child: Text("Copy",
+              style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
           onPressed: () {
             Navigator.of(context).pop();
             Clipboard.setData(ClipboardData(text: error.toString()));
           },
         ),
         TextButton(
-          child: Text("OK", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
+          child:
+              Text("OK", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
           onPressed: () {
             Navigator.of(context).pop();
           },

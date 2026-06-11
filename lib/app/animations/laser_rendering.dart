@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 class Laser extends LeafRenderObjectWidget {
-  Laser({
+  const Laser({
     super.key,
     required this.controller,
   });
@@ -29,7 +29,7 @@ class Laser extends LeafRenderObjectWidget {
 class RenderLaser extends RenderBox {
   RenderLaser({
     required LaserController controller,
-  })   : _controller = controller;
+  }) : _controller = controller;
 
   LaserController get controller => _controller;
   LaserController _controller;
@@ -95,42 +95,50 @@ class RenderLaser extends RenderBox {
       double centerY = controller.laser!.position.y;
       double screenHeight = max(controller.windowSize.height, controller.windowSize.width) * sqrt(2);
       Color color = HSVColor.fromAHSV(1, controller.globalHue % 360, 1, 1).toColor();
-      p.addArc(Rect.fromCenter(
-        center: Offset(centerX, centerY),
-        height: screenHeight * 2 - 100,
-        width: screenHeight * 2 - 100,
-      ), 0, 2 * pi);
-      canvas.drawPath(p, Paint()
-        ..style = PaintingStyle.fill
-        ..shader = RadialGradient(
-            colors: [
-              color.withOpacity(0.8),
+      p.addArc(
+          Rect.fromCenter(
+            center: Offset(centerX, centerY),
+            height: screenHeight * 2 - 100,
+            width: screenHeight * 2 - 100,
+          ),
+          0,
+          2 * pi);
+      canvas.drawPath(
+          p,
+          Paint()
+            ..style = PaintingStyle.fill
+            ..shader = RadialGradient(colors: [
+              color.withValues(alpha: 0.8),
               Colors.transparent,
-            ],
-            stops: [0, 0.9]
-        ).createShader(Rect.fromCircle(center: Offset(centerX, centerY), radius: screenHeight * 2 - 100))
-      );
+            ], stops: [
+              0,
+              0.9
+            ]).createShader(Rect.fromCircle(center: Offset(centerX, centerY), radius: screenHeight * 2 - 100)));
       for (LaserBeam b in controller.beams) {
         final Path p2 = Path();
         p2.moveTo(centerX, centerY);
-        p2.lineTo(centerX + screenHeight * cos(b.globalAngle) - b.internalWidth * sin(b.globalAngle), centerY + screenHeight * sin(b.globalAngle) + b.internalWidth * cos(b.globalAngle));
-        p2.lineTo(centerX + screenHeight * cos(b.globalAngle) + b.internalWidth * sin(b.globalAngle), centerY + screenHeight * sin(b.globalAngle) - b.internalWidth * cos(b.globalAngle));
+        p2.lineTo(centerX + screenHeight * cos(b.globalAngle) - b.internalWidth * sin(b.globalAngle),
+            centerY + screenHeight * sin(b.globalAngle) + b.internalWidth * cos(b.globalAngle));
+        p2.lineTo(centerX + screenHeight * cos(b.globalAngle) + b.internalWidth * sin(b.globalAngle),
+            centerY + screenHeight * sin(b.globalAngle) - b.internalWidth * cos(b.globalAngle));
         p2.lineTo(centerX, centerY);
-        canvas.drawPath(p2, Paint()
-          ..style = PaintingStyle.fill
-          ..shader = RadialGradient(
-              colors: [
+        canvas.drawPath(
+            p2,
+            Paint()
+              ..style = PaintingStyle.fill
+              ..shader = RadialGradient(colors: [
                 color,
                 Colors.transparent,
-              ],
-              stops: [0, 0.9]
-          ).createShader(Rect.fromCircle(center: Offset(centerX, centerY), radius: screenHeight * 2 - 100))
-        );
-        canvas.drawPath(p2, Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2
-          ..color = color.lightenAmount(0.1)
-        );
+              ], stops: [
+                0,
+                0.9
+              ]).createShader(Rect.fromCircle(center: Offset(centerX, centerY), radius: screenHeight * 2 - 100)));
+        canvas.drawPath(
+            p2,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 2
+              ..color = color.lightenAmount(0.1));
       }
     }
   }

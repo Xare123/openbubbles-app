@@ -9,7 +9,7 @@ class ThemeEntry {
   String? name;
   Color? color;
 
-  String? get dbColor => color?.value.toRadixString(16);
+  String? get dbColor => color?.toARGB32().toRadixString(16);
 
   set dbColor(String? s) => s == null ? color = null : color = HexColor(s);
   bool? isFont;

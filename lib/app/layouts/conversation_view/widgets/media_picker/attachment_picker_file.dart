@@ -1,7 +1,7 @@
+import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
-import 'package:bluebubbles/helpers/ui/theme_helpers.dart';
+import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/cupertino.dart';
@@ -10,13 +10,16 @@ import 'package:get/get.dart';
 import 'package:mime_type/mime_type.dart';
 import 'package:photo_manager/photo_manager.dart';
 
+/// Optimized attachment picker file that uses File-based rendering instead of loading bytes
+/// This significantly reduces memory usage and improves scrolling performance
 class AttachmentPickerFile extends StatefulWidget {
-  AttachmentPickerFile({
+  const AttachmentPickerFile({
     super.key,
     required this.onTap,
     required this.data,
     required this.controller,
   });
+
   final AssetEntity data;
   final Function() onTap;
   final ConversationViewController controller;
@@ -25,49 +28,75 @@ class AttachmentPickerFile extends StatefulWidget {
   State<AttachmentPickerFile> createState() => _AttachmentPickerFileState();
 }
 
-class _AttachmentPickerFileState extends OptimizedState<AttachmentPickerFile> with AutomaticKeepAliveClientMixin {
-  Uint8List? image;
-  String? path;
+class _AttachmentPickerFileState extends State<AttachmentPickerFile> with ThemeHelpers {
+  String? filePath;
+  Uint8List? thumbnailBytes; // Only for videos and special formats
+  bool isLoading = true;
+  bool hasError = false;
 
   @override
   void initState() {
     super.initState();
-    load();
+    loadFilePath();
   }
 
-  Future<void> load() async {
-    final file = (await widget.data.file)!;
-    path = file.path;
-    if (widget.data.mimeType?.startsWith("video/") ?? false) {
-      try {
-        image = await as.getVideoThumbnail(file.path, useCachedFile: false);
-      } catch (ex) {
-        image = fs.noVideoPreviewIcon;
+  Future<void> loadFilePath() async {
+    try {
+      final file = await widget.data.file;
+      if (file == null) {
+        setState(() {
+          hasError = true;
+          isLoading = false;
+        });
+        return;
       }
-      setState(() {});
-    } else if (widget.data.mimeType == "image/heic"
-        || widget.data.mimeType == "image/heif"
-        || widget.data.mimeType == "image/tif"
-        || widget.data.mimeType == "image/tiff") {
-      final fakeAttachment = Attachment(
-        transferName: file.path,
-        mimeType: widget.data.mimeType!,
-      );
-      image = await as.loadAndGetProperties(fakeAttachment, actualPath: file.path, onlyFetchData: true, isPreview: true);
-      setState(() {});
-    } else {
-      image = await file.readAsBytes();
-      setState(() {});
+
+      // Only load bytes for videos (thumbnails only)
+      if (widget.data.mimeType?.startsWith("video/") ?? false) {
+        try {
+          thumbnailBytes = await AttachmentsSvc.getVideoThumbnail(file.path, useCachedFile: false);
+        } catch (ex) {
+          thumbnailBytes = FilesystemSvc.noVideoPreviewIcon;
+        }
+        filePath = file.path;
+      } else if (widget.data.mimeType == "image/heic" ||
+          widget.data.mimeType == "image/heif" ||
+          widget.data.mimeType == "image/tif" ||
+          widget.data.mimeType == "image/tiff") {
+        // For incompatible formats, use ensureImageCompatibility to get converted path
+        // This returns a file path (not bytes), which we can render with Image.file
+        final fakeAttachment = Attachment(
+          transferName: file.path,
+          mimeType: widget.data.mimeType!,
+        );
+        filePath = await AttachmentsSvc.ensureImageCompatibility(fakeAttachment, actualPath: file.path);
+      } else {
+        // For regular images, just use the file path directly
+        filePath = file.path;
+      }
+      // All paths use Image.file for efficient rendering
+
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          hasError = true;
+          isLoading = false;
+        });
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final hideAttachments = ss.settings.redactedMode.value && ss.settings.hideAttachments.value;
-
-    super.build(context);
     return Obx(() {
-      bool containsThis = widget.controller.pickedAttachments.firstWhereOrNull((e) => e.path == path) != null;
+      final hideAttachments = SettingsSvc.settings.redactedMode.value && SettingsSvc.settings.hideAttachments.value;
+      bool containsThis = widget.controller.pickedAttachments.firstWhereOrNull((e) => e.path == filePath) != null;
+
       return AnimatedContainer(
         duration: const Duration(milliseconds: 250),
         margin: EdgeInsets.all(containsThis ? 10 : 0),
@@ -81,53 +110,14 @@ class _AttachmentPickerFileState extends OptimizedState<AttachmentPickerFile> wi
           child: Stack(
             alignment: Alignment.center,
             children: <Widget>[
-              if (image != null)
-                Image.memory(
-                  image!,
-                  fit: BoxFit.cover,
-                  width: 150,
-                  height: 150,
-                  cacheWidth: 300,
-                  frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-                    if (frame == null) {
-                      return Positioned.fill(
-                        child: Container(
-                          color: context.theme.colorScheme.properSurface,
-                        ),
-                      );
-                    } else {
-                      return child;
-                    }
-                  },
-                ),
-              if (image == null || hideAttachments)
-                Positioned.fill(
-                  child: Container(
-                    color: context.theme.colorScheme.properSurface,
-                    alignment: Alignment.center,
-                    child: Text(
-                      mime(path) ?? "",
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                ),
-              if (containsThis || widget.data.type == AssetType.video)
-                Container(
-                  decoration: containsThis ? BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: context.theme.colorScheme.primary
-                  ) : null,
-                  child: Padding(
-                    padding: const EdgeInsets.all(5.0),
-                    child: Icon(
-                      containsThis
-                          ? (iOS ? CupertinoIcons.check_mark : Icons.check)
-                          : (iOS ? CupertinoIcons.play_circle_fill : Icons.play_circle_filled),
-                      color: context.theme.colorScheme.onPrimary,
-                      size: containsThis ? 18 : 50,
-                    ),
-                  ),
-                ),
+              // Show image/thumbnail
+              if (!isLoading && !hasError && !hideAttachments) _buildImage(),
+
+              // Show placeholder while loading or on error
+              if (isLoading || hasError || hideAttachments) _buildPlaceholder(context),
+
+              // Show selection indicator or video icon
+              if (containsThis || widget.data.type == AssetType.video) _buildOverlayIcon(context, containsThis),
             ],
           ),
         ),
@@ -135,6 +125,93 @@ class _AttachmentPickerFileState extends OptimizedState<AttachmentPickerFile> wi
     });
   }
 
+  Widget _buildImage() {
+    // Use memory image only for videos and incompatible formats
+    if (thumbnailBytes != null) {
+      return Positioned.fill(
+        child: Image.memory(
+          thumbnailBytes!,
+          fit: BoxFit.cover,
+          cacheWidth: (150 * MediaQuery.of(context).devicePixelRatio).toInt(),
+          frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+            if (frame == null) {
+              return _buildPlaceholderContent(context);
+            }
+            return child;
+          },
+        ),
+      );
+    }
+
+    if (filePath != null) {
+      return Positioned.fill(
+        child: Image.file(
+          File(filePath!),
+          fit: BoxFit.cover,
+          cacheWidth: (150 * MediaQuery.of(context).devicePixelRatio).toInt(),
+          filterQuality: FilterQuality.low, // Low quality is fine for thumbnails
+          frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+            if (frame == null) {
+              return _buildPlaceholderContent(context);
+            }
+            return child;
+          },
+          errorBuilder: (context, error, stackTrace) {
+            return _buildPlaceholderContent(context);
+          },
+        ),
+      );
+    }
+
+    return _buildPlaceholder(context);
+  }
+
+  Widget _buildPlaceholder(BuildContext context) {
+    return Positioned.fill(
+      child: _buildPlaceholderContent(context),
+    );
+  }
+
+  Widget _buildPlaceholderContent(BuildContext context) {
+    return Container(
+      color: context.theme.colorScheme.surfaceContainerHighest,
+      alignment: Alignment.center,
+      child: isLoading
+          ? const CupertinoActivityIndicator()
+          : Text(
+              mime(filePath) ?? "",
+              textAlign: TextAlign.center,
+            ),
+    );
+  }
+
+  Widget _buildOverlayIcon(BuildContext context, bool containsThis) {
+    return Container(
+      decoration: containsThis
+          ? BoxDecoration(
+              shape: BoxShape.circle,
+              color: context.theme.colorScheme.primary,
+            )
+          : null,
+      child: Padding(
+        padding: const EdgeInsets.all(5.0),
+        child: Icon(
+          containsThis
+              ? (SettingsSvc.settings.skin.value == Skins.iOS ? CupertinoIcons.check_mark : Icons.check)
+              : (SettingsSvc.settings.skin.value == Skins.iOS
+                  ? CupertinoIcons.play_circle_fill
+                  : Icons.play_circle_filled),
+          color: context.theme.colorScheme.onPrimary,
+          size: containsThis ? 18 : 50,
+        ),
+      ),
+    );
+  }
+
   @override
-  bool get wantKeepAlive => true;
+  void dispose() {
+    // Clear any loaded thumbnail bytes
+    thumbnailBytes = null;
+    super.dispose();
+  }
 }

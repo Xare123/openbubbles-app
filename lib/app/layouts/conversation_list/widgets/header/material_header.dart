@@ -1,18 +1,16 @@
-import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/pages/conversation_list.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/widgets/header/header_widgets.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/pages/search/search_view.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get/get.dart';
 
 class MaterialHeader extends CustomStateful<ConversationListController> {
-  const MaterialHeader({Key? key, required super.parentController});
+  const MaterialHeader({super.key, required super.parentController});
 
   @override
   State<StatefulWidget> createState() => _MaterialHeaderState();
@@ -30,91 +28,95 @@ class _MaterialHeaderState extends CustomState<MaterialHeader, void, Conversatio
       children: [
         Obx(() => Container(
               height: controller.selectedChats.isEmpty ? 100 : null,
-              width: ns.width(context),
-              color: ss.settings.windowEffect.value == WindowEffect.disabled ? context.theme.colorScheme.properSurface : Colors.transparent,
+              width: NavigationSvc.width(context),
+              color: SettingsSvc.settings.windowEffect.value == WindowEffect.disabled
+                  ? context.theme.colorScheme.surfaceContainerHighest
+                  : Colors.transparent,
             )),
         AnimatedSwitcher(
           duration: const Duration(milliseconds: 500),
           child: controller.selectedChats.isEmpty
               ? SafeArea(
                   child: Obx(() {
-                      ns.listener.value;
-                      return Container(
-                        decoration: BoxDecoration(
-                          color: !ns.isAvatarOnly(context) && !showArchived && !showUnknown && !showDeleted ? context.theme.colorScheme.properSurface
-                              .withOpacity(ss.settings.windowEffect.value == WindowEffect.disabled ? 1 : 0.7) : Colors.transparent,
-                        ),
-                        child: Padding(
-                              padding: const EdgeInsets.only(left: 5.0, top: 5.0, bottom: 5.0),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.start,
-                                children: [
-                                  if (ns.isAvatarOnly(context))
-                                    Material(
-                                      color: Colors.transparent,
-                                      shape: const CircleBorder(),
-                                      clipBehavior: Clip.antiAlias,
-                                      child: OverflowMenu(extraItems: true, controller: controller),
-                                    ),
-                                  if (!ns.isAvatarOnly(context))
-                                    Padding(
-                                      padding: const EdgeInsets.only(left: 18, right: 20),
-                                      child: (!showArchived && !showUnknown && !showDeleted)
-                                          ? SvgPicture.asset(
-                                              'assets/icon/bb-icon.svg',
-                                              width: 26,
-                                              height: 26,
-                                              colorFilter: ColorFilter.mode(context.theme.colorScheme.properOnSurface, BlendMode.srcIn)
-                                          ) : IconButton(
-                                              onPressed: () async {
-                                                Navigator.of(context).pop();
-                                              },
-                                              padding: EdgeInsets.zero,
-                                              icon: Icon(
-                                                Icons.arrow_back,
-                                                color: context.theme.colorScheme.properOnSurface,
-                                              ),
-                                            ),
-                                    ),
-                                  if (!ns.isAvatarOnly(context)) HeaderText(controller: controller, fontSize: 20),
-                                  if (!ns.isAvatarOnly(context) && !showArchived && !showUnknown && !showDeleted)
-                                    Expanded(
-                                      child: Row(
-                                        mainAxisAlignment: MainAxisAlignment.end,
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          IconButton(
-                                            onPressed: () async {
-                                              controller.openCamera(context);
-                                            },
-                                            icon: Icon(
-                                              Icons.camera_alt_outlined,
-                                              color: context.theme.colorScheme.properOnSurface,
-                                            ),
-                                          ),
-                                          Padding(
-                                            padding: const EdgeInsets.only(left: 2),
-                                            child: IconButton(
-                                            onPressed: () async {
-                                              ns.pushLeft(
-                                                context,
-                                                SearchView(),
-                                              );
-                                            },
-                                            icon: Icon(
-                                              Icons.search_rounded,
-                                              color: context.theme.colorScheme.properOnSurface,
-                                            ),
-                                          )),
-                                          const OverflowMenu(),
-                                        ],
+                    NavigationSvc.listener.value;
+                    return Container(
+                      decoration: BoxDecoration(
+                        color: !NavigationSvc.isAvatarOnly(context) && !showArchived && !showUnknown && !showDeleted
+                            ? context.theme.colorScheme.surfaceContainerHighest.withValues(
+                                alpha: SettingsSvc.settings.windowEffect.value == WindowEffect.disabled ? 1 : 0.7)
+                            : Colors.transparent,
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 5.0, top: 6.0, bottom: 6.0),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.start,
+                          children: [
+                            if (NavigationSvc.isAvatarOnly(context))
+                              Material(
+                                color: Colors.transparent,
+                                shape: const CircleBorder(),
+                                clipBehavior: Clip.antiAlias,
+                                child: OverflowMenu(extraItems: true, controller: controller),
+                              ),
+                            if (!NavigationSvc.isAvatarOnly(context))
+                              Padding(
+                                padding: const EdgeInsets.only(left: 18, right: 10),
+                                child: (!showArchived && !showUnknown && !showDeleted)
+                                    ? SvgPicture.asset('assets/icon/bb-icon.svg',
+                                        width: 26,
+                                        height: 26,
+                                        colorFilter: ColorFilter.mode(
+                                            context.theme.colorScheme.onSurfaceVariant, BlendMode.srcIn))
+                                    : IconButton(
+                                        onPressed: () async {
+                                          Navigator.of(context).pop();
+                                        },
+                                        padding: EdgeInsets.zero,
+                                        icon: Icon(
+                                          Icons.arrow_back,
+                                          color: context.theme.colorScheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                              ),
+                            if (!NavigationSvc.isAvatarOnly(context)) HeaderText(controller: controller, fontSize: 18),
+                            if (!NavigationSvc.isAvatarOnly(context) && !showArchived && !showUnknown && !showDeleted)
+                              Expanded(
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      onPressed: () async {
+                                        controller.openCamera(context);
+                                      },
+                                      icon: Icon(
+                                        Icons.camera_alt_outlined,
+                                        color: context.theme.colorScheme.onSurfaceVariant,
                                       ),
                                     ),
-                                ],
+                                    Padding(
+                                        padding: const EdgeInsets.only(left: 2),
+                                        child: IconButton(
+                                          onPressed: () async {
+                                            NavigationSvc.pushLeft(
+                                              context,
+                                              const SearchView(),
+                                            );
+                                          },
+                                          icon: Icon(
+                                            Icons.search_rounded,
+                                            color: context.theme.colorScheme.onSurfaceVariant,
+                                          ),
+                                        )),
+                                    const OverflowMenu(),
+                                  ],
+                                ),
                               ),
-                            ),
-                      );
-                    }),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
                 )
               : SafeArea(
                   child: Padding(
@@ -150,26 +152,42 @@ class _MaterialHeaderState extends CustomState<MaterialHeader, void, Conversatio
                         Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            if (([0, controller.selectedChats.length])
-                                .contains(controller.selectedChats.where((element) => element.hasUnreadMessage!).length))
+                            if (([
+                              0,
+                              controller.selectedChats.length
+                            ]).contains(controller.selectedChats.where((element) => element.hasUnreadMessage!).length))
                               IconButton(
                                 onPressed: () {
                                   for (Chat element in controller.selectedChats) {
-                                    element.toggleHasUnread(!element.hasUnreadMessage!);
+                                    final chatState = ChatsSvc.getChatState(element.guid);
+                                    if (chatState != null) {
+                                      ChatsSvc.setChatHasUnread(chatState.chat, !element.hasUnreadMessage!);
+                                    } else {
+                                      element.toggleHasUnreadAsync(!element.hasUnreadMessage!);
+                                    }
                                   }
                                   controller.clearSelectedChats();
                                 },
                                 icon: Icon(
-                                  controller.selectedChats[0].hasUnreadMessage! ? Icons.mark_chat_read_outlined : Icons.mark_chat_unread_outlined,
+                                  controller.selectedChats[0].hasUnreadMessage!
+                                      ? Icons.mark_chat_read_outlined
+                                      : Icons.mark_chat_unread_outlined,
                                   color: context.theme.colorScheme.primary,
                                 ),
                               ),
-                            if (([0, controller.selectedChats.length])
-                                .contains(controller.selectedChats.where((element) => element.muteType == "mute").length))
+                            if (([
+                              0,
+                              controller.selectedChats.length
+                            ]).contains(controller.selectedChats.where((element) => element.muteType == "mute").length))
                               IconButton(
                                 onPressed: () {
                                   for (Chat element in controller.selectedChats) {
-                                    element.toggleMute(element.muteType != "mute");
+                                    final chatState = ChatsSvc.getChatState(element.guid);
+                                    if (chatState != null) {
+                                      ChatsSvc.setChatMuted(chatState.chat, element.muteType != "mute");
+                                    } else {
+                                      element.toggleMuteAsync(element.muteType != "mute");
+                                    }
                                   }
                                   controller.clearSelectedChats();
                                 },
@@ -185,7 +203,12 @@ class _MaterialHeaderState extends CustomState<MaterialHeader, void, Conversatio
                               IconButton(
                                 onPressed: () {
                                   for (Chat element in controller.selectedChats) {
-                                    element.togglePin(!element.isPinned!);
+                                    final chatState = ChatsSvc.getChatState(element.guid);
+                                    if (chatState != null) {
+                                      ChatsSvc.setChatPinned(chatState.chat, !element.isPinned!);
+                                    } else {
+                                      ChatsSvc.toggleChatPin(element, !element.isPinned!);
+                                    }
                                   }
                                   controller.clearSelectedChats();
                                 },
@@ -197,7 +220,12 @@ class _MaterialHeaderState extends CustomState<MaterialHeader, void, Conversatio
                             IconButton(
                               onPressed: () {
                                 for (Chat element in controller.selectedChats) {
-                                  element.toggleArchived(!element.isArchived!);
+                                  final chatState = ChatsSvc.getChatState(element.guid);
+                                  if (chatState != null) {
+                                    ChatsSvc.setChatArchived(chatState.chat, !element.isArchived!);
+                                  } else {
+                                    ChatsSvc.toggleChatArchive(element, !element.isArchived!);
+                                  }
                                 }
                                 controller.clearSelectedChats();
                               },
@@ -209,8 +237,8 @@ class _MaterialHeaderState extends CustomState<MaterialHeader, void, Conversatio
                             IconButton(
                               onPressed: () {
                                 for (Chat element in controller.selectedChats) {
-                                  chats.removeChat(element);
-                                  Chat.softDelete(element);
+                                  ChatsSvc.removeChat(element);
+                                  ChatsSvc.softDeleteChat(element);
                                 }
                                 controller.clearSelectedChats();
                               },

@@ -46,30 +46,45 @@ class SettingsTile extends StatelessWidget {
           child: ListTile(
             mouseCursor: MouseCursor.defer,
             enableFeedback: true,
-            minVerticalPadding: 10,
+            minVerticalPadding: 14,
             horizontalTitleGap: 10,
-            dense: ss.settings.skin.value == Skins.iOS ? true : false,
-            leading: leading == null ? null : Padding(
-              padding: EdgeInsets.only(bottom: isThreeLine ? 10 : 0.0, right: 5, left: ss.settings.skin.value == Skins.iOS ? 0 : 5),
-              child: leading,
-            ),
-            title: title != null ? Text(
-              title!,
-              style: context.theme.textTheme.bodyLarge,
-            ) : null,
-            trailing: trailing == null ? null : Padding(
-              padding: EdgeInsets.only(bottom: isThreeLine ? 10 : 0.0),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  trailing!,
-                ],
-              ),
-            ),
-            subtitle: subtitle != null ? Text(
-              subtitle!,
-              style: context.theme.textTheme.bodySmall!.copyWith(color: context.theme.colorScheme.properOnSurface.withOpacity(0.75), height: 1.5),
-            ) : null,
+            dense: SettingsSvc.settings.skin.value == Skins.iOS ? true : false,
+            leading: leading == null
+                ? null
+                : Padding(
+                    padding: EdgeInsets.only(
+                        bottom: isThreeLine ? 10 : 0.0,
+                        right: 5,
+                        left: SettingsSvc.settings.skin.value == Skins.iOS ? 0 : 5),
+                    child: leading,
+                  ),
+            title: title != null
+                ? Text(
+                    title!,
+                    style: context.theme.textTheme.bodyLarge,
+                  )
+                : null,
+            trailing: trailing == null
+                ? null
+                : ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 160),
+                    child: Padding(
+                      padding: EdgeInsets.only(bottom: isThreeLine ? 10 : 0.0),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          trailing!,
+                        ],
+                      ),
+                    ),
+                  ),
+            subtitle: subtitle != null
+                ? Text(
+                    subtitle!,
+                    style: context.theme.textTheme.bodySmall!.copyWith(
+                        color: context.theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.75), height: 1.5),
+                  )
+                : null,
             contentPadding: const EdgeInsets.symmetric(horizontal: 16.0),
           ),
         ),

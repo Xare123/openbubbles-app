@@ -14,7 +14,6 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:url_launcher/url_launcher.dart';
 
 class DevicePanelController extends StatefulController {
-
   final RxBool allowSharing = false.obs;
 }
 
@@ -26,33 +25,31 @@ class DevicePanel extends CustomStateful<DevicePanelController> {
 }
 
 class _DevicePanelState extends CustomState<DevicePanel, void, DevicePanelController> {
-
   api.DeviceInfo? deviceInfo;
   String deviceName = "";
   RxBool isInClique = false.obs;
 
   Future<T> wrapPromise<T>(Future<T> inner, String text) async {
     showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          backgroundColor: context.theme.colorScheme.properSurface,
-          title: Text(
-            text,
-            style: context.theme.textTheme.titleLarge,
-          ),
-          content: Container(
-            height: 70,
-            child: Center(
-              child: CircularProgressIndicator(
-                backgroundColor: context.theme.colorScheme.properSurface,
-                valueColor: AlwaysStoppedAnimation<Color>(context.theme.colorScheme.primary),
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+            title: Text(
+              text,
+              style: context.theme.textTheme.titleLarge,
+            ),
+            content: Container(
+              height: 70,
+              child: Center(
+                child: CircularProgressIndicator(
+                  backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+                  valueColor: AlwaysStoppedAnimation<Color>(context.theme.colorScheme.primary),
+                ),
               ),
             ),
-          ),
-        );
-      }
-    );
+          );
+        });
     T result;
     try {
       result = await inner;
@@ -68,119 +65,126 @@ class _DevicePanelState extends CustomState<DevicePanel, void, DevicePanelContro
   void choosePassword(bool pin) async {
     var codeController = TextEditingController();
     await showDialog(
-      context: context,
-      builder: (_) {
-        return AlertDialog(
-          actions: [
-            TextButton(
-              child: Text("Use ${pin ? "Password" : "Passcode"}", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-              onPressed: () {
-                Get.back();
-                choosePassword(!pin);
-              },
-            ),
-            TextButton(
-              child: Text("OK", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-              onPressed: () async {
-                Get.back();
-                await wrapPromise(api.changeEscrowPassword(keychain: pushService.state!.icloudServices!.keychain!, devicePassword: codeController.text), "Changing password...");
-                ss.settings.keychainDefaultPassword.value = null;
-                ss.saveSettings();
-              },
-            ),
-          ],
-          title: Text("Enter a ${pin ? "passcode" : "password"} to protect your iCloud data.", style: context.theme.textTheme.titleLarge),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 20,),
-              pin ? StatefulBuilder(builder: (context, state) => Stack(
-                children: [
-                  Row(
-                    children: List.generate(6, (index) {
-                      var text = index < codeController.text.length ? codeController.text[index] : "";
-                      return Expanded(child: 
-                        Container(
-                          decoration: index == codeController.text.length ? 
-                            BoxDecoration(
-                              border: Border.all(
-                                color: context.theme.colorScheme.primary,
-                                width: 2
-                              ),
-                              borderRadius: const BorderRadius.all(Radius.circular(10)),
-                            )
-                          : BoxDecoration(
-                            border: Border.all(
-                              color: context.theme.colorScheme.outline,
-                            ),
-                            borderRadius: const BorderRadius.all(Radius.circular(10)),
-                          ),
-                          margin: const EdgeInsets.all(3),
-                          height: 50,
-                          child: Center(
-                            child: Text(
-                              text,
-                              style: context.theme.textTheme.titleLarge
-                            ),
-                          )
-                        )
-                      );
-                    }),
-                  ),
-                  Opacity(
-                    opacity: 0,
-                    child: TextField(
-                      cursorColor: context.theme.colorScheme.primary,
-                      autocorrect: false,
-                      autofocus: true,
-                      controller: codeController,
-                      textInputAction: TextInputAction.next,
-                      keyboardType: TextInputType.number,
-                      onChanged: (v) {
-                        state(() {});
-                      },
-                    )),
-                ],
-              )) : TextField(
-                controller: codeController,
-                decoration: const InputDecoration(
-                  labelText: "Password",
-                  border: OutlineInputBorder(),
-                ),
-                autofocus: true,
-              )
+        context: context,
+        builder: (_) {
+          return AlertDialog(
+            actions: [
+              TextButton(
+                child: Text("Use ${pin ? "Password" : "Passcode"}",
+                    style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
+                onPressed: () {
+                  Get.back();
+                  choosePassword(!pin);
+                },
+              ),
+              TextButton(
+                child: Text("OK",
+                    style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
+                onPressed: () async {
+                  Get.back();
+                  await wrapPromise(
+                      api.changeEscrowPassword(
+                          keychain: PushSvc.state!.icloudServices!.keychain!, devicePassword: codeController.text),
+                      "Changing password...");
+                  SettingsSvc.settings.keychainDefaultPassword.value = null;
+                  await SettingsSvc.settings.saveOneAsync('keychainDefaultPassword');
+                },
+              ),
             ],
-          ),
-          backgroundColor: context.theme.colorScheme.properSurface,
-        );
-      }
-    );
+            title: Text("Enter a ${pin ? "passcode" : "password"} to protect your iCloud data.",
+                style: context.theme.textTheme.titleLarge),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(
+                  height: 20,
+                ),
+                pin
+                    ? StatefulBuilder(
+                        builder: (context, state) => Stack(
+                              children: [
+                                Row(
+                                  children: List.generate(6, (index) {
+                                    var text = index < codeController.text.length ? codeController.text[index] : "";
+                                    return Expanded(
+                                        child: Container(
+                                            decoration: index == codeController.text.length
+                                                ? BoxDecoration(
+                                                    border:
+                                                        Border.all(color: context.theme.colorScheme.primary, width: 2),
+                                                    borderRadius: const BorderRadius.all(Radius.circular(10)),
+                                                  )
+                                                : BoxDecoration(
+                                                    border: Border.all(
+                                                      color: context.theme.colorScheme.outline,
+                                                    ),
+                                                    borderRadius: const BorderRadius.all(Radius.circular(10)),
+                                                  ),
+                                            margin: const EdgeInsets.all(3),
+                                            height: 50,
+                                            child: Center(
+                                              child: Text(text, style: context.theme.textTheme.titleLarge),
+                                            )));
+                                  }),
+                                ),
+                                Opacity(
+                                    opacity: 0,
+                                    child: TextField(
+                                      cursorColor: context.theme.colorScheme.primary,
+                                      autocorrect: false,
+                                      autofocus: true,
+                                      controller: codeController,
+                                      textInputAction: TextInputAction.next,
+                                      keyboardType: TextInputType.number,
+                                      onChanged: (v) {
+                                        state(() {});
+                                      },
+                                    )),
+                              ],
+                            ))
+                    : TextField(
+                        controller: codeController,
+                        decoration: const InputDecoration(
+                          labelText: "Password",
+                          border: OutlineInputBorder(),
+                        ),
+                        autofocus: true,
+                      )
+              ],
+            ),
+            backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+          );
+        });
   }
 
   @override
   void initState() {
     super.initState();
-    api.getDeviceInfo(config: pushService.state!.osConfig).then((value) {
+    api.getDeviceInfo(config: PushSvc.state!.osConfig).then((value) {
       setState(() {
         deviceInfo = value;
         deviceName = RustPushBBUtils.modelToUser(deviceInfo!.name);
       });
     });
-    if (pushService.state!.icloudServices != null) api.isInClique(keychain: pushService.state!.icloudServices!.keychain!).then((clique) => isInClique.value = clique);
+    if (PushSvc.state!.icloudServices != null)
+      api.isInClique(keychain: PushSvc.state!.icloudServices!.keychain!).then((clique) => isInClique.value = clique);
   }
 
   @override
   Widget build(BuildContext context) {
-    Widget nextIcon = Obx(() => ss.settings.skin.value != Skins.Material ? Icon(
-      ss.settings.skin.value != Skins.Material ? CupertinoIcons.chevron_right : Icons.arrow_forward,
-      color: context.theme.colorScheme.outline,
-      size: iOS ? 18 : 24,
-    ) : const SizedBox.shrink());
+    Widget nextIcon = Obx(() => SettingsSvc.settings.skin.value != Skins.Material
+        ? Icon(
+            SettingsSvc.settings.skin.value != Skins.Material ? CupertinoIcons.chevron_right : Icons.arrow_forward,
+            color: context.theme.colorScheme.outline,
+            size: iOS ? 18 : 24,
+          )
+        : const SizedBox.shrink());
 
     return Obx(
       () => SettingsScaffold(
-        title: "${ss.settings.deviceIsHosted.value ? "Hosted" : ss.settings.macIsMine.value ? 'My' : 'Shared'} Device",
+        title:
+            "${SettingsSvc.settings.deviceIsHosted.value ? "Hosted" : SettingsSvc.settings.macIsMine.value ? 'My' : 'Shared'} Device",
         initialHeader: null,
         iosSubtitle: iosSubtitle,
         materialSubtitle: materialSubtitle,
@@ -194,132 +198,141 @@ class _DevicePanelState extends CustomState<DevicePanel, void, DevicePanelContro
                   backgroundColor: tileColor,
                   children: [
                     Center(
-                      child: Column(
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.all(25),
-                            child: Icon(
-                              RustPushBBUtils.getIcon(deviceName),
-                              size: 200,
-                              color: context.theme.colorScheme.properOnSurface,
-                            ),
+                        child: Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.all(25),
+                          child: Icon(
+                            RustPushBBUtils.getIcon(deviceName),
+                            size: 200,
+                            color: context.theme.colorScheme.onSurface,
                           ),
-                          Text(deviceName, style: context.theme.textTheme.titleLarge),
-                          const SizedBox(height: 10),
-                          Text(ss.settings.redactedMode.value ? "Serial Number" : deviceInfo?.serial ?? ""),
-                          const SizedBox(height: 10),
-                          Text(deviceInfo?.osVersion ?? ""),
-                          const SizedBox(height: 25),
-                        ],
-                      )
-                    ),
-                    if (ss.settings.deviceIsHosted.value)
+                        ),
+                        Text(deviceName, style: context.theme.textTheme.titleLarge),
+                        const SizedBox(height: 10),
+                        Text(SettingsSvc.settings.redactedMode.value ? "Serial Number" : deviceInfo?.serial ?? ""),
+                        const SizedBox(height: 10),
+                        Text(deviceInfo?.osVersion ?? ""),
+                        const SizedBox(height: 25),
+                      ],
+                    )),
+                    if (SettingsSvc.settings.deviceIsHosted.value)
                       SettingsTile(
-                      title: "Manage subscription",
-                      onTap: () async {
-                        launchUrl(Uri.parse("https://play.google.com/store/account/subscriptions?sku=monthly_hosted&package=com.openbubbles.messaging"), mode: LaunchMode.externalNonBrowserApplication);
-                      },
-                      trailing: const NextButton()
-                      ),
+                          title: "Manage subscription",
+                          onTap: () async {
+                            launchUrl(
+                                Uri.parse(
+                                    "https://play.google.com/store/account/subscriptions?sku=monthly_hosted&package=com.openbubbles.messaging"),
+                                mode: LaunchMode.externalNonBrowserApplication);
+                          },
+                          trailing: const NextButton()),
                     if (isInClique.value)
                       SettingsTile(
-                      title: "Manage iCloud Keychain Password",
-                      subtitle: "Protects your Apple ID, saved passwords, and other data stored in iCloud",
-                      onTap: () async {
-                        await showDialog(
-                          context: context,
-                          builder: (_) {
-                            return AlertDialog(
-                              actions: [
-                                TextButton(
-                                  child: Text("Change Password", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-                                  onPressed: () async {
-                                    Get.back();
-                                    choosePassword(true);
-                                  },
-                                ),
-                                TextButton(
-                                  child: Text("Ok", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-                                  onPressed: () {
-                                    Get.back();
-                                  },
-                                ),
-                              ],
-                              title: Text("Keychain Password", style: context.theme.textTheme.titleLarge),
-                              content: Text(ss.settings.keychainDefaultPassword.value != null ? "This device's default keychain passcode is ${ss.settings.keychainDefaultPassword.value}." : "You have set a custom keychain password.", style: context.theme.textTheme.bodyLarge),
-                              backgroundColor: context.theme.colorScheme.properSurface,
-                            );
-                          }
-                        );
-                      },
-                      trailing: const NextButton()
-                      ),
+                          title: "Manage iCloud Keychain Password",
+                          subtitle: "Protects your Apple ID, saved passwords, and other data stored in iCloud",
+                          onTap: () async {
+                            await showDialog(
+                                context: context,
+                                builder: (_) {
+                                  return AlertDialog(
+                                    actions: [
+                                      TextButton(
+                                        child: Text("Change Password",
+                                            style: context.theme.textTheme.bodyLarge!
+                                                .copyWith(color: context.theme.colorScheme.primary)),
+                                        onPressed: () async {
+                                          Get.back();
+                                          choosePassword(true);
+                                        },
+                                      ),
+                                      TextButton(
+                                        child: Text("Ok",
+                                            style: context.theme.textTheme.bodyLarge!
+                                                .copyWith(color: context.theme.colorScheme.primary)),
+                                        onPressed: () {
+                                          Get.back();
+                                        },
+                                      ),
+                                    ],
+                                    title: Text("Keychain Password", style: context.theme.textTheme.titleLarge),
+                                    content: Text(
+                                        SettingsSvc.settings.keychainDefaultPassword.value != null
+                                            ? "This device's default keychain passcode is ${SettingsSvc.settings.keychainDefaultPassword.value}."
+                                            : "You have set a custom keychain password.",
+                                        style: context.theme.textTheme.bodyLarge),
+                                    backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+                                  );
+                                });
+                          },
+                          trailing: const NextButton()),
                   ],
                 ),
-                if (ss.settings.macIsMine.value && deviceInfo?.encodedData != null && !ss.settings.redactedMode.value)
-                SettingsHeader(
-                    iosSubtitle: iosSubtitle,
-                    materialSubtitle: materialSubtitle,
-                    text: "Share Mac"),
-                if (ss.settings.macIsMine.value && deviceInfo?.encodedData != null && !ss.settings.redactedMode.value)
-                SettingsSection(
-                  backgroundColor: tileColor,
-                  children: [
-                    Obx(() => SettingsSwitch(
-                      onChanged: (bool val) {
-                        controller.allowSharing.value = !val;
-                      },
-                      initialVal: !controller.allowSharing.value,
-                      title: "Prevent sharing",
-                      backgroundColor: tileColor,
-                      subtitle: "Apple may block devices due to spam or exceeding 20 users. Only share with people you trust.",
-                      isThreeLine: true,
-                    )),
-                    if (deviceInfo != null)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(15, 0, 15, 0),
-                      child: AspectRatio(
-                        aspectRatio: 1,
-                        child: BarcodeWidget.fromBytes(
-                          barcode: Barcode.qrCode(
-                            errorCorrectLevel: BarcodeQRCorrectionLevel.medium,
-                          ),
-                          data: pushService.getQrInfo(controller.allowSharing.value, deviceInfo!.encodedData!),
-                          backgroundColor: const Color(0),
-                          color: context.theme.colorScheme.onSurface,
+                if (SettingsSvc.settings.macIsMine.value &&
+                    deviceInfo?.encodedData != null &&
+                    !SettingsSvc.settings.redactedMode.value)
+                  SettingsHeader(iosSubtitle: iosSubtitle, materialSubtitle: materialSubtitle, text: "Share Mac"),
+                if (SettingsSvc.settings.macIsMine.value &&
+                    deviceInfo?.encodedData != null &&
+                    !SettingsSvc.settings.redactedMode.value)
+                  SettingsSection(
+                    backgroundColor: tileColor,
+                    children: [
+                      Obx(() => SettingsSwitch(
+                            onChanged: (bool val) {
+                              controller.allowSharing.value = !val;
+                            },
+                            initialVal: !controller.allowSharing.value,
+                            title: "Prevent sharing",
+                            backgroundColor: tileColor,
+                            subtitle:
+                                "Apple may block devices due to spam or exceeding 20 users. Only share with people you trust.",
+                            isThreeLine: true,
+                          )),
+                      if (deviceInfo != null)
+                        Padding(
+                            padding: const EdgeInsets.fromLTRB(15, 0, 15, 0),
+                            child: AspectRatio(
+                              aspectRatio: 1,
+                              child: BarcodeWidget.fromBytes(
+                                barcode: Barcode.qrCode(
+                                  errorCorrectLevel: BarcodeQRCorrectionLevel.medium,
+                                ),
+                                data: PushSvc.getQrInfo(controller.allowSharing.value, deviceInfo!.encodedData!),
+                                backgroundColor: const Color(0),
+                                color: context.theme.colorScheme.onSurface,
+                              ),
+                            )),
+                      const SizedBox(height: 10),
+                      if (!kIsDesktop)
+                        SettingsTile(
+                          backgroundColor: tileColor,
+                          title: "Share Activation Code",
+                          onTap: () async {
+                            var code = await PushSvc.uploadCode(controller.allowSharing.value, deviceInfo!);
+                            if (code.length > 50) {
+                              Share.text(code);
+                            } else {
+                              Share.text("$rpApiRoot/$code");
+                            }
+                          },
+                          subtitle: controller.allowSharing.value ? null : "Code can only be used once",
+                          trailing:
+                              Icon(SettingsSvc.settings.skin.value == Skins.iOS ? CupertinoIcons.share : Icons.share),
                         ),
-                      )),
-                    const SizedBox(height: 10),
-                    if (!kIsDesktop)
-                    SettingsTile(
-                      backgroundColor: tileColor,
-                      title: "Share Activation Code",
-                      onTap: () async {
-                        var code = await pushService.uploadCode(controller.allowSharing.value, deviceInfo!);
-                        if (code.length > 50) {
-                          Share.text("OpenBubbles", code);
-                        } else {
-                          Share.text("OpenBubbles", "$rpApiRoot/$code");
-                        }
-                      },
-                      subtitle: controller.allowSharing.value ? null : "Code can only be used once",
-                      trailing: Icon(
-                        ss.settings.skin.value == Skins.iOS ? CupertinoIcons.share : Icons.share
+                      SettingsTile(
+                        backgroundColor: tileColor,
+                        title: "Copy Activation Code",
+                        onTap: () async {
+                          Clipboard.setData(ClipboardData(
+                              text: await PushSvc.uploadCode(controller.allowSharing.value, deviceInfo!)));
+                        },
+                        trailing: Icon(SettingsSvc.settings.skin.value == Skins.iOS
+                            ? CupertinoIcons.doc_on_clipboard
+                            : Icons.copy),
+                        subtitle: controller.allowSharing.value ? null : "Code can only be used once",
                       ),
-                    ),
-                    SettingsTile(
-                      backgroundColor: tileColor,
-                      title: "Copy Activation Code",
-                      onTap: () async {
-                        Clipboard.setData(ClipboardData(text: await pushService.uploadCode(controller.allowSharing.value, deviceInfo!)));
-                      },
-                      trailing: Icon(
-                        ss.settings.skin.value == Skins.iOS ? CupertinoIcons.doc_on_clipboard : Icons.copy
-                      ),
-                      subtitle: controller.allowSharing.value ? null : "Code can only be used once",
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
               ],
             ),
           ),
@@ -329,6 +342,6 @@ class _DevicePanelState extends CustomState<DevicePanel, void, DevicePanelContro
   }
 
   void saveSettings() {
-    ss.saveSettings();
+    SettingsSvc.settings.saveAsync();
   }
 }

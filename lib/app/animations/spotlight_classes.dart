@@ -30,7 +30,8 @@ class SpotlightController implements Listenable {
     isPlaying = true;
     autoLaunchDuration = const Duration(milliseconds: 100);
     lastAutoLaunch = Duration.zero;
-    position = Point((bubbleDimensions.left + bubbleDimensions.right) / 2, (bubbleDimensions.top + bubbleDimensions.bottom) / 2);
+    position = Point(
+        (bubbleDimensions.left + bubbleDimensions.right) / 2, (bubbleDimensions.top + bubbleDimensions.bottom) / 2);
     size = max(bubbleDimensions.width, bubbleDimensions.height) + 50;
     ticker = vsync.createTicker(update)..start();
   }
@@ -111,7 +112,8 @@ class SpotlightObject {
 
   void update(Duration elapsed) {
     if (elapsed.inSeconds < 3) {
-      position = Point(originalPosition.x + (random.nextDouble() - .5), originalPosition.y + (random.nextDouble() - .5));
+      position =
+          Point(originalPosition.x + (random.nextDouble() - .5), originalPosition.y + (random.nextDouble() - .5));
     } else {
       stop = stop - 0.05;
     }

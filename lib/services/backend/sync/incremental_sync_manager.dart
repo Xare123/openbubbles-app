@@ -1,6 +1,6 @@
 import 'package:async_task/async_task_extension.dart';
-import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/backend/sync/sync_manager_impl.dart';
 import 'package:bluebubbles/services/services.dart';
@@ -39,6 +39,18 @@ class IncrementalSyncManager extends SyncManager {
   // A cache of all the chats we've synced
   Map<String, Chat> syncedChats = {};
 
+  // Tracks the DB ID of the latest (highest dateCreated) message synced per chat.
+  // Used by SyncActions to return message IDs instead of chat IDs so the interface
+  // can hydrate Message objects and update ChatState subtitles.
+  Map<String, int> latestMessageIdPerChat = {};
+
+  // Tracks the latest group-photo-change message per chat across all sync pages.
+  // isGroupPhotoChanged (groupActionType == 1) → photo changed.
+  // isGroupPhotoRemoved (groupActionType == 2) → photo removed.
+  // We keep only the latest (highest dateCreated) so that if multiple photo
+  // changes arrive in the same sync the most-recent action wins.
+  Map<String, ({DateTime? dateCreated, int groupActionType})> latestPhotoChangePerChat = {};
+
   // A flag telling the "complete" function to save the timestamp/row ID markers.
   bool saveMarker;
 
@@ -47,21 +59,27 @@ class IncrementalSyncManager extends SyncManager {
 
   // The default extra fields to fetch with the messages
   List<String> defaultWithQuery = [
-    "chats", "chats.participants", "attachments", "attributedBody", "messageSummaryInfo", "payloadData"];
+    "chats",
+    "chats.participants",
+    "attachments",
+    "attributedBody",
+    "messageSummaryInfo",
+    "payloadData"
+  ];
 
-  IncrementalSyncManager({
-      this.startRowId,
+  IncrementalSyncManager(
+      {this.startRowId,
       this.endRowId,
       this.startTimestamp,
       this.endTimestamp,
       this.batchSize = 1000,
       this.saveMarker = false,
       this.onComplete,
-      bool saveLogs = false
-  }) : super("Incremental", saveLogs: saveLogs) {
-      if (startRowId == null && startTimestamp == null) {
-        throw Exception("Must provide either a startRowId or startTimestamp");
-      }
+      bool saveLogs = false})
+      : super("Incremental", saveLogs: saveLogs) {
+    if (startRowId == null && startTimestamp == null) {
+      throw Exception("Must provide either a startRowId or startTimestamp");
+    }
   }
 
   @override
@@ -89,16 +107,14 @@ class IncrementalSyncManager extends SyncManager {
     // Check the server version and sync differently based on the version.
     // This is due to bugs in certain server versions as well as new features
     // in server versions to make the sync more efficient.
-    int serverVersion = (await ss.getServerDetails()).item4;
-    bool isMin_1_2_0 = serverVersion >= 142; // Server: v1.2.0 (1 * 100 + 2 * 21 + 0)
-    bool isMin_1_6_0 = serverVersion >= 226; // Server: v1.6.0 (1 * 100 + 6 * 21 + 0)
+    final serverDetails = SettingsSvc.serverDetails;
 
     try {
       // If we've don't have a startRowId (null or 0), then sync using timestamps
-      if (isMin_1_6_0 && (startRowId ?? 0) > 0) {
+      if (serverDetails.supportsRowIdSync && (startRowId ?? 0) > 0) {
         addToOutput("Syncing with server version >= 1.6.0");
         await startMin_1_6_0();
-      } else if (isMin_1_2_0) {
+      } else if (serverDetails.supportsImprovedSync) {
         addToOutput("Syncing with server version >= 1.2.0");
         await startMin_1_2_0();
       } else {
@@ -120,7 +136,7 @@ class IncrementalSyncManager extends SyncManager {
     // Query the API for messages.
     // This endpoint will return the total messages that match the query in v1.6.0+
     addToOutput('Fetching messages...');
-    dio.Response<dynamic> messagesRes = await http.messages(
+    dio.Response<dynamic> messagesRes = await HttpSvc.messages(
       where: buildRowIdWhereArgs(startRowId!, endRowId),
       limit: batchSize,
       offset: 0,
@@ -147,7 +163,7 @@ class IncrementalSyncManager extends SyncManager {
     }
 
     // Hit API endpoint to check for updated messages
-    dio.Response<dynamic> uMessageCountRes = await http.messageCount(
+    dio.Response<dynamic> uMessageCountRes = await HttpSvc.messageCount(
       after: DateTime.fromMillisecondsSinceEpoch(startTimestamp!),
     );
 
@@ -169,7 +185,7 @@ class IncrementalSyncManager extends SyncManager {
     // the messages have a null text, we can still account for them when we fetch.
 
     // Hit API endpoint to check for updated messages
-    dio.Response<dynamic> uMessageCountRes = await http.messageCount(
+    dio.Response<dynamic> uMessageCountRes = await HttpSvc.messageCount(
       after: DateTime.fromMillisecondsSinceEpoch(startTimestamp!),
     );
 
@@ -201,13 +217,13 @@ class IncrementalSyncManager extends SyncManager {
 
       // Fetch the pages differently depending on the parameters.
       if (useRowId) {
-        messagesResponse = await http.messages(
+        messagesResponse = await HttpSvc.messages(
             where: buildRowIdWhereArgs(startRowId!, endRowId),
             offset: i * batchSize,
             limit: batchSize,
             withQuery: defaultWithQuery);
       } else {
-        messagesResponse = await http.messages(
+        messagesResponse = await HttpSvc.messages(
             after: startTimestamp,
             before: endTimestamp,
             offset: i * batchSize,
@@ -216,8 +232,7 @@ class IncrementalSyncManager extends SyncManager {
       }
 
       int messageCount = messagesResponse.data['data'].length;
-      addToOutput('Page ${i + 1} returned $messageCount message(s)...',
-          level: LogLevel.DEBUG);
+      addToOutput('Page ${i + 1} returned $messageCount message(s)...', level: LogLevel.DEBUG);
 
       if (messageCount == 0) break;
       await syncMessages(messagesResponse.data['data'], total);
@@ -236,6 +251,12 @@ class IncrementalSyncManager extends SyncManager {
     // Enumerate the chats into cache
     Map<String, Chat> chatCache = {};
     Map<String, List<Message>> messagesToSync = {};
+
+    // Tracks the latest group-name-change per chat, keyed by chat GUID.
+    // We keep only the latest (highest dateCreated) so that if multiple name
+    // changes arrive in the same batch the most-recent one wins.
+    final Map<String, ({DateTime? dateCreated, String? groupTitle})> latestNameChangePerChat = {};
+
     for (var msgData in messages) {
       for (var chat in msgData['chats']) {
         if (!chatCache.containsKey(chat['guid'])) {
@@ -247,6 +268,7 @@ class IncrementalSyncManager extends SyncManager {
         }
 
         Message msg = Message.fromMap(msgData);
+        if (msg.error > 0) msg.errorMessage = serverErrorMessage(msg.error);
         messagesToSync[chat['guid']]!.add(msg);
 
         // Save the last synced ROWID
@@ -255,9 +277,73 @@ class IncrementalSyncManager extends SyncManager {
         }
 
         // Save the last synced timestamp
-        if (msg.dateCreated != null && lastSyncedTimestamp == null || msg.dateCreated!.millisecondsSinceEpoch > lastSyncedTimestamp!) {
+        if (msg.dateCreated != null && lastSyncedTimestamp == null ||
+            msg.dateCreated!.millisecondsSinceEpoch > lastSyncedTimestamp!) {
           lastSyncedTimestamp = msg.dateCreated!.millisecondsSinceEpoch;
         }
+
+        // Track the latest group-name-change message per chat.
+        if (msg.isNameChange) {
+          final chatGuid = chat['guid'] as String;
+          final existing = latestNameChangePerChat[chatGuid];
+          final msgDate = msg.dateCreated;
+          if (existing == null ||
+              (msgDate != null && existing.dateCreated != null && msgDate.isAfter(existing.dateCreated!))) {
+            latestNameChangePerChat[chatGuid] = (dateCreated: msgDate, groupTitle: msg.groupTitle);
+          }
+        }
+
+        // Track the latest group-photo-change message per chat.
+        if (msg.isGroupPhotoEvent) {
+          final chatGuid = chat['guid'] as String;
+          final existing = latestPhotoChangePerChat[chatGuid];
+          final msgDate = msg.dateCreated;
+          if (existing == null ||
+              (msgDate != null && existing.dateCreated != null && msgDate.isAfter(existing.dateCreated!))) {
+            latestPhotoChangePerChat[chatGuid] = (dateCreated: msgDate, groupActionType: msg.groupActionType ?? 0);
+          }
+        }
+      }
+    }
+
+    // Check which chats need full participant data from the server
+    // This is needed because message API responses don't include participants for efficiency
+    List<String> chatsNeedingParticipants = [];
+    for (var chatGuid in chatCache.keys) {
+      final existingChat = Chat.findOne(guid: chatGuid);
+      // If chat doesn't exist or has no handles, we need to fetch participants
+      if (existingChat == null || existingChat.handles.isEmpty) {
+        chatsNeedingParticipants.add(chatGuid);
+      }
+    }
+
+    // Fetch full chat data with participants for chats that need it
+    if (chatsNeedingParticipants.isNotEmpty) {
+      addToOutput('Fetching participant data for ${chatsNeedingParticipants.length} chat(s)...', level: LogLevel.DEBUG);
+      for (var chatGuid in chatsNeedingParticipants) {
+        try {
+          final response = await HttpSvc.singleChat(chatGuid, withQuery: "participants");
+          if (response.statusCode == 200 && response.data["data"] != null) {
+            final chatData = response.data["data"];
+            // Update the cache with the full chat data from the server
+            chatCache[chatGuid] = Chat.fromMap(chatData);
+          }
+        } catch (ex) {
+          Logger.warn("Failed to fetch participants for chat $chatGuid", error: ex, tag: tag);
+        }
+      }
+    }
+
+    // Apply the authoritative group name from group-name-change messages.
+    // groupTitle on the message IS the name the chat was changed to, so it is
+    // more reliable than whatever displayName happened to be embedded in the
+    // first message's chat object.  We apply it here (after any participant
+    // fetches that may have replaced chatCache entries) so that bulkSyncChats
+    // receives the correct displayName and writes it to the DB.
+    for (final entry in latestNameChangePerChat.entries) {
+      final chat = chatCache[entry.key];
+      if (chat != null) {
+        chat.displayName = entry.value.groupTitle;
       }
     }
 
@@ -281,6 +367,15 @@ class IncrementalSyncManager extends SyncManager {
       List<Message> s = await Chat.bulkSyncMessages(theChat, item.value);
       messagesSynced += s.length;
       setProgress(messagesSynced, total);
+
+      // Track the latest message per chat (highest dateCreated with a valid DB id)
+      // so the action layer can return message IDs instead of chat IDs.
+      final latest = s
+          .where((m) => m.id != null && m.dateCreated != null)
+          .fold<Message?>(null, (prev, m) => prev == null || m.dateCreated!.isAfter(prev.dateCreated!) ? m : prev);
+      if (latest != null) {
+        latestMessageIdPerChat[item.key] = latest.id!;
+      }
     }
   }
 
@@ -288,18 +383,14 @@ class IncrementalSyncManager extends SyncManager {
     List<Map<String, dynamic>> whereArgs = [
       {
         'statement': 'message.ROWID > :startRowId',
-        'args': {
-          'startRowId': startRowId
-        }
+        'args': {'startRowId': startRowId}
       }
     ];
 
     if (endRowId != null && endRowId > startRowId) {
       whereArgs.add({
         'statement': 'message.ROWID <= :endRowId',
-        'args': {
-          'endRowId': endRowId
-        }
+        'args': {'endRowId': endRowId}
       });
     }
 
@@ -314,27 +405,47 @@ class IncrementalSyncManager extends SyncManager {
 
       // If we have a start timestamp, use the time that our sync started.
       // Otherwise, use the last timestamp we got from the API
+      final toSave = ['lastIncrementalSync'];
       if (startTimestamp != null) {
-        ss.settings.lastIncrementalSync.value = syncStartedAt;
+        SettingsSvc.settings.lastIncrementalSync.value = syncStartedAt;
       } else if (lastSyncedTimestamp != null) {
-        ss.settings.lastIncrementalSync.value = lastSyncedTimestamp!;
+        SettingsSvc.settings.lastIncrementalSync.value = lastSyncedTimestamp!;
       }
 
       // The lastRowId should always get set, even when sycing using timestamps
       if (lastSyncedRowId != null) {
-        ss.settings.lastIncrementalSyncRowId.value = lastSyncedRowId!;
+        SettingsSvc.settings.lastIncrementalSyncRowId.value = lastSyncedRowId!;
+        toSave.add('lastIncrementalSyncRowId');
       }
 
-      await ss.saveSettings();
+      await SettingsSvc.settings.saveManyAsync(toSave);
+    }
+
+    // Update the chat service with the latest chats
+    for (var chat in syncedChats.values) {
+      chat.dbLatestMessage;
+      ChatsSvc.updateChat(chat, override: true);
+    }
+
+    // Apply group photo changes detected during the sync.
+    // Each entry holds the most-recent photo-event action for that chat; we
+    // re-fetch the icon from the server for changes, or clear it for removals.
+    for (final entry in latestPhotoChangePerChat.entries) {
+      final chat = syncedChats[entry.key];
+      if (chat == null) continue;
+      if (entry.value.groupActionType == 2) {
+        // Photo explicitly removed — clear without an HTTP round-trip.
+        await ChatsSvc.setChatCustomAvatarPath(chat, null);
+      } else {
+        // Photo added/changed — pull latest icon from server, then refresh state.
+        await Chat.getIcon(chat, force: true);
+        ChatsSvc.updateChat(chat, override: true);
+      }
     }
 
     // Call this first so listeners can react before any
     // "heavier" calls are made
     await super.complete();
-
-    if (ss.settings.showIncrementalSync.value) {
-      showSnackbar('Success', '🔄 Incremental sync complete 🔄');
-    }
 
     if (onComplete != null) {
       onComplete!();

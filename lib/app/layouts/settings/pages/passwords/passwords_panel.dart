@@ -4,7 +4,8 @@ import 'package:bluebubbles/app/layouts/settings/pages/passwords/password_models
 import 'package:bluebubbles/app/layouts/settings/pages/passwords/passwords_group_panel.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/content/next_button.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/settings_widgets.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
+import 'package:bluebubbles/helpers/helpers.dart';
+import 'package:bluebubbles/helpers/ui/theme_helpers.dart';
 import 'package:bluebubbles/helpers/ui/ui_helpers.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
@@ -23,7 +24,7 @@ class PasswordsPanel extends StatefulWidget {
   State<PasswordsPanel> createState() => _PasswordsPanelState();
 }
 
-class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
+class _PasswordsPanelState extends State<PasswordsPanel> with ThemeHelpers {
   lib.ArcPasswordManagerDefaultAnisetteProvider? manager;
   bool _isCheckingClique = true;
   bool _isInClique = false;
@@ -42,7 +43,7 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
   }
 
   Future<void> _refreshCliqueStatus() async {
-    final keychain = pushService.state?.icloudServices?.keychain;
+    final keychain = PushSvc.state?.icloudServices?.keychain;
     if (keychain == null) {
       if (!mounted) return;
       setState(() {
@@ -52,16 +53,16 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
       return;
     }
 
-    await pushService.initFuture;
-    final inClique = pushService.cachedInClique;
+    await PushSvc.initFuture;
+    final inClique = PushSvc.cachedInClique;
     if (inClique && manager == null) {
-      manager = pushService.state!.icloudServices!.passwords!;
+      manager = PushSvc.state!.icloudServices!.passwords!;
     }
     if (inClique && manager != null) {
       await _loadCredentialCaches();
       await _loadGroups();
     }
-    pushService.checkClique().then((inclique) {
+    PushSvc.checkClique().then((inclique) {
       if (!inclique) return;
       api.syncWifiPasswords(manager: manager!, userApprove: true);
     });
@@ -82,9 +83,7 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
         _groupsUserId = groups.$1;
         _groupNamesById = {
           for (final entry in groups.$2.entries)
-            entry.key: entry.value.displayName.trim().isEmpty
-                ? "(unknown group)"
-                : entry.value.displayName,
+            entry.key: entry.value.displayName.trim().isEmpty ? "(unknown group)" : entry.value.displayName,
         };
         _groupsById = groups.$2;
         _invitesById = groups.$3;
@@ -128,8 +127,7 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
       } else {
         await api.declineInvite(passwords: manager!, inviteId: inviteId);
       }
-      await api.syncPasswords(
-          passwords: manager!, conn: pushService.state!.conn);
+      await api.syncPasswords(passwords: manager!, conn: PushSvc.state!.conn);
       await _loadGroups();
     } catch (error) {
       showSnackbar(
@@ -148,7 +146,7 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
     try {
       await api.syncPasswords(
         passwords: manager!,
-        conn: pushService.state!.conn,
+        conn: PushSvc.state!.conn,
       );
       await _loadCredentialCaches();
       await _loadGroups();
@@ -159,7 +157,7 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
 
   Future<void> _joinClique() async {
     if (_isJoiningClique) return;
-    final keychain = pushService.state?.icloudServices?.keychain;
+    final keychain = PushSvc.state?.icloudServices?.keychain;
     if (keychain == null) {
       showSnackbar(
         "Relog required!",
@@ -170,8 +168,8 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
 
     setState(() => _isJoiningClique = true);
     try {
-      if (await pushService.joinClique()) {
-        await api.syncPasswords(passwords: pushService.state!.icloudServices!.passwords!, conn: pushService.state!.conn);
+      if (await PushSvc.joinClique()) {
+        await api.syncPasswords(passwords: PushSvc.state!.icloudServices!.passwords!, conn: PushSvc.state!.conn);
       }
       await _refreshCliqueStatus();
     } finally {
@@ -305,7 +303,7 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
       actions: [
         IconButton(
           tooltip: "Search",
-          icon: Icon(iOS ? CupertinoIcons.search : Icons.search),
+          icon: Icon(SettingsSvc.settings.skin.value == Skins.iOS ? CupertinoIcons.search : Icons.search),
           onPressed: _openSearch,
         ),
       ],
@@ -331,17 +329,15 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
                         containerColor: Colors.indigo,
                       ),
                       onTap: () async {
-                        await mcs
-                            .invokeMethod("open-autofill-provider-settings");
+                        await MethodChannelSvc.invokeMethod(
+                          "open-autofill-provider-settings",
+                        );
                       },
                       trailing: const NextButton(),
                     ),
                   ],
                 ),
-              SettingsHeader(
-                  iosSubtitle: iosSubtitle,
-                  materialSubtitle: materialSubtitle,
-                  text: "Groups"),
+              SettingsHeader(iosSubtitle: iosSubtitle, materialSubtitle: materialSubtitle, text: "Groups"),
               SettingsSection(
                 backgroundColor: tileColor,
                 children: [
@@ -415,7 +411,7 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
                             ),
                           )
                         : Icon(
-                            iOS ? CupertinoIcons.add : Icons.add,
+                            SettingsSvc.settings.skin.value == Skins.iOS ? CupertinoIcons.add : Icons.add,
                             color: context.theme.colorScheme.primary,
                           ),
                   ),
@@ -443,7 +439,7 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
       subtitle: subtitle,
       onTap: () {
         if (manager == null) return;
-        ns.pushSettings(
+        NavigationSvc.pushSettings(
           context,
           PasswordsGroupPanel(
             title: title,
@@ -469,24 +465,20 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
     }
 
     final entries = _groupsById.entries.toList()
-      ..sort((a, b) => a.value.displayName
-          .toLowerCase()
-          .compareTo(b.value.displayName.toLowerCase()));
+      ..sort((a, b) => a.value.displayName.toLowerCase().compareTo(b.value.displayName.toLowerCase()));
 
     final tiles = <Widget>[];
     for (var i = 0; i < entries.length; i++) {
       final groupId = entries[i].key;
       final summary = entries[i].value;
-      final groupName = summary.displayName.trim().isEmpty
-          ? "(unknown group)"
-          : summary.displayName;
+      final groupName = summary.displayName.trim().isEmpty ? "(unknown group)" : summary.displayName;
       tiles.add(
         SettingsTile(
           backgroundColor: tileColor,
           title: groupName,
           onTap: () async {
             if (manager == null) return;
-            final result = await ns.pushSettings(
+            final result = await NavigationSvc.pushSettings(
               context,
               GroupCredentialsPanel(
                 groupId: groupId,
@@ -512,16 +504,13 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
   }
 
   List<Widget> _buildInviteTiles() {
-    final entries = _invitesById.entries.toList()
-      ..sort((a, b) => a.key.compareTo(b.key));
+    final entries = _invitesById.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
     final tiles = <Widget>[];
     for (var i = 0; i < entries.length; i++) {
       final inviteId = entries[i].key;
       final invite = entries[i].value;
       final pending = _pendingInviteActions.contains(inviteId);
-      final groupName = invite.groupName.trim().isEmpty
-          ? "(unknown group)"
-          : invite.groupName;
+      final groupName = invite.groupName.trim().isEmpty ? "(unknown group)" : invite.groupName;
       tiles.add(
         SettingsTile(
           backgroundColor: tileColor,
@@ -581,7 +570,7 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
       delegate: _PasswordSearchDelegate(items: items),
     );
     if (selected == null || !mounted) return;
-    final result = await ns.pushSettings(
+    final result = await NavigationSvc.pushSettings(
       context,
       CredentialDetailPanel(
         credential: selected.entry,
@@ -591,8 +580,7 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
       ),
     );
     if (result == true) {
-      await api.syncPasswords(
-          passwords: manager!, conn: pushService.state!.conn);
+      await api.syncPasswords(passwords: manager!, conn: PushSvc.state!.conn);
       await _loadGroups();
     }
   }
@@ -669,8 +657,7 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
     return items;
   }
 
-  Map<String, List<(String, String?, api.PasswordManagerMeta)>>
-      _indexMetasBySiteAndUser(
+  Map<String, List<(String, String?, api.PasswordManagerMeta)>> _indexMetasBySiteAndUser(
     Map<String, (String?, api.PasswordManagerMeta)> metas,
   ) {
     final result = <String, List<(String, String?, api.PasswordManagerMeta)>>{};
@@ -678,16 +665,14 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
       final group = entry.value.$1;
       final meta = entry.value.$2;
       final key = _siteUserKey(site: meta.srvr, user: meta.acct);
-      result.putIfAbsent(
-          key, () => <(String, String?, api.PasswordManagerMeta)>[]);
+      result.putIfAbsent(key, () => <(String, String?, api.PasswordManagerMeta)>[]);
       result[key]!.add((entry.key, group, meta));
     }
     return result;
   }
 
   (String, api.PasswordManagerMeta)? _takeMatchingMeta(
-    Map<String, List<(String, String?, api.PasswordManagerMeta)>>
-        metasBySiteUser, {
+    Map<String, List<(String, String?, api.PasswordManagerMeta)>> metasBySiteUser, {
     required String site,
     required String user,
     required String? group,
@@ -781,9 +766,7 @@ class _PasswordSearchDelegate extends SearchDelegate<_PasswordSearchItem?> {
     final dividerColor = Theme.of(context).dividerColor.withOpacity(0.35);
     final filtered = normalizedQuery.isEmpty
         ? items
-        : items
-            .where((item) => item.queryText.contains(normalizedQuery))
-            .toList(growable: false);
+        : items.where((item) => item.queryText.contains(normalizedQuery)).toList(growable: false);
     if (filtered.isEmpty) {
       return const Center(
         child: Text("No matching passwords or Wi-Fi networks."),

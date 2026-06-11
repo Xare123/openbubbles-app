@@ -1,137 +1,153 @@
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flex_color_picker/flex_color_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:tuple/tuple.dart';
+
+@immutable
+class AdvancedThemingEntry {
+  final MapEntry<String, Color> primary;
+  final MapEntry<String, Color>? textColor;
+  const AdvancedThemingEntry({required this.primary, this.textColor});
+}
 
 class AdvancedThemingTile extends StatefulWidget {
-  AdvancedThemingTile({super.key, required this.currentTheme, required this.tuple, required this.editable});
+  const AdvancedThemingTile({super.key, required this.currentTheme, required this.colorEntry, required this.editable});
   final ThemeStruct currentTheme;
-  final Tuple2<MapEntry<String, Color>, MapEntry<String, Color>?> tuple;
+  final AdvancedThemingEntry colorEntry;
   final bool editable;
 
   @override
   State<AdvancedThemingTile> createState() => _AdvancedThemingTileState();
 }
 
-class _AdvancedThemingTileState extends OptimizedState<AdvancedThemingTile> {
+class _AdvancedThemingTileState extends State<AdvancedThemingTile> {
   @override
   Widget build(BuildContext context) {
-    final textColor = widget.tuple.item2?.value ?? Colors.black;
+    final textColor = widget.colorEntry.textColor?.value ?? Colors.black;
     return Padding(
       padding: const EdgeInsets.all(8.0),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: Material(
-          color: widget.tuple.item1.value,
-          child: Container(
-            decoration: widget.tuple.item1.value.computeDifference(ts.inDarkMode(context)
-                || ss.settings.skin.value == Skins.Samsung
-                ? context.theme.colorScheme.background : context.theme.colorScheme.properSurface) < 15 ? BoxDecoration(
-              border: Border.all(width: 0.5, color: context.theme.colorScheme.outline),
-              borderRadius: BorderRadius.circular(20)
-            ) : null,
-            child: InkWell(
-              onTap: () async {
-                BuildContext _context = context;
-                if (widget.editable) {
-                  final result = await showThemeDialog(widget.tuple.item1.value);
-                  if (result != null) {
-                    final map = widget.currentTheme.toMap();
-                    map["data"]["colorScheme"][widget.tuple.item1.key] = result.value;
-                    widget.currentTheme.data = ThemeStruct.fromMap(map).data;
-                    widget.currentTheme.save();
-                    if (widget.currentTheme.name == ss.prefs.getString("selected-dark")) {
-                      await ts.changeTheme(_context, dark: widget.currentTheme);
-                    } else if (widget.currentTheme.name == ss.prefs.getString("selected-light")) {
-                      await ts.changeTheme(_context, light: widget.currentTheme);
+          borderRadius: BorderRadius.circular(20),
+          child: Material(
+              color: widget.colorEntry.primary.value,
+              child: Container(
+                decoration: widget.colorEntry.primary.value.computeDifference(
+                            ThemeSvc.inDarkMode(context) || SettingsSvc.settings.skin.value == Skins.Samsung
+                                ? context.theme.colorScheme.surface
+                                : context.theme.colorScheme.surfaceContainerHighest) <
+                        15
+                    ? BoxDecoration(
+                        border: Border.all(width: 0.5, color: context.theme.colorScheme.outline),
+                        borderRadius: BorderRadius.circular(20))
+                    : null,
+                child: InkWell(
+                  onTap: () async {
+                    BuildContext _context = context;
+                    if (widget.editable) {
+                      final result = await showThemeDialog(widget.colorEntry.primary.value);
+                      if (result != null) {
+                        final map = widget.currentTheme.toMap();
+                        map["data"]["colorScheme"][widget.colorEntry.primary.key] = result.toARGB32();
+                        widget.currentTheme.data = ThemeStruct.fromMap(map).data;
+                        widget.currentTheme.save();
+                        if (widget.currentTheme.name == PrefsSvc.i.getString("selected-dark")) {
+                          await ThemeSvc.changeTheme(_context, dark: widget.currentTheme);
+                        } else if (widget.currentTheme.name == PrefsSvc.i.getString("selected-light")) {
+                          await ThemeSvc.changeTheme(_context, light: widget.currentTheme);
+                        }
+                      }
+                    } else {
+                      if (SettingsSvc.settings.monetTheming.value != Monet.none) {
+                        showSnackbar('Notice', "Turn off Material You to start customizing!");
+                      } else {
+                        showSnackbar('Notice', "Create a new theme to start customizing!");
+                      }
                     }
-                  }
-                } else {
-                  if (ss.settings.monetTheming.value != Monet.none) {
-                    showSnackbar('Notice', "Turn off Material You to start customizing!");
-                  } else {
-                    showSnackbar('Notice', "Create a new theme to start customizing!");
-                  }
-                }
-              },
-              onLongPress: widget.tuple.item2 != null ? () async {
-                BuildContext _context = context;
-                if (widget.editable) {
-                  final result = await showThemeDialog(widget.tuple.item2!.value);
-                  if (result != null) {
-                    final map = widget.currentTheme.toMap();
-                    map["data"]["colorScheme"][widget.tuple.item2!.key] = result.value;
-                    widget.currentTheme.data = ThemeStruct.fromMap(map).data;
-                    widget.currentTheme.save();
-                    if (widget.currentTheme.name == ss.prefs.getString("selected-dark")) {
-                      await ts.changeTheme(_context, dark: widget.currentTheme);
-                    } else if (widget.currentTheme.name == ss.prefs.getString("selected-light")) {
-                      await ts.changeTheme(_context, light: widget.currentTheme);
-                    }
-                  }
-                } else {
-                  if (ss.settings.monetTheming.value != Monet.none) {
-                    showSnackbar('Notice', "Turn off Material You to start customizing!");
-                  } else {
-                    showSnackbar('Notice', "Create a new theme to start customizing!");
-                  }
-                }
-              } : null,
-              onDoubleTap: () {
-                showDialog(
-                  context: context,
-                  builder: (BuildContext context) {
-                    return AlertDialog(
-                      title: Text(
-                        "Info - ${widget.tuple.item1.key} ${widget.tuple.item2 != null ? "/ ${widget.tuple.item2!.key}" : ""}",
-                        style: context.theme.textTheme.titleLarge,
-                      ),
-                      backgroundColor: context.theme.colorScheme.properSurface,
-                      content: Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: Text(
-                            "${ThemeStruct.colorDescriptions[widget.tuple.item1.key]}${widget.tuple.item2 != null ? "\n\n${ThemeStruct.colorDescriptions[widget.tuple.item2!.key]}" : ""}",
-                            style: context.theme.textTheme.bodyLarge),
-                      ),
-                      actions: <Widget>[
-                        TextButton(
-                          child: Text("OK", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-                          onPressed: () {
-                            Navigator.of(context).pop();
-                          },
-                        ),
-                      ],
+                  },
+                  onLongPress: widget.colorEntry.textColor != null
+                      ? () async {
+                          BuildContext _context = context;
+                          if (widget.editable) {
+                            final result = await showThemeDialog(widget.colorEntry.textColor!.value);
+                            if (result != null) {
+                              final map = widget.currentTheme.toMap();
+                              map["data"]["colorScheme"][widget.colorEntry.textColor!.key] = result.toARGB32();
+                              widget.currentTheme.data = ThemeStruct.fromMap(map).data;
+                              widget.currentTheme.save();
+                              if (widget.currentTheme.name == PrefsSvc.i.getString("selected-dark")) {
+                                await ThemeSvc.changeTheme(_context, dark: widget.currentTheme);
+                              } else if (widget.currentTheme.name == PrefsSvc.i.getString("selected-light")) {
+                                await ThemeSvc.changeTheme(_context, light: widget.currentTheme);
+                              }
+                            }
+                          } else {
+                            if (SettingsSvc.settings.monetTheming.value != Monet.none) {
+                              showSnackbar('Notice', "Turn off Material You to start customizing!");
+                            } else {
+                              showSnackbar('Notice', "Create a new theme to start customizing!");
+                            }
+                          }
+                        }
+                      : null,
+                  onDoubleTap: () {
+                    showDialog(
+                      context: context,
+                      builder: (BuildContext context) {
+                        return AlertDialog(
+                          title: Text(
+                            "Info - ${widget.colorEntry.primary.key} ${widget.colorEntry.textColor != null ? "/ ${widget.colorEntry.textColor!.key}" : ""}",
+                            style: context.theme.textTheme.titleLarge,
+                          ),
+                          backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+                          content: Padding(
+                            padding: const EdgeInsets.all(8.0),
+                            child: Text(
+                                "${ThemeStruct.colorDescriptions[widget.colorEntry.primary.key]}${widget.colorEntry.textColor != null ? "\n\n${ThemeStruct.colorDescriptions[widget.colorEntry.textColor!.key]}" : ""}",
+                                style: context.theme.textTheme.bodyLarge),
+                          ),
+                          actions: <Widget>[
+                            TextButton(
+                              child: Text("OK",
+                                  style: context.theme.textTheme.bodyLarge!
+                                      .copyWith(color: context.theme.colorScheme.primary)),
+                              onPressed: () {
+                                Navigator.of(context).pop();
+                              },
+                            ),
+                          ],
+                        );
+                      },
                     );
                   },
-                );
-              },
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.color_lens,
-                    size: 40,
-                    color: textColor.computeDifference(widget.tuple.item1.value) < 15 ? widget.tuple.item1.value.lightenOrDarken(50) : textColor,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.color_lens,
+                        size: 40,
+                        color: textColor.computeDifference(widget.colorEntry.primary.value) < 15
+                            ? widget.colorEntry.primary.value.lightenOrDarken(50)
+                            : textColor,
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Text(
+                          widget.colorEntry.primary.key +
+                              (widget.colorEntry.textColor != null ? " / ${widget.colorEntry.textColor!.key}" : ""),
+                          style: context.textTheme.titleMedium?.copyWith(
+                              color: textColor.computeDifference(widget.colorEntry.primary.value) < 15
+                                  ? widget.colorEntry.primary.value.lightenOrDarken(20)
+                                  : textColor),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ],
                   ),
-                  Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: Text(
-                      widget.tuple.item1.key + (widget.tuple.item2 != null ? " / ${widget.tuple.item2!.key}" : ""),
-                      style: context.textTheme.titleMedium?.copyWith(color: textColor.computeDifference(widget.tuple.item1.value) < 15 ? widget.tuple.item1.value.lightenOrDarken(20) : textColor),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          )
-        )
-      ),
+                ),
+              ))),
     );
   }
 
@@ -147,9 +163,8 @@ class _AdvancedThemingTileState extends OptimizedState<AdvancedThemingTile> {
                 newColor = color;
               },
               title: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Text('Choose a Color', style: Theme.of(context).textTheme.titleLarge)
-              ),
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text('Choose a Color', style: Theme.of(context).textTheme.titleLarge)),
               width: 40,
               height: 40,
               spacing: 0,
@@ -184,7 +199,6 @@ class _AdvancedThemingTileState extends OptimizedState<AdvancedThemingTile> {
               ),
             ],
           );
-        }
-    );
+        });
   }
 }

@@ -1,5 +1,5 @@
 import 'package:bluebubbles/app/components/circle_progress_bar.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
+import 'package:bluebubbles/app/wrappers/bb_annotated_region.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/app/layouts/fullscreen_media/fullscreen_image.dart';
@@ -16,16 +16,15 @@ import 'package:gesture_x_detector/gesture_x_detector.dart';
 import 'package:get/get.dart';
 
 class FullscreenMediaHolder extends StatefulWidget {
-  FullscreenMediaHolder({
-    super.key,
-    required this.attachment,
-    required this.showInteractions,
-    this.currentChat,
-    this.videoController,
-    this.mute
-  });
+  const FullscreenMediaHolder(
+      {super.key,
+      required this.attachment,
+      required this.showInteractions,
+      this.currentChat,
+      this.videoController,
+      this.mute});
 
-  final ChatLifecycleManager? currentChat;
+  final Chat? currentChat;
   final Attachment attachment;
   final bool showInteractions;
   final VideoController? videoController;
@@ -35,18 +34,20 @@ class FullscreenMediaHolder extends StatefulWidget {
   FullscreenMediaHolderState createState() => FullscreenMediaHolderState();
 }
 
-class FullscreenMediaHolderState extends OptimizedState<FullscreenMediaHolder> {
+class FullscreenMediaHolderState extends State<FullscreenMediaHolder> with ThemeHelpers {
   final focusNode = FocusNode();
   late final PageController controller;
-  late final messageService = widget.currentChat == null ? null : ms(widget.currentChat!.chat.guid);
+  late final messageService = widget.currentChat == null ? null : MessagesSvc(widget.currentChat!.guid);
   late List<Attachment> attachments = widget.currentChat == null
       ? [attachment]
-      : messageService!.struct.attachments.where((e) => e.mimeStart == "image" || e.mimeStart == "video").toList();
+      : messageService!.struct.attachments.where((e) => e.mimeStart == "image").toList();
 
   int currentIndex = 0;
   ScrollPhysics? physics;
   Attachment get attachment => widget.attachment;
-  bool showAppBar = true;
+  // Start hidden for video (video auto-plays and manages its own overlay); show for images
+  bool get _isVideoAttachment => attachment.mimeStart == "video";
+  late bool showAppBar = kIsDesktop || kIsWeb || !_isVideoAttachment;
 
   @override
   void initState() {
@@ -74,16 +75,10 @@ class FullscreenMediaHolderState extends OptimizedState<FullscreenMediaHolder> {
   @override
   Widget build(BuildContext context) {
     return TitleBarWrapper(
-      child: AnnotatedRegion<SystemUiOverlayStyle>(
-        value: SystemUiOverlayStyle(
-          systemNavigationBarColor: ss.settings.immersiveMode.value
-              ? Colors.transparent
-              : context.theme.colorScheme.background, // navigation bar color
-          systemNavigationBarIconBrightness: context.theme.colorScheme.brightness.opposite,
-          statusBarColor: Colors.transparent, // status bar color
-          statusBarIconBrightness:
-              ss.settings.skin.value != Skins.iOS ? Brightness.light : context.theme.colorScheme.brightness.opposite,
-        ),
+      child: BBAnnotatedRegion(
+        statusBarIconBrightness: SettingsSvc.settings.skin.value != Skins.iOS
+            ? Brightness.light
+            : context.theme.colorScheme.brightness.opposite,
         child: Actions(
           actions: {
             GoBackIntent: GoBackAction(context),
@@ -116,10 +111,10 @@ class FullscreenMediaHolderState extends OptimizedState<FullscreenMediaHolder> {
                             ? "Media"
                             : "${currentIndex + 1} of ${attachments.length}",
                         style: context.theme.textTheme.titleLarge!
-                            .copyWith(color: context.theme.colorScheme.properOnSurface)),
+                            .copyWith(color: context.theme.colorScheme.onSurfaceVariant)),
                     centerTitle: iOS,
                     iconTheme: IconThemeData(color: context.theme.colorScheme.primary),
-                    backgroundColor: context.theme.colorScheme.properSurface,
+                    backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
                     systemOverlayStyle: context.theme.colorScheme.brightness == Brightness.dark
                         ? SystemUiOverlayStyle.light
                         : SystemUiOverlayStyle.dark,
@@ -134,13 +129,13 @@ class FullscreenMediaHolderState extends OptimizedState<FullscreenMediaHolder> {
                       "Got device label ${event.deviceType.label}, physical key ${event.physicalKey.toString()}, logical key ${event.logicalKey.toString()}",
                       tag: "RawKeyboardListener");
                   if (event.physicalKey.debugName == "Arrow Right") {
-                    if (ss.settings.fullscreenViewerSwipeDir.value == SwipeDirection.RIGHT) {
+                    if (SettingsSvc.settings.fullscreenViewerSwipeDir.value == SwipeDirection.RIGHT) {
                       controller.previousPage(duration: const Duration(milliseconds: 300), curve: Curves.easeIn);
                     } else {
                       controller.nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeIn);
                     }
                   } else if (event.physicalKey.debugName == "Arrow Left") {
-                    if (ss.settings.fullscreenViewerSwipeDir.value == SwipeDirection.LEFT) {
+                    if (SettingsSvc.settings.fullscreenViewerSwipeDir.value == SwipeDirection.LEFT) {
                       controller.previousPage(duration: const Duration(milliseconds: 300), curve: Curves.easeIn);
                     } else {
                       controller.nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeIn);
@@ -156,7 +151,7 @@ class FullscreenMediaHolderState extends OptimizedState<FullscreenMediaHolder> {
                       (attachments.length == 1
                           ? const NeverScrollableScrollPhysics()
                           : ThemeSwitcher.getScrollPhysics()),
-                  reverse: ss.settings.fullscreenViewerSwipeDir.value == SwipeDirection.RIGHT,
+                  reverse: SettingsSvc.settings.fullscreenViewerSwipeDir.value == SwipeDirection.RIGHT,
                   itemCount: attachments.length,
                   onPageChanged: (int val) {
                     widget.videoController?.player.pause();
@@ -167,8 +162,8 @@ class FullscreenMediaHolderState extends OptimizedState<FullscreenMediaHolder> {
                   controller: controller,
                   itemBuilder: (BuildContext context, int index) {
                     final attachment = attachments[index];
-                    dynamic content =
-                        as.getContent(attachment, path: attachment.guid == null ? attachment.sourcePath : null);
+                    dynamic content = AttachmentsSvc.getContent(attachment,
+                        path: attachment.guid == null ? (attachment.metadata?['source_path'] as String?) : null);
                     final key = attachment.guid ?? attachment.transferName ?? randomString(8);
 
                     if (content is PlatformFile) {
@@ -201,6 +196,13 @@ class FullscreenMediaHolderState extends OptimizedState<FullscreenMediaHolder> {
                           showInteractions: widget.showInteractions,
                           videoController: widget.videoController,
                           mute: widget.mute,
+                          onOverlayToggle: (show) {
+                            if (showAppBar != show) {
+                              setState(() {
+                                showAppBar = show;
+                              });
+                            }
+                          },
                         );
                       } else {
                         return const SizedBox.shrink();
@@ -210,7 +212,7 @@ class FullscreenMediaHolderState extends OptimizedState<FullscreenMediaHolder> {
                       return InkWell(
                         onTap: () {
                           setState(() {
-                            content = attachmentDownloader.startDownload(content, onComplete: (file) {
+                            content = AttachmentDownloader.startDownload(content, onComplete: (file) {
                               setState(() {
                                 content = file;
                               });
@@ -231,7 +233,7 @@ class FullscreenMediaHolderState extends OptimizedState<FullscreenMediaHolder> {
                             Text(
                               (_content.mimeType ?? ""),
                               style: context.theme.textTheme.bodyLarge!
-                                  .copyWith(color: context.theme.colorScheme.properOnSurface),
+                                  .copyWith(color: context.theme.colorScheme.onSurfaceVariant),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -239,7 +241,7 @@ class FullscreenMediaHolderState extends OptimizedState<FullscreenMediaHolder> {
                             Text(
                               _content.getFriendlySize(),
                               style: context.theme.textTheme.bodyMedium!
-                                  .copyWith(color: context.theme.colorScheme.properOnSurface),
+                                  .copyWith(color: context.theme.colorScheme.onSurfaceVariant),
                               maxLines: 1,
                             ),
                           ],
@@ -250,9 +252,9 @@ class FullscreenMediaHolderState extends OptimizedState<FullscreenMediaHolder> {
                       return InkWell(
                         onTap: () {
                           final AttachmentDownloadController _content = content;
-                          if (!_content.error.value) return;
+                          if (_content.state.value != AttachmentDownloadState.error) return;
                           Get.delete<AttachmentDownloadController>(tag: _content.attachment.guid);
-                          content = attachmentDownloader.startDownload(_content.attachment, onComplete: (file) {
+                          content = AttachmentDownloader.startDownload(_content.attachment, onComplete: (file) {
                             setState(() {
                               content = file;
                             });
@@ -261,6 +263,10 @@ class FullscreenMediaHolderState extends OptimizedState<FullscreenMediaHolder> {
                         child: Padding(
                           padding: const EdgeInsets.all(20.0),
                           child: Obx(() {
+                            final isError = _content.state.value == AttachmentDownloadState.error;
+                            final isProcessing = _content.state.value == AttachmentDownloadState.processing;
+                            final isQueued = _content.state.value == AttachmentDownloadState.queued;
+
                             return Column(
                               mainAxisSize: MainAxisSize.min,
                               children: <Widget>[
@@ -268,20 +274,32 @@ class FullscreenMediaHolderState extends OptimizedState<FullscreenMediaHolder> {
                                   height: 40,
                                   width: 40,
                                   child: Center(
-                                    child: _content.error.value
+                                    child: isError
                                         ? Icon(iOS ? CupertinoIcons.arrow_clockwise : Icons.refresh, size: 30)
-                                        : CircleProgressBar(
-                                            value: _content.progress.value?.toDouble() ?? 0,
-                                            backgroundColor: context.theme.colorScheme.outline,
-                                            foregroundColor: context.theme.colorScheme.properOnSurface,
-                                          ),
+                                        : isProcessing
+                                            ? (iOS
+                                                ? const CupertinoActivityIndicator(radius: 14)
+                                                : const CircularProgressIndicator())
+                                            : isQueued
+                                                ? Icon(iOS ? CupertinoIcons.clock : Icons.schedule, size: 30)
+                                                : CircleProgressBar(
+                                                    value: _content.progress.value?.toDouble() ?? 0,
+                                                    backgroundColor: context.theme.colorScheme.outline,
+                                                    foregroundColor: context.theme.colorScheme.onSurfaceVariant,
+                                                  ),
                                   ),
                                 ),
-                                _content.error.value ? const SizedBox(height: 10) : const SizedBox(height: 5),
+                                isError ? const SizedBox(height: 10) : const SizedBox(height: 5),
                                 Text(
-                                  _content.error.value ? "Failed to download!" : (_content.attachment.mimeType ?? ""),
+                                  isError
+                                      ? "Failed to download!"
+                                      : isProcessing
+                                          ? "Processing"
+                                          : isQueued
+                                              ? "Queued"
+                                              : (_content.attachment.mimeType ?? ""),
                                   style: context.theme.textTheme.bodyLarge!
-                                      .copyWith(color: context.theme.colorScheme.properOnSurface),
+                                      .copyWith(color: context.theme.colorScheme.onSurfaceVariant),
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                 )

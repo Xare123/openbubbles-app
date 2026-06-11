@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-class FindMyLocationClipper extends CustomClipper<Path>{
+class FindMyLocationClipper extends CustomClipper<Path> {
   const FindMyLocationClipper();
 
   @override

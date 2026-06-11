@@ -50,10 +50,10 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
 
         val call = client.newCall(okhttp)
         val response = call.execute()
-        if (response.code() != 200) {
+        if (response.code != 200) {
             throw Exception("Failed to load resource! $response")
         }
-        val body = response.body() ?: throw Exception("Failed to load resource! Empty body!")
+        val body = response.body ?: throw Exception("Failed to load resource! Empty body!")
         var string = body.string()
             .replace(""""GenericToast\.Waiting": *"Waiting to be let in…",""".toRegex(), """"GenericToast.Waiting":"Connecting…",""")
             .replace(""""SessionBanner\.FaceTime": *"FaceTime Call",""".toRegex(), """"SessionBanner.FaceTime":"$desc",""")

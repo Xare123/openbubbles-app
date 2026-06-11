@@ -1,12 +1,8 @@
-import 'package:bluebubbles/helpers/ui/theme_helpers.dart';
 import 'package:bluebubbles/app/layouts/setup/pages/page_template.dart';
-import 'package:bluebubbles/main.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter/material.dart';
-import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:universal_io/io.dart';
 
 class RequestBluetooth extends StatelessWidget {
   @override
@@ -15,7 +11,7 @@ class RequestBluetooth extends StatelessWidget {
       title: "Nearby Devices",
       subtitle: "Apple uses proximity detection to securely transfer account data during login.",
       onNextPressed: () async {
-        if ((fs.androidInfo?.version.sdkInt ?? 0) >= 31) {
+        if ((FilesystemSvc.androidInfo?.version.sdkInt ?? 0) >= 31) {
           final statuses = await [
             Permission.bluetoothAdvertise,
             Permission.bluetoothConnect,
@@ -28,7 +24,7 @@ class RequestBluetooth extends StatelessWidget {
         }
 
         try {
-          await mcs.invokeMethod("enable-bt", {"request": true});
+          await MethodChannelSvc.invokeMethod("enable-bt", {"request": true});
         } catch (e, s) {
           Logger.error("Failed to enable bt", error: e, trace: s);
           return false;

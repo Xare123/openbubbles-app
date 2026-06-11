@@ -1,24 +1,19 @@
-import 'dart:async';
-import 'dart:io';
-
-import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/dialogs/conversation_peek_view.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/widgets/tile/conversation_tile.dart';
+import 'package:bluebubbles/app/layouts/conversation_list/widgets/tile/trailing_state_mixin.dart';
+import 'package:bluebubbles/app/state/chat_state_scope.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
-import 'package:bluebubbles/database/database.dart';
-import 'package:bluebubbles/database/models.dart';
-import 'package:bluebubbles/services/network/backend_service.dart';
+import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/services.dart';
-import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 class CupertinoConversationTile extends CustomStateful<ConversationTileController> {
-  CupertinoConversationTile({Key? key, required super.parentController, required this.deletedMode});
+  const CupertinoConversationTile({super.key, required super.parentController, this.deletedMode = false});
 
-  bool deletedMode;
+  final bool deletedMode;
 
   @override
   State<StatefulWidget> createState() => _CupertinoConversationTileState();
@@ -59,10 +54,10 @@ class _CupertinoConversationTileState extends CustomState<CupertinoConversationT
         child: Obx(() => ListTile(
             mouseCursor: MouseCursor.defer,
             enableFeedback: true,
-            dense: ss.settings.denseChatTiles.value,
+            dense: SettingsSvc.settings.denseChatTiles.value,
             contentPadding: const EdgeInsets.only(left: 0),
-            visualDensity: ss.settings.denseChatTiles.value ? VisualDensity.compact : null,
-            minVerticalPadding: ss.settings.denseChatTiles.value ? 7.5 : 10,
+            visualDensity: SettingsSvc.settings.denseChatTiles.value ? VisualDensity.compact : null,
+            minVerticalPadding: 6,
             horizontalTitleGap: 10,
             title: Row(
               children: [
@@ -71,253 +66,204 @@ class _CupertinoConversationTileState extends CustomState<CupertinoConversationT
                     parentController: controller,
                     style: context.theme.textTheme.bodyLarge!.copyWith(
                         fontWeight: controller.shouldHighlight.value ? FontWeight.w600 : FontWeight.w500,
-                        color: controller.shouldHighlight.value ? context.theme.colorScheme.onBubble(context, controller.chat.isIMessage) : null),
+                        color: controller.shouldHighlight.value
+                            ? context.theme.colorScheme.onBubble(context, controller.chat.isIMessage)
+                            : null),
                   ),
                 ),
-                const SizedBox(width: 10,),
-                if (!widget.deletedMode)
-                CupertinoTrailing(parentController: controller),
+                if (!widget.deletedMode) CupertinoTrailing(parentController: controller),
                 if (widget.deletedMode)
-                Builder(builder: (context) {
-                  DateTime oldestDeletion = DateTime.now();
-                  for (var message in controller.chat.messages) {
-                    if (message.dateDeleted == null) continue;
-                    // we are less than the oldest
-                    if (message.dateDeleted!.compareTo(oldestDeletion) < 0) {
-                      oldestDeletion = message.dateDeleted!;
+                  Builder(builder: (context) {
+                    DateTime oldestDeletion = DateTime.now();
+                    for (final message in controller.chat.messages) {
+                      if (message.dateDeleted == null) continue;
+                      if (message.dateDeleted!.compareTo(oldestDeletion) < 0) {
+                        oldestDeletion = message.dateDeleted!;
+                      }
                     }
-                  }
 
-                  var deleteDate = oldestDeletion.add(const Duration(days: 30));
-                  var diff = deleteDate.difference(DateTime.now());
-                  String d;
-                  if (diff.isNegative) {
-                    d = "Pending Deletion";
-                  } else if (diff.inDays != 0) {
-                    d = "${diff.inDays}d";
-                  } else if (diff.inHours != 0) {
-                    d = "${diff.inHours}h";
-                  } else {
-                    d = "${diff.inMinutes}m";
-                  }
+                    final deleteDate = oldestDeletion.add(const Duration(days: 30));
+                    final diff = deleteDate.difference(DateTime.now());
+                    final String d;
+                    if (diff.isNegative) {
+                      d = "Pending Deletion";
+                    } else if (diff.inDays != 0) {
+                      d = "${diff.inDays}d";
+                    } else if (diff.inHours != 0) {
+                      d = "${diff.inHours}h";
+                    } else {
+                      d = "${diff.inMinutes}m";
+                    }
 
-
-                  var bodyStyle = context.theme.textTheme.bodySmall!
-                      .copyWith(
-                        color: controller.shouldHighlight.value
-                                ? context.theme.colorScheme.onBubble(context, controller.chat.isIMessage)
-                                : context.theme.colorScheme.outline,
-                        fontWeight: controller.shouldHighlight.value ? FontWeight.w500 : null,
-                      )
-                      .apply(fontSizeFactor: 1.1);
-                  return Padding(padding: const EdgeInsets.only(right: 8), child: Text(d, style: bodyStyle));
-                }),
+                    final bodyStyle = context.theme.textTheme.bodySmall!
+                        .copyWith(
+                          color: controller.shouldHighlight.value
+                              ? context.theme.colorScheme.onBubble(context, controller.chat.isIMessage)
+                              : context.theme.colorScheme.outline,
+                          fontWeight: controller.shouldHighlight.value ? FontWeight.w500 : null,
+                        )
+                        .apply(fontSizeFactor: 1.1);
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Text(d, style: bodyStyle),
+                    );
+                  }),
               ],
             ),
             subtitle: Padding(
               padding: const EdgeInsets.only(right: 20.0),
-              child: widget.deletedMode ? Builder(builder: (context) {
-                var count = controller.chat.messages.where((i) => i.dateDeleted != null).length;
-                return Text("$count message${count == 1 ? '' : 's'}");
-              }) : controller.subtitle ??
-                  ChatSubtitle(
-                    parentController: controller,
-                    style: context.theme.textTheme.bodyMedium!.copyWith(
-                      color: controller.shouldHighlight.value
-                          ? context.theme.colorScheme.onBubble(context, controller.chat.isIMessage).withOpacity(0.85)
-                          : context.theme.colorScheme.outline,
-                      height: 1.5,
-                    ),
-                  ),
+              child: widget.deletedMode
+                  ? Builder(builder: (context) {
+                      final count = controller.chat.messages.where((i) => i.dateDeleted != null).length;
+                      return Text("$count message${count == 1 ? '' : 's'}");
+                    })
+                  : controller.subtitle ??
+                      ChatSubtitle(
+                        parentController: controller,
+                        style: context.theme.textTheme.bodyMedium!.copyWith(
+                          color: controller.shouldHighlight.value
+                              ? context.theme.colorScheme
+                                  .onBubble(context, controller.chat.isIMessage)
+                                  .withValues(alpha: 0.85)
+                              : context.theme.colorScheme.outline,
+                          height: 1.5,
+                        ),
+                      ),
             ),
             leading: leading)),
       ),
     );
 
-    return Obx(() {
-      ns.listener.value;
-      return AnimatedContainer(
-        duration: const Duration(milliseconds: 100),
-        decoration: BoxDecoration(
-          color: controller.shouldPartialHighlight.value
-              ? context.theme.colorScheme.properSurface.lightenOrDarken(10)
-              : controller.shouldHighlight.value
-                  ? context.theme.colorScheme.bubble(context, controller.chat.isIMessage)
-                  : controller.hoverHighlight.value
-                      ? context.theme.colorScheme.properSurface.withOpacity(0.5)
-                      : null,
-          borderRadius: BorderRadius.circular(
-              controller.shouldHighlight.value || controller.shouldPartialHighlight.value || controller.hoverHighlight.value ? 8 : 0),
-        ),
-        child: ns.isAvatarOnly(context)
-            ? InkWell(
-                mouseCursor: MouseCursor.defer,
-                onTap: () => controller.onTap(context, widget.deletedMode),
-                onSecondaryTapUp: (details) => controller.onSecondaryTap(Get.context!, details),
-                onLongPress: kIsDesktop || kIsWeb
-                    ? null
-                    : () async {
-                        await peekChat(context, controller.chat, longPressPosition ?? Offset.zero);
-                      },
-                onTapDown: (details) {
-                  longPressPosition = details.globalPosition;
-                },
-                child: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 10.0, horizontal: (ns.width(context) - 100) / 2).add(const EdgeInsets.only(right: 15)),
-                  child: leading,
-                ),
-              )
-            : child,
-      );
-    });
+    return ChatStateScope(
+      chatState: controller.chatState ?? ChatsSvc.getOrCreateChatState(controller.chat),
+      child: Obx(() {
+        NavigationSvc.listener.value;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 100),
+          decoration: BoxDecoration(
+            color: controller.shouldPartialHighlight.value
+                ? context.theme.colorScheme.surfaceContainerHighest.lightenOrDarken(10)
+                : controller.shouldHighlight.value
+                    ? context.theme.colorScheme.bubble(context, controller.chat.isIMessage)
+                    : controller.hoverHighlight.value
+                        ? context.theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5)
+                        : null,
+            borderRadius: BorderRadius.circular(controller.shouldHighlight.value ||
+                    controller.shouldPartialHighlight.value ||
+                    controller.hoverHighlight.value
+                ? 8
+                : 0),
+          ),
+          child: NavigationSvc.isAvatarOnly(context)
+              ? InkWell(
+                  mouseCursor: MouseCursor.defer,
+                  onTap: () => controller.onTap(context, widget.deletedMode),
+                  onSecondaryTapUp:
+                      widget.deletedMode ? null : (details) => controller.onSecondaryTap(Get.context!, details),
+                  onLongPress: kIsDesktop || kIsWeb || widget.deletedMode
+                      ? null
+                      : () async {
+                          await peekChat(context, controller.chat, longPressPosition ?? Offset.zero);
+                        },
+                  onTapDown: (details) {
+                    longPressPosition = details.globalPosition;
+                  },
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 10.0, horizontal: (NavigationSvc.width(context) - 100) / 2)
+                        .add(const EdgeInsets.only(right: 15)),
+                    child: leading,
+                  ),
+                )
+              : child,
+        );
+      }),
+    );
   }
 }
 
 class CupertinoTrailing extends CustomStateful<ConversationTileController> {
-  const CupertinoTrailing({Key? key, required super.parentController});
+  const CupertinoTrailing({super.key, required super.parentController});
 
   @override
   State<StatefulWidget> createState() => _CupertinoTrailingState();
 }
 
-class _CupertinoTrailingState extends CustomState<CupertinoTrailing, void, ConversationTileController> {
-  DateTime? dateCreated;
-  late final StreamSubscription sub;
-  String? cachedLatestMessageGuid = "";
-  Message? cachedLatestMessage;
-
-  @override
-  void initState() {
-    super.initState();
-    tag = controller.chat.guid;
-    // keep controller in memory since the widget is part of a list
-    // (it will be disposed when scrolled out of view)
-    forceDelete = false;
-    cachedLatestMessage = controller.chat.latestMessage;
-    cachedLatestMessageGuid = cachedLatestMessage?.guid;
-    dateCreated = cachedLatestMessage?.dateCreated;
-    // run query after render has completed
-    if (!kIsWeb) {
-      updateObx(() {
-        final latestMessageQuery = (Database.messages.query(Message_.dateDeleted.isNull())
-              ..link(Message_.chat, Chat_.guid.equals(controller.chat.guid))
-              ..order(Message_.dateCreated, flags: Order.descending))
-            .watch();
-
-        sub = latestMessageQuery.listen((Query<Message> query) async {
-          final message = await runAsync(() {
-            return query.findFirst();
-          });
-          if (message != null &&
-              ss.settings.statusIndicatorsOnChats.value &&
-              (message.dateDelivered != cachedLatestMessage?.dateDelivered || message.dateRead != cachedLatestMessage?.dateRead)) {
-            setState(() {});
-          }
-          cachedLatestMessage = message;
-          // check if we really need to update this widget
-          if (message != null && message.guid != cachedLatestMessageGuid) {
-            if (dateCreated != message.dateCreated) {
-              setState(() {
-                dateCreated = message.dateCreated;
-              });
-            }
-          }
-          cachedLatestMessageGuid = message?.guid;
-        });
-      });
-    } else {
-      sub = WebListeners.newMessage.listen((tuple) {
-        if (tuple.item2?.guid == controller.chat.guid && (dateCreated == null || tuple.item1.dateCreated!.isAfter(dateCreated!))) {
-          cachedLatestMessage = tuple.item1;
-          setState(() {
-            dateCreated = tuple.item1.dateCreated;
-          });
-          cachedLatestMessageGuid = tuple.item1.guid;
-        }
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    sub.cancel();
-    super.dispose();
-  }
-
+class _CupertinoTrailingState extends CustomState<CupertinoTrailing, void, ConversationTileController>
+    with TrailingStateMixin<CupertinoTrailing> {
   @override
   Widget build(BuildContext context) {
+    final chatState = ChatStateScope.of(context);
     return Padding(
       padding: const EdgeInsets.only(right: 15),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.end,
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Obx(() {
-            String indicatorText = "";
-            if (ss.settings.statusIndicatorsOnChats.value && (cachedLatestMessage?.isFromMe ?? false) && !controller.chat.isGroup) {
-              Indicator show = cachedLatestMessage?.indicatorToShow ?? Indicator.NONE;
-              if (show != Indicator.NONE) {
-                indicatorText = show.name.toLowerCase().capitalizeFirst!;
-              }
-            }
-
-            return Text(
-              (cachedLatestMessage?.error ?? 0) > 0
-                  ? "Error"
-                  // fix layout
-                  : "${indicatorText.isNotEmpty && indicatorText != "None" ? "$indicatorText " : ""}${buildDate(cachedLatestMessage?.chatViewDate)}",
+      child: Obx(() {
+        final message = chatState.latestMessage.value;
+        final indicator = computeIndicatorText(chatState.latestMessageStatus.value, controller.chat.isGroup);
+        final hasError = (message?.error ?? 0) > 0;
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              hasError ? "Error" : "${indicator.isNotEmpty ? "$indicator\n" : ""}${buildDate(message?.chatViewDate)}",
               textAlign: TextAlign.right,
               style: context.theme.textTheme.bodySmall!
                   .copyWith(
-                    color: (cachedLatestMessage?.error ?? 0) > 0
+                    color: hasError
                         ? context.theme.colorScheme.error
                         : controller.shouldHighlight.value
                             ? context.theme.colorScheme.onBubble(context, controller.chat.isIMessage)
-                            : context.theme.colorScheme.outline,
+                            : context.theme.colorScheme.outline.withValues(alpha: 0.75),
                     fontWeight: controller.shouldHighlight.value ? FontWeight.w500 : null,
                   )
-                  .apply(fontSizeFactor: 1.1),
+                  .apply(fontSizeFactor: 1.15),
               overflow: TextOverflow.clip,
-            );
-          }),
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                CupertinoIcons.forward,
-                color: controller.shouldHighlight.value
-                    ? context.theme.colorScheme.onBubble(context, controller.chat.isIMessage)
-                    : context.theme.colorScheme.outline,
-                size: 15,
-              ),
-              if (controller.chat.muteType == "mute")
+            ),
+            const SizedBox(width: 8),
+            Stack(
+              clipBehavior: Clip.none,
+              alignment: Alignment.topCenter,
+              children: [
                 Padding(
-                    padding: const EdgeInsets.only(top: 5.0),
+                  padding: const EdgeInsets.only(top: 1),
+                  child: Icon(
+                    CupertinoIcons.forward,
+                    color: controller.shouldHighlight.value
+                        ? context.theme.colorScheme.onBubble(context, controller.chat.isIMessage)
+                        : context.theme.colorScheme.outline.withValues(alpha: 0.75),
+                    size: 16,
+                  ),
+                ),
+                if (chatState.muteType.value == "mute")
+                  Positioned(
+                    top: 22,
+                    left: 0,
+                    right: 0,
                     child: Icon(
                       CupertinoIcons.bell_slash_fill,
                       color: controller.shouldHighlight.value
                           ? context.theme.colorScheme.onBubble(context, controller.chat.isIMessage)
-                          : context.theme.colorScheme.outline,
+                          : context.theme.colorScheme.outline.withValues(alpha: 0.85),
                       size: 12,
-                    ))
-            ],
-          ),
-        ],
-      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        );
+      }),
     );
   }
 }
 
 class UnreadIcon extends CustomStateful<ConversationTileController> {
-  const UnreadIcon({Key? key, required super.parentController});
+  const UnreadIcon({super.key, required super.parentController});
 
   @override
   State<StatefulWidget> createState() => _UnreadIconState();
 }
 
 class _UnreadIconState extends CustomState<UnreadIcon, void, ConversationTileController> {
-
   @override
   void initState() {
     super.initState();
@@ -330,18 +276,18 @@ class _UnreadIconState extends CustomState<UnreadIcon, void, ConversationTileCon
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(left: 5.0, right: 5.0),
-      child: Obx(() => GlobalChatService.unreadState(controller.chat.guid).value
-          ? Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(35),
-                color: context.theme.colorScheme.primary,
-              ),
-              width: 10,
-              height: 10,
-            )
-          : const SizedBox(width: 10),
-      )
-    );
+        padding: const EdgeInsets.only(left: 8.0, right: 6.0),
+        child: Obx(
+          () => (ChatsSvc.getChatState(controller.chat.guid)?.hasUnreadMessage.value ?? false)
+              ? Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(35),
+                    color: context.theme.colorScheme.primary,
+                  ),
+                  width: 12,
+                  height: 12,
+                )
+              : const SizedBox(width: 12),
+        ));
   }
 }

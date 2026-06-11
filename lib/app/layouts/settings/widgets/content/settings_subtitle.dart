@@ -1,4 +1,3 @@
-import 'package:bluebubbles/helpers/ui/theme_helpers.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -19,12 +18,15 @@ class SettingsSubtitle extends StatelessWidget {
     return Padding(
       padding: !bottomPadding ? EdgeInsets.zero : const EdgeInsets.only(bottom: 10.0),
       child: ListTile(
-        title: subtitle != null ? Text(
-          subtitle!,
-          style: context.theme.textTheme.bodySmall!.copyWith(color: context.theme.colorScheme.properOnSurface.withOpacity(0.75)),
-          maxLines: unlimitedSpace ? 100 : 2,
-          overflow: TextOverflow.ellipsis,
-        ) : null,
+        title: subtitle != null
+            ? Text(
+                subtitle!,
+                style: context.theme.textTheme.bodySmall!
+                    .copyWith(color: context.theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.75)),
+                maxLines: unlimitedSpace ? 100 : 2,
+                overflow: TextOverflow.ellipsis,
+              )
+            : null,
         minVerticalPadding: 0,
         visualDensity: const VisualDensity(horizontal: 0, vertical: -4),
         dense: true,

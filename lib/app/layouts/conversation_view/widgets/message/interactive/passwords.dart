@@ -1,7 +1,6 @@
 import 'package:bluebubbles/app/layouts/conversation_view/pages/conversation_view.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/passwords/passwords_panel.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/material.dart';
@@ -18,20 +17,19 @@ class SharedPasswords extends StatefulWidget {
   });
 
   @override
-  OptimizedState createState() => _SharedPasswordsState();
+  State<SharedPasswords> createState() => _SharedPasswordsState();
 }
 
-class _SharedPasswordsState extends OptimizedState<SharedPasswords>
-    with AutomaticKeepAliveClientMixin {
+class _SharedPasswordsState extends State<SharedPasswords> with AutomaticKeepAliveClientMixin<SharedPasswords> {
   iMessageAppData get data => widget.data;
 
   @override
   bool get wantKeepAlive => true;
 
   Future<void> _openPasswords() async {
-    final currentChat = cm.activeChat?.chat;
-    ns.closeAllConversationView(context);
-    await cm.setAllInactive();
+    final currentChat = ChatsSvc.activeChat?.chat;
+    NavigationSvc.closeAllConversationView(context);
+    await ChatsSvc.setAllInactive();
     await Navigator.of(Get.context!).push(
       ThemeSwitcher.buildPageRoute(
         builder: (BuildContext context) {
@@ -40,9 +38,9 @@ class _SharedPasswordsState extends OptimizedState<SharedPasswords>
       ),
     );
     if (currentChat != null) {
-      await cm.setActiveChat(currentChat);
-      if (ss.settings.tabletMode.value) {
-        ns.pushAndRemoveUntil(
+      await ChatsSvc.setActiveChat(currentChat);
+      if (SettingsSvc.settings.tabletMode.value) {
+        await NavigationSvc.pushAndRemoveUntil(
           context,
           ConversationView(
             chat: currentChat,
@@ -58,9 +56,7 @@ class _SharedPasswordsState extends OptimizedState<SharedPasswords>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final str = data.ldText?.trim().isNotEmpty == true
-        ? data.ldText!.trim()
-        : "You have been invited";
+    final str = data.ldText?.trim().isNotEmpty == true ? data.ldText!.trim() : "You have been invited";
     return Material(
       color: Colors.transparent,
       child: InkWell(

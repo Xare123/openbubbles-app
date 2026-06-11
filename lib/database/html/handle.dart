@@ -1,10 +1,9 @@
+import 'package:bluebubbles/database/io/contact_v2.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
-import 'package:bluebubbles/database/html/contact.dart';
-import 'package:bluebubbles/database/html/objectbox.dart';
+import 'package:bluebubbles/models/models.dart' show HandleLookupKey;
 import 'package:bluebubbles/services/services.dart';
 import 'package:faker/faker.dart';
 import 'package:get/get.dart';
-import 'package:tuple/tuple.dart';
 
 class Handle {
   int? id;
@@ -18,40 +17,25 @@ class Handle {
   String? defaultPhone;
   final String fakeName = faker.person.name();
 
-  final contactRelation = ToOne<Contact>();
-  Contact? webContact;
+  // Web has no ObjectBox relations; expose empty list for API compatibility.
+  List<ContactV2> get contacts => [];
 
-  final RxnString _color = RxnString();
-  String? get color => _color.value;
-  set color(String? val) => _color.value = val;
+  String? color;
 
-  Contact? get contact => webContact;
   String get displayName {
-    if (ss.settings.redactedMode.value) {
-      if (ss.settings.generateFakeContactNames.value) {
-        return fakeName;
-      } else if (ss.settings.hideContactInfo.value) {
-        return "";
-      }
-    }
     if (address.startsWith("urn:biz")) return "Business";
-    if (contact != null) return contact!.displayName;
     return address.contains("@") ? address : (formattedAddress ?? address);
   }
-  String? get initials {
-    // Remove any numbers, certain symbols, and non-alphabet characters
-    if (address.startsWith("urn:biz")) return null;
-    String importantChars = displayName.toUpperCase().replaceAll(RegExp(r'[^a-zA-Z _-]'), "").trim();
-    if (importantChars.isEmpty) return null;
 
-    // Split by a space or special character delimiter, take each of the items and
-    // reduce it to just the capitalized first letter. Then join the array by an empty char
-    String reduced = importantChars
-        .split(RegExp(r'[ \-_]'))
-        .take(2)
-        .map((e) => e.isEmpty ? '' : e[0].toUpperCase())
-        .join('');
-    return reduced.isEmpty ? null : reduced;
+  String? get initials {
+    if (address.startsWith("urn:biz")) return null;
+    final parts = displayName.trim().split(RegExp(r'[ \-_]'));
+    if (parts.length == 1) return parts[0].firstAlpha;
+
+    final firstPart = parts.first.firstAlpha ?? '';
+    final secondPart = parts[1].firstAlpha ?? '';
+
+    return (firstPart + secondPart).isEmpty ? null : firstPart + secondPart;
   }
 
   Handle({
@@ -62,7 +46,7 @@ class Handle {
     this.uniqueAddressAndService = "",
     this.formattedAddress,
     this.country,
-    String? handleColor,
+    this.color,
     this.defaultEmail,
     this.defaultPhone,
   }) {
@@ -72,20 +56,19 @@ class Handle {
     if (uniqueAddressAndService.isEmpty) {
       uniqueAddressAndService = "$address/$service";
     }
-    color = handleColor;
   }
 
   factory Handle.fromMap(Map<String, dynamic> json) => Handle(
-    id: json["ROWID"] ?? json["id"],
-    originalROWID: json["originalROWID"],
-    address: json["address"],
-    service: json["service"] ?? "iMessage",
-    uniqueAddressAndService: json["uniqueAddrAndService"] ?? "${json["address"]}/${json["service"] ?? "iMessage"}",
-    formattedAddress: json["formattedAddress"],
-    country: json["country"],
-    handleColor: json["color"],
-    defaultPhone: json['defaultPhone'],
-  );
+        id: json["ROWID"] ?? json["id"],
+        originalROWID: json["originalROWID"],
+        address: json["address"],
+        service: json["service"] ?? "iMessage",
+        uniqueAddressAndService: json["uniqueAddrAndService"] ?? "${json["address"]}/${json["service"] ?? "iMessage"}",
+        formattedAddress: json["formattedAddress"],
+        country: json["country"],
+        color: json["color"],
+        defaultPhone: json['defaultPhone'],
+      );
 
   Handle save({updateColor = false}) {
     return this;
@@ -113,9 +96,11 @@ class Handle {
     return this;
   }
 
-  static Handle? findOne({int? id, int? originalROWID, Tuple2<String, String>? addressAndService}) {
+  static Handle? findOne({int? id, int? originalROWID, HandleLookupKey? addressAndService}) {
     // ignore: argument_type_not_assignable, return_of_invalid_type, invalid_assignment, for_in_of_invalid_element_type
-    return chats.webCachedHandles.firstWhereOrNull((e) => originalROWID != null ? e.originalROWID == originalROWID : e.uniqueAddressAndService == "${addressAndService?.item1}/${addressAndService?.item2}");
+    return ChatsSvc.webCachedHandles.firstWhereOrNull((e) => originalROWID != null
+        ? e.originalROWID == originalROWID
+        : e.uniqueAddressAndService == "${addressAndService?.address}/${addressAndService?.service}");
   }
 
   static List<Handle> find() {
@@ -125,7 +110,7 @@ class Handle {
   static Handle merge(Handle handle1, Handle handle2) {
     handle1.id ??= handle2.id;
     handle1.originalROWID ??= handle2.originalROWID;
-    handle1._color.value ??= handle2._color.value;
+    handle1.color ??= handle2.color;
     handle1.country ??= handle2.country;
     handle1.formattedAddress ??= handle2.formattedAddress;
     if (isNullOrEmpty(handle1.defaultPhone)) {
@@ -138,9 +123,8 @@ class Handle {
     return handle1;
   }
 
-  Map<String, dynamic> toMap({bool includeObjects = false}) {
-
-    final output = {
+  Map<String, dynamic> toMap() {
+    return {
       "ROWID": id,
       "originalROWID": originalROWID,
       "address": address,
@@ -152,12 +136,5 @@ class Handle {
       "defaultPhone": defaultPhone,
       "defaultEmail": defaultEmail,
     };
-
-    if (includeObjects) {
-      output['contact'] = contact?.toMap();
-      output['contactRelation'] = contactRelation.target?.toMap();
-    }
-
-    return output;
   }
 }

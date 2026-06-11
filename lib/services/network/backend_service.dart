@@ -4,8 +4,10 @@ import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:dio/dio.dart';
 import 'package:get/get.dart';
+import 'package:get_it/get_it.dart';
 
-BackendService backend = Get.isRegistered<BackendService>() ? Get.find<BackendService>() : Get.put(RustPushBackend());
+BackendService BackendSvc = GetIt.I<BackendService>();
+
 enum ParticipantOp { Add, Remove }
 
 abstract class BackendService {
@@ -18,8 +20,7 @@ abstract class BackendService {
   Future<void> restoreChat(Chat c);
   Future<void> permanentlyDeleteChat(Chat c);
   Future<bool> leaveChat(Chat chat);
-  Future<Message> sendTapback(
-      Chat chat, Message selected, String reaction, int? repPart);
+  Future<Message> sendTapback(Chat chat, Message selected, String reaction, int? repPart);
   Future<Message> updateMessage(
       Chat chat, Message old, PayloadData newData, PlatformFile? newImage, bool isMeta, String? notifText);
   Future<bool> markRead(Chat chat, bool notifyOthers);
@@ -37,8 +38,7 @@ abstract class BackendService {
       {void Function(int, int)? onSendProgress, CancelToken? cancelToken});
   bool canCancelUploads();
   Future<bool> canUploadGroupPhotos();
-  Future<bool> setChatIcon(Chat chat, String path,
-      {void Function(int, int)? onSendProgress, CancelToken? cancelToken});
+  Future<bool> setChatIcon(Chat chat, String path, {void Function(int, int)? onSendProgress, CancelToken? cancelToken});
   Future<bool> deleteChatIcon(Chat chat, {CancelToken? cancelToken});
   bool supportsFocusStates();
   Future<bool> downloadLivePhoto(Attachment att, String target,
@@ -54,6 +54,5 @@ abstract class BackendService {
   Future<Map<String, dynamic>> getAccountInfo();
   Future<void> setDefaultHandle(String handle);
   Future<Map<String, dynamic>> getAccountContact();
-  void init();
   bool canDelete(); // use hard delete
 }

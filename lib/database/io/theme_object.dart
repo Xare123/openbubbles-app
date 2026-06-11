@@ -53,7 +53,7 @@ class ThemeObject {
         ThemeEntry.fromStyle(ThemeColors.Subtitle2, data!.textTheme.titleSmall!),
         ThemeEntry(name: ThemeColors.AccentColor, color: data!.colorScheme.secondary, isFont: false),
         ThemeEntry(name: ThemeColors.DividerColor, color: data!.dividerColor, isFont: false),
-        ThemeEntry(name: ThemeColors.BackgroundColor, color: data!.colorScheme.background, isFont: false),
+        ThemeEntry(name: ThemeColors.BackgroundColor, color: data!.colorScheme.surface, isFont: false),
         ThemeEntry(name: ThemeColors.PrimaryColor, color: data!.primaryColor, isFont: false),
       ];
 
@@ -70,11 +70,11 @@ class ThemeObject {
   List<ThemeEntry> fetchData() {
     if (isPreset && !name!.contains("Music")) {
       if (name == "OLED Dark") {
-        data = ts.oledDarkTheme;
+        data = ThemesService.oledDarkTheme;
       } else if (name == "Bright White") {
-        data = ts.whiteLightTheme;
+        data = ThemesService.whiteLightTheme;
       } else if (name == "Nord Theme") {
-        data = ts.nordDarkTheme;
+        data = ThemesService.nordDarkTheme;
       }
 
       entries = toEntries();
@@ -83,10 +83,10 @@ class ThemeObject {
     if (kIsWeb) return entries;
     final themeEntries = List<ThemeEntry>.from(this.themeEntries);
     if (name == "Music Theme (Light)" && themeEntries.isEmpty) {
-      data = ts.whiteLightTheme;
+      data = ThemesService.whiteLightTheme;
       entries = toEntries();
     } else if (name == "Music Theme (Dark)" && themeEntries.isEmpty) {
-      data = ts.oledDarkTheme;
+      data = ThemesService.oledDarkTheme;
       entries = toEntries();
     } else if (themeEntries.isNotEmpty) {
       entries = themeEntries;

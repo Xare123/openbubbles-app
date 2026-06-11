@@ -1,11 +1,11 @@
 import 'package:bluebubbles/app/components/avatars/contact_avatar_group_widget.dart';
+import 'package:bluebubbles/app/components/bb_chip.dart';
 import 'package:bluebubbles/app/layouts/chat_selector_view/chat_selector_view.dart';
 import 'package:bluebubbles/app/layouts/conversation_details/dialogs/timeframe_picker.dart';
 import 'package:bluebubbles/app/layouts/handle_selector_view/handle_selector_view.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/pages/conversation_view.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/settings_widgets.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
@@ -17,15 +17,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart';
 import 'package:get/get.dart';
-import 'package:sliding_up_panel2/sliding_up_panel2.dart';
-import 'package:tuple/tuple.dart';
+import 'package:flutter_sliding_up_panel/flutter_sliding_up_panel.dart';
 import 'package:objectbox/src/native/query/query.dart' as obx;
+
+class _SearchResult {
+  final Chat chat;
+  final Message message;
+  const _SearchResult({required this.chat, required this.message});
+}
 
 class SearchResult {
   final String search;
   final String chatGuidFilter;
   final String method;
-  final List<Tuple2<Chat, Message>> results;
+  final List<_SearchResult> results;
 
   SearchResult({
     required this.search,
@@ -36,7 +41,7 @@ class SearchResult {
 }
 
 class SearchView extends StatefulWidget {
-  SearchView({
+  const SearchView({
     super.key,
   });
 
@@ -44,26 +49,26 @@ class SearchView extends StatefulWidget {
   SearchViewState createState() => SearchViewState();
 }
 
-class SearchViewState extends OptimizedState<SearchView> {
+class SearchViewState extends State<SearchView> with ThemeHelpers {
   final TextEditingController textEditingController = TextEditingController();
-  final PanelController panelController = PanelController();
+  final SlidingUpPanelController panelController = SlidingUpPanelController();
   final FocusNode focusNode = FocusNode();
   final List<SearchResult> pastSearches = [];
 
-  SearchResult? currentSearch;
-  bool noResults = false;
-  bool isSearching = false;
-  String? currentSearchTerm;
-  bool local = backend.getRemoteService() == null;
-  bool network = backend.getRemoteService() != null;
-  Chat? selectedChat;
-  Handle? selectedHandle;
-  bool isFromMe = false;
-  bool isNotFromMe = false;
-  DateTime? sinceDate;
+  final Rx<SearchResult?> currentSearch = Rx<SearchResult?>(null);
+  final RxBool noResults = false.obs;
+  final RxBool isSearching = false.obs;
+  final Rx<String?> currentSearchTerm = Rx<String?>(null);
+  final RxBool local = (BackendSvc.getRemoteService() == null).obs;
+  final RxBool network = (BackendSvc.getRemoteService() != null).obs;
+  final Rx<Chat?> selectedChat = Rx<Chat?>(null);
+  final Rx<Handle?> selectedHandle = Rx<Handle?>(null);
+  final RxBool isFromMe = false.obs;
+  final RxBool isNotFromMe = false.obs;
+  final Rx<DateTime?> sinceDate = Rx<DateTime?>(null);
 
-  Color get backgroundColor => ss.settings.windowEffect.value == WindowEffect.disabled
-      ? context.theme.colorScheme.background
+  Color get backgroundColor => SettingsSvc.settings.windowEffect.value == WindowEffect.disabled
+      ? context.theme.colorScheme.surface
       : Colors.transparent;
 
   @override
@@ -72,62 +77,59 @@ class SearchViewState extends OptimizedState<SearchView> {
 
     // When the user types again after no results, reset no results
     textEditingController.addListener(() {
-      if (textEditingController.text != currentSearchTerm && noResults) {
-        noResults = false;
+      if (textEditingController.text != currentSearchTerm.value && noResults.value) {
+        noResults.value = false;
       }
     });
   }
 
   Future<void> search(String newSearch) async {
-    if (isSearching || isNullOrEmpty(newSearch) || newSearch.length < 3) return;
+    if (isSearching.value || isNullOrEmpty(newSearch) || newSearch.length < 3) return;
     focusNode.unfocus();
-    noResults = false;
-    currentSearchTerm = newSearch;
+    noResults.value = false;
+    currentSearchTerm.value = newSearch;
 
     // If we've already searched for the results and there are none, set no results and return
     if (pastSearches
-            .firstWhereOrNull((e) => e.search == newSearch && e.method == (local ? "local" : "network"))
+            .firstWhereOrNull((e) => e.search == newSearch && e.method == (local.value ? "local" : "network"))
             ?.results
             .isEmpty ??
         false) {
-      return setState(() {
-        noResults = true;
-      });
+      noResults.value = true;
+      return;
     }
 
-    setState(() {
-      isSearching = true;
-    });
+    isSearching.value = true;
 
     final search = SearchResult(
-      search: currentSearchTerm!,
-      method: local ? "local" : "network",
+      search: currentSearchTerm.value!,
+      method: local.value ? "local" : "network",
       results: [],
     );
 
-    if (local) {
+    if (local.value) {
       obx.Condition<Message> condition = Message_.text
-          .contains(currentSearchTerm!, caseSensitive: false)
+          .contains(currentSearchTerm.value!, caseSensitive: false)
           .and(Message_.associatedMessageGuid.isNull())
           .and(Message_.dateDeleted.isNull())
           .and(Message_.dateCreated.notNull());
 
-      if (isFromMe) {
+      if (isFromMe.value) {
         condition = condition.and(Message_.isFromMe.equals(true));
-      } else if (isNotFromMe) {
+      } else if (isNotFromMe.value) {
         condition = condition.and(Message_.isFromMe.equals(false));
-      } else if (selectedHandle != null) {
-        condition = condition.and(Message_.handleId.equals(selectedHandle!.originalROWID!));
+      } else if (selectedHandle.value != null) {
+        condition = condition.and(Message_.handleId.equals(selectedHandle.value!.originalROWID!));
       }
 
-      if (sinceDate != null) {
-        condition = condition.and(Message_.dateCreated.greaterOrEqual(sinceDate!.millisecondsSinceEpoch));
+      if (sinceDate.value != null) {
+        condition = condition.and(Message_.dateCreated.greaterOrEqual(sinceDate.value!.millisecondsSinceEpoch));
       }
 
       QueryBuilder<Message> qBuilder = Database.messages.query(condition);
 
-      if (selectedChat != null) {
-        qBuilder = qBuilder..link(Message_.chat, Chat_.guid.equals(selectedChat!.guid));
+      if (selectedChat.value != null) {
+        qBuilder = qBuilder..link(Message_.chat, Chat_.guid.equals(selectedChat.value!.guid));
       }
 
       final query = qBuilder.order(Message_.dateCreated, flags: Order.descending).build();
@@ -135,32 +137,36 @@ class SearchViewState extends OptimizedState<SearchView> {
       final results = query.find();
       query.close();
 
-      if (selectedChat == null) {
-        final q2query = Database.chats.query(Chat_.title.contains(currentSearchTerm!, caseSensitive: false)
-          .and(Chat_.dateDeleted.isNull())).build();
-        q2query.limit = 10;
-        final results = q2query.find();
-        q2query.close();
-        results.sort(Chat.sort);
-        for (var result in results) {
-          search.results.add(Tuple2(result, result.dbLatestMessage));
+      if (selectedChat.value == null) {
+        final chatResults = ChatsSvc.allChats
+            .where((chat) =>
+                (chat.dateDeleted == null) &&
+                chat.getTitle().toLowerCase().contains(currentSearchTerm.value!.toLowerCase()))
+            .take(10)
+            .toList();
+        chatResults.sort(Chat.sort);
+        for (final result in chatResults) {
+          final latest = result.dbLatestMessage;
+          if (latest != null) {
+            search.results.add(_SearchResult(chat: result, message: latest));
+          }
         }
       }
 
+      List<Chat?> chats = [];
       List<Message> messages = [];
       messages = results.map((e) {
         // grab attachments, associated messages, and handle
         e.realAttachments;
         e.fetchAssociatedMessages();
-        e.handle = e.getHandle();
         return e;
       }).toList();
-      List<Chat> chats = results.map((e) => e.chat.target!).toList();
+      chats = results.map((e) => e.chat.target).toList();
       chats.forEachIndexed((index, element) {
+        if (element == null) return;
         element.latestMessage = messages[index];
-        search.results.add(Tuple2(element, messages[index]));
+        search.results.add(_SearchResult(chat: element, message: messages[index]));
       });
-
     } else {
       final whereClause = [
         {
@@ -170,641 +176,612 @@ class SearchViewState extends OptimizedState<SearchView> {
         {'statement': 'message.associated_message_guid IS NULL', 'args': null}
       ];
 
-      if (selectedChat != null) {
+      if (selectedChat.value != null) {
         whereClause.add({
           'statement': 'chat.guid = :guid',
-          'args': {'guid': selectedChat!.guid}
+          'args': {'guid': selectedChat.value!.guid}
         });
       }
 
-      if (isFromMe) {
+      if (isFromMe.value) {
         whereClause.add({
           'statement': 'message.is_from_me = :isFromMe',
           'args': {'isFromMe': 1}
         });
-      } else if (isNotFromMe) {
+      } else if (isNotFromMe.value) {
         whereClause.add({
           'statement': 'message.is_from_me = :isFromMe',
           'args': {'isFromMe': 0}
         });
-      } else if (selectedHandle != null) {
+      } else if (selectedHandle.value != null) {
         whereClause.add({
           'statement': 'handle.id = :addr',
-          'args': {'addr': selectedHandle!.address}
+          'args': {'addr': selectedHandle.value!.address}
         });
       }
 
       final results = await MessagesService.getMessages(
         limit: 50,
-        after: sinceDate?.millisecondsSinceEpoch,
+        after: sinceDate.value?.millisecondsSinceEpoch,
         withChats: true,
         withHandles: true,
         withAttachments: true,
         withChatParticipants: true,
         where: whereClause,
       );
-      // we query chats from DB so we can get contact names
       // ignore: prefer_const_constructors
-      final items = Tuple2(<Chat>[], <Message>[]);
+      final List<Chat> itemChats = [];
+      final List<Message> itemMessages = [];
       for (dynamic item in results) {
         final chat = Chat.fromMap(item['chats'][0]);
         final message = Message.fromMap(item);
-        items.item1.add(chat);
-        items.item2.add(message);
+        itemChats.add(chat);
+        itemMessages.add(message);
       }
-      final chatsToGet = items.item1.map((e) => e.guid).toList();
+      final chatsToGet = itemChats.map((e) => e.guid).toList();
       final dbChats = Database.chats.query(Chat_.guid.oneOf(chatsToGet)).build().find();
-      for (int i = 0; i < items.item1.length; i++) {
-        final chat = dbChats.firstWhereOrNull((e) => e.guid == items.item1[i].guid) ?? items.item1[i];
-        chat.latestMessage = items.item2[i];
-        search.results.add(Tuple2(chat, items.item2[i]));
+      for (int i = 0; i < itemChats.length; i++) {
+        final chat = dbChats.firstWhereOrNull((e) => e.guid == itemChats[i].guid) ?? itemChats[i];
+        chat.latestMessage = itemMessages[i];
+        search.results.add(_SearchResult(chat: chat, message: itemMessages[i]));
       }
     }
 
     pastSearches.add(search);
-    setState(() {
-      isSearching = false;
-      noResults = search.results.isEmpty;
-      currentSearch = search;
-    });
+    isSearching.value = false;
+    noResults.value = search.results.isEmpty;
+    currentSearch.value = search;
   }
 
   @override
   Widget build(BuildContext context) {
-    int filterCount = 0;
-    if (selectedChat != null) filterCount++;
-    if (selectedHandle != null) filterCount++;
-    if (isFromMe) filterCount++;
-    if (isNotFromMe) filterCount++;
-    if (sinceDate != null) filterCount++;
+    return Obx(() {
+      int filterCount = 0;
+      if (selectedChat.value != null) filterCount++;
+      if (selectedHandle.value != null) filterCount++;
+      if (isFromMe.value) filterCount++;
+      if (isNotFromMe.value) filterCount++;
+      if (sinceDate.value != null) filterCount++;
 
-    bool showSenderFilter = !isNotFromMe && !isFromMe && (selectedChat?.isGroup ?? true);
+      bool showSenderFilter = !isNotFromMe.value && !isFromMe.value && (selectedChat.value?.isGroup ?? true);
 
-    return PopScope(
-        canPop: false,
-        onPopInvoked: (bool didPop) {
-          if (didPop) return;
-          if (panelController.isPanelOpen) {
-            panelController.close();
-          } else {
-            final NavigatorState navigator = Navigator.of(context);
-            navigator.pop();
-          }
-        },
-        child: Stack(children: [
-          SettingsScaffold(
-            title: "Search",
-            initialHeader: null,
-            iosSubtitle: iosSubtitle,
-            materialSubtitle: materialSubtitle,
-            tileColor: backgroundColor,
-            headerColor: backgroundColor,
-            bodySlivers: [
-              SliverList(
-                delegate: SliverChildListDelegate([
-                  const SizedBox(height: 8),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 15.0, vertical: 10.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Icon(
-                          ss.settings.skin.value == Skins.iOS ? CupertinoIcons.info : Icons.info_outline,
-                          size: 20,
-                          color: context.theme.colorScheme.primary,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                            child: Text(
-                          "Enter at least 3 characters to begin a search",
-                          style: context.theme.textTheme.bodySmall!
-                              .copyWith(color: context.theme.colorScheme.properOnSurface),
-                        )),
-                      ],
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(left: 15, right: 15, top: 5),
-                    child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                      Flexible(
-                          child: CupertinoTextField(
-                        textInputAction: TextInputAction.done,
-                        onSubmitted: (_) {
-                          search(textEditingController.text);
-                        },
-                        focusNode: focusNode,
-                        padding: const EdgeInsets.symmetric(horizontal: 15.0, vertical: 10),
-                        controller: textEditingController,
-                        placeholder: "Enter a search term...",
-                        autofocus: true,
-                        style: context.theme.textTheme.bodyLarge,
-                        placeholderStyle:
-                            context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.outline),
-                        cursorColor: context.theme.colorScheme.primary,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: context.theme.colorScheme.primary),
-                        ),
-                        maxLines: 1,
-                        prefix: Padding(
-                          padding: const EdgeInsets.only(left: 15),
-                          child: Icon(ss.settings.skin.value == Skins.iOS ? CupertinoIcons.search : Icons.search,
-                              color: context.theme.colorScheme.outline),
-                        ),
-                        suffix: Padding(
-                          padding: const EdgeInsets.only(right: 15),
-                          child: !isSearching
-                              ? InkWell(
-                                  child: Icon(Icons.arrow_forward, color: context.theme.colorScheme.primary),
-                                  onTap: () {
-                                    search(textEditingController.text);
-                                  })
-                              : Padding(
-                                  padding: const EdgeInsets.all(12.0),
-                                  child: ss.settings.skin.value == Skins.iOS
-                                      ? Theme(
-                                          data: ThemeData(
-                                            cupertinoOverrideTheme: CupertinoThemeData(
-                                                brightness: ThemeData.estimateBrightnessForColor(
-                                                    context.theme.colorScheme.background)),
-                                          ),
-                                          child: const CupertinoActivityIndicator(),
-                                        )
-                                      : Container(
-                                          height: 20,
-                                          width: 20,
-                                          child: Center(
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              valueColor:
-                                                  AlwaysStoppedAnimation<Color>(context.theme.colorScheme.primary),
-                                            ),
-                                          ),
-                                        ),
-                                ),
-                        ),
-                        suffixMode: OverlayVisibilityMode.editing,
-                      )),
-                      Container(
-                          margin: const EdgeInsets.only(left: 10),
-                          width: 35,
-                          height: 40,
-                          child: Stack(children: [
-                            if (filterCount > 0)
-                              Positioned(
-                                top: -4,
-                                right: 0,
-                                child: Container(
-                                  padding: const EdgeInsets.all(5),
-                                  decoration: BoxDecoration(
-                                    color: context.theme.colorScheme.primary,
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: Text(
-                                    filterCount.toString(),
-                                    style: context.theme.textTheme.bodySmall!
-                                        .copyWith(color: context.theme.colorScheme.onPrimary),
-                                  ),
-                                ),
-                              ),
-                            Container(
-                                margin: const EdgeInsets.only(left: 5),
-                                child: Padding(
-                                    padding: const EdgeInsets.only(top: 10),
-                                    child: InkWell(
-                                      onTap: () {
-                                        HapticFeedback.lightImpact();
-                                        if (focusNode.hasFocus) {
-                                          focusNode.unfocus();
-                                        }
-
-                                        if (panelController.isPanelOpen) {
-                                          panelController.close();
-                                        } else {
-                                          panelController.open();
-                                        }
-                                      },
-                                      child: Icon(
-                                        Icons.tune,
-                                        color: context.theme.colorScheme.primary,
-                                      ),
-                                    )))
-                          ]))
-                    ]),
-                  ),
-                  if (!kIsWeb && backend.getRemoteService() != null)
+      return PopScope(
+          canPop: false,
+          onPopInvoked: (bool didPop) {
+            if (didPop) return;
+            if (panelController.status != SlidingUpPanelStatus.collapsed) {
+              panelController.collapse();
+            } else {
+              final NavigatorState navigator = Navigator.of(context);
+              navigator.pop();
+            }
+          },
+          child: Stack(children: [
+            SettingsScaffold(
+              title: "Search",
+              initialHeader: null,
+              iosSubtitle: iosSubtitle,
+              materialSubtitle: materialSubtitle,
+              tileColor: backgroundColor,
+              headerColor: backgroundColor,
+              bodySlivers: [
+                SliverList(
+                  delegate: SliverChildListDelegate([
+                    const SizedBox(height: 8),
                     Padding(
-                      padding: const EdgeInsets.only(left: 15, right: 15, top: 15, bottom: 10),
-                      child: ToggleButtons(
-                        constraints: BoxConstraints(minWidth: (ns.width(context) * 0.9) / 2),
-                        fillColor: context.theme.colorScheme.primary.withOpacity(0.2),
-                        splashColor: context.theme.colorScheme.primary.withOpacity(0.2),
+                      padding: const EdgeInsets.symmetric(horizontal: 15.0, vertical: 10.0),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          const Row(
-                            children: [
-                              Padding(
-                                padding: EdgeInsets.all(8.0),
-                                child: Text("Search Device"),
-                              ),
-                              Icon(Icons.storage_outlined, size: 16),
-                            ],
+                          Icon(
+                            SettingsSvc.settings.skin.value == Skins.iOS ? CupertinoIcons.info : Icons.info_outline,
+                            size: 20,
+                            color: context.theme.colorScheme.primary,
                           ),
-                          const Row(
-                            children: [
-                              Padding(
-                                padding: EdgeInsets.all(8.0),
-                                child: Text("Search Mac"),
-                              ),
-                              Icon(Icons.cloud_outlined, size: 16),
-                            ],
-                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                              child: Text(
+                            "Enter at least 3 characters to begin a search",
+                            style: context.theme.textTheme.bodySmall!
+                                .copyWith(color: context.theme.colorScheme.onSurfaceVariant),
+                          )),
                         ],
-                        borderRadius: BorderRadius.circular(20),
-                        selectedBorderColor: context.theme.colorScheme.primary,
-                        selectedColor: context.theme.colorScheme.primary,
-                        borderColor: context.theme.colorScheme.primary.withOpacity(0.5),
-                        isSelected: [local, network],
-                        onPressed: (index) {
-                          if (index == 0) {
-                            setState(() {
-                              local = true;
-                              network = false;
-                            });
-                          } else {
-                            setState(() {
-                              local = false;
-                              network = true;
-                            });
-                          }
-                          setState(() {
-                            isSearching = false;
-                            noResults = false;
-                            currentSearch = null;
-                          });
-                        },
                       ),
                     ),
-                  Divider(color: context.theme.colorScheme.outline.withOpacity(0.75)),
-                  if (!isSearching && noResults)
                     Padding(
-                        padding: const EdgeInsets.only(top: 25.0),
-                        child: Center(child: Text("No results found!", style: context.theme.textTheme.bodyLarge))),
-                ]),
-              ),
-              if (!isSearching && currentSearch != null)
-                SliverList(
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) {
-                      TextStyle subtitleStyle = context.theme.textTheme.bodySmall!
-                          .copyWith(color: context.theme.colorScheme.outline, height: 1.5)
-                          .apply(fontSizeFactor: ss.settings.skin.value == Skins.Material ? 1.05 : 1.0);
-
-                      final chat = currentSearch!.results[index].item1;
-                      final message = currentSearch!.results[index].item2;
-
-                      // Create the textspans
-                      List<InlineSpan> spans = [];
-
-                      // Get the current position of the search term
-                      int termStart = message.fullText.toLowerCase().indexOf(currentSearchTerm!.toLowerCase());
-                      int termEnd = termStart + currentSearchTerm!.length;
-
-                      if (termStart >= 0) {
-                        // We only want a snippet of the text, so only get a 50x50 range
-                        // of characters from the string, with the search term in the middle
-                        String subText = message.fullText.substring(
-                          (termStart - 50).clamp(0, double.infinity).toInt(),
-                          (termEnd + 50).clamp(0, message.fullText.length),
-                        );
-
-                        // Recalculate the term position in the snippet
-                        termStart = subText.toLowerCase().indexOf(currentSearchTerm!.toLowerCase());
-                        termEnd = termStart + currentSearchTerm!.length;
-
-                        // Add the beginning string
-                        spans.add(TextSpan(text: subText.substring(0, termStart).trimLeft(), style: subtitleStyle));
-
-                        // Add the search term (bolded with color)
-                        spans.add(
-                          TextSpan(
-                              text: subText.substring(termStart, termEnd),
-                              style: subtitleStyle.apply(color: context.theme.colorScheme.primary, fontWeightDelta: 2)),
-                        );
-
-                        // Add the ending string
-                        spans.add(TextSpan(
-                            text: subText.substring(termEnd, subText.length).trimRight(), style: subtitleStyle));
-                      } else {
-                        spans.add(TextSpan(text: message.text, style: subtitleStyle));
-                      }
-
-                      return Container(
-                        decoration: BoxDecoration(
-                          border: !ss.settings.hideDividers.value
-                              ? Border(
-                                  bottom: BorderSide(
-                                    color: context.theme.colorScheme.background.oppositeLightenOrDarken(15),
-                                    width: 0.5,
-                                  ),
-                                )
-                              : null,
-                        ),
-                        child: ListTile(
-                          mouseCursor: SystemMouseCursors.click,
-                          title: RichText(
-                            text: TextSpan(
-                              children: MessageHelper.buildEmojiText(
-                                chat.getTitle(),
-                                context.theme.textTheme.bodyLarge!,
-                              ),
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle: RichText(
-                            text: TextSpan(
-                              children: spans,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                            maxLines: ss.settings.denseChatTiles.value
-                                ? 1
-                                : material
-                                    ? 3
-                                    : 2,
-                          ),
-                          leading: ContactAvatarGroupWidget(
-                            chat: chat,
-                            size: 40,
-                            editable: false,
-                          ),
-                          trailing: Text(
-                            buildDate(message.dateCreated),
-                            textAlign: TextAlign.right,
-                            style: context.theme.textTheme.bodySmall,
-                            overflow: TextOverflow.clip,
-                          ),
-                          onTap: () {
-                            final service = ms(chat.guid);
-                            service.method = local ? "local" : "network";
-                            service.struct.addMessages([message]);
-                            ns.pushAndRemoveUntil(
-                              context,
-                              ConversationView(
-                                chat: chat,
-                                customService: service,
-                              ),
-                              (route) => route.isFirst,
-                            );
+                      padding: const EdgeInsets.only(left: 15, right: 15, top: 5),
+                      child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                        Flexible(
+                            child: CupertinoTextField(
+                          textInputAction: TextInputAction.done,
+                          onSubmitted: (_) {
+                            search(textEditingController.text);
                           },
-                        ),
-                      );
-                    },
-                    childCount: currentSearch!.results.length,
-                  ),
-                )
-            ],
-          ),
-          SlidingUpPanel(
-            controller: panelController,
-            defaultPanelState: PanelState.CLOSED,
-            backdropEnabled: true,
-            backdropTapClosesPanel: true,
-            backdropColor: context.theme.colorScheme.properSurface,
-            color: backgroundColor,
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(20),
-              topRight: Radius.circular(20),
-            ),
-            isDraggable: false,
-            parallaxEnabled: true,
-            minHeight: 0,
-            maxHeight: 225,
-            panelBuilder: () {
-              return Container(
-                padding: const EdgeInsets.only(left: 10, right: 10, bottom: 20, top: 20),
-                child: Column(children: [
-                  Center(
-                      child: Text(
-                    "Search Filters",
-                    style: context.theme.textTheme.headlineSmall,
-                  )),
-                  Material(
-                      child: Padding(
-                          padding: const EdgeInsets.only(top: 10),
-                          child: Wrap(
-                            direction: Axis.horizontal,
-                            alignment: WrapAlignment.start,
-                            spacing: 10,
-                            children: [
-                              RawChip(
-                                tapEnabled: true,
-                                deleteIcon: const Icon(Icons.close, size: 16),
-                                side: BorderSide(color: context.theme.colorScheme.outline.withOpacity(0.1)),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                                avatar: CircleAvatar(
-                                  backgroundColor: context.theme.colorScheme.primaryContainer,
-                                  child: Icon(
-                                    Icons.calendar_today_outlined,
-                                    color: context.theme.colorScheme.primary,
-                                    size: 12,
+                          focusNode: focusNode,
+                          padding: const EdgeInsets.symmetric(horizontal: 15.0, vertical: 10),
+                          controller: textEditingController,
+                          placeholder: "Enter a search term...",
+                          autofocus: true,
+                          style: context.theme.textTheme.bodyLarge,
+                          placeholderStyle:
+                              context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.outline),
+                          cursorColor: context.theme.colorScheme.primary,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: context.theme.colorScheme.primary),
+                          ),
+                          maxLines: 1,
+                          prefix: Padding(
+                            padding: const EdgeInsets.only(left: 15),
+                            child: Icon(
+                                SettingsSvc.settings.skin.value == Skins.iOS ? CupertinoIcons.search : Icons.search,
+                                color: context.theme.colorScheme.outline),
+                          ),
+                          suffix: Padding(
+                            padding: const EdgeInsets.only(right: 15),
+                            child: !isSearching.value
+                                ? InkWell(
+                                    child: Icon(Icons.arrow_forward, color: context.theme.colorScheme.primary),
+                                    onTap: () {
+                                      search(textEditingController.text);
+                                    })
+                                : Padding(
+                                    padding: const EdgeInsets.all(12.0),
+                                    child: SettingsSvc.settings.skin.value == Skins.iOS
+                                        ? Theme(
+                                            data: ThemeData(
+                                              cupertinoOverrideTheme: CupertinoThemeData(
+                                                  brightness: ThemeData.estimateBrightnessForColor(
+                                                      context.theme.colorScheme.surface)),
+                                            ),
+                                            child: const CupertinoActivityIndicator(),
+                                          )
+                                        : SizedBox(
+                                            height: 20,
+                                            width: 20,
+                                            child: Center(
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                valueColor:
+                                                    AlwaysStoppedAnimation<Color>(context.theme.colorScheme.primary),
+                                              ),
+                                            ),
+                                          ),
+                                  ),
+                          ),
+                          suffixMode: OverlayVisibilityMode.editing,
+                        )),
+                        Container(
+                            margin: const EdgeInsets.only(left: 10),
+                            width: 35,
+                            height: 40,
+                            child: Stack(children: [
+                              if (filterCount > 0)
+                                Positioned(
+                                  top: -4,
+                                  right: 0,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(5),
+                                    decoration: BoxDecoration(
+                                      color: context.theme.colorScheme.primary,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Text(
+                                      filterCount.toString(),
+                                      style: context.theme.textTheme.bodySmall!
+                                          .copyWith(color: context.theme.colorScheme.onPrimary),
+                                    ),
                                   ),
                                 ),
-                                label: sinceDate != null
-                                    ? Text(
-                                        "Since ${buildFullDate(sinceDate!, includeTime: sinceDate!.isToday(), useTodayYesterday: true)}",
-                                        style: TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.normal,
-                                            color: context.theme.colorScheme.onSurface),
-                                        overflow: TextOverflow.ellipsis)
-                                    : Text('Filter by Date',
-                                        style: TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.normal,
-                                            color: context.theme.colorScheme.onSurface)),
-                                onDeleted: sinceDate == null
-                                    ? null
-                                    : () {
-                                        setState(() {
-                                          sinceDate = null;
-                                          isSearching = false;
-                                          noResults = false;
-                                          currentSearch = null;
-                                        });
-                                      },
-                                onPressed: () async {
-                                  sinceDate = await showTimeframePicker("Since When?", context,
-                                      customTimeframes: {
-                                        "1 Hour": 1,
-                                        "1 Day": 24,
-                                        "1 Week": 168,
-                                        "1 Month": 720,
-                                        "6 Months": 4320,
-                                        "1 Year": 8760,
-                                      },
-                                      selectionSuffix: "Ago",
-                                      useTodayYesterday: true);
-                                  setState(() {
-                                    isSearching = false;
-                                    noResults = false;
-                                    currentSearch = null;
-                                  });
-                                },
-                              ),
-                              RawChip(
-                                tapEnabled: true,
-                                deleteIcon: const Icon(Icons.close, size: 16),
-                                side: BorderSide(color: context.theme.colorScheme.outline.withOpacity(0.1)),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                                avatar: CircleAvatar(
-                                  backgroundColor: context.theme.colorScheme.primaryContainer,
+                              Container(
+                                  margin: const EdgeInsets.only(left: 5),
                                   child: Padding(
-                                      padding: const EdgeInsets.only(left: 1, top: 1),
-                                      child: Icon(
-                                        Icons.chat_bubble_outline_rounded,
-                                        color: context.theme.colorScheme.primary,
-                                        size: 12,
-                                      )),
-                                ),
-                                label: selectedChat != null
-                                    ? Text(selectedChat!.getTitle(),
-                                        style: TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.normal,
-                                            color: context.theme.colorScheme.onSurface),
-                                        overflow: TextOverflow.ellipsis)
-                                    : Text('Filter by Chat',
-                                        style: TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.normal,
-                                            color: context.theme.colorScheme.onSurface)),
-                                onDeleted: selectedChat == null
-                                    ? null
-                                    : () {
-                                        setState(() {
-                                          selectedChat = null;
-                                          isSearching = false;
-                                          noResults = false;
-                                          currentSearch = null;
-                                        });
-                                      },
-                                onPressed: () {
-                                  // Push a route that allows the user to select a chat
-                                  ns.push(context, ChatSelectorView(
-                                    onSelect: (chat) {
-                                      setState(() {
-                                        selectedChat = chat;
-                                        isSearching = false;
-                                        noResults = false;
-                                        currentSearch = null;
-                                      });
-                                    },
-                                  ));
-                                },
+                                      padding: const EdgeInsets.only(top: 10),
+                                      child: InkWell(
+                                        onTap: () {
+                                          HapticFeedback.lightImpact();
+                                          if (focusNode.hasFocus) {
+                                            focusNode.unfocus();
+                                          }
+
+                                          if (panelController.status != SlidingUpPanelStatus.expanded) {
+                                            panelController.expand();
+                                          }
+                                        },
+                                        child: Icon(
+                                          Icons.tune,
+                                          color: context.theme.colorScheme.primary,
+                                        ),
+                                      )))
+                            ]))
+                      ]),
+                    ),
+                    if (!kIsWeb && BackendSvc.getRemoteService() != null)
+                      Obx(() {
+                        NavigationSvc.listener.value;
+                        return Padding(
+                          padding: const EdgeInsets.only(left: 15, right: 15, top: 15, bottom: 10),
+                          child: ToggleButtons(
+                            constraints: BoxConstraints(minWidth: (NavigationSvc.width(context) * 0.9) / 2),
+                            fillColor: context.theme.colorScheme.primary.withValues(alpha: 0.2),
+                            splashColor: context.theme.colorScheme.primary.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(20),
+                            selectedBorderColor: context.theme.colorScheme.primary,
+                            selectedColor: context.theme.colorScheme.primary,
+                            borderColor: context.theme.colorScheme.primary.withValues(alpha: 0.5),
+                            isSelected: [local.value, network.value],
+                            onPressed: (index) {
+                              if (index == 0) {
+                                local.value = true;
+                                network.value = false;
+                              } else {
+                                local.value = false;
+                                network.value = true;
+                              }
+                              isSearching.value = false;
+                              noResults.value = false;
+                              currentSearch.value = null;
+                            },
+                            children: [
+                              const Row(
+                                children: [
+                                  Padding(
+                                    padding: EdgeInsets.all(8.0),
+                                    child: Text("Search Device"),
+                                  ),
+                                  Icon(Icons.storage_outlined, size: 16),
+                                ],
                               ),
-                              if (showSenderFilter)
-                                RawChip(
-                                  tapEnabled: true,
-                                  deleteIcon: const Icon(Icons.close, size: 16),
-                                  side: BorderSide(color: context.theme.colorScheme.outline.withOpacity(0.1)),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                              const Row(
+                                children: [
+                                  Padding(
+                                    padding: EdgeInsets.all(8.0),
+                                    child: Text("Search Mac"),
+                                  ),
+                                  Icon(Icons.cloud_outlined, size: 16),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                    Divider(color: context.theme.colorScheme.outline.withValues(alpha: 0.75)),
+                    if (!isSearching.value && noResults.value)
+                      Padding(
+                          padding: const EdgeInsets.only(top: 25.0),
+                          child: Center(child: Text("No results found!", style: context.theme.textTheme.bodyLarge))),
+                  ]),
+                ),
+                if (!isSearching.value && currentSearch.value != null)
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        TextStyle subtitleStyle = context.theme.textTheme.bodySmall!
+                            .copyWith(color: context.theme.colorScheme.outline, height: 1.5)
+                            .apply(fontSizeFactor: SettingsSvc.settings.skin.value == Skins.Material ? 1.05 : 1.0);
+
+                        final chat = currentSearch.value!.results[index].chat;
+                        final message = currentSearch.value!.results[index].message;
+
+                        // Create the textspans
+                        List<InlineSpan> spans = [];
+
+                        // Get the current position of the search term
+                        int termStart = message.fullText.toLowerCase().indexOf(currentSearchTerm.value!.toLowerCase());
+                        int termEnd = termStart + currentSearchTerm.value!.length;
+
+                        if (termStart >= 0) {
+                          // We only want a snippet of the text, so only get a 50x50 range
+                          // of characters from the string, with the search term in the middle
+                          String subText = message.fullText.substring(
+                            (termStart - 50).clamp(0, double.infinity).toInt(),
+                            (termEnd + 50).clamp(0, message.fullText.length),
+                          );
+
+                          // Recalculate the term position in the snippet
+                          termStart = subText.toLowerCase().indexOf(currentSearchTerm.value!.toLowerCase());
+                          termEnd = termStart + currentSearchTerm.value!.length;
+
+                          // Add the beginning string
+                          spans.add(TextSpan(text: subText.substring(0, termStart).trimLeft(), style: subtitleStyle));
+
+                          // Add the search term (bolded with color)
+                          spans.add(
+                            TextSpan(
+                                text: subText.substring(termStart, termEnd),
+                                style:
+                                    subtitleStyle.apply(color: context.theme.colorScheme.primary, fontWeightDelta: 2)),
+                          );
+
+                          // Add the ending string
+                          spans.add(TextSpan(
+                              text: subText.substring(termEnd, subText.length).trimRight(), style: subtitleStyle));
+                        } else {
+                          spans.add(TextSpan(text: message.text, style: subtitleStyle));
+                        }
+
+                        return Container(
+                          decoration: BoxDecoration(
+                            border: !SettingsSvc.settings.hideDividers.value
+                                ? Border(
+                                    bottom: BorderSide(
+                                      color: context.theme.colorScheme.surface.oppositeLightenOrDarken(15),
+                                      width: 0.5,
+                                    ),
+                                  )
+                                : null,
+                          ),
+                          child: ListTile(
+                            mouseCursor: SystemMouseCursors.click,
+                            title: RichText(
+                              text: TextSpan(
+                                children: MessageHelper.buildEmojiText(
+                                  chat.getTitle(),
+                                  context.theme.textTheme.bodyLarge!,
+                                ),
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: RichText(
+                              text: TextSpan(
+                                children: spans,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: SettingsSvc.settings.denseChatTiles.value
+                                  ? 1
+                                  : material
+                                      ? 3
+                                      : 2,
+                            ),
+                            leading: ContactAvatarGroupWidget(
+                              chat: chat,
+                              size: 40,
+                              editable: false,
+                            ),
+                            trailing: Text(
+                              buildDate(message.dateCreated),
+                              textAlign: TextAlign.right,
+                              style: context.theme.textTheme.bodySmall,
+                              overflow: TextOverflow.clip,
+                            ),
+                            onTap: () {
+                              final service = MessagesSvc(chat.guid);
+                              service.method = local.value ? "local" : "network";
+                              service.struct.addMessages([message]);
+                              NavigationSvc.pushAndRemoveUntil(
+                                context,
+                                ConversationView(
+                                  chat: chat,
+                                  customService: service,
+                                  initialScrollToGuid: message.guid,
+                                ),
+                                (route) => route.isFirst,
+                              );
+                            },
+                          ),
+                        );
+                      },
+                      childCount: currentSearch.value!.results.length,
+                    ),
+                  )
+              ],
+            ),
+            SlidingUpPanelWidget(
+              panelController: panelController,
+              anchor: 1,
+              controlHeight: 0,
+              enableOnTap: false,
+              child: Column(children: [
+                Expanded(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapUp: (a_) {
+                      if (panelController.status != SlidingUpPanelStatus.collapsed) {
+                        panelController.collapse();
+                      }
+                    },
+                  ),
+                ),
+                Container(
+                  decoration: BoxDecoration(
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                    color: tileColor,
+                  ),
+                  height: 255,
+                  padding: const EdgeInsets.only(left: 10, right: 10, bottom: 20, top: 20),
+                  child: Column(children: [
+                    Center(
+                        child: Text(
+                      "Search Filters",
+                      style: context.theme.textTheme.headlineSmall,
+                    )),
+                    Material(
+                        color: Colors.transparent,
+                        child: Padding(
+                            padding: const EdgeInsets.only(top: 10),
+                            child: Wrap(
+                              direction: Axis.horizontal,
+                              alignment: WrapAlignment.start,
+                              spacing: 10,
+                              runSpacing: 10,
+                              children: [
+                                BBChip(
                                   avatar: CircleAvatar(
                                     backgroundColor: context.theme.colorScheme.primaryContainer,
                                     child: Icon(
-                                      Icons.person_2_outlined,
+                                      Icons.calendar_today_outlined,
                                       color: context.theme.colorScheme.primary,
                                       size: 12,
                                     ),
                                   ),
-                                  label: selectedHandle != null
-                                      ? Text(selectedHandle!.displayName,
+                                  label: sinceDate.value != null
+                                      ? Text(
+                                          "Since ${buildFullDate(sinceDate.value!, includeTime: sinceDate.value!.isToday(), useTodayYesterday: true)}",
                                           style: TextStyle(
                                               fontSize: 14,
                                               fontWeight: FontWeight.normal,
                                               color: context.theme.colorScheme.onSurface),
                                           overflow: TextOverflow.ellipsis)
-                                      : Text('Filter by Sender',
+                                      : Text('Filter by Date',
                                           style: TextStyle(
                                               fontSize: 14,
                                               fontWeight: FontWeight.normal,
                                               color: context.theme.colorScheme.onSurface)),
-                                  onDeleted: selectedHandle == null
+                                  onDeleted: sinceDate.value == null
                                       ? null
                                       : () {
-                                          setState(() {
-                                            selectedHandle = null;
-                                            isSearching = false;
-                                            noResults = false;
-                                            currentSearch = null;
-                                          });
+                                          sinceDate.value = null;
+                                          isSearching.value = false;
+                                          noResults.value = false;
+                                          currentSearch.value = null;
+                                        },
+                                  onPressed: () async {
+                                    sinceDate.value = await showTimeframePicker("Since When?", context,
+                                        customTimeframes: {
+                                          "1 Hour": 1,
+                                          "1 Day": 24,
+                                          "1 Week": 168,
+                                          "1 Month": 720,
+                                          "6 Months": 4320,
+                                          "1 Year": 8760,
+                                        },
+                                        selectionSuffix: "Ago",
+                                        useTodayYesterday: true);
+                                    isSearching.value = false;
+                                    noResults.value = false;
+                                    currentSearch.value = null;
+                                  },
+                                ),
+                                BBChip(
+                                  avatar: CircleAvatar(
+                                    backgroundColor: context.theme.colorScheme.primaryContainer,
+                                    child: Padding(
+                                        padding: const EdgeInsets.only(left: 1, top: 1),
+                                        child: Icon(
+                                          Icons.chat_bubble_outline_rounded,
+                                          color: context.theme.colorScheme.primary,
+                                          size: 12,
+                                        )),
+                                  ),
+                                  label: selectedChat.value != null
+                                      ? Text(selectedChat.value!.getTitle(),
+                                          style: TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.normal,
+                                              color: context.theme.colorScheme.onSurface),
+                                          overflow: TextOverflow.ellipsis)
+                                      : Text('Filter by Chat',
+                                          style: TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.normal,
+                                              color: context.theme.colorScheme.onSurface)),
+                                  onDeleted: selectedChat.value == null
+                                      ? null
+                                      : () {
+                                          selectedChat.value = null;
+                                          isSearching.value = false;
+                                          noResults.value = false;
+                                          currentSearch.value = null;
                                         },
                                   onPressed: () {
                                     // Push a route that allows the user to select a chat
-                                    ns.push(
-                                        context,
-                                        HandleSelectorView(
-                                          forChat: selectedChat,
-                                          onSelect: (handle) {
-                                            setState(() {
-                                              selectedHandle = handle;
-                                              isSearching = false;
-                                              noResults = false;
-                                              currentSearch = null;
-                                            });
+                                    NavigationSvc.push(context, ChatSelectorView(
+                                      onSelect: (chat) {
+                                        selectedChat.value = chat;
+                                        isSearching.value = false;
+                                        noResults.value = false;
+                                        currentSearch.value = null;
+                                      },
+                                    ));
+                                  },
+                                ),
+                                if (showSenderFilter)
+                                  BBChip(
+                                    avatar: CircleAvatar(
+                                      backgroundColor: context.theme.colorScheme.primaryContainer,
+                                      child: Icon(
+                                        Icons.person_2_outlined,
+                                        color: context.theme.colorScheme.primary,
+                                        size: 12,
+                                      ),
+                                    ),
+                                    label: selectedHandle.value != null
+                                        ? Text(selectedHandle.value!.displayName,
+                                            style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.normal,
+                                                color: context.theme.colorScheme.onSurface),
+                                            overflow: TextOverflow.ellipsis)
+                                        : Text('Filter by Sender',
+                                            style: TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.normal,
+                                                color: context.theme.colorScheme.onSurface)),
+                                    onDeleted: selectedHandle.value == null
+                                        ? null
+                                        : () {
+                                            selectedHandle.value = null;
+                                            isSearching.value = false;
+                                            noResults.value = false;
+                                            currentSearch.value = null;
                                           },
-                                        ));
-                                  },
-                                ),
-                              if (selectedHandle == null && !isNotFromMe)
-                                RawChip(
-                                  tapEnabled: true,
-                                  showCheckmark: true,
-                                  selected: isFromMe,
-                                  checkmarkColor: context.theme.colorScheme.primary,
-                                  side: BorderSide(color: context.theme.colorScheme.outline.withOpacity(0.1)),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                                  label: Text('From You',
-                                      style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.normal,
-                                          color: context.theme.colorScheme.onSurface)),
-                                  onSelected: (selected) {
-                                    setState(() {
-                                      isFromMe = selected;
-                                      isSearching = false;
-                                      noResults = false;
-                                      currentSearch = null;
-                                    });
-                                  },
-                                ),
-                              if (selectedHandle == null && !isFromMe)
-                                RawChip(
-                                  tapEnabled: true,
-                                  showCheckmark: true,
-                                  selected: isNotFromMe,
-                                  checkmarkColor: context.theme.colorScheme.primary,
-                                  side: BorderSide(color: context.theme.colorScheme.outline.withOpacity(0.1)),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                                  label: Text('Not From You',
-                                      style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.normal,
-                                          color: context.theme.colorScheme.onSurface)),
-                                  onSelected: (selected) {
-                                    setState(() {
-                                      isNotFromMe = selected;
-                                      isSearching = false;
-                                      noResults = false;
-                                      currentSearch = null;
-                                    });
-                                  },
-                                ),
-                            ],
-                          ))),
-                ]),
-              );
-            },
-          )
-        ]));
+                                    onPressed: () {
+                                      // Push a route that allows the user to select a chat
+                                      NavigationSvc.push(
+                                          context,
+                                          HandleSelectorView(
+                                            forChat: selectedChat.value,
+                                            onSelect: (handle) {
+                                              selectedHandle.value = handle;
+                                              isSearching.value = false;
+                                              noResults.value = false;
+                                              currentSearch.value = null;
+                                            },
+                                          ));
+                                    },
+                                  ),
+                                if (selectedHandle.value == null && !isNotFromMe.value)
+                                  BBChip(
+                                    showCheckmark: true,
+                                    selected: isFromMe.value,
+                                    checkmarkColor: context.theme.colorScheme.primary,
+                                    label: Text('From You',
+                                        style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.normal,
+                                            color: context.theme.colorScheme.onSurface)),
+                                    onSelected: (selected) {
+                                      isFromMe.value = selected;
+                                      isSearching.value = false;
+                                      noResults.value = false;
+                                      currentSearch.value = null;
+                                    },
+                                  ),
+                                if (selectedHandle.value == null && !isFromMe.value)
+                                  BBChip(
+                                    showCheckmark: true,
+                                    selected: isNotFromMe.value,
+                                    checkmarkColor: context.theme.colorScheme.primary,
+                                    label: Text('Not From You',
+                                        style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.normal,
+                                            color: context.theme.colorScheme.onSurface)),
+                                    onSelected: (selected) {
+                                      isNotFromMe.value = selected;
+                                      isSearching.value = false;
+                                      noResults.value = false;
+                                      currentSearch.value = null;
+                                    },
+                                  ),
+                              ],
+                            ))),
+                  ]),
+                )
+              ]),
+            )
+          ]));
+    });
   }
 }

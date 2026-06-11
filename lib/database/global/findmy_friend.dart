@@ -1,9 +1,9 @@
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/models/models.dart' show HandleLookupKey;
 import 'package:collection/collection.dart';
 import 'package:intl/intl.dart';
-import 'package:tuple/tuple.dart';
 
-enum LocationStatus {legacy, shallow, live}
+enum LocationStatus { legacy, shallow, live }
 
 class FindMyFriend {
   FindMyFriend({
@@ -33,28 +33,32 @@ class FindMyFriend {
   final String? id;
 
   factory FindMyFriend.fromJson(Map<String, dynamic> json) => FindMyFriend(
-    latitude: json["coordinates"]?[0].toDouble(),
-    longitude: json["coordinates"]?[1].toDouble(),
-    longAddress: json["long_address"],
-    shortAddress: json["short_address"],
-    title: json["title"],
-    subtitle: json["subtitle"],
-    handle: json["handle"] == null && json["title"] == null ? null : Handle.findOne(addressAndService: Tuple2(json["handle"] ?? json["title"], "iMessage")),
-    lastUpdated: (json["last_updated"] ?? 0) == 0 ? null : DateTime.fromMillisecondsSinceEpoch(json["last_updated"]),
-    status: LocationStatus.values.firstWhereOrNull((e) => e.name == json["status"]),
-    locatingInProgress: json["is_locating_in_progress"] ?? false,
-  );
+        id: json["id"],
+        latitude: json["coordinates"]?[0].toDouble(),
+        longitude: json["coordinates"]?[1].toDouble(),
+        longAddress: json["long_address"],
+        shortAddress: json["short_address"],
+        title: json["title"],
+        subtitle: json["subtitle"],
+        handle: json["handle"] == null && json["title"] == null
+            ? null
+            : Handle.findOne(addressAndService: HandleLookupKey(json["handle"] ?? json["title"], "iMessage")),
+        lastUpdated:
+            (json["last_updated"] ?? 0) == 0 ? null : DateTime.fromMillisecondsSinceEpoch(json["last_updated"]),
+        status: LocationStatus.values.firstWhereOrNull((e) => e.name == json["status"]),
+        locatingInProgress: json["is_locating_in_progress"] ?? false,
+      );
 
   Map<String, dynamic> toJson() => {
-    "coordinates": [latitude, longitude],
-    "long_address": longAddress,
-    "short_address": shortAddress,
-    "title": title,
-    "subtitle": subtitle,
-    "handle": handle?.toMap(),
-    "last_updated": lastUpdated == null ? null : DateFormat("MMMM d, yyyy h:mm:ss a").format(lastUpdated!),
-    "status": status?.name,
-    "locating_in_progress": locatingInProgress,
-  };
+        "id": id,
+        "coordinates": [latitude, longitude],
+        "long_address": longAddress,
+        "short_address": shortAddress,
+        "title": title,
+        "subtitle": subtitle,
+        "handle": handle?.toMap(),
+        "last_updated": lastUpdated == null ? null : DateFormat("MMMM d, yyyy h:mm:ss a").format(lastUpdated!),
+        "status": status?.name,
+        "locating_in_progress": locatingInProgress,
+      };
 }
-

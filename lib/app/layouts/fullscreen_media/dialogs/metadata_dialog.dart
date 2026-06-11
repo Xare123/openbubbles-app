@@ -1,4 +1,3 @@
-import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
@@ -37,16 +36,13 @@ void showMetadataDialog(Attachment a, BuildContext context) {
         "Metadata",
         style: context.theme.textTheme.titleLarge,
       ),
-      backgroundColor: context.theme.colorScheme.properSurface,
+      backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
       content: SizedBox(
-        width: ns.width(context) * 3 / 5,
+        width: NavigationSvc.width(context) * 3 / 5,
         height: context.height * 1 / 4,
         child: Container(
           padding: const EdgeInsets.all(10.0),
-          decoration: BoxDecoration(
-            color: context.theme.colorScheme.background,
-            borderRadius: BorderRadius.circular(10)
-          ),
+          decoration: BoxDecoration(color: context.theme.colorScheme.surface, borderRadius: BorderRadius.circular(10)),
           child: ListView(
             physics: ThemeSwitcher.getScrollPhysics(),
             children: metaWidgets,
@@ -55,10 +51,8 @@ void showMetadataDialog(Attachment a, BuildContext context) {
       ),
       actions: [
         TextButton(
-          child: Text(
-            "Close",
-            style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)
-          ),
+          child: Text("Close",
+              style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
           onPressed: () => Navigator.of(context).pop(),
         ),
       ],

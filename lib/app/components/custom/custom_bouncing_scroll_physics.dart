@@ -91,7 +91,7 @@ class CustomBouncingScrollPhysics extends ScrollPhysics {
       return BouncingScrollSimulation(
         spring: spring,
         position: position.pixels,
-        velocity: velocity * ss.settings.scrollVelocity.value,
+        velocity: velocity * SettingsSvc.settings.scrollVelocity.value,
         // 0.90 is the default
         leadingExtent: position.minScrollExtent,
         trailingExtent: position.maxScrollExtent,

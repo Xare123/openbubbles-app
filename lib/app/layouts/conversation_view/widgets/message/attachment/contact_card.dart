@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:bluebubbles/app/components/avatars/contact_avatar_widget.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
@@ -15,7 +14,7 @@ import 'package:universal_html/html.dart' as html;
 import 'package:universal_io/io.dart';
 
 class ContactCard extends StatefulWidget {
-  ContactCard({
+  const ContactCard({
     super.key,
     required this.file,
     required this.attachment,
@@ -27,15 +26,13 @@ class ContactCard extends StatefulWidget {
   State<ContactCard> createState() => _ContactCardState();
 }
 
-class _ContactCardState extends OptimizedState<ContactCard> with AutomaticKeepAliveClientMixin {
-  Contact? contact;
+class _ContactCardState extends State<ContactCard> with AutomaticKeepAliveClientMixin, ThemeHelpers {
+  ContactV2? contact;
 
   @override
   void initState() {
     super.initState();
-    updateObx(() {
-      init();
-    });
+    init();
   }
 
   void init() async {
@@ -71,17 +68,19 @@ class _ContactCardState extends OptimizedState<ContactCard> with AutomaticKeepAl
     final avatarStr = avatarLines.join();
 
     try {
-      contact = as.parseAppleContact(appleContact);
+      contact = AttachmentsSvc.parseAppleContact(appleContact);
     } catch (ex) {
-      contact = Contact(displayName: "Invalid Contact", id: randomString(8));
+      contact = ContactV2(displayName: "Invalid Contact", nativeContactId: randomString(8));
     }
 
-    if (contact != null) {
-      final map = contact!.toMap();
-      if (avatarStr.isNotEmpty) {
-        map["avatar"] = "/${avatarStr.split("/").sublist(1).join('/').trim()}";
-      }
-      contact = Contact.fromMap(map);
+    if (contact != null && avatarStr.isNotEmpty) {
+      try {
+        final b64 = "/${avatarStr.split("/").sublist(1).join('/').trim()}";
+        final bytes = base64Decode(b64);
+        final tempPath = '${Directory.systemTemp.path}/contact_card_${contact!.nativeContactId}.jpg';
+        await File(tempPath).writeAsBytes(bytes);
+        contact!.avatarPath = tempPath;
+      } catch (_) {}
     }
 
     if (!kIsWeb && widget.file.path != null) setState(() {});
@@ -99,50 +98,50 @@ class _ContactCardState extends OptimizedState<ContactCard> with AutomaticKeepAl
           onTap: () async {
             if (kIsWeb || widget.file.path == null) {
               final content = base64.encode(widget.file.bytes!);
-              html.AnchorElement(
-                  href: "data:application/octet-stream;charset=utf-16le;base64,$content")
+              html.AnchorElement(href: "data:application/octet-stream;charset=utf-16le;base64,$content")
                 ..setAttribute("download", widget.file.name)
                 ..click();
             } else {
-              await OpenFilex.open("${fs.appDocDir.path}/attachments/${widget.attachment.guid!}/${basename(widget.file.path!)}", type: widget.attachment.mimeType);
+              await OpenFilex.open(
+                  join(FilesystemSvc.attachmentsPath, widget.attachment.guid!, basename(widget.file.path!)),
+                  type: widget.attachment.mimeType);
             }
           },
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 15.0),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: <Widget>[
-                Expanded(
-                  child:  Text(
-                    contact?.displayName ?? 'Unknown',
-                    style: context.theme.textTheme.bodyLarge!.copyWith(fontWeight: FontWeight.bold),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 2,
-                    softWrap: true,
-                  ),
-                ),
-                const SizedBox(width: 2),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    ContactAvatarWidget(
-                      handle: Handle(),
-                      contact: contact,
-                      borderThickness: 0.5,
+              padding: const EdgeInsets.symmetric(horizontal: 15.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      contact?.computedDisplayName ?? 'Unknown',
+                      style: context.theme.textTheme.bodyLarge!.copyWith(fontWeight: FontWeight.bold),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 2,
+                      softWrap: true,
                     ),
-                    Padding(
-                      padding: const EdgeInsets.only(left: 5.0),
-                      child: Icon(
-                        iOS ? CupertinoIcons.forward : Icons.arrow_forward,
-                        color: context.theme.colorScheme.outline,
-                        size: 15,
+                  ),
+                  const SizedBox(width: 2),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      ContactAvatarWidget(
+                        handle: Handle(),
+                        contact: contact,
+                        borderThickness: 0.5,
                       ),
-                    )
-                  ],
-                )
-              ],
-            )
-          ),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 5.0),
+                        child: Icon(
+                          iOS ? CupertinoIcons.forward : Icons.arrow_forward,
+                          color: context.theme.colorScheme.outline,
+                          size: 15,
+                        ),
+                      )
+                    ],
+                  )
+                ],
+              )),
         ),
       ),
     );

@@ -1,11 +1,10 @@
 import 'dart:convert';
 
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/interactive/polls.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
-import 'package:collection/collection.dart';
+import 'package:bluebubbles/services/ui/extension_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
@@ -13,10 +12,10 @@ import 'package:universal_io/io.dart';
 
 class SupportedInteractive extends StatefulWidget {
   final iMessageAppData data;
-  dynamic content;
-  String? guid;
+  final dynamic content;
+  final String? guid;
 
-  SupportedInteractive({
+  const SupportedInteractive({
     super.key,
     required this.data,
     required this.content,
@@ -24,15 +23,15 @@ class SupportedInteractive extends StatefulWidget {
   });
 
   @override
-  OptimizedState createState() => _SupportedInteractiveState();
+  State<StatefulWidget> createState() => _SupportedInteractiveState();
 }
 
-class _SupportedInteractiveState extends OptimizedState<SupportedInteractive> with AutomaticKeepAliveClientMixin {
+class _SupportedInteractiveState extends State<SupportedInteractive> with AutomaticKeepAliveClientMixin {
   iMessageAppData get data => widget.data;
   dynamic get file => File(widget.content.path!);
 
-  static List<_SupportedInteractiveState> aliveExtensions = [];
-  
+  static final List<_SupportedInteractiveState> aliveExtensions = [];
+
   bool forcedDead = false;
 
   @override
@@ -40,18 +39,18 @@ class _SupportedInteractiveState extends OptimizedState<SupportedInteractive> wi
     super.initState();
     aliveExtensions.add(this);
     if (aliveExtensions.length > 20) {
-      var oldExt = aliveExtensions.removeAt(0);
+      final oldExt = aliveExtensions.removeAt(0);
       oldExt.forcedDead = true;
-      oldExt.setState(() { });
+      oldExt.setState(() {});
     }
   }
 
   @override
   void dispose() {
-    super.dispose();
     if (aliveExtensions.contains(this)) {
       aliveExtensions.remove(this);
     }
+    super.dispose();
   }
 
   @override
@@ -60,25 +59,26 @@ class _SupportedInteractiveState extends OptimizedState<SupportedInteractive> wi
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    if (widget.data.isLive == true && widget.data.appId != null && es.isAppAvailable(widget.data.appId!)) {
-      var data = widget.data.toNative(null);
-      data["messageGuid"] = widget.guid;
-      data["user-count"] = cm.activeChat!.chat.participants.length + 1;
+    if (widget.data.isLive == true && widget.data.appId != null && ExtensionSvc.isAppAvailable(widget.data.appId!)) {
+      final nativeData = widget.data.toNative(null);
+      nativeData["messageGuid"] = widget.guid;
+      nativeData["user-count"] = ChatsSvc.activeChat!.chat.handles.length + 1;
       return SizedBox(
-        height: 250,
-        child: forcedDead ? const SizedBox.shrink() : RepaintBoundary(
-          child: AndroidView(
-            key: ValueKey(data.toString()),
-          viewType: "extension-live",
-          layoutDirection: TextDirection.ltr,
-          creationParams: data,
-          creationParamsCodec: const StandardMessageCodec(),
-        ),
-        )
-      );
+          height: 250,
+          child: forcedDead
+              ? const SizedBox.shrink()
+              : RepaintBoundary(
+                  child: AndroidView(
+                    key: ValueKey(jsonEncode(nativeData)),
+                    viewType: "extension-live",
+                    layoutDirection: TextDirection.ltr,
+                    creationParams: nativeData,
+                    creationParamsCodec: const StandardMessageCodec(),
+                  ),
+                ));
     }
     if (widget.data.appName == "Polls" && widget.data.appId == null) {
-      return Polls(data: widget.data, message: null);
+      return Polls(data: widget.data, messageState: null);
     }
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -123,12 +123,10 @@ class _SupportedInteractiveState extends OptimizedState<SupportedInteractive> wi
                         overflow: TextOverflow.ellipsis,
                       ),
                     if (!isNullOrEmpty(data.userInfo?.imageSubtitle))
-                      Text(
-                        data.userInfo!.imageSubtitle!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: context.theme.textTheme.labelMedium!.copyWith(fontWeight: FontWeight.normal)
-                      ),
+                      Text(data.userInfo!.imageSubtitle!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: context.theme.textTheme.labelMedium!.copyWith(fontWeight: FontWeight.normal)),
                   ],
                 ),
               ),
@@ -136,63 +134,56 @@ class _SupportedInteractiveState extends OptimizedState<SupportedInteractive> wi
         ),
         Padding(
           padding: const EdgeInsets.all(15.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (!isNullOrEmpty(data.userInfo?.caption))
-                    Flexible(
-                      fit: !isNullOrEmpty(data.userInfo?.secondarySubcaption) ? FlexFit.tight : FlexFit.loose,
-                      child: Text(
-                        data.userInfo!.caption!,
-                        style: context.theme.textTheme.bodyLarge!.apply(fontWeightDelta: 2),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  if (isNullOrEmpty(data.userInfo?.caption) && !isNullOrEmpty(data.ldText))
-                    Flexible(
-                      fit: !isNullOrEmpty(data.userInfo?.secondarySubcaption) ? FlexFit.tight : FlexFit.loose,
-                      child: Text(
-                        data.ldText!,
-                        style: context.theme.textTheme.bodyLarge!.apply(fontWeightDelta: 2),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  if (!isNullOrEmpty(data.userInfo?.secondarySubcaption))
-                    Text(
-                      data.userInfo!.secondarySubcaption!,
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!isNullOrEmpty(data.userInfo?.caption))
+                  Flexible(
+                    fit: !isNullOrEmpty(data.userInfo?.secondarySubcaption) ? FlexFit.tight : FlexFit.loose,
+                    child: Text(
+                      data.userInfo!.caption!,
                       style: context.theme.textTheme.bodyLarge!.apply(fontWeightDelta: 2),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
-                ],
-              ),
-              if (!isNullOrEmpty(data.userInfo?.subcaption))
-                const SizedBox(height: 2.5),
-              if (!isNullOrEmpty(data.userInfo?.subcaption))
-                Text(
-                  data.userInfo!.subcaption!,
+                  ),
+                if (isNullOrEmpty(data.userInfo?.caption) && !isNullOrEmpty(data.ldText))
+                  Flexible(
+                    fit: !isNullOrEmpty(data.userInfo?.secondarySubcaption) ? FlexFit.tight : FlexFit.loose,
+                    child: Text(
+                      data.ldText!,
+                      style: context.theme.textTheme.bodyLarge!.apply(fontWeightDelta: 2),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                if (!isNullOrEmpty(data.userInfo?.secondarySubcaption))
+                  Text(
+                    data.userInfo!.secondarySubcaption!,
+                    style: context.theme.textTheme.bodyLarge!.apply(fontWeightDelta: 2),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+              ],
+            ),
+            if (!isNullOrEmpty(data.userInfo?.subcaption)) const SizedBox(height: 2.5),
+            if (!isNullOrEmpty(data.userInfo?.subcaption))
+              Text(data.userInfo!.subcaption!,
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
-                  style: context.theme.textTheme.labelMedium!.copyWith(fontWeight: FontWeight.normal)
-                ),
-              if (!isNullOrEmpty(data.appName))
-                const SizedBox(height: 5),
-              if (!isNullOrEmpty(data.appName))
-                Text(
-                  data.appName!,
-                  style: context.theme.textTheme.labelMedium!.copyWith(fontWeight: FontWeight.normal, color: context.theme.colorScheme.outline),
-                  overflow: TextOverflow.clip,
-                  maxLines: 1,
-                ),
-            ]
-          ),
+                  style: context.theme.textTheme.labelMedium!.copyWith(fontWeight: FontWeight.normal)),
+            if (!isNullOrEmpty(data.appName)) const SizedBox(height: 5),
+            if (!isNullOrEmpty(data.appName))
+              Text(
+                data.appName!,
+                style: context.theme.textTheme.labelMedium!
+                    .copyWith(fontWeight: FontWeight.normal, color: context.theme.colorScheme.outline),
+                overflow: TextOverflow.clip,
+                maxLines: 1,
+              ),
+          ]),
         )
       ],
     );

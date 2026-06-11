@@ -42,19 +42,13 @@ pubspeck.lock
 
 #objectbox
 .dart_tool/*
-!.dart_tool/build
-.dart_tool/build/entrypoint
-.dart_tool/build/*/error_cache/**
-.dart_tool/build/generated
-!.dart_tool/build/generated/*/*.info
 
 #private keys
 *.env
 .vscode/launch.json
 /lib/models/html/giphy.dart
 
-#native-lib
-native-lib/target/**
+/android/app/.cxx/
 
-/rust/src/api/hw_testing.plist
-/rust/src/api/id_testing.plist
+# FVM Version Cache
+.fvm/

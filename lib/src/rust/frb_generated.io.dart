@@ -19,189 +19,150 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     required super.portManager,
   });
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ApsConnectionPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnectionPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ApsConnectionPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnectionPtr;
 
-  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ApsStatePtr => wire
-      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSStatePtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ApsStatePtr =>
+      wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSStatePtr;
 
   CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ApsWatcherPtr =>
       wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcherPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ArcAnisetteClientDefaultAnisetteProviderPtr =>
-          wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcAnisetteClientDefaultAnisetteProviderPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ArcAnisetteClientDefaultAnisetteProviderPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcAnisetteClientDefaultAnisetteProviderPtr;
+
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ArcCloudKitClientDefaultAnisetteProviderPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudKitClientDefaultAnisetteProviderPtr;
+
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ArcCloudMessagesClientDefaultAnisetteProviderPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudMessagesClientDefaultAnisetteProviderPtr;
+
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ArcFtClientPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClientPtr;
+
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ArcFindMyClientDefaultAnisetteProviderPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFindMyClientDefaultAnisetteProviderPtr;
+
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ArcImClientPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClientPtr;
+
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ArcIdmsAuthListenerPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIdmsAuthListenerPtr;
+
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ArcKeychainClientDefaultAnisetteProviderPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcKeychainClientDefaultAnisetteProviderPtr;
+
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ArcMutexAppleAccountDefaultAnisetteProviderPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexAppleAccountDefaultAnisetteProviderPtr;
 
   CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ArcCloudKitClientDefaultAnisetteProviderPtr =>
-          wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudKitClientDefaultAnisetteProviderPtr;
+      get rust_arc_decrement_strong_count_ArcMutexOptionCircleClientSessionDefaultAnisetteProviderPtr => wire
+          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexOptionCircleClientSessionDefaultAnisetteProviderPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ArcCloudMessagesClientDefaultAnisetteProviderPtr =>
-          wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudMessagesClientDefaultAnisetteProviderPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ArcMutexVecActiveCircleSessionPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexVecActiveCircleSessionPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ArcFtClientPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClientPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ArcPasswordManagerDefaultAnisetteProviderPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcPasswordManagerDefaultAnisetteProviderPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ArcFindMyClientDefaultAnisetteProviderPtr =>
-          wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFindMyClientDefaultAnisetteProviderPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ArcProfilesClientDefaultAnisetteProviderPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcProfilesClientDefaultAnisetteProviderPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ArcImClientPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClientPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ArcSenderPushMessagePtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSenderPushMessagePtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ArcIdmsAuthListenerPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIdmsAuthListenerPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ArcSharedPushStatePtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushStatePtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ArcKeychainClientDefaultAnisetteProviderPtr =>
-          wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcKeychainClientDefaultAnisetteProviderPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ArcStatusKitClientDefaultAnisetteProviderPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcStatusKitClientDefaultAnisetteProviderPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ArcMutexAppleAccountDefaultAnisetteProviderPtr =>
-          wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexAppleAccountDefaultAnisetteProviderPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ArcTokenProviderDefaultAnisetteProviderPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcTokenProviderDefaultAnisetteProviderPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ArcMutexOptionCircleClientSessionDefaultAnisetteProviderPtr =>
-          wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexOptionCircleClientSessionDefaultAnisetteProviderPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_AssetPtr =>
+      wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAssetPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ArcMutexVecActiveCircleSessionPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexVecActiveCircleSessionPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ChannelInterestTokenPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerChannelInterestTokenPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ArcPasswordManagerDefaultAnisetteProviderPtr =>
-          wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcPasswordManagerDefaultAnisetteProviderPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_CircleClientSessionDefaultAnisetteProviderPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCircleClientSessionDefaultAnisetteProviderPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ArcProfilesClientDefaultAnisetteProviderPtr =>
-          wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcProfilesClientDefaultAnisetteProviderPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ConversationLinkPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLinkPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ArcSenderPushMessagePtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSenderPushMessagePtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ConversationParticipantPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationParticipantPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ArcSharedPushStatePtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushStatePtr;
-
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ArcStatusKitClientDefaultAnisetteProviderPtr =>
-          wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcStatusKitClientDefaultAnisetteProviderPtr;
-
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ArcTokenProviderDefaultAnisetteProviderPtr =>
-          wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcTokenProviderDefaultAnisetteProviderPtr;
-
-  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_AssetPtr => wire
-      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAssetPtr;
-
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ChannelInterestTokenPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerChannelInterestTokenPtr;
-
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_CircleClientSessionDefaultAnisetteProviderPtr =>
-          wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCircleClientSessionDefaultAnisetteProviderPtr;
-
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ConversationLinkPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLinkPtr;
-
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ConversationParticipantPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationParticipantPtr;
-
-  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_DatePtr => wire
-      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDatePtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_DatePtr =>
+      wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDatePtr;
 
   CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_EscrowDataPtr =>
       wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowDataPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_FindMyFriendsClientDefaultAnisetteProviderPtr =>
-          wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFindMyFriendsClientDefaultAnisetteProviderPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_FindMyFriendsClientDefaultAnisetteProviderPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFindMyFriendsClientDefaultAnisetteProviderPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_FindMyPhoneClientDefaultAnisetteProviderPtr =>
-          wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFindMyPhoneClientDefaultAnisetteProviderPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_FindMyPhoneClientDefaultAnisetteProviderPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFindMyPhoneClientDefaultAnisetteProviderPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_GZipWrapperAttachmentMetaPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperAttachmentMetaPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_GZipWrapperAttachmentMetaPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperAttachmentMetaPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_GZipWrapperChatProtoPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperChatProtoPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_GZipWrapperChatProtoPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperChatProtoPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_GZipWrapperMessageProtoPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProtoPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_GZipWrapperMessageProtoPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProtoPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_GZipWrapperMessageProto2Ptr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto2Ptr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_GZipWrapperMessageProto2Ptr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto2Ptr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_GZipWrapperMessageProto3Ptr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto3Ptr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_GZipWrapperMessageProto3Ptr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto3Ptr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_GZipWrapperMessageProto4Ptr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto4Ptr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_GZipWrapperMessageProto4Ptr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto4Ptr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_IdsngmIdentityPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentityPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_IdsngmIdentityPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentityPtr;
 
-  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_IdsUserPtr => wire
-      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUserPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_IdsUserPtr =>
+      wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUserPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_JoinedOsConfigPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfigPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_JoinedOsConfigPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfigPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_LocationReportPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReportPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_LocationReportPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReportPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_MessageFlagsPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlagsPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_MessageFlagsPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlagsPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_NsArrayLpIconMetadataPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPIconMetadataPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_NsArrayLpIconMetadataPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPIconMetadataPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_NsArrayLpImageMetadataPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPImageMetadataPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_NsArrayLpImageMetadataPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPImageMetadataPtr;
 
   CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_PushErrorPtr =>
       wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushErrorPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ReceiverApsMessagePtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessagePtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ReceiverApsMessagePtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessagePtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_SavedHardwareStatePtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareStatePtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_SavedHardwareStatePtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareStatePtr;
 
-  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_SenderPtr => wire
-      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_SenderPtr =>
+      wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_StCollapsedValuePtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValuePtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_StCollapsedValuePtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValuePtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_SyncManagerDefaultAnisetteProviderMyFilePackagerPtr =>
-          wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSyncManagerDefaultAnisetteProviderMyFilePackagerPtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_SyncManagerDefaultAnisetteProviderMyFilePackagerPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSyncManagerDefaultAnisetteProviderMyFilePackagerPtr;
 
   CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_SystemTimePtr =>
       wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTimePtr;
@@ -209,27 +170,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_VerifyBodyPtr =>
       wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBodyPtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_ViableBottlePtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottlePtr;
+  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_ViableBottlePtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottlePtr;
 
   @protected
   AnyhowException dco_decode_AnyhowException(dynamic raw);
 
   @protected
-  ApsConnection
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
-          dynamic raw);
+  ApsConnection dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
+      dynamic raw);
 
   @protected
-  ApsState
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
-          dynamic raw);
+  ApsState dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(dynamic raw);
 
   @protected
-  ApsWatcher
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
-          dynamic raw);
+  ApsWatcher dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
+      dynamic raw);
 
   @protected
   ArcAnisetteClientDefaultAnisetteProvider
@@ -247,9 +203,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  ArcFtClient
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
-          dynamic raw);
+  ArcFtClient dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
+      dynamic raw);
 
   @protected
   ArcFindMyClientDefaultAnisetteProvider
@@ -257,9 +212,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  ArcImClient
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
-          dynamic raw);
+  ArcImClient dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
+      dynamic raw);
 
   @protected
   ArcIdmsAuthListener
@@ -317,9 +271,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  Asset
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
-          dynamic raw);
+  Asset dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(dynamic raw);
 
   @protected
   ChannelInterestToken
@@ -332,9 +284,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  ConversationLink
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
-          dynamic raw);
+  ConversationLink dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
+      dynamic raw);
 
   @protected
   ConversationParticipant
@@ -342,14 +293,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  Date
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
-          dynamic raw);
+  Date dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(dynamic raw);
 
   @protected
-  EscrowData
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
-          dynamic raw);
+  EscrowData dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
+      dynamic raw);
 
   @protected
   FindMyFriendsClientDefaultAnisetteProvider
@@ -392,29 +340,23 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  IdsngmIdentity
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
-          dynamic raw);
+  IdsngmIdentity dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
+      dynamic raw);
 
   @protected
-  IdsUser
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          dynamic raw);
+  IdsUser dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(dynamic raw);
 
   @protected
-  JoinedOsConfig
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
-          dynamic raw);
+  JoinedOsConfig dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
+      dynamic raw);
 
   @protected
-  LocationReport
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
-          dynamic raw);
+  LocationReport dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
+      dynamic raw);
 
   @protected
-  MessageFlags
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
-          dynamic raw);
+  MessageFlags dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
+      dynamic raw);
 
   @protected
   NsArrayLpIconMetadata
@@ -427,9 +369,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  PushError
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
-          dynamic raw);
+  PushError dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(dynamic raw);
 
   @protected
   ReceiverApsMessage
@@ -442,14 +382,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  Sender
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
-          dynamic raw);
+  Sender dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(dynamic raw);
 
   @protected
-  StCollapsedValue
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
-          dynamic raw);
+  StCollapsedValue dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
+      dynamic raw);
 
   @protected
   SyncManagerDefaultAnisetteProviderMyFilePackager
@@ -457,24 +394,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  SystemTime
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
-          dynamic raw);
+  SystemTime dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
+      dynamic raw);
 
   @protected
-  VerifyBody
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
-          dynamic raw);
+  VerifyBody dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
+      dynamic raw);
 
   @protected
-  ViableBottle
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
-          dynamic raw);
+  ViableBottle dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
+      dynamic raw);
 
   @protected
-  ApsWatcher
-      dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
-          dynamic raw);
+  ApsWatcher dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
+      dynamic raw);
 
   @protected
   CircleClientSessionDefaultAnisetteProvider
@@ -492,9 +425,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  LocationReport
-      dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
-          dynamic raw);
+  LocationReport dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
+      dynamic raw);
 
   @protected
   ReceiverApsMessage
@@ -507,14 +439,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  ViableBottle
-      dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
-          dynamic raw);
+  ViableBottle dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
+      dynamic raw);
 
   @protected
-  ApsConnection
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
-          dynamic raw);
+  ApsConnection dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
+      dynamic raw);
 
   @protected
   ArcAnisetteClientDefaultAnisetteProvider
@@ -532,9 +462,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  ArcFtClient
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
-          dynamic raw);
+  ArcFtClient dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
+      dynamic raw);
 
   @protected
   ArcFindMyClientDefaultAnisetteProvider
@@ -542,9 +471,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  ArcImClient
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
-          dynamic raw);
+  ArcImClient dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
+      dynamic raw);
 
   @protected
   ArcIdmsAuthListener
@@ -588,8 +516,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ArcSharedPushState
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushState(
-          dynamic raw);
+      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushState(dynamic raw);
 
   @protected
   ArcStatusKitClientDefaultAnisetteProvider
@@ -602,14 +529,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  Date
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
-          dynamic raw);
+  Date dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(dynamic raw);
 
   @protected
-  EscrowData
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
-          dynamic raw);
+  EscrowData dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(dynamic raw);
 
   @protected
   GZipWrapperAttachmentMeta
@@ -642,44 +565,34 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  IdsngmIdentity
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
-          dynamic raw);
+  IdsngmIdentity dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
+      dynamic raw);
 
   @protected
-  IdsUser
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          dynamic raw);
+  IdsUser dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(dynamic raw);
 
   @protected
-  JoinedOsConfig
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
-          dynamic raw);
+  JoinedOsConfig dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
+      dynamic raw);
 
   @protected
-  LocationReport
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
-          dynamic raw);
+  LocationReport dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
+      dynamic raw);
 
   @protected
-  MessageFlags
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
-          dynamic raw);
+  MessageFlags dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
+      dynamic raw);
 
   @protected
   SavedHardwareState
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
-          dynamic raw);
+      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(dynamic raw);
 
   @protected
-  Sender
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
-          dynamic raw);
+  Sender dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(dynamic raw);
 
   @protected
-  StCollapsedValue
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
-          dynamic raw);
+  StCollapsedValue dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
+      dynamic raw);
 
   @protected
   SyncManagerDefaultAnisetteProviderMyFilePackager
@@ -687,14 +600,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  VerifyBody
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
-          dynamic raw);
+  VerifyBody dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(dynamic raw);
 
   @protected
-  ViableBottle
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
-          dynamic raw);
+  ViableBottle dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
+      dynamic raw);
 
   @protected
   int dco_decode_CastedPrimitive_i_64(dynamic raw);
@@ -706,17 +616,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int dco_decode_CastedPrimitive_usize(dynamic raw);
 
   @protected
-  FutureOr<String> Function(String)
-      dco_decode_DartFn_Inputs_String_Output_String_AnyhowException(
-          dynamic raw);
+  FutureOr<String> Function(String) dco_decode_DartFn_Inputs_String_Output_String_AnyhowException(dynamic raw);
 
   @protected
   Object dco_decode_DartOpaque(dynamic raw);
 
   @protected
   Map<String, Asset>
-      dco_decode_Map_String_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
-          dynamic raw);
+      dco_decode_Map_String_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(dynamic raw);
 
   @protected
   Map<String, StCollapsedValue>
@@ -733,8 +640,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Map<String, bool> dco_decode_Map_String_bool(dynamic raw);
 
   @protected
-  Map<String, CloudAttachment> dco_decode_Map_String_cloud_attachment(
-      dynamic raw);
+  Map<String, CloudAttachment> dco_decode_Map_String_cloud_attachment(dynamic raw);
 
   @protected
   Map<String, CloudChat> dco_decode_Map_String_cloud_chat(dynamic raw);
@@ -749,75 +655,56 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Map<String, GroupSummary> dco_decode_Map_String_group_summary(dynamic raw);
 
   @protected
-  Map<String, List<MessageEdit>> dco_decode_Map_String_list_message_edit(
+  Map<String, List<MessageEdit>> dco_decode_Map_String_list_message_edit(dynamic raw);
+
+  @protected
+  Map<String, Uint8List> dco_decode_Map_String_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  Map<String, MessageEditRange> dco_decode_Map_String_message_edit_range(dynamic raw);
+
+  @protected
+  Map<String, CloudAttachment?> dco_decode_Map_String_opt_box_autoadd_cloud_attachment(dynamic raw);
+
+  @protected
+  Map<String, CloudChat?> dco_decode_Map_String_opt_box_autoadd_cloud_chat(dynamic raw);
+
+  @protected
+  Map<String, CloudMessage?> dco_decode_Map_String_opt_box_autoadd_cloud_message(dynamic raw);
+
+  @protected
+  Map<String, PasswordManagerMetaDataCtx> dco_decode_Map_String_password_manager_meta_data_ctx(dynamic raw);
+
+  @protected
+  Map<String, (String?, Passkey)> dco_decode_Map_String_record_opt_string_passkey(dynamic raw);
+
+  @protected
+  Map<String, (String?, PasswordManagerMeta)> dco_decode_Map_String_record_opt_string_password_manager_meta(
       dynamic raw);
 
   @protected
-  Map<String, Uint8List> dco_decode_Map_String_list_prim_u_8_strict(
-      dynamic raw);
+  Map<String, (String?, PasswordRawEntry)> dco_decode_Map_String_record_opt_string_password_raw_entry(dynamic raw);
 
   @protected
-  Map<String, MessageEditRange> dco_decode_Map_String_message_edit_range(
-      dynamic raw);
+  Map<String, (String?, WifiPassword)> dco_decode_Map_String_record_opt_string_wifi_password(dynamic raw);
 
   @protected
-  Map<String, CloudAttachment?>
-      dco_decode_Map_String_opt_box_autoadd_cloud_attachment(dynamic raw);
+  Map<String, ShareInviteContentData> dco_decode_Map_String_share_invite_content_data(dynamic raw);
 
   @protected
-  Map<String, CloudChat?> dco_decode_Map_String_opt_box_autoadd_cloud_chat(
-      dynamic raw);
-
-  @protected
-  Map<String, CloudMessage?>
-      dco_decode_Map_String_opt_box_autoadd_cloud_message(dynamic raw);
-
-  @protected
-  Map<String, PasswordManagerMetaDataCtx>
-      dco_decode_Map_String_password_manager_meta_data_ctx(dynamic raw);
-
-  @protected
-  Map<String, (String?, Passkey)>
-      dco_decode_Map_String_record_opt_string_passkey(dynamic raw);
-
-  @protected
-  Map<String, (String?, PasswordManagerMeta)>
-      dco_decode_Map_String_record_opt_string_password_manager_meta(
-          dynamic raw);
-
-  @protected
-  Map<String, (String?, PasswordRawEntry)>
-      dco_decode_Map_String_record_opt_string_password_raw_entry(dynamic raw);
-
-  @protected
-  Map<String, (String?, WifiPassword)>
-      dco_decode_Map_String_record_opt_string_wifi_password(dynamic raw);
-
-  @protected
-  Map<String, ShareInviteContentData>
-      dco_decode_Map_String_share_invite_content_data(dynamic raw);
-
-  @protected
-  Map<String, StatusKitPersonalConfig>
-      dco_decode_Map_String_status_kit_personal_config(dynamic raw);
+  Map<String, StatusKitPersonalConfig> dco_decode_Map_String_status_kit_personal_config(dynamic raw);
 
   @protected
   Map<String, SyncStatus> dco_decode_Map_String_sync_status(dynamic raw);
 
   @protected
-  ApsConnection
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
-          dynamic raw);
+  ApsConnection dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(dynamic raw);
 
   @protected
-  ApsState
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
-          dynamic raw);
+  ApsState dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(dynamic raw);
 
   @protected
-  ApsWatcher
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
-          dynamic raw);
+  ApsWatcher dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(dynamic raw);
 
   @protected
   ArcAnisetteClientDefaultAnisetteProvider
@@ -835,9 +722,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  ArcFtClient
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
-          dynamic raw);
+  ArcFtClient dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(dynamic raw);
 
   @protected
   ArcFindMyClientDefaultAnisetteProvider
@@ -845,14 +730,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  ArcImClient
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
-          dynamic raw);
+  ArcImClient dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(dynamic raw);
 
   @protected
-  ArcIdmsAuthListener
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIdmsAuthListener(
-          dynamic raw);
+  ArcIdmsAuthListener dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIdmsAuthListener(
+      dynamic raw);
 
   @protected
   ArcKeychainClientDefaultAnisetteProvider
@@ -885,14 +767,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  ArcSenderPushMessage
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSenderPushMessage(
-          dynamic raw);
+  ArcSenderPushMessage dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSenderPushMessage(
+      dynamic raw);
 
   @protected
-  ArcSharedPushState
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushState(
-          dynamic raw);
+  ArcSharedPushState dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushState(
+      dynamic raw);
 
   @protected
   ArcStatusKitClientDefaultAnisetteProvider
@@ -905,14 +785,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  Asset
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
-          dynamic raw);
+  Asset dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(dynamic raw);
 
   @protected
-  ChannelInterestToken
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerChannelInterestToken(
-          dynamic raw);
+  ChannelInterestToken dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerChannelInterestToken(
+      dynamic raw);
 
   @protected
   CircleClientSessionDefaultAnisetteProvider
@@ -920,24 +797,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  ConversationLink
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
-          dynamic raw);
+  ConversationLink dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
+      dynamic raw);
 
   @protected
   ConversationParticipant
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationParticipant(
-          dynamic raw);
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationParticipant(dynamic raw);
 
   @protected
-  Date
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
-          dynamic raw);
+  Date dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(dynamic raw);
 
   @protected
-  EscrowData
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
-          dynamic raw);
+  EscrowData dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(dynamic raw);
 
   @protected
   FindMyFriendsClientDefaultAnisetteProvider
@@ -951,93 +822,68 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   GZipWrapperAttachmentMeta
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperAttachmentMeta(
-          dynamic raw);
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperAttachmentMeta(dynamic raw);
 
   @protected
-  GZipWrapperChatProto
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperChatProto(
-          dynamic raw);
+  GZipWrapperChatProto dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperChatProto(
+      dynamic raw);
 
   @protected
   GZipWrapperMessageProto
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto(
-          dynamic raw);
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto(dynamic raw);
 
   @protected
   GZipWrapperMessageProto2
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto2(
-          dynamic raw);
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto2(dynamic raw);
 
   @protected
   GZipWrapperMessageProto3
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto3(
-          dynamic raw);
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto3(dynamic raw);
 
   @protected
   GZipWrapperMessageProto4
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto4(
-          dynamic raw);
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto4(dynamic raw);
 
   @protected
-  IdsngmIdentity
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
-          dynamic raw);
+  IdsngmIdentity dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(dynamic raw);
 
   @protected
-  IdsUser
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          dynamic raw);
+  IdsUser dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(dynamic raw);
 
   @protected
-  JoinedOsConfig
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
-          dynamic raw);
+  JoinedOsConfig dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(dynamic raw);
 
   @protected
-  LocationReport
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
-          dynamic raw);
+  LocationReport dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(dynamic raw);
 
   @protected
-  MessageFlags
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
-          dynamic raw);
+  MessageFlags dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(dynamic raw);
 
   @protected
-  NsArrayLpIconMetadata
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPIconMetadata(
-          dynamic raw);
+  NsArrayLpIconMetadata dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPIconMetadata(
+      dynamic raw);
 
   @protected
   NsArrayLpImageMetadata
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPImageMetadata(
-          dynamic raw);
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPImageMetadata(dynamic raw);
 
   @protected
-  PushError
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
-          dynamic raw);
+  PushError dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(dynamic raw);
 
   @protected
-  ReceiverApsMessage
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessage(
-          dynamic raw);
+  ReceiverApsMessage dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessage(
+      dynamic raw);
 
   @protected
-  SavedHardwareState
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
-          dynamic raw);
+  SavedHardwareState dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
+      dynamic raw);
 
   @protected
-  Sender
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
-          dynamic raw);
+  Sender dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(dynamic raw);
 
   @protected
-  StCollapsedValue
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
-          dynamic raw);
+  StCollapsedValue dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
+      dynamic raw);
 
   @protected
   SyncManagerDefaultAnisetteProviderMyFilePackager
@@ -1045,30 +891,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  SystemTime
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
-          dynamic raw);
+  SystemTime dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(dynamic raw);
 
   @protected
-  VerifyBody
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
-          dynamic raw);
+  VerifyBody dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(dynamic raw);
 
   @protected
-  ViableBottle
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
-          dynamic raw);
+  ViableBottle dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(dynamic raw);
 
   @protected
   Set<FTMember> dco_decode_Set_ft_member(dynamic raw);
 
   @protected
-  RustStreamSink<MMCSTransferProgress>
-      dco_decode_StreamSink_mmcs_transfer_progress_Sse(dynamic raw);
+  RustStreamSink<MMCSTransferProgress> dco_decode_StreamSink_mmcs_transfer_progress_Sse(dynamic raw);
 
   @protected
-  RustStreamSink<TransferProgress> dco_decode_StreamSink_transfer_progress_Sse(
-      dynamic raw);
+  RustStreamSink<TransferProgress> dco_decode_StreamSink_transfer_progress_Sse(dynamic raw);
 
   @protected
   String dco_decode_String(dynamic raw);
@@ -1113,9 +951,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
-  ApsState
-      dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
-          dynamic raw);
+  ApsState dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
+      dynamic raw);
 
   @protected
   ArcCloudKitClientDefaultAnisetteProvider
@@ -1148,9 +985,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  Asset
-      dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
-          dynamic raw);
+  Asset dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
+      dynamic raw);
 
   @protected
   ChannelInterestToken
@@ -1173,9 +1009,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  Date
-      dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
-          dynamic raw);
+  Date dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
+      dynamic raw);
 
   @protected
   GZipWrapperChatProto
@@ -1198,9 +1033,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  IdsUser
-      dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          dynamic raw);
+  IdsUser dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+      dynamic raw);
 
   @protected
   LocationReport
@@ -1218,9 +1052,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  PushError
-      dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
-          dynamic raw);
+  PushError dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
+      dynamic raw);
 
   @protected
   SavedHardwareState
@@ -1233,9 +1066,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  SystemTime
-      dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
-          dynamic raw);
+  SystemTime dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
+      dynamic raw);
 
   @protected
   Address dco_decode_box_autoadd_address(dynamic raw);
@@ -1268,8 +1100,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CertifiedContext dco_decode_box_autoadd_certified_context(dynamic raw);
 
   @protected
-  ChangeParticipantMessage dco_decode_box_autoadd_change_participant_message(
-      dynamic raw);
+  ChangeParticipantMessage dco_decode_box_autoadd_change_participant_message(dynamic raw);
 
   @protected
   ChatProto dco_decode_box_autoadd_chat_proto(dynamic raw);
@@ -1290,8 +1121,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ConversationData dco_decode_box_autoadd_conversation_data(dynamic raw);
 
   @protected
-  DartBeaconShareInfo dco_decode_box_autoadd_dart_beacon_share_info(
-      dynamic raw);
+  DartBeaconShareInfo dco_decode_box_autoadd_dart_beacon_share_info(dynamic raw);
 
   @protected
   EditMessage dco_decode_box_autoadd_edit_message(dynamic raw);
@@ -1321,12 +1151,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
 
   @protected
-  IMessageNicknameRecord dco_decode_box_autoadd_i_message_nickname_record(
-      dynamic raw);
+  IMessageNicknameRecord dco_decode_box_autoadd_i_message_nickname_record(dynamic raw);
 
   @protected
-  IMessagePosterRecord dco_decode_box_autoadd_i_message_poster_record(
-      dynamic raw);
+  IMessagePosterRecord dco_decode_box_autoadd_i_message_poster_record(dynamic raw);
 
   @protected
   IconChangeMessage dco_decode_box_autoadd_icon_change_message(dynamic raw);
@@ -1338,8 +1166,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   IdmsMessage dco_decode_box_autoadd_idms_message(dynamic raw);
 
   @protected
-  IdmsRequestedSignIn dco_decode_box_autoadd_idms_requested_sign_in(
-      dynamic raw);
+  IdmsRequestedSignIn dco_decode_box_autoadd_idms_requested_sign_in(dynamic raw);
 
   @protected
   LetMeInRequest dco_decode_box_autoadd_let_me_in_request(dynamic raw);
@@ -1360,8 +1187,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   LPImageMetadata dco_decode_box_autoadd_lp_image_metadata(dynamic raw);
 
   @protected
-  LPSpecializationMetadata dco_decode_box_autoadd_lp_specialization_metadata(
-      dynamic raw);
+  LPSpecializationMetadata dco_decode_box_autoadd_lp_specialization_metadata(dynamic raw);
 
   @protected
   MemojiData dco_decode_box_autoadd_memoji_data(dynamic raw);
@@ -1400,8 +1226,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MonogramData dco_decode_box_autoadd_monogram_data(dynamic raw);
 
   @protected
-  MoveToRecycleBinMessage dco_decode_box_autoadd_move_to_recycle_bin_message(
-      dynamic raw);
+  MoveToRecycleBinMessage dco_decode_box_autoadd_move_to_recycle_bin_message(dynamic raw);
 
   @protected
   NormalMessage dco_decode_box_autoadd_normal_message(dynamic raw);
@@ -1434,13 +1259,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PasswordManagerMeta dco_decode_box_autoadd_password_manager_meta(dynamic raw);
 
   @protected
-  PasswordManagerMetaData dco_decode_box_autoadd_password_manager_meta_data(
-      dynamic raw);
+  PasswordManagerMetaData dco_decode_box_autoadd_password_manager_meta_data(dynamic raw);
 
   @protected
-  PasswordManagerMetaDataFormerlyShared
-      dco_decode_box_autoadd_password_manager_meta_data_formerly_shared(
-          dynamic raw);
+  PasswordManagerMetaDataFormerlyShared dco_decode_box_autoadd_password_manager_meta_data_formerly_shared(dynamic raw);
 
   @protected
   PasswordManagerTotp dco_decode_box_autoadd_password_manager_totp(dynamic raw);
@@ -1449,15 +1271,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PasswordRawEntry dco_decode_box_autoadd_password_raw_entry(dynamic raw);
 
   @protected
-  PermanentDeleteMessage dco_decode_box_autoadd_permanent_delete_message(
-      dynamic raw);
+  PermanentDeleteMessage dco_decode_box_autoadd_permanent_delete_message(dynamic raw);
 
   @protected
   PosterColor dco_decode_box_autoadd_poster_color(dynamic raw);
 
   @protected
-  PRPosterContentMaterialStyle
-      dco_decode_box_autoadd_pr_poster_content_material_style(dynamic raw);
+  PRPosterContentMaterialStyle dco_decode_box_autoadd_pr_poster_content_material_style(dynamic raw);
 
   @protected
   PushMessage dco_decode_box_autoadd_push_message(dynamic raw);
@@ -1488,15 +1308,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RenameMessage dco_decode_box_autoadd_rename_message(dynamic raw);
 
   @protected
-  RichLinkImageAttachmentSubstitute
-      dco_decode_box_autoadd_rich_link_image_attachment_substitute(dynamic raw);
+  RichLinkImageAttachmentSubstitute dco_decode_box_autoadd_rich_link_image_attachment_substitute(dynamic raw);
 
   @protected
   ScheduleMode dco_decode_box_autoadd_schedule_mode(dynamic raw);
 
   @protected
-  SetTranscriptBackgroundMessage
-      dco_decode_box_autoadd_set_transcript_background_message(dynamic raw);
+  SetTranscriptBackgroundMessage dco_decode_box_autoadd_set_transcript_background_message(dynamic raw);
 
   @protected
   ShareProfileMessage dco_decode_box_autoadd_share_profile_message(dynamic raw);
@@ -1505,8 +1323,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SharedAlbum dco_decode_box_autoadd_shared_album(dynamic raw);
 
   @protected
-  SharedICloudServices dco_decode_box_autoadd_shared_i_cloud_services(
-      dynamic raw);
+  SharedICloudServices dco_decode_box_autoadd_shared_i_cloud_services(dynamic raw);
 
   @protected
   SharedPoster dco_decode_box_autoadd_shared_poster(dynamic raw);
@@ -1515,12 +1332,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SharedPushState dco_decode_box_autoadd_shared_push_state(dynamic raw);
 
   @protected
-  SimplifiedIncomingCallPoster
-      dco_decode_box_autoadd_simplified_incoming_call_poster(dynamic raw);
+  SimplifiedIncomingCallPoster dco_decode_box_autoadd_simplified_incoming_call_poster(dynamic raw);
 
   @protected
-  SimplifiedTranscriptPoster
-      dco_decode_box_autoadd_simplified_transcript_poster(dynamic raw);
+  SimplifiedTranscriptPoster dco_decode_box_autoadd_simplified_transcript_poster(dynamic raw);
 
   @protected
   StatusKitMessage dco_decode_box_autoadd_status_kit_message(dynamic raw);
@@ -1541,8 +1356,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TextFormat dco_decode_box_autoadd_text_format(dynamic raw);
 
   @protected
-  TranscriptDynamicUserData dco_decode_box_autoadd_transcript_dynamic_user_data(
-      dynamic raw);
+  TranscriptDynamicUserData dco_decode_box_autoadd_transcript_dynamic_user_data(dynamic raw);
 
   @protected
   TypingApp dco_decode_box_autoadd_typing_app(dynamic raw);
@@ -1560,16 +1374,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   UpdateAccountFinish dco_decode_box_autoadd_update_account_finish(dynamic raw);
 
   @protected
-  UpdateExtensionMessage dco_decode_box_autoadd_update_extension_message(
-      dynamic raw);
+  UpdateExtensionMessage dco_decode_box_autoadd_update_extension_message(dynamic raw);
 
   @protected
-  UpdateProfileMessage dco_decode_box_autoadd_update_profile_message(
-      dynamic raw);
+  UpdateProfileMessage dco_decode_box_autoadd_update_profile_message(dynamic raw);
 
   @protected
-  UpdateProfileSharingMessage
-      dco_decode_box_autoadd_update_profile_sharing_message(dynamic raw);
+  UpdateProfileSharingMessage dco_decode_box_autoadd_update_profile_sharing_message(dynamic raw);
 
   @protected
   WifiPassword dco_decode_box_autoadd_wifi_password(dynamic raw);
@@ -1704,9 +1515,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   LinkMeta dco_decode_link_meta(dynamic raw);
 
   @protected
-  List<IdsUser>
-      dco_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          dynamic raw);
+  List<IdsUser> dco_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+      dynamic raw);
 
   @protected
   List<StCollapsedValue>
@@ -1755,12 +1565,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<MessageTarget> dco_decode_list_message_target(dynamic raw);
 
   @protected
-  List<PasswordManagerAltDomain> dco_decode_list_password_manager_alt_domain(
-      dynamic raw);
+  List<PasswordManagerAltDomain> dco_decode_list_password_manager_alt_domain(dynamic raw);
 
   @protected
-  List<PasswordManagerMetaChange> dco_decode_list_password_manager_meta_change(
-      dynamic raw);
+  List<PasswordManagerMetaChange> dco_decode_list_password_manager_meta_change(dynamic raw);
 
   @protected
   List<PhotoPosterLayer> dco_decode_list_photo_poster_layer(dynamic raw);
@@ -1803,95 +1611,72 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<(String, bool)> dco_decode_list_record_string_bool(dynamic raw);
 
   @protected
-  List<(String, int)> dco_decode_list_record_string_casted_primitive_u_64(
+  List<(String, int)> dco_decode_list_record_string_casted_primitive_u_64(dynamic raw);
+
+  @protected
+  List<(String, CloudAttachment)> dco_decode_list_record_string_cloud_attachment(dynamic raw);
+
+  @protected
+  List<(String, CloudChat)> dco_decode_list_record_string_cloud_chat(dynamic raw);
+
+  @protected
+  List<(String, CloudMessage)> dco_decode_list_record_string_cloud_message(dynamic raw);
+
+  @protected
+  List<(String, FTParticipant)> dco_decode_list_record_string_ft_participant(dynamic raw);
+
+  @protected
+  List<(String, GroupSummary)> dco_decode_list_record_string_group_summary(dynamic raw);
+
+  @protected
+  List<(String, List<MessageEdit>)> dco_decode_list_record_string_list_message_edit(dynamic raw);
+
+  @protected
+  List<(String, Uint8List)> dco_decode_list_record_string_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  List<(String, MessageEditRange)> dco_decode_list_record_string_message_edit_range(dynamic raw);
+
+  @protected
+  List<(String, CloudAttachment?)> dco_decode_list_record_string_opt_box_autoadd_cloud_attachment(dynamic raw);
+
+  @protected
+  List<(String, CloudChat?)> dco_decode_list_record_string_opt_box_autoadd_cloud_chat(dynamic raw);
+
+  @protected
+  List<(String, CloudMessage?)> dco_decode_list_record_string_opt_box_autoadd_cloud_message(dynamic raw);
+
+  @protected
+  List<(String, PasswordManagerMetaDataCtx)> dco_decode_list_record_string_password_manager_meta_data_ctx(dynamic raw);
+
+  @protected
+  List<(String, (String?, Passkey))> dco_decode_list_record_string_record_opt_string_passkey(dynamic raw);
+
+  @protected
+  List<(String, (String?, PasswordManagerMeta))> dco_decode_list_record_string_record_opt_string_password_manager_meta(
       dynamic raw);
 
   @protected
-  List<(String, CloudAttachment)>
-      dco_decode_list_record_string_cloud_attachment(dynamic raw);
-
-  @protected
-  List<(String, CloudChat)> dco_decode_list_record_string_cloud_chat(
+  List<(String, (String?, PasswordRawEntry))> dco_decode_list_record_string_record_opt_string_password_raw_entry(
       dynamic raw);
 
   @protected
-  List<(String, CloudMessage)> dco_decode_list_record_string_cloud_message(
-      dynamic raw);
+  List<(String, (String?, WifiPassword))> dco_decode_list_record_string_record_opt_string_wifi_password(dynamic raw);
 
   @protected
-  List<(String, FTParticipant)> dco_decode_list_record_string_ft_participant(
-      dynamic raw);
+  List<(String, ShareInviteContentData)> dco_decode_list_record_string_share_invite_content_data(dynamic raw);
 
   @protected
-  List<(String, GroupSummary)> dco_decode_list_record_string_group_summary(
-      dynamic raw);
-
-  @protected
-  List<(String, List<MessageEdit>)>
-      dco_decode_list_record_string_list_message_edit(dynamic raw);
-
-  @protected
-  List<(String, Uint8List)> dco_decode_list_record_string_list_prim_u_8_strict(
-      dynamic raw);
-
-  @protected
-  List<(String, MessageEditRange)>
-      dco_decode_list_record_string_message_edit_range(dynamic raw);
-
-  @protected
-  List<(String, CloudAttachment?)>
-      dco_decode_list_record_string_opt_box_autoadd_cloud_attachment(
-          dynamic raw);
-
-  @protected
-  List<(String, CloudChat?)>
-      dco_decode_list_record_string_opt_box_autoadd_cloud_chat(dynamic raw);
-
-  @protected
-  List<(String, CloudMessage?)>
-      dco_decode_list_record_string_opt_box_autoadd_cloud_message(dynamic raw);
-
-  @protected
-  List<(String, PasswordManagerMetaDataCtx)>
-      dco_decode_list_record_string_password_manager_meta_data_ctx(dynamic raw);
-
-  @protected
-  List<(String, (String?, Passkey))>
-      dco_decode_list_record_string_record_opt_string_passkey(dynamic raw);
-
-  @protected
-  List<(String, (String?, PasswordManagerMeta))>
-      dco_decode_list_record_string_record_opt_string_password_manager_meta(
-          dynamic raw);
-
-  @protected
-  List<(String, (String?, PasswordRawEntry))>
-      dco_decode_list_record_string_record_opt_string_password_raw_entry(
-          dynamic raw);
-
-  @protected
-  List<(String, (String?, WifiPassword))>
-      dco_decode_list_record_string_record_opt_string_wifi_password(
-          dynamic raw);
-
-  @protected
-  List<(String, ShareInviteContentData)>
-      dco_decode_list_record_string_share_invite_content_data(dynamic raw);
-
-  @protected
-  List<(String, StatusKitPersonalConfig)>
-      dco_decode_list_record_string_status_kit_personal_config(dynamic raw);
+  List<(String, StatusKitPersonalConfig)> dco_decode_list_record_string_status_kit_personal_config(dynamic raw);
 
   @protected
   List<(String, String)> dco_decode_list_record_string_string(dynamic raw);
 
   @protected
-  List<(String, SyncStatus)> dco_decode_list_record_string_sync_status(
-      dynamic raw);
+  List<(String, SyncStatus)> dco_decode_list_record_string_sync_status(dynamic raw);
 
   @protected
-  List<(int, NSDictionaryTypedCoder)>
-      dco_decode_list_record_u_32_ns_dictionary_typed_coder(dynamic raw);
+  List<(int, NSDictionaryTypedCoder)> dco_decode_list_record_u_32_ns_dictionary_typed_coder(dynamic raw);
 
   @protected
   List<ReportMessage> dco_decode_list_report_message(dynamic raw);
@@ -2058,9 +1843,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  Asset?
-      dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
-          dynamic raw);
+  Asset? dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
+      dynamic raw);
 
   @protected
   ChannelInterestToken?
@@ -2083,9 +1867,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  Date?
-      dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
-          dynamic raw);
+  Date? dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
+      dynamic raw);
 
   @protected
   GZipWrapperChatProto?
@@ -2108,9 +1891,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           dynamic raw);
 
   @protected
-  IdsUser?
-      dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          dynamic raw);
+  IdsUser? dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+      dynamic raw);
 
   @protected
   LocationReport?
@@ -2154,8 +1936,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Attachment? dco_decode_opt_box_autoadd_attachment(dynamic raw);
 
   @protected
-  AttachmentMetaExtra? dco_decode_opt_box_autoadd_attachment_meta_extra(
-      dynamic raw);
+  AttachmentMetaExtra? dco_decode_opt_box_autoadd_attachment_meta_extra(dynamic raw);
 
   @protected
   Balloon? dco_decode_opt_box_autoadd_balloon(dynamic raw);
@@ -2185,8 +1966,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ConversationData? dco_decode_opt_box_autoadd_conversation_data(dynamic raw);
 
   @protected
-  DartBeaconShareInfo? dco_decode_opt_box_autoadd_dart_beacon_share_info(
-      dynamic raw);
+  DartBeaconShareInfo? dco_decode_opt_box_autoadd_dart_beacon_share_info(dynamic raw);
 
   @protected
   ExtensionApp? dco_decode_opt_box_autoadd_extension_app(dynamic raw);
@@ -2204,12 +1984,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
 
   @protected
-  IMessagePosterRecord? dco_decode_opt_box_autoadd_i_message_poster_record(
-      dynamic raw);
+  IMessagePosterRecord? dco_decode_opt_box_autoadd_i_message_poster_record(dynamic raw);
 
   @protected
-  IdmsRequestedSignIn? dco_decode_opt_box_autoadd_idms_requested_sign_in(
-      dynamic raw);
+  IdmsRequestedSignIn? dco_decode_opt_box_autoadd_idms_requested_sign_in(dynamic raw);
 
   @protected
   LinkMeta? dco_decode_opt_box_autoadd_link_meta(dynamic raw);
@@ -2227,12 +2005,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   LPImageMetadata? dco_decode_opt_box_autoadd_lp_image_metadata(dynamic raw);
 
   @protected
-  LPSpecializationMetadata?
-      dco_decode_opt_box_autoadd_lp_specialization_metadata(dynamic raw);
+  LPSpecializationMetadata? dco_decode_opt_box_autoadd_lp_specialization_metadata(dynamic raw);
 
   @protected
-  MMCSAttachmentMeta? dco_decode_opt_box_autoadd_mmcs_attachment_meta(
-      dynamic raw);
+  MMCSAttachmentMeta? dco_decode_opt_box_autoadd_mmcs_attachment_meta(dynamic raw);
 
   @protected
   MMCSFile? dco_decode_opt_box_autoadd_mmcs_file(dynamic raw);
@@ -2247,20 +2023,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PartExtension? dco_decode_opt_box_autoadd_part_extension(dynamic raw);
 
   @protected
-  PasswordManagerMetaDataFormerlyShared?
-      dco_decode_opt_box_autoadd_password_manager_meta_data_formerly_shared(
-          dynamic raw);
+  PasswordManagerMetaDataFormerlyShared? dco_decode_opt_box_autoadd_password_manager_meta_data_formerly_shared(
+      dynamic raw);
 
   @protected
-  PasswordManagerTotp? dco_decode_opt_box_autoadd_password_manager_totp(
-      dynamic raw);
+  PasswordManagerTotp? dco_decode_opt_box_autoadd_password_manager_totp(dynamic raw);
 
   @protected
   PosterColor? dco_decode_opt_box_autoadd_poster_color(dynamic raw);
 
   @protected
-  PRPosterContentMaterialStyle?
-      dco_decode_opt_box_autoadd_pr_poster_content_material_style(dynamic raw);
+  PRPosterContentMaterialStyle? dco_decode_opt_box_autoadd_pr_poster_content_material_style(dynamic raw);
 
   @protected
   PushMessage? dco_decode_opt_box_autoadd_push_message(dynamic raw);
@@ -2273,27 +2046,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       dynamic raw);
 
   @protected
-  (String, String)? dco_decode_opt_box_autoadd_record_string_string(
-      dynamic raw);
+  (String, String)? dco_decode_opt_box_autoadd_record_string_string(dynamic raw);
 
   @protected
   (String, BigInt)? dco_decode_opt_box_autoadd_record_string_u_64(dynamic raw);
 
   @protected
-  RichLinkImageAttachmentSubstitute?
-      dco_decode_opt_box_autoadd_rich_link_image_attachment_substitute(
-          dynamic raw);
+  RichLinkImageAttachmentSubstitute? dco_decode_opt_box_autoadd_rich_link_image_attachment_substitute(dynamic raw);
 
   @protected
   ScheduleMode? dco_decode_opt_box_autoadd_schedule_mode(dynamic raw);
 
   @protected
-  ShareProfileMessage? dco_decode_opt_box_autoadd_share_profile_message(
-      dynamic raw);
+  ShareProfileMessage? dco_decode_opt_box_autoadd_share_profile_message(dynamic raw);
 
   @protected
-  SharedICloudServices? dco_decode_opt_box_autoadd_shared_i_cloud_services(
-      dynamic raw);
+  SharedICloudServices? dco_decode_opt_box_autoadd_shared_i_cloud_services(dynamic raw);
 
   @protected
   SharedPoster? dco_decode_opt_box_autoadd_shared_poster(dynamic raw);
@@ -2317,13 +2085,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
 
   @protected
-  UpdateAccountFinish? dco_decode_opt_box_autoadd_update_account_finish(
-      dynamic raw);
+  UpdateAccountFinish? dco_decode_opt_box_autoadd_update_account_finish(dynamic raw);
 
   @protected
-  List<IdsUser>?
-      dco_decode_opt_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          dynamic raw);
+  List<IdsUser>? dco_decode_opt_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+      dynamic raw);
 
   @protected
   List<String>? dco_decode_opt_list_String(dynamic raw);
@@ -2347,19 +2113,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PasswordManagerMeta dco_decode_password_manager_meta(dynamic raw);
 
   @protected
-  PasswordManagerMetaChange dco_decode_password_manager_meta_change(
-      dynamic raw);
+  PasswordManagerMetaChange dco_decode_password_manager_meta_change(dynamic raw);
 
   @protected
   PasswordManagerMetaData dco_decode_password_manager_meta_data(dynamic raw);
 
   @protected
-  PasswordManagerMetaDataCtx dco_decode_password_manager_meta_data_ctx(
-      dynamic raw);
+  PasswordManagerMetaDataCtx dco_decode_password_manager_meta_data_ctx(dynamic raw);
 
   @protected
-  PasswordManagerMetaDataFormerlyShared
-      dco_decode_password_manager_meta_data_formerly_shared(dynamic raw);
+  PasswordManagerMetaDataFormerlyShared dco_decode_password_manager_meta_data_formerly_shared(dynamic raw);
 
   @protected
   PasswordManagerTotp dco_decode_password_manager_totp(dynamic raw);
@@ -2407,16 +2170,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PRPosterColor dco_decode_pr_poster_color(dynamic raw);
 
   @protected
-  PRPosterContentMaterialStyle dco_decode_pr_poster_content_material_style(
-      dynamic raw);
+  PRPosterContentMaterialStyle dco_decode_pr_poster_content_material_style(dynamic raw);
 
   @protected
-  PRPosterSystemTimeFontConfiguration
-      dco_decode_pr_poster_system_time_font_configuration(dynamic raw);
+  PRPosterSystemTimeFontConfiguration dco_decode_pr_poster_system_time_font_configuration(dynamic raw);
 
   @protected
-  PRPosterTitleStyleConfiguration
-      dco_decode_pr_poster_title_style_configuration(dynamic raw);
+  PRPosterTitleStyleConfiguration dco_decode_pr_poster_title_style_configuration(dynamic raw);
 
   @protected
   PrivateDeviceInfo dco_decode_private_device_info(dynamic raw);
@@ -2477,42 +2237,26 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       dynamic raw);
 
   @protected
-  (
-    Uint8List,
-    Map<String, CloudAttachment?>,
-    int
-  ) dco_decode_record_list_prim_u_8_strict_map_string_opt_box_autoadd_cloud_attachment_i_32(
+  (Uint8List, Map<String, CloudAttachment?>, int)
+      dco_decode_record_list_prim_u_8_strict_map_string_opt_box_autoadd_cloud_attachment_i_32(dynamic raw);
+
+  @protected
+  (Uint8List, Map<String, CloudChat?>, int)
+      dco_decode_record_list_prim_u_8_strict_map_string_opt_box_autoadd_cloud_chat_i_32(dynamic raw);
+
+  @protected
+  (Uint8List, Map<String, CloudMessage?>, int)
+      dco_decode_record_list_prim_u_8_strict_map_string_opt_box_autoadd_cloud_message_i_32(dynamic raw);
+
+  @protected
+  (Uint8List, Uint8List?) dco_decode_record_list_prim_u_8_strict_opt_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  (List<SharedAlbum>, List<String>) dco_decode_record_list_shared_album_list_string(dynamic raw);
+
+  @protected
+  (List<TrustedPhoneNumber>, LoginState?) dco_decode_record_list_trusted_phone_number_opt_box_autoadd_login_state(
       dynamic raw);
-
-  @protected
-  (
-    Uint8List,
-    Map<String, CloudChat?>,
-    int
-  ) dco_decode_record_list_prim_u_8_strict_map_string_opt_box_autoadd_cloud_chat_i_32(
-      dynamic raw);
-
-  @protected
-  (
-    Uint8List,
-    Map<String, CloudMessage?>,
-    int
-  ) dco_decode_record_list_prim_u_8_strict_map_string_opt_box_autoadd_cloud_message_i_32(
-      dynamic raw);
-
-  @protected
-  (Uint8List, Uint8List?)
-      dco_decode_record_list_prim_u_8_strict_opt_list_prim_u_8_strict(
-          dynamic raw);
-
-  @protected
-  (List<SharedAlbum>, List<String>)
-      dco_decode_record_list_shared_album_list_string(dynamic raw);
-
-  @protected
-  (List<TrustedPhoneNumber>, LoginState?)
-      dco_decode_record_list_trusted_phone_number_opt_box_autoadd_login_state(
-          dynamic raw);
 
   @protected
   (
@@ -2522,11 +2266,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       dynamic raw);
 
   @protected
-  (
-    Map<String, SyncStatus>,
-    (String, BigInt)?
-  ) dco_decode_record_map_string_sync_status_opt_box_autoadd_record_string_u_64(
-      dynamic raw);
+  (Map<String, SyncStatus>, (String, BigInt)?)
+      dco_decode_record_map_string_sync_status_opt_box_autoadd_record_string_u_64(dynamic raw);
 
   @protected
   (
@@ -2539,16 +2280,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   (String?, Passkey) dco_decode_record_opt_string_passkey(dynamic raw);
 
   @protected
-  (String?, PasswordManagerMeta)
-      dco_decode_record_opt_string_password_manager_meta(dynamic raw);
+  (String?, PasswordManagerMeta) dco_decode_record_opt_string_password_manager_meta(dynamic raw);
 
   @protected
-  (String?, PasswordRawEntry) dco_decode_record_opt_string_password_raw_entry(
-      dynamic raw);
+  (String?, PasswordRawEntry) dco_decode_record_opt_string_password_raw_entry(dynamic raw);
 
   @protected
-  (String?, WifiPassword) dco_decode_record_opt_string_wifi_password(
-      dynamic raw);
+  (String?, WifiPassword) dco_decode_record_opt_string_wifi_password(dynamic raw);
 
   @protected
   (
@@ -2558,11 +2296,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       dynamic raw);
 
   @protected
-  (
-    String,
-    Asset
-  ) dco_decode_record_string_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_asset(
-      dynamic raw);
+  (String, Asset)
+      dco_decode_record_string_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_asset(
+          dynamic raw);
 
   @protected
   (
@@ -2578,8 +2314,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   (String, int) dco_decode_record_string_casted_primitive_u_64(dynamic raw);
 
   @protected
-  (String, CloudAttachment) dco_decode_record_string_cloud_attachment(
-      dynamic raw);
+  (String, CloudAttachment) dco_decode_record_string_cloud_attachment(dynamic raw);
 
   @protected
   (String, CloudChat) dco_decode_record_string_cloud_chat(dynamic raw);
@@ -2594,71 +2329,51 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   (String, GroupSummary) dco_decode_record_string_group_summary(dynamic raw);
 
   @protected
-  (String, List<MessageEdit>) dco_decode_record_string_list_message_edit(
+  (String, List<MessageEdit>) dco_decode_record_string_list_message_edit(dynamic raw);
+
+  @protected
+  (String, Uint8List) dco_decode_record_string_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  (String, Map<String, GroupSummary>, Map<String, ShareInviteContentData>)
+      dco_decode_record_string_map_string_group_summary_map_string_share_invite_content_data(dynamic raw);
+
+  @protected
+  (String, MessageEditRange) dco_decode_record_string_message_edit_range(dynamic raw);
+
+  @protected
+  (String, CloudAttachment?) dco_decode_record_string_opt_box_autoadd_cloud_attachment(dynamic raw);
+
+  @protected
+  (String, CloudChat?) dco_decode_record_string_opt_box_autoadd_cloud_chat(dynamic raw);
+
+  @protected
+  (String, CloudMessage?) dco_decode_record_string_opt_box_autoadd_cloud_message(dynamic raw);
+
+  @protected
+  (String, PasswordManagerMetaDataCtx) dco_decode_record_string_password_manager_meta_data_ctx(dynamic raw);
+
+  @protected
+  (String, (String?, Passkey)) dco_decode_record_string_record_opt_string_passkey(dynamic raw);
+
+  @protected
+  (String, (String?, PasswordManagerMeta)) dco_decode_record_string_record_opt_string_password_manager_meta(
       dynamic raw);
 
   @protected
-  (String, Uint8List) dco_decode_record_string_list_prim_u_8_strict(
-      dynamic raw);
+  (String, (String?, PasswordRawEntry)) dco_decode_record_string_record_opt_string_password_raw_entry(dynamic raw);
 
   @protected
-  (
-    String,
-    Map<String, GroupSummary>,
-    Map<String, ShareInviteContentData>
-  ) dco_decode_record_string_map_string_group_summary_map_string_share_invite_content_data(
-      dynamic raw);
+  (String, (String?, WifiPassword)) dco_decode_record_string_record_opt_string_wifi_password(dynamic raw);
 
   @protected
-  (String, MessageEditRange) dco_decode_record_string_message_edit_range(
-      dynamic raw);
+  (String, ShareInviteContentData) dco_decode_record_string_share_invite_content_data(dynamic raw);
 
   @protected
-  (String, CloudAttachment?)
-      dco_decode_record_string_opt_box_autoadd_cloud_attachment(dynamic raw);
+  (String, SharedPushState) dco_decode_record_string_shared_push_state(dynamic raw);
 
   @protected
-  (String, CloudChat?) dco_decode_record_string_opt_box_autoadd_cloud_chat(
-      dynamic raw);
-
-  @protected
-  (String, CloudMessage?)
-      dco_decode_record_string_opt_box_autoadd_cloud_message(dynamic raw);
-
-  @protected
-  (String, PasswordManagerMetaDataCtx)
-      dco_decode_record_string_password_manager_meta_data_ctx(dynamic raw);
-
-  @protected
-  (String, (String?, Passkey))
-      dco_decode_record_string_record_opt_string_passkey(dynamic raw);
-
-  @protected
-  (String, (String?, PasswordManagerMeta))
-      dco_decode_record_string_record_opt_string_password_manager_meta(
-          dynamic raw);
-
-  @protected
-  (
-    String,
-    (String?, PasswordRawEntry)
-  ) dco_decode_record_string_record_opt_string_password_raw_entry(dynamic raw);
-
-  @protected
-  (String, (String?, WifiPassword))
-      dco_decode_record_string_record_opt_string_wifi_password(dynamic raw);
-
-  @protected
-  (String, ShareInviteContentData)
-      dco_decode_record_string_share_invite_content_data(dynamic raw);
-
-  @protected
-  (String, SharedPushState) dco_decode_record_string_shared_push_state(
-      dynamic raw);
-
-  @protected
-  (String, StatusKitPersonalConfig)
-      dco_decode_record_string_status_kit_personal_config(dynamic raw);
+  (String, StatusKitPersonalConfig) dco_decode_record_string_status_kit_personal_config(dynamic raw);
 
   @protected
   (String, String) dco_decode_record_string_string(dynamic raw);
@@ -2670,12 +2385,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   (String, BigInt) dco_decode_record_string_u_64(dynamic raw);
 
   @protected
-  (String, UpdateAccountFinish) dco_decode_record_string_update_account_finish(
-      dynamic raw);
+  (String, UpdateAccountFinish) dco_decode_record_string_update_account_finish(dynamic raw);
 
   @protected
-  (int, NSDictionaryTypedCoder)
-      dco_decode_record_u_32_ns_dictionary_typed_coder(dynamic raw);
+  (int, NSDictionaryTypedCoder) dco_decode_record_u_32_ns_dictionary_typed_coder(dynamic raw);
 
   @protected
   (int, BigInt) dco_decode_record_u_32_u_64(dynamic raw);
@@ -2690,15 +2403,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ReportMessage dco_decode_report_message(dynamic raw);
 
   @protected
-  RichLinkImageAttachmentSubstitute
-      dco_decode_rich_link_image_attachment_substitute(dynamic raw);
+  RichLinkImageAttachmentSubstitute dco_decode_rich_link_image_attachment_substitute(dynamic raw);
 
   @protected
   ScheduleMode dco_decode_schedule_mode(dynamic raw);
 
   @protected
-  SetTranscriptBackgroundMessage dco_decode_set_transcript_background_message(
-      dynamic raw);
+  SetTranscriptBackgroundMessage dco_decode_set_transcript_background_message(dynamic raw);
 
   @protected
   ShareInviteContentData dco_decode_share_invite_content_data(dynamic raw);
@@ -2719,15 +2430,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SharedPushState dco_decode_shared_push_state(dynamic raw);
 
   @protected
-  SimplifiedIncomingCallPoster dco_decode_simplified_incoming_call_poster(
-      dynamic raw);
+  SimplifiedIncomingCallPoster dco_decode_simplified_incoming_call_poster(dynamic raw);
 
   @protected
   SimplifiedPoster dco_decode_simplified_poster(dynamic raw);
 
   @protected
-  SimplifiedTranscriptPoster dco_decode_simplified_transcript_poster(
-      dynamic raw);
+  SimplifiedTranscriptPoster dco_decode_simplified_transcript_poster(dynamic raw);
 
   @protected
   StatusKitMessage dco_decode_status_kit_message(dynamic raw);
@@ -2757,8 +2466,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TextFormat dco_decode_text_format(dynamic raw);
 
   @protected
-  TranscriptDynamicUserData dco_decode_transcript_dynamic_user_data(
-      dynamic raw);
+  TranscriptDynamicUserData dco_decode_transcript_dynamic_user_data(dynamic raw);
 
   @protected
   TransferProgress dco_decode_transfer_progress(dynamic raw);
@@ -2797,8 +2505,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   UpdateProfileMessage dco_decode_update_profile_message(dynamic raw);
 
   @protected
-  UpdateProfileSharingMessage dco_decode_update_profile_sharing_message(
-      dynamic raw);
+  UpdateProfileSharingMessage dco_decode_update_profile_sharing_message(dynamic raw);
 
   @protected
   BigInt dco_decode_usize(dynamic raw);
@@ -2816,19 +2523,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
-  ApsConnection
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
-          SseDeserializer deserializer);
+  ApsConnection sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
+      SseDeserializer deserializer);
 
   @protected
-  ApsState
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
-          SseDeserializer deserializer);
+  ApsState sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
+      SseDeserializer deserializer);
 
   @protected
-  ApsWatcher
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
-          SseDeserializer deserializer);
+  ApsWatcher sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
+      SseDeserializer deserializer);
 
   @protected
   ArcAnisetteClientDefaultAnisetteProvider
@@ -2846,9 +2550,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  ArcFtClient
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
-          SseDeserializer deserializer);
+  ArcFtClient sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
+      SseDeserializer deserializer);
 
   @protected
   ArcFindMyClientDefaultAnisetteProvider
@@ -2856,9 +2559,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  ArcImClient
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
-          SseDeserializer deserializer);
+  ArcImClient sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
+      SseDeserializer deserializer);
 
   @protected
   ArcIdmsAuthListener
@@ -2916,9 +2618,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  Asset
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
-          SseDeserializer deserializer);
+  Asset sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
+      SseDeserializer deserializer);
 
   @protected
   ChannelInterestToken
@@ -2931,9 +2632,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  ConversationLink
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
-          SseDeserializer deserializer);
+  ConversationLink sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
+      SseDeserializer deserializer);
 
   @protected
   ConversationParticipant
@@ -2941,14 +2641,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  Date
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
-          SseDeserializer deserializer);
+  Date sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
+      SseDeserializer deserializer);
 
   @protected
-  EscrowData
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
-          SseDeserializer deserializer);
+  EscrowData sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
+      SseDeserializer deserializer);
 
   @protected
   FindMyFriendsClientDefaultAnisetteProvider
@@ -2991,29 +2689,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  IdsngmIdentity
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
-          SseDeserializer deserializer);
+  IdsngmIdentity sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
+      SseDeserializer deserializer);
 
   @protected
-  IdsUser
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          SseDeserializer deserializer);
+  IdsUser sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+      SseDeserializer deserializer);
 
   @protected
-  JoinedOsConfig
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
-          SseDeserializer deserializer);
+  JoinedOsConfig sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
+      SseDeserializer deserializer);
 
   @protected
-  LocationReport
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
-          SseDeserializer deserializer);
+  LocationReport sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
+      SseDeserializer deserializer);
 
   @protected
-  MessageFlags
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
-          SseDeserializer deserializer);
+  MessageFlags sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
+      SseDeserializer deserializer);
 
   @protected
   NsArrayLpIconMetadata
@@ -3026,9 +2719,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  PushError
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
-          SseDeserializer deserializer);
+  PushError sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
+      SseDeserializer deserializer);
 
   @protected
   ReceiverApsMessage
@@ -3041,14 +2733,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  Sender
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
-          SseDeserializer deserializer);
+  Sender sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
+      SseDeserializer deserializer);
 
   @protected
-  StCollapsedValue
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
-          SseDeserializer deserializer);
+  StCollapsedValue sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
+      SseDeserializer deserializer);
 
   @protected
   SyncManagerDefaultAnisetteProviderMyFilePackager
@@ -3056,24 +2746,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  SystemTime
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
-          SseDeserializer deserializer);
+  SystemTime sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
+      SseDeserializer deserializer);
 
   @protected
-  VerifyBody
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
-          SseDeserializer deserializer);
+  VerifyBody sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
+      SseDeserializer deserializer);
 
   @protected
-  ViableBottle
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
-          SseDeserializer deserializer);
+  ViableBottle sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
+      SseDeserializer deserializer);
 
   @protected
-  ApsWatcher
-      sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
-          SseDeserializer deserializer);
+  ApsWatcher sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
+      SseDeserializer deserializer);
 
   @protected
   CircleClientSessionDefaultAnisetteProvider
@@ -3091,9 +2777,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  LocationReport
-      sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
-          SseDeserializer deserializer);
+  LocationReport sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
+      SseDeserializer deserializer);
 
   @protected
   ReceiverApsMessage
@@ -3106,14 +2791,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  ViableBottle
-      sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
-          SseDeserializer deserializer);
+  ViableBottle sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
+      SseDeserializer deserializer);
 
   @protected
-  ApsConnection
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
-          SseDeserializer deserializer);
+  ApsConnection sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
+      SseDeserializer deserializer);
 
   @protected
   ArcAnisetteClientDefaultAnisetteProvider
@@ -3131,9 +2814,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  ArcFtClient
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
-          SseDeserializer deserializer);
+  ArcFtClient sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
+      SseDeserializer deserializer);
 
   @protected
   ArcFindMyClientDefaultAnisetteProvider
@@ -3141,9 +2823,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  ArcImClient
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
-          SseDeserializer deserializer);
+  ArcImClient sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
+      SseDeserializer deserializer);
 
   @protected
   ArcIdmsAuthListener
@@ -3201,14 +2882,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  Date
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
-          SseDeserializer deserializer);
+  Date sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
+      SseDeserializer deserializer);
 
   @protected
-  EscrowData
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
-          SseDeserializer deserializer);
+  EscrowData sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
+      SseDeserializer deserializer);
 
   @protected
   GZipWrapperAttachmentMeta
@@ -3241,29 +2920,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  IdsngmIdentity
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
-          SseDeserializer deserializer);
+  IdsngmIdentity sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
+      SseDeserializer deserializer);
 
   @protected
-  IdsUser
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          SseDeserializer deserializer);
+  IdsUser sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+      SseDeserializer deserializer);
 
   @protected
-  JoinedOsConfig
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
-          SseDeserializer deserializer);
+  JoinedOsConfig sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
+      SseDeserializer deserializer);
 
   @protected
-  LocationReport
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
-          SseDeserializer deserializer);
+  LocationReport sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
+      SseDeserializer deserializer);
 
   @protected
-  MessageFlags
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
-          SseDeserializer deserializer);
+  MessageFlags sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
+      SseDeserializer deserializer);
 
   @protected
   SavedHardwareState
@@ -3271,14 +2945,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  Sender
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
-          SseDeserializer deserializer);
+  Sender sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
+      SseDeserializer deserializer);
 
   @protected
-  StCollapsedValue
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
-          SseDeserializer deserializer);
+  StCollapsedValue sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
+      SseDeserializer deserializer);
 
   @protected
   SyncManagerDefaultAnisetteProviderMyFilePackager
@@ -3286,14 +2958,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  VerifyBody
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
-          SseDeserializer deserializer);
+  VerifyBody sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
+      SseDeserializer deserializer);
 
   @protected
-  ViableBottle
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
-          SseDeserializer deserializer);
+  ViableBottle sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
+      SseDeserializer deserializer);
 
   @protected
   int sse_decode_CastedPrimitive_i_64(SseDeserializer deserializer);
@@ -3318,115 +2988,86 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  Map<String, int> sse_decode_Map_String_CastedPrimitive_u_64(
-      SseDeserializer deserializer);
+  Map<String, int> sse_decode_Map_String_CastedPrimitive_u_64(SseDeserializer deserializer);
 
   @protected
-  Map<String, String> sse_decode_Map_String_String(
-      SseDeserializer deserializer);
+  Map<String, String> sse_decode_Map_String_String(SseDeserializer deserializer);
 
   @protected
   Map<String, bool> sse_decode_Map_String_bool(SseDeserializer deserializer);
 
   @protected
-  Map<String, CloudAttachment> sse_decode_Map_String_cloud_attachment(
+  Map<String, CloudAttachment> sse_decode_Map_String_cloud_attachment(SseDeserializer deserializer);
+
+  @protected
+  Map<String, CloudChat> sse_decode_Map_String_cloud_chat(SseDeserializer deserializer);
+
+  @protected
+  Map<String, CloudMessage> sse_decode_Map_String_cloud_message(SseDeserializer deserializer);
+
+  @protected
+  Map<String, FTParticipant> sse_decode_Map_String_ft_participant(SseDeserializer deserializer);
+
+  @protected
+  Map<String, GroupSummary> sse_decode_Map_String_group_summary(SseDeserializer deserializer);
+
+  @protected
+  Map<String, List<MessageEdit>> sse_decode_Map_String_list_message_edit(SseDeserializer deserializer);
+
+  @protected
+  Map<String, Uint8List> sse_decode_Map_String_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  Map<String, MessageEditRange> sse_decode_Map_String_message_edit_range(SseDeserializer deserializer);
+
+  @protected
+  Map<String, CloudAttachment?> sse_decode_Map_String_opt_box_autoadd_cloud_attachment(SseDeserializer deserializer);
+
+  @protected
+  Map<String, CloudChat?> sse_decode_Map_String_opt_box_autoadd_cloud_chat(SseDeserializer deserializer);
+
+  @protected
+  Map<String, CloudMessage?> sse_decode_Map_String_opt_box_autoadd_cloud_message(SseDeserializer deserializer);
+
+  @protected
+  Map<String, PasswordManagerMetaDataCtx> sse_decode_Map_String_password_manager_meta_data_ctx(
       SseDeserializer deserializer);
 
   @protected
-  Map<String, CloudChat> sse_decode_Map_String_cloud_chat(
+  Map<String, (String?, Passkey)> sse_decode_Map_String_record_opt_string_passkey(SseDeserializer deserializer);
+
+  @protected
+  Map<String, (String?, PasswordManagerMeta)> sse_decode_Map_String_record_opt_string_password_manager_meta(
       SseDeserializer deserializer);
 
   @protected
-  Map<String, CloudMessage> sse_decode_Map_String_cloud_message(
+  Map<String, (String?, PasswordRawEntry)> sse_decode_Map_String_record_opt_string_password_raw_entry(
       SseDeserializer deserializer);
 
   @protected
-  Map<String, FTParticipant> sse_decode_Map_String_ft_participant(
+  Map<String, (String?, WifiPassword)> sse_decode_Map_String_record_opt_string_wifi_password(
       SseDeserializer deserializer);
 
   @protected
-  Map<String, GroupSummary> sse_decode_Map_String_group_summary(
+  Map<String, ShareInviteContentData> sse_decode_Map_String_share_invite_content_data(SseDeserializer deserializer);
+
+  @protected
+  Map<String, StatusKitPersonalConfig> sse_decode_Map_String_status_kit_personal_config(SseDeserializer deserializer);
+
+  @protected
+  Map<String, SyncStatus> sse_decode_Map_String_sync_status(SseDeserializer deserializer);
+
+  @protected
+  ApsConnection sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
       SseDeserializer deserializer);
 
   @protected
-  Map<String, List<MessageEdit>> sse_decode_Map_String_list_message_edit(
+  ApsState sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
       SseDeserializer deserializer);
 
   @protected
-  Map<String, Uint8List> sse_decode_Map_String_list_prim_u_8_strict(
+  ApsWatcher sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
       SseDeserializer deserializer);
-
-  @protected
-  Map<String, MessageEditRange> sse_decode_Map_String_message_edit_range(
-      SseDeserializer deserializer);
-
-  @protected
-  Map<String, CloudAttachment?>
-      sse_decode_Map_String_opt_box_autoadd_cloud_attachment(
-          SseDeserializer deserializer);
-
-  @protected
-  Map<String, CloudChat?> sse_decode_Map_String_opt_box_autoadd_cloud_chat(
-      SseDeserializer deserializer);
-
-  @protected
-  Map<String, CloudMessage?>
-      sse_decode_Map_String_opt_box_autoadd_cloud_message(
-          SseDeserializer deserializer);
-
-  @protected
-  Map<String, PasswordManagerMetaDataCtx>
-      sse_decode_Map_String_password_manager_meta_data_ctx(
-          SseDeserializer deserializer);
-
-  @protected
-  Map<String, (String?, Passkey)>
-      sse_decode_Map_String_record_opt_string_passkey(
-          SseDeserializer deserializer);
-
-  @protected
-  Map<String, (String?, PasswordManagerMeta)>
-      sse_decode_Map_String_record_opt_string_password_manager_meta(
-          SseDeserializer deserializer);
-
-  @protected
-  Map<String, (String?, PasswordRawEntry)>
-      sse_decode_Map_String_record_opt_string_password_raw_entry(
-          SseDeserializer deserializer);
-
-  @protected
-  Map<String, (String?, WifiPassword)>
-      sse_decode_Map_String_record_opt_string_wifi_password(
-          SseDeserializer deserializer);
-
-  @protected
-  Map<String, ShareInviteContentData>
-      sse_decode_Map_String_share_invite_content_data(
-          SseDeserializer deserializer);
-
-  @protected
-  Map<String, StatusKitPersonalConfig>
-      sse_decode_Map_String_status_kit_personal_config(
-          SseDeserializer deserializer);
-
-  @protected
-  Map<String, SyncStatus> sse_decode_Map_String_sync_status(
-      SseDeserializer deserializer);
-
-  @protected
-  ApsConnection
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
-          SseDeserializer deserializer);
-
-  @protected
-  ApsState
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
-          SseDeserializer deserializer);
-
-  @protected
-  ApsWatcher
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
-          SseDeserializer deserializer);
 
   @protected
   ArcAnisetteClientDefaultAnisetteProvider
@@ -3444,9 +3085,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  ArcFtClient
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
-          SseDeserializer deserializer);
+  ArcFtClient sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
+      SseDeserializer deserializer);
 
   @protected
   ArcFindMyClientDefaultAnisetteProvider
@@ -3454,14 +3094,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  ArcImClient
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
-          SseDeserializer deserializer);
+  ArcImClient sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
+      SseDeserializer deserializer);
 
   @protected
-  ArcIdmsAuthListener
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIdmsAuthListener(
-          SseDeserializer deserializer);
+  ArcIdmsAuthListener sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIdmsAuthListener(
+      SseDeserializer deserializer);
 
   @protected
   ArcKeychainClientDefaultAnisetteProvider
@@ -3494,14 +3132,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  ArcSenderPushMessage
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSenderPushMessage(
-          SseDeserializer deserializer);
+  ArcSenderPushMessage sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSenderPushMessage(
+      SseDeserializer deserializer);
 
   @protected
-  ArcSharedPushState
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushState(
-          SseDeserializer deserializer);
+  ArcSharedPushState sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushState(
+      SseDeserializer deserializer);
 
   @protected
   ArcStatusKitClientDefaultAnisetteProvider
@@ -3514,14 +3150,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  Asset
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
-          SseDeserializer deserializer);
+  Asset sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(SseDeserializer deserializer);
 
   @protected
-  ChannelInterestToken
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerChannelInterestToken(
-          SseDeserializer deserializer);
+  ChannelInterestToken sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerChannelInterestToken(
+      SseDeserializer deserializer);
 
   @protected
   CircleClientSessionDefaultAnisetteProvider
@@ -3529,9 +3162,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  ConversationLink
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
-          SseDeserializer deserializer);
+  ConversationLink sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
+      SseDeserializer deserializer);
 
   @protected
   ConversationParticipant
@@ -3539,14 +3171,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  Date
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
-          SseDeserializer deserializer);
+  Date sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(SseDeserializer deserializer);
 
   @protected
-  EscrowData
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
-          SseDeserializer deserializer);
+  EscrowData sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
+      SseDeserializer deserializer);
 
   @protected
   FindMyFriendsClientDefaultAnisetteProvider
@@ -3564,9 +3193,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  GZipWrapperChatProto
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperChatProto(
-          SseDeserializer deserializer);
+  GZipWrapperChatProto sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperChatProto(
+      SseDeserializer deserializer);
 
   @protected
   GZipWrapperMessageProto
@@ -3589,34 +3217,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  IdsngmIdentity
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
-          SseDeserializer deserializer);
+  IdsngmIdentity sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
+      SseDeserializer deserializer);
 
   @protected
-  IdsUser
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          SseDeserializer deserializer);
+  IdsUser sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+      SseDeserializer deserializer);
 
   @protected
-  JoinedOsConfig
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
-          SseDeserializer deserializer);
+  JoinedOsConfig sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
+      SseDeserializer deserializer);
 
   @protected
-  LocationReport
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
-          SseDeserializer deserializer);
+  LocationReport sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
+      SseDeserializer deserializer);
 
   @protected
-  MessageFlags
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
-          SseDeserializer deserializer);
+  MessageFlags sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
+      SseDeserializer deserializer);
 
   @protected
-  NsArrayLpIconMetadata
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPIconMetadata(
-          SseDeserializer deserializer);
+  NsArrayLpIconMetadata sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPIconMetadata(
+      SseDeserializer deserializer);
 
   @protected
   NsArrayLpImageMetadata
@@ -3624,29 +3246,23 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  PushError
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
-          SseDeserializer deserializer);
+  PushError sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
+      SseDeserializer deserializer);
 
   @protected
-  ReceiverApsMessage
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessage(
-          SseDeserializer deserializer);
+  ReceiverApsMessage sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessage(
+      SseDeserializer deserializer);
 
   @protected
-  SavedHardwareState
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
-          SseDeserializer deserializer);
+  SavedHardwareState sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
+      SseDeserializer deserializer);
 
   @protected
-  Sender
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
-          SseDeserializer deserializer);
+  Sender sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(SseDeserializer deserializer);
 
   @protected
-  StCollapsedValue
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
-          SseDeserializer deserializer);
+  StCollapsedValue sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
+      SseDeserializer deserializer);
 
   @protected
   SyncManagerDefaultAnisetteProviderMyFilePackager
@@ -3654,31 +3270,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  SystemTime
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
-          SseDeserializer deserializer);
+  SystemTime sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
+      SseDeserializer deserializer);
 
   @protected
-  VerifyBody
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
-          SseDeserializer deserializer);
+  VerifyBody sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
+      SseDeserializer deserializer);
 
   @protected
-  ViableBottle
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
-          SseDeserializer deserializer);
+  ViableBottle sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
+      SseDeserializer deserializer);
 
   @protected
   Set<FTMember> sse_decode_Set_ft_member(SseDeserializer deserializer);
 
   @protected
-  RustStreamSink<MMCSTransferProgress>
-      sse_decode_StreamSink_mmcs_transfer_progress_Sse(
-          SseDeserializer deserializer);
+  RustStreamSink<MMCSTransferProgress> sse_decode_StreamSink_mmcs_transfer_progress_Sse(SseDeserializer deserializer);
 
   @protected
-  RustStreamSink<TransferProgress> sse_decode_StreamSink_transfer_progress_Sse(
-      SseDeserializer deserializer);
+  RustStreamSink<TransferProgress> sse_decode_StreamSink_transfer_progress_Sse(SseDeserializer deserializer);
 
   @protected
   String sse_decode_String(SseDeserializer deserializer);
@@ -3702,8 +3312,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AttachmentMeta sse_decode_attachment_meta(SseDeserializer deserializer);
 
   @protected
-  AttachmentMetaExtra sse_decode_attachment_meta_extra(
-      SseDeserializer deserializer);
+  AttachmentMetaExtra sse_decode_attachment_meta_extra(SseDeserializer deserializer);
 
   @protected
   AttachmentType sse_decode_attachment_type(SseDeserializer deserializer);
@@ -3718,16 +3327,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BeaconAttributes sse_decode_beacon_attributes(SseDeserializer deserializer);
 
   @protected
-  BeaconNamingRecord sse_decode_beacon_naming_record(
-      SseDeserializer deserializer);
+  BeaconNamingRecord sse_decode_beacon_naming_record(SseDeserializer deserializer);
 
   @protected
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
-  ApsState
-      sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
-          SseDeserializer deserializer);
+  ApsState sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
+      SseDeserializer deserializer);
 
   @protected
   ArcCloudKitClientDefaultAnisetteProvider
@@ -3760,9 +3367,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  Asset
-      sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
-          SseDeserializer deserializer);
+  Asset sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
+      SseDeserializer deserializer);
 
   @protected
   ChannelInterestToken
@@ -3785,9 +3391,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  Date
-      sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
-          SseDeserializer deserializer);
+  Date sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
+      SseDeserializer deserializer);
 
   @protected
   GZipWrapperChatProto
@@ -3810,9 +3415,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  IdsUser
-      sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          SseDeserializer deserializer);
+  IdsUser sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+      SseDeserializer deserializer);
 
   @protected
   LocationReport
@@ -3830,9 +3434,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  PushError
-      sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
-          SseDeserializer deserializer);
+  PushError sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
+      SseDeserializer deserializer);
 
   @protected
   SavedHardwareState
@@ -3845,9 +3448,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  SystemTime
-      sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
-          SseDeserializer deserializer);
+  SystemTime sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
+      SseDeserializer deserializer);
 
   @protected
   Address sse_decode_box_autoadd_address(SseDeserializer deserializer);
@@ -3856,74 +3458,61 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Attachment sse_decode_box_autoadd_attachment(SseDeserializer deserializer);
 
   @protected
-  AttachmentMeta sse_decode_box_autoadd_attachment_meta(
-      SseDeserializer deserializer);
+  AttachmentMeta sse_decode_box_autoadd_attachment_meta(SseDeserializer deserializer);
 
   @protected
-  AttachmentMetaExtra sse_decode_box_autoadd_attachment_meta_extra(
-      SseDeserializer deserializer);
+  AttachmentMetaExtra sse_decode_box_autoadd_attachment_meta_extra(SseDeserializer deserializer);
 
   @protected
   Balloon sse_decode_box_autoadd_balloon(SseDeserializer deserializer);
 
   @protected
-  BalloonLayout sse_decode_box_autoadd_balloon_layout(
-      SseDeserializer deserializer);
+  BalloonLayout sse_decode_box_autoadd_balloon_layout(SseDeserializer deserializer);
 
   @protected
-  BeaconAttributes sse_decode_box_autoadd_beacon_attributes(
-      SseDeserializer deserializer);
+  BeaconAttributes sse_decode_box_autoadd_beacon_attributes(SseDeserializer deserializer);
 
   @protected
-  BeaconNamingRecord sse_decode_box_autoadd_beacon_naming_record(
-      SseDeserializer deserializer);
+  BeaconNamingRecord sse_decode_box_autoadd_beacon_naming_record(SseDeserializer deserializer);
 
   @protected
   bool sse_decode_box_autoadd_bool(SseDeserializer deserializer);
 
   @protected
-  CertifiedContext sse_decode_box_autoadd_certified_context(
-      SseDeserializer deserializer);
+  CertifiedContext sse_decode_box_autoadd_certified_context(SseDeserializer deserializer);
 
   @protected
-  ChangeParticipantMessage sse_decode_box_autoadd_change_participant_message(
-      SseDeserializer deserializer);
+  ChangeParticipantMessage sse_decode_box_autoadd_change_participant_message(SseDeserializer deserializer);
 
   @protected
   ChatProto sse_decode_box_autoadd_chat_proto(SseDeserializer deserializer);
 
   @protected
-  CloudAttachment sse_decode_box_autoadd_cloud_attachment(
-      SseDeserializer deserializer);
+  CloudAttachment sse_decode_box_autoadd_cloud_attachment(SseDeserializer deserializer);
 
   @protected
   CloudChat sse_decode_box_autoadd_cloud_chat(SseDeserializer deserializer);
 
   @protected
-  CloudMessage sse_decode_box_autoadd_cloud_message(
-      SseDeserializer deserializer);
+  CloudMessage sse_decode_box_autoadd_cloud_message(SseDeserializer deserializer);
 
   @protected
   CloudProp sse_decode_box_autoadd_cloud_prop(SseDeserializer deserializer);
 
   @protected
-  ConversationData sse_decode_box_autoadd_conversation_data(
-      SseDeserializer deserializer);
+  ConversationData sse_decode_box_autoadd_conversation_data(SseDeserializer deserializer);
 
   @protected
-  DartBeaconShareInfo sse_decode_box_autoadd_dart_beacon_share_info(
-      SseDeserializer deserializer);
+  DartBeaconShareInfo sse_decode_box_autoadd_dart_beacon_share_info(SseDeserializer deserializer);
 
   @protected
   EditMessage sse_decode_box_autoadd_edit_message(SseDeserializer deserializer);
 
   @protected
-  ErrorMessage sse_decode_box_autoadd_error_message(
-      SseDeserializer deserializer);
+  ErrorMessage sse_decode_box_autoadd_error_message(SseDeserializer deserializer);
 
   @protected
-  ExtensionApp sse_decode_box_autoadd_extension_app(
-      SseDeserializer deserializer);
+  ExtensionApp sse_decode_box_autoadd_extension_app(SseDeserializer deserializer);
 
   @protected
   double sse_decode_box_autoadd_f_64(SseDeserializer deserializer);
@@ -3944,31 +3533,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
-  IMessageNicknameRecord sse_decode_box_autoadd_i_message_nickname_record(
-      SseDeserializer deserializer);
+  IMessageNicknameRecord sse_decode_box_autoadd_i_message_nickname_record(SseDeserializer deserializer);
 
   @protected
-  IMessagePosterRecord sse_decode_box_autoadd_i_message_poster_record(
-      SseDeserializer deserializer);
+  IMessagePosterRecord sse_decode_box_autoadd_i_message_poster_record(SseDeserializer deserializer);
 
   @protected
-  IconChangeMessage sse_decode_box_autoadd_icon_change_message(
-      SseDeserializer deserializer);
+  IconChangeMessage sse_decode_box_autoadd_icon_change_message(SseDeserializer deserializer);
 
   @protected
-  IdmsCircleMessage sse_decode_box_autoadd_idms_circle_message(
-      SseDeserializer deserializer);
+  IdmsCircleMessage sse_decode_box_autoadd_idms_circle_message(SseDeserializer deserializer);
 
   @protected
   IdmsMessage sse_decode_box_autoadd_idms_message(SseDeserializer deserializer);
 
   @protected
-  IdmsRequestedSignIn sse_decode_box_autoadd_idms_requested_sign_in(
-      SseDeserializer deserializer);
+  IdmsRequestedSignIn sse_decode_box_autoadd_idms_requested_sign_in(SseDeserializer deserializer);
 
   @protected
-  LetMeInRequest sse_decode_box_autoadd_let_me_in_request(
-      SseDeserializer deserializer);
+  LetMeInRequest sse_decode_box_autoadd_let_me_in_request(SseDeserializer deserializer);
 
   @protected
   LinkMeta sse_decode_box_autoadd_link_meta(SseDeserializer deserializer);
@@ -3980,16 +3563,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   LoginState sse_decode_box_autoadd_login_state(SseDeserializer deserializer);
 
   @protected
-  LPIconMetadata sse_decode_box_autoadd_lp_icon_metadata(
-      SseDeserializer deserializer);
+  LPIconMetadata sse_decode_box_autoadd_lp_icon_metadata(SseDeserializer deserializer);
 
   @protected
-  LPImageMetadata sse_decode_box_autoadd_lp_image_metadata(
-      SseDeserializer deserializer);
+  LPImageMetadata sse_decode_box_autoadd_lp_image_metadata(SseDeserializer deserializer);
 
   @protected
-  LPSpecializationMetadata sse_decode_box_autoadd_lp_specialization_metadata(
-      SseDeserializer deserializer);
+  LPSpecializationMetadata sse_decode_box_autoadd_lp_specialization_metadata(SseDeserializer deserializer);
 
   @protected
   MemojiData sse_decode_box_autoadd_memoji_data(SseDeserializer deserializer);
@@ -4001,51 +3581,40 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MessageInst sse_decode_box_autoadd_message_inst(SseDeserializer deserializer);
 
   @protected
-  MessageParts sse_decode_box_autoadd_message_parts(
-      SseDeserializer deserializer);
+  MessageParts sse_decode_box_autoadd_message_parts(SseDeserializer deserializer);
 
   @protected
-  MessageProto sse_decode_box_autoadd_message_proto(
-      SseDeserializer deserializer);
+  MessageProto sse_decode_box_autoadd_message_proto(SseDeserializer deserializer);
 
   @protected
-  MessageProto2 sse_decode_box_autoadd_message_proto_2(
-      SseDeserializer deserializer);
+  MessageProto2 sse_decode_box_autoadd_message_proto_2(SseDeserializer deserializer);
 
   @protected
-  MessageProto3 sse_decode_box_autoadd_message_proto_3(
-      SseDeserializer deserializer);
+  MessageProto3 sse_decode_box_autoadd_message_proto_3(SseDeserializer deserializer);
 
   @protected
-  MessageProto4 sse_decode_box_autoadd_message_proto_4(
-      SseDeserializer deserializer);
+  MessageProto4 sse_decode_box_autoadd_message_proto_4(SseDeserializer deserializer);
 
   @protected
-  MessageSummaryInfo sse_decode_box_autoadd_message_summary_info(
-      SseDeserializer deserializer);
+  MessageSummaryInfo sse_decode_box_autoadd_message_summary_info(SseDeserializer deserializer);
 
   @protected
-  MMCSAttachmentMeta sse_decode_box_autoadd_mmcs_attachment_meta(
-      SseDeserializer deserializer);
+  MMCSAttachmentMeta sse_decode_box_autoadd_mmcs_attachment_meta(SseDeserializer deserializer);
 
   @protected
   MMCSFile sse_decode_box_autoadd_mmcs_file(SseDeserializer deserializer);
 
   @protected
-  MonogramData sse_decode_box_autoadd_monogram_data(
-      SseDeserializer deserializer);
+  MonogramData sse_decode_box_autoadd_monogram_data(SseDeserializer deserializer);
 
   @protected
-  MoveToRecycleBinMessage sse_decode_box_autoadd_move_to_recycle_bin_message(
-      SseDeserializer deserializer);
+  MoveToRecycleBinMessage sse_decode_box_autoadd_move_to_recycle_bin_message(SseDeserializer deserializer);
 
   @protected
-  NormalMessage sse_decode_box_autoadd_normal_message(
-      SseDeserializer deserializer);
+  NormalMessage sse_decode_box_autoadd_normal_message(SseDeserializer deserializer);
 
   @protected
-  NSAttributedString sse_decode_box_autoadd_ns_attributed_string(
-      SseDeserializer deserializer);
+  NSAttributedString sse_decode_box_autoadd_ns_attributed_string(SseDeserializer deserializer);
 
   @protected
   NSNumber sse_decode_box_autoadd_ns_number(SseDeserializer deserializer);
@@ -4057,59 +3626,47 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   NSURL sse_decode_box_autoadd_nsurl(SseDeserializer deserializer);
 
   @protected
-  NumOrString sse_decode_box_autoadd_num_or_string(
-      SseDeserializer deserializer);
+  NumOrString sse_decode_box_autoadd_num_or_string(SseDeserializer deserializer);
 
   @protected
-  OperatedChat sse_decode_box_autoadd_operated_chat(
-      SseDeserializer deserializer);
+  OperatedChat sse_decode_box_autoadd_operated_chat(SseDeserializer deserializer);
 
   @protected
-  PartExtension sse_decode_box_autoadd_part_extension(
-      SseDeserializer deserializer);
+  PartExtension sse_decode_box_autoadd_part_extension(SseDeserializer deserializer);
 
   @protected
   Passkey sse_decode_box_autoadd_passkey(SseDeserializer deserializer);
 
   @protected
-  PasswordManagerMeta sse_decode_box_autoadd_password_manager_meta(
+  PasswordManagerMeta sse_decode_box_autoadd_password_manager_meta(SseDeserializer deserializer);
+
+  @protected
+  PasswordManagerMetaData sse_decode_box_autoadd_password_manager_meta_data(SseDeserializer deserializer);
+
+  @protected
+  PasswordManagerMetaDataFormerlyShared sse_decode_box_autoadd_password_manager_meta_data_formerly_shared(
       SseDeserializer deserializer);
 
   @protected
-  PasswordManagerMetaData sse_decode_box_autoadd_password_manager_meta_data(
-      SseDeserializer deserializer);
+  PasswordManagerTotp sse_decode_box_autoadd_password_manager_totp(SseDeserializer deserializer);
 
   @protected
-  PasswordManagerMetaDataFormerlyShared
-      sse_decode_box_autoadd_password_manager_meta_data_formerly_shared(
-          SseDeserializer deserializer);
+  PasswordRawEntry sse_decode_box_autoadd_password_raw_entry(SseDeserializer deserializer);
 
   @protected
-  PasswordManagerTotp sse_decode_box_autoadd_password_manager_totp(
-      SseDeserializer deserializer);
-
-  @protected
-  PasswordRawEntry sse_decode_box_autoadd_password_raw_entry(
-      SseDeserializer deserializer);
-
-  @protected
-  PermanentDeleteMessage sse_decode_box_autoadd_permanent_delete_message(
-      SseDeserializer deserializer);
+  PermanentDeleteMessage sse_decode_box_autoadd_permanent_delete_message(SseDeserializer deserializer);
 
   @protected
   PosterColor sse_decode_box_autoadd_poster_color(SseDeserializer deserializer);
 
   @protected
-  PRPosterContentMaterialStyle
-      sse_decode_box_autoadd_pr_poster_content_material_style(
-          SseDeserializer deserializer);
+  PRPosterContentMaterialStyle sse_decode_box_autoadd_pr_poster_content_material_style(SseDeserializer deserializer);
 
   @protected
   PushMessage sse_decode_box_autoadd_push_message(SseDeserializer deserializer);
 
   @protected
-  ReactMessage sse_decode_box_autoadd_react_message(
-      SseDeserializer deserializer);
+  ReactMessage sse_decode_box_autoadd_react_message(SseDeserializer deserializer);
 
   @protected
   Reaction sse_decode_box_autoadd_reaction(SseDeserializer deserializer);
@@ -4122,79 +3679,59 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
-  (String, String) sse_decode_box_autoadd_record_string_string(
+  (String, String) sse_decode_box_autoadd_record_string_string(SseDeserializer deserializer);
+
+  @protected
+  (String, BigInt) sse_decode_box_autoadd_record_string_u_64(SseDeserializer deserializer);
+
+  @protected
+  RegisterState sse_decode_box_autoadd_register_state(SseDeserializer deserializer);
+
+  @protected
+  RenameMessage sse_decode_box_autoadd_rename_message(SseDeserializer deserializer);
+
+  @protected
+  RichLinkImageAttachmentSubstitute sse_decode_box_autoadd_rich_link_image_attachment_substitute(
       SseDeserializer deserializer);
 
   @protected
-  (String, BigInt) sse_decode_box_autoadd_record_string_u_64(
-      SseDeserializer deserializer);
+  ScheduleMode sse_decode_box_autoadd_schedule_mode(SseDeserializer deserializer);
 
   @protected
-  RegisterState sse_decode_box_autoadd_register_state(
-      SseDeserializer deserializer);
+  SetTranscriptBackgroundMessage sse_decode_box_autoadd_set_transcript_background_message(SseDeserializer deserializer);
 
   @protected
-  RenameMessage sse_decode_box_autoadd_rename_message(
-      SseDeserializer deserializer);
-
-  @protected
-  RichLinkImageAttachmentSubstitute
-      sse_decode_box_autoadd_rich_link_image_attachment_substitute(
-          SseDeserializer deserializer);
-
-  @protected
-  ScheduleMode sse_decode_box_autoadd_schedule_mode(
-      SseDeserializer deserializer);
-
-  @protected
-  SetTranscriptBackgroundMessage
-      sse_decode_box_autoadd_set_transcript_background_message(
-          SseDeserializer deserializer);
-
-  @protected
-  ShareProfileMessage sse_decode_box_autoadd_share_profile_message(
-      SseDeserializer deserializer);
+  ShareProfileMessage sse_decode_box_autoadd_share_profile_message(SseDeserializer deserializer);
 
   @protected
   SharedAlbum sse_decode_box_autoadd_shared_album(SseDeserializer deserializer);
 
   @protected
-  SharedICloudServices sse_decode_box_autoadd_shared_i_cloud_services(
-      SseDeserializer deserializer);
+  SharedICloudServices sse_decode_box_autoadd_shared_i_cloud_services(SseDeserializer deserializer);
 
   @protected
-  SharedPoster sse_decode_box_autoadd_shared_poster(
-      SseDeserializer deserializer);
+  SharedPoster sse_decode_box_autoadd_shared_poster(SseDeserializer deserializer);
 
   @protected
-  SharedPushState sse_decode_box_autoadd_shared_push_state(
-      SseDeserializer deserializer);
+  SharedPushState sse_decode_box_autoadd_shared_push_state(SseDeserializer deserializer);
 
   @protected
-  SimplifiedIncomingCallPoster
-      sse_decode_box_autoadd_simplified_incoming_call_poster(
-          SseDeserializer deserializer);
+  SimplifiedIncomingCallPoster sse_decode_box_autoadd_simplified_incoming_call_poster(SseDeserializer deserializer);
 
   @protected
-  SimplifiedTranscriptPoster
-      sse_decode_box_autoadd_simplified_transcript_poster(
-          SseDeserializer deserializer);
+  SimplifiedTranscriptPoster sse_decode_box_autoadd_simplified_transcript_poster(SseDeserializer deserializer);
 
   @protected
-  StatusKitMessage sse_decode_box_autoadd_status_kit_message(
-      SseDeserializer deserializer);
+  StatusKitMessage sse_decode_box_autoadd_status_kit_message(SseDeserializer deserializer);
 
   @protected
-  SupportAction sse_decode_box_autoadd_support_action(
-      SseDeserializer deserializer);
+  SupportAction sse_decode_box_autoadd_support_action(SseDeserializer deserializer);
 
   @protected
-  SupportAlert sse_decode_box_autoadd_support_alert(
-      SseDeserializer deserializer);
+  SupportAlert sse_decode_box_autoadd_support_alert(SseDeserializer deserializer);
 
   @protected
-  TeardownSignIn sse_decode_box_autoadd_teardown_sign_in(
-      SseDeserializer deserializer);
+  TeardownSignIn sse_decode_box_autoadd_teardown_sign_in(SseDeserializer deserializer);
 
   @protected
   TextFlags sse_decode_box_autoadd_text_flags(SseDeserializer deserializer);
@@ -4203,8 +3740,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TextFormat sse_decode_box_autoadd_text_format(SseDeserializer deserializer);
 
   @protected
-  TranscriptDynamicUserData sse_decode_box_autoadd_transcript_dynamic_user_data(
-      SseDeserializer deserializer);
+  TranscriptDynamicUserData sse_decode_box_autoadd_transcript_dynamic_user_data(SseDeserializer deserializer);
 
   @protected
   TypingApp sse_decode_box_autoadd_typing_app(SseDeserializer deserializer);
@@ -4216,36 +3752,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
-  UnsendMessage sse_decode_box_autoadd_unsend_message(
-      SseDeserializer deserializer);
+  UnsendMessage sse_decode_box_autoadd_unsend_message(SseDeserializer deserializer);
 
   @protected
-  UpdateAccountFinish sse_decode_box_autoadd_update_account_finish(
-      SseDeserializer deserializer);
+  UpdateAccountFinish sse_decode_box_autoadd_update_account_finish(SseDeserializer deserializer);
 
   @protected
-  UpdateExtensionMessage sse_decode_box_autoadd_update_extension_message(
-      SseDeserializer deserializer);
+  UpdateExtensionMessage sse_decode_box_autoadd_update_extension_message(SseDeserializer deserializer);
 
   @protected
-  UpdateProfileMessage sse_decode_box_autoadd_update_profile_message(
-      SseDeserializer deserializer);
+  UpdateProfileMessage sse_decode_box_autoadd_update_profile_message(SseDeserializer deserializer);
 
   @protected
-  UpdateProfileSharingMessage
-      sse_decode_box_autoadd_update_profile_sharing_message(
-          SseDeserializer deserializer);
+  UpdateProfileSharingMessage sse_decode_box_autoadd_update_profile_sharing_message(SseDeserializer deserializer);
 
   @protected
-  WifiPassword sse_decode_box_autoadd_wifi_password(
-      SseDeserializer deserializer);
+  WifiPassword sse_decode_box_autoadd_wifi_password(SseDeserializer deserializer);
 
   @protected
   CertifiedContext sse_decode_certified_context(SseDeserializer deserializer);
 
   @protected
-  ChangeParticipantMessage sse_decode_change_participant_message(
-      SseDeserializer deserializer);
+  ChangeParticipantMessage sse_decode_change_participant_message(SseDeserializer deserializer);
 
   @protected
   ChatProto sse_decode_chat_proto(SseDeserializer deserializer);
@@ -4260,8 +3788,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CloudMessage sse_decode_cloud_message(SseDeserializer deserializer);
 
   @protected
-  CloudMessageSummary sse_decode_cloud_message_summary(
-      SseDeserializer deserializer);
+  CloudMessageSummary sse_decode_cloud_message_summary(SseDeserializer deserializer);
 
   @protected
   CloudParticipant sse_decode_cloud_participant(SseDeserializer deserializer);
@@ -4279,8 +3806,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   DartBeacon sse_decode_dart_beacon(SseDeserializer deserializer);
 
   @protected
-  DartBeaconShareInfo sse_decode_dart_beacon_share_info(
-      SseDeserializer deserializer);
+  DartBeaconShareInfo sse_decode_dart_beacon_share_info(SseDeserializer deserializer);
 
   @protected
   DeleteTarget sse_decode_delete_target(SseDeserializer deserializer);
@@ -4331,8 +3857,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   GroupSummary sse_decode_group_summary(SseDeserializer deserializer);
 
   @protected
-  GroupSummaryMember sse_decode_group_summary_member(
-      SseDeserializer deserializer);
+  GroupSummaryMember sse_decode_group_summary_member(SseDeserializer deserializer);
 
   @protected
   HwExtra sse_decode_hw_extra(SseDeserializer deserializer);
@@ -4344,35 +3869,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
 
   @protected
-  IMessageNameRecord sse_decode_i_message_name_record(
-      SseDeserializer deserializer);
+  IMessageNameRecord sse_decode_i_message_name_record(SseDeserializer deserializer);
 
   @protected
-  IMessageNicknameRecord sse_decode_i_message_nickname_record(
-      SseDeserializer deserializer);
+  IMessageNicknameRecord sse_decode_i_message_nickname_record(SseDeserializer deserializer);
 
   @protected
-  IMessagePosterRecord sse_decode_i_message_poster_record(
-      SseDeserializer deserializer);
+  IMessagePosterRecord sse_decode_i_message_poster_record(SseDeserializer deserializer);
 
   @protected
-  IconChangeMessage sse_decode_icon_change_message(
-      SseDeserializer deserializer);
+  IconChangeMessage sse_decode_icon_change_message(SseDeserializer deserializer);
 
   @protected
-  IdmsCircleMessage sse_decode_idms_circle_message(
-      SseDeserializer deserializer);
+  IdmsCircleMessage sse_decode_idms_circle_message(SseDeserializer deserializer);
 
   @protected
   IdmsMessage sse_decode_idms_message(SseDeserializer deserializer);
 
   @protected
-  IdmsRequestedSignIn sse_decode_idms_requested_sign_in(
-      SseDeserializer deserializer);
+  IdmsRequestedSignIn sse_decode_idms_requested_sign_in(SseDeserializer deserializer);
 
   @protected
-  IndexedMessagePart sse_decode_indexed_message_part(
-      SseDeserializer deserializer);
+  IndexedMessagePart sse_decode_indexed_message_part(SseDeserializer deserializer);
 
   @protected
   LetMeInRequest sse_decode_let_me_in_request(SseDeserializer deserializer);
@@ -4381,9 +3899,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   LinkMeta sse_decode_link_meta(SseDeserializer deserializer);
 
   @protected
-  List<IdsUser>
-      sse_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          SseDeserializer deserializer);
+  List<IdsUser> sse_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+      SseDeserializer deserializer);
 
   @protected
   List<StCollapsedValue>
@@ -4399,8 +3916,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<String> sse_decode_list_String(SseDeserializer deserializer);
 
   @protected
-  List<CloudParticipant> sse_decode_list_cloud_participant(
-      SseDeserializer deserializer);
+  List<CloudParticipant> sse_decode_list_cloud_participant(SseDeserializer deserializer);
 
   @protected
   List<DartBeacon> sse_decode_list_dart_beacon(SseDeserializer deserializer);
@@ -4418,35 +3934,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<FTSession> sse_decode_list_ft_session(SseDeserializer deserializer);
 
   @protected
-  List<GroupSummaryMember> sse_decode_list_group_summary_member(
-      SseDeserializer deserializer);
+  List<GroupSummaryMember> sse_decode_list_group_summary_member(SseDeserializer deserializer);
 
   @protected
-  List<IndexedMessagePart> sse_decode_list_indexed_message_part(
-      SseDeserializer deserializer);
+  List<IndexedMessagePart> sse_decode_list_indexed_message_part(SseDeserializer deserializer);
 
   @protected
-  List<Uint8List> sse_decode_list_list_prim_u_8_strict(
-      SseDeserializer deserializer);
+  List<Uint8List> sse_decode_list_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
   List<MessageEdit> sse_decode_list_message_edit(SseDeserializer deserializer);
 
   @protected
-  List<MessageTarget> sse_decode_list_message_target(
-      SseDeserializer deserializer);
+  List<MessageTarget> sse_decode_list_message_target(SseDeserializer deserializer);
 
   @protected
-  List<PasswordManagerAltDomain> sse_decode_list_password_manager_alt_domain(
-      SseDeserializer deserializer);
+  List<PasswordManagerAltDomain> sse_decode_list_password_manager_alt_domain(SseDeserializer deserializer);
 
   @protected
-  List<PasswordManagerMetaChange> sse_decode_list_password_manager_meta_change(
-      SseDeserializer deserializer);
+  List<PasswordManagerMetaChange> sse_decode_list_password_manager_meta_change(SseDeserializer deserializer);
 
   @protected
-  List<PhotoPosterLayer> sse_decode_list_photo_poster_layer(
-      SseDeserializer deserializer);
+  List<PhotoPosterLayer> sse_decode_list_photo_poster_layer(SseDeserializer deserializer);
 
   @protected
   List<PosterAsset> sse_decode_list_poster_asset(SseDeserializer deserializer);
@@ -4470,8 +3979,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
-  List<PrivateDeviceInfo> sse_decode_list_private_device_info(
-      SseDeserializer deserializer);
+  List<PrivateDeviceInfo> sse_decode_list_private_device_info(SseDeserializer deserializer);
 
   @protected
   List<(String, Asset)>
@@ -4484,121 +3992,92 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  List<(String, bool)> sse_decode_list_record_string_bool(
+  List<(String, bool)> sse_decode_list_record_string_bool(SseDeserializer deserializer);
+
+  @protected
+  List<(String, int)> sse_decode_list_record_string_casted_primitive_u_64(SseDeserializer deserializer);
+
+  @protected
+  List<(String, CloudAttachment)> sse_decode_list_record_string_cloud_attachment(SseDeserializer deserializer);
+
+  @protected
+  List<(String, CloudChat)> sse_decode_list_record_string_cloud_chat(SseDeserializer deserializer);
+
+  @protected
+  List<(String, CloudMessage)> sse_decode_list_record_string_cloud_message(SseDeserializer deserializer);
+
+  @protected
+  List<(String, FTParticipant)> sse_decode_list_record_string_ft_participant(SseDeserializer deserializer);
+
+  @protected
+  List<(String, GroupSummary)> sse_decode_list_record_string_group_summary(SseDeserializer deserializer);
+
+  @protected
+  List<(String, List<MessageEdit>)> sse_decode_list_record_string_list_message_edit(SseDeserializer deserializer);
+
+  @protected
+  List<(String, Uint8List)> sse_decode_list_record_string_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  List<(String, MessageEditRange)> sse_decode_list_record_string_message_edit_range(SseDeserializer deserializer);
+
+  @protected
+  List<(String, CloudAttachment?)> sse_decode_list_record_string_opt_box_autoadd_cloud_attachment(
       SseDeserializer deserializer);
 
   @protected
-  List<(String, int)> sse_decode_list_record_string_casted_primitive_u_64(
+  List<(String, CloudChat?)> sse_decode_list_record_string_opt_box_autoadd_cloud_chat(SseDeserializer deserializer);
+
+  @protected
+  List<(String, CloudMessage?)> sse_decode_list_record_string_opt_box_autoadd_cloud_message(
       SseDeserializer deserializer);
 
   @protected
-  List<(String, CloudAttachment)>
-      sse_decode_list_record_string_cloud_attachment(
-          SseDeserializer deserializer);
-
-  @protected
-  List<(String, CloudChat)> sse_decode_list_record_string_cloud_chat(
+  List<(String, PasswordManagerMetaDataCtx)> sse_decode_list_record_string_password_manager_meta_data_ctx(
       SseDeserializer deserializer);
 
   @protected
-  List<(String, CloudMessage)> sse_decode_list_record_string_cloud_message(
+  List<(String, (String?, Passkey))> sse_decode_list_record_string_record_opt_string_passkey(
       SseDeserializer deserializer);
 
   @protected
-  List<(String, FTParticipant)> sse_decode_list_record_string_ft_participant(
+  List<(String, (String?, PasswordManagerMeta))> sse_decode_list_record_string_record_opt_string_password_manager_meta(
       SseDeserializer deserializer);
 
   @protected
-  List<(String, GroupSummary)> sse_decode_list_record_string_group_summary(
+  List<(String, (String?, PasswordRawEntry))> sse_decode_list_record_string_record_opt_string_password_raw_entry(
       SseDeserializer deserializer);
 
   @protected
-  List<(String, List<MessageEdit>)>
-      sse_decode_list_record_string_list_message_edit(
-          SseDeserializer deserializer);
-
-  @protected
-  List<(String, Uint8List)> sse_decode_list_record_string_list_prim_u_8_strict(
+  List<(String, (String?, WifiPassword))> sse_decode_list_record_string_record_opt_string_wifi_password(
       SseDeserializer deserializer);
 
   @protected
-  List<(String, MessageEditRange)>
-      sse_decode_list_record_string_message_edit_range(
-          SseDeserializer deserializer);
-
-  @protected
-  List<(String, CloudAttachment?)>
-      sse_decode_list_record_string_opt_box_autoadd_cloud_attachment(
-          SseDeserializer deserializer);
-
-  @protected
-  List<(String, CloudChat?)>
-      sse_decode_list_record_string_opt_box_autoadd_cloud_chat(
-          SseDeserializer deserializer);
-
-  @protected
-  List<(String, CloudMessage?)>
-      sse_decode_list_record_string_opt_box_autoadd_cloud_message(
-          SseDeserializer deserializer);
-
-  @protected
-  List<(String, PasswordManagerMetaDataCtx)>
-      sse_decode_list_record_string_password_manager_meta_data_ctx(
-          SseDeserializer deserializer);
-
-  @protected
-  List<(String, (String?, Passkey))>
-      sse_decode_list_record_string_record_opt_string_passkey(
-          SseDeserializer deserializer);
-
-  @protected
-  List<(String, (String?, PasswordManagerMeta))>
-      sse_decode_list_record_string_record_opt_string_password_manager_meta(
-          SseDeserializer deserializer);
-
-  @protected
-  List<(String, (String?, PasswordRawEntry))>
-      sse_decode_list_record_string_record_opt_string_password_raw_entry(
-          SseDeserializer deserializer);
-
-  @protected
-  List<(String, (String?, WifiPassword))>
-      sse_decode_list_record_string_record_opt_string_wifi_password(
-          SseDeserializer deserializer);
-
-  @protected
-  List<(String, ShareInviteContentData)>
-      sse_decode_list_record_string_share_invite_content_data(
-          SseDeserializer deserializer);
-
-  @protected
-  List<(String, StatusKitPersonalConfig)>
-      sse_decode_list_record_string_status_kit_personal_config(
-          SseDeserializer deserializer);
-
-  @protected
-  List<(String, String)> sse_decode_list_record_string_string(
+  List<(String, ShareInviteContentData)> sse_decode_list_record_string_share_invite_content_data(
       SseDeserializer deserializer);
 
   @protected
-  List<(String, SyncStatus)> sse_decode_list_record_string_sync_status(
+  List<(String, StatusKitPersonalConfig)> sse_decode_list_record_string_status_kit_personal_config(
       SseDeserializer deserializer);
 
   @protected
-  List<(int, NSDictionaryTypedCoder)>
-      sse_decode_list_record_u_32_ns_dictionary_typed_coder(
-          SseDeserializer deserializer);
+  List<(String, String)> sse_decode_list_record_string_string(SseDeserializer deserializer);
 
   @protected
-  List<ReportMessage> sse_decode_list_report_message(
+  List<(String, SyncStatus)> sse_decode_list_record_string_sync_status(SseDeserializer deserializer);
+
+  @protected
+  List<(int, NSDictionaryTypedCoder)> sse_decode_list_record_u_32_ns_dictionary_typed_coder(
       SseDeserializer deserializer);
+
+  @protected
+  List<ReportMessage> sse_decode_list_report_message(SseDeserializer deserializer);
 
   @protected
   List<SharedAlbum> sse_decode_list_shared_album(SseDeserializer deserializer);
 
   @protected
-  List<TrustedPhoneNumber> sse_decode_list_trusted_phone_number(
-      SseDeserializer deserializer);
+  List<TrustedPhoneNumber> sse_decode_list_trusted_phone_number(SseDeserializer deserializer);
 
   @protected
   List<UIColor> sse_decode_list_ui_color(SseDeserializer deserializer);
@@ -4619,8 +4098,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   LPLinkMetadata sse_decode_lp_link_metadata(SseDeserializer deserializer);
 
   @protected
-  LPSpecializationMetadata sse_decode_lp_specialization_metadata(
-      SseDeserializer deserializer);
+  LPSpecializationMetadata sse_decode_lp_specialization_metadata(SseDeserializer deserializer);
 
   @protected
   MemojiData sse_decode_memoji_data(SseDeserializer deserializer);
@@ -4656,8 +4134,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MessageProto4 sse_decode_message_proto_4(SseDeserializer deserializer);
 
   @protected
-  MessageSummaryInfo sse_decode_message_summary_info(
-      SseDeserializer deserializer);
+  MessageSummaryInfo sse_decode_message_summary_info(SseDeserializer deserializer);
 
   @protected
   MessageTarget sse_decode_message_target(SseDeserializer deserializer);
@@ -4666,22 +4143,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MessageType sse_decode_message_type(SseDeserializer deserializer);
 
   @protected
-  MMCSAttachmentMeta sse_decode_mmcs_attachment_meta(
-      SseDeserializer deserializer);
+  MMCSAttachmentMeta sse_decode_mmcs_attachment_meta(SseDeserializer deserializer);
 
   @protected
   MMCSFile sse_decode_mmcs_file(SseDeserializer deserializer);
 
   @protected
-  MMCSTransferProgress sse_decode_mmcs_transfer_progress(
-      SseDeserializer deserializer);
+  MMCSTransferProgress sse_decode_mmcs_transfer_progress(SseDeserializer deserializer);
 
   @protected
   MonogramData sse_decode_monogram_data(SseDeserializer deserializer);
 
   @protected
-  MoveToRecycleBinMessage sse_decode_move_to_recycle_bin_message(
-      SseDeserializer deserializer);
+  MoveToRecycleBinMessage sse_decode_move_to_recycle_bin_message(SseDeserializer deserializer);
 
   @protected
   MyAsyncRuntime sse_decode_my_async_runtime(SseDeserializer deserializer);
@@ -4690,16 +4164,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   NormalMessage sse_decode_normal_message(SseDeserializer deserializer);
 
   @protected
-  NSAttributedString sse_decode_ns_attributed_string(
-      SseDeserializer deserializer);
+  NSAttributedString sse_decode_ns_attributed_string(SseDeserializer deserializer);
 
   @protected
-  NSDictionaryClass sse_decode_ns_dictionary_class(
-      SseDeserializer deserializer);
+  NSDictionaryClass sse_decode_ns_dictionary_class(SseDeserializer deserializer);
 
   @protected
-  NSDictionaryTypedCoder sse_decode_ns_dictionary_typed_coder(
-      SseDeserializer deserializer);
+  NSDictionaryTypedCoder sse_decode_ns_dictionary_typed_coder(SseDeserializer deserializer);
 
   @protected
   NSNumber sse_decode_ns_number(SseDeserializer deserializer);
@@ -4764,9 +4235,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  Asset?
-      sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
-          SseDeserializer deserializer);
+  Asset? sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
+      SseDeserializer deserializer);
 
   @protected
   ChannelInterestToken?
@@ -4789,9 +4259,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  Date?
-      sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
-          SseDeserializer deserializer);
+  Date? sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
+      SseDeserializer deserializer);
 
   @protected
   GZipWrapperChatProto?
@@ -4814,9 +4283,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  IdsUser?
-      sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          SseDeserializer deserializer);
+  IdsUser? sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+      SseDeserializer deserializer);
 
   @protected
   LocationReport?
@@ -4857,54 +4325,43 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Address? sse_decode_opt_box_autoadd_address(SseDeserializer deserializer);
 
   @protected
-  Attachment? sse_decode_opt_box_autoadd_attachment(
-      SseDeserializer deserializer);
+  Attachment? sse_decode_opt_box_autoadd_attachment(SseDeserializer deserializer);
 
   @protected
-  AttachmentMetaExtra? sse_decode_opt_box_autoadd_attachment_meta_extra(
-      SseDeserializer deserializer);
+  AttachmentMetaExtra? sse_decode_opt_box_autoadd_attachment_meta_extra(SseDeserializer deserializer);
 
   @protected
   Balloon? sse_decode_opt_box_autoadd_balloon(SseDeserializer deserializer);
 
   @protected
-  BalloonLayout? sse_decode_opt_box_autoadd_balloon_layout(
-      SseDeserializer deserializer);
+  BalloonLayout? sse_decode_opt_box_autoadd_balloon_layout(SseDeserializer deserializer);
 
   @protected
   bool? sse_decode_opt_box_autoadd_bool(SseDeserializer deserializer);
 
   @protected
-  CertifiedContext? sse_decode_opt_box_autoadd_certified_context(
-      SseDeserializer deserializer);
+  CertifiedContext? sse_decode_opt_box_autoadd_certified_context(SseDeserializer deserializer);
 
   @protected
-  CloudAttachment? sse_decode_opt_box_autoadd_cloud_attachment(
-      SseDeserializer deserializer);
+  CloudAttachment? sse_decode_opt_box_autoadd_cloud_attachment(SseDeserializer deserializer);
 
   @protected
-  CloudChat? sse_decode_opt_box_autoadd_cloud_chat(
-      SseDeserializer deserializer);
+  CloudChat? sse_decode_opt_box_autoadd_cloud_chat(SseDeserializer deserializer);
 
   @protected
-  CloudMessage? sse_decode_opt_box_autoadd_cloud_message(
-      SseDeserializer deserializer);
+  CloudMessage? sse_decode_opt_box_autoadd_cloud_message(SseDeserializer deserializer);
 
   @protected
-  CloudProp? sse_decode_opt_box_autoadd_cloud_prop(
-      SseDeserializer deserializer);
+  CloudProp? sse_decode_opt_box_autoadd_cloud_prop(SseDeserializer deserializer);
 
   @protected
-  ConversationData? sse_decode_opt_box_autoadd_conversation_data(
-      SseDeserializer deserializer);
+  ConversationData? sse_decode_opt_box_autoadd_conversation_data(SseDeserializer deserializer);
 
   @protected
-  DartBeaconShareInfo? sse_decode_opt_box_autoadd_dart_beacon_share_info(
-      SseDeserializer deserializer);
+  DartBeaconShareInfo? sse_decode_opt_box_autoadd_dart_beacon_share_info(SseDeserializer deserializer);
 
   @protected
-  ExtensionApp? sse_decode_opt_box_autoadd_extension_app(
-      SseDeserializer deserializer);
+  ExtensionApp? sse_decode_opt_box_autoadd_extension_app(SseDeserializer deserializer);
 
   @protected
   double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer);
@@ -4919,12 +4376,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
 
   @protected
-  IMessagePosterRecord? sse_decode_opt_box_autoadd_i_message_poster_record(
-      SseDeserializer deserializer);
+  IMessagePosterRecord? sse_decode_opt_box_autoadd_i_message_poster_record(SseDeserializer deserializer);
 
   @protected
-  IdmsRequestedSignIn? sse_decode_opt_box_autoadd_idms_requested_sign_in(
-      SseDeserializer deserializer);
+  IdmsRequestedSignIn? sse_decode_opt_box_autoadd_idms_requested_sign_in(SseDeserializer deserializer);
 
   @protected
   LinkMeta? sse_decode_opt_box_autoadd_link_meta(SseDeserializer deserializer);
@@ -4933,25 +4388,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Location? sse_decode_opt_box_autoadd_location(SseDeserializer deserializer);
 
   @protected
-  LoginState? sse_decode_opt_box_autoadd_login_state(
-      SseDeserializer deserializer);
+  LoginState? sse_decode_opt_box_autoadd_login_state(SseDeserializer deserializer);
 
   @protected
-  LPIconMetadata? sse_decode_opt_box_autoadd_lp_icon_metadata(
-      SseDeserializer deserializer);
+  LPIconMetadata? sse_decode_opt_box_autoadd_lp_icon_metadata(SseDeserializer deserializer);
 
   @protected
-  LPImageMetadata? sse_decode_opt_box_autoadd_lp_image_metadata(
-      SseDeserializer deserializer);
+  LPImageMetadata? sse_decode_opt_box_autoadd_lp_image_metadata(SseDeserializer deserializer);
 
   @protected
-  LPSpecializationMetadata?
-      sse_decode_opt_box_autoadd_lp_specialization_metadata(
-          SseDeserializer deserializer);
+  LPSpecializationMetadata? sse_decode_opt_box_autoadd_lp_specialization_metadata(SseDeserializer deserializer);
 
   @protected
-  MMCSAttachmentMeta? sse_decode_opt_box_autoadd_mmcs_attachment_meta(
-      SseDeserializer deserializer);
+  MMCSAttachmentMeta? sse_decode_opt_box_autoadd_mmcs_attachment_meta(SseDeserializer deserializer);
 
   @protected
   MMCSFile? sse_decode_opt_box_autoadd_mmcs_file(SseDeserializer deserializer);
@@ -4960,34 +4409,27 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   NSURL? sse_decode_opt_box_autoadd_nsurl(SseDeserializer deserializer);
 
   @protected
-  NumOrString? sse_decode_opt_box_autoadd_num_or_string(
+  NumOrString? sse_decode_opt_box_autoadd_num_or_string(SseDeserializer deserializer);
+
+  @protected
+  PartExtension? sse_decode_opt_box_autoadd_part_extension(SseDeserializer deserializer);
+
+  @protected
+  PasswordManagerMetaDataFormerlyShared? sse_decode_opt_box_autoadd_password_manager_meta_data_formerly_shared(
       SseDeserializer deserializer);
 
   @protected
-  PartExtension? sse_decode_opt_box_autoadd_part_extension(
+  PasswordManagerTotp? sse_decode_opt_box_autoadd_password_manager_totp(SseDeserializer deserializer);
+
+  @protected
+  PosterColor? sse_decode_opt_box_autoadd_poster_color(SseDeserializer deserializer);
+
+  @protected
+  PRPosterContentMaterialStyle? sse_decode_opt_box_autoadd_pr_poster_content_material_style(
       SseDeserializer deserializer);
 
   @protected
-  PasswordManagerMetaDataFormerlyShared?
-      sse_decode_opt_box_autoadd_password_manager_meta_data_formerly_shared(
-          SseDeserializer deserializer);
-
-  @protected
-  PasswordManagerTotp? sse_decode_opt_box_autoadd_password_manager_totp(
-      SseDeserializer deserializer);
-
-  @protected
-  PosterColor? sse_decode_opt_box_autoadd_poster_color(
-      SseDeserializer deserializer);
-
-  @protected
-  PRPosterContentMaterialStyle?
-      sse_decode_opt_box_autoadd_pr_poster_content_material_style(
-          SseDeserializer deserializer);
-
-  @protected
-  PushMessage? sse_decode_opt_box_autoadd_push_message(
-      SseDeserializer deserializer);
+  PushMessage? sse_decode_opt_box_autoadd_push_message(SseDeserializer deserializer);
 
   @protected
   (
@@ -4997,49 +4439,38 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
-  (String, String)? sse_decode_opt_box_autoadd_record_string_string(
+  (String, String)? sse_decode_opt_box_autoadd_record_string_string(SseDeserializer deserializer);
+
+  @protected
+  (String, BigInt)? sse_decode_opt_box_autoadd_record_string_u_64(SseDeserializer deserializer);
+
+  @protected
+  RichLinkImageAttachmentSubstitute? sse_decode_opt_box_autoadd_rich_link_image_attachment_substitute(
       SseDeserializer deserializer);
 
   @protected
-  (String, BigInt)? sse_decode_opt_box_autoadd_record_string_u_64(
-      SseDeserializer deserializer);
+  ScheduleMode? sse_decode_opt_box_autoadd_schedule_mode(SseDeserializer deserializer);
 
   @protected
-  RichLinkImageAttachmentSubstitute?
-      sse_decode_opt_box_autoadd_rich_link_image_attachment_substitute(
-          SseDeserializer deserializer);
+  ShareProfileMessage? sse_decode_opt_box_autoadd_share_profile_message(SseDeserializer deserializer);
 
   @protected
-  ScheduleMode? sse_decode_opt_box_autoadd_schedule_mode(
-      SseDeserializer deserializer);
+  SharedICloudServices? sse_decode_opt_box_autoadd_shared_i_cloud_services(SseDeserializer deserializer);
 
   @protected
-  ShareProfileMessage? sse_decode_opt_box_autoadd_share_profile_message(
-      SseDeserializer deserializer);
+  SharedPoster? sse_decode_opt_box_autoadd_shared_poster(SseDeserializer deserializer);
 
   @protected
-  SharedICloudServices? sse_decode_opt_box_autoadd_shared_i_cloud_services(
-      SseDeserializer deserializer);
+  SharedPushState? sse_decode_opt_box_autoadd_shared_push_state(SseDeserializer deserializer);
 
   @protected
-  SharedPoster? sse_decode_opt_box_autoadd_shared_poster(
-      SseDeserializer deserializer);
+  SupportAction? sse_decode_opt_box_autoadd_support_action(SseDeserializer deserializer);
 
   @protected
-  SharedPushState? sse_decode_opt_box_autoadd_shared_push_state(
-      SseDeserializer deserializer);
+  SupportAlert? sse_decode_opt_box_autoadd_support_alert(SseDeserializer deserializer);
 
   @protected
-  SupportAction? sse_decode_opt_box_autoadd_support_action(
-      SseDeserializer deserializer);
-
-  @protected
-  SupportAlert? sse_decode_opt_box_autoadd_support_alert(
-      SseDeserializer deserializer);
-
-  @protected
-  TypingApp? sse_decode_opt_box_autoadd_typing_app(
-      SseDeserializer deserializer);
+  TypingApp? sse_decode_opt_box_autoadd_typing_app(SseDeserializer deserializer);
 
   @protected
   int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
@@ -5048,20 +4479,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
-  UpdateAccountFinish? sse_decode_opt_box_autoadd_update_account_finish(
-      SseDeserializer deserializer);
+  UpdateAccountFinish? sse_decode_opt_box_autoadd_update_account_finish(SseDeserializer deserializer);
 
   @protected
-  List<IdsUser>?
-      sse_decode_opt_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          SseDeserializer deserializer);
+  List<IdsUser>? sse_decode_opt_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+      SseDeserializer deserializer);
 
   @protected
   List<String>? sse_decode_opt_list_String(SseDeserializer deserializer);
 
   @protected
-  List<MessageTarget>? sse_decode_opt_list_message_target(
-      SseDeserializer deserializer);
+  List<MessageTarget>? sse_decode_opt_list_message_target(SseDeserializer deserializer);
 
   @protected
   Uint8List? sse_decode_opt_list_prim_u_8_strict(SseDeserializer deserializer);
@@ -5073,63 +4501,50 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Passkey sse_decode_passkey(SseDeserializer deserializer);
 
   @protected
-  PasswordManagerAltDomain sse_decode_password_manager_alt_domain(
+  PasswordManagerAltDomain sse_decode_password_manager_alt_domain(SseDeserializer deserializer);
+
+  @protected
+  PasswordManagerMeta sse_decode_password_manager_meta(SseDeserializer deserializer);
+
+  @protected
+  PasswordManagerMetaChange sse_decode_password_manager_meta_change(SseDeserializer deserializer);
+
+  @protected
+  PasswordManagerMetaData sse_decode_password_manager_meta_data(SseDeserializer deserializer);
+
+  @protected
+  PasswordManagerMetaDataCtx sse_decode_password_manager_meta_data_ctx(SseDeserializer deserializer);
+
+  @protected
+  PasswordManagerMetaDataFormerlyShared sse_decode_password_manager_meta_data_formerly_shared(
       SseDeserializer deserializer);
 
   @protected
-  PasswordManagerMeta sse_decode_password_manager_meta(
-      SseDeserializer deserializer);
-
-  @protected
-  PasswordManagerMetaChange sse_decode_password_manager_meta_change(
-      SseDeserializer deserializer);
-
-  @protected
-  PasswordManagerMetaData sse_decode_password_manager_meta_data(
-      SseDeserializer deserializer);
-
-  @protected
-  PasswordManagerMetaDataCtx sse_decode_password_manager_meta_data_ctx(
-      SseDeserializer deserializer);
-
-  @protected
-  PasswordManagerMetaDataFormerlyShared
-      sse_decode_password_manager_meta_data_formerly_shared(
-          SseDeserializer deserializer);
-
-  @protected
-  PasswordManagerTotp sse_decode_password_manager_totp(
-      SseDeserializer deserializer);
+  PasswordManagerTotp sse_decode_password_manager_totp(SseDeserializer deserializer);
 
   @protected
   PasswordRawEntry sse_decode_password_raw_entry(SseDeserializer deserializer);
 
   @protected
-  PermanentDeleteMessage sse_decode_permanent_delete_message(
-      SseDeserializer deserializer);
+  PermanentDeleteMessage sse_decode_permanent_delete_message(SseDeserializer deserializer);
 
   @protected
-  PhotoPosterContents sse_decode_photo_poster_contents(
-      SseDeserializer deserializer);
+  PhotoPosterContents sse_decode_photo_poster_contents(SseDeserializer deserializer);
 
   @protected
-  PhotoPosterContentsFrame sse_decode_photo_poster_contents_frame(
-      SseDeserializer deserializer);
+  PhotoPosterContentsFrame sse_decode_photo_poster_contents_frame(SseDeserializer deserializer);
 
   @protected
-  PhotoPosterContentsSize sse_decode_photo_poster_contents_size(
-      SseDeserializer deserializer);
+  PhotoPosterContentsSize sse_decode_photo_poster_contents_size(SseDeserializer deserializer);
 
   @protected
   PhotoPosterLayer sse_decode_photo_poster_layer(SseDeserializer deserializer);
 
   @protected
-  PhotoPosterLayout sse_decode_photo_poster_layout(
-      SseDeserializer deserializer);
+  PhotoPosterLayout sse_decode_photo_poster_layout(SseDeserializer deserializer);
 
   @protected
-  PhotoPosterProperties sse_decode_photo_poster_properties(
-      SseDeserializer deserializer);
+  PhotoPosterProperties sse_decode_photo_poster_properties(SseDeserializer deserializer);
 
   @protected
   PollResult sse_decode_poll_result(SseDeserializer deserializer);
@@ -5150,22 +4565,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PRPosterColor sse_decode_pr_poster_color(SseDeserializer deserializer);
 
   @protected
-  PRPosterContentMaterialStyle sse_decode_pr_poster_content_material_style(
-      SseDeserializer deserializer);
+  PRPosterContentMaterialStyle sse_decode_pr_poster_content_material_style(SseDeserializer deserializer);
 
   @protected
-  PRPosterSystemTimeFontConfiguration
-      sse_decode_pr_poster_system_time_font_configuration(
-          SseDeserializer deserializer);
+  PRPosterSystemTimeFontConfiguration sse_decode_pr_poster_system_time_font_configuration(SseDeserializer deserializer);
 
   @protected
-  PRPosterTitleStyleConfiguration
-      sse_decode_pr_poster_title_style_configuration(
-          SseDeserializer deserializer);
+  PRPosterTitleStyleConfiguration sse_decode_pr_poster_title_style_configuration(SseDeserializer deserializer);
 
   @protected
-  PrivateDeviceInfo sse_decode_private_device_info(
-      SseDeserializer deserializer);
+  PrivateDeviceInfo sse_decode_private_device_info(SseDeserializer deserializer);
 
   @protected
   ProvisionedFlavor sse_decode_provisioned_flavor(SseDeserializer deserializer);
@@ -5223,43 +4632,30 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
-  (
-    Uint8List,
-    Map<String, CloudAttachment?>,
-    int
-  ) sse_decode_record_list_prim_u_8_strict_map_string_opt_box_autoadd_cloud_attachment_i_32(
-      SseDeserializer deserializer);
+  (Uint8List, Map<String, CloudAttachment?>, int)
+      sse_decode_record_list_prim_u_8_strict_map_string_opt_box_autoadd_cloud_attachment_i_32(
+          SseDeserializer deserializer);
 
   @protected
-  (
-    Uint8List,
-    Map<String, CloudChat?>,
-    int
-  ) sse_decode_record_list_prim_u_8_strict_map_string_opt_box_autoadd_cloud_chat_i_32(
-      SseDeserializer deserializer);
+  (Uint8List, Map<String, CloudChat?>, int)
+      sse_decode_record_list_prim_u_8_strict_map_string_opt_box_autoadd_cloud_chat_i_32(SseDeserializer deserializer);
 
   @protected
   (
     Uint8List,
     Map<String, CloudMessage?>,
     int
-  ) sse_decode_record_list_prim_u_8_strict_map_string_opt_box_autoadd_cloud_message_i_32(
+  ) sse_decode_record_list_prim_u_8_strict_map_string_opt_box_autoadd_cloud_message_i_32(SseDeserializer deserializer);
+
+  @protected
+  (Uint8List, Uint8List?) sse_decode_record_list_prim_u_8_strict_opt_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  (List<SharedAlbum>, List<String>) sse_decode_record_list_shared_album_list_string(SseDeserializer deserializer);
+
+  @protected
+  (List<TrustedPhoneNumber>, LoginState?) sse_decode_record_list_trusted_phone_number_opt_box_autoadd_login_state(
       SseDeserializer deserializer);
-
-  @protected
-  (Uint8List, Uint8List?)
-      sse_decode_record_list_prim_u_8_strict_opt_list_prim_u_8_strict(
-          SseDeserializer deserializer);
-
-  @protected
-  (List<SharedAlbum>, List<String>)
-      sse_decode_record_list_shared_album_list_string(
-          SseDeserializer deserializer);
-
-  @protected
-  (List<TrustedPhoneNumber>, LoginState?)
-      sse_decode_record_list_trusted_phone_number_opt_box_autoadd_login_state(
-          SseDeserializer deserializer);
 
   @protected
   (
@@ -5269,11 +4665,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
-  (
-    Map<String, SyncStatus>,
-    (String, BigInt)?
-  ) sse_decode_record_map_string_sync_status_opt_box_autoadd_record_string_u_64(
-      SseDeserializer deserializer);
+  (Map<String, SyncStatus>, (String, BigInt)?)
+      sse_decode_record_map_string_sync_status_opt_box_autoadd_record_string_u_64(SseDeserializer deserializer);
 
   @protected
   (
@@ -5283,21 +4676,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
-  (String?, Passkey) sse_decode_record_opt_string_passkey(
-      SseDeserializer deserializer);
+  (String?, Passkey) sse_decode_record_opt_string_passkey(SseDeserializer deserializer);
 
   @protected
-  (String?, PasswordManagerMeta)
-      sse_decode_record_opt_string_password_manager_meta(
-          SseDeserializer deserializer);
+  (String?, PasswordManagerMeta) sse_decode_record_opt_string_password_manager_meta(SseDeserializer deserializer);
 
   @protected
-  (String?, PasswordRawEntry) sse_decode_record_opt_string_password_raw_entry(
-      SseDeserializer deserializer);
+  (String?, PasswordRawEntry) sse_decode_record_opt_string_password_raw_entry(SseDeserializer deserializer);
 
   @protected
-  (String?, WifiPassword) sse_decode_record_opt_string_wifi_password(
-      SseDeserializer deserializer);
+  (String?, WifiPassword) sse_decode_record_opt_string_wifi_password(SseDeserializer deserializer);
 
   @protected
   (
@@ -5307,11 +4695,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
-  (
-    String,
-    Asset
-  ) sse_decode_record_string_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_asset(
-      SseDeserializer deserializer);
+  (String, Asset)
+      sse_decode_record_string_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_asset(
+          SseDeserializer deserializer);
 
   @protected
   (
@@ -5324,121 +4710,88 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   (String, bool) sse_decode_record_string_bool(SseDeserializer deserializer);
 
   @protected
-  (String, int) sse_decode_record_string_casted_primitive_u_64(
-      SseDeserializer deserializer);
+  (String, int) sse_decode_record_string_casted_primitive_u_64(SseDeserializer deserializer);
 
   @protected
-  (String, CloudAttachment) sse_decode_record_string_cloud_attachment(
-      SseDeserializer deserializer);
+  (String, CloudAttachment) sse_decode_record_string_cloud_attachment(SseDeserializer deserializer);
 
   @protected
-  (String, CloudChat) sse_decode_record_string_cloud_chat(
-      SseDeserializer deserializer);
+  (String, CloudChat) sse_decode_record_string_cloud_chat(SseDeserializer deserializer);
 
   @protected
-  (String, CloudMessage) sse_decode_record_string_cloud_message(
-      SseDeserializer deserializer);
+  (String, CloudMessage) sse_decode_record_string_cloud_message(SseDeserializer deserializer);
 
   @protected
-  (String, FTParticipant) sse_decode_record_string_ft_participant(
-      SseDeserializer deserializer);
+  (String, FTParticipant) sse_decode_record_string_ft_participant(SseDeserializer deserializer);
 
   @protected
-  (String, GroupSummary) sse_decode_record_string_group_summary(
-      SseDeserializer deserializer);
+  (String, GroupSummary) sse_decode_record_string_group_summary(SseDeserializer deserializer);
 
   @protected
-  (String, List<MessageEdit>) sse_decode_record_string_list_message_edit(
-      SseDeserializer deserializer);
+  (String, List<MessageEdit>) sse_decode_record_string_list_message_edit(SseDeserializer deserializer);
 
   @protected
-  (String, Uint8List) sse_decode_record_string_list_prim_u_8_strict(
-      SseDeserializer deserializer);
+  (String, Uint8List) sse_decode_record_string_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
-  (
-    String,
-    Map<String, GroupSummary>,
-    Map<String, ShareInviteContentData>
-  ) sse_decode_record_string_map_string_group_summary_map_string_share_invite_content_data(
-      SseDeserializer deserializer);
-
-  @protected
-  (String, MessageEditRange) sse_decode_record_string_message_edit_range(
-      SseDeserializer deserializer);
-
-  @protected
-  (String, CloudAttachment?)
-      sse_decode_record_string_opt_box_autoadd_cloud_attachment(
+  (String, Map<String, GroupSummary>, Map<String, ShareInviteContentData>)
+      sse_decode_record_string_map_string_group_summary_map_string_share_invite_content_data(
           SseDeserializer deserializer);
 
   @protected
-  (String, CloudChat?) sse_decode_record_string_opt_box_autoadd_cloud_chat(
+  (String, MessageEditRange) sse_decode_record_string_message_edit_range(SseDeserializer deserializer);
+
+  @protected
+  (String, CloudAttachment?) sse_decode_record_string_opt_box_autoadd_cloud_attachment(SseDeserializer deserializer);
+
+  @protected
+  (String, CloudChat?) sse_decode_record_string_opt_box_autoadd_cloud_chat(SseDeserializer deserializer);
+
+  @protected
+  (String, CloudMessage?) sse_decode_record_string_opt_box_autoadd_cloud_message(SseDeserializer deserializer);
+
+  @protected
+  (String, PasswordManagerMetaDataCtx) sse_decode_record_string_password_manager_meta_data_ctx(
       SseDeserializer deserializer);
 
   @protected
-  (String, CloudMessage?)
-      sse_decode_record_string_opt_box_autoadd_cloud_message(
-          SseDeserializer deserializer);
+  (String, (String?, Passkey)) sse_decode_record_string_record_opt_string_passkey(SseDeserializer deserializer);
 
   @protected
-  (String, PasswordManagerMetaDataCtx)
-      sse_decode_record_string_password_manager_meta_data_ctx(
-          SseDeserializer deserializer);
-
-  @protected
-  (String, (String?, Passkey))
-      sse_decode_record_string_record_opt_string_passkey(
-          SseDeserializer deserializer);
-
-  @protected
-  (String, (String?, PasswordManagerMeta))
-      sse_decode_record_string_record_opt_string_password_manager_meta(
-          SseDeserializer deserializer);
-
-  @protected
-  (String, (String?, PasswordRawEntry))
-      sse_decode_record_string_record_opt_string_password_raw_entry(
-          SseDeserializer deserializer);
-
-  @protected
-  (String, (String?, WifiPassword))
-      sse_decode_record_string_record_opt_string_wifi_password(
-          SseDeserializer deserializer);
-
-  @protected
-  (String, ShareInviteContentData)
-      sse_decode_record_string_share_invite_content_data(
-          SseDeserializer deserializer);
-
-  @protected
-  (String, SharedPushState) sse_decode_record_string_shared_push_state(
+  (String, (String?, PasswordManagerMeta)) sse_decode_record_string_record_opt_string_password_manager_meta(
       SseDeserializer deserializer);
 
   @protected
-  (String, StatusKitPersonalConfig)
-      sse_decode_record_string_status_kit_personal_config(
-          SseDeserializer deserializer);
-
-  @protected
-  (String, String) sse_decode_record_string_string(
+  (String, (String?, PasswordRawEntry)) sse_decode_record_string_record_opt_string_password_raw_entry(
       SseDeserializer deserializer);
 
   @protected
-  (String, SyncStatus) sse_decode_record_string_sync_status(
+  (String, (String?, WifiPassword)) sse_decode_record_string_record_opt_string_wifi_password(
       SseDeserializer deserializer);
+
+  @protected
+  (String, ShareInviteContentData) sse_decode_record_string_share_invite_content_data(SseDeserializer deserializer);
+
+  @protected
+  (String, SharedPushState) sse_decode_record_string_shared_push_state(SseDeserializer deserializer);
+
+  @protected
+  (String, StatusKitPersonalConfig) sse_decode_record_string_status_kit_personal_config(SseDeserializer deserializer);
+
+  @protected
+  (String, String) sse_decode_record_string_string(SseDeserializer deserializer);
+
+  @protected
+  (String, SyncStatus) sse_decode_record_string_sync_status(SseDeserializer deserializer);
 
   @protected
   (String, BigInt) sse_decode_record_string_u_64(SseDeserializer deserializer);
 
   @protected
-  (String, UpdateAccountFinish) sse_decode_record_string_update_account_finish(
-      SseDeserializer deserializer);
+  (String, UpdateAccountFinish) sse_decode_record_string_update_account_finish(SseDeserializer deserializer);
 
   @protected
-  (int, NSDictionaryTypedCoder)
-      sse_decode_record_u_32_ns_dictionary_typed_coder(
-          SseDeserializer deserializer);
+  (int, NSDictionaryTypedCoder) sse_decode_record_u_32_ns_dictionary_typed_coder(SseDeserializer deserializer);
 
   @protected
   (int, BigInt) sse_decode_record_u_32_u_64(SseDeserializer deserializer);
@@ -5453,31 +4806,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ReportMessage sse_decode_report_message(SseDeserializer deserializer);
 
   @protected
-  RichLinkImageAttachmentSubstitute
-      sse_decode_rich_link_image_attachment_substitute(
-          SseDeserializer deserializer);
+  RichLinkImageAttachmentSubstitute sse_decode_rich_link_image_attachment_substitute(SseDeserializer deserializer);
 
   @protected
   ScheduleMode sse_decode_schedule_mode(SseDeserializer deserializer);
 
   @protected
-  SetTranscriptBackgroundMessage sse_decode_set_transcript_background_message(
-      SseDeserializer deserializer);
+  SetTranscriptBackgroundMessage sse_decode_set_transcript_background_message(SseDeserializer deserializer);
 
   @protected
-  ShareInviteContentData sse_decode_share_invite_content_data(
-      SseDeserializer deserializer);
+  ShareInviteContentData sse_decode_share_invite_content_data(SseDeserializer deserializer);
 
   @protected
-  ShareProfileMessage sse_decode_share_profile_message(
-      SseDeserializer deserializer);
+  ShareProfileMessage sse_decode_share_profile_message(SseDeserializer deserializer);
 
   @protected
   SharedAlbum sse_decode_shared_album(SseDeserializer deserializer);
 
   @protected
-  SharedICloudServices sse_decode_shared_i_cloud_services(
-      SseDeserializer deserializer);
+  SharedICloudServices sse_decode_shared_i_cloud_services(SseDeserializer deserializer);
 
   @protected
   SharedPoster sse_decode_shared_poster(SseDeserializer deserializer);
@@ -5486,22 +4833,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SharedPushState sse_decode_shared_push_state(SseDeserializer deserializer);
 
   @protected
-  SimplifiedIncomingCallPoster sse_decode_simplified_incoming_call_poster(
-      SseDeserializer deserializer);
+  SimplifiedIncomingCallPoster sse_decode_simplified_incoming_call_poster(SseDeserializer deserializer);
 
   @protected
   SimplifiedPoster sse_decode_simplified_poster(SseDeserializer deserializer);
 
   @protected
-  SimplifiedTranscriptPoster sse_decode_simplified_transcript_poster(
-      SseDeserializer deserializer);
+  SimplifiedTranscriptPoster sse_decode_simplified_transcript_poster(SseDeserializer deserializer);
 
   @protected
   StatusKitMessage sse_decode_status_kit_message(SseDeserializer deserializer);
 
   @protected
-  StatusKitPersonalConfig sse_decode_status_kit_personal_config(
-      SseDeserializer deserializer);
+  StatusKitPersonalConfig sse_decode_status_kit_personal_config(SseDeserializer deserializer);
 
   @protected
   SupportAction sse_decode_support_action(SseDeserializer deserializer);
@@ -5525,15 +4869,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TextFormat sse_decode_text_format(SseDeserializer deserializer);
 
   @protected
-  TranscriptDynamicUserData sse_decode_transcript_dynamic_user_data(
-      SseDeserializer deserializer);
+  TranscriptDynamicUserData sse_decode_transcript_dynamic_user_data(SseDeserializer deserializer);
 
   @protected
   TransferProgress sse_decode_transfer_progress(SseDeserializer deserializer);
 
   @protected
-  TrustedPhoneNumber sse_decode_trusted_phone_number(
-      SseDeserializer deserializer);
+  TrustedPhoneNumber sse_decode_trusted_phone_number(SseDeserializer deserializer);
 
   @protected
   TypingApp sse_decode_typing_app(SseDeserializer deserializer);
@@ -5557,20 +4899,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   UnsendMessage sse_decode_unsend_message(SseDeserializer deserializer);
 
   @protected
-  UpdateAccountFinish sse_decode_update_account_finish(
-      SseDeserializer deserializer);
+  UpdateAccountFinish sse_decode_update_account_finish(SseDeserializer deserializer);
 
   @protected
-  UpdateExtensionMessage sse_decode_update_extension_message(
-      SseDeserializer deserializer);
+  UpdateExtensionMessage sse_decode_update_extension_message(SseDeserializer deserializer);
 
   @protected
-  UpdateProfileMessage sse_decode_update_profile_message(
-      SseDeserializer deserializer);
+  UpdateProfileMessage sse_decode_update_profile_message(SseDeserializer deserializer);
 
   @protected
-  UpdateProfileSharingMessage sse_decode_update_profile_sharing_message(
-      SseDeserializer deserializer);
+  UpdateProfileSharingMessage sse_decode_update_profile_sharing_message(SseDeserializer deserializer);
 
   @protected
   BigInt sse_decode_usize(SseDeserializer deserializer);
@@ -5585,80 +4923,66 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   WifiPassword sse_decode_wifi_password(SseDeserializer deserializer);
 
   @protected
-  void sse_encode_AnyhowException(
-      AnyhowException self, SseSerializer serializer);
+  void sse_encode_AnyhowException(AnyhowException self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
-          ApsConnection self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
+      ApsConnection self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
-          ApsState self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
+      ApsState self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
-          ApsWatcher self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
+      ApsWatcher self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcAnisetteClientDefaultAnisetteProvider(
-          ArcAnisetteClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcAnisetteClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudKitClientDefaultAnisetteProvider(
-          ArcCloudKitClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcCloudKitClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudMessagesClientDefaultAnisetteProvider(
-          ArcCloudMessagesClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcCloudMessagesClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
-          ArcFtClient self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
+      ArcFtClient self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFindMyClientDefaultAnisetteProvider(
-          ArcFindMyClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcFindMyClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
-          ArcImClient self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
+      ArcImClient self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIdmsAuthListener(
-          ArcIdmsAuthListener self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIdmsAuthListener(
+      ArcIdmsAuthListener self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcKeychainClientDefaultAnisetteProvider(
-          ArcKeychainClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcKeychainClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexAppleAccountDefaultAnisetteProvider(
-          ArcMutexAppleAccountDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcMutexAppleAccountDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexOptionCircleClientSessionDefaultAnisetteProvider(
-          ArcMutexOptionCircleClientSessionDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcMutexOptionCircleClientSessionDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
@@ -5668,435 +4992,353 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcPasswordManagerDefaultAnisetteProvider(
-          ArcPasswordManagerDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcPasswordManagerDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcProfilesClientDefaultAnisetteProvider(
-          ArcProfilesClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcProfilesClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSenderPushMessage(
-          ArcSenderPushMessage self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSenderPushMessage(
+      ArcSenderPushMessage self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushState(
-          ArcSharedPushState self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushState(
+      ArcSharedPushState self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcStatusKitClientDefaultAnisetteProvider(
-          ArcStatusKitClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcStatusKitClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcTokenProviderDefaultAnisetteProvider(
-          ArcTokenProviderDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcTokenProviderDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
-          Asset self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
+      Asset self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerChannelInterestToken(
-          ChannelInterestToken self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerChannelInterestToken(
+      ChannelInterestToken self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCircleClientSessionDefaultAnisetteProvider(
-          CircleClientSessionDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          CircleClientSessionDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
-          ConversationLink self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
+      ConversationLink self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationParticipant(
-          ConversationParticipant self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationParticipant(
+      ConversationParticipant self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
-          Date self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
+      Date self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
-          EscrowData self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
+      EscrowData self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFindMyFriendsClientDefaultAnisetteProvider(
-          FindMyFriendsClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          FindMyFriendsClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFindMyPhoneClientDefaultAnisetteProvider(
-          FindMyPhoneClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          FindMyPhoneClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperAttachmentMeta(
-          GZipWrapperAttachmentMeta self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperAttachmentMeta(
+      GZipWrapperAttachmentMeta self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperChatProto(
-          GZipWrapperChatProto self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperChatProto(
+      GZipWrapperChatProto self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto(
-          GZipWrapperMessageProto self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto(
+      GZipWrapperMessageProto self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto2(
-          GZipWrapperMessageProto2 self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto2(
+      GZipWrapperMessageProto2 self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto3(
-          GZipWrapperMessageProto3 self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto3(
+      GZipWrapperMessageProto3 self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto4(
-          GZipWrapperMessageProto4 self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto4(
+      GZipWrapperMessageProto4 self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
-          IdsngmIdentity self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
+      IdsngmIdentity self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          IdsUser self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+      IdsUser self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
-          JoinedOsConfig self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
+      JoinedOsConfig self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
-          LocationReport self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
+      LocationReport self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
-          MessageFlags self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
+      MessageFlags self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPIconMetadata(
-          NsArrayLpIconMetadata self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPIconMetadata(
+      NsArrayLpIconMetadata self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPImageMetadata(
-          NsArrayLpImageMetadata self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPImageMetadata(
+      NsArrayLpImageMetadata self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
-          PushError self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
+      PushError self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessage(
-          ReceiverApsMessage self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessage(
+      ReceiverApsMessage self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
-          SavedHardwareState self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
+      SavedHardwareState self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
-          Sender self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
+      Sender self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
-          StCollapsedValue self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
+      StCollapsedValue self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSyncManagerDefaultAnisetteProviderMyFilePackager(
-          SyncManagerDefaultAnisetteProviderMyFilePackager self,
-          SseSerializer serializer);
+          SyncManagerDefaultAnisetteProviderMyFilePackager self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
-          SystemTime self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
+      SystemTime self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
-          VerifyBody self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
+      VerifyBody self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
-          ViableBottle self, SseSerializer serializer);
+  void sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
+      ViableBottle self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
-          ApsWatcher self, SseSerializer serializer);
+  void sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
+      ApsWatcher self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCircleClientSessionDefaultAnisetteProvider(
-          CircleClientSessionDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          CircleClientSessionDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFindMyFriendsClientDefaultAnisetteProvider(
-          FindMyFriendsClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          FindMyFriendsClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFindMyPhoneClientDefaultAnisetteProvider(
-          FindMyPhoneClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          FindMyPhoneClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
-          LocationReport self, SseSerializer serializer);
+  void sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
+      LocationReport self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessage(
-          ReceiverApsMessage self, SseSerializer serializer);
+  void sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessage(
+      ReceiverApsMessage self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
-          SavedHardwareState self, SseSerializer serializer);
+  void sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
+      SavedHardwareState self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
-          ViableBottle self, SseSerializer serializer);
+  void sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
+      ViableBottle self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
-          ApsConnection self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
+      ApsConnection self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcAnisetteClientDefaultAnisetteProvider(
-          ArcAnisetteClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcAnisetteClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudKitClientDefaultAnisetteProvider(
-          ArcCloudKitClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcCloudKitClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudMessagesClientDefaultAnisetteProvider(
-          ArcCloudMessagesClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcCloudMessagesClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
-          ArcFtClient self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
+      ArcFtClient self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFindMyClientDefaultAnisetteProvider(
-          ArcFindMyClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcFindMyClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
-          ArcImClient self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
+      ArcImClient self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIdmsAuthListener(
-          ArcIdmsAuthListener self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIdmsAuthListener(
+      ArcIdmsAuthListener self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcKeychainClientDefaultAnisetteProvider(
-          ArcKeychainClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcKeychainClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexAppleAccountDefaultAnisetteProvider(
-          ArcMutexAppleAccountDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcMutexAppleAccountDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexOptionCircleClientSessionDefaultAnisetteProvider(
-          ArcMutexOptionCircleClientSessionDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcMutexOptionCircleClientSessionDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexVecActiveCircleSession(
-          ArcMutexVecActiveCircleSession self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexVecActiveCircleSession(
+      ArcMutexVecActiveCircleSession self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcPasswordManagerDefaultAnisetteProvider(
-          ArcPasswordManagerDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcPasswordManagerDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcProfilesClientDefaultAnisetteProvider(
-          ArcProfilesClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcProfilesClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSenderPushMessage(
-          ArcSenderPushMessage self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSenderPushMessage(
+      ArcSenderPushMessage self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushState(
-          ArcSharedPushState self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushState(
+      ArcSharedPushState self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcStatusKitClientDefaultAnisetteProvider(
-          ArcStatusKitClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcStatusKitClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcTokenProviderDefaultAnisetteProvider(
-          ArcTokenProviderDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcTokenProviderDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
-          Date self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
+      Date self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
-          EscrowData self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
+      EscrowData self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperAttachmentMeta(
-          GZipWrapperAttachmentMeta self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperAttachmentMeta(
+      GZipWrapperAttachmentMeta self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperChatProto(
-          GZipWrapperChatProto self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperChatProto(
+      GZipWrapperChatProto self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto(
-          GZipWrapperMessageProto self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto(
+      GZipWrapperMessageProto self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto2(
-          GZipWrapperMessageProto2 self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto2(
+      GZipWrapperMessageProto2 self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto3(
-          GZipWrapperMessageProto3 self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto3(
+      GZipWrapperMessageProto3 self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto4(
-          GZipWrapperMessageProto4 self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto4(
+      GZipWrapperMessageProto4 self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
-          IdsngmIdentity self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
+      IdsngmIdentity self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          IdsUser self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+      IdsUser self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
-          JoinedOsConfig self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
+      JoinedOsConfig self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
-          LocationReport self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
+      LocationReport self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
-          MessageFlags self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
+      MessageFlags self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
-          SavedHardwareState self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
+      SavedHardwareState self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
-          Sender self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
+      Sender self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
-          StCollapsedValue self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
+      StCollapsedValue self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSyncManagerDefaultAnisetteProviderMyFilePackager(
-          SyncManagerDefaultAnisetteProviderMyFilePackager self,
-          SseSerializer serializer);
+          SyncManagerDefaultAnisetteProviderMyFilePackager self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
-          VerifyBody self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
+      VerifyBody self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
-          ViableBottle self, SseSerializer serializer);
+  void sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
+      ViableBottle self, SseSerializer serializer);
 
   @protected
   void sse_encode_CastedPrimitive_i_64(int self, SseSerializer serializer);
@@ -6115,83 +5357,66 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_DartOpaque(Object self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Map_String_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
-          Map<String, Asset> self, SseSerializer serializer);
+  void sse_encode_Map_String_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
+      Map<String, Asset> self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_Map_String_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
-          Map<String, StCollapsedValue> self, SseSerializer serializer);
+  void sse_encode_Map_String_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
+      Map<String, StCollapsedValue> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_Map_String_CastedPrimitive_u_64(
-      Map<String, int> self, SseSerializer serializer);
+  void sse_encode_Map_String_CastedPrimitive_u_64(Map<String, int> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_Map_String_String(
-      Map<String, String> self, SseSerializer serializer);
+  void sse_encode_Map_String_String(Map<String, String> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_Map_String_bool(
-      Map<String, bool> self, SseSerializer serializer);
+  void sse_encode_Map_String_bool(Map<String, bool> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_Map_String_cloud_attachment(
-      Map<String, CloudAttachment> self, SseSerializer serializer);
+  void sse_encode_Map_String_cloud_attachment(Map<String, CloudAttachment> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_Map_String_cloud_chat(
-      Map<String, CloudChat> self, SseSerializer serializer);
+  void sse_encode_Map_String_cloud_chat(Map<String, CloudChat> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_Map_String_cloud_message(
-      Map<String, CloudMessage> self, SseSerializer serializer);
+  void sse_encode_Map_String_cloud_message(Map<String, CloudMessage> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_Map_String_ft_participant(
-      Map<String, FTParticipant> self, SseSerializer serializer);
+  void sse_encode_Map_String_ft_participant(Map<String, FTParticipant> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_Map_String_group_summary(
-      Map<String, GroupSummary> self, SseSerializer serializer);
+  void sse_encode_Map_String_group_summary(Map<String, GroupSummary> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_Map_String_list_message_edit(
-      Map<String, List<MessageEdit>> self, SseSerializer serializer);
+  void sse_encode_Map_String_list_message_edit(Map<String, List<MessageEdit>> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_Map_String_list_prim_u_8_strict(
-      Map<String, Uint8List> self, SseSerializer serializer);
+  void sse_encode_Map_String_list_prim_u_8_strict(Map<String, Uint8List> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_Map_String_message_edit_range(
-      Map<String, MessageEditRange> self, SseSerializer serializer);
+  void sse_encode_Map_String_message_edit_range(Map<String, MessageEditRange> self, SseSerializer serializer);
 
   @protected
   void sse_encode_Map_String_opt_box_autoadd_cloud_attachment(
       Map<String, CloudAttachment?> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_Map_String_opt_box_autoadd_cloud_chat(
-      Map<String, CloudChat?> self, SseSerializer serializer);
+  void sse_encode_Map_String_opt_box_autoadd_cloud_chat(Map<String, CloudChat?> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_Map_String_opt_box_autoadd_cloud_message(
-      Map<String, CloudMessage?> self, SseSerializer serializer);
+  void sse_encode_Map_String_opt_box_autoadd_cloud_message(Map<String, CloudMessage?> self, SseSerializer serializer);
 
   @protected
   void sse_encode_Map_String_password_manager_meta_data_ctx(
       Map<String, PasswordManagerMetaDataCtx> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_Map_String_record_opt_string_passkey(
-      Map<String, (String?, Passkey)> self, SseSerializer serializer);
+  void sse_encode_Map_String_record_opt_string_passkey(Map<String, (String?, Passkey)> self, SseSerializer serializer);
 
   @protected
   void sse_encode_Map_String_record_opt_string_password_manager_meta(
-      Map<String, (String?, PasswordManagerMeta)> self,
-      SseSerializer serializer);
+      Map<String, (String?, PasswordManagerMeta)> self, SseSerializer serializer);
 
   @protected
   void sse_encode_Map_String_record_opt_string_password_raw_entry(
@@ -6210,278 +5435,224 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       Map<String, StatusKitPersonalConfig> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_Map_String_sync_status(
-      Map<String, SyncStatus> self, SseSerializer serializer);
+  void sse_encode_Map_String_sync_status(Map<String, SyncStatus> self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
-          ApsConnection self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
+      ApsConnection self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
-          ApsState self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
+      ApsState self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
-          ApsWatcher self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
+      ApsWatcher self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcAnisetteClientDefaultAnisetteProvider(
-          ArcAnisetteClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcAnisetteClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudKitClientDefaultAnisetteProvider(
-          ArcCloudKitClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcCloudKitClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudMessagesClientDefaultAnisetteProvider(
-          ArcCloudMessagesClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcCloudMessagesClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
-          ArcFtClient self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
+      ArcFtClient self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFindMyClientDefaultAnisetteProvider(
-          ArcFindMyClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFindMyClientDefaultAnisetteProvider(
+      ArcFindMyClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
-          ArcImClient self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
+      ArcImClient self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIdmsAuthListener(
-          ArcIdmsAuthListener self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIdmsAuthListener(
+      ArcIdmsAuthListener self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcKeychainClientDefaultAnisetteProvider(
-          ArcKeychainClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcKeychainClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexAppleAccountDefaultAnisetteProvider(
-          ArcMutexAppleAccountDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcMutexAppleAccountDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexOptionCircleClientSessionDefaultAnisetteProvider(
-          ArcMutexOptionCircleClientSessionDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcMutexOptionCircleClientSessionDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexVecActiveCircleSession(
-          ArcMutexVecActiveCircleSession self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexVecActiveCircleSession(
+      ArcMutexVecActiveCircleSession self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcPasswordManagerDefaultAnisetteProvider(
-          ArcPasswordManagerDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcPasswordManagerDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcProfilesClientDefaultAnisetteProvider(
-          ArcProfilesClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcProfilesClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSenderPushMessage(
-          ArcSenderPushMessage self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSenderPushMessage(
+      ArcSenderPushMessage self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushState(
-          ArcSharedPushState self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushState(
+      ArcSharedPushState self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcStatusKitClientDefaultAnisetteProvider(
-          ArcStatusKitClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcStatusKitClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcTokenProviderDefaultAnisetteProvider(
-          ArcTokenProviderDefaultAnisetteProvider self,
-          SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcTokenProviderDefaultAnisetteProvider(
+      ArcTokenProviderDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
-          Asset self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
+      Asset self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerChannelInterestToken(
-          ChannelInterestToken self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerChannelInterestToken(
+      ChannelInterestToken self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCircleClientSessionDefaultAnisetteProvider(
-          CircleClientSessionDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          CircleClientSessionDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
-          ConversationLink self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
+      ConversationLink self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationParticipant(
-          ConversationParticipant self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationParticipant(
+      ConversationParticipant self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
-          Date self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
+      Date self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
-          EscrowData self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
+      EscrowData self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFindMyFriendsClientDefaultAnisetteProvider(
-          FindMyFriendsClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          FindMyFriendsClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerFindMyPhoneClientDefaultAnisetteProvider(
-          FindMyPhoneClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          FindMyPhoneClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperAttachmentMeta(
-          GZipWrapperAttachmentMeta self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperAttachmentMeta(
+      GZipWrapperAttachmentMeta self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperChatProto(
-          GZipWrapperChatProto self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperChatProto(
+      GZipWrapperChatProto self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto(
-          GZipWrapperMessageProto self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto(
+      GZipWrapperMessageProto self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto2(
-          GZipWrapperMessageProto2 self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto2(
+      GZipWrapperMessageProto2 self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto3(
-          GZipWrapperMessageProto3 self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto3(
+      GZipWrapperMessageProto3 self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto4(
-          GZipWrapperMessageProto4 self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto4(
+      GZipWrapperMessageProto4 self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
-          IdsngmIdentity self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
+      IdsngmIdentity self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          IdsUser self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+      IdsUser self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
-          JoinedOsConfig self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
+      JoinedOsConfig self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
-          LocationReport self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
+      LocationReport self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
-          MessageFlags self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
+      MessageFlags self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPIconMetadata(
-          NsArrayLpIconMetadata self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPIconMetadata(
+      NsArrayLpIconMetadata self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPImageMetadata(
-          NsArrayLpImageMetadata self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPImageMetadata(
+      NsArrayLpImageMetadata self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
-          PushError self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
+      PushError self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessage(
-          ReceiverApsMessage self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessage(
+      ReceiverApsMessage self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
-          SavedHardwareState self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
+      SavedHardwareState self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
-          Sender self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
+      Sender self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
-          StCollapsedValue self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
+      StCollapsedValue self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSyncManagerDefaultAnisetteProviderMyFilePackager(
-          SyncManagerDefaultAnisetteProviderMyFilePackager self,
-          SseSerializer serializer);
+          SyncManagerDefaultAnisetteProviderMyFilePackager self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
-          SystemTime self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
+      SystemTime self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
-          VerifyBody self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
+      VerifyBody self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
-          ViableBottle self, SseSerializer serializer);
+  void sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
+      ViableBottle self, SseSerializer serializer);
 
   @protected
   void sse_encode_Set_ft_member(Set<FTMember> self, SseSerializer serializer);
@@ -6491,8 +5662,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       RustStreamSink<MMCSTransferProgress> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_StreamSink_transfer_progress_Sse(
-      RustStreamSink<TransferProgress> self, SseSerializer serializer);
+  void sse_encode_StreamSink_transfer_progress_Sse(RustStreamSink<TransferProgress> self, SseSerializer serializer);
 
   @protected
   void sse_encode_String(String self, SseSerializer serializer);
@@ -6513,16 +5683,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_attachment(Attachment self, SseSerializer serializer);
 
   @protected
-  void sse_encode_attachment_meta(
-      AttachmentMeta self, SseSerializer serializer);
+  void sse_encode_attachment_meta(AttachmentMeta self, SseSerializer serializer);
 
   @protected
-  void sse_encode_attachment_meta_extra(
-      AttachmentMetaExtra self, SseSerializer serializer);
+  void sse_encode_attachment_meta_extra(AttachmentMetaExtra self, SseSerializer serializer);
 
   @protected
-  void sse_encode_attachment_type(
-      AttachmentType self, SseSerializer serializer);
+  void sse_encode_attachment_type(AttachmentType self, SseSerializer serializer);
 
   @protected
   void sse_encode_balloon(Balloon self, SseSerializer serializer);
@@ -6531,61 +5698,51 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_balloon_layout(BalloonLayout self, SseSerializer serializer);
 
   @protected
-  void sse_encode_beacon_attributes(
-      BeaconAttributes self, SseSerializer serializer);
+  void sse_encode_beacon_attributes(BeaconAttributes self, SseSerializer serializer);
 
   @protected
-  void sse_encode_beacon_naming_record(
-      BeaconNamingRecord self, SseSerializer serializer);
+  void sse_encode_beacon_naming_record(BeaconNamingRecord self, SseSerializer serializer);
 
   @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
-          ApsState self, SseSerializer serializer);
+  void sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
+      ApsState self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudKitClientDefaultAnisetteProvider(
-          ArcCloudKitClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcCloudKitClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudMessagesClientDefaultAnisetteProvider(
-          ArcCloudMessagesClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcCloudMessagesClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFindMyClientDefaultAnisetteProvider(
-          ArcFindMyClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcFindMyClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcKeychainClientDefaultAnisetteProvider(
-          ArcKeychainClientDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcKeychainClientDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexAppleAccountDefaultAnisetteProvider(
-          ArcMutexAppleAccountDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcMutexAppleAccountDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcPasswordManagerDefaultAnisetteProvider(
-          ArcPasswordManagerDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          ArcPasswordManagerDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
-          Asset self, SseSerializer serializer);
+  void sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
+      Asset self, SseSerializer serializer);
 
   @protected
   void
@@ -6595,13 +5752,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void
       sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCircleClientSessionDefaultAnisetteProvider(
-          CircleClientSessionDefaultAnisetteProvider self,
-          SseSerializer serializer);
+          CircleClientSessionDefaultAnisetteProvider self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
-          ConversationLink self, SseSerializer serializer);
+  void sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
+      ConversationLink self, SseSerializer serializer);
 
   @protected
   void
@@ -6609,9 +5764,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           ConversationParticipant self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
-          Date self, SseSerializer serializer);
+  void sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
+      Date self, SseSerializer serializer);
 
   @protected
   void
@@ -6634,14 +5788,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           GZipWrapperMessageProto4 self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          IdsUser self, SseSerializer serializer);
+  void sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+      IdsUser self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
-          LocationReport self, SseSerializer serializer);
+  void sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
+      LocationReport self, SseSerializer serializer);
 
   @protected
   void
@@ -6654,9 +5806,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           NsArrayLpImageMetadata self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
-          PushError self, SseSerializer serializer);
+  void sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
+      PushError self, SseSerializer serializer);
 
   @protected
   void
@@ -6666,101 +5817,80 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void
       sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSyncManagerDefaultAnisetteProviderMyFilePackager(
-          SyncManagerDefaultAnisetteProviderMyFilePackager self,
-          SseSerializer serializer);
+          SyncManagerDefaultAnisetteProviderMyFilePackager self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
-          SystemTime self, SseSerializer serializer);
+  void sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
+      SystemTime self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_address(Address self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_attachment(
-      Attachment self, SseSerializer serializer);
+  void sse_encode_box_autoadd_attachment(Attachment self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_attachment_meta(
-      AttachmentMeta self, SseSerializer serializer);
+  void sse_encode_box_autoadd_attachment_meta(AttachmentMeta self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_attachment_meta_extra(
-      AttachmentMetaExtra self, SseSerializer serializer);
+  void sse_encode_box_autoadd_attachment_meta_extra(AttachmentMetaExtra self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_balloon(Balloon self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_balloon_layout(
-      BalloonLayout self, SseSerializer serializer);
+  void sse_encode_box_autoadd_balloon_layout(BalloonLayout self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_beacon_attributes(
-      BeaconAttributes self, SseSerializer serializer);
+  void sse_encode_box_autoadd_beacon_attributes(BeaconAttributes self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_beacon_naming_record(
-      BeaconNamingRecord self, SseSerializer serializer);
+  void sse_encode_box_autoadd_beacon_naming_record(BeaconNamingRecord self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_bool(bool self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_certified_context(
-      CertifiedContext self, SseSerializer serializer);
+  void sse_encode_box_autoadd_certified_context(CertifiedContext self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_change_participant_message(
-      ChangeParticipantMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_change_participant_message(ChangeParticipantMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_chat_proto(
-      ChatProto self, SseSerializer serializer);
+  void sse_encode_box_autoadd_chat_proto(ChatProto self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_cloud_attachment(
-      CloudAttachment self, SseSerializer serializer);
+  void sse_encode_box_autoadd_cloud_attachment(CloudAttachment self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_cloud_chat(
-      CloudChat self, SseSerializer serializer);
+  void sse_encode_box_autoadd_cloud_chat(CloudChat self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_cloud_message(
-      CloudMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_cloud_message(CloudMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_cloud_prop(
-      CloudProp self, SseSerializer serializer);
+  void sse_encode_box_autoadd_cloud_prop(CloudProp self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_conversation_data(
-      ConversationData self, SseSerializer serializer);
+  void sse_encode_box_autoadd_conversation_data(ConversationData self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_dart_beacon_share_info(
-      DartBeaconShareInfo self, SseSerializer serializer);
+  void sse_encode_box_autoadd_dart_beacon_share_info(DartBeaconShareInfo self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_edit_message(
-      EditMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_edit_message(EditMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_error_message(
-      ErrorMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_error_message(ErrorMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_extension_app(
-      ExtensionApp self, SseSerializer serializer);
+  void sse_encode_box_autoadd_extension_app(ExtensionApp self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_f_64(double self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_ft_message(
-      FTMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_ft_message(FTMessage self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_ft_mode(FTMode self, SseSerializer serializer);
@@ -6772,184 +5902,144 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_i_32(int self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_i_64(
-      PlatformInt64 self, SseSerializer serializer);
+  void sse_encode_box_autoadd_i_64(PlatformInt64 self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_i_message_nickname_record(
-      IMessageNicknameRecord self, SseSerializer serializer);
+  void sse_encode_box_autoadd_i_message_nickname_record(IMessageNicknameRecord self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_i_message_poster_record(
-      IMessagePosterRecord self, SseSerializer serializer);
+  void sse_encode_box_autoadd_i_message_poster_record(IMessagePosterRecord self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_icon_change_message(
-      IconChangeMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_icon_change_message(IconChangeMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_idms_circle_message(
-      IdmsCircleMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_idms_circle_message(IdmsCircleMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_idms_message(
-      IdmsMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_idms_message(IdmsMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_idms_requested_sign_in(
-      IdmsRequestedSignIn self, SseSerializer serializer);
+  void sse_encode_box_autoadd_idms_requested_sign_in(IdmsRequestedSignIn self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_let_me_in_request(
-      LetMeInRequest self, SseSerializer serializer);
+  void sse_encode_box_autoadd_let_me_in_request(LetMeInRequest self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_link_meta(
-      LinkMeta self, SseSerializer serializer);
+  void sse_encode_box_autoadd_link_meta(LinkMeta self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_location(Location self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_login_state(
-      LoginState self, SseSerializer serializer);
+  void sse_encode_box_autoadd_login_state(LoginState self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_lp_icon_metadata(
-      LPIconMetadata self, SseSerializer serializer);
+  void sse_encode_box_autoadd_lp_icon_metadata(LPIconMetadata self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_lp_image_metadata(
-      LPImageMetadata self, SseSerializer serializer);
+  void sse_encode_box_autoadd_lp_image_metadata(LPImageMetadata self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_lp_specialization_metadata(
-      LPSpecializationMetadata self, SseSerializer serializer);
+  void sse_encode_box_autoadd_lp_specialization_metadata(LPSpecializationMetadata self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_memoji_data(
-      MemojiData self, SseSerializer serializer);
+  void sse_encode_box_autoadd_memoji_data(MemojiData self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_message(Message self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_message_inst(
-      MessageInst self, SseSerializer serializer);
+  void sse_encode_box_autoadd_message_inst(MessageInst self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_message_parts(
-      MessageParts self, SseSerializer serializer);
+  void sse_encode_box_autoadd_message_parts(MessageParts self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_message_proto(
-      MessageProto self, SseSerializer serializer);
+  void sse_encode_box_autoadd_message_proto(MessageProto self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_message_proto_2(
-      MessageProto2 self, SseSerializer serializer);
+  void sse_encode_box_autoadd_message_proto_2(MessageProto2 self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_message_proto_3(
-      MessageProto3 self, SseSerializer serializer);
+  void sse_encode_box_autoadd_message_proto_3(MessageProto3 self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_message_proto_4(
-      MessageProto4 self, SseSerializer serializer);
+  void sse_encode_box_autoadd_message_proto_4(MessageProto4 self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_message_summary_info(
-      MessageSummaryInfo self, SseSerializer serializer);
+  void sse_encode_box_autoadd_message_summary_info(MessageSummaryInfo self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_mmcs_attachment_meta(
-      MMCSAttachmentMeta self, SseSerializer serializer);
+  void sse_encode_box_autoadd_mmcs_attachment_meta(MMCSAttachmentMeta self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_mmcs_file(
-      MMCSFile self, SseSerializer serializer);
+  void sse_encode_box_autoadd_mmcs_file(MMCSFile self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_monogram_data(
-      MonogramData self, SseSerializer serializer);
+  void sse_encode_box_autoadd_monogram_data(MonogramData self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_move_to_recycle_bin_message(
-      MoveToRecycleBinMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_move_to_recycle_bin_message(MoveToRecycleBinMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_normal_message(
-      NormalMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_normal_message(NormalMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_ns_attributed_string(
-      NSAttributedString self, SseSerializer serializer);
+  void sse_encode_box_autoadd_ns_attributed_string(NSAttributedString self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_ns_number(
-      NSNumber self, SseSerializer serializer);
+  void sse_encode_box_autoadd_ns_number(NSNumber self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_ns_string(
-      NSString self, SseSerializer serializer);
+  void sse_encode_box_autoadd_ns_string(NSString self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_nsurl(NSURL self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_num_or_string(
-      NumOrString self, SseSerializer serializer);
+  void sse_encode_box_autoadd_num_or_string(NumOrString self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_operated_chat(
-      OperatedChat self, SseSerializer serializer);
+  void sse_encode_box_autoadd_operated_chat(OperatedChat self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_part_extension(
-      PartExtension self, SseSerializer serializer);
+  void sse_encode_box_autoadd_part_extension(PartExtension self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_passkey(Passkey self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_password_manager_meta(
-      PasswordManagerMeta self, SseSerializer serializer);
+  void sse_encode_box_autoadd_password_manager_meta(PasswordManagerMeta self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_password_manager_meta_data(
-      PasswordManagerMetaData self, SseSerializer serializer);
+  void sse_encode_box_autoadd_password_manager_meta_data(PasswordManagerMetaData self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_password_manager_meta_data_formerly_shared(
       PasswordManagerMetaDataFormerlyShared self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_password_manager_totp(
-      PasswordManagerTotp self, SseSerializer serializer);
+  void sse_encode_box_autoadd_password_manager_totp(PasswordManagerTotp self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_password_raw_entry(
-      PasswordRawEntry self, SseSerializer serializer);
+  void sse_encode_box_autoadd_password_raw_entry(PasswordRawEntry self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_permanent_delete_message(
-      PermanentDeleteMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_permanent_delete_message(PermanentDeleteMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_poster_color(
-      PosterColor self, SseSerializer serializer);
+  void sse_encode_box_autoadd_poster_color(PosterColor self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_pr_poster_content_material_style(
       PRPosterContentMaterialStyle self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_push_message(
-      PushMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_push_message(PushMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_react_message(
-      ReactMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_react_message(ReactMessage self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_reaction(Reaction self, SseSerializer serializer);
@@ -6960,92 +6050,73 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           (SharedPushState, ApsWatcher) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_record_string_string(
-      (String, String) self, SseSerializer serializer);
+  void sse_encode_box_autoadd_record_string_string((String, String) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_record_string_u_64(
-      (String, BigInt) self, SseSerializer serializer);
+  void sse_encode_box_autoadd_record_string_u_64((String, BigInt) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_register_state(
-      RegisterState self, SseSerializer serializer);
+  void sse_encode_box_autoadd_register_state(RegisterState self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_rename_message(
-      RenameMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_rename_message(RenameMessage self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_rich_link_image_attachment_substitute(
       RichLinkImageAttachmentSubstitute self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_schedule_mode(
-      ScheduleMode self, SseSerializer serializer);
+  void sse_encode_box_autoadd_schedule_mode(ScheduleMode self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_set_transcript_background_message(
       SetTranscriptBackgroundMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_share_profile_message(
-      ShareProfileMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_share_profile_message(ShareProfileMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_shared_album(
-      SharedAlbum self, SseSerializer serializer);
+  void sse_encode_box_autoadd_shared_album(SharedAlbum self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_shared_i_cloud_services(
-      SharedICloudServices self, SseSerializer serializer);
+  void sse_encode_box_autoadd_shared_i_cloud_services(SharedICloudServices self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_shared_poster(
-      SharedPoster self, SseSerializer serializer);
+  void sse_encode_box_autoadd_shared_poster(SharedPoster self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_shared_push_state(
-      SharedPushState self, SseSerializer serializer);
+  void sse_encode_box_autoadd_shared_push_state(SharedPushState self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_simplified_incoming_call_poster(
       SimplifiedIncomingCallPoster self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_simplified_transcript_poster(
-      SimplifiedTranscriptPoster self, SseSerializer serializer);
+  void sse_encode_box_autoadd_simplified_transcript_poster(SimplifiedTranscriptPoster self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_status_kit_message(
-      StatusKitMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_status_kit_message(StatusKitMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_support_action(
-      SupportAction self, SseSerializer serializer);
+  void sse_encode_box_autoadd_support_action(SupportAction self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_support_alert(
-      SupportAlert self, SseSerializer serializer);
+  void sse_encode_box_autoadd_support_alert(SupportAlert self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_teardown_sign_in(
-      TeardownSignIn self, SseSerializer serializer);
+  void sse_encode_box_autoadd_teardown_sign_in(TeardownSignIn self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_text_flags(
-      TextFlags self, SseSerializer serializer);
+  void sse_encode_box_autoadd_text_flags(TextFlags self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_text_format(
-      TextFormat self, SseSerializer serializer);
+  void sse_encode_box_autoadd_text_format(TextFormat self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_transcript_dynamic_user_data(
-      TranscriptDynamicUserData self, SseSerializer serializer);
+  void sse_encode_box_autoadd_transcript_dynamic_user_data(TranscriptDynamicUserData self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_typing_app(
-      TypingApp self, SseSerializer serializer);
+  void sse_encode_box_autoadd_typing_app(TypingApp self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
@@ -7054,43 +6125,35 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_unsend_message(
-      UnsendMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_unsend_message(UnsendMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_update_account_finish(
-      UpdateAccountFinish self, SseSerializer serializer);
+  void sse_encode_box_autoadd_update_account_finish(UpdateAccountFinish self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_update_extension_message(
-      UpdateExtensionMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_update_extension_message(UpdateExtensionMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_update_profile_message(
-      UpdateProfileMessage self, SseSerializer serializer);
+  void sse_encode_box_autoadd_update_profile_message(UpdateProfileMessage self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_update_profile_sharing_message(
       UpdateProfileSharingMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_box_autoadd_wifi_password(
-      WifiPassword self, SseSerializer serializer);
+  void sse_encode_box_autoadd_wifi_password(WifiPassword self, SseSerializer serializer);
 
   @protected
-  void sse_encode_certified_context(
-      CertifiedContext self, SseSerializer serializer);
+  void sse_encode_certified_context(CertifiedContext self, SseSerializer serializer);
 
   @protected
-  void sse_encode_change_participant_message(
-      ChangeParticipantMessage self, SseSerializer serializer);
+  void sse_encode_change_participant_message(ChangeParticipantMessage self, SseSerializer serializer);
 
   @protected
   void sse_encode_chat_proto(ChatProto self, SseSerializer serializer);
 
   @protected
-  void sse_encode_cloud_attachment(
-      CloudAttachment self, SseSerializer serializer);
+  void sse_encode_cloud_attachment(CloudAttachment self, SseSerializer serializer);
 
   @protected
   void sse_encode_cloud_chat(CloudChat self, SseSerializer serializer);
@@ -7099,12 +6162,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_cloud_message(CloudMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_cloud_message_summary(
-      CloudMessageSummary self, SseSerializer serializer);
+  void sse_encode_cloud_message_summary(CloudMessageSummary self, SseSerializer serializer);
 
   @protected
-  void sse_encode_cloud_participant(
-      CloudParticipant self, SseSerializer serializer);
+  void sse_encode_cloud_participant(CloudParticipant self, SseSerializer serializer);
 
   @protected
   void sse_encode_cloud_prop(CloudProp self, SseSerializer serializer);
@@ -7113,15 +6174,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_cloud_prop_001(CloudProp001 self, SseSerializer serializer);
 
   @protected
-  void sse_encode_conversation_data(
-      ConversationData self, SseSerializer serializer);
+  void sse_encode_conversation_data(ConversationData self, SseSerializer serializer);
 
   @protected
   void sse_encode_dart_beacon(DartBeacon self, SseSerializer serializer);
 
   @protected
-  void sse_encode_dart_beacon_share_info(
-      DartBeaconShareInfo self, SseSerializer serializer);
+  void sse_encode_dart_beacon_share_info(DartBeaconShareInfo self, SseSerializer serializer);
 
   @protected
   void sse_encode_delete_target(DeleteTarget self, SseSerializer serializer);
@@ -7145,8 +6204,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_f_64(double self, SseSerializer serializer);
 
   @protected
-  void sse_encode_ffi_file_packager(
-      FFIFilePackager self, SseSerializer serializer);
+  void sse_encode_ffi_file_packager(FFIFilePackager self, SseSerializer serializer);
 
   @protected
   void sse_encode_follow(Follow self, SseSerializer serializer);
@@ -7173,8 +6231,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_group_summary(GroupSummary self, SseSerializer serializer);
 
   @protected
-  void sse_encode_group_summary_member(
-      GroupSummaryMember self, SseSerializer serializer);
+  void sse_encode_group_summary_member(GroupSummaryMember self, SseSerializer serializer);
 
   @protected
   void sse_encode_hw_extra(HwExtra self, SseSerializer serializer);
@@ -7186,145 +6243,115 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
 
   @protected
-  void sse_encode_i_message_name_record(
-      IMessageNameRecord self, SseSerializer serializer);
+  void sse_encode_i_message_name_record(IMessageNameRecord self, SseSerializer serializer);
 
   @protected
-  void sse_encode_i_message_nickname_record(
-      IMessageNicknameRecord self, SseSerializer serializer);
+  void sse_encode_i_message_nickname_record(IMessageNicknameRecord self, SseSerializer serializer);
 
   @protected
-  void sse_encode_i_message_poster_record(
-      IMessagePosterRecord self, SseSerializer serializer);
+  void sse_encode_i_message_poster_record(IMessagePosterRecord self, SseSerializer serializer);
 
   @protected
-  void sse_encode_icon_change_message(
-      IconChangeMessage self, SseSerializer serializer);
+  void sse_encode_icon_change_message(IconChangeMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_idms_circle_message(
-      IdmsCircleMessage self, SseSerializer serializer);
+  void sse_encode_idms_circle_message(IdmsCircleMessage self, SseSerializer serializer);
 
   @protected
   void sse_encode_idms_message(IdmsMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_idms_requested_sign_in(
-      IdmsRequestedSignIn self, SseSerializer serializer);
+  void sse_encode_idms_requested_sign_in(IdmsRequestedSignIn self, SseSerializer serializer);
 
   @protected
-  void sse_encode_indexed_message_part(
-      IndexedMessagePart self, SseSerializer serializer);
+  void sse_encode_indexed_message_part(IndexedMessagePart self, SseSerializer serializer);
 
   @protected
-  void sse_encode_let_me_in_request(
-      LetMeInRequest self, SseSerializer serializer);
+  void sse_encode_let_me_in_request(LetMeInRequest self, SseSerializer serializer);
 
   @protected
   void sse_encode_link_meta(LinkMeta self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          List<IdsUser> self, SseSerializer serializer);
+  void sse_encode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+      List<IdsUser> self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
-          List<StCollapsedValue> self, SseSerializer serializer);
+  void sse_encode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
+      List<StCollapsedValue> self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
-          List<ViableBottle> self, SseSerializer serializer);
+  void sse_encode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
+      List<ViableBottle> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_cloud_participant(
-      List<CloudParticipant> self, SseSerializer serializer);
+  void sse_encode_list_cloud_participant(List<CloudParticipant> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_dart_beacon(
-      List<DartBeacon> self, SseSerializer serializer);
+  void sse_encode_list_dart_beacon(List<DartBeacon> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_follow(List<Follow> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_found_device(
-      List<FoundDevice> self, SseSerializer serializer);
+  void sse_encode_list_found_device(List<FoundDevice> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_ft_member(List<FTMember> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_ft_session(
-      List<FTSession> self, SseSerializer serializer);
+  void sse_encode_list_ft_session(List<FTSession> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_group_summary_member(
-      List<GroupSummaryMember> self, SseSerializer serializer);
+  void sse_encode_list_group_summary_member(List<GroupSummaryMember> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_indexed_message_part(
-      List<IndexedMessagePart> self, SseSerializer serializer);
+  void sse_encode_list_indexed_message_part(List<IndexedMessagePart> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_list_prim_u_8_strict(
-      List<Uint8List> self, SseSerializer serializer);
+  void sse_encode_list_list_prim_u_8_strict(List<Uint8List> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_message_edit(
-      List<MessageEdit> self, SseSerializer serializer);
+  void sse_encode_list_message_edit(List<MessageEdit> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_message_target(
-      List<MessageTarget> self, SseSerializer serializer);
+  void sse_encode_list_message_target(List<MessageTarget> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_password_manager_alt_domain(
-      List<PasswordManagerAltDomain> self, SseSerializer serializer);
+  void sse_encode_list_password_manager_alt_domain(List<PasswordManagerAltDomain> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_password_manager_meta_change(
-      List<PasswordManagerMetaChange> self, SseSerializer serializer);
+  void sse_encode_list_password_manager_meta_change(List<PasswordManagerMetaChange> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_photo_poster_layer(
-      List<PhotoPosterLayer> self, SseSerializer serializer);
+  void sse_encode_list_photo_poster_layer(List<PhotoPosterLayer> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_poster_asset(
-      List<PosterAsset> self, SseSerializer serializer);
+  void sse_encode_list_poster_asset(List<PosterAsset> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_poster_color(
-      List<PosterColor> self, SseSerializer serializer);
+  void sse_encode_list_poster_color(List<PosterColor> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_prim_f_64_strict(
-      Float64List self, SseSerializer serializer);
+  void sse_encode_list_prim_f_64_strict(Float64List self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_prim_i_64_strict(
-      Int64List self, SseSerializer serializer);
+  void sse_encode_list_prim_i_64_strict(Int64List self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_prim_u_32_strict(
-      Uint32List self, SseSerializer serializer);
+  void sse_encode_list_prim_u_32_strict(Uint32List self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_prim_u_8_strict(
-      Uint8List self, SseSerializer serializer);
+  void sse_encode_list_prim_u_8_strict(Uint8List self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_private_device_info(
-      List<PrivateDeviceInfo> self, SseSerializer serializer);
+  void sse_encode_list_private_device_info(List<PrivateDeviceInfo> self, SseSerializer serializer);
 
   @protected
   void
@@ -7337,40 +6364,32 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           List<(String, StCollapsedValue)> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_record_string_bool(
-      List<(String, bool)> self, SseSerializer serializer);
+  void sse_encode_list_record_string_bool(List<(String, bool)> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_record_string_casted_primitive_u_64(
-      List<(String, int)> self, SseSerializer serializer);
+  void sse_encode_list_record_string_casted_primitive_u_64(List<(String, int)> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_record_string_cloud_attachment(
-      List<(String, CloudAttachment)> self, SseSerializer serializer);
+  void sse_encode_list_record_string_cloud_attachment(List<(String, CloudAttachment)> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_record_string_cloud_chat(
-      List<(String, CloudChat)> self, SseSerializer serializer);
+  void sse_encode_list_record_string_cloud_chat(List<(String, CloudChat)> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_record_string_cloud_message(
-      List<(String, CloudMessage)> self, SseSerializer serializer);
+  void sse_encode_list_record_string_cloud_message(List<(String, CloudMessage)> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_record_string_ft_participant(
-      List<(String, FTParticipant)> self, SseSerializer serializer);
+  void sse_encode_list_record_string_ft_participant(List<(String, FTParticipant)> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_record_string_group_summary(
-      List<(String, GroupSummary)> self, SseSerializer serializer);
+  void sse_encode_list_record_string_group_summary(List<(String, GroupSummary)> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_record_string_list_message_edit(
       List<(String, List<MessageEdit>)> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_record_string_list_prim_u_8_strict(
-      List<(String, Uint8List)> self, SseSerializer serializer);
+  void sse_encode_list_record_string_list_prim_u_8_strict(List<(String, Uint8List)> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_record_string_message_edit_range(
@@ -7390,8 +6409,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_list_record_string_password_manager_meta_data_ctx(
-      List<(String, PasswordManagerMetaDataCtx)> self,
-      SseSerializer serializer);
+      List<(String, PasswordManagerMetaDataCtx)> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_record_string_record_opt_string_passkey(
@@ -7399,13 +6417,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_list_record_string_record_opt_string_password_manager_meta(
-      List<(String, (String?, PasswordManagerMeta))> self,
-      SseSerializer serializer);
+      List<(String, (String?, PasswordManagerMeta))> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_record_string_record_opt_string_password_raw_entry(
-      List<(String, (String?, PasswordRawEntry))> self,
-      SseSerializer serializer);
+      List<(String, (String?, PasswordRawEntry))> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_record_string_record_opt_string_wifi_password(
@@ -7420,28 +6436,23 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       List<(String, StatusKitPersonalConfig)> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_record_string_string(
-      List<(String, String)> self, SseSerializer serializer);
+  void sse_encode_list_record_string_string(List<(String, String)> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_record_string_sync_status(
-      List<(String, SyncStatus)> self, SseSerializer serializer);
+  void sse_encode_list_record_string_sync_status(List<(String, SyncStatus)> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_record_u_32_ns_dictionary_typed_coder(
       List<(int, NSDictionaryTypedCoder)> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_report_message(
-      List<ReportMessage> self, SseSerializer serializer);
+  void sse_encode_list_report_message(List<ReportMessage> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_shared_album(
-      List<SharedAlbum> self, SseSerializer serializer);
+  void sse_encode_list_shared_album(List<SharedAlbum> self, SseSerializer serializer);
 
   @protected
-  void sse_encode_list_trusted_phone_number(
-      List<TrustedPhoneNumber> self, SseSerializer serializer);
+  void sse_encode_list_trusted_phone_number(List<TrustedPhoneNumber> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_ui_color(List<UIColor> self, SseSerializer serializer);
@@ -7453,20 +6464,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_login_state(LoginState self, SseSerializer serializer);
 
   @protected
-  void sse_encode_lp_icon_metadata(
-      LPIconMetadata self, SseSerializer serializer);
+  void sse_encode_lp_icon_metadata(LPIconMetadata self, SseSerializer serializer);
 
   @protected
-  void sse_encode_lp_image_metadata(
-      LPImageMetadata self, SseSerializer serializer);
+  void sse_encode_lp_image_metadata(LPImageMetadata self, SseSerializer serializer);
 
   @protected
-  void sse_encode_lp_link_metadata(
-      LPLinkMetadata self, SseSerializer serializer);
+  void sse_encode_lp_link_metadata(LPLinkMetadata self, SseSerializer serializer);
 
   @protected
-  void sse_encode_lp_specialization_metadata(
-      LPSpecializationMetadata self, SseSerializer serializer);
+  void sse_encode_lp_specialization_metadata(LPSpecializationMetadata self, SseSerializer serializer);
 
   @protected
   void sse_encode_memoji_data(MemojiData self, SseSerializer serializer);
@@ -7478,8 +6485,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_message_edit(MessageEdit self, SseSerializer serializer);
 
   @protected
-  void sse_encode_message_edit_range(
-      MessageEditRange self, SseSerializer serializer);
+  void sse_encode_message_edit_range(MessageEditRange self, SseSerializer serializer);
 
   @protected
   void sse_encode_message_inst(MessageInst self, SseSerializer serializer);
@@ -7503,8 +6509,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_message_proto_4(MessageProto4 self, SseSerializer serializer);
 
   @protected
-  void sse_encode_message_summary_info(
-      MessageSummaryInfo self, SseSerializer serializer);
+  void sse_encode_message_summary_info(MessageSummaryInfo self, SseSerializer serializer);
 
   @protected
   void sse_encode_message_target(MessageTarget self, SseSerializer serializer);
@@ -7513,41 +6518,34 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_message_type(MessageType self, SseSerializer serializer);
 
   @protected
-  void sse_encode_mmcs_attachment_meta(
-      MMCSAttachmentMeta self, SseSerializer serializer);
+  void sse_encode_mmcs_attachment_meta(MMCSAttachmentMeta self, SseSerializer serializer);
 
   @protected
   void sse_encode_mmcs_file(MMCSFile self, SseSerializer serializer);
 
   @protected
-  void sse_encode_mmcs_transfer_progress(
-      MMCSTransferProgress self, SseSerializer serializer);
+  void sse_encode_mmcs_transfer_progress(MMCSTransferProgress self, SseSerializer serializer);
 
   @protected
   void sse_encode_monogram_data(MonogramData self, SseSerializer serializer);
 
   @protected
-  void sse_encode_move_to_recycle_bin_message(
-      MoveToRecycleBinMessage self, SseSerializer serializer);
+  void sse_encode_move_to_recycle_bin_message(MoveToRecycleBinMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_my_async_runtime(
-      MyAsyncRuntime self, SseSerializer serializer);
+  void sse_encode_my_async_runtime(MyAsyncRuntime self, SseSerializer serializer);
 
   @protected
   void sse_encode_normal_message(NormalMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_ns_attributed_string(
-      NSAttributedString self, SseSerializer serializer);
+  void sse_encode_ns_attributed_string(NSAttributedString self, SseSerializer serializer);
 
   @protected
-  void sse_encode_ns_dictionary_class(
-      NSDictionaryClass self, SseSerializer serializer);
+  void sse_encode_ns_dictionary_class(NSDictionaryClass self, SseSerializer serializer);
 
   @protected
-  void sse_encode_ns_dictionary_typed_coder(
-      NSDictionaryTypedCoder self, SseSerializer serializer);
+  void sse_encode_ns_dictionary_typed_coder(NSDictionaryTypedCoder self, SseSerializer serializer);
 
   @protected
   void sse_encode_ns_number(NSNumber self, SseSerializer serializer);
@@ -7571,57 +6569,48 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_CastedPrimitive_u_64(int? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_CastedPrimitive_usize(
-      int? self, SseSerializer serializer);
+  void sse_encode_opt_CastedPrimitive_usize(int? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
-          ApsState? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
+      ApsState? self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudKitClientDefaultAnisetteProvider(
-          ArcCloudKitClientDefaultAnisetteProvider? self,
-          SseSerializer serializer);
+          ArcCloudKitClientDefaultAnisetteProvider? self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudMessagesClientDefaultAnisetteProvider(
-          ArcCloudMessagesClientDefaultAnisetteProvider? self,
-          SseSerializer serializer);
+          ArcCloudMessagesClientDefaultAnisetteProvider? self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFindMyClientDefaultAnisetteProvider(
-          ArcFindMyClientDefaultAnisetteProvider? self,
-          SseSerializer serializer);
+          ArcFindMyClientDefaultAnisetteProvider? self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcKeychainClientDefaultAnisetteProvider(
-          ArcKeychainClientDefaultAnisetteProvider? self,
-          SseSerializer serializer);
+          ArcKeychainClientDefaultAnisetteProvider? self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcMutexAppleAccountDefaultAnisetteProvider(
-          ArcMutexAppleAccountDefaultAnisetteProvider? self,
-          SseSerializer serializer);
+          ArcMutexAppleAccountDefaultAnisetteProvider? self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcPasswordManagerDefaultAnisetteProvider(
-          ArcPasswordManagerDefaultAnisetteProvider? self,
-          SseSerializer serializer);
+          ArcPasswordManagerDefaultAnisetteProvider? self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
-          Asset? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
+      Asset? self, SseSerializer serializer);
 
   @protected
   void
@@ -7631,8 +6620,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void
       sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCircleClientSessionDefaultAnisetteProvider(
-          CircleClientSessionDefaultAnisetteProvider? self,
-          SseSerializer serializer);
+          CircleClientSessionDefaultAnisetteProvider? self, SseSerializer serializer);
 
   @protected
   void
@@ -7645,9 +6633,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           ConversationParticipant? self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
-          Date? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
+      Date? self, SseSerializer serializer);
 
   @protected
   void
@@ -7670,9 +6657,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           GZipWrapperMessageProto4? self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          IdsUser? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+      IdsUser? self, SseSerializer serializer);
 
   @protected
   void
@@ -7690,9 +6676,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           NsArrayLpImageMetadata? self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
-          PushError? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
+      PushError? self, SseSerializer serializer);
 
   @protected
   void
@@ -7702,153 +6687,121 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void
       sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSyncManagerDefaultAnisetteProviderMyFilePackager(
-          SyncManagerDefaultAnisetteProviderMyFilePackager? self,
-          SseSerializer serializer);
+          SyncManagerDefaultAnisetteProviderMyFilePackager? self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
-          SystemTime? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
+      SystemTime? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_address(
-      Address? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_address(Address? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_attachment(
-      Attachment? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_attachment(Attachment? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_attachment_meta_extra(
-      AttachmentMetaExtra? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_attachment_meta_extra(AttachmentMetaExtra? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_balloon(
-      Balloon? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_balloon(Balloon? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_balloon_layout(
-      BalloonLayout? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_balloon_layout(BalloonLayout? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_bool(bool? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_certified_context(
-      CertifiedContext? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_certified_context(CertifiedContext? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_cloud_attachment(
-      CloudAttachment? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_cloud_attachment(CloudAttachment? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_cloud_chat(
-      CloudChat? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_cloud_chat(CloudChat? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_cloud_message(
-      CloudMessage? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_cloud_message(CloudMessage? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_cloud_prop(
-      CloudProp? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_cloud_prop(CloudProp? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_conversation_data(
-      ConversationData? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_conversation_data(ConversationData? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_dart_beacon_share_info(
-      DartBeaconShareInfo? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_dart_beacon_share_info(DartBeaconShareInfo? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_extension_app(
-      ExtensionApp? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_extension_app(ExtensionApp? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_ft_mode(
-      FTMode? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_ft_mode(FTMode? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_i_32(int? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_i_64(
-      PlatformInt64? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_i_64(PlatformInt64? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_i_message_poster_record(
-      IMessagePosterRecord? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_i_message_poster_record(IMessagePosterRecord? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_idms_requested_sign_in(
-      IdmsRequestedSignIn? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_idms_requested_sign_in(IdmsRequestedSignIn? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_link_meta(
-      LinkMeta? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_link_meta(LinkMeta? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_location(
-      Location? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_location(Location? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_login_state(
-      LoginState? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_login_state(LoginState? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_lp_icon_metadata(
-      LPIconMetadata? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_lp_icon_metadata(LPIconMetadata? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_lp_image_metadata(
-      LPImageMetadata? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_lp_image_metadata(LPImageMetadata? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_lp_specialization_metadata(
-      LPSpecializationMetadata? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_lp_specialization_metadata(LPSpecializationMetadata? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_mmcs_attachment_meta(
-      MMCSAttachmentMeta? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_mmcs_attachment_meta(MMCSAttachmentMeta? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_mmcs_file(
-      MMCSFile? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_mmcs_file(MMCSFile? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_nsurl(NSURL? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_num_or_string(
-      NumOrString? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_num_or_string(NumOrString? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_part_extension(
-      PartExtension? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_part_extension(PartExtension? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_password_manager_meta_data_formerly_shared(
       PasswordManagerMetaDataFormerlyShared? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_password_manager_totp(
-      PasswordManagerTotp? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_password_manager_totp(PasswordManagerTotp? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_poster_color(
-      PosterColor? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_poster_color(PosterColor? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_pr_poster_content_material_style(
       PRPosterContentMaterialStyle? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_push_message(
-      PushMessage? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_push_message(PushMessage? self, SseSerializer serializer);
 
   @protected
   void
@@ -7856,48 +6809,38 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           (SharedPushState, ApsWatcher)? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_record_string_string(
-      (String, String)? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_record_string_string((String, String)? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_record_string_u_64(
-      (String, BigInt)? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_record_string_u_64((String, BigInt)? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_rich_link_image_attachment_substitute(
       RichLinkImageAttachmentSubstitute? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_schedule_mode(
-      ScheduleMode? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_schedule_mode(ScheduleMode? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_share_profile_message(
-      ShareProfileMessage? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_share_profile_message(ShareProfileMessage? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_shared_i_cloud_services(
-      SharedICloudServices? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_shared_i_cloud_services(SharedICloudServices? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_shared_poster(
-      SharedPoster? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_shared_poster(SharedPoster? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_shared_push_state(
-      SharedPushState? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_shared_push_state(SharedPushState? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_support_action(
-      SupportAction? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_support_action(SupportAction? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_support_alert(
-      SupportAlert? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_support_alert(SupportAlert? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_typing_app(
-      TypingApp? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_typing_app(TypingApp? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
@@ -7906,24 +6849,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_update_account_finish(
-      UpdateAccountFinish? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_update_account_finish(UpdateAccountFinish? self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_opt_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
-          List<IdsUser>? self, SseSerializer serializer);
+  void sse_encode_opt_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+      List<IdsUser>? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_list_String(List<String>? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_list_message_target(
-      List<MessageTarget>? self, SseSerializer serializer);
+  void sse_encode_opt_list_message_target(List<MessageTarget>? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_list_prim_u_8_strict(
-      Uint8List? self, SseSerializer serializer);
+  void sse_encode_opt_list_prim_u_8_strict(Uint8List? self, SseSerializer serializer);
 
   @protected
   void sse_encode_part_extension(PartExtension self, SseSerializer serializer);
@@ -7932,64 +6871,50 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_passkey(Passkey self, SseSerializer serializer);
 
   @protected
-  void sse_encode_password_manager_alt_domain(
-      PasswordManagerAltDomain self, SseSerializer serializer);
+  void sse_encode_password_manager_alt_domain(PasswordManagerAltDomain self, SseSerializer serializer);
 
   @protected
-  void sse_encode_password_manager_meta(
-      PasswordManagerMeta self, SseSerializer serializer);
+  void sse_encode_password_manager_meta(PasswordManagerMeta self, SseSerializer serializer);
 
   @protected
-  void sse_encode_password_manager_meta_change(
-      PasswordManagerMetaChange self, SseSerializer serializer);
+  void sse_encode_password_manager_meta_change(PasswordManagerMetaChange self, SseSerializer serializer);
 
   @protected
-  void sse_encode_password_manager_meta_data(
-      PasswordManagerMetaData self, SseSerializer serializer);
+  void sse_encode_password_manager_meta_data(PasswordManagerMetaData self, SseSerializer serializer);
 
   @protected
-  void sse_encode_password_manager_meta_data_ctx(
-      PasswordManagerMetaDataCtx self, SseSerializer serializer);
+  void sse_encode_password_manager_meta_data_ctx(PasswordManagerMetaDataCtx self, SseSerializer serializer);
 
   @protected
   void sse_encode_password_manager_meta_data_formerly_shared(
       PasswordManagerMetaDataFormerlyShared self, SseSerializer serializer);
 
   @protected
-  void sse_encode_password_manager_totp(
-      PasswordManagerTotp self, SseSerializer serializer);
+  void sse_encode_password_manager_totp(PasswordManagerTotp self, SseSerializer serializer);
 
   @protected
-  void sse_encode_password_raw_entry(
-      PasswordRawEntry self, SseSerializer serializer);
+  void sse_encode_password_raw_entry(PasswordRawEntry self, SseSerializer serializer);
 
   @protected
-  void sse_encode_permanent_delete_message(
-      PermanentDeleteMessage self, SseSerializer serializer);
+  void sse_encode_permanent_delete_message(PermanentDeleteMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_photo_poster_contents(
-      PhotoPosterContents self, SseSerializer serializer);
+  void sse_encode_photo_poster_contents(PhotoPosterContents self, SseSerializer serializer);
 
   @protected
-  void sse_encode_photo_poster_contents_frame(
-      PhotoPosterContentsFrame self, SseSerializer serializer);
+  void sse_encode_photo_poster_contents_frame(PhotoPosterContentsFrame self, SseSerializer serializer);
 
   @protected
-  void sse_encode_photo_poster_contents_size(
-      PhotoPosterContentsSize self, SseSerializer serializer);
+  void sse_encode_photo_poster_contents_size(PhotoPosterContentsSize self, SseSerializer serializer);
 
   @protected
-  void sse_encode_photo_poster_layer(
-      PhotoPosterLayer self, SseSerializer serializer);
+  void sse_encode_photo_poster_layer(PhotoPosterLayer self, SseSerializer serializer);
 
   @protected
-  void sse_encode_photo_poster_layout(
-      PhotoPosterLayout self, SseSerializer serializer);
+  void sse_encode_photo_poster_layout(PhotoPosterLayout self, SseSerializer serializer);
 
   @protected
-  void sse_encode_photo_poster_properties(
-      PhotoPosterProperties self, SseSerializer serializer);
+  void sse_encode_photo_poster_properties(PhotoPosterProperties self, SseSerializer serializer);
 
   @protected
   void sse_encode_poll_result(PollResult self, SseSerializer serializer);
@@ -8010,24 +6935,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_pr_poster_color(PRPosterColor self, SseSerializer serializer);
 
   @protected
-  void sse_encode_pr_poster_content_material_style(
-      PRPosterContentMaterialStyle self, SseSerializer serializer);
+  void sse_encode_pr_poster_content_material_style(PRPosterContentMaterialStyle self, SseSerializer serializer);
 
   @protected
   void sse_encode_pr_poster_system_time_font_configuration(
       PRPosterSystemTimeFontConfiguration self, SseSerializer serializer);
 
   @protected
-  void sse_encode_pr_poster_title_style_configuration(
-      PRPosterTitleStyleConfiguration self, SseSerializer serializer);
+  void sse_encode_pr_poster_title_style_configuration(PRPosterTitleStyleConfiguration self, SseSerializer serializer);
 
   @protected
-  void sse_encode_private_device_info(
-      PrivateDeviceInfo self, SseSerializer serializer);
+  void sse_encode_private_device_info(PrivateDeviceInfo self, SseSerializer serializer);
 
   @protected
-  void sse_encode_provisioned_flavor(
-      ProvisionedFlavor self, SseSerializer serializer);
+  void sse_encode_provisioned_flavor(ProvisionedFlavor self, SseSerializer serializer);
 
   @protected
   void sse_encode_push_message(PushMessage self, SseSerializer serializer);
@@ -8039,8 +6960,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_react_message(ReactMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_react_message_type(
-      ReactMessageType self, SseSerializer serializer);
+  void sse_encode_react_message_type(ReactMessageType self, SseSerializer serializer);
 
   @protected
   void sse_encode_reaction(Reaction self, SseSerializer serializer);
@@ -8053,8 +6973,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void
       sse_encode_record_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_arc_mutex_apple_account_default_anisette_provider_login_state(
-          (ArcMutexAppleAccountDefaultAnisetteProvider, LoginState) self,
-          SseSerializer serializer);
+          (ArcMutexAppleAccountDefaultAnisetteProvider, LoginState) self, SseSerializer serializer);
 
   @protected
   void
@@ -8064,36 +6983,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void
       sse_encode_record_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_circle_client_session_default_anisette_provider_login_state_opt_string(
-          (
-            CircleClientSessionDefaultAnisetteProvider,
-            LoginState,
-            String?
-          ) self,
-          SseSerializer serializer);
+          (CircleClientSessionDefaultAnisetteProvider, LoginState, String?) self, SseSerializer serializer);
 
   @protected
   void
       sse_encode_record_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_sender_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_arc_sender_push_message_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_aps_watcher(
-          (Sender, ArcSenderPushMessage, ApsWatcher) self,
-          SseSerializer serializer);
+          (Sender, ArcSenderPushMessage, ApsWatcher) self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_record_list_prim_u_8_strict_map_string_opt_box_autoadd_cloud_attachment_i_32(
-          (Uint8List, Map<String, CloudAttachment?>, int) self,
-          SseSerializer serializer);
+  void sse_encode_record_list_prim_u_8_strict_map_string_opt_box_autoadd_cloud_attachment_i_32(
+      (Uint8List, Map<String, CloudAttachment?>, int) self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_record_list_prim_u_8_strict_map_string_opt_box_autoadd_cloud_chat_i_32(
-          (Uint8List, Map<String, CloudChat?>, int) self,
-          SseSerializer serializer);
+  void sse_encode_record_list_prim_u_8_strict_map_string_opt_box_autoadd_cloud_chat_i_32(
+      (Uint8List, Map<String, CloudChat?>, int) self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_record_list_prim_u_8_strict_map_string_opt_box_autoadd_cloud_message_i_32(
-          (Uint8List, Map<String, CloudMessage?>, int) self,
-          SseSerializer serializer);
+  void sse_encode_record_list_prim_u_8_strict_map_string_opt_box_autoadd_cloud_message_i_32(
+      (Uint8List, Map<String, CloudMessage?>, int) self, SseSerializer serializer);
 
   @protected
   void sse_encode_record_list_prim_u_8_strict_opt_list_prim_u_8_strict(
@@ -8113,10 +7020,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           (LoginState, IdsUser?) self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_record_map_string_sync_status_opt_box_autoadd_record_string_u_64(
-          (Map<String, SyncStatus>, (String, BigInt)?) self,
-          SseSerializer serializer);
+  void sse_encode_record_map_string_sync_status_opt_box_autoadd_record_string_u_64(
+      (Map<String, SyncStatus>, (String, BigInt)?) self, SseSerializer serializer);
 
   @protected
   void
@@ -8124,20 +7029,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           (List<IdsUser>?, SupportAlert?) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_opt_string_passkey(
-      (String?, Passkey) self, SseSerializer serializer);
+  void sse_encode_record_opt_string_passkey((String?, Passkey) self, SseSerializer serializer);
 
   @protected
   void sse_encode_record_opt_string_password_manager_meta(
       (String?, PasswordManagerMeta) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_opt_string_password_raw_entry(
-      (String?, PasswordRawEntry) self, SseSerializer serializer);
+  void sse_encode_record_opt_string_password_raw_entry((String?, PasswordRawEntry) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_opt_string_wifi_password(
-      (String?, WifiPassword) self, SseSerializer serializer);
+  void sse_encode_record_opt_string_wifi_password((String?, WifiPassword) self, SseSerializer serializer);
 
   @protected
   void
@@ -8145,9 +7047,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           (SharedPushState, ApsWatcher) self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_record_string_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_asset(
-          (String, Asset) self, SseSerializer serializer);
+  void sse_encode_record_string_auto_owned_rust_opaque_flutter_rust_bridgefor_generated_rust_auto_opaque_inner_asset(
+      (String, Asset) self, SseSerializer serializer);
 
   @protected
   void
@@ -8155,74 +7056,55 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
           (String, StCollapsedValue) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_string_bool(
-      (String, bool) self, SseSerializer serializer);
+  void sse_encode_record_string_bool((String, bool) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_string_casted_primitive_u_64(
-      (String, int) self, SseSerializer serializer);
+  void sse_encode_record_string_casted_primitive_u_64((String, int) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_string_cloud_attachment(
-      (String, CloudAttachment) self, SseSerializer serializer);
+  void sse_encode_record_string_cloud_attachment((String, CloudAttachment) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_string_cloud_chat(
-      (String, CloudChat) self, SseSerializer serializer);
+  void sse_encode_record_string_cloud_chat((String, CloudChat) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_string_cloud_message(
-      (String, CloudMessage) self, SseSerializer serializer);
+  void sse_encode_record_string_cloud_message((String, CloudMessage) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_string_ft_participant(
-      (String, FTParticipant) self, SseSerializer serializer);
+  void sse_encode_record_string_ft_participant((String, FTParticipant) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_string_group_summary(
-      (String, GroupSummary) self, SseSerializer serializer);
+  void sse_encode_record_string_group_summary((String, GroupSummary) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_string_list_message_edit(
-      (String, List<MessageEdit>) self, SseSerializer serializer);
+  void sse_encode_record_string_list_message_edit((String, List<MessageEdit>) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_string_list_prim_u_8_strict(
-      (String, Uint8List) self, SseSerializer serializer);
+  void sse_encode_record_string_list_prim_u_8_strict((String, Uint8List) self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_record_string_map_string_group_summary_map_string_share_invite_content_data(
-          (
-            String,
-            Map<String, GroupSummary>,
-            Map<String, ShareInviteContentData>
-          ) self,
-          SseSerializer serializer);
+  void sse_encode_record_string_map_string_group_summary_map_string_share_invite_content_data(
+      (String, Map<String, GroupSummary>, Map<String, ShareInviteContentData>) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_string_message_edit_range(
-      (String, MessageEditRange) self, SseSerializer serializer);
+  void sse_encode_record_string_message_edit_range((String, MessageEditRange) self, SseSerializer serializer);
 
   @protected
   void sse_encode_record_string_opt_box_autoadd_cloud_attachment(
       (String, CloudAttachment?) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_string_opt_box_autoadd_cloud_chat(
-      (String, CloudChat?) self, SseSerializer serializer);
+  void sse_encode_record_string_opt_box_autoadd_cloud_chat((String, CloudChat?) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_string_opt_box_autoadd_cloud_message(
-      (String, CloudMessage?) self, SseSerializer serializer);
+  void sse_encode_record_string_opt_box_autoadd_cloud_message((String, CloudMessage?) self, SseSerializer serializer);
 
   @protected
   void sse_encode_record_string_password_manager_meta_data_ctx(
       (String, PasswordManagerMetaDataCtx) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_string_record_opt_string_passkey(
-      (String, (String?, Passkey)) self, SseSerializer serializer);
+  void sse_encode_record_string_record_opt_string_passkey((String, (String?, Passkey)) self, SseSerializer serializer);
 
   @protected
   void sse_encode_record_string_record_opt_string_password_manager_meta(
@@ -8241,36 +7123,29 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       (String, ShareInviteContentData) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_string_shared_push_state(
-      (String, SharedPushState) self, SseSerializer serializer);
+  void sse_encode_record_string_shared_push_state((String, SharedPushState) self, SseSerializer serializer);
 
   @protected
   void sse_encode_record_string_status_kit_personal_config(
       (String, StatusKitPersonalConfig) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_string_string(
-      (String, String) self, SseSerializer serializer);
+  void sse_encode_record_string_string((String, String) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_string_sync_status(
-      (String, SyncStatus) self, SseSerializer serializer);
+  void sse_encode_record_string_sync_status((String, SyncStatus) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_string_u_64(
-      (String, BigInt) self, SseSerializer serializer);
+  void sse_encode_record_string_u_64((String, BigInt) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_string_update_account_finish(
-      (String, UpdateAccountFinish) self, SseSerializer serializer);
+  void sse_encode_record_string_update_account_finish((String, UpdateAccountFinish) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_u_32_ns_dictionary_typed_coder(
-      (int, NSDictionaryTypedCoder) self, SseSerializer serializer);
+  void sse_encode_record_u_32_ns_dictionary_typed_coder((int, NSDictionaryTypedCoder) self, SseSerializer serializer);
 
   @protected
-  void sse_encode_record_u_32_u_64(
-      (int, BigInt) self, SseSerializer serializer);
+  void sse_encode_record_u_32_u_64((int, BigInt) self, SseSerializer serializer);
 
   @protected
   void sse_encode_register_state(RegisterState self, SseSerializer serializer);
@@ -8289,50 +7164,40 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_schedule_mode(ScheduleMode self, SseSerializer serializer);
 
   @protected
-  void sse_encode_set_transcript_background_message(
-      SetTranscriptBackgroundMessage self, SseSerializer serializer);
+  void sse_encode_set_transcript_background_message(SetTranscriptBackgroundMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_share_invite_content_data(
-      ShareInviteContentData self, SseSerializer serializer);
+  void sse_encode_share_invite_content_data(ShareInviteContentData self, SseSerializer serializer);
 
   @protected
-  void sse_encode_share_profile_message(
-      ShareProfileMessage self, SseSerializer serializer);
+  void sse_encode_share_profile_message(ShareProfileMessage self, SseSerializer serializer);
 
   @protected
   void sse_encode_shared_album(SharedAlbum self, SseSerializer serializer);
 
   @protected
-  void sse_encode_shared_i_cloud_services(
-      SharedICloudServices self, SseSerializer serializer);
+  void sse_encode_shared_i_cloud_services(SharedICloudServices self, SseSerializer serializer);
 
   @protected
   void sse_encode_shared_poster(SharedPoster self, SseSerializer serializer);
 
   @protected
-  void sse_encode_shared_push_state(
-      SharedPushState self, SseSerializer serializer);
+  void sse_encode_shared_push_state(SharedPushState self, SseSerializer serializer);
 
   @protected
-  void sse_encode_simplified_incoming_call_poster(
-      SimplifiedIncomingCallPoster self, SseSerializer serializer);
+  void sse_encode_simplified_incoming_call_poster(SimplifiedIncomingCallPoster self, SseSerializer serializer);
 
   @protected
-  void sse_encode_simplified_poster(
-      SimplifiedPoster self, SseSerializer serializer);
+  void sse_encode_simplified_poster(SimplifiedPoster self, SseSerializer serializer);
 
   @protected
-  void sse_encode_simplified_transcript_poster(
-      SimplifiedTranscriptPoster self, SseSerializer serializer);
+  void sse_encode_simplified_transcript_poster(SimplifiedTranscriptPoster self, SseSerializer serializer);
 
   @protected
-  void sse_encode_status_kit_message(
-      StatusKitMessage self, SseSerializer serializer);
+  void sse_encode_status_kit_message(StatusKitMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_status_kit_personal_config(
-      StatusKitPersonalConfig self, SseSerializer serializer);
+  void sse_encode_status_kit_personal_config(StatusKitPersonalConfig self, SseSerializer serializer);
 
   @protected
   void sse_encode_support_action(SupportAction self, SseSerializer serializer);
@@ -8344,8 +7209,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_sync_status(SyncStatus self, SseSerializer serializer);
 
   @protected
-  void sse_encode_teardown_sign_in(
-      TeardownSignIn self, SseSerializer serializer);
+  void sse_encode_teardown_sign_in(TeardownSignIn self, SseSerializer serializer);
 
   @protected
   void sse_encode_text_effect(TextEffect self, SseSerializer serializer);
@@ -8357,16 +7221,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_text_format(TextFormat self, SseSerializer serializer);
 
   @protected
-  void sse_encode_transcript_dynamic_user_data(
-      TranscriptDynamicUserData self, SseSerializer serializer);
+  void sse_encode_transcript_dynamic_user_data(TranscriptDynamicUserData self, SseSerializer serializer);
 
   @protected
-  void sse_encode_transfer_progress(
-      TransferProgress self, SseSerializer serializer);
+  void sse_encode_transfer_progress(TransferProgress self, SseSerializer serializer);
 
   @protected
-  void sse_encode_trusted_phone_number(
-      TrustedPhoneNumber self, SseSerializer serializer);
+  void sse_encode_trusted_phone_number(TrustedPhoneNumber self, SseSerializer serializer);
 
   @protected
   void sse_encode_typing_app(TypingApp self, SseSerializer serializer);
@@ -8390,31 +7251,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_unsend_message(UnsendMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_update_account_finish(
-      UpdateAccountFinish self, SseSerializer serializer);
+  void sse_encode_update_account_finish(UpdateAccountFinish self, SseSerializer serializer);
 
   @protected
-  void sse_encode_update_extension_message(
-      UpdateExtensionMessage self, SseSerializer serializer);
+  void sse_encode_update_extension_message(UpdateExtensionMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_update_profile_message(
-      UpdateProfileMessage self, SseSerializer serializer);
+  void sse_encode_update_profile_message(UpdateProfileMessage self, SseSerializer serializer);
 
   @protected
-  void sse_encode_update_profile_sharing_message(
-      UpdateProfileSharingMessage self, SseSerializer serializer);
+  void sse_encode_update_profile_sharing_message(UpdateProfileSharingMessage self, SseSerializer serializer);
 
   @protected
   void sse_encode_usize(BigInt self, SseSerializer serializer);
 
   @protected
-  void sse_encode_wallpaper_metadata(
-      WallpaperMetadata self, SseSerializer serializer);
+  void sse_encode_wallpaper_metadata(WallpaperMetadata self, SseSerializer serializer);
 
   @protected
-  void sse_encode_watch_background(
-      WatchBackground self, SseSerializer serializer);
+  void sse_encode_watch_background(WatchBackground self, SseSerializer serializer);
 
   @protected
   void sse_encode_wifi_password(WifiPassword self, SseSerializer serializer);
@@ -8423,19 +7278,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 // Section: wire_class
 
 class RustLibWire implements BaseWire {
-  factory RustLibWire.fromExternalLibrary(ExternalLibrary lib) =>
-      RustLibWire(lib.ffiDynamicLibrary);
+  factory RustLibWire.fromExternalLibrary(ExternalLibrary lib) => RustLibWire(lib.ffiDynamicLibrary);
 
   /// Holds the symbol lookup function.
-  final ffi.Pointer<T> Function<T extends ffi.NativeType>(String symbolName)
-      _lookup;
+  final ffi.Pointer<T> Function<T extends ffi.NativeType>(String symbolName) _lookup;
 
   /// The symbols are looked up in [dynamicLibrary].
-  RustLibWire(ffi.DynamicLibrary dynamicLibrary)
-      : _lookup = dynamicLibrary.lookup;
+  RustLibWire(ffi.DynamicLibrary dynamicLibrary) : _lookup = dynamicLibrary.lookup;
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
@@ -8450,8 +7301,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnectionPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnection(
@@ -8466,8 +7316,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSConnectionPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
@@ -8482,8 +7331,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSStatePtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSState(
@@ -8498,8 +7346,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSStatePtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
@@ -8514,8 +7361,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcherPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAPSWatcher(
@@ -8626,8 +7472,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcCloudMessagesClientDefaultAnisetteProviderPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
@@ -8642,8 +7487,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClientPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
@@ -8690,8 +7534,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFindMyClientDefaultAnisetteProviderPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
@@ -8706,8 +7549,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClientPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcIMClient(
@@ -8978,8 +7820,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSenderPushMessagePtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushState(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushState(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushState(
@@ -8994,8 +7835,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushStatePtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushState(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushState(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcSharedPushState(
@@ -9074,8 +7914,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcTokenProviderDefaultAnisetteProviderPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
@@ -9090,8 +7929,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAssetPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerAsset(
@@ -9170,8 +8008,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCircleClientSessionDefaultAnisetteProviderPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
@@ -9186,8 +8023,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLinkPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
@@ -9234,8 +8070,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationParticipantPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
@@ -9250,8 +8085,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDatePtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDate(
@@ -9266,8 +8100,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerDatePtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
@@ -9282,8 +8115,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowDataPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEscrowData(
@@ -9554,8 +8386,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerGZipWrapperMessageProto4Ptr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
@@ -9570,8 +8401,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentityPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentity(
@@ -9586,8 +8416,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSNGMIdentityPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
@@ -9602,8 +8431,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUserPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUser(
@@ -9618,8 +8446,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerIDSUserPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
@@ -9634,8 +8461,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfigPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfig(
@@ -9650,8 +8476,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerJoinedOSConfigPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
@@ -9666,8 +8491,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReportPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReport(
@@ -9682,8 +8506,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLocationReportPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
@@ -9698,8 +8521,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlagsPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerMessageFlags(
@@ -9778,8 +8600,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerNSArrayLPImageMetadataPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
@@ -9794,8 +8615,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushErrorPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushError(
@@ -9810,8 +8630,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerPushErrorPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessage(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessage(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessage(
@@ -9826,8 +8645,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessagePtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessage(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessage(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessage(
@@ -9842,8 +8660,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerReceiverAPSMessagePtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
@@ -9858,8 +8675,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareStatePtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareState(
@@ -9874,8 +8690,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSavedHardwareStatePtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
@@ -9890,8 +8705,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSender(
@@ -9906,8 +8720,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSenderPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
@@ -9922,8 +8735,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValuePtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerStCollapsedValue(
@@ -9970,8 +8782,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSyncManagerDefaultAnisetteProviderMyFilePackagerPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
@@ -9986,8 +8797,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTimePtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTime(
@@ -10002,8 +8812,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerSystemTimePtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
@@ -10018,8 +8827,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBodyPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBody(
@@ -10034,8 +8842,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerVerifyBodyPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
+  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
@@ -10050,8 +8857,7 @@ class RustLibWire implements BaseWire {
       _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottlePtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
+  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(
     ffi.Pointer<ffi.Void> ptr,
   ) {
     return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerViableBottle(

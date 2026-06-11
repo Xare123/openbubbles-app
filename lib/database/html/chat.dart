@@ -1,27 +1,24 @@
 import 'dart:async';
 
-import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/html/attachment.dart';
 import 'package:bluebubbles/database/html/handle.dart';
 import 'package:bluebubbles/database/html/message.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
-import 'package:bluebubbles/services/network/backend_service.dart';
 
 String getFullChatTitle(Chat _chat) {
   String? title = "";
   if (isNullOrEmpty(_chat.displayName)) {
-    Chat chat = _chat.getParticipants();
-
     List<String> titles = [];
-    for (int i = 0; i < chat.participants.length; i++) {
+    for (int i = 0; i < _chat.participants.length; i++) {
       // ignore: argument_type_not_assignable, return_of_invalid_type, invalid_assignment, for_in_of_invalid_element_type
-      String? name = chat.participants[i].displayName;
+      String? name = _chat.participants[i].displayName;
 
-      if (chat.participants.length > 1 && !name.isPhoneNumber) {
+      if (_chat.participants.length > 1 && !name.isPhoneNumber) {
         name = name.trim().split(" ")[0];
       } else {
         name = name.trim();
@@ -59,21 +56,9 @@ class Chat {
   bool? isPinned;
   bool? hasUnreadMessage;
   String? title;
-  String get properTitle {
-    if (ss.settings.redactedMode.value && ss.settings.hideContactInfo.value) {
-      return getTitle();
-    }
-    title ??= getTitle();
-    return title!;
-  }
+
   String? displayName;
-  List<Handle> _participants = [];
-  List<Handle> get participants {
-    if (_participants.isEmpty) {
-      getParticipants();
-    }
-    return _participants;
-  }
+  List<Handle> participants = [];
   bool? autoSendReadReceipts = true;
   bool? autoSendTypingIndicators = true;
   String? textFieldText;
@@ -81,12 +66,14 @@ class Chat {
   Message? _latestMessage;
   Message get latestMessage {
     if (_latestMessage != null) return _latestMessage!;
-    _latestMessage = Chat.getMessages(this, limit: 1, getDetails: true).firstOrNull ?? Message(
-      dateCreated: DateTime.fromMillisecondsSinceEpoch(0),
-      guid: guid,
-    );
+    _latestMessage = Chat.getMessages(this, limit: 1, getDetails: true).firstOrNull ??
+        Message(
+          dateCreated: DateTime.fromMillisecondsSinceEpoch(0),
+          guid: guid,
+        );
     return _latestMessage!;
   }
+
   set latestMessage(Message m) => _latestMessage = m;
   DateTime? dbOnlyLatestMessageDate;
   DateTime? dateDeleted;
@@ -136,7 +123,7 @@ class Chat {
     customAvatarPath = customAvatar;
     pinIndex = pinnedIndex;
     if (textFieldAttachments.isEmpty) textFieldAttachments = [];
-    _participants = participants ?? [];
+    this.participants = participants ?? [];
     _latestMessage = latestMessage;
   }
 
@@ -207,7 +194,8 @@ class Chat {
   /// Get a chat's title
   String getChatCreatorSubtitle() {
     // generate names for group chats or DMs
-    List<String> titles = participants.map((e) => e.displayName.trim().split(isGroup && e.contact != null ? " " : String.fromCharCode(65532)).first).toList();
+    List<String> titles =
+        participants.map((e) => e.displayName.trim().split(isGroup ? " " : String.fromCharCode(65532)).first).toList();
     if (titles.isEmpty) {
       if (chatIdentifier!.startsWith("urn:biz")) {
         return "Business Chat";
@@ -230,12 +218,12 @@ class Chat {
   }
 
   bool shouldMuteNotification(Message? message) {
-    if (ss.settings.filterUnknownSenders.value &&
+    if (SettingsSvc.settings.filterUnknownSenders.value &&
         participants.length == 1 &&
-        participants[0].contact == null) {
+        participants[0].contacts.isEmpty) {
       return true;
-    } else if (ss.settings.globalTextDetection.value.isNotEmpty) {
-      List<String> text = ss.settings.globalTextDetection.value.split(",");
+    } else if (SettingsSvc.settings.globalTextDetection.value.isNotEmpty) {
+      List<String> text = SettingsSvc.settings.globalTextDetection.value.split(",");
       for (String s in text) {
         if (message?.text?.toLowerCase().contains(s.toLowerCase()) ?? false) {
           return false;
@@ -266,7 +254,7 @@ class Chat {
       }
       return true;
     }
-    return !ss.settings.notifyReactions.value &&
+    return !SettingsSvc.settings.notifyReactions.value &&
         ReactionTypes.toList().contains(message?.associatedMessageType ?? "");
   }
 
@@ -278,25 +266,31 @@ class Chat {
     return;
   }
 
-  Chat toggleHasUnread(bool hasUnread, {bool force = false, bool clearLocalNotifications = true, bool privateMark = true}) {
+  Chat toggleHasUnread(bool hasUnread,
+      {bool force = false, bool clearLocalNotifications = true, bool privateMark = true}) {
     if (hasUnreadMessage == hasUnread && !force) return this;
-    if (!cm.isChatActive(guid) || !hasUnread || force) {
+    if (!ChatsSvc.isChatActive(guid) || !hasUnread || force) {
       hasUnreadMessage = hasUnread;
       save(updateHasUnreadMessage: true);
     }
 
     try {
-      if (!hasUnread && autoSendReadReceipts!) {
-        backend.markRead(this, privateMark && ss.settings.enablePrivateAPI.value && ss.settings.privateMarkChatAsRead.value);
-      } else if (hasUnread) {
-        backend.markUnread(this);
+      if (privateMark &&
+          SettingsSvc.settings.enablePrivateAPI.value &&
+          SettingsSvc.settings.privateMarkChatAsRead.value) {
+        if (!hasUnread && autoSendReadReceipts!) {
+          HttpSvc.markChatRead(guid);
+        } else if (hasUnread) {
+          HttpSvc.markChatUnread(guid);
+        }
       }
     } catch (_) {}
 
     return this;
   }
 
-  Future<Chat> addMessage(Message message, {bool changeUnreadStatus = true, bool checkForMessageText = true, bool clearNotificationsIfFromMe = true}) async {
+  Future<Chat> addMessage(Message message,
+      {bool changeUnreadStatus = true, bool checkForMessageText = true, bool clearNotificationsIfFromMe = true}) async {
     // Save the message
     Message? latest = latestMessage;
     Message? newMessage;
@@ -306,7 +300,8 @@ class Chat {
     } catch (ex, stacktrace) {
       newMessage = Message.findOne(guid: message.guid);
       if (newMessage == null) {
-        Logger.error("Failed to add message (GUID: ${message.guid}) to chat (GUID: $guid)", error: ex, trace: stacktrace);
+        Logger.error("Failed to add message (GUID: ${message.guid}) to chat (GUID: $guid)",
+            error: ex, trace: stacktrace);
       }
     }
     bool isNewer = false;
@@ -314,13 +309,13 @@ class Chat {
     // If the message was saved correctly, update this chat's latestMessage info,
     // but only if the incoming message's date is newer
     if ((newMessage?.id != null || kIsWeb) && checkForMessageText) {
-      isNewer = message.dateCreated!.isAfter(latest.dateCreated!)
-          || (message.guid != latest.guid && message.dateCreated == latest.dateCreated);
+      isNewer = message.dateCreated!.isAfter(latest.dateCreated!) ||
+          (message.guid != latest.guid && message.dateCreated == latest.dateCreated);
       if (isNewer) {
         _latestMessage = message;
         dateDeleted = null;
         // ignore: argument_type_not_assignable, return_of_invalid_type, invalid_assignment, for_in_of_invalid_element_type
-        await chats.addChat(this);
+        await ChatsSvc.addChat(this);
       }
     }
 
@@ -339,8 +334,8 @@ class Chat {
       // If the message is from me, mark it unread
       // If the message is not from the same chat as the current chat, mark unread
       if (message.isFromMe!) {
-        toggleHasUnread(false, clearLocalNotifications: clearNotificationsIfFromMe, force: cm.isChatActive(guid));
-      } else if (!cm.isChatActive(guid)) {
+        toggleHasUnread(false, clearLocalNotifications: clearNotificationsIfFromMe, force: ChatsSvc.isChatActive(guid));
+      } else if (!ChatsSvc.isChatActive(guid)) {
         toggleHasUnread(true);
       }
     }
@@ -358,9 +353,9 @@ class Chat {
   void serverSyncParticipants() async {
     // Send message to server to get the participants
     // Send message to server to get the participants
-    final chat = await cm.fetchChat(guid);
+    final chat = await ChatsSvc.fetchChat(guid);
     if (chat != null) {
-      chat.save();
+      await chat.saveAsync();
     }
   }
 
@@ -386,13 +381,12 @@ class Chat {
     return [];
   }
 
-  Chat getParticipants() {
-    return this;
-  }
-
   void webSyncParticipants() {
     // ignore: argument_type_not_assignable, return_of_invalid_type, invalid_assignment, for_in_of_invalid_element_type
-    _participants = chats.webCachedHandles.where((e) => _participants.map((e2) => e2.address).contains(e.address)).toList();
+    participants = ChatsSvc.webCachedHandles
+        .where((e) => participants.map((e2) => e2.address).contains(e.address))
+        .cast<Handle>()
+        .toList();
   }
 
   Chat addParticipant(Handle participant) {
@@ -419,8 +413,7 @@ class Chat {
     _pinIndex.value = null;
     save();
     // ignore: argument_type_not_assignable, return_of_invalid_type, invalid_assignment, for_in_of_invalid_element_type
-    chats.updateChat(this);
-    chats.sort();
+    ChatsSvc.updateChat(this);
     return this;
   }
 
@@ -430,8 +423,7 @@ class Chat {
     muteArgs = null;
     save();
     // ignore: argument_type_not_assignable, return_of_invalid_type, invalid_assignment, for_in_of_invalid_element_type
-    chats.updateChat(this);
-    chats.sort();
+    ChatsSvc.updateChat(this);
     return this;
   }
 
@@ -440,8 +432,7 @@ class Chat {
     this.isArchived = isArchived;
     save();
     // ignore: argument_type_not_assignable, return_of_invalid_type, invalid_assignment, for_in_of_invalid_element_type
-    chats.updateChat(this);
-    chats.sort();
+    ChatsSvc.updateChat(this);
     return this;
   }
 
@@ -449,8 +440,8 @@ class Chat {
     if (id == null) return this;
     this.autoSendReadReceipts = autoSendReadReceipts;
     save(updateAutoSendReadReceipts: true);
-    if (autoSendReadReceipts ?? ss.settings.privateMarkChatAsRead.value) {
-      backend.markRead(this, ss.settings.privateMarkChatAsRead.value);
+    if (autoSendReadReceipts ?? SettingsSvc.settings.privateMarkChatAsRead.value) {
+      HttpSvc.markChatRead(guid);
     }
     return this;
   }
@@ -459,17 +450,17 @@ class Chat {
     if (id == null) return this;
     this.autoSendTypingIndicators = autoSendTypingIndicators;
     save(updateAutoSendTypingIndicators: true);
-    if (!(autoSendTypingIndicators ?? ss.settings.privateSendTypingIndicators.value)) {
-          backend.stoppedTyping(this);
+    if (!(autoSendTypingIndicators ?? SettingsSvc.settings.privateSendTypingIndicators.value)) {
+      SocketSvc.sendMessage("stopped-typing", {"chatGuid": guid});
     }
     return this;
   }
 
   static Future<Chat?> findOneWeb({String? guid, String? chatIdentifier}) async {
     if (guid != null) {
-      return chats.chats.firstWhereOrNull((e) => e.guid == guid) as Chat;
+      return ChatsSvc.findChatByGuid(guid) as Chat;
     } else if (chatIdentifier != null) {
-      return chats.chats.firstWhereOrNull((e) => e.chatIdentifier == chatIdentifier) as Chat;
+      return ChatsSvc.findChatByChatIdentifier(chatIdentifier) as Chat;
     }
     return null;
   }
@@ -521,8 +512,8 @@ class Chat {
     if (handles.isEmpty) {
       handles.addAll(other.handles);
     }
-    if (_participants.isEmpty) {
-      _participants.addAll(other._participants);
+    if (participants.isEmpty) {
+      participants.addAll(other.participants);
     }
     hasUnreadMessage ??= other.hasUnreadMessage;
     isArchived ??= other.isArchived;
@@ -550,31 +541,31 @@ class Chat {
     if (!a.isPinned! && b.isPinned!) return 1;
     if (a.isPinned! && !b.isPinned!) return -1;
 
-    // Compare the last message dates
-    return -(a.latestMessage.dateCreated)!.compareTo(b.latestMessage.dateCreated!);
+    // Compare the last message dates (negate to sort newest first)
+    return -(a.latestMessage.dateCreated!.compareTo(b.latestMessage.dateCreated!));
   }
 
   static Future<void> getIcon(Chat c, {bool force = false}) async {}
 
   Map<String, dynamic> toMap() => {
-    "ROWID": id,
-    "guid": guid,
-    "chatIdentifier": chatIdentifier,
-    "isArchived": isArchived!,
-    "muteType": muteType,
-    "muteArgs": muteArgs,
-    "isPinned": isPinned!,
-    "displayName": displayName,
-    "participants": participants.map((item) => item.toMap()).toList(),
-    "hasUnreadMessage": hasUnreadMessage!,
-    "_customAvatarPath": _customAvatarPath.value,
-    "_pinIndex": _pinIndex.value,
-    "autoSendReadReceipts": autoSendReadReceipts!,
-    "autoSendTypingIndicators": autoSendTypingIndicators!,
-    "dateDeleted": dateDeleted?.millisecondsSinceEpoch,
-    "style": style,
-    "lockChatName": lockChatName,
-    "lockChatIcon": lockChatIcon,
-    "lastReadMessageGuid": lastReadMessageGuid,
-  };
+        "ROWID": id,
+        "guid": guid,
+        "chatIdentifier": chatIdentifier,
+        "isArchived": isArchived!,
+        "muteType": muteType,
+        "muteArgs": muteArgs,
+        "isPinned": isPinned!,
+        "displayName": displayName,
+        "participants": participants.map((item) => item.toMap()).toList(),
+        "hasUnreadMessage": hasUnreadMessage!,
+        "_customAvatarPath": _customAvatarPath.value,
+        "_pinIndex": _pinIndex.value,
+        "autoSendReadReceipts": autoSendReadReceipts!,
+        "autoSendTypingIndicators": autoSendTypingIndicators!,
+        "dateDeleted": dateDeleted?.millisecondsSinceEpoch,
+        "style": style,
+        "lockChatName": lockChatName,
+        "lockChatIcon": lockChatIcon,
+        "lastReadMessageGuid": lastReadMessageGuid,
+      };
 }

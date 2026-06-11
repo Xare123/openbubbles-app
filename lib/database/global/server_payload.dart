@@ -4,11 +4,7 @@ import 'package:bluebubbles/services/backend/settings/settings_service.dart';
 import 'package:bluebubbles/utils/crypto_utils.dart';
 import 'package:collection/collection.dart';
 
-enum PayloadEncoding {
-  JSON_OBJECT,
-  BASE64,
-  JSON_STRING
-}
+enum PayloadEncoding { JSON_OBJECT, BASE64, JSON_STRING }
 
 enum PayloadType {
   NEW_MESAGE,
@@ -52,7 +48,7 @@ class ServerPayload {
   }) {
     if (isEncrypted) {
       if (encryptionType == EncryptionType.AES_PB) {
-        data = utf8.decode(decryptAESCryptoJS(data, ss.settings.guidAuthKey.value));
+        data = utf8.decode(decryptAESCryptoJS(data, SettingsSvc.settings.guidAuthKey.value));
       }
     }
     if ([PayloadEncoding.JSON_OBJECT, PayloadEncoding.JSON_STRING].contains(encoding) && data is String) {
@@ -62,14 +58,17 @@ class ServerPayload {
   }
 
   factory ServerPayload.fromJson(Map<String, dynamic> json) => ServerPayload(
-    originalJson: json,
-    data: ((json["data"] ?? json) is String ? jsonDecode(json["data"] ?? json) : (json["data"] ?? json)).cast<String, Object>(),
-    isLegacy: json.containsKey("type"),
-    type: PayloadType.values.firstWhereOrNull((element) => element.name == json["type"]) ?? PayloadType.OTHER,
-    subtype: json["subtype"],
-    isEncrypted: json["encrypted"] ?? false,
-    isPartial: json["partial"] ?? false,
-    encoding: PayloadEncoding.values.firstWhereOrNull((element) => element.name == json["encoding"]) ?? PayloadEncoding.JSON_OBJECT,
-    encryptionType: EncryptionType.values.firstWhereOrNull((element) => element.name == json["encryptionType"]) ?? EncryptionType.AES_PB,
-  );
+        originalJson: json,
+        data: ((json["data"] ?? json) is String ? jsonDecode(json["data"] ?? json) : (json["data"] ?? json))
+            .cast<String, dynamic>(),
+        isLegacy: json.containsKey("type"),
+        type: PayloadType.values.firstWhereOrNull((element) => element.name == json["type"]) ?? PayloadType.OTHER,
+        subtype: json["subtype"],
+        isEncrypted: json["encrypted"] ?? false,
+        isPartial: json["partial"] ?? false,
+        encoding: PayloadEncoding.values.firstWhereOrNull((element) => element.name == json["encoding"]) ??
+            PayloadEncoding.JSON_OBJECT,
+        encryptionType: EncryptionType.values.firstWhereOrNull((element) => element.name == json["encryptionType"]) ??
+            EncryptionType.AES_PB,
+      );
 }

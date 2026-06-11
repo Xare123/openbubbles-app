@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:bluebubbles/helpers/ui/theme_helpers.dart';
 import 'package:bluebubbles/app/layouts/setup/pages/page_template.dart';
 import 'package:bluebubbles/main.dart';
@@ -18,24 +20,28 @@ class RequestContacts extends StatelessWidget {
         initialData: PermissionStatus.denied,
         builder: (context, snapshot) {
           bool granted = snapshot.data! == PermissionStatus.granted;
-          return granted ? Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text("Permission Status: ${granted ? "Granted" : "Denied"}",
-                style: context.theme.textTheme.bodyLarge!.apply(
-                  fontSizeDelta: 1.5,
-                  color: granted ? Colors.green : context.theme.colorScheme.error,
-                ).copyWith(height: 2)),
-            ),
-          ) : const SizedBox.shrink();
+          return granted
+              ? Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text("Permission Status: ${granted ? "Granted" : "Denied"}",
+                        style: context.theme.textTheme.bodyLarge!
+                            .apply(
+                              fontSizeDelta: 1.5,
+                              color: granted ? Colors.green : context.theme.colorScheme.error,
+                            )
+                            .copyWith(height: 2)),
+                  ),
+                )
+              : const SizedBox.shrink();
         },
       ),
       onNextPressed: () async {
-        if (Platform.isAndroid && !(await cs.canAccessContacts())) {
+        if (Platform.isAndroid && !(await ContactsSvcV2.hasContactAccess)) {
           await Permission.contacts.request();
         }
-        if (!(await cs.canAccessContacts())) {
+        if (!(await ContactsSvcV2.hasContactAccess)) {
           return await showDialog(
             context: context,
             builder: (BuildContext context) {
@@ -44,22 +50,24 @@ class RequestContacts extends StatelessWidget {
                   "Notice",
                   style: context.theme.textTheme.titleLarge,
                 ),
-                backgroundColor: context.theme.colorScheme.properSurface,
+                backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
                 content: Padding(
                   padding: const EdgeInsets.all(8.0),
                   child: Text(
-                    "We weren't able to access your contacts.\n\nAre you sure you want to proceed without contacts?",
-                    style: context.theme.textTheme.bodyLarge),
+                      "We weren't able to access your contacts.\n\nAre you sure you want to proceed without contacts?",
+                      style: context.theme.textTheme.bodyLarge),
                 ),
                 actions: <Widget>[
                   TextButton(
-                    child: Text("No", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
+                    child: Text("No",
+                        style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
                     onPressed: () {
                       Navigator.of(context).pop(false);
                     },
                   ),
                   TextButton(
-                    child: Text("Yes", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
+                    child: Text("Yes",
+                        style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
                     onPressed: () {
                       Navigator.of(context).pop(true);
                     },
@@ -70,7 +78,7 @@ class RequestContacts extends StatelessWidget {
           );
         } else {
           if (usingRustPush) {
-            cs.refreshContacts();
+            unawaited(ContactsSvcV2.syncContactsToHandles(wait: false));
           }
           return true;
         }

@@ -155,7 +155,7 @@ abstract class FireworkObjectWithTrail {
     required this.trailCount,
     required this.position,
     required this.size,
-  })   : assert(size >= 0),
+  })  : assert(size >= 0),
         trailPoints = [
           // Fill the trail with the starting position initially.
           for (var i = 0; i < trailCount; i++) position,
@@ -197,15 +197,15 @@ class FireworkParticle extends FireworkObjectWithTrail {
     this.saturation,
     bool isCelebration = false,
     required double size,
-  })   : angle = random.nextDouble() * 2 * pi,
+  })  : angle = random.nextDouble() * 2 * pi,
         velocity = random.nextDouble() * (isCelebration ? 50 : 12) + 1,
-        hue = hueBaseValue + (isCelebration ? 0 : - 50 + random.nextDouble() * 100),
+        hue = hueBaseValue + (isCelebration ? 0 : -50 + random.nextDouble() * 100),
         brightness = .5 + random.nextDouble() * .3,
         alphaDecay = random.nextDouble() * .007 + .013,
         super(
-        trailCount: isCelebration ? 2 : size.toInt() * 2,
-        size: isCelebration ? random.nextDouble() * 10 : size,
-      );
+          trailCount: isCelebration ? 2 : size.toInt() * 2,
+          size: isCelebration ? random.nextDouble() * 10 : size,
+        );
 
   final double angle;
 
@@ -247,13 +247,13 @@ class FireworkRocket extends FireworkObjectWithTrail {
     required this.target,
     required this.hue,
     required super.size,
-  })   : targetDistance = target.distanceTo(start),
+  })  : targetDistance = target.distanceTo(start),
         angle = atan2(target.y - start.y, target.x - start.x),
         brightness = .5 + random.nextDouble() * .2,
         super(
-        trailCount: 2,
-        position: start,
-      );
+          trailCount: 2,
+          position: start,
+        );
 
   final Point<double> start;
   final Point<double> target;

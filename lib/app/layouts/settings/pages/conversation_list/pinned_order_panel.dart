@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:bluebubbles/app/wrappers/bb_annotated_region.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/pages/conversation_list.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/widgets/tile/conversation_tile.dart';
 import 'package:bluebubbles/app/wrappers/scrollbar_wrapper.dart';
@@ -12,37 +13,32 @@ import 'package:flutter_acrylic/flutter_acrylic.dart';
 import 'package:get/get.dart';
 
 class PinnedOrderPanel extends StatelessWidget {
+  const PinnedOrderPanel({super.key});
+
   @override
   Widget build(BuildContext context) {
-    final Rx<Color> _backgroundColor = (kIsDesktop && ss.settings.windowEffect.value == WindowEffect.disabled
+    final Rx<Color> _backgroundColor = (kIsDesktop && SettingsSvc.settings.windowEffect.value == WindowEffect.disabled
             ? Colors.transparent
-            : context.theme.colorScheme.background)
+            : context.theme.colorScheme.surface)
         .obs;
     final ScrollController scrollController = ScrollController();
 
     if (kIsDesktop) {
-      ss.settings.windowEffect.listen((WindowEffect effect) => _backgroundColor.value =
-          effect != WindowEffect.disabled ? Colors.transparent : context.theme.colorScheme.background);
+      SettingsSvc.settings.windowEffect.listen((WindowEffect effect) => _backgroundColor.value =
+          effect != WindowEffect.disabled ? Colors.transparent : context.theme.colorScheme.surface);
     }
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle(
-        systemNavigationBarColor: ss.settings.immersiveMode.value
-            ? Colors.transparent
-            : context.theme.colorScheme.background, // navigation bar color
-        systemNavigationBarIconBrightness: context.theme.colorScheme.brightness.opposite,
-        statusBarColor: Colors.transparent, // status bar color
-        statusBarIconBrightness: context.theme.colorScheme.brightness.opposite,
-      ),
+    return BBAnnotatedRegion(
       child: Obx(
         () => Scaffold(
           backgroundColor: _backgroundColor.value,
           appBar: PreferredSize(
-            preferredSize: Size(ns.width(context), 80),
+            preferredSize: Size(NavigationSvc.width(context), 80),
             child: ClipRRect(
               child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
                 child: AppBar(
                   systemOverlayStyle:
-                      ThemeData.estimateBrightnessForColor(context.theme.colorScheme.background) == Brightness.dark
+                      ThemeData.estimateBrightnessForColor(context.theme.colorScheme.surface) == Brightness.dark
                           ? SystemUiOverlayStyle.light
                           : SystemUiOverlayStyle.dark,
                   toolbarHeight: kIsDesktop ? 80 : 50,
@@ -51,7 +47,7 @@ class PinnedOrderPanel extends StatelessWidget {
                   surfaceTintColor: context.theme.colorScheme.primary,
                   leading: buildBackButton(context),
                   backgroundColor: _backgroundColor.value,
-                  centerTitle: ss.settings.skin.value == Skins.iOS,
+                  centerTitle: SettingsSvc.settings.skin.value == Skins.iOS,
                   title: Text(
                     "Pinned Chat Order",
                     style: context.theme.textTheme.titleLarge,
@@ -62,11 +58,10 @@ class PinnedOrderPanel extends StatelessWidget {
                             style:
                                 context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
                         onPressed: () {
-                          chats.removePinIndices();
+                          ChatsSvc.removePinIndices();
                         }),
                   ],
                 ),
-                filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
               ),
             ),
           ),
@@ -80,7 +75,7 @@ class PinnedOrderPanel extends StatelessWidget {
                 mainAxisSize: MainAxisSize.max,
                 children: <Widget>[
                   Obx(() {
-                    if (!chats.loadedChatBatch.value) {
+                    if (!ChatsSvc.loadedFirstChatBatch.value) {
                       return Center(
                         child: Padding(
                           padding: const EdgeInsets.only(top: 50.0),
@@ -99,7 +94,8 @@ class PinnedOrderPanel extends StatelessWidget {
                         ),
                       );
                     }
-                    if (chats.hasChats.value && chats.chats.bigPinHelper(true).isEmpty) {
+                    final pinnedChats = ChatsSvc.getFilteredChats(pinnedOnly: true);
+                    if (ChatsSvc.hasChats.value && pinnedChats.isEmpty) {
                       return Center(
                         child: Padding(
                           padding: const EdgeInsets.only(top: 50.0),
@@ -114,20 +110,21 @@ class PinnedOrderPanel extends StatelessWidget {
                     return ReorderableListView.builder(
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
-                      onReorder: chats.updateChatPinIndex,
+                      onReorder: ChatsSvc.updateChatPinIndex,
                       header: Padding(
                         padding: const EdgeInsets.all(13.0),
                         child: Text("Set the order of pinned chats by dragging the chat tile to the desired location.",
                             style: context.theme.textTheme.bodyLarge),
                       ),
                       itemBuilder: (context, index) {
+                        final chat = pinnedChats[index];
                         return ReorderableDragStartListener(
-                          key: Key(chats.chats.bigPinHelper(true)[index].guid.toString()),
+                          key: Key(chat.guid.toString()),
                           index: index,
                           child: AbsorbPointer(
                             absorbing: true,
                             child: ConversationTile(
-                              chat: chats.chats.bigPinHelper(true)[index],
+                              chat: chat,
                               controller: Get.put(
                                   ConversationListController(showUnknownSenders: true, showArchivedChats: true),
                                   tag: "pinned-order-panel"),
@@ -137,7 +134,7 @@ class PinnedOrderPanel extends StatelessWidget {
                           ),
                         );
                       },
-                      itemCount: chats.chats.bigPinHelper(true).length,
+                      itemCount: pinnedChats.length,
                     );
                   }),
                 ],

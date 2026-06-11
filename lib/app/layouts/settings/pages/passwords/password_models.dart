@@ -65,8 +65,7 @@ class CredentialEntry {
     this.wifiPassword,
   });
 
-  bool get isEditable =>
-      groupType == PasswordGroupType.web || groupType == PasswordGroupType.wifi;
+  bool get isEditable => groupType == PasswordGroupType.web || groupType == PasswordGroupType.wifi;
 }
 
 enum PasswordGroupType {
@@ -143,8 +142,7 @@ CredentialItem buildPasskeyCredential({
     fields: [
       ..._buildGroupField(group),
       if (label.isNotEmpty) CredentialField("Site", label),
-      if (passkey.agrp.trim().isNotEmpty)
-        CredentialField("Created", _formatPlistDate(passkey.cdat)),
+      if (passkey.agrp.trim().isNotEmpty) CredentialField("Created", _formatPlistDate(passkey.cdat)),
       CredentialField("Modified", _formatPlistDate(passkey.mdat)),
       CredentialField("Account", subtitle),
       // ..._bytesField("Attachment Tag", passkey.atag),
@@ -248,8 +246,7 @@ String _formatBytes(Uint8List bytes) {
 
 String _formatPlistDate(int date) {
   if (date <= 0) return "";
-  final dateTime =
-      DateTime.fromMillisecondsSinceEpoch(date, isUtc: true).toLocal();
+  final dateTime = DateTime.fromMillisecondsSinceEpoch(date, isUtc: true).toLocal();
   return buildFullDate(dateTime);
 }
 

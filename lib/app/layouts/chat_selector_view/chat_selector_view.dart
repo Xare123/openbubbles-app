@@ -1,18 +1,16 @@
 import 'dart:async';
 
 import 'package:bluebubbles/app/layouts/chat_creator/widgets/chat_creator_tile.dart';
+import 'package:bluebubbles/app/wrappers/bb_scaffold.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_acrylic/window_effect.dart';
 import 'package:get/get.dart' hide Response;
 import 'package:slugify/slugify.dart';
-import 'package:supercharged/supercharged.dart';
 
 class ChatSelectorView extends StatefulWidget {
   const ChatSelectorView({
@@ -26,7 +24,7 @@ class ChatSelectorView extends StatefulWidget {
   ChatSelectorViewState createState() => ChatSelectorViewState();
 }
 
-class ChatSelectorViewState extends OptimizedState<ChatSelectorView> {
+class ChatSelectorViewState extends State<ChatSelectorView> with ThemeHelpers {
   final TextEditingController searchController = TextEditingController();
   final FocusNode searchNode = FocusNode();
   final ScrollController addressScrollController = ScrollController();
@@ -45,7 +43,7 @@ class ChatSelectorViewState extends OptimizedState<ChatSelectorView> {
       _debounce = Timer(const Duration(milliseconds: 250), () async {
         final searchChats = await SchedulerBinding.instance.scheduleTask(() async {
           final query = slugify(searchController.text, delimiter: "");
-          return chats.chats.filter((element) => slugify(element.getTitle(), delimiter: "").contains(query));
+          return ChatsSvc.searchChats(query);
         }, Priority.animation);
 
         _debounce = null;
@@ -55,150 +53,130 @@ class ChatSelectorViewState extends OptimizedState<ChatSelectorView> {
       });
     });
 
-    updateObx(() {
-      if (chats.loadedAllChats.isCompleted) {
+    if (ChatsSvc.loadedAllChats.isCompleted) {
+      if (mounted) {
         setState(() {
-          filteredChats = List<Chat>.from(chats.chats);
-        });
-      } else {
-        chats.loadedAllChats.future.then((_) {
-          setState(() {
-            filteredChats = List<Chat>.from(chats.chats);
-          });
+          filteredChats = ChatsSvc.allChats;
         });
       }
-    });
+    } else {
+      ChatsSvc.loadedAllChats.future.then((_) {
+        if (mounted) {
+          setState(() {
+            filteredChats = ChatsSvc.allChats;
+          });
+        }
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle(
-        systemNavigationBarColor: ss.settings.immersiveMode.value
-            ? Colors.transparent
-            : context.theme.colorScheme.background, // navigation bar color
-        systemNavigationBarIconBrightness: context.theme.colorScheme.brightness.opposite,
-        statusBarColor: Colors.transparent, // status bar color
-        statusBarIconBrightness: context.theme.colorScheme.brightness.opposite,
-      ),
-      child: Scaffold(
-        backgroundColor: ss.settings.windowEffect.value != WindowEffect.disabled
-            ? Colors.transparent
-            : context.theme.colorScheme.background,
-        appBar: PreferredSize(
-            preferredSize: Size(ns.width(context), kIsDesktop ? 90 : 50),
-            child: AppBar(
-                systemOverlayStyle: context.theme.colorScheme.brightness == Brightness.dark
-                    ? SystemUiOverlayStyle.light
-                    : SystemUiOverlayStyle.dark,
-                toolbarHeight: kIsDesktop ? 90 : 50,
-                elevation: 0,
-                scrolledUnderElevation: 3,
-                surfaceTintColor: context.theme.colorScheme.primary,
-                leading: buildBackButton(context),
-                backgroundColor: Colors.transparent,
-                centerTitle: ss.settings.skin.value == Skins.iOS,
-                title: Text(
-                  "Select a Chat",
-                  style: context.theme.textTheme.titleLarge,
-                ))),
-        body: FocusScope(
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                child: TextField(
-                  controller: searchController,
-                  focusNode: searchNode,
-                  style: context.theme.textTheme.bodyLarge,
-                  decoration: InputDecoration(
-                      hintText: "Search for a chat...",
-                      hintStyle: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.outline),
-                      prefixIcon: Icon(
-                        Icons.search,
-                        color: context.theme.colorScheme.outline,
-                      ),
-                      suffixIcon: searchController.text.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.clear),
-                              onPressed: () {
-                                searchController.clear();
-                              },
-                            )
-                          : null,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: BorderSide.none,
-                      ),
-                      filled: false),
-                ),
+    return BBScaffold(
+      appBar: PreferredSize(
+          preferredSize: Size(NavigationSvc.width(context), kIsDesktop ? 90 : 50),
+          child: AppBar(
+              systemOverlayStyle: context.theme.colorScheme.brightness == Brightness.dark
+                  ? SystemUiOverlayStyle.light
+                  : SystemUiOverlayStyle.dark,
+              toolbarHeight: kIsDesktop ? 90 : 50,
+              elevation: 0,
+              scrolledUnderElevation: 3,
+              surfaceTintColor: context.theme.colorScheme.primary,
+              leading: buildBackButton(context),
+              backgroundColor: Colors.transparent,
+              centerTitle: SettingsSvc.settings.skin.value == Skins.iOS,
+              title: Text(
+                "Select a Chat",
+                style: context.theme.textTheme.titleLarge,
+              ))),
+      body: FocusScope(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: TextField(
+                controller: searchController,
+                focusNode: searchNode,
+                style: context.theme.textTheme.bodyLarge,
+                decoration: InputDecoration(
+                    hintText: "Search for a chat...",
+                    hintStyle: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.outline),
+                    prefixIcon: Icon(
+                      Icons.search,
+                      color: context.theme.colorScheme.outline,
+                    ),
+                    suffixIcon: searchController.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              searchController.clear();
+                            },
+                          )
+                        : null,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none,
+                    ),
+                    filled: false),
               ),
-              Expanded(
-                child: Obx(() {
-                  return Align(
-                      alignment: Alignment.topCenter,
-                      child: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 150),
-                          child: CustomScrollView(
-                            shrinkWrap: true,
-                            physics: ThemeSwitcher.getScrollPhysics(),
-                            slivers: <Widget>[
-                              SliverList(
-                                delegate: SliverChildBuilderDelegate((context, index) {
-                                  if (filteredChats.isEmpty) {
-                                    return Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Padding(
-                                          padding: const EdgeInsets.all(8.0),
-                                          child: Text(
-                                            "Loading chats...",
-                                            style: context.theme.textTheme.labelLarge,
-                                          ),
+            ),
+            Expanded(
+              child: Obx(() {
+                return Align(
+                    alignment: Alignment.topCenter,
+                    child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 150),
+                        child: CustomScrollView(
+                          shrinkWrap: true,
+                          physics: ThemeSwitcher.getScrollPhysics(),
+                          slivers: <Widget>[
+                            SliverList(
+                              delegate: SliverChildBuilderDelegate((context, index) {
+                                if (filteredChats.isEmpty) {
+                                  return Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Padding(
+                                        padding: const EdgeInsets.all(8.0),
+                                        child: Text(
+                                          "Loading chats...",
+                                          style: context.theme.textTheme.labelLarge,
                                         ),
-                                        buildProgressIndicator(context, size: 15),
-                                      ],
-                                    );
-                                  }
-                                  final chat = filteredChats[index];
-                                  final hideInfo = ss.settings.redactedMode.value && ss.settings.hideContactInfo.value;
-                                  String _title = chat.properTitle;
-                                  if (hideInfo) {
-                                    _title =
-                                        chat.participants.length > 1 ? "Group Chat" : chat.participants[0].fakeName;
-                                  }
-                                  return Material(
-                                    color: Colors.transparent,
-                                    child: InkWell(
-                                      onTap: () {
-                                        widget.onSelect(chat);
-                                        Get.back();
-                                      },
-                                      child: ChatCreatorTile(
-                                        key: ValueKey(chat.guid),
-                                        title: _title,
-                                        subtitle: hideInfo
-                                            ? ""
-                                            : !chat.isGroup
-                                                ? (chat.participants.first.formattedAddress ??
-                                                    chat.participants.first.address)
-                                                : chat.getChatCreatorSubtitle(),
-                                        chat: chat,
-                                        showTrailing: false,
                                       ),
-                                    ),
+                                      buildProgressIndicator(context, size: 15),
+                                    ],
                                   );
-                                },
-                                    childCount: filteredChats.length
-                                        .clamp(chats.loadedAllChats.isCompleted ? 0 : 1, double.infinity)
-                                        .toInt()),
-                              )
-                            ],
-                          )));
-                }),
-              ),
-            ],
-          ),
+                                }
+                                final chat = filteredChats[index];
+                                final chatState = ChatsSvc.getChatState(chat.guid);
+                                final _title = chatState?.title.value ?? chat.getTitle();
+                                return Material(
+                                  color: Colors.transparent,
+                                  child: InkWell(
+                                    onTap: () {
+                                      widget.onSelect(chat);
+                                      Navigator.of(context).pop();
+                                    },
+                                    child: ChatCreatorTile(
+                                      key: ValueKey(chat.guid),
+                                      title: _title,
+                                      subtitle: chatState?.chatCreatorSubtitle.value ?? chat.getChatCreatorSubtitle(),
+                                      chat: chat,
+                                      showTrailing: false,
+                                    ),
+                                  ),
+                                );
+                              },
+                                  childCount: filteredChats.length
+                                      .clamp(ChatsSvc.loadedAllChats.isCompleted ? 0 : 1, double.infinity)
+                                      .toInt()),
+                            )
+                          ],
+                        )));
+              }),
+            ),
+          ],
         ),
       ),
     );

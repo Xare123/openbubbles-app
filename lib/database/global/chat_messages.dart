@@ -13,8 +13,13 @@ class ChatMessages {
   List<Message> get reactions => _reactions.values.toList();
   List<Attachment> get attachments => _attachments.values.toList();
   List<Message> threads(String originatorGuid, int originatorPart, {bool returnOriginator = true}) =>
-      _threads[originatorGuid]?.values.where((e) =>
-      (e.normalizedThreadPart == originatorPart && e.guid != originatorGuid) || (returnOriginator ? e.guid == originatorGuid : false)).toList() ?? [];
+      _threads[originatorGuid]
+          ?.values
+          .where((e) =>
+              (e.normalizedThreadPart == originatorPart && e.guid != originatorGuid) ||
+              (returnOriginator ? e.guid == originatorGuid : false))
+          .toList() ??
+      [];
 
   void addMessages(List<Message> __messages) {
     for (Message m in __messages) {
@@ -34,7 +39,7 @@ class ChatMessages {
         // add thread 'originator'
         _threads[m.guid]![m.guid!] = m;
       }
-      _attachments.addEntries(m.attachments.map((e) => MapEntry(e!.guid!, e)));
+      _attachments.addEntries(m.dbAttachments.map((e) => MapEntry(e.guid!, e)));
     }
   }
 

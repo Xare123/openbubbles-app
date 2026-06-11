@@ -20,6 +20,7 @@ class ProvisionNative: MethodCallHandlerImpl() {
         val data = call.argument<String>("native")!!
         client.bind { service: APNService ->
             service.kickstartNative(data)
+            result.success(null)
             client.destroy()
         }
     }

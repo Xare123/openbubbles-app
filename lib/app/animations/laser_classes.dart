@@ -2,7 +2,13 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:tuple/tuple.dart';
+
+class _AngleRange {
+  final double min;
+  final double max;
+
+  const _AngleRange(this.min, this.max);
+}
 
 class LaserController implements Listenable {
   LaserController({
@@ -33,7 +39,8 @@ class LaserController implements Listenable {
     isPlaying = true;
     autoLaunchDuration = const Duration(milliseconds: 500);
     lastAutoLaunch = Duration.zero;
-    position = Point((bubbleDimensions.left + bubbleDimensions.right) / 2, (bubbleDimensions.top + bubbleDimensions.bottom) / 2);
+    position = Point(
+        (bubbleDimensions.left + bubbleDimensions.right) / 2, (bubbleDimensions.top + bubbleDimensions.bottom) / 2);
     ticker = vsync.createTicker(update)..start();
   }
 
@@ -71,16 +78,43 @@ class LaserController implements Listenable {
       beams.addAll(List.generate(12, (index) {
         final width = (random.nextDouble() * 300).clamp(50, 300).toDouble();
         final angle = (random.nextDouble() * 2 * pi).clamp(
-            pi / 2 * (index > 8 ? index - 8 : index > 4 ? index - 4 : index), pi / 2 * (index > 8 ? index - 8 : index > 4 ? index - 4 : index) + pi / 2);
+            pi /
+                2 *
+                (index > 8
+                    ? index - 8
+                    : index > 4
+                        ? index - 4
+                        : index),
+            pi /
+                    2 *
+                    (index > 8
+                        ? index - 8
+                        : index > 4
+                            ? index - 4
+                            : index) +
+                pi / 2);
         return LaserBeam(
-            random: random,
-            position: position,
-            originalInternalWidth: (random.nextDouble() * 300).clamp(50, 300),
-            originalGlobalAngle: pi / 2 * (index > 8 ? index - 8 : index > 4 ? index - 4 : index),
-            internalWidth: width,
-            globalAngle: angle,
-            internalWidthVelocity: width / 50,
-            globalAngleVelocity: angle / 50 / ((index > 8 ? index - 8 : index > 4 ? index - 4 : index) + 1),
+          random: random,
+          position: position,
+          originalInternalWidth: (random.nextDouble() * 300).clamp(50, 300),
+          originalGlobalAngle: pi /
+              2 *
+              (index > 8
+                  ? index - 8
+                  : index > 4
+                      ? index - 4
+                      : index),
+          internalWidth: width,
+          globalAngle: angle,
+          internalWidthVelocity: width / 50,
+          globalAngleVelocity: angle /
+              50 /
+              ((index > 8
+                      ? index - 8
+                      : index > 4
+                          ? index - 4
+                          : index) +
+                  1),
         );
       }));
     }
@@ -147,20 +181,20 @@ class LaserBeam {
     required this.globalAngleVelocity,
   }) {
     if (originalGlobalAngle >= 0 && originalGlobalAngle < pi / 2) {
-      globalAngleStops = const Tuple2(0, pi / 2);
+      globalAngleStops = const _AngleRange(0, pi / 2);
     } else if (originalGlobalAngle >= pi / 2 && originalGlobalAngle < pi) {
-      globalAngleStops = const Tuple2(pi / 2, pi);
+      globalAngleStops = const _AngleRange(pi / 2, pi);
     } else if (originalGlobalAngle >= pi && originalGlobalAngle < 3 * pi / 2) {
-      globalAngleStops = const Tuple2(pi, 3 * pi / 2);
+      globalAngleStops = const _AngleRange(pi, 3 * pi / 2);
     } else {
-      globalAngleStops = const Tuple2(3 * pi / 2, 2 * pi);
+      globalAngleStops = const _AngleRange(3 * pi / 2, 2 * pi);
     }
     if (internalWidth > originalInternalWidth) {
       internalWidthDirection = Direction.down;
     } else {
       internalWidthDirection = Direction.up;
     }
-    if (globalAngle > globalAngleStops.item2) {
+    if (globalAngle > globalAngleStops.max) {
       globalAngleDirection = Direction.down;
     } else {
       globalAngleDirection = Direction.up;
@@ -171,7 +205,7 @@ class LaserBeam {
   final Point<double> position;
   final double originalInternalWidth;
   final double originalGlobalAngle;
-  late final Tuple2<double, double> globalAngleStops;
+  late final _AngleRange globalAngleStops;
   double internalWidth;
   double globalAngle;
   final double internalWidthVelocity;
@@ -188,15 +222,17 @@ class LaserBeam {
       internalWidthDirection = Direction.up;
       internalWidth = internalWidth + internalWidthVelocity;
     }
-    if (globalAngle >= globalAngleStops.item2 || (globalAngleDirection == Direction.down && globalAngle >= globalAngleStops.item1)) {
+    if (globalAngle >= globalAngleStops.max ||
+        (globalAngleDirection == Direction.down && globalAngle >= globalAngleStops.min)) {
       globalAngleDirection = Direction.down;
       globalAngle = globalAngle - globalAngleVelocity;
     }
-    if (globalAngle <= globalAngleStops.item1 || (globalAngleDirection == Direction.up && globalAngle <= globalAngleStops.item2)) {
+    if (globalAngle <= globalAngleStops.min ||
+        (globalAngleDirection == Direction.up && globalAngle <= globalAngleStops.max)) {
       globalAngleDirection = Direction.up;
       globalAngle = globalAngle + globalAngleVelocity;
     }
   }
 }
 
-enum Direction {up, down}
+enum Direction { up, down }

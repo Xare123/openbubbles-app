@@ -6,20 +6,21 @@ import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/attach
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/misc/message_sender.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/misc/tail_clipper.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/settings_widgets.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/app/state/message_state.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 class RedactedModePanel extends StatefulWidget {
+  const RedactedModePanel({super.key});
 
   @override
   State<StatefulWidget> createState() => _RedactedModePanelState();
 }
 
-class _RedactedModePanelState extends OptimizedState<RedactedModePanel> {
+class _RedactedModePanelState extends State<RedactedModePanel> with ThemeHelpers {
   final message = Message(
     guid: "redacted-mode-demo",
     dateDelivered: DateTime.now().toLocal(),
@@ -52,49 +53,48 @@ class _RedactedModePanelState extends OptimizedState<RedactedModePanel> {
       )
     ],
   );
+  late final MessagePart _previewPart = MessagePart(part: 0, text: message.text, subject: message.subject);
   final RxInt placeholder = 0.obs;
 
   @override
   Widget build(BuildContext context) {
     return SettingsScaffold(
-      title: "Redacted Mode",
-      initialHeader: "Redacted Mode",
-      iosSubtitle: iosSubtitle,
-      materialSubtitle: materialSubtitle,
-      tileColor: tileColor,
-      headerColor: headerColor,
-      bodySlivers: [
-        SliverList(
-          delegate: SliverChildListDelegate(
-            <Widget>[
-              SettingsSection(
-                backgroundColor: tileColor,
-                children: [
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 8.0, left: 15, top: 8.0, right: 15),
-                    child: Text(
-                        "Redacted Mode hides sensitive information, such as contact names, message content, and more. This is useful when taking screenshots to send to developers."
+        title: "Redacted Mode",
+        initialHeader: "Redacted Mode",
+        iosSubtitle: iosSubtitle,
+        materialSubtitle: materialSubtitle,
+        tileColor: tileColor,
+        headerColor: headerColor,
+        bodySlivers: [
+          SliverList(
+            delegate: SliverChildListDelegate(
+              <Widget>[
+                SettingsSection(
+                  backgroundColor: tileColor,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8.0, left: 15, top: 8.0, right: 15),
+                      child: Text(
+                          "Redacted Mode hides sensitive information, such as contact names, message content, and more. This is useful when taking screenshots to send to developers."),
+                    ),
+                  ],
+                ),
+                Theme(
+                  data: context.theme.copyWith(
+                    // in case some components still use legacy theming
+                    primaryColor: context.theme.colorScheme.bubble(context, true),
+                    colorScheme: context.theme.colorScheme.copyWith(
+                      primary: context.theme.colorScheme.bubble(context, true),
+                      onPrimary: context.theme.colorScheme.onBubble(context, true),
+                      surface: SettingsSvc.settings.monetTheming.value == Monet.full
+                          ? null
+                          : (context.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
+                      onSurface: SettingsSvc.settings.monetTheming.value == Monet.full
+                          ? null
+                          : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
                     ),
                   ),
-                ],
-              ),
-              Theme(
-                data: context.theme.copyWith(
-                  // in case some components still use legacy theming
-                  primaryColor: context.theme.colorScheme.bubble(context, true),
-                  colorScheme: context.theme.colorScheme.copyWith(
-                    primary: context.theme.colorScheme.bubble(context, true),
-                    onPrimary: context.theme.colorScheme.onBubble(context, true),
-                    surface: ss.settings.monetTheming.value == Monet.full
-                        ? null
-                        : (context.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
-                    onSurface: ss.settings.monetTheming.value == Monet.full
-                        ? null
-                        : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
-                  ),
-                ),
-                child: Builder(
-                  builder: (context) {
+                  child: Builder(builder: (context) {
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 10.0, horizontal: 10.0),
                       child: AbsorbPointer(
@@ -102,6 +102,8 @@ class _RedactedModePanelState extends OptimizedState<RedactedModePanel> {
                           // used to update preview real-time
                           // ignore: unused_local_variable
                           final _placeholder = placeholder.value;
+                          _previewPart.shouldRedact =
+                              SettingsSvc.settings.redactedMode.value && SettingsSvc.settings.hideMessageContent.value;
                           return Row(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
@@ -114,9 +116,9 @@ class _RedactedModePanelState extends OptimizedState<RedactedModePanel> {
                               Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Padding(
-                                    padding: const EdgeInsets.only(left: 5.0),
-                                    child: MessageSender(olderMessage: null, message: message),
+                                  const Padding(
+                                    padding: EdgeInsets.only(left: 5.0),
+                                    child: MessageSender(olderMessage: null),
                                   ),
                                   ClipPath(
                                     clipper: TailClipper(
@@ -127,21 +129,24 @@ class _RedactedModePanelState extends OptimizedState<RedactedModePanel> {
                                     ),
                                     child: Container(
                                       constraints: BoxConstraints(
-                                        maxWidth: ns.width(context) * 0.3,
+                                        maxWidth: NavigationSvc.width(context) * 0.3,
                                         maxHeight: context.height * 0.3,
                                         minHeight: 40,
                                         minWidth: 40,
                                       ),
                                       padding: const EdgeInsets.only(left: 10),
-                                      color: context.theme.colorScheme.properSurface,
+                                      color: context.theme.colorScheme.surfaceContainerHighest,
                                       child: Center(
                                         widthFactor: 1,
                                         heightFactor: 1,
                                         child: AnimatedOpacity(
                                           duration: const Duration(milliseconds: 150),
-                                          opacity: ss.settings.redactedMode.value && ss.settings.hideAttachments.value ? 0 : 1,
+                                          opacity: SettingsSvc.settings.redactedMode.value &&
+                                                  SettingsSvc.settings.hideAttachments.value
+                                              ? 0
+                                              : 1,
                                           child: ImageViewer(
-                                            file: as.getContent(message.attachments.first!),
+                                            file: AttachmentsSvc.getContent(message.attachments.first!),
                                             attachment: message.attachments.first!,
                                             isFromMe: false,
                                           ),
@@ -159,18 +164,19 @@ class _RedactedModePanelState extends OptimizedState<RedactedModePanel> {
                                     ),
                                     child: Container(
                                       constraints: BoxConstraints(
-                                        maxWidth: ns.width(context) * MessageWidgetController.maxBubbleSizeFactor - 40,
+                                        maxWidth: NavigationSvc.width(context) * MessageState.maxBubbleSizeFactor - 40,
                                         minHeight: 40,
                                       ),
-                                      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 15).add(const EdgeInsets.only(left: 10)),
-                                      color: context.theme.colorScheme.properSurface,
+                                      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 15)
+                                          .add(const EdgeInsets.only(left: 10)),
+                                      color: context.theme.colorScheme.surfaceContainerHighest,
                                       child: Center(
                                         widthFactor: 1,
                                         child: RichText(
                                           text: TextSpan(
                                             children: buildMessageSpans(
                                               context,
-                                              MessagePart(part: 0, text: message.text, subject: message.subject),
+                                              _previewPart,
                                               message,
                                             ),
                                           ),
@@ -185,83 +191,90 @@ class _RedactedModePanelState extends OptimizedState<RedactedModePanel> {
                         }),
                       ),
                     );
-                  }
+                  }),
                 ),
-              ),
-              SettingsSection(
-                backgroundColor: tileColor,
-                children: [
-                  Obx(() => SettingsSwitch(
-                    onChanged: (bool val) {
-                      ss.settings.redactedMode.value = val;
-                      saveSettings();
-                    },
-                    initialVal: ss.settings.redactedMode.value,
-                    title: "Enable Redacted Mode",
-                    backgroundColor: tileColor,
-                  )),
-                ],
-              ),
-              Obx(() => AnimatedSizeAndFade.showHide(
-                show: ss.settings.redactedMode.value,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                SettingsSection(
+                  backgroundColor: tileColor,
                   children: [
-                    SettingsHeader(
-                        iosSubtitle: iosSubtitle,
-                        materialSubtitle: materialSubtitle,
-                        text: "Customization"
-                    ),
-                    SettingsSection(
-                      backgroundColor: tileColor,
-                      children: [
-                        SettingsSwitch(
-                          onChanged: (bool val) {
-                            ss.settings.hideMessageContent.value = val;
-                            saveSettings();
+                    Obx(() => SettingsSwitch(
+                          onChanged: (bool val) async {
+                            SettingsSvc.settings.redactedMode.value = val;
+                            await saveSettings('redactedMode');
                           },
-                          initialVal: ss.settings.hideMessageContent.value,
-                          title: "Hide Message Content",
+                          initialVal: SettingsSvc.settings.redactedMode.value,
+                          title: "Enable Redacted Mode",
                           backgroundColor: tileColor,
-                          subtitle: "Replace message text with generated lorem ipsum",
-                        ),
-                        const SettingsDivider(padding: EdgeInsets.only(left: 16.0)),
-                        SettingsSwitch(
-                          onChanged: (bool val) {
-                            ss.settings.hideAttachments.value = val;
-                            saveSettings();
-                          },
-                          initialVal: ss.settings.hideAttachments.value,
-                          title: "Hide Attachments",
-                          backgroundColor: tileColor,
-                          subtitle: "Replace attachments with placeholder boxes",
-                        ),
-                        const SettingsDivider(padding: EdgeInsets.only(left: 16.0)),
-                        SettingsSwitch(
-                          onChanged: (bool val) {
-                            ss.settings.hideContactInfo.value = val;
-                            saveSettings();
-                          },
-                          initialVal: ss.settings.hideContactInfo.value,
-                          title: "Hide Contact Info",
-                          backgroundColor: tileColor,
-                          subtitle: "Replace contact info with fake names and hide contact photos",
-                          isThreeLine: true,
-                        ),
-                      ],
-                    ),
+                        )),
                   ],
                 ),
-              )),
-            ],
+                Obx(() => AnimatedSizeAndFade.showHide(
+                      show: SettingsSvc.settings.redactedMode.value,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SettingsHeader(
+                              iosSubtitle: iosSubtitle, materialSubtitle: materialSubtitle, text: "Customization"),
+                          SettingsSection(
+                            backgroundColor: tileColor,
+                            children: [
+                              SettingsSwitch(
+                                onChanged: (bool val) async {
+                                  SettingsSvc.settings.hideMessageContent.value = val;
+                                  await saveSettings('hideMessageContent');
+                                },
+                                initialVal: SettingsSvc.settings.hideMessageContent.value,
+                                title: "Hide Message Content",
+                                backgroundColor: tileColor,
+                                subtitle: "Replace message text with generated lorem ipsum",
+                              ),
+                              const SettingsDivider(padding: EdgeInsets.only(left: 16.0)),
+                              SettingsSwitch(
+                                onChanged: (bool val) async {
+                                  SettingsSvc.settings.hideAttachments.value = val;
+                                  await saveSettings('hideAttachments');
+                                },
+                                initialVal: SettingsSvc.settings.hideAttachments.value,
+                                title: "Hide Attachments",
+                                backgroundColor: tileColor,
+                                subtitle: "Replace attachments with placeholder boxes",
+                              ),
+                              const SettingsDivider(padding: EdgeInsets.only(left: 16.0)),
+                              SettingsSwitch(
+                                onChanged: (bool val) async {
+                                  SettingsSvc.settings.hideContactInfo.value = val;
+                                  await saveSettings('hideContactInfo');
+                                },
+                                initialVal: SettingsSvc.settings.hideContactInfo.value,
+                                title: "Hide Contact Info",
+                                backgroundColor: tileColor,
+                                subtitle: "Replace contact info with fake names and hide contact photos",
+                                isThreeLine: true,
+                              ),
+                              const SettingsDivider(padding: EdgeInsets.only(left: 16.0)),
+                              SettingsSwitch(
+                                onChanged: (bool val) async {
+                                  SettingsSvc.settings.generateFakeAvatars.value = val;
+                                  await saveSettings('generateFakeAvatars');
+                                },
+                                initialVal: SettingsSvc.settings.generateFakeAvatars.value,
+                                title: "Generate Fake Avatars",
+                                backgroundColor: tileColor,
+                                subtitle: "Use the Dice Bear service to generate fake avatars for contacts",
+                                isThreeLine: true,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    )),
+              ],
+            ),
           ),
-        ),
-      ]
-    );
+        ]);
   }
 
-  void saveSettings() {
+  Future<void> saveSettings(String key) async {
     placeholder.value += 1;
-    ss.saveSettings();
+    await SettingsSvc.settings.saveOneAsync(key);
   }
 }

@@ -3,14 +3,20 @@ import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/material.dart';
 
-class ReactionPickerClipper extends CustomClipper<Path>{
+class ReactionPickerClipper extends CustomClipper<Path> {
   final Size messageSize;
   final bool isFromMe;
-  const ReactionPickerClipper({required this.messageSize, required this.isFromMe});
+  final double cornerRadius;
+
+  const ReactionPickerClipper({
+    required this.messageSize,
+    required this.isFromMe,
+    this.cornerRadius = 30,
+  });
 
   @override
   Path getClip(Size size) {
-    var boxheight = size.height - 15;
+    final boxheight = size.height - 15;
     final path = Path();
     path.moveTo(size.width - (boxheight / 2), 0);
     path.arcToPoint(Offset(size.width - (boxheight / 2), boxheight), radius: Radius.circular(boxheight / 2));
@@ -22,6 +28,8 @@ class ReactionPickerClipper extends CustomClipper<Path>{
 
   @override
   bool shouldReclip(covariant ReactionPickerClipper oldClipper) {
-    return false;
+    return cornerRadius != oldClipper.cornerRadius ||
+        messageSize != oldClipper.messageSize ||
+        isFromMe != oldClipper.isFromMe;
   }
 }

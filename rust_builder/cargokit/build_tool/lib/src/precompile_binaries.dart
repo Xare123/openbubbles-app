@@ -76,8 +76,9 @@ class PrecompileBinaries {
       hash: hash,
     );
 
-    final tempDir =
-        this.tempDir != null ? Directory(this.tempDir!) : Directory.systemTemp.createTempSync('precompiled_');
+    final tempDir = this.tempDir != null
+        ? Directory(this.tempDir!)
+        : Directory.systemTemp.createTempSync('precompiled_');
 
     tempDir.createSync(recursive: true);
 
@@ -116,7 +117,8 @@ class PrecompileBinaries {
 
       _log.info('Building for $target');
 
-      final builder = RustBuilder(target: target, environment: buildEnvironment);
+      final builder =
+          RustBuilder(target: target, environment: buildEnvironment);
       builder.prepare(rustup);
       final res = await builder.build();
 
@@ -159,7 +161,8 @@ class PrecompileBinaries {
               rethrow;
             }
             ++retryCount;
-            _log.shout('Upload failed (attempt $retryCount, will retry): ${e.toString()}');
+            _log.shout(
+                'Upload failed (attempt $retryCount, will retry): ${e.toString()}');
             await Future.delayed(Duration(seconds: 2));
           }
         }

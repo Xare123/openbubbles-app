@@ -1,276 +1,40 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
 import 'dart:math';
 
-import 'package:async_task/async_task.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
-import 'package:bluebubbles/services/network/backend_service.dart';
-import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/database.dart';
-import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/app/state/message_state.dart';
+import 'package:bluebubbles/database/models.dart' hide Message_, Chat_;
+import 'package:bluebubbles/services/network/backend_service.dart';
+import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/services/backend/interfaces/message_interface.dart';
 import 'package:collection/collection.dart';
-import 'package:dlibphonenumber/generated/metadata/phone_number/CH.dart';
+import 'package:telephony_plus/telephony_plus.dart';
+import 'package:telephony_plus/src/models/attachment.dart' as TelephonyAttachment;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart' hide Condition;
 import 'package:metadata_fetch/metadata_fetch.dart';
+import 'package:tuple/tuple.dart';
+import 'package:bluebubbles/src/rust/api/api.dart' as api;
+import 'package:convert/convert.dart';
+import 'package:bluebubbles/generated/objectbox.g.dart';
+import 'package:universal_io/io.dart' show gzip;
 // (needed when generating objectbox model code)
 // ignore: unnecessary_import
 import 'package:objectbox/objectbox.dart';
-import 'package:supercharged/supercharged.dart';
-import 'package:telephony_plus/telephony_plus.dart';
-import 'package:telephony_plus/src/models/attachment.dart' as TelephonyAttachment;
-import 'package:bluebubbles/src/rust/api/api.dart' as api;
-import 'package:tuple/tuple.dart';
-import 'dart:typed_data';
-import 'package:convert/convert.dart';
 
-const IS_FINISHED               = 1 << 0; // this one probably, although there are some unset in db, all are set on local db
-const IS_EMOTE                  = 1 << 1;
-const IS_FROM_ME                = 1 << 2;
-const IS_EMPTY                  = 1 << 3;
-const IS_DELAYED                = 1 << 5;
-const IS_AUTO_REPLY             = 1 << 6;
-const IS_PREPARED               = 1 << 11;
-const IS_DELIVERED              = 1 << 12;
-const IS_READ                   = 1 << 13;
-const IS_SYSTEM_MESSAGE         = 1 << 14;
-const IS_SENT                   = 1 << 15;
-const HAS_DD_RESULTS            = 1 << 16;
-const IS_SERVICE_MESSAGE        = 1 << 17;
-const IS_FORWARD                = 1 << 18;
-const WAS_DOWNGRADED            = 1 << 19;
-const WAS_DATA_DETECTED         = 1 << 20;
-const IS_AUDIO_MESSAGE          = 1 << 21;
-const IS_PLAYED                 = 1 << 22;
-const IS_EXPIRABLE              = 1 << 24;
-const MESSAGE_SOURCE            = 1 << 25;
-const IS_CORRUPT                = 1 << 26;
-const IS_SPAM                   = 1 << 27;
-const HAS_UNKNOWN_MENTION       = 1 << 28;
-const IS_STEWIE                 = 1 << 33;
-const WAS_DELIVERED_QUIETLY     = 1 << 34;
-const DID_NOTIFY_RECIPIENT      = 1 << 35;
-const WAS_DETONATED             = 1 << 36;
-const IS_KT_VERIFIED            = 1 << 37;
-const IS_CRITICAL               = 1 << 38;
-const IS_SOS                    = 1 << 39;
-const IS_PENDING_SATELLITE_SEND = 1 << 41;
-const NEEDS_RELAY               = 1 << 42;
-const SENT_OR_RECEIVED_OFF_GRID = 1 << 43;
-
-/// Async method to fetch attachments
-class GetMessageAttachments extends AsyncTask<List<dynamic>, Map<String, List<Attachment?>>> {
-  final List<dynamic> stuff;
-
-  GetMessageAttachments(this.stuff);
-
-  @override
-  AsyncTask<List<dynamic>, Map<String, List<Attachment?>>> instantiate(List<dynamic> parameters,
-      [Map<String, SharedData>? sharedData]) {
-    return GetMessageAttachments(parameters);
-  }
-
-  @override
-  List<dynamic> parameters() {
-    return stuff;
-  }
-
-  @override
-  FutureOr<Map<String, List<Attachment?>>> run() {
-    /// Pull args from input and create new instances of store and boxes
-    List<int> messageIds = stuff[0];
-    final Map<String, List<Attachment?>> map = {};
-    return Database.runInTransaction(TxMode.read, () {
-      /// Query the [amJoinBox] for relevant attachment IDs
-      final messages = Database.messages.getMany(messageIds);
-
-      /// Add the attachments to the map with some clever list operations
-      map.addEntries(messages.mapIndexed((index, e) => MapEntry(e!.guid!, e.dbAttachments)));
-      return map;
-    });
-  }
-}
-
-/// Async method to get chats from objectbox
-class BulkSaveNewMessages extends AsyncTask<List<dynamic>, List<Message>> {
-  final List<dynamic> params;
-
-  BulkSaveNewMessages(this.params);
-
-  @override
-  AsyncTask<List<dynamic>, List<Message>> instantiate(List<dynamic> parameters, [Map<String, SharedData>? sharedData]) {
-    return BulkSaveNewMessages(parameters);
-  }
-
-  @override
-  List<dynamic> parameters() {
-    return params;
-  }
-
-  @override
-  FutureOr<List<Message>> run() {
-    return Database.runInTransaction(TxMode.write, () {
-      // NOTE: This assumes that handles and chats will already be created and in the database
-      // 0. Create map for the messages and attachments to save
-      // 1. Check for existing attachments and save new ones
-      // 2. Fetch all inserted/existing attachments based on input
-      // 3. Create map of inserted/existing attachments
-      // 4. Check for existing messages & create list of new messages to save
-      // 5. Fetch all handles and map the old handle ROWIDs from each message to the new ones based on the original ROWID
-      // 6. Relate the attachments to the messages
-      // 7. Save all messages (and handle/attachment relationships)
-      // 8. Get the inserted messages
-      // 9. Check inserted messages for associated message GUIDs & update hasReactions flag
-      // 10. Save the updated associated messages
-      // 11. Update the associated chat's last message
-
-      /// Takes the list of messages from [params] and saves it
-      /// to the objectbox Database.
-      Chat inputChat = params[0];
-      List<Message> inputMessages = params[1];
-      List<String> inputMessageGuids = inputMessages.map((element) => element.guid!).toList();
-
-      // 0. Create map for the messages and attachments to save
-      Map<String, Attachment> attachmentsToSave = {};
-      Map<String, List<String>> messageAttachments = {};
-      for (final msg in inputMessages) {
-        for (final a in msg.attachments) {
-          if (!attachmentsToSave.containsKey(a!.guid)) {
-            attachmentsToSave[a.guid!] = a;
-          }
-
-          if (!messageAttachments.containsKey(a.guid)) {
-            messageAttachments[msg.guid!] = [];
-          }
-
-          if (!messageAttachments[msg.guid]!.contains(a.guid)) {
-            messageAttachments[msg.guid]?.add(a.guid!);
-          }
-        }
-      }
-
-      // 1. Check for existing attachments and save new ones
-      Map<String, Attachment> attachmentMap = {};
-      if (attachmentsToSave.isNotEmpty) {
-        List<String> inputAttachmentGuids = attachmentsToSave.values.map((e) => e.guid).whereNotNull().toList();
-        QueryBuilder<Attachment> attachmentQuery = Database.attachments.query(Attachment_.guid.oneOf(inputAttachmentGuids));
-        List<String> existingAttachmentGuids =
-            attachmentQuery.build().find().map((e) => e.guid).whereNotNull().toList();
-
-        // Insert the attachments that don't yet exist
-        List<Attachment> attachmentsToInsert = attachmentsToSave.values
-            .where((element) => !existingAttachmentGuids.contains(element.guid))
-            .whereNotNull()
-            .toList();
-        Database.attachments.putMany(attachmentsToInsert);
-
-        // 2. Fetch all inserted/existing attachments based on input
-        QueryBuilder<Attachment> attachmentQuery2 = Database.attachments.query(Attachment_.guid.oneOf(inputAttachmentGuids));
-        List<Attachment> attachments = attachmentQuery2.build().find().whereNotNull().toList();
-
-        // 3. Create map of inserted/existing attachments
-        for (final a in attachments) {
-          attachmentMap[a.guid!] = a;
-        }
-      }
-
-      // 4. Check for existing messages & create list of new messages to save
-      QueryBuilder<Message> query = Database.messages.query(Message_.guid.oneOf(inputMessageGuids));
-      List<String> existingMessageGuids = query.build().find().map((e) => e.guid!).toList();
-      inputMessages = inputMessages.where((element) => !existingMessageGuids.contains(element.guid)).toList();
-
-      // 5. Fetch all handles and map the old handle ROWIDs from each message to the new ones based on the original ROWID
-      List<Handle> handles = Database.handles.getAll();
-
-      for (final msg in inputMessages) {
-        msg.chat.target = inputChat;
-        msg.handle = handles.firstWhereOrNull((e) => e.originalROWID == msg.handleId);
-      }
-
-      // 6. Relate the attachments to the messages
-      for (final msg in inputMessages) {
-        final relatedAttachments =
-            messageAttachments[msg.guid]?.map((e) => attachmentMap[e]).whereNotNull().toList() ?? [];
-        msg.attachments = relatedAttachments;
-        msg.dbAttachments.addAll(relatedAttachments);
-      }
-
-      // 7. Save all messages (and handle/attachment relationships)
-      Database.messages.putMany(inputMessages);
-
-      // 8. Get the inserted messages
-      QueryBuilder<Message> messageQuery = Database.messages.query(Message_.guid.oneOf(inputMessageGuids));
-      List<Message> messages = messageQuery.build().find().toList();
-
-      // 9. Check inserted messages for associated message GUIDs & update hasReactions flag
-      Map<String, Message> messagesToUpdate = {};
-      for (final message in messages) {
-        // Update the handles from our cache
-        message.handle = handles.firstWhereOrNull((element) => element.originalROWID == message.handleId);
-
-        // Continue if there isn't an associated message GUID to process
-        if ((message.associatedMessageGuid ?? '').isEmpty) continue;
-
-        // Find the associated message in the DB and update the hasReactions flag
-        List<Message> associatedMessages =
-            Message.find(cond: Message_.guid.equals(message.associatedMessageGuid!)).toList();
-        if (associatedMessages.isNotEmpty) {
-          // Toggle the hasReactions flag
-          Message messageWithReaction = messagesToUpdate[associatedMessages[0].guid] ?? associatedMessages[0];
-          messageWithReaction.hasReactions = true;
-
-          // Make sure the current message has the associated message in it's list, and the hasReactions
-          // flag is set as well
-          Message reactionMessage = messagesToUpdate[message.guid!] ?? message;
-          for (var e in messageWithReaction.associatedMessages) {
-            if (e.guid == messageWithReaction.guid) {
-              e.hasReactions = true;
-              break;
-            }
-          }
-
-          // Update the cached values
-          messagesToUpdate[messageWithReaction.guid!] = messageWithReaction;
-          messagesToUpdate[reactionMessage.guid!] = reactionMessage;
-        }
-      }
-
-      // 10. Save the updated associated messages
-      if (messagesToUpdate.isNotEmpty) {
-        try {
-          Database.messages.putMany(messagesToUpdate.values.toList());
-        } catch (ex) {
-          print('Failed to put associated messages into DB: ${ex.toString()}');
-        }
-      }
-
-      // 11. Update the associated chat's last message
-      messages.sort(Message.sort);
-      bool isNewer = false;
-
-      // If the message was saved correctly, update this chat's latestMessage info,
-      // but only if the incoming message's date is newer
-      if (messages.isNotEmpty) {
-        final first = messages.first;
-        if (first.id != null || kIsWeb) {
-          isNewer = first.dateCreated!.isAfter(inputChat.latestMessage.dateCreated!);
-          if (isNewer) {
-            inputChat.latestMessage = first;
-            if (!first.isFromMe! && !cm.isChatActive(inputChat.guid)) {
-              inputChat.toggleHasUnread(true);
-            }
-          }
-        }
-      }
-
-      return messages;
-    });
-  }
-}
+const IS_FINISHED = 1 << 0;
+const IS_FROM_ME = 1 << 2;
+const IS_DELIVERED = 1 << 12;
+const IS_READ = 1 << 13;
+const IS_SENT = 1 << 15;
+const WAS_DATA_DETECTED = 1 << 20;
+const IS_FORWARD = 1 << 18;
 
 @Entity()
 class Message {
@@ -294,6 +58,7 @@ class Message {
   // Data detector results
   bool? hasDdResults;
   DateTime? datePlayed;
+  bool hasEffectPlayed;
   int? itemType;
   String? groupTitle;
   int? groupActionType;
@@ -306,11 +71,28 @@ class Message {
   Handle? handle;
   bool hasAttachments;
   bool hasReactions;
+
+  // Phase 1: Add ToOne relationship for Handle
+  // This will eventually replace the embedded Handle object above
+  final handleRelation = ToOne<Handle>();
   DateTime? dateDeleted;
   Map<String, dynamic>? metadata;
   String? threadOriginatorGuid;
   String? threadOriginatorPart;
+
+  // IMPORTANT: Two separate attachment fields with different purposes:
+  // 1. 'attachments' - In-memory list for serialization/deserialization and UI access
+  // 2. 'dbAttachments' - ObjectBox ToMany relationship for persistent DB links
+  //    Only modify when saving/updating messages in DB transactions
+  //    Do NOT clear/modify when just querying - the relationship already exists
+  // Transient because we don't want it to be stored in the DB. The attachments are linked via
+  // the dbAttachments ToMany relationship, and this list is just for easier access, when needed (use sparingly).
+  @Transient()
+  bool temp = false;
+
+  @Transient()
   List<Attachment?> attachments = [];
+
   List<Message> associatedMessages = [];
   bool? bigEmoji;
   List<AttributedBody> attributedBody;
@@ -339,6 +121,10 @@ class Message {
   int get error => _error.value;
   set error(int i) => _error.value = i;
 
+  /// Human-readable description of the send error. Populated by the client
+  /// for client-side failures and by [serverErrorMessage] for server-side ones.
+  String? errorMessage;
+
   final Rxn<DateTime> _dateRead = Rxn<DateTime>();
   DateTime? get dateRead => _dateRead.value;
   set dateRead(DateTime? d) => _dateRead.value = d;
@@ -355,87 +141,56 @@ class Message {
   DateTime? get dateEdited => _dateEdited.value;
   set dateEdited(DateTime? d) => _dateEdited.value = d;
 
+  /// Parts that have been unsent/retracted, as reported by [messageSummaryInfo].
+  List<int> get retractedParts => messageSummaryInfo.firstOrNull?.retractedParts ?? [];
+
+  /// True when this message has at least one retracted part.
+  bool get hasUnsentParts => dateEdited != null && retractedParts.isNotEmpty;
+
   @Backlink('message')
   final dbAttachments = ToMany<Attachment>();
 
   final chat = ToOne<Chat>();
 
   String? get dbAttributedBody => jsonEncode(attributedBody.map((e) => e.toMap()).toList());
-  set dbAttributedBody(String? json) => attributedBody = json == null
-      ? <AttributedBody>[] : (jsonDecode(json) as List).map((e) => AttributedBody.fromMap(e)).toList();
+  set dbAttributedBody(String? json) => attributedBody =
+      json == null ? <AttributedBody>[] : (jsonDecode(json) as List).map((e) => AttributedBody.fromMap(e)).toList();
 
   String? get dbMessageSummaryInfo => jsonEncode(messageSummaryInfo.map((e) => e.toJson()).toList());
   set dbMessageSummaryInfo(String? json) => messageSummaryInfo = json == null
-      ? <MessageSummaryInfo>[] : (jsonDecode(json) as List).map((e) => MessageSummaryInfo.fromJson(e)).toList();
+      ? <MessageSummaryInfo>[]
+      : (jsonDecode(json) as List).map((e) => MessageSummaryInfo.fromJson(e)).toList();
 
-  String? get dbPayloadData => payloadData == null
-      ? null : jsonEncode(payloadData!.toJson());
-  set dbPayloadData(String? json) => payloadData = json == null
-      ? null : PayloadData.fromJson(jsonDecode(json));
+  String? get dbPayloadData => payloadData == null ? null : jsonEncode(payloadData!.toJson());
+  set dbPayloadData(String? json) => payloadData = json == null ? null : PayloadData.fromJson(jsonDecode(json));
 
-  String? get dbMetadata => metadata == null
-      ? null : jsonEncode(metadata);
-  set dbMetadata(String? json) => metadata = json == null
-      ? null : jsonDecode(json) as Map<String, dynamic>;
+  String? get dbMetadata => metadata == null ? null : jsonEncode(metadata);
+  set dbMetadata(String? json) => metadata = json == null ? null : jsonDecode(json) as Map<String, dynamic>;
+
+  @Transient()
+  bool get isKeptAudio => itemType == 5 && subject != null;
 
   DateTime? get chatViewDate => dateScheduled ?? dateCreated;
 
-  // prevents saving, used for SMS forwarding
+  // It's outgoing from this device is the guid starts with "temp" and isFromMe is true.
+  // A temp GUID is only assigned to outgoing messages before they are sent to the server.
   @Transient()
-  bool temp = false;
+  bool get isSending => isFromMe == true && guid != null && guid!.startsWith("temp");
 
+  @Transient()
+  bool get isSticker => associatedMessageType == "sticker" && associatedMessageGuid != null;
 
-  Future<void> forwardIfNessesary(Chat chat, {bool markFailed = false}) async {
-    if (hasBeenForwarded || !chat.isTextForwarding || !(isFromMe ?? true)) return;
-    if (!await chat.shouldRoute()) return;
+  @Transient()
+  bool get isNameChange => itemType == 2;
 
+  @Transient()
+  bool get isGroupPhotoEvent => itemType == 3 && (groupActionType ?? 0) > 0;
 
-    hasBeenForwarded = true;
-    save(chat: chat);
+  @Transient()
+  bool get isGroupPhotoChanged => itemType == 3 && groupActionType == 1;
 
-    pushService.disableOutgoingSms = true;
-
-    try {
-      // if we are forwarding, we do not persist to disk. Therefore we don't care about temp guids
-      var attachments = fetchAttachments()!;
-      bool useMMS = chat.participants.length > 1 || attachments.isNotEmpty;
-      int status;
-      if (useMMS) {
-        status = await TelephonyPlus().sendMMS(
-          addresses: chat.participants.map((e) => e.address).filter((e) => e.isPhoneNumber).toList(),
-          message: text?.trim() == "" ? null : text,
-          threadId: chat.telephonyId,
-          attachments: await Future.wait(attachments.map((e) => e!.toTelephony()).toList())
-        );
-      } else {
-        status = await TelephonyPlus().sendSMS(
-          address: chat.participants.first.address,
-          threadId: chat.telephonyId,
-          message: text!,
-        );
-      }
-      if (status != -1) {
-        await (backend as RustPushBackend).confirmSmsSent(this, chat, false);
-        hasBeenForwarded = false;
-        save(chat: chat);
-        if (markFailed) {
-
-          if (!ls.isAlive || !(cm.getChatController(chat.guid)?.isAlive ?? false)) {
-            await notif.createFailedToSend(chat);
-          }
-          return;
-        } else {
-          throw Exception("failed to send sms with status $status!");
-        }
-      }
-      await (backend as RustPushBackend).confirmSmsSent(this, chat, true);
-    } finally {
-      (() async {
-        await Future.delayed(const Duration(seconds: 5));
-        pushService.disableOutgoingSms = false;
-      })();
-    }
-  }
+  @Transient()
+  bool get isGroupPhotoRemoved => itemType == 3 && groupActionType == 2;
 
   Message({
     this.id,
@@ -447,6 +202,7 @@ class Message {
     this.subject,
     this.country,
     int? error,
+    this.errorMessage,
     this.dateCreated,
     DateTime? dateRead,
     DateTime? dateDelivered,
@@ -454,6 +210,7 @@ class Message {
     this.isFromMe = true,
     this.hasDdResults = false,
     this.datePlayed,
+    this.hasEffectPlayed = false,
     this.itemType = 0,
     this.groupTitle,
     this.groupActionType = 0,
@@ -462,6 +219,7 @@ class Message {
     this.associatedMessagePart,
     this.associatedMessageType,
     this.expressiveSendStyleId,
+    this.associatedMessageEmoji,
     this.handle,
     this.hasAttachments = false,
     this.hasReactions = false,
@@ -479,30 +237,228 @@ class Message {
     this.wasDeliveredQuietly = false,
     this.didNotifyRecipient = false,
     this.isBookmarked = false,
+    this.verificationFailed = false,
+    this.dateScheduled,
+    this.sendingServiceId,
+    this.amkSessionId,
     this.hasBeenForwarded = false,
     this.stagingGuid,
-    this.amkSessionId,
-    this.verificationFailed = false,
-    this.sendingServiceId,
-    this.associatedMessageEmoji,
-    this.dateScheduled,
-    this.temp = false,
     this.ckRecordId,
+    this.temp = false,
   }) {
-      if (handle != null && handleId == null) handleId = handle!.originalROWID;
-      if (error != null) _error.value = error;
-      if (dateRead != null) _dateRead.value = dateRead;
-      if (dateDelivered != null) _dateDelivered.value = dateDelivered;
-      if (dateEdited != null) _dateEdited.value = dateEdited;
-      if (isDelievered != null) _isDelivered.value = isDelievered;
-      if (attachments.isEmpty) attachments = [];
-      if (associatedMessages.isEmpty) associatedMessages = [];
-      if (attributedBody.isEmpty) attributedBody = [];
-      if (messageSummaryInfo.isEmpty) messageSummaryInfo = [];
+    if (handle != null && handleId == null) {
+      handleId = handle!.originalROWID;
+    }
+    if (error != null) _error.value = error;
+    if (dateRead != null) _dateRead.value = dateRead;
+    if (dateDelivered != null) _dateDelivered.value = dateDelivered;
+    if (dateEdited != null) _dateEdited.value = dateEdited;
+    if (isDelievered != null) _isDelivered.value = isDelievered;
+    if (attachments.isEmpty) attachments = [];
+    if (associatedMessages.isEmpty) associatedMessages = [];
+    if (attributedBody.isEmpty) attributedBody = [];
+    if (messageSummaryInfo.isEmpty) messageSummaryInfo = [];
+  }
+
+  String convertAttachmentGuid(String guid) {
+    if (guid.startsWith("at")) {
+      final items = guid.split("_");
+      guid = "${items[2]}_${items[1]}";
+    }
+    return guid;
+  }
+
+  String unconvertAttachmentGuid(String guid) {
+    final items = guid.split("_");
+    if (items.length == 1) return guid;
+    return "at_${items[1]}_${items[0]}";
+  }
+
+  Uint8List? encodeAttributedBody(List<AttributedBody> body, bool noAttachments) {
+    if (body.isEmpty) return null;
+    return api.nscoderEncode(
+      value: body
+          .map(
+            (item) => api.NSAttributedString(
+              text: item.string,
+              ranges: item.runs
+                  .where((run) => !noAttachments || run.attributes?.attachmentGuid == null)
+                  .map(
+                    (run) => (
+                      run.range[1],
+                      api.NSDictionaryTypedCoder(
+                        field0: {
+                          if (run.attributes?.messagePart != null)
+                            "__kIMMessagePartAttributeName":
+                                api.NSNumber(field0: run.attributes!.messagePart!).encode(),
+                          if (run.attributes?.attachmentGuid != null)
+                            "__kIMFileTransferGUIDAttributeName":
+                                api.NSString(field0: unconvertAttachmentGuid(run.attributes!.attachmentGuid!)).encode(),
+                          if (run.attributes?.mention != null)
+                            "__kIMMentionConfirmedMention": api.NSString(field0: run.attributes!.mention!).encode(),
+                          if (run.attributes?.audioTranscript != null)
+                            "IMAudioTranscription": api.NSString(field0: run.attributes!.audioTranscript!).encode(),
+                          if (run.attributes?.textEffect != null)
+                            "__kIMTextEffectAttributeName": api.NSNumber(field0: run.attributes!.textEffect!).encode(),
+                          if (run.attributes?.bold != null)
+                            "__kIMTextBoldAttributeName": api.NSNumber(field0: run.attributes!.bold! ? 1 : 0).encode(),
+                          if (run.attributes?.italic != null)
+                            "__kIMTextItalicAttributeName":
+                                api.NSNumber(field0: run.attributes!.italic! ? 1 : 0).encode(),
+                          if (run.attributes?.strikethrough != null)
+                            "__kIMTextStrikethroughAttributeName":
+                                api.NSNumber(field0: run.attributes!.strikethrough! ? 1 : 0).encode(),
+                          if (run.attributes?.underline != null)
+                            "__kIMTextUnderlineAttributeName":
+                                api.NSNumber(field0: run.attributes!.underline! ? 1 : 0).encode(),
+                        },
+                      ),
+                    ),
+                  )
+                  .toList(),
+            ).encode(),
+          )
+          .toList(),
+    );
+  }
+
+  List<AttributedBody> decodeAttributedBody(Uint8List? data) {
+    if (data == null) return [];
+    return api.nscoderDecode(data: data).map((val) {
+      final decoded = api.NSAttributedString.decode(val: val);
+      int length = 0;
+      return AttributedBody(
+        string: decoded.text,
+        runs: decoded.ranges.map((range) {
+          final start = length;
+          length += range.$1;
+          return Run(
+            range: [start, range.$1],
+            attributes: Attributes(
+              messagePart: range.$2.field0["__kIMMessagePartAttributeName"] == null
+                  ? null
+                  : api.NSNumber.decode(val: range.$2.field0["__kIMMessagePartAttributeName"]!).field0,
+              attachmentGuid: range.$2.field0["__kIMFileTransferGUIDAttributeName"] == null
+                  ? null
+                  : convertAttachmentGuid(
+                      api.NSString.decode(val: range.$2.field0["__kIMFileTransferGUIDAttributeName"]!).field0),
+              mention: range.$2.field0["__kIMMentionConfirmedMention"] == null
+                  ? null
+                  : api.NSString.decode(val: range.$2.field0["__kIMMentionConfirmedMention"]!).field0,
+              audioTranscript: range.$2.field0["IMAudioTranscription"] == null
+                  ? null
+                  : api.NSString.decode(val: range.$2.field0["IMAudioTranscription"]!).field0,
+              textEffect: range.$2.field0["__kIMTextEffectAttributeName"] == null
+                  ? null
+                  : api.NSNumber.decode(val: range.$2.field0["__kIMTextEffectAttributeName"]!).field0,
+              bold: range.$2.field0["__kIMTextBoldAttributeName"] == null
+                  ? null
+                  : api.NSNumber.decode(val: range.$2.field0["__kIMTextBoldAttributeName"]!).field0 == 1,
+              italic: range.$2.field0["__kIMTextItalicAttributeName"] == null
+                  ? null
+                  : api.NSNumber.decode(val: range.$2.field0["__kIMTextItalicAttributeName"]!).field0 == 1,
+              strikethrough: range.$2.field0["__kIMTextStrikethroughAttributeName"] == null
+                  ? null
+                  : api.NSNumber.decode(val: range.$2.field0["__kIMTextStrikethroughAttributeName"]!).field0 == 1,
+              underline: range.$2.field0["__kIMTextUnderlineAttributeName"] == null
+                  ? null
+                  : api.NSNumber.decode(val: range.$2.field0["__kIMTextUnderlineAttributeName"]!).field0 == 1,
+            ),
+          );
+        }).toList(),
+      );
+    }).toList();
+  }
+
+  Future<void> forwardIfNessesary(Chat chat, {bool markFailed = false}) async {
+    if (hasBeenForwarded || !chat.isTextForwarding || !(isFromMe ?? true)) return;
+    if (!await chat.shouldRoute()) return;
+
+    hasBeenForwarded = true;
+    save(chat: chat);
+    PushSvc.disableOutgoingSms = true;
+
+    try {
+      final fetchedAttachments = fetchAttachments()!;
+      final useMms = chat.handles.length > 1 || fetchedAttachments.isNotEmpty;
+      int status;
+      if (useMms) {
+        status = await TelephonyPlus().sendMMS(
+          addresses: chat.handles.map((e) => e.address).where((e) => e.isPhoneNumber).toList(),
+          message: text?.trim().isEmpty == true ? null : text,
+          threadId: chat.telephonyId,
+          attachments: await Future.wait(fetchedAttachments.map((e) => e!.toTelephony()).toList()),
+        );
+      } else {
+        status = await TelephonyPlus().sendSMS(
+          address: chat.handles.first.address,
+          threadId: chat.telephonyId,
+          message: text!,
+        );
+      }
+      if (status != -1) {
+        await (BackendSvc as RustPushBackend).confirmSmsSent(this, chat, false);
+        hasBeenForwarded = false;
+        save(chat: chat);
+        if (markFailed) {
+          if (!LifecycleSvc.isAlive || !(ChatsSvc.getChatController(chat.guid)?.isAlive.value ?? false)) {
+            await NotificationsSvc.createFailedToSend(chat);
+          }
+          return;
+        } else {
+          throw Exception("failed to send sms with status $status!");
+        }
+      }
+      await (BackendSvc as RustPushBackend).confirmSmsSent(this, chat, true);
+    } finally {
+      unawaited(Future<void>.delayed(const Duration(seconds: 5), () {
+        PushSvc.disableOutgoingSms = false;
+      }));
+    }
+  }
+
+  void inferReaction(Chat chat) {
+    if (associatedMessageGuid != null || text == null) return;
+    final inferReactionMap = <Tuple2<RegExp, String>>[
+      Tuple2(RegExp(r'^\s*Liked “(.*)”\s*$'), ReactionTypes.LIKE),
+      Tuple2(RegExp(r'^\s*Removed a like from “(.*)”\s*$'), "-${ReactionTypes.LIKE}"),
+      Tuple2(RegExp(r'^\s*Loved “(.*)”\s*$'), ReactionTypes.LOVE),
+      Tuple2(RegExp(r'^\s*Removed a heart from “(.*)”\s*$'), "-${ReactionTypes.LOVE}"),
+      Tuple2(RegExp(r'^\s*Disliked “(.*)”\s*$'), ReactionTypes.DISLIKE),
+      Tuple2(RegExp(r'^\s*Removed a dislike from “(.*)”\s*$'), "-${ReactionTypes.DISLIKE}"),
+      Tuple2(RegExp(r'^\s*Laughed at “(.*)”\s*$'), ReactionTypes.LAUGH),
+      Tuple2(RegExp(r'^\s*Removed a laugh from “(.*)”\s*$'), "-${ReactionTypes.LAUGH}"),
+      Tuple2(RegExp(r'^\s*Emphasized “(.*)”\s*$'), ReactionTypes.EMPHASIZE),
+      Tuple2(RegExp(r'^\s*Removed an exclamation from “(.*)”\s*$'), "-${ReactionTypes.EMPHASIZE}"),
+      Tuple2(RegExp(r'^\s*Questioned “(.*)”\s*$'), ReactionTypes.QUESTION),
+      Tuple2(RegExp(r'^\s*Removed a question mark from “(.*)”\s*$'), "-${ReactionTypes.QUESTION}"),
+      Tuple2(RegExp(r'^\s*Reacted ([^\s]+) to “(.*)”\s*$'), ReactionTypes.EMOJI),
+      Tuple2(RegExp(r'^\s*Removed ([^\s]+) from “(.*)”\s*$'), "-${ReactionTypes.EMOJI}"),
+    ];
+    for (final reaction in inferReactionMap) {
+      final match = reaction.item1.firstMatch(text!);
+      if (match == null) continue;
+      final query = (Database.messages
+              .query(Message_.text.equals(match[match.groupCount > 1 ? 2 : 1]!).and(Message_.chat.equals(chat.id!)))
+            ..order(Message_.dateCreated, flags: Order.descending))
+          .build();
+      query.limit = 1;
+      final msg = query.findFirst();
+      query.close();
+      if (msg == null) return;
+      associatedMessageGuid = msg.guid!;
+      associatedMessagePart = 0;
+      associatedMessageType = reaction.item2;
+      if (match.groupCount > 1) {
+        associatedMessageEmoji = match[1]!;
+      }
+      return;
+    }
   }
 
   factory Message.fromMap(Map<String, dynamic> json) {
-    final attachments = (json['attachments'] as List? ?? []).map((a) => Attachment.fromMap(a!.cast<String, Object>())).toList();
+    final attachments =
+        (json['attachments'] as List? ?? []).map((a) => Attachment.fromMap(a!.cast<String, Object>())).toList();
 
     List<AttributedBody> attributedBody = [];
     if (json["attributedBody"] != null) {
@@ -510,7 +466,8 @@ class Message {
         json['attributedBody'] = [json['attributedBody']!.cast<String, Object>()];
       }
       try {
-        attributedBody = (json['attributedBody'] as List).map((a) => AttributedBody.fromMap(a!.cast<String, Object>())).toList();
+        attributedBody =
+            (json['attributedBody'] as List).map((a) => AttributedBody.fromMap(a!.cast<String, Object>())).toList();
       } catch (e, stack) {
         Logger.error('Failed to parse attributed body!', error: e, trace: stack);
       }
@@ -529,7 +486,9 @@ class Message {
 
     List<MessageSummaryInfo> msi = [];
     try {
-      msi = (json['messageSummaryInfo'] as List? ?? []).map((e) => MessageSummaryInfo.fromJson(e!.cast<String, Object>())).toList();
+      msi = (json['messageSummaryInfo'] as List? ?? [])
+          .map((e) => MessageSummaryInfo.fromJson(e!.cast<String, Object>()))
+          .toList();
     } catch (e, stack) {
       Logger.error('Failed to parse summary info!', error: e, trace: stack);
     }
@@ -551,6 +510,7 @@ class Message {
       subject: json["subject"],
       country: json["country"],
       error: json["error"] ?? json["_error"] ?? 0,
+      errorMessage: json['errorMessage'] as String?,
       dateCreated: parseDate(json["dateCreated"]),
       dateRead: parseDate(json["dateRead"]),
       dateDelivered: parseDate(json["dateDelivered"]),
@@ -563,12 +523,14 @@ class Message {
       groupActionType: json["groupActionType"] ?? 0,
       balloonBundleId: json["balloonBundleId"],
       associatedMessageGuid: json["associatedMessageGuid"]?.toString().replaceAll("bp:", "").split("/").last,
-      associatedMessagePart: json["associatedMessagePart"] ?? int.tryParse(json["associatedMessageGuid"].toString().replaceAll("p:", "").split("/").first),
+      associatedMessagePart: json["associatedMessagePart"] ??
+          int.tryParse(json["associatedMessageGuid"].toString().replaceAll("p:", "").split("/").first),
       associatedMessageType: json["associatedMessageType"],
       expressiveSendStyleId: json["expressiveSendStyleId"],
       handle: json['handle'] != null ? Handle.fromMap(json['handle']!.cast<String, Object>()) : null,
       hasAttachments: attachments.isNotEmpty || json['hasAttachments'] == true,
-      attachments: (json['attachments'] as List? ?? []).map((a) => Attachment.fromMap(a!.cast<String, Object>())).toList(),
+      attachments:
+          (json['attachments'] as List? ?? []).map((a) => Attachment.fromMap(a!.cast<String, Object>())).toList(),
       hasReactions: json['hasReactions'] == true,
       dateDeleted: parseDate(json["dateDeleted"]),
       metadata: metadata is String ? null : metadata,
@@ -585,7 +547,7 @@ class Message {
       hasBeenForwarded: json['hasBeenForwarded'] ?? false,
       stagingGuid: json['stagingGuid'],
       amkSessionId: json['amkSessionId'],
-      verificationFailed: json['verificationFailed'],
+      verificationFailed: json['verificationFailed'] ?? false,
       sendingServiceId: json['sendingServiceId'],
       associatedMessageEmoji: json['associatedMessageEmoji'],
       dateScheduled: parseDate(json['dateScheduled']),
@@ -593,182 +555,268 @@ class Message {
     );
   }
 
-  List<Tuple2<RegExp, String>> inferReactionMap = [
-    Tuple2(RegExp(r'^\s*Liked “(.*)”\s*$'), ReactionTypes.LIKE),
-    Tuple2(RegExp(r'^\s*Removed a like from “(.*)”\s*$'), "-${ReactionTypes.LIKE}"),
-    Tuple2(RegExp(r'^\s*Loved “(.*)”\s*$'), ReactionTypes.LOVE),
-    Tuple2(RegExp(r'^\s*Removed a heart from “(.*)”\s*$'), "-${ReactionTypes.LOVE}"),
-    Tuple2(RegExp(r'^\s*Disliked “(.*)”\s*$'), ReactionTypes.DISLIKE),
-    Tuple2(RegExp(r'^\s*Removed a dislike from “(.*)”\s*$'), "-${ReactionTypes.DISLIKE}"),
-    Tuple2(RegExp(r'^\s*Laughed at “(.*)”\s*$'), ReactionTypes.LAUGH),
-    Tuple2(RegExp(r'^\s*Removed a laugh from “(.*)”\s*$'), "-${ReactionTypes.LAUGH}"),
-    Tuple2(RegExp(r'^\s*Emphasized “(.*)”\s*$'), ReactionTypes.EMPHASIZE),
-    Tuple2(RegExp(r'^\s*Removed an exclamation from “(.*)”\s*$'), "-${ReactionTypes.EMPHASIZE}"),
-    Tuple2(RegExp(r'^\s*Questioned “(.*)”\s*$'), ReactionTypes.QUESTION),
-    Tuple2(RegExp(r'^\s*Removed a question mark from “(.*)”\s*$'), "-${ReactionTypes.QUESTION}"),
-    Tuple2(RegExp(r'^\s*Reacted ([^\s]+) to “(.*)”\s*$'), ReactionTypes.EMOJI),
-    Tuple2(RegExp(r'^\s*Removed ([^\s]+) from “(.*)”\s*$'), "-${ReactionTypes.EMOJI}"),
-  ];
+  api.CloudMessage toCloud(bool noAttachments) {
+    int? associatedType;
+    if (associatedMessageType == "sticker") {
+      associatedType = 2;
+    } else if (associatedMessageType != null) {
+      final rawType = associatedMessageType!.replaceFirst("-", "");
+      final idx = ReactionTypes.toList().indexOf(rawType);
+      associatedType = idx + (associatedMessageType!.startsWith("-") ? 3000 : 2000);
+    }
 
-  void inferReaction(Chat chat) {
-    if (associatedMessageGuid != null) return; // already associated
-    for (var reaction in inferReactionMap) {
-      var match = reaction.item1.firstMatch(text!);
-      if (match == null) continue;
-      var query = (Database.messages.query(Message_.text.equals(match[match.groupCount > 1 ? 2 : 1]!).and(Message_.chat.equals(chat.id!)))
-        ..order(Message_.dateCreated, flags: Order.descending))
-        .build();
-      query.limit = 1;
-      var msg = query.findFirst();
-      query.close();
-    
-      if (msg == null) return;
-      associatedMessageGuid = msg.guid!;
-      associatedMessagePart = 0;
-      associatedMessageType = reaction.item2;
-      if (match.groupCount > 1) {
-        associatedMessageEmoji = match[1]!;
-      }
-      return;
+    if (attributedBody.isEmpty && associatedMessageType != null) {
+      attributedBody = [AttributedBody.raw(" ")];
     }
-  }
 
-  List<MessagePart> attributedBodyToMessagePart(AttributedBody body) {
-    final mainString = body.string;
-    final list = <MessagePart>[];
-    body.runs.sort((a, b) => a.range.first.compareTo(b.range.first));
-    body.runs.forEachIndexed((i, e) {
-      if (e.attributes?.messagePart == null) return;
-      final existingPart = list.firstWhereOrNull((element) => element.part == e.attributes!.messagePart!);
-      if (existingPart != null) {
-        final newText = mainString.substring(e.range.first, e.range.first + e.range.last);
-        final currentLength = existingPart.text?.length ?? 0;
-        existingPart.text = (existingPart.text ?? "") + newText;
-        existingPart.annotations.add(Annotation(
-          mentionedAddress: e.attributes?.mention,
-          range: [currentLength, currentLength + e.range.last],
-          bold: e.attributes?.bold,
-          italic: e.attributes?.italic,
-          underline: e.attributes?.underline,
-          strikethrough: e.attributes?.strikethrough,
-          textEffect: e.attributes?.textEffect,
-        ));
-        existingPart.annotations.sort((a, b) => a.range.first.compareTo(b.range.first));
-      } else {
-        list.add(MessagePart(
-          subject: i == 0 ? subject : null,
-          text: e.isAttachment ? null : mainString.substring(e.range.first, e.range.first + e.range.last),
-          attachments: e.isAttachment && (chat.target != null || cm.activeChat != null)
-              ? [
-                  ms(chat.target?.guid ?? cm.activeChat!.chat.guid)
-                          .struct
-                          .getAttachment(e.attributes!.attachmentGuid!) ??
-                      Attachment.findOne(e.attributes!.attachmentGuid!)
-                ].where((e) => e != null).map((e) => e!).toList()
-              : [],
-          annotations: [
-                  Annotation(
-                    mentionedAddress: e.attributes?.mention,
-                    bold: e.attributes?.bold,
-                    italic: e.attributes?.italic,
-                    underline: e.attributes?.underline,
-                    strikethrough: e.attributes?.strikethrough,
-                    textEffect: e.attributes?.textEffect,
-                    range: [0, e.range.last],
-                  )
-                ],
-          part: e.attributes!.messagePart!,
-        ));
-      }
-    });
-    return list;
-  }
+    if (noAttachments &&
+        attributedBody.isNotEmpty &&
+        attributedBody[0].runs.every((run) => run.attributes?.attachmentGuid != null)) {
+      throw Exception("No Attachments!");
+    }
 
-  List<MessagePart> buildMessageParts() {
-    List<MessagePart> parts = [];
-    if (guid?.startsWith("error") ?? false) {
-      Logger.debug("hi");
-    }
-    // go through the attributed body
-    if (attributedBody.firstOrNull?.runs.isNotEmpty ?? false) {
-      parts = attributedBodyToMessagePart(attributedBody.first);
-    }
-    // add edits
-    if (messageSummaryInfo.firstOrNull?.editedParts.isNotEmpty ?? false) {
-      for (int part in messageSummaryInfo.first.editedParts) {
-        final edits = messageSummaryInfo.first.editedContent[part.toString()] ?? [];
-        final existingPart = parts.firstWhereOrNull((element) => element.part == part);
-        if (existingPart != null) {
-          existingPart.edits.addAll(edits
-              .where((e) => e.text?.values.isNotEmpty ?? false)
-              .map((e) => attributedBodyToMessagePart(e.text!.values.first).firstOrNull)
-              .where((e) => e != null)
-              .map((e) => e!)
-              .toList());
-          if (existingPart.edits.isNotEmpty) {
-            existingPart.edits.removeLast();
-          }
-        }
-      }
-    }
-    // add unsends
-    if (messageSummaryInfo.firstOrNull?.retractedParts.isNotEmpty ?? false) {
-      for (int part in messageSummaryInfo.first.retractedParts) {
-        final existing = parts.indexWhere((e) => e.part == part);
-        if (existing >= 0) {
-          parts.removeAt(existing);
-        }
-        parts.add(MessagePart(
-          part: part,
-          isUnsent: true,
-        ));
-      }
-    }
-    if (parts.isEmpty) {
-      if (!hasApplePayloadData && !isLegacyUrlPreview && !isGroupEvent) {
-        parts.addAll(attachments.mapIndexed((index, e) => MessagePart(
-              attachments: [e!],
-              part: index,
-            )));
-      } else if (isInteractive) {
-        parts.add(MessagePart(
-          part: 0,
-        ));
-      }
+    final appPayload = payloadData?.appData?.firstOrNull != null
+        ? api.encodeExtensionApp(app: PushSvc.dataToApp(payloadData!)).$2
+        : null;
+    final associatedMessage = associatedMessageGuid == null ? null : Message.findOne(guid: associatedMessageGuid!);
+    final associatedRun = associatedMessagePart == null
+        ? null
+        : associatedMessage?.attributedBody.firstOrNull?.runs.firstWhereOrNull(
+            (run) => run.attributes?.messagePart == associatedMessagePart,
+          );
+    final targetChat = chat.target!;
 
-      if (fullText.isNotEmpty || isGroupEvent) {
-        parts.add(MessagePart(
+    return api.CloudMessage(
+      utm: api.utmNow(),
+      type: associatedMessageGuid != null ? 2 : 1,
+      error: error,
+      chatId: targetChat.isGroup ? targetChat.cloudGuid ?? targetChat.guid : "iMessage;-;${targetChat.chatIdentifier}",
+      sender: isFromMe == true ? "" : getHandle()?.address ?? "",
+      time: RustPushBBUtils.nsSinceAppleEpoch(dateCreated!),
+      msgProto2: threadOriginatorGuid != null
+          ? api.encodeMessageproto2(
+              messageproto2: api.MessageProto2(reply: "r:$threadOriginatorPart:$threadOriginatorGuid"),
+            )
+          : null,
+      destinationCallerId: targetChat.usingHandle!.replaceFirst("mailto:", "").replaceFirst("tel:", ""),
+      msgProto: api.encodeMessageproto(
+        messageproto: api.MessageProto(
+          unk1: 1,
           subject: subject,
-          text: text,
-          part: parts.length,
-        ));
+          text: attributedBody[0].string,
+          attributedBody: encodeAttributedBody(attributedBody, noAttachments),
+          balloonBundleId: balloonBundleId,
+          payloadData: appPayload != null ? Uint8List.fromList(gzip.decode(appPayload)) : null,
+          messageSummaryInfo: messageSummaryInfo.isEmpty
+              ? null
+              : api.encodeMessageInfo(
+                  info: api.MessageSummaryInfo(
+                    ec: messageSummaryInfo.first.editedContent.map(
+                      (key, value) => MapEntry(
+                        key,
+                        value
+                            .map(
+                              (item) => api.MessageEdit(
+                                t: encodeAttributedBody(item.text!.values, noAttachments)!,
+                                d: item.date!,
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ),
+                    ep: Uint32List.fromList(messageSummaryInfo.first.editedParts),
+                    otr: messageSummaryInfo.first.originalTextRange
+                        .map((key, value) => MapEntry(key, api.MessageEditRange(lo: value[0], le: value[1]))),
+                    rp: Uint32List.fromList(messageSummaryInfo.first.retractedParts),
+                    euh: const [],
+                    amc: 0,
+                    ust: true,
+                  ),
+                ),
+          effect: expressiveSendStyleId,
+          dateRead: dateRead != null ? RustPushBBUtils.nsSinceAppleEpoch(dateRead!) : 0,
+          unk10: 0,
+          unk11: 0,
+          dateDelivered: dateDelivered != null ? RustPushBBUtils.nsSinceAppleEpoch(dateDelivered!) : 0,
+          unk14: 0,
+          associatedMessageType: associatedType,
+          associatedMessageGuid:
+              associatedMessageGuid != null ? "p:$associatedMessagePart/$associatedMessageGuid" : null,
+          associatedMessageRangeLength: associatedRun?.range[1],
+          associatedMessageRangeLocation: associatedRun?.range[0],
+        ),
+      ),
+      flags: api.MessageFlags.fromBitsTruncate(
+        val: IS_FINISHED |
+            ((isFromMe ?? false) ? IS_FROM_ME : 0) |
+            (isDelivered ? IS_DELIVERED : 0) |
+            (dateRead != null ? IS_READ : 0) |
+            IS_SENT |
+            (hasBeenForwarded ? IS_FORWARD : 0) |
+            WAS_DATA_DETECTED,
+      ),
+      guid: guid!,
+      msgProto3: api.encodeMessageproto3(messageproto3: const api.MessageProto3(unk2: 0, unk3: 0)),
+      service: targetChat.isRpSms ? "SMS" : "iMessage",
+      msgProto4: api.encodeMessageproto4(
+        messageproto4: api.MessageProto4(
+          associatedMessageEmoji: associatedMessageEmoji,
+          service: targetChat.isRpSms ? "SMS" : "iMessage",
+          scheduleType: 0,
+          scheduleState: 0,
+          groupId: targetChat.guid,
+          sentOrReceivedOffGrid: 0,
+        ),
+      ),
+    );
+  }
+
+  void applyFromCloud(api.CloudMessage c, String cloudkitId) {
+    Chat? syncedChat;
+    if (c.chatId.contains(";")) {
+      final query = Database.chats.query(Chat_.chatIdentifier.equals(c.chatId.split(";")[2])).build();
+      syncedChat = query.findFirst();
+      query.close();
+    } else {
+      final query = Database.chats.query(Chat_.cloudGuid.equals(c.chatId)).build();
+      syncedChat = query.findFirst();
+      query.close();
+      syncedChat ??= Chat.findByRustGuid(c.chatId);
+    }
+
+    if (syncedChat?.isRpSms ?? true) return;
+
+    ckRecordId = cloudkitId;
+    error = c.error;
+    handle = RustPushBBUtils.rustHandleToBB(c.sender);
+    handleId = handle!.originalROWID;
+    dateCreated = RustPushBBUtils.fromNsSinceAppleEpoch(c.time);
+
+    final proto1 = api.decodeMessageproto(wrapped: c.msgProto);
+    subject = proto1.subject;
+    text = proto1.text;
+    attributedBody = decodeAttributedBody(proto1.attributedBody);
+    hasAttachments = attributedBody.firstOrNull?.runs.any((run) => run.attributes?.attachmentGuid != null) ?? false;
+
+    final eraseBalloonBundle = proto1.balloonBundleId == "com.apple.messages.URLBalloonProvider";
+    balloonBundleId = eraseBalloonBundle ? null : proto1.balloonBundleId;
+
+    try {
+      payloadData = proto1.payloadData != null && !eraseBalloonBundle
+          ? PushSvc.appToData(
+              api.decodeExtensionApp(bp: gzip.encode(proto1.payloadData!), bid: proto1.balloonBundleId!))
+          : null;
+    } catch (e, s) {
+      Logger.info("Failed item ${hex.encode(proto1.payloadData!)} ${proto1.balloonBundleId}", error: e, trace: s);
+    }
+    hasApplePayloadData = proto1.payloadData != null && !eraseBalloonBundle;
+
+    if (proto1.messageSummaryInfo != null) {
+      final summary = api.decodeMessageInfo(data: proto1.messageSummaryInfo!);
+      messageSummaryInfo = [
+        MessageSummaryInfo(
+          retractedParts: summary.rp.toList(),
+          editedContent: summary.ec.map(
+            (key, value) => MapEntry(
+              key,
+              value
+                  .map((item) => EditedContent(text: Content(values: decodeAttributedBody(item.t)), date: item.d))
+                  .toList(),
+            ),
+          ),
+          originalTextRange: summary.otr.map((key, value) => MapEntry(key, [value.lo, value.le])),
+          editedParts: summary.ep.toList(),
+        ),
+      ];
+    } else {
+      messageSummaryInfo = [];
+    }
+
+    expressiveSendStyleId = proto1.effect;
+    dateRead = proto1.dateRead == null || proto1.dateRead == 0
+        ? null
+        : RustPushBBUtils.fromNsSinceAppleEpoch(proto1.dateRead!);
+    dateDelivered = proto1.dateDelivered == null || proto1.dateDelivered == 0
+        ? null
+        : RustPushBBUtils.fromNsSinceAppleEpoch(proto1.dateDelivered!);
+
+    if (proto1.associatedMessageType != null) {
+      if (proto1.associatedMessageType == 2) {
+        associatedMessageType = "sticker";
+      } else if (proto1.associatedMessageType! >= 2000 && proto1.associatedMessageType! < 3000) {
+        associatedMessageType = ReactionTypes.toList()[proto1.associatedMessageType! - 2000];
+      } else if (proto1.associatedMessageType! >= 3000 && proto1.associatedMessageType! < 4000) {
+        associatedMessageType = "-${ReactionTypes.toList()[proto1.associatedMessageType! - 3000]}";
       }
     }
-    parts.sort((a, b) => a.part.compareTo(b.part));
-    return parts;
+
+    associatedMessageGuid = proto1.associatedMessageGuid;
+    associatedMessagePart = attributedBody.firstOrNull?.runs
+        .firstWhereOrNull(
+          (run) =>
+              run.range[0] == proto1.associatedMessageRangeLocation &&
+              run.range[1] == proto1.associatedMessageRangeLength,
+        )
+        ?.attributes
+        ?.messagePart;
+    guid = c.guid;
+
+    final bits = c.flags.bits();
+    isFromMe = (bits & IS_FROM_ME) != 0;
+
+    if (c.msgProto2 != null) {
+      final proto2 = api.decodeMessageproto2(wrapped: c.msgProto2!);
+      if (proto2.reply != null && proto2.reply!.startsWith("r:")) {
+        final parts = proto2.reply!.split(":");
+        threadOriginatorGuid = parts.last;
+        threadOriginatorPart = parts.sublist(1, parts.length - 1).join(":");
+      }
+    }
+
+    if (c.msgProto4 != null) {
+      final proto4 = api.decodeMessageproto4(wrapped: c.msgProto4!);
+      associatedMessageEmoji = proto4.associatedMessageEmoji;
+    }
+
+    save(chat: syncedChat);
   }
 
   /// Save a single message - prefer [bulkSave] for multiple messages rather
   /// than iterating through them
-  Message save({Chat? chat, bool updateIsBookmarked = false, bool updateSendingServiceId = false}) {
+  Message save({
+    Chat? chat,
+    bool updateIsBookmarked = false,
+    bool updateSendingServiceId = false,
+  }) {
     if (kIsWeb || temp) return this;
     Database.runInTransaction(TxMode.write, () {
       Message? existing = Message.findOne(guid: guid);
       if (existing != null) {
         id = existing.id;
         text ??= existing.text;
-        // delivered can sometimes come before sending, don't let it get overwritten
         if (existing.dateDelivered != null && dateDelivered == null) {
           dateDelivered = existing.dateDelivered;
         }
         if (existing.dateRead != null && dateRead == null) {
           dateRead = existing.dateRead;
         }
+
+        // Phase 2: Preserve the handle relationship from existing message
+        if (existing.handleRelation.hasValue) {
+          handleRelation.target = existing.handleRelation.target;
+        }
       }
 
-      // Save the participant & set the handle ID to the new participant
-      if (handle == null && handleId != null) {
-        handle = Handle.findOne(originalROWID: handleId);
+      // Phase 2: Set up handle relationship if we have a handle
+      if (handle != null && !handleRelation.hasValue) {
+        if (handle!.id != null) {
+          handleRelation.targetId = handle!.id!;
+        } else if (handleId != null) {
+          final foundHandle = Handle.findOne(originalROWID: handleId);
+          if (foundHandle != null) {
+            handleRelation.target = foundHandle;
+          }
+        }
       }
       // Save associated messages or the original message (depending on whether
       // this message is a reaction or regular message
@@ -793,118 +841,60 @@ class Message {
 
       try {
         if (chat != null) this.chat.target = chat;
+
+        // CRITICAL: Preserve dbAttachments ToMany relationship
+        // ObjectBox will clear ToMany relationships on put() if not explicitly preserved
+        final attachmentsToPreserve = List<Attachment>.from(dbAttachments);
+
         id = Database.messages.put(this);
+
+        // Restore attachments after put
+        if (attachmentsToPreserve.isNotEmpty) {
+          dbAttachments.clear();
+          dbAttachments.addAll(attachmentsToPreserve);
+          dbAttachments.applyToDb();
+        }
       } on UniqueViolationException catch (_) {}
     });
     return this;
   }
 
-  static Future<List<Message>> bulkSaveNewMessages(Chat chat, List<Message> messages) async {
-    if (kIsWeb) throw Exception("Web does not support saving messages!");
+  Future<Message> saveAsync({Chat? chat, bool updateIsBookmarked = false, bool updateSendingServiceId = false}) async {
+    if (kIsWeb) return this;
 
-    final task = BulkSaveNewMessages([chat, messages]);
-    return (await createAsyncTask<List<Message>>(task)) ?? [];
+    final result = await MessageInterface.saveMessageAsync(
+      messageData: toMap(),
+      chatData: chat?.toMap(),
+      updateIsBookmarked: updateIsBookmarked,
+      updateSendingServiceId: updateSendingServiceId,
+    );
+
+    if (result != null) {
+      id = result.id;
+    }
+    return this;
   }
 
-  /// Save a list of messages
-  static List<Message> bulkSave(List<Message> messages) {
-    Database.runInTransaction(TxMode.write, () {
-      /// Find existing messages and match them to the messages to save, where
-      /// possible
-      List<Message> existingMessages = Message.find(cond: Message_.guid.oneOf(messages.map((e) => e.guid!).toList()));
-      for (Message m in messages) {
-        final existingMessage = existingMessages.firstWhereOrNull((e) => e.guid == m.guid);
-        if (existingMessage != null) {
-          m.id = existingMessage.id;
-          m.text ??= existingMessage.text;
-        }
-      }
+  static Future<List<Message>> bulkSaveNewMessages(Chat chat, List<Message> messages) async {
+    if (kIsWeb) throw Exception("Web does not support saving messages!");
+    if (messages.isEmpty) return [];
 
-      /// Save the messages and update their IDs
-      /// We do this first because we might want these same messages to show up
-      /// in the next queries
-      final ids = Database.messages.putMany(messages);
-      for (int i = 0; i < messages.length; i++) {
-        messages[i].id = ids[i];
-      }
-
-      /// Find associated messages or original messages
-      List<Message> associatedMessages =
-          Message.find(cond: Message_.guid.oneOf(messages.map((e) => e.associatedMessageGuid ?? "").toList()));
-      List<Message> originalMessages =
-          Message.find(cond: Message_.associatedMessageGuid.oneOf(messages.map((e) => e.guid!).toList()));
-
-      /// Iterate thru messages and update the associated message or the original
-      /// message, and update original message handle data
-      for (Message m in messages) {
-        if (m.associatedMessageType != null && m.associatedMessageGuid != null) {
-          final associatedMessageList = associatedMessages.where((e) => e.guid == m.associatedMessageGuid);
-          for (Message am in associatedMessageList) {
-            am.hasReactions = true;
-          }
-        } else if (!m.hasReactions) {
-          final originalMessage = originalMessages.firstWhereOrNull((e) => e.associatedMessageGuid == m.guid);
-          if (originalMessage != null) {
-            m.hasReactions = true;
-          }
-        }
-      }
-      associatedMessages.removeWhere((message) {
-        Message? _message = messages.firstWhereOrNull((e) => e.guid == message.guid);
-        _message?.hasReactions = message.hasReactions;
-        return _message != null;
-      });
-      try {
-        /// Update the original messages and associated messages
-        final ids = Database.messages.putMany(messages..addAll(associatedMessages));
-        for (int i = 0; i < messages.length; i++) {
-          messages[i].id = ids[i];
-        }
-      } on UniqueViolationException catch (_) {}
-    });
-    return messages;
+    return await MessageInterface.bulkSaveNewMessages(
+      data: {
+        'chatData': chat.toMap(),
+        'messagesData': messages.map((e) => e.toMap()).toList(),
+      },
+    );
   }
 
   /// Replace a temp message with the message from the server
   static Future<Message> replaceMessage(String? oldGuid, Message newMessage) async {
-    if (newMessage.temp) throw Exception("Attempting to persist temp message!");
-    Message? existing = Message.findOne(guid: oldGuid);
-    if (existing == null) {
-      throw Exception("Cannot replace on a null existing message!!");
-    }
+    if (kIsWeb) throw Exception("Web does not support replacing messages!");
 
-    // We just need to update the timestamps & error
-    if (existing.guid != newMessage.guid) {
-      existing.guid = newMessage.guid;
-    }
-    if (newMessage.text != null) {
-      existing.text = newMessage.text;
-    }
-    
-    existing._dateDelivered.value = newMessage._dateDelivered.value ?? existing._dateDelivered.value;
-    existing._isDelivered.value = newMessage._isDelivered.value;
-    existing._dateRead.value = newMessage._dateRead.value ?? existing._dateRead.value;
-    existing._dateEdited.value = newMessage._dateEdited.value ?? existing._dateEdited.value;
-    existing.attributedBody = newMessage.attributedBody.isNotEmpty ? newMessage.attributedBody : existing.attributedBody;
-    existing.messageSummaryInfo = newMessage.messageSummaryInfo.isNotEmpty ? newMessage.messageSummaryInfo : existing.messageSummaryInfo;
-    existing.payloadData = newMessage.payloadData ?? existing.payloadData;
-    existing.wasDeliveredQuietly = newMessage.wasDeliveredQuietly ? newMessage.wasDeliveredQuietly : existing.wasDeliveredQuietly;
-    existing.didNotifyRecipient = newMessage.didNotifyRecipient ? newMessage.didNotifyRecipient : existing.didNotifyRecipient;
-    existing._error.value = newMessage._error.value;
-    existing.stagingGuid = newMessage.stagingGuid;
-    existing.verificationFailed = newMessage.verificationFailed;
-    existing.amkSessionId = newMessage.amkSessionId;
-    if (existing.dateScheduled != null && newMessage.dateScheduled == null) {
-      existing.dateCreated = newMessage.dateCreated;
-    }
-    existing.dateScheduled = newMessage.dateScheduled;
-
-    try {
-      Database.messages.put(existing, mode: PutMode.update);
-    } catch (ex, stack) {
-      Logger.error('Failed to replace message! This is likely due to a unique constraint being violated.', error: ex, trace: stack);
-    }
-    return existing;
+    return await MessageInterface.replaceMessage(
+      oldGuid: oldGuid,
+      newMessageData: newMessage.toMap(),
+    );
   }
 
   Message updateMetadata(Metadata? metadata) {
@@ -920,9 +910,15 @@ class Message {
     return this;
   }
 
+  Message setEffectPlayed() {
+    hasEffectPlayed = true;
+    save();
+    return this;
+  }
+
   /// Fetch attachments for a single message. Prefer using [fetchAttachmentsByMessages]
   /// or [fetchAttachmentsByMessagesAsync] when working with a list of messages.
-  List<Attachment?>? fetchAttachments({ChatLifecycleManager? currentChat}) {
+  List<Attachment?>? fetchAttachments() {
     if (attachments.isNotEmpty) {
       return attachments;
     }
@@ -933,6 +929,19 @@ class Message {
     });
   }
 
+  Future<List<Attachment?>> fetchAttachmentsAsync() async {
+    if (kIsWeb || id == null) return [];
+    if (attachments.isNotEmpty) return attachments;
+
+    final result = await MessageInterface.fetchAttachmentsAsync(
+      messageId: id!,
+      messageGuid: guid!,
+    );
+
+    attachments = result.map((e) => Attachment.fromMap(e)).toList();
+    return attachments;
+  }
+
   /// Get the chat associated with the message
   Chat? getChat() {
     if (kIsWeb) return null;
@@ -941,268 +950,50 @@ class Message {
     });
   }
 
-  String convertAttachmentGuid(String guid) {
-    if (guid.startsWith("at")) {
-      var items = guid.split("_");
-      guid = "${items[2]}_${items[1]}";
-    }
-    return guid;
-  }
+  Future<Chat?> getChatAsync() async {
+    if (kIsWeb || id == null) return null;
 
-  String unconvertAttachmentGuid(String guid) {
-    var items = guid.split("_");
-    if (items.length == 1) return guid;
-    return "at_${items[1]}_${items[0]}";
-  }
-
-  Uint8List? encodeAttributedBody(List<AttributedBody> body, bool noAttachments) {
-    if (body.isEmpty) return null;
-    return api.nscoderEncode(value: body.map((b) => api.NSAttributedString(
-      text: b.string,
-      ranges: b.runs.filter((run) => !noAttachments || run.attributes?.attachmentGuid == null).map((run) => (run.range[1], api.NSDictionaryTypedCoder(field0: {
-        if (run.attributes?.messagePart != null)
-        "__kIMMessagePartAttributeName": api.NSNumber(field0: run.attributes!.messagePart!).encode(),
-        if (run.attributes?.attachmentGuid != null)
-        "__kIMFileTransferGUIDAttributeName": api.NSString(field0: unconvertAttachmentGuid(run.attributes!.attachmentGuid!)).encode(),
-        if (run.attributes?.mention != null)
-        "__kIMMentionConfirmedMention": api.NSString(field0: run.attributes!.mention!).encode(),
-        if (run.attributes?.audioTranscript != null)
-        "IMAudioTranscription": api.NSString(field0: run.attributes!.audioTranscript!).encode(),
-        if (run.attributes?.textEffect != null)
-        "__kIMTextEffectAttributeName": api.NSNumber(field0: run.attributes!.textEffect!).encode(),
-        if (run.attributes?.bold != null)
-        "__kIMTextBoldAttributeName": api.NSNumber(field0: run.attributes!.bold! ? 1 : 0).encode(),
-        if (run.attributes?.italic != null)
-        "__kIMTextItalicAttributeName": api.NSNumber(field0: run.attributes!.italic! ? 1 : 0).encode(),
-        if (run.attributes?.italic != null)
-        "__kIMTextStrikethroughAttributeName": api.NSNumber(field0: run.attributes!.italic! ? 1 : 0).encode(),
-        if (run.attributes?.underline != null)
-        "__kIMTextUnderlineAttributeName": api.NSNumber(field0: run.attributes!.underline! ? 1 : 0).encode(),
-      }))).toList()
-    ).encode()).toList());
-  }
-
-  List<AttributedBody> decodeAttributedBody(Uint8List? data) {
-    if (data == null) return [];
-    return api.nscoderDecode(data: data).map((val) {
-      var decoded = api.NSAttributedString.decode(val: val);
-      int length = 0;
-      return AttributedBody(
-        string: decoded.text,
-        runs: decoded.ranges.map((r) {
-          var start = length;
-          length += r.$1;
-          return Run(
-            range: [start, r.$1],
-            attributes: Attributes(
-              messagePart: r.$2.field0["__kIMMessagePartAttributeName"] == null ? null : api.NSNumber.decode(val: r.$2.field0["__kIMMessagePartAttributeName"]!).field0,
-              attachmentGuid: r.$2.field0["__kIMFileTransferGUIDAttributeName"] == null ? null : convertAttachmentGuid(api.NSString.decode(val: r.$2.field0["__kIMFileTransferGUIDAttributeName"]!).field0),
-              mention: r.$2.field0["__kIMMentionConfirmedMention"] == null ? null : api.NSString.decode(val: r.$2.field0["__kIMMentionConfirmedMention"]!).field0,
-              audioTranscript: r.$2.field0["IMAudioTranscription"] == null ? null : api.NSString.decode(val: r.$2.field0["IMAudioTranscription"]!).field0,
-              textEffect: r.$2.field0["__kIMTextEffectAttributeName"] == null ? null : api.NSNumber.decode(val: r.$2.field0["__kIMTextEffectAttributeName"]!).field0,
-              bold: r.$2.field0["__kIMTextBoldAttributeName"] == null ? null : api.NSNumber.decode(val: r.$2.field0["__kIMTextBoldAttributeName"]!).field0 == 1,
-              italic: r.$2.field0["__kIMTextItalicAttributeName"] == null ? null : api.NSNumber.decode(val: r.$2.field0["__kIMTextItalicAttributeName"]!).field0 == 1,
-              strikethrough: r.$2.field0["__kIMTextStrikethroughAttributeName"] == null ? null : api.NSNumber.decode(val: r.$2.field0["__kIMTextStrikethroughAttributeName"]!).field0 == 1,
-              underline: r.$2.field0["__kIMTextUnderlineAttributeName"] == null ? null : api.NSNumber.decode(val: r.$2.field0["__kIMTextUnderlineAttributeName"]!).field0 == 1,
-            )
-          );
-        }).toList()
-      );
-    }).toList();
-  }
-
-  api.CloudMessage toCloud(bool noAttachments) {
-    int? amt;
-    if (associatedMessageType == "sticker") {
-      amt = 2;
-    } else if (associatedMessageType != null) {
-      var itemRaw = associatedMessageType!.replaceFirst("-", "");
-      var idx = ReactionTypes.toList().indexOf(itemRaw);
-      amt = idx + (associatedMessageType!.startsWith("-") ? 3000 : 2000);
-    }
-
-    // attributebody is null here, should really be Liked "text", but i am lazy
-    if (attributedBody.isEmpty && associatedMessageType != null) {
-      attributedBody = [AttributedBody.raw(" ")];
-    }
-
-    if (noAttachments && attributedBody.isNotEmpty && attributedBody[0].runs.every((run) => run.attributes?.attachmentGuid != null)) {
-      throw Exception("No Attachments!");
-    }
-
-    var p = payloadData?.appData?.firstOrNull != null ? api.encodeExtensionApp(app: pushService.dataToApp(payloadData!)).$2 : null;
-    return api.CloudMessage(
-      utm: api.utmNow(),
-      type: associatedMessageGuid != null ? 2 : 1,
-      error: error, 
-      chatId: chat.target!.isGroup ? chat.target!.cloudGuid ?? chat.target!.guid : "iMessage;-;${chat.target!.chatIdentifier}", 
-      sender: isFromMe == true ? "" : getHandle()?.address ?? "", 
-      time: RustPushBBUtils.nsSinceAppleEpoch(dateCreated!), 
-      msgProto2: threadOriginatorGuid != null ? api.encodeMessageproto2(messageproto2: api.MessageProto2(
-        reply: "r:$threadOriginatorPart:$threadOriginatorGuid"
-      )) : null,
-      // this assumes it was sent with this handle, but, cmon, just go along with me...
-      destinationCallerId: chat.target!.usingHandle!.replaceFirst("mailto:", "").replaceFirst("tel:", ""), 
-      msgProto: api.encodeMessageproto(messageproto: api.MessageProto(
-        unk1: 1,
-        subject: subject, 
-        text: attributedBody[0].string, 
-        attributedBody: encodeAttributedBody(attributedBody, noAttachments),
-        balloonBundleId: balloonBundleId,
-        payloadData: p != null ? Uint8List.fromList(gzip.decode(p)) : null,
-        messageSummaryInfo: messageSummaryInfo.isEmpty ? null : api.encodeMessageInfo(info: api.MessageSummaryInfo(
-          ec: messageSummaryInfo.first.editedContent.map((key, value) => 
-            MapEntry(key, value.map((i) => api.MessageEdit(
-              t: encodeAttributedBody(i.text!.values, noAttachments)!, 
-              d: i.date!,
-            )).toList())), 
-          ep: Uint32List.fromList(messageSummaryInfo.first.editedParts), 
-          otr: messageSummaryInfo.first.originalTextRange.map((key, value) => MapEntry(key, api.MessageEditRange(lo: value[0], le: value[1]))), 
-          rp: Uint32List.fromList(messageSummaryInfo.first.retractedParts), 
-          euh: [],
-          amc: 0,
-          ust: true,
-        )),
-        effect: expressiveSendStyleId,
-        dateRead: dateRead != null ? RustPushBBUtils.nsSinceAppleEpoch(dateRead!) : 0,
-        unk10: 0,
-        unk11: 0,
-        dateDelivered: dateDelivered != null ? RustPushBBUtils.nsSinceAppleEpoch(dateDelivered!) : 0,
-        unk14: 0,
-        associatedMessageType: amt,
-        associatedMessageGuid: associatedMessageGuid != null ? "p:$associatedMessagePart/$associatedMessageGuid" : null,
-        associatedMessageRangeLength: associatedMessagePart != null ? Message.findOne(guid: associatedMessageGuid!)?.attributedBody[0].runs.firstWhere((r) => r.attributes!.messagePart == associatedMessagePart).range[1] : null,
-        associatedMessageRangeLocation: associatedMessagePart != null ? Message.findOne(guid: associatedMessageGuid!)?.attributedBody[0].runs.firstWhere((r) => r.attributes!.messagePart == associatedMessagePart).range[0] : null
-      )),
-      flags: api.MessageFlags.fromBitsTruncate(val: 
-        IS_FINISHED |
-        ((isFromMe ?? false) ? IS_FROM_ME : 0) |
-        (isDelivered ? IS_DELIVERED : 0) |
-        (dateRead != null ? IS_READ : 0) |
-        IS_SENT | 
-        (hasBeenForwarded ? IS_FORWARD : 0) |
-        WAS_DATA_DETECTED
-      ), 
-      guid: guid!, 
-      msgProto3: api.encodeMessageproto3(messageproto3: const api.MessageProto3(unk2: 0, unk3: 0)),
-      service: chat.target!.isRpSms ? "SMS" : "iMessage",
-      msgProto4: api.encodeMessageproto4(messageproto4: api.MessageProto4(
-        associatedMessageEmoji: associatedMessageEmoji,
-        service: chat.target!.isRpSms ? "SMS" : "iMessage", 
-        scheduleType: 0, 
-        scheduleState: 0, 
-        groupId: chat.target!.guid, 
-        sentOrReceivedOffGrid: 0
-      ))
+    final result = await MessageInterface.getChatAsync(
+      messageId: id!,
+      messageGuid: guid!,
     );
-  }
 
-  void applyFromCloud(api.CloudMessage c, String cloudkitId) {
-    Logger.info("item ${c.chatId}");
-    Chat? chat;
-    if (c.chatId.contains(";")) {
-      final query = Database.chats.query(Chat_.chatIdentifier.equals(c.chatId.split(";")[2])).build();
-      chat = query.findFirst();
-      query.close();
-    } else {
-      final query = Database.chats.query(Chat_.cloudGuid.equals(c.chatId)).build();
-      chat = query.findFirst();
-      query.close();
-      
-      chat ??= Chat.findByRustGuid(c.chatId);
-    }
-
-    if (chat?.isRpSms ?? true) return;
-
-    Logger.info("Syncing new message");
-
-    ckRecordId = cloudkitId;
-
-    error = c.error;
-    handle = RustPushBBUtils.rustHandleToBB(c.sender);
-    handleId = handle!.originalROWID;
-    dateCreated = RustPushBBUtils.fromNsSinceAppleEpoch(c.time);
-    var proto1 = api.decodeMessageproto(wrapped: c.msgProto);
-    subject = proto1.subject;
-    text = proto1.text;
-    attributedBody = decodeAttributedBody(proto1.attributedBody);
-    hasAttachments = attributedBody.firstOrNull?.runs.any((run) => run.attributes?.attachmentGuid != null) ?? false;
-    // urls are a whole weird system, ignore for now.
-    var eraseBalloonBundle = proto1.balloonBundleId == "com.apple.messages.URLBalloonProvider";
-    balloonBundleId = proto1.balloonBundleId;
-    if (eraseBalloonBundle) {
-      balloonBundleId = null; // we don't support this at the moment.
-    }
-    
-    try {
-      payloadData = proto1.payloadData != null && !eraseBalloonBundle ? pushService.appToData(api.decodeExtensionApp(bp: gzip.encode(proto1.payloadData!), bid: proto1.balloonBundleId!)) : null;
-    } catch (e, s) {
-      Logger.info("Failed item ${hex.encode(proto1.payloadData!)} ${proto1.balloonBundleId}", error: e, trace: s);
-    }
-    hasApplePayloadData = proto1.payloadData != null && !eraseBalloonBundle;
-
-    if (proto1.messageSummaryInfo != null) {
-      var summary = api.decodeMessageInfo(data: proto1.messageSummaryInfo!);
-      messageSummaryInfo = [MessageSummaryInfo(
-        retractedParts: summary.rp.toList(), 
-        editedContent: summary.ec.map((key, value) => MapEntry(key, value.map((i) => EditedContent(text: Content(values: decodeAttributedBody(i.t)), date: i.d)).toList())), 
-        originalTextRange: summary.otr.map((key, value) => MapEntry(key, [value.lo, value.le])), 
-        editedParts: summary.ep.toList(),
-      )];
-    } else {
-      messageSummaryInfo = [];
-    }
-    expressiveSendStyleId = proto1.effect;
-    dateRead = proto1.dateRead == null || proto1.dateRead == 0 ? null : RustPushBBUtils.fromNsSinceAppleEpoch(proto1.dateRead!);
-    dateDelivered = proto1.dateDelivered == null || proto1.dateDelivered == 0 ? null : RustPushBBUtils.fromNsSinceAppleEpoch(proto1.dateDelivered!);
-    if (proto1.associatedMessageType != null) {
-      if (proto1.associatedMessageType == 2) {
-        associatedMessageType = "sticker";
-      } else if (proto1.associatedMessageType! >= 2000 && proto1.associatedMessageType! < 3000) {
-        associatedMessageType = ReactionTypes.toList()[proto1.associatedMessageType! - 2000];
-      } else if (proto1.associatedMessageType! >= 3000 && proto1.associatedMessageType! < 4000) {
-        associatedMessageType = "-${ReactionTypes.toList()[proto1.associatedMessageType! - 3000]}";
-      }
-    }
-    associatedMessageGuid = proto1.associatedMessageGuid;
-    associatedMessagePart = attributedBody.firstOrNull?.runs.firstWhereOrNull((b) => b.range[0] == proto1.associatedMessageRangeLocation && b.range[1] == proto1.associatedMessageRangeLength)?.attributes?.messagePart;
-    guid = c.guid;
-    var bits = c.flags.bits();
-    isFromMe = (bits & IS_FROM_ME) != 0;
-
-    if (c.msgProto2 != null) {
-      var proto2 = api.decodeMessageproto2(wrapped: c.msgProto2!);
-      if (proto2.reply != null && proto2.reply!.startsWith("r:")) {
-        var parts = proto2.reply!.split(":");
-        threadOriginatorGuid = parts.last;
-        threadOriginatorPart = parts.slice(1, parts.length - 1).join(":");
-      }
-    }
-    
-    if (c.msgProto4 != null) {
-      var proto4 = api.decodeMessageproto4(wrapped: c.msgProto4!);
-      associatedMessageEmoji = proto4.associatedMessageEmoji;
-    }
-    
-    save(chat: chat);
+    if (result == null) return null;
+    return Chat.fromMap(result);
   }
 
   /// Fetch reactions
-  Message fetchAssociatedMessages({MessagesService? service, bool shouldRefresh = false}) {
-    associatedMessages = Message.find(cond: Message_.associatedMessageGuid.equals(guid ?? ""));
-    associatedMessages = MessageHelper.normalizedAssociatedMessages(associatedMessages);
+  Future<Message> fetchAssociatedMessages({MessagesService? service, bool shouldRefresh = false}) async {
+    if (kIsWeb) return this;
+
+    final result = await MessageInterface.fetchAssociatedMessagesAsync(
+      messageGuid: guid!,
+      messageId: id,
+      threadOriginatorGuid: threadOriginatorGuid,
+    );
+
+    final associatedMessagesData = (result['associatedMessages'] as List).cast<Map<String, dynamic>>();
+    associatedMessages = associatedMessagesData.map((e) => Message.fromMap(e)).toList();
+
+    // Check if we need to add the thread originator from the service's struct
     if (threadOriginatorGuid != null) {
       final existing = service?.struct.getMessage(threadOriginatorGuid!);
-      final threadOriginator = existing ?? Message.findOne(guid: threadOriginatorGuid);
-      threadOriginator?.handle ??= threadOriginator.getHandle();
-      if (threadOriginator != null) associatedMessages.add(threadOriginator);
-      if (existing == null && threadOriginator != null) service?.struct.addThreadOriginator(threadOriginator);
+      if (existing != null && !associatedMessages.any((m) => m.guid == threadOriginatorGuid)) {
+        associatedMessages.add(existing);
+      } else if (existing == null && associatedMessages.any((m) => m.guid == threadOriginatorGuid)) {
+        final threadOriginator = associatedMessages.firstWhere((m) => m.guid == threadOriginatorGuid);
+        service?.struct.addThreadOriginator(threadOriginator);
+      }
     }
-    associatedMessages.sort((a, b) => a.originalROWID == null || b.originalROWID == null ? 0 : a.originalROWID!.compareTo(b.originalROWID!));
+
     return this;
   }
 
   Handle? getHandle() {
+    // Phase 2: Prefer ToOne relationship if available
+    if (handleRelation.target != null) return handleRelation.target;
+
+    // Fallback to manual lookup for backward compatibility
     if (kIsWeb || handleId == 0 || handleId == null) return null;
     return Handle.findOne(originalROWID: handleId!);
   }
@@ -1214,14 +1005,24 @@ class Message {
       query.limit = 1;
       final result = query.findFirst();
       query.close();
-      result?.handle = result.getHandle();
-      if (result == null) {
+      if (result != null) {
+        // Populate attachments field from dbAttachments for consistent behavior
+        if (result.hasAttachments) {
+          result.attachments = List<Attachment>.from(result.dbAttachments);
+        }
+        result.handle = result.getHandle();
+      } else {
         final query = Database.messages.query(Message_.stagingGuid.equals(guid)).build();
         query.limit = 1;
-        final result = query.findFirst();
+        final stagedResult = query.findFirst();
         query.close();
-        result?.handle = result.getHandle();
-        return result;
+        if (stagedResult != null) {
+          if (stagedResult.hasAttachments) {
+            stagedResult.attachments = List<Attachment>.from(stagedResult.dbAttachments);
+          }
+          stagedResult.handle = stagedResult.getHandle();
+        }
+        return stagedResult;
       }
       return result;
     } else if (associatedMessageGuid != null) {
@@ -1229,10 +1030,27 @@ class Message {
       query.limit = 1;
       final result = query.findFirst();
       query.close();
-      result?.handle = result.getHandle();
+      if (result != null) {
+        // Populate attachments field from dbAttachments for consistent behavior
+        if (result.hasAttachments) {
+          result.attachments = List<Attachment>.from(result.dbAttachments);
+        }
+      }
+
       return result;
     }
     return null;
+  }
+
+  static Future<Message?> findOneAsync({String? guid, String? associatedMessageGuid}) async {
+    if (kIsWeb) return null;
+
+    final result = await MessageInterface.findOneAsync(
+      guid: guid,
+      associatedMessageGuid: associatedMessageGuid,
+    );
+
+    return result;
   }
 
   /// Find a list of messages by the specified condition, or return all messages
@@ -1242,30 +1060,29 @@ class Message {
     return query.find();
   }
 
-  /// Delete a message and remove all instances of that message in the DB
-  static void delete(String guid) {
-    if (kIsWeb) return;
-    Database.runInTransaction(TxMode.write, () {
-      final query = Database.messages.query(Message_.guid.equals(guid)).build();
-      final result = query.findFirst();
-      query.close();
-      if (result?.id != null) {
-        if (result?.ckRecordId != null && !pushService.syncStopDelete) {
-          var list = ss.prefs.getStringList("messageDeletionIds-1") ?? [];
-          list.add(result!.ckRecordId!);
-          ss.prefs.setStringList("messageDeletionIds-1", list);
-        }
-        Database.messages.remove(result!.id!);
-      }
-    });
+  static Future<List<Message>> findAsync({Condition<Message>? cond}) async {
+    if (kIsWeb) return [];
+
+    // Note: For now, we pass null for conditionJson since serializing ObjectBox Condition
+    // is complex. This will return all messages. Future enhancement can add condition serialization.
+    return await MessageInterface.findAsync(
+      conditionJson: null,
+    );
   }
 
-  static void softDelete(String guid) async {
+  /// Delete a message and remove all instances of that message in the DB
+  static Future<void> delete(String guid) async {
     if (kIsWeb) return;
-    Message? toDelete = Message.findOne(guid: guid);
-    if (toDelete != null) await backend.moveToRecycleBin(toDelete.chat.target!, toDelete);
-    toDelete?.dateDeleted = DateTime.now().toUtc();
-    toDelete?.save();
+    await MessageInterface.deleteMessage(guid: guid);
+  }
+
+  static Future<void> softDelete(String guid) async {
+    if (kIsWeb) return;
+    final toDelete = Message.findOne(guid: guid);
+    if (toDelete != null && toDelete.chat.target != null) {
+      await BackendSvc.moveToRecycleBin(toDelete.chat.target!, toDelete);
+    }
+    await MessageInterface.softDeleteMessage(guid: guid);
   }
 
   /// This is purely because some Macs incorrectly report the dateCreated time
@@ -1295,8 +1112,9 @@ class Message {
   String get fullText => sanitizeString([subject, text].where((e) => !isNullOrEmpty(e)).join("\n"));
 
   // first condition is for macOS < 11 and second condition is for macOS >= 11
-  bool get isLegacyUrlPreview => (balloonBundleId == "com.apple.messages.URLBalloonProvider" && hasDdResults!)
-      || ((hasDdResults! || isFromMe!) && (text ?? "").trim().isURL);
+  bool get isLegacyUrlPreview =>
+      (balloonBundleId == "com.apple.messages.URLBalloonProvider" && hasDdResults!) ||
+      ((hasDdResults! || isFromMe!) && (text ?? "").trim().isURL);
 
   String? get url => text?.replaceAll("\n", " ").split(" ").firstWhereOrNull((String e) => e.hasUrl);
 
@@ -1306,10 +1124,11 @@ class Message {
     String text = "";
 
     if (payloadData?.urlData != null && payloadData!.urlData!.isNotEmpty && payloadData?.urlData?.first.url != null) {
-      return payloadData!.urlData!.first.url!; // do not show summary for Android's open link functionality
+      return payloadData!.urlData!.first.url!;
     }
 
-    final temp = balloonBundleIdMap[balloonBundleId?.split(":").first] ?? (balloonBundleId?.split(":").first ?? "Unknown");
+    final temp =
+        balloonBundleIdMap[balloonBundleId?.split(":").first] ?? (balloonBundleId?.split(":").first ?? "Unknown");
     if (temp is Map) {
       text = temp[balloonBundleId?.split(":").last] ?? ((balloonBundleId?.split(":").last ?? "Unknown"));
     } else {
@@ -1319,77 +1138,98 @@ class Message {
   }
 
   String? get interactiveMediaPath {
-    final extension = balloonBundleId!.contains("com.apple.Digital") ? ".mov" : balloonBundleId!.contains("com.apple.Handwriting") ? ".png" : null;
-    return "${fs.appDocDir.path}/messages/$guid/embedded-media/$balloonBundleId$extension";
+    final extension = balloonBundleId!.contains("com.apple.Digital")
+        ? ".mov"
+        : balloonBundleId!.contains("com.apple.Handwriting")
+            ? ".png"
+            : null;
+    return "${FilesystemSvc.messagesPath}/$guid/embedded-media/$balloonBundleId$extension";
   }
 
   bool get isGroupEvent => groupTitle != null || (itemType ?? 0) > 0 || (groupActionType ?? 0) > 0;
 
+  /// Resolved sender name for the group event — prefers [handleRelation.target]
+  /// over the transient [handle] field since ObjectBox hydrates the relation, not
+  /// the transient field.
   String get groupEventText {
+    final h = handle ?? handleRelation.target;
+    final name = h?.displayName ?? (isFromMe! || handleRelation.target == null ? 'You' : 'Unknown');
+    return buildGroupEventText(name);
+  }
+
+  /// Build the group-event description string with a pre-resolved [senderName].
+  /// Call this from the UI with a reactive name (e.g. from [HandleState.displayName])
+  /// so that contact-sync updates are reflected without rebuilding the whole tree.
+  String buildGroupEventText(String senderName) {
     String text = "Unknown group event";
-    String name = handle?.displayName ?? 'You';
+    final name = senderName;
 
     String? other = "someone";
     if (otherHandle != null && isParticipantEvent) {
-      other = Handle.findOne(originalROWID: otherHandle)?.displayName;
+      // Keep the "someone" fallback if the handle isn't in the DB yet.
+      other = Handle.findOne(originalROWID: otherHandle)?.displayName ?? other;
     }
 
     if (itemType == 1) {
       if (groupActionType == 0) {
-        text = "$name added $other to the conversation";
+        text = "$name added $other to the conversation.";
       } else if (groupActionType == 1) {
-        text = "$name removed $other from the conversation";
+        text = "$name removed $other from the conversation.";
       }
     } else if (itemType == 2) {
       if (groupTitle != null) {
-        text = "$name named the conversation \"$groupTitle\"";
+        text = "$name named the conversation \"$groupTitle\".";
       } else {
-        text = "$name removed the name from the conversation";
+        text = "$name removed the name from the conversation.";
       }
     } else if (itemType == 3) {
       if (groupActionType == null || groupActionType == 0) {
-        text = "$name left the conversation";
+        text = "$name left the conversation.";
       } else if (groupActionType == 1) {
-        text = "$name changed the group photo";
+        text = "$name changed the group photo.";
       } else if (groupActionType == 2) {
-        text = "$name removed the group photo";
+        text = "$name removed the group photo.";
       }
     } else if (itemType == 4 && groupActionType == 0) {
-      text = "$name shared ${name == "You" ? "your" : "their"} location";
+      text = "$name shared ${name == "You" ? "your" : "their"} location.";
     } else if (itemType == 5) {
-      text = "$name kept an audio message";
+      text = "$name kept an audio message.";
     } else if (itemType == 6) {
-      text = "$name started a FaceTime call";
+      text = "$name started a FaceTime call.";
     } else if (itemType == 7) {
       if (groupActionType == 1) {
-        text = "$name changed the background";
+        text = "$name changed the background.";
       } else {
-        text = "$name removed the background";
+        text = "$name removed the background.";
       }
     }
 
     return text;
   }
 
-  bool get isParticipantEvent => isGroupEvent && ((itemType == 1 && [0, 1].contains(groupActionType)) || [2, 3].contains(itemType));
+  bool get isParticipantEvent =>
+      isGroupEvent && ((itemType == 1 && [0, 1].contains(groupActionType)) || [2, 3].contains(itemType));
 
   bool get isBigEmoji => bigEmoji ?? MessageHelper.shouldShowBigEmoji(fullText);
 
-  List<Attachment> get realAttachments => attachments.where((e) => e != null && e.mimeType != null).cast<Attachment>().toList();
+  List<Attachment> get realAttachments =>
+      attachments.where((e) => e != null && e.mimeType != null).cast<Attachment>().toList();
 
-  List<Attachment> get previewAttachments => attachments.where((e) => e != null && e.mimeType == null).cast<Attachment>().toList();
+  List<Attachment> get previewAttachments =>
+      attachments.where((e) => e != null && e.mimeType == null).cast<Attachment>().toList();
 
-  List<Message> get reactions => associatedMessages.where((item) =>
-      ReactionTypes.toList().contains(item.associatedMessageType?.replaceAll("-", ""))).toList();
+  List<Message> get reactions => associatedMessages
+      .where((item) => ReactionTypes.toList().contains(item.associatedMessageType?.replaceAll("-", "")))
+      .toList();
 
-  Indicator get indicatorToShow {
-    if (!isFromMe!) return Indicator.NONE;
-    if (dateRead != null) return Indicator.READ;
-    if (isDelivered) return Indicator.DELIVERED;
-    if (dateDelivered != null) return Indicator.DELIVERED;
-    if (dateScheduled != null) return Indicator.SCHEDULED;
-    if (dateCreated != null) return Indicator.SENT;
-    return Indicator.NONE;
+  MessageStatusIndicator get indicatorToShow {
+    if (!isFromMe!) return MessageStatusIndicator.NONE;
+    if (dateRead != null) return MessageStatusIndicator.READ;
+    if (isDelivered) return MessageStatusIndicator.DELIVERED;
+    if (dateDelivered != null) return MessageStatusIndicator.DELIVERED;
+    if (dateScheduled != null) return MessageStatusIndicator.SCHEDULED;
+    if (dateCreated != null) return MessageStatusIndicator.SENT;
+    return MessageStatusIndicator.NONE;
   }
 
   bool get hasAudioTranscript => attributedBody.any((i) => i.runs.any((e) => e.attributes?.audioTranscript != null));
@@ -1402,7 +1242,8 @@ class Message {
   }
 
   bool sameSender(Message? other) {
-    return (isFromMe! && isFromMe == other?.isFromMe) || (!isFromMe! && !(other?.isFromMe ?? true) && handleId == other?.handleId);
+    return (isFromMe! && isFromMe == other?.isFromMe) ||
+        (!isFromMe! && !(other?.isFromMe ?? true) && handleId == other?.handleId);
   }
 
   void generateTempGuid() {
@@ -1441,7 +1282,9 @@ class Message {
     // we only want lines ending at messages to me to connect downwards (this
     // helps simplify some things and prevent rendering mistakes)
     if (getLineType(olderMessage, threadOriginator) == LineType.meToOther ||
-        getLineType(olderMessage, threadOriginator) == LineType.otherToOther) return false;
+        getLineType(olderMessage, threadOriginator) == LineType.otherToOther) {
+      return false;
+    }
     // if the lower message isn't from me, then draw the connecting line
     // (if the message is from me, that message will draw a connecting line up
     // rather than this message drawing one downwards).
@@ -1459,20 +1302,26 @@ class Message {
 
   bool showUpperMessage(Message olderMessage) {
     // find the part count of the older message
-    final olderPartCount = getActiveMwc(olderMessage.guid!)?.parts.length ?? 1;
+    final olderPartCount = chat.target?.guid != null
+        ? MessagesSvc(chat.target!.guid).getMessageStateIfExists(olderMessage.guid!)?.parts.length ?? 1
+        : 1;
     // make sure the older message is none of the following:
     // 1) thread originator
     // 2) part of the thread with the same thread partIndex
     // OR
     // 1) It is the thread originator but the part is not the last part of the older message
     // 2) It is part of the thread but has multiple parts
-    return (olderMessage.guid != threadOriginatorGuid && (olderMessage.threadOriginatorGuid != threadOriginatorGuid || olderMessage.normalizedThreadPart != normalizedThreadPart))
-        || (olderMessage.guid == threadOriginatorGuid && normalizedThreadPart != olderPartCount - 1)
-        || (olderMessage.threadOriginatorGuid == threadOriginatorGuid && olderPartCount > 1);
+    return (olderMessage.guid != threadOriginatorGuid &&
+            (olderMessage.threadOriginatorGuid != threadOriginatorGuid ||
+                olderMessage.normalizedThreadPart != normalizedThreadPart)) ||
+        (olderMessage.guid == threadOriginatorGuid && normalizedThreadPart != olderPartCount - 1) ||
+        (olderMessage.threadOriginatorGuid == threadOriginatorGuid && olderPartCount > 1);
   }
 
   bool connectToLower(Message newerMessage) {
-    final thisPartCount = getActiveMwc(guid!)?.parts.length ?? 1;
+    final thisPartCount = chat.target?.guid != null
+        ? MessagesSvc(chat.target!.guid).getMessageStateIfExists(guid!)?.parts.length ?? 1
+        : 1;
     if (newerMessage.isFromMe != isFromMe) return false;
     if (newerMessage.normalizedThreadPart != thisPartCount - 1) return false;
     if (threadOriginatorGuid != null) {
@@ -1498,7 +1347,9 @@ class Message {
     if (upperIsThreadOriginatorBubble(olderMessage) ||
         (!threadOriginator.isFromMe! && isFromMe!) ||
         getLineType(olderMessage, threadOriginator) == LineType.meToMe ||
-        getLineType(olderMessage, threadOriginator) == LineType.otherToMe) return true;
+        getLineType(olderMessage, threadOriginator) == LineType.otherToMe) {
+      return true;
+    }
     // if the upper message is from me, then draw the connecting line
     // (if the message is not from me, that message will draw a connecting line
     // down rather than this message drawing one upwards).
@@ -1522,15 +1373,15 @@ class Message {
       return Size(
           attachments
               .map((e) => e!.width)
-              .fold(0, (p, e) => max(p, (e ?? ns.width(context) / 2).toDouble()) + 28),
+              .fold(0, (p, e) => max(p, (e ?? NavigationSvc.width(context) / 2).toDouble()) + 28),
           attachments
               .map((e) => e!.height)
-              .fold(0, (p, e) => max(p, (e ?? ns.width(context) / 2).toDouble())));
+              .fold(0, (p, e) => max(p, (e ?? NavigationSvc.width(context) / 2).toDouble())));
     }
     // initialize constraints for text rendering
     final fontSizeFactor = isBigEmoji ? bigEmojiScaleFactor : 1.0;
     final constraints = BoxConstraints(
-      maxWidth: maxWidthOverride ?? ns.width(context) * MessageWidgetController.maxBubbleSizeFactor - 30,
+      maxWidth: maxWidthOverride ?? NavigationSvc.width(context) * MessageState.maxBubbleSizeFactor - 30,
       minHeight: minHeightOverride ?? Theme.of(context).textTheme.bodySmall!.fontSize! * fontSizeFactor,
     );
     final renderParagraph = RichText(
@@ -1549,7 +1400,7 @@ class Message {
     }
     // if we have a URL preview, extend to the full width
     if (isLegacyUrlPreview) {
-      size = Size(ns.width(context) * 2 / 3 - 30, size.height);
+      size = Size(NavigationSvc.width(context) * 2 / 3 - 30, size.height);
     }
     // if we have reactions, account for the extra height they add
     if (hasReactions) {
@@ -1565,7 +1416,7 @@ class Message {
   static Message merge(Message existing, Message newMessage) {
     existing.id ??= newMessage.id;
     existing.guid ??= newMessage.guid;
-  
+
     // Update date created
     if ((existing.dateCreated == null && newMessage.dateCreated != null) ||
         (existing.dateCreated != null &&
@@ -1660,9 +1511,9 @@ class Message {
       existing.chat.target = newMessage.chat.target;
     }
 
-    // Update handle
-    if (existing.handle?.id == null && newMessage.handle?.id != null) {
-      existing.handle = newMessage.handle;
+    // Update handle relationship
+    if (!existing.handleRelation.hasValue && newMessage.handleRelation.hasValue) {
+      existing.handleRelation.target = newMessage.handleRelation.target;
     }
 
     // Update attachments
@@ -1683,12 +1534,24 @@ class Message {
     }
 
     existing.isBookmarked = newMessage.isBookmarked;
-
     existing.hasBeenForwarded = newMessage.hasBeenForwarded;
     newMessage.stagingGuid = existing.stagingGuid;
     newMessage.verificationFailed = existing.verificationFailed;
     newMessage.amkSessionId = existing.amkSessionId;
     newMessage.dateScheduled = existing.dateScheduled;
+
+    // Update attachments
+    if (existing.dbAttachments.isEmpty && newMessage.dbAttachments.isNotEmpty) {
+      existing.dbAttachments.addAll(newMessage.dbAttachments);
+    }
+
+    // IMPORTANT: Also update the attachments field for serialization/UI
+    if (existing.attachments.isEmpty && newMessage.attachments.isNotEmpty) {
+      existing.attachments = newMessage.attachments;
+    } else if (existing.attachments.isEmpty && existing.dbAttachments.isNotEmpty) {
+      // If attachments field is empty but dbAttachments has data, populate it
+      existing.attachments = List<Attachment>.from(existing.dbAttachments);
+    }
 
     return existing;
   }
@@ -1714,6 +1577,8 @@ class Message {
     if (error == 0 && other.error != 0) return false;
 
     // Check null dates in order of what should be filled in first -> last
+    if (dateScheduled == null && other.dateScheduled != null) return true;
+    if (dateScheduled != null && other.dateScheduled == null) return false;
     if (dateCreated == null && other.dateCreated != null) return false;
     if (dateCreated != null && other.dateCreated == null) return true;
     if (!isDelivered && other.isDelivered) return false;
@@ -1744,8 +1609,8 @@ class Message {
     return false;
   }
 
-  Map<String, dynamic> toMap({bool includeObjects = false}) {
-    final map = {
+  Map<String, dynamic> toMap() {
+    return {
       "ROWID": id,
       "originalROWID": originalROWID,
       "guid": guid,
@@ -1755,9 +1620,10 @@ class Message {
       "subject": subject,
       "country": country,
       "_error": _error.value,
+      "errorMessage": errorMessage,
       "dateCreated": dateCreated?.millisecondsSinceEpoch,
       "dateRead": _dateRead.value?.millisecondsSinceEpoch,
-      "dateDelivered":  _dateDelivered.value?.millisecondsSinceEpoch,
+      "dateDelivered": _dateDelivered.value?.millisecondsSinceEpoch,
       "isDelivered": _isDelivered.value,
       "isFromMe": isFromMe!,
       "hasDdResults": hasDdResults!,
@@ -1770,7 +1636,7 @@ class Message {
       "associatedMessagePart": associatedMessagePart,
       "associatedMessageType": associatedMessageType,
       "expressiveSendStyleId": expressiveSendStyleId,
-      "handle": handle?.toMap(includeObjects: true),
+      "handle": handle?.toMap(),
       "hasAttachments": hasAttachments,
       "hasReactions": hasReactions,
       "dateDeleted": dateDeleted?.millisecondsSinceEpoch,
@@ -1782,22 +1648,18 @@ class Message {
       "wasDeliveredQuietly": wasDeliveredQuietly,
       "didNotifyRecipient": didNotifyRecipient,
       "isBookmarked": isBookmarked,
+      "verificationFailed": verificationFailed,
+      "dateScheduled": dateScheduled?.millisecondsSinceEpoch,
+      "sendingServiceId": sendingServiceId,
+      "amkSessionId": amkSessionId,
       "hasBeenForwarded": hasBeenForwarded,
       "stagingGuid": stagingGuid,
-      "verificationFailed": verificationFailed,
-      "amkSessionId": amkSessionId,
-      "sendingServiceId": sendingServiceId,
+      "ckRecordId": ckRecordId,
       "associatedMessageEmoji": associatedMessageEmoji,
-      "dateScheduled": dateScheduled?.millisecondsSinceEpoch,
-      "ckRecordId": ckRecordId
+      "attachments": attachments.map((e) => e!.toMap()).toList(),
+      "attributedBody": attributedBody.map((e) => e.toMap()).toList(),
+      "messageSummaryInfo": messageSummaryInfo.map((e) => e.toJson()).toList(),
+      "payloadData": payloadData?.toJson(),
     };
-    if (includeObjects) {
-      map['attachments'] = (attachments).map((e) => e!.toMap()).toList();
-      map['handle'] = handle?.toMap();
-      map['attributedBody'] = attributedBody.map((e) => e.toMap()).toList();
-      map['messageSummaryInfo'] = messageSummaryInfo.map((e) => e.toJson()).toList();
-      map['payloadData'] = payloadData?.toJson();
-    }
-    return map;
   }
 }

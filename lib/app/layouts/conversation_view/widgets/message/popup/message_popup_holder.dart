@@ -1,5 +1,6 @@
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/message_popup.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
+import 'package:bluebubbles/app/state/chat_state_scope.dart';
+import 'package:bluebubbles/app/state/message_state.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
@@ -8,11 +9,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
-import 'package:tuple/tuple.dart';
 import 'package:universal_html/html.dart' as html;
 
 class MessagePopupHolder extends StatefulWidget {
-  MessagePopupHolder({
+  const MessagePopupHolder({
     super.key,
     required this.child,
     required this.part,
@@ -23,15 +23,15 @@ class MessagePopupHolder extends StatefulWidget {
 
   final Widget child;
   final MessagePart part;
-  final MessageWidgetController controller;
+  final MessageState controller;
   final ConversationViewController cvController;
   final bool isEditing;
 
   @override
-  OptimizedState createState() => _MessagePopupHolderState();
+  State<StatefulWidget> createState() => _MessagePopupHolderState();
 }
 
-class _MessagePopupHolderState extends OptimizedState<MessagePopupHolder> {
+class _MessagePopupHolderState extends State<MessagePopupHolder> with ThemeHelpers {
   final GlobalKey globalKey = GlobalKey();
 
   Message get message => widget.controller.message;
@@ -43,11 +43,15 @@ class _MessagePopupHolderState extends OptimizedState<MessagePopupHolder> {
     final size = globalKey.currentContext?.size;
     Offset? childPos = (globalKey.currentContext?.findRenderObject() as RenderBox?)?.localToGlobal(Offset.zero);
     if (size == null || childPos == null) return;
-    childPos = Offset(childPos.dx - MediaQueryData.fromView(View.of(context)).padding.left - (iOS ? 0 : ns.widthChatListLeft(context)), childPos.dy);
-    final tuple = await ss.getServerDetails();
-    final version = tuple.item4;
-    final minSierra = await ss.isMinSierra;
-    final minBigSur = await ss.isMinBigSur;
+    childPos = Offset(
+        childPos.dx -
+            MediaQueryData.fromView(View.of(context)).padding.left -
+            (iOS ? 0 : NavigationSvc.widthChatListLeft(context)),
+        childPos.dy);
+    final serverDetails = SettingsSvc.serverDetails;
+    final version = serverDetails.serverVersionCode;
+    final minSierra = serverDetails.isMinSierra;
+    final minBigSur = serverDetails.isMinBigSur;
     if (!iOS) {
       widget.cvController.selected.add(message);
     }
@@ -69,21 +73,26 @@ class _MessagePopupHolderState extends OptimizedState<MessagePopupHolder> {
                 colorScheme: ctx.theme.colorScheme.copyWith(
                   primary: ctx.theme.colorScheme.bubble(ctx, true),
                   onPrimary: ctx.theme.colorScheme.onBubble(ctx, true),
-                  surface: ss.settings.monetTheming.value == Monet.full ? null : (ctx.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
-                  onSurface: ss.settings.monetTheming.value == Monet.full ? null : (ctx.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
+                  surface: SettingsSvc.settings.monetTheming.value == Monet.full
+                      ? null
+                      : (ctx.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
+                  onSurface: SettingsSvc.settings.monetTheming.value == Monet.full
+                      ? null
+                      : (ctx.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
                 ),
               ),
               child: PopupScope(
                 child: MessagePopup(
                   childPosition: childPos!,
                   size: size,
-                  child: widget.child,
                   part: widget.part,
                   controller: widget.controller,
                   cvController: widget.cvController,
-                  serverDetails: Tuple3(minSierra, minBigSur, version > 100),
+                  serverDetails: MessagePopupServerDetails(
+                      minSierra: minSierra, minBigSur: minBigSur, supportsOriginalDownload: version > 100),
                   sendTapback: sendTapback,
                   widthContext: () => mounted ? context : null,
+                  child: widget.child,
                 ),
               ),
             ),
@@ -104,59 +113,73 @@ class _MessagePopupHolderState extends OptimizedState<MessagePopupHolder> {
       } else {
         // This delay is necessary because there is a second instance of the focus node in the popup which gets focused otherwise
         // The autofocus doesn't seem to work on desktop
-        Future.delayed(const Duration(milliseconds: 500), () => widget.cvController.editing.last.item3.focusNode?.requestFocus());
+        Future.delayed(const Duration(milliseconds: 500),
+            () => widget.cvController.editing.last.controller.focusNode?.requestFocus());
       }
     }
   }
 
   void sendTapback([String? type, String? emoji, int? part]) {
     HapticFeedback.lightImpact();
-    final reaction = type ?? ss.settings.quickTapbackType.value;
+    final reaction = type ?? SettingsSvc.settings.quickTapbackType.value;
     Logger.info("Sending reaction type: $reaction");
-    outq.queue(OutgoingItem(
+
+    final tempMessage = Message(
+      associatedMessageGuid: message.guid,
+      associatedMessageType: reaction,
+      associatedMessagePart: part,
+      dateCreated: DateTime.now(),
+      hasAttachments: false,
+      isFromMe: true,
+      handleId: 0,
+    );
+    tempMessage.associatedMessageEmoji = emoji;
+
+    Logger.debug("[sendTapback] Creating temp reaction: type=$reaction, parent=${message.guid}",
+        tag: "MessageReactivity");
+
+    OutgoingMsgHandler.queue(OutgoingItem(
       type: QueueType.sendMessage,
-      chat: message.getChat() ?? cm.activeChat!.chat,
-      message: Message(
-        associatedMessageGuid: message.guid,
-        associatedMessageType: reaction,
-        associatedMessagePart: part,
-        associatedMessageEmoji: emoji,
-        dateCreated: DateTime.now(),
-        hasAttachments: false,
-        isFromMe: true,
-        handleId: 0,
-      ),
+      chat: message.getChat() ?? ChatStateScope.chatOf(context),
+      message: tempMessage,
       selected: message,
-      reaction: emoji != null ? reaction.startsWith("-") ? "-$emoji" : emoji : reaction,
+      reaction: emoji != null ? (reaction.startsWith("-") ? "-$emoji" : emoji) : reaction,
     ));
   }
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      key: globalKey,
-      onDoubleTap: widget.isEditing ? null
-        : ss.settings.doubleTapForDetails.value || message.guid!.startsWith('temp')
-        ? () => openPopup()
-        : ss.settings.enableQuickTapback.value && widget.cvController.chat.isIMessage
-        ? () => sendTapback(null, null, widget.part.part)
-        : null,
-      onLongPress: widget.isEditing ? null
-        : ss.settings.doubleTapForDetails.value &&
-        ss.settings.enableQuickTapback.value &&
-        widget.cvController.chat.isIMessage &&
-        !message.guid!.startsWith('temp')
-        ? () => sendTapback(null, null, widget.part.part)
-        : () => openPopup(),
-      onSecondaryTapUp: widget.isEditing ? null : (details) async {
-        if (!kIsWeb && !kIsDesktop) return;
-        if (kIsWeb) {
-          (await html.document.onContextMenu.first).preventDefault();
-        }
-        openPopup();
-      },
-      child: widget.child,
-    );
+    return Obx(() {
+      final isTempMessage = widget.controller.isSending.value;
+      return GestureDetector(
+        key: globalKey,
+        onDoubleTap: widget.isEditing
+            ? null
+            : SettingsSvc.settings.doubleTapForDetails.value || isTempMessage
+                ? () => openPopup()
+                : SettingsSvc.settings.enableQuickTapback.value && widget.cvController.chat.isIMessage
+                    ? () => sendTapback(null, null, widget.part.part)
+                    : null,
+        onLongPress: widget.isEditing
+            ? null
+            : SettingsSvc.settings.doubleTapForDetails.value &&
+                    SettingsSvc.settings.enableQuickTapback.value &&
+                    widget.cvController.chat.isIMessage &&
+                    !isTempMessage
+                ? () => sendTapback(null, null, widget.part.part)
+                : () => openPopup(),
+        onSecondaryTapUp: widget.isEditing
+            ? null
+            : (details) async {
+                if (!kIsWeb && !kIsDesktop) return;
+                if (kIsWeb) {
+                  (await html.document.onContextMenu.first).preventDefault();
+                }
+                openPopup();
+              },
+        child: widget.child,
+      );
+    });
   }
 }
 

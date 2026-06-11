@@ -3,15 +3,21 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
-import 'package:encrypt/encrypt.dart' as encrypt;
-import 'package:tuple/tuple.dart';
+import 'package:encrypter_plus/encrypter_plus.dart' as encrypt;
+
+class DerivedKeyAndIV {
+  final Uint8List key;
+  final Uint8List iv;
+
+  const DerivedKeyAndIV(this.key, this.iv);
+}
 
 String encryptAESCryptoJS(Uint8List plainText, String passphrase) {
   try {
     final salt = genRandomWithNonZero(8);
     var keyndIV = deriveKeyAndIV(passphrase, salt);
-    final key = encrypt.Key(keyndIV.item1);
-    final iv = encrypt.IV(keyndIV.item2);
+    final key = encrypt.Key(keyndIV.key);
+    final iv = encrypt.IV(keyndIV.iv);
 
     final encrypter = encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.cbc, padding: "PKCS7"));
     final encrypted = encrypter.encryptBytes(plainText, iv: iv);
@@ -30,8 +36,8 @@ List<int> decryptAESCryptoJS(String encrypted, String passphrase) {
     Uint8List encryptedBytes = encryptedBytesWithSalt.sublist(16, encryptedBytesWithSalt.length);
     final salt = encryptedBytesWithSalt.sublist(8, 16);
     var keyndIV = deriveKeyAndIV(passphrase, salt);
-    final key = encrypt.Key(keyndIV.item1);
-    final iv = encrypt.IV(keyndIV.item2);
+    final key = encrypt.Key(keyndIV.key);
+    final iv = encrypt.IV(keyndIV.iv);
 
     final encrypter = encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.cbc, padding: "PKCS7"));
     final decrypted = encrypter.decryptBytes(encrypt.Encrypted(encryptedBytes), iv: iv);
@@ -41,7 +47,7 @@ List<int> decryptAESCryptoJS(String encrypted, String passphrase) {
   }
 }
 
-Tuple2<Uint8List, Uint8List> deriveKeyAndIV(String passphrase, Uint8List salt) {
+DerivedKeyAndIV deriveKeyAndIV(String passphrase, Uint8List salt) {
   var password = createUint8ListFromString(passphrase);
   Uint8List concatenatedHashes = Uint8List(0);
   Uint8List currentHash = Uint8List(0);
@@ -63,7 +69,7 @@ Tuple2<Uint8List, Uint8List> deriveKeyAndIV(String passphrase, Uint8List salt) {
 
   var keyBtyes = concatenatedHashes.sublist(0, 32);
   var ivBtyes = concatenatedHashes.sublist(32, 48);
-  return Tuple2(keyBtyes, ivBtyes);
+  return DerivedKeyAndIV(keyBtyes, ivBtyes);
 }
 
 Uint8List createUint8ListFromString(String s) {

@@ -9,6 +9,7 @@ import 'package:simple_animations/simple_animations.dart';
 
 class SetupPageTemplate extends StatelessWidget {
   SetupPageTemplate({
+    super.key,
     required this.title,
     required this.subtitle,
     this.aboveTitle,
@@ -70,10 +71,8 @@ class SetupPageTemplate extends StatelessWidget {
                     contentWrapper: contentWrapper,
                   ),
                   if (customMiddle != null) customMiddle!,
-                  if (buttonWrapper != null)
-                    buttonWrapper!.call(buttons),
-                  if (buttonWrapper == null)
-                    buttons,
+                  if (buttonWrapper != null) buttonWrapper!.call(buttons),
+                  if (buttonWrapper == null) buttons,
                 ],
               ),
             ),
@@ -107,53 +106,48 @@ class PageContent extends StatelessWidget {
   final Widget Function(Widget)? titleWrapper;
   final Widget Function(Widget)? subtitleWrapper;
   final Widget Function(Widget)? contentWrapper;
-  
+
   @override
   Widget build(BuildContext context) {
-    final titleW = customTitle ?? Padding(
-      padding: const EdgeInsets.all(8.0),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: Container(
-          width: context.width * 3 / 4,
-          child: Text(
-              title,
-              style: context.theme.textTheme.displayMedium!.apply(
-                fontWeightDelta: 2,
-              ).copyWith(height: 1.35, color: context.theme.colorScheme.onBackground)
+    final titleW = customTitle ??
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: SizedBox(
+              width: context.width * 3 / 4,
+              child: Text(title,
+                  style: context.theme.textTheme.displayMedium!
+                      .apply(
+                        fontWeightDelta: 2,
+                      )
+                      .copyWith(height: 1.35, color: context.theme.colorScheme.onSurface)),
+            ),
           ),
-        ),
-      ),
-    );
-    final subtitleW = customSubtitle ?? Padding(
-      padding: const EdgeInsets.all(8.0),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: Text(
-            subtitle,
-            style: context.theme.textTheme.bodyLarge!.apply(
-              fontSizeDelta: 1.5,
-              color: context.theme.colorScheme.outline,
-            ).copyWith(height: 2)
-        ),
-      ),
-    );
+        );
+    final subtitleW = customSubtitle ??
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(subtitle,
+                style: context.theme.textTheme.bodyLarge!
+                    .apply(
+                      fontSizeDelta: 1.5,
+                      color: context.theme.colorScheme.outline,
+                    )
+                    .copyWith(height: 2)),
+          ),
+        );
     final content = Column(
       children: [
-        if (aboveTitle != null)
-          aboveTitle!,
-        if (aboveTitle != null)
-          const SizedBox(height: 10),
-        if (titleWrapper != null)
-          titleWrapper!.call(titleW),
-        if (titleWrapper == null)
-          titleW,
-        if (subtitleWrapper != null)
-          subtitleWrapper!.call(subtitleW),
-        if (subtitleWrapper == null)
-          subtitleW,
-        if (belowSubtitle != null)
-          belowSubtitle!,
+        if (aboveTitle != null) aboveTitle!,
+        if (aboveTitle != null) const SizedBox(height: 10),
+        if (titleWrapper != null) titleWrapper!.call(titleW),
+        if (titleWrapper == null) titleW,
+        if (subtitleWrapper != null) subtitleWrapper!.call(subtitleW),
+        if (subtitleWrapper == null) subtitleW,
+        if (belowSubtitle != null) belowSubtitle!,
       ],
     );
     if (contentWrapper != null) {
@@ -181,102 +175,108 @@ class PageButtons extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return customButton ?? Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        title == "Welcome to OpenBubbles" ? const SizedBox.shrink() : Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(25),
-            gradient: LinearGradient(
-              begin: AlignmentDirectional.topStart,
-              colors: [HexColor('2772C3'), HexColor('5CA7F8').darkenPercent(5)],
-            ),
-          ),
-          height: 40,
-          padding: const EdgeInsets.all(2),
-          child: ElevatedButton(
-            style: ButtonStyle(
-              shape: WidgetStateProperty.all<RoundedRectangleBorder>(
-                RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20.0),
-                ),
-              ),
-              backgroundColor: WidgetStateProperty.all(context.theme.colorScheme.background),
-              shadowColor: WidgetStateProperty.all(context.theme.colorScheme.background),
-              maximumSize: WidgetStateProperty.all(const Size(200, 36)),
-              minimumSize: WidgetStateProperty.all(const Size(30, 30)),
-            ),
-            onPressed: () async {
-              previousPage();
-            },
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.arrow_back, color: context.theme.colorScheme.onBackground, size: 20),
-                const SizedBox(width: 10),
-                Text("Back", style: context.theme.textTheme.bodyLarge!.apply(fontSizeFactor: 1.1, color: context.theme.colorScheme.onBackground)),
-              ],
-            ),
-          ),
-        ),
-        Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(25),
-            gradient: LinearGradient(
-              begin: AlignmentDirectional.topStart,
-              colors: [HexColor('2772C3'), HexColor('5CA7F8').darkenPercent(5)],
-            ),
-          ),
-          height: 40,
-          child: ElevatedButton(
-            style: ButtonStyle(
-              shape: WidgetStateProperty.all<RoundedRectangleBorder>(
-                RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20.0),
-                ),
-              ),
-              backgroundColor: WidgetStateProperty.all(Colors.transparent),
-              shadowColor: WidgetStateProperty.all(Colors.transparent),
-              maximumSize: WidgetStateProperty.all(const Size(200, 36)),
-              minimumSize: WidgetStateProperty.all(const Size(30, 30)),
-            ),
-            onPressed: () async {
-              final proceed = (await onNextPressed?.call()) ?? true;
-              if (proceed) nextPage();
-            },
-            child: Shimmer.fromColors(
-              baseColor: Colors.white70,
-              highlightColor: Colors.white,
-              child: Stack(
-                clipBehavior: Clip.none,
-                alignment: Alignment.center,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(right: 30.0),
-                    child: Text("Next", style: context.theme.textTheme.bodyLarge!.apply(fontSizeFactor: 1.1, color: Colors.white)),
-                  ),
-                  Positioned(
-                    left: 40,
-                    child: CustomAnimationBuilder<double>(
-                      control: animation,
-                      tween: tween,
-                      duration: const Duration(milliseconds: 600),
-                      curve: Curves.easeOut,
-                      builder: (context, anim, _) {
-                        return Padding(
-                          padding: EdgeInsets.only(left: anim),
-                          child: const Icon(Icons.arrow_forward, color: Colors.white, size: 20),
-                        );
-                      },
+    return customButton ??
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            title == "Welcome to OpenBubbles"
+                ? const SizedBox.shrink()
+                : Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(25),
+                      gradient: LinearGradient(
+                        begin: AlignmentDirectional.topStart,
+                        colors: [HexColor('2772C3'), HexColor('5CA7F8').darkenPercent(5)],
+                      ),
                     ),
-                  )
-                ],
+                    height: 40,
+                    padding: const EdgeInsets.all(2),
+                    child: ElevatedButton(
+                      style: ButtonStyle(
+                        shape: WidgetStateProperty.all<RoundedRectangleBorder>(
+                          RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20.0),
+                          ),
+                        ),
+                        backgroundColor: WidgetStateProperty.all(context.theme.colorScheme.surface),
+                        shadowColor: WidgetStateProperty.all(context.theme.colorScheme.surface),
+                        maximumSize: WidgetStateProperty.all(const Size(200, 36)),
+                        minimumSize: WidgetStateProperty.all(const Size(30, 30)),
+                      ),
+                      onPressed: () async {
+                        previousPage();
+                      },
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.arrow_back, color: context.theme.colorScheme.onSurface, size: 20),
+                          const SizedBox(width: 10),
+                          Text("Back",
+                              style: context.theme.textTheme.bodyLarge!
+                                  .apply(fontSizeFactor: 1.1, color: context.theme.colorScheme.onSurface)),
+                        ],
+                      ),
+                    ),
+                  ),
+            Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(25),
+                gradient: LinearGradient(
+                  begin: AlignmentDirectional.topStart,
+                  colors: [HexColor('2772C3'), HexColor('5CA7F8').darkenPercent(5)],
+                ),
+              ),
+              height: 40,
+              child: ElevatedButton(
+                style: ButtonStyle(
+                  shape: WidgetStateProperty.all<RoundedRectangleBorder>(
+                    RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20.0),
+                    ),
+                  ),
+                  backgroundColor: WidgetStateProperty.all(Colors.transparent),
+                  shadowColor: WidgetStateProperty.all(Colors.transparent),
+                  maximumSize: WidgetStateProperty.all(const Size(200, 36)),
+                  minimumSize: WidgetStateProperty.all(const Size(30, 30)),
+                ),
+                onPressed: () async {
+                  final proceed = (await onNextPressed?.call()) ?? true;
+                  if (proceed) nextPage();
+                },
+                child: Shimmer.fromColors(
+                  baseColor: Colors.white70,
+                  highlightColor: Colors.white,
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    alignment: Alignment.center,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(right: 30.0),
+                        child: Text("Next",
+                            style: context.theme.textTheme.bodyLarge!.apply(fontSizeFactor: 1.1, color: Colors.white)),
+                      ),
+                      Positioned(
+                        left: 40,
+                        child: CustomAnimationBuilder<double>(
+                          control: animation,
+                          tween: tween,
+                          duration: const Duration(milliseconds: 600),
+                          curve: Curves.easeOut,
+                          builder: (context, anim, _) {
+                            return Padding(
+                              padding: EdgeInsets.only(left: anim),
+                              child: const Icon(Icons.arrow_forward, color: Colors.white, size: 20),
+                            );
+                          },
+                        ),
+                      )
+                    ],
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
-      ],
-    );
+          ],
+        );
   }
 
   void nextPage() {

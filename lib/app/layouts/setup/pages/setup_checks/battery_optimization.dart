@@ -8,20 +8,22 @@ import 'package:get/get.dart';
 import 'package:shimmer/shimmer.dart';
 
 class BatteryOptimizationCheck extends StatelessWidget {
-  final controller = Get.find<SetupViewController>();
+  const BatteryOptimizationCheck({super.key});
+
+  SetupViewController get controller => Get.find<SetupViewController>();
 
   @override
   Widget build(BuildContext context) {
     return SetupPageTemplate(
       title: "Battery Optimization",
-      subtitle: "We recommend disabling battery optimization for OpenBubbles to ensure you receive all your notifications.",
+      subtitle:
+          "We recommend disabling battery optimization for OpenBubbles to ensure you receive all your notifications.",
       onNextPressed: () async {
         if (!((await DisableBatteryOptimization.isAllBatteryOptimizationDisabled) ?? false)) {
           final optimizationsDisabled = await disableBatteryOptimizations();
           if (!optimizationsDisabled) {
             showSnackbar("Error", "Battery optimizations were not disabled. Please try again.");
           }
-          // don't let progress if first time around
           if (!controller.triedBattery) {
             controller.triedBattery = true;
             return false;
@@ -41,10 +43,12 @@ class BatteryOptimizationCheck extends StatelessWidget {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text("Battery Optimization: ${disabled ? "Disabled" : "Enabled"}",
-                  style: context.theme.textTheme.bodyLarge!.apply(
-                    fontSizeDelta: 1.5,
-                    color: disabled ? Colors.green : context.theme.colorScheme.error,
-                  ).copyWith(height: 2)),
+                    style: context.theme.textTheme.bodyLarge!
+                        .apply(
+                          fontSizeDelta: 1.5,
+                          color: disabled ? Colors.green : context.theme.colorScheme.error,
+                        )
+                        .copyWith(height: 2)),
               ),
             );
           } else {

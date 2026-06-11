@@ -13,7 +13,7 @@ import 'package:bluebubbles/app/layouts/setup/setup_view.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/services/backend/settings/settings_service.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
-import 'package:bluebubbles/services/ui/contact_service.dart';
+import 'package:bluebubbles/services/ui/contact_service_v2.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
@@ -30,7 +30,7 @@ class FinalizePage extends StatefulWidget {
   State<FinalizePage> createState() => _FinalizePageState();
 }
 
-class _FinalizePageState extends OptimizedState<FinalizePage> {
+class _FinalizePageState extends State<FinalizePage> with ThemeHelpers {
   final controller = Get.find<SetupViewController>();
   final FocusNode doneFocusNode = FocusNode();
 
@@ -42,20 +42,21 @@ class _FinalizePageState extends OptimizedState<FinalizePage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final context = node.context;
       if (context == null) return;
-      Scrollable.ensureVisible(context, duration: const Duration(milliseconds: 200), alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd);
+      Scrollable.ensureVisible(context,
+          duration: const Duration(milliseconds: 200), alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd);
     });
   }
 
   @override
   void initState() {
     super.initState();
-    api.getHandles(state: pushService.state!.client).then((result) {
+    api.getHandles(state: PushSvc.state!.client).then((result) {
       setState(() {
         handles = result;
       });
     });
     if (kIsDesktop) {
-      pushService.googleSignIn.signInOffline().then((state) {
+      PushSvc.googleSignIn.silentSignIn().then((state) {
         googleCreds.value = state;
       });
     }
@@ -68,12 +69,13 @@ class _FinalizePageState extends OptimizedState<FinalizePage> {
     });
   }
 
-  bool isActivateKey(LogicalKeyboardKey key) => key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.select || key == LogicalKeyboardKey.space;
+  bool isActivateKey(LogicalKeyboardKey key) =>
+      key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.select || key == LogicalKeyboardKey.space;
 
   @override
   Widget build(BuildContext context) {
     var handlesMapped = handles.map((handle) => handle.replaceFirst("tel:", "").replaceAll("mailto:", "")).toList();
-    var handle = ss.settings.defaultHandle.value.replaceFirst("tel:", "").replaceAll("mailto:", "");
+    var handle = SettingsSvc.settings.defaultHandle.value.replaceFirst("tel:", "").replaceAll("mailto:", "");
     var initHandle = handlesMapped.contains(handle) ? handle : handlesMapped.firstOrNull;
     return SetupPageTemplate(
       title: "Done!",
@@ -83,105 +85,111 @@ class _FinalizePageState extends OptimizedState<FinalizePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              "You can be reached on iMessage at",
-              style: context.theme.textTheme.bodyLarge!.apply(
-                fontSizeDelta: 1.5,
-                color: context.theme.colorScheme.outline,
-              ).copyWith(height: 2)
-            ),
-            ...handles.map((e) => Padding(
-              padding: const EdgeInsets.all(8),
-              child: Text(
-                e.replaceFirst("tel:", "").replaceAll("mailto:", ""),
-                style: context.theme.textTheme.titleMedium,
-              ),
-            )),
-            if (!controller.supportsPhoneReg.value && !kIsDesktop)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-                child: GestureDetector(
-                  child: Row(
-                  children: [
-                    Icon(Icons.add, color: context.theme.textTheme.titleMedium!.color!,),
-                    const SizedBox(width: 5,),
-                    Text(
-                      "Add your number",
-                      style: context.theme.textTheme.titleMedium,
+            Text("You can be reached on iMessage at",
+                style: context.theme.textTheme.bodyLarge!
+                    .apply(
+                      fontSizeDelta: 1.5,
+                      color: context.theme.colorScheme.outline,
                     )
-                  ],
-                ),
-                onTap: () {
-                  pushService.wantAddNumber();
-                },
-              )
-            ),
+                    .copyWith(height: 2)),
+            ...handles.map((e) => Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Text(
+                    e.replaceFirst("tel:", "").replaceAll("mailto:", ""),
+                    style: context.theme.textTheme.titleMedium,
+                  ),
+                )),
+            if (!controller.supportsPhoneReg.value && !kIsDesktop)
+              Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                  child: GestureDetector(
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.add,
+                          color: context.theme.textTheme.titleMedium!.color!,
+                        ),
+                        const SizedBox(
+                          width: 5,
+                        ),
+                        Text(
+                          "Add your number",
+                          style: context.theme.textTheme.titleMedium,
+                        )
+                      ],
+                    ),
+                    onTap: () {
+                      PushSvc.wantAddNumber();
+                    },
+                  )),
             if (handles.length > 1)
-            SettingsOptions<String>(
-              title: "Start Chats Using",
-              initial: initHandle ?? "",
-              clampWidth: false,
-              options: handlesMapped,
-              secondaryColor: headerColor,
-              useCupertino: false,
-              textProcessing: (str) => ss.settings.redactedMode.value ? (GetUtils.isEmail(str) ? "Redacted Email" : "Redacted Phone") : str,
-              capitalize: false,
-              onChanged: (value) async {
-                if (value == null) return;
-                setState(() {});
-                await backend.setDefaultHandle(value);
-              },
-            ),
+              SettingsOptions<String>(
+                title: "Start Chats Using",
+                initial: initHandle ?? "",
+                clampWidth: false,
+                options: handlesMapped,
+                secondaryColor: headerColor,
+                useCupertino: false,
+                textProcessing: (str) => SettingsSvc.settings.redactedMode.value
+                    ? (GetUtils.isEmail(str) ? "Redacted Email" : "Redacted Phone")
+                    : str,
+                capitalize: false,
+                onChanged: (value) async {
+                  if (value == null) return;
+                  setState(() {});
+                  await BackendSvc.setDefaultHandle(value);
+                },
+              ),
             if (kIsDesktop)
-            SettingsOptions<String>(
-              title: "Sync contacts with",
-              initial: ss.settings.contactSyncProvider.value,
-              clampWidth: false,
-              options: ["iCloud", "Google", "CardDav"],
-              secondaryColor: headerColor,
-              useCupertino: false,
-              textProcessing: (str) => str,
-              capitalize: false,
-              onChanged: (value) async {
-                ss.settings.ctags.clear();
-                ss.settings.tokens.clear();
-                ss.settings.contactSyncProvider.value = value ?? "iCloud";
-                ss.saveSettings();
-                cs.refreshContacts();
-              },
-            ),
-            if (kIsDesktop && ss.settings.contactSyncProvider.value == "Google" && googleCreds.value == null)
-            SettingsTile(
-              title: "Sign In",
-              onTap: () async {
-                final credentials = await pushService.googleSignIn.signIn();
-                if (credentials != null) {
-                  print('Signed in successfully: ${credentials.accessToken}');
-                  googleCreds.value = credentials;
-                  cs.refreshContacts();
-                } else {
-                  print('Sign in failed');
-                }
-              },
-              trailing: const NextButton(),
-            ),
-            if (kIsDesktop && ss.settings.contactSyncProvider.value == "Google" && googleCreds.value != null)
-            SettingsTile(
-              title: "Sign Out",
-              onTap: () async {
-                await pushService.googleSignIn.signOut();
-                googleCreds.value = null;
-              },
-              trailing: const NextButton(),
-            ),
-            if (kIsDesktop && ss.settings.contactSyncProvider.value == "CardDav")
-            SettingsTile(
-              title: "Set CardDav Server Details",
-              onTap: () async {
-                pushService.updateCardDav();
-              },
-              trailing: const NextButton(),
-            ),
+              SettingsOptions<String>(
+                title: "Sync contacts with",
+                initial: SettingsSvc.settings.contactSyncProvider.value,
+                clampWidth: false,
+                options: ["iCloud", "Google", "CardDav"],
+                secondaryColor: headerColor,
+                useCupertino: false,
+                textProcessing: (str) => str,
+                capitalize: false,
+                onChanged: (value) async {
+                  SettingsSvc.settings.ctags.clear();
+                  SettingsSvc.settings.tokens.clear();
+                  SettingsSvc.settings.contactSyncProvider.value = value ?? "iCloud";
+                  await SettingsSvc.settings.saveAsync();
+                  unawaited(ContactsSvcV2.syncContactsToHandles(wait: false));
+                },
+              ),
+            if (kIsDesktop && SettingsSvc.settings.contactSyncProvider.value == "Google" && googleCreds.value == null)
+              SettingsTile(
+                title: "Sign In",
+                onTap: () async {
+                  final credentials = await PushSvc.googleSignIn.signIn();
+                  if (credentials != null) {
+                    print('Signed in successfully: ${credentials.accessToken}');
+                    googleCreds.value = credentials;
+                    unawaited(ContactsSvcV2.syncContactsToHandles(wait: false));
+                  } else {
+                    print('Sign in failed');
+                  }
+                },
+                trailing: const NextButton(),
+              ),
+            if (kIsDesktop && SettingsSvc.settings.contactSyncProvider.value == "Google" && googleCreds.value != null)
+              SettingsTile(
+                title: "Sign Out",
+                onTap: () async {
+                  await PushSvc.googleSignIn.signOut();
+                  googleCreds.value = null;
+                },
+                trailing: const NextButton(),
+              ),
+            if (kIsDesktop && SettingsSvc.settings.contactSyncProvider.value == "CardDav")
+              SettingsTile(
+                title: "Set CardDav Server Details",
+                onTap: () async {
+                  PushSvc.updateCardDav();
+                },
+                trailing: const NextButton(),
+              ),
           ],
         ),
       ),
@@ -191,81 +199,82 @@ class _FinalizePageState extends OptimizedState<FinalizePage> {
           AnimatedSize(
             duration: const Duration(milliseconds: 200),
             child: Theme(
-                    data: context.theme.copyWith(
-                      inputDecorationTheme: InputDecorationTheme(
-                        labelStyle: TextStyle(color: context.theme.colorScheme.outline),
+              data: context.theme.copyWith(
+                inputDecorationTheme: InputDecorationTheme(
+                  labelStyle: TextStyle(color: context.theme.colorScheme.outline),
+                ),
+              ),
+              child: Column(
+                children: [
+                  if (SettingsSvc.settings.macIsMine.value && !controller.supportsPhoneReg.value)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 5),
+                      child: Text(
+                        "Share your Mac with up to 20 friends in settings!",
+                        textAlign: TextAlign.center,
                       ),
                     ),
-                    child: Column(
-                      children: [
-                        if (ss.settings.macIsMine.value && !controller.supportsPhoneReg.value)
-                          const Padding(padding: EdgeInsets.symmetric(vertical: 5),
-                            child: Text(
-                              "Share your Mac with up to 20 friends in settings!",
-                              textAlign: TextAlign.center,
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Focus(
+                        focusNode: doneFocusNode,
+                        onKey: (node, event) {
+                          if (event is RawKeyDownEvent && isActivateKey(event.logicalKey)) {
+                            connect();
+                            return KeyEventResult.handled;
+                          }
+                          return KeyEventResult.ignored;
+                        },
+                        child: Container(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(25),
+                            border: SettingsSvc.settings.isDumb.value && doneFocusNode.hasFocus
+                                ? Border.all(
+                                    color: context.theme.brightness == Brightness.dark ? Colors.white : Colors.black,
+                                    width: 2,
+                                  )
+                                : null,
+                            gradient: LinearGradient(
+                              begin: AlignmentDirectional.topStart,
+                              colors: [HexColor('2772C3'), HexColor('5CA7F8').darkenPercent(5)],
                             ),
                           ),
-                        const SizedBox(height: 20),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            Focus(
-                              focusNode: doneFocusNode,
-                              onKey: (node, event) {
-                                if (event is RawKeyDownEvent && isActivateKey(event.logicalKey)) {
-                                  connect();
-                                  return KeyEventResult.handled;
-                                }
-                                return KeyEventResult.ignored;
-                              },
-                              child: Container(
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(25),
-                                border: ss.settings.isDumb.value && doneFocusNode.hasFocus
-                                    ? Border.all(
-                                        color: context.theme.brightness == Brightness.dark ? Colors.white : Colors.black,
-                                        width: 2,
-                                      )
-                                    : null,
-                                gradient: LinearGradient(
-                                  begin: AlignmentDirectional.topStart,
-                                  colors: [HexColor('2772C3'), HexColor('5CA7F8').darkenPercent(5)],
+                          height: 40,
+                          child: ElevatedButton(
+                            style: ButtonStyle(
+                              shape: MaterialStateProperty.all<RoundedRectangleBorder>(
+                                RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20.0),
                                 ),
                               ),
-                              height: 40,
-                              child: ElevatedButton(
-                                style: ButtonStyle(
-                                  shape: MaterialStateProperty.all<RoundedRectangleBorder>(
-                                    RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(20.0),
-                                    ),
-                                  ),
-                                  backgroundColor: MaterialStateProperty.all(Colors.transparent),
-                                  shadowColor: MaterialStateProperty.all(Colors.transparent),
-                                  maximumSize: MaterialStateProperty.all(const Size(200, 36)),
-                                  minimumSize: MaterialStateProperty.all(const Size(30, 30)),
-                                ),
-                                onPressed: () async {
-                                  connect();
-                                },
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text("Done",
-                                        style: context.theme.textTheme.bodyLarge!
-                                            .apply(fontSizeFactor: 1.1, color: Colors.white)),
-                                    const SizedBox(width: 10),
-                                    const Icon(Icons.check, color: Colors.white, size: 20),
-                                  ],
-                                ),
-                              ),
-                              ),
+                              backgroundColor: MaterialStateProperty.all(Colors.transparent),
+                              shadowColor: MaterialStateProperty.all(Colors.transparent),
+                              maximumSize: MaterialStateProperty.all(const Size(200, 36)),
+                              minimumSize: MaterialStateProperty.all(const Size(30, 30)),
                             ),
-                          ],
+                            onPressed: () async {
+                              connect();
+                            },
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text("Done",
+                                    style: context.theme.textTheme.bodyLarge!
+                                        .apply(fontSizeFactor: 1.1, color: Colors.white)),
+                                const SizedBox(width: 10),
+                                const Icon(Icons.check, color: Colors.white, size: 20),
+                              ],
+                            ),
+                          ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
+                ],
+              ),
+            ),
           ),
         ],
       ),
@@ -273,15 +282,14 @@ class _FinalizePageState extends OptimizedState<FinalizePage> {
   }
 
   Future<void> connect() async {
-    Get.offAll(() => ConversationList(
-        showArchivedChats: false,
-        showUnknownSenders: false,
-      ),
-      routeName: "",
-      duration: Duration.zero,
-      transition: Transition.noTransition
-    );
+    Get.offAll(
+        () => ConversationList(
+              showArchivedChats: false,
+              showUnknownSenders: false,
+            ),
+        routeName: "",
+        duration: Duration.zero,
+        transition: Transition.noTransition);
     Get.delete<SetupViewController>(force: true);
   }
-
 }

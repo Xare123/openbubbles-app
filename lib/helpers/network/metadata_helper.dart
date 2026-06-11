@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:dio/dio.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:html/dom.dart' as html;
 import 'package:html/parser.dart' as parser;
 import 'package:metadata_fetch/metadata_fetch.dart';
 import 'package:universal_io/io.dart';
@@ -61,7 +64,7 @@ class MetadataHelper {
       data?.image = null;
     } else if (imageData.startsWith('//')) {
       data?.image = 'https:$imageData';
-    // In case the image is just a relative URL path
+      // In case the image is just a relative URL path
     } else if (imageData.startsWith('/')) {
       data?.image = '$url$imageData';
     }
@@ -85,22 +88,51 @@ class MetadataHelper {
     return completer.future;
   }
 
+  static Future<Metadata> getLocationMetadata(Position locationData) async {
+    String metaUrl =
+        "https://maps.apple.com/?ll=${locationData.latitude},${locationData.longitude}&q=${locationData.latitude},${locationData.longitude}";
+    String userAgent =
+        " Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0";
+
+    HttpClient client = HttpClient();
+    client.userAgent = userAgent;
+
+    HttpClientRequest request = await client.getUrl(Uri.parse(metaUrl));
+    HttpClientResponse response = await request.close();
+    String data = await response.transform(utf8.decoder).join();
+
+    html.Document document = parser.parse(data);
+    Metadata metadata = MetadataParser.parse(document);
+    String title = document.getElementsByTagName("title")[0].text;
+    int split = title.lastIndexOf(' - ');
+    if (split != -1) {
+      title = title.substring(0, split);
+    }
+    metadata.title = title;
+
+    return metadata;
+  }
+
   /// Manually tries to parse out metadata from a given [url]
   static Future<Metadata> _manuallyGetMetadata(String url) async {
     Metadata meta = Metadata();
 
     try {
-      final response = await http.dio.get(url, options: Options(headers: {
-        // pretend to be a social media crawler
-        "User-Agent": "Mozilla/5.0 (Windows NT 6.1; rv:6.0) Gecko/20110814 Firefox/6.0 Google (+https://developers.google.com/+/web/snippet/)"
-      }));
+      final response = await HttpSvc.dio.get(url,
+          options: Options(headers: {
+            // pretend to be a social media crawler
+            "User-Agent":
+                "Mozilla/5.0 (Windows NT 6.1; rv:6.0) Gecko/20110814 Firefox/6.0 Google (+https://developers.google.com/+/web/snippet/)"
+          }));
       if (response.headers.value('content-type')?.startsWith("image/") ?? false) {
         meta.image = url;
       }
       final document = parser.parse(response.data);
       final props = document.head?.children
-          .where((e) => e.localName == "meta" && e.attributes["property"].toString().contains("og:"))
-          .map((e) => MapEntry(e.attributes["property"], e.attributes["content"])).toList() ?? [];
+              .where((e) => e.localName == "meta" && e.attributes["property"].toString().contains("og:"))
+              .map((e) => MapEntry(e.attributes["property"], e.attributes["content"]))
+              .toList() ??
+          [];
       for (MapEntry entry in props) {
         if (entry.key == "og:title") {
           meta.title = entry.value;

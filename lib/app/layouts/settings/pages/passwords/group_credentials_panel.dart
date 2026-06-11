@@ -8,7 +8,7 @@ import 'package:bluebubbles/app/layouts/settings/pages/passwords/password_models
 import 'package:bluebubbles/app/layouts/settings/pages/passwords/passwords_widgets.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/content/next_button.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/settings_widgets.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
+import 'package:bluebubbles/helpers/ui/theme_helpers.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/src/rust/lib.dart' as lib;
@@ -38,8 +38,7 @@ class GroupCredentialsPanel extends StatefulWidget {
   State<GroupCredentialsPanel> createState() => _GroupCredentialsPanelState();
 }
 
-class _GroupCredentialsPanelState
-    extends OptimizedState<GroupCredentialsPanel> {
+class _GroupCredentialsPanelState extends State<GroupCredentialsPanel> with ThemeHelpers {
   late Future<List<CredentialEntry>> _credentialsFuture;
 
   @override
@@ -125,8 +124,7 @@ class _GroupCredentialsPanelState
     return entry.passwordMeta?.mdat ?? entry.passwordRaw?.mdat ?? 0;
   }
 
-  Map<String, List<(String, String?, api.PasswordManagerMeta)>>
-      _indexMetasBySiteAndUser(
+  Map<String, List<(String, String?, api.PasswordManagerMeta)>> _indexMetasBySiteAndUser(
     Map<String, (String?, api.PasswordManagerMeta)> metas,
   ) {
     final result = <String, List<(String, String?, api.PasswordManagerMeta)>>{};
@@ -134,16 +132,14 @@ class _GroupCredentialsPanelState
       final group = entry.value.$1;
       final meta = entry.value.$2;
       final key = _siteUserKey(site: meta.srvr, user: meta.acct);
-      result.putIfAbsent(
-          key, () => <(String, String?, api.PasswordManagerMeta)>[]);
+      result.putIfAbsent(key, () => <(String, String?, api.PasswordManagerMeta)>[]);
       result[key]!.add((entry.key, group, meta));
     }
     return result;
   }
 
   (String, api.PasswordManagerMeta)? _takeMatchingMeta(
-    Map<String, List<(String, String?, api.PasswordManagerMeta)>>
-        metasBySiteUser, {
+    Map<String, List<(String, String?, api.PasswordManagerMeta)>> metasBySiteUser, {
     required String site,
     required String user,
     required String? group,
@@ -235,21 +231,17 @@ class _GroupCredentialsPanelState
       tileColor: tileColor,
       actions: [
         IconButton(
-          tooltip: widget.initialSummary.isOwner
-              ? "Edit Group"
-              : "View Participants",
+          tooltip: widget.initialSummary.isOwner ? "Edit Group" : "View Participants",
           onPressed: () => _openGroupParticipants(),
           icon: Icon(
-            widget.initialSummary.isOwner
-                ? Icons.edit_outlined
-                : Icons.group_outlined,
+            widget.initialSummary.isOwner ? Icons.edit_outlined : Icons.group_outlined,
           ),
         ),
       ],
       fab: FloatingActionButton(
         backgroundColor: context.theme.colorScheme.primary,
         onPressed: () async {
-          final result = await ns.pushSettings(
+          final result = await NavigationSvc.pushSettings(
             context,
             PasswordEditorPanel(
               provider: widget.provider,
@@ -314,12 +306,9 @@ class _GroupCredentialsPanelState
                   SettingsSection(
                     backgroundColor: tileColor,
                     children: [
-                      for (var index = 0;
-                          index < credentials.length;
-                          index++) ...[
+                      for (var index = 0; index < credentials.length; index++) ...[
                         _buildCredentialTile(credentials[index]),
-                        if (index != credentials.length - 1)
-                          const SettingsDivider(),
+                        if (index != credentials.length - 1) const SettingsDivider(),
                       ],
                     ],
                   ),
@@ -334,7 +323,7 @@ class _GroupCredentialsPanelState
 
   Widget _buildCredentialTile(CredentialEntry entry) {
     Future<void> openDetails() async {
-      final result = await ns.pushSettings(
+      final result = await NavigationSvc.pushSettings(
         context,
         CredentialDetailPanel(
           credential: entry,
@@ -359,7 +348,7 @@ class _GroupCredentialsPanelState
   }
 
   Future<void> _openGroupParticipants() async {
-    final result = await ns.pushSettings(
+    final result = await NavigationSvc.pushSettings(
       context,
       GroupEditorPanel(
         provider: widget.provider,

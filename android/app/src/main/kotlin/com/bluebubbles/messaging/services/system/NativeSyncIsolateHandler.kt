@@ -8,10 +8,10 @@ import com.bluebubbles.messaging.services.backend_ui_interop.MethodCallHandler
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.dart.DartExecutor
 import io.flutter.embedding.engine.loader.ApplicationInfoLoader
+import io.flutter.embedding.engine.loader.FlutterLoader
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.view.FlutterCallbackInformation
-import io.flutter.view.FlutterMain
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
@@ -42,8 +42,9 @@ class NativeSyncIsolateHandler : MethodCallHandlerImpl() {
             return
         }
 
-        FlutterMain.startInitialization(context)
-        FlutterMain.ensureInitializationComplete(context, null)
+        val flutterLoader = FlutterLoader()
+        flutterLoader.startInitialization(context)
+        flutterLoader.ensureInitializationComplete(context, null)
 
         Log.d(Constants.logTag, "Loading callback info")
         val info = ApplicationInfoLoader.load(context)

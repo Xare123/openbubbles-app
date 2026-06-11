@@ -7,7 +7,8 @@ class PlatformFile {
     required this.name,
     required this.size,
     this.bytes,
-  }) : assert(path != null || bytes != null);
+    this.balloonBundleId,
+  });
 
   factory PlatformFile.fromMap(Map data, {Stream<List<int>>? readStream}) {
     return PlatformFile(
@@ -37,6 +38,12 @@ class PlatformFile {
 
   /// The file size in bytes.
   final int size;
+
+  /// The balloon bundle ID for interactive message types (e.g. handwriten
+  /// messages). When set, the outgoing [Message] will be tagged with this ID
+  /// so it is immediately rendered as interactive media. `null` for regular
+  /// attachments.
+  String? balloonBundleId;
 
   /// File extension for this file.
   String? get extension => name.split('.').last;

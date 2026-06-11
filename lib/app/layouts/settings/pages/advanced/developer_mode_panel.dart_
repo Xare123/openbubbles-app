@@ -19,7 +19,7 @@ class DeveloperModePanel extends StatefulWidget {
   State<StatefulWidget> createState() => _DeveloperModePanelState();
 }
 
-class _DeveloperModePanelState extends OptimizedState<DeveloperModePanel> {
+class _DeveloperModePanelState extends State<DeveloperModePanel> with ThemeHelpers {
   final RxInt placeholder = 0.obs;
   final TextEditingController participantController = TextEditingController();
 
@@ -46,7 +46,7 @@ class _DeveloperModePanelState extends OptimizedState<DeveloperModePanel> {
                           context: context,
                           builder: (BuildContext context) {
                             return AlertDialog(
-                                backgroundColor: context.theme.colorScheme.properSurface,
+                                backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
                                 title: Text("Enable development mode?", style: context.theme.textTheme.titleLarge),
                                 content: Text(
                                   'This mode is intended for developer use only. Extensions added through this mode have not been reviewed or approved by neither OpenBubbles or Google. You are responsible for ensuring the safety of your data and any extensions you add.',
@@ -67,7 +67,7 @@ class _DeveloperModePanelState extends OptimizedState<DeveloperModePanel> {
                                             .copyWith(color: context.theme.colorScheme.primary)),
                                     onPressed: () async {
                                       Navigator.of(context).pop();
-                                      ss.settings.developerEnabled.value = true;
+                                      SettingsSvc.settings.developerEnabled.value = true;
                                       saveSettings();
                                     },
                                   ),
@@ -76,11 +76,11 @@ class _DeveloperModePanelState extends OptimizedState<DeveloperModePanel> {
                         );
                         return;
                       }
-                      ss.settings.developerEnabled.value = val;
+                      SettingsSvc.settings.developerEnabled.value = val;
                       saveSettings();
                       showSnackbar("Success", "Restart device or force quit OpenBubbles to unload extensions");
                     },
-                    initialVal: ss.settings.developerEnabled.value,
+                    initialVal: SettingsSvc.settings.developerEnabled.value,
                     title: "Enable Developer Mode",
                     backgroundColor: tileColor,
                   )),
@@ -95,10 +95,10 @@ class _DeveloperModePanelState extends OptimizedState<DeveloperModePanel> {
               mouseCursor: MouseCursor.defer,
               title: Text("Add Service Name", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
               leading: Container(
-                width: 40 * ss.settings.avatarScale.value,
-                height: 40 * ss.settings.avatarScale.value,
+                width: 40 * SettingsSvc.settings.avatarScale.value,
+                height: 40 * SettingsSvc.settings.avatarScale.value,
                 decoration: BoxDecoration(
-                  color: !iOS ? null : context.theme.colorScheme.properSurface,
+                  color: !iOS ? null : context.theme.colorScheme.surfaceContainerHighest,
                   shape: BoxShape.circle,
                   border: iOS ? null : Border.all(color: context.theme.colorScheme.primary, width: 3)
                 ),
@@ -121,8 +121,8 @@ class _DeveloperModePanelState extends OptimizedState<DeveloperModePanel> {
                         TextButton(
                           child: Text("OK", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
                           onPressed: () async {
-                            ss.settings.developerMode.add(participantController.text);
-                            ss.saveSettings();
+                            SettingsSvc.settings.developerMode.add(participantController.text);
+                            await SettingsSvc.settings.saveOneAsync('developerMode');
                             await es.refreshCache();
                             Get.back();
                           },
@@ -137,7 +137,7 @@ class _DeveloperModePanelState extends OptimizedState<DeveloperModePanel> {
                         autofillHints: [AutofillHints.telephoneNumber, AutofillHints.email],
                       ),
                       title: Text("Add", style: context.theme.textTheme.titleLarge),
-                      backgroundColor: context.theme.colorScheme.properSurface,
+                      backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
                     );
                   }
                 );
@@ -148,10 +148,10 @@ class _DeveloperModePanelState extends OptimizedState<DeveloperModePanel> {
               mouseCursor: MouseCursor.defer,
               title: Text("Reload extensions", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
               leading: Container(
-                width: 40 * ss.settings.avatarScale.value,
-                height: 40 * ss.settings.avatarScale.value,
+                width: 40 * SettingsSvc.settings.avatarScale.value,
+                height: 40 * SettingsSvc.settings.avatarScale.value,
                 decoration: BoxDecoration(
-                  color: !iOS ? null : context.theme.colorScheme.properSurface,
+                  color: !iOS ? null : context.theme.colorScheme.surfaceContainerHighest,
                   shape: BoxShape.circle,
                   border: iOS ? null : Border.all(color: context.theme.colorScheme.primary, width: 3)
                 ),
@@ -171,10 +171,10 @@ class _DeveloperModePanelState extends OptimizedState<DeveloperModePanel> {
               mouseCursor: MouseCursor.defer,
               title: Text("Clear services", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.error)),
               leading: Container(
-                width: 40 * ss.settings.avatarScale.value,
-                height: 40 * ss.settings.avatarScale.value,
+                width: 40 * SettingsSvc.settings.avatarScale.value,
+                height: 40 * SettingsSvc.settings.avatarScale.value,
                 decoration: BoxDecoration(
-                  color: !iOS ? null : context.theme.colorScheme.properSurface,
+                  color: !iOS ? null : context.theme.colorScheme.surfaceContainerHighest,
                   shape: BoxShape.circle,
                   border: iOS ? null : Border.all(color: context.theme.colorScheme.primary, width: 3)
                 ),
@@ -185,27 +185,27 @@ class _DeveloperModePanelState extends OptimizedState<DeveloperModePanel> {
                 ),
               ),
               onTap: () async {
-                ss.settings.developerMode.clear();
-                ss.saveSettings();
+                SettingsSvc.settings.developerMode.clear();
+                await SettingsSvc.settings.saveOneAsync('developerMode');
                 showSnackbar("Success", "Restart device or force quit OpenBubbles to unload extensions");
               },
             );
 
-            if (index == ss.settings.developerMode.length) {
+            if (index == SettingsSvc.settings.developerMode.length) {
               return addMember;
             }
-            if (index == ss.settings.developerMode.length + 1) {
+            if (index == SettingsSvc.settings.developerMode.length + 1) {
               return refreshCache;
             }
-            if (index == ss.settings.developerMode.length + 2) {
+            if (index == SettingsSvc.settings.developerMode.length + 2) {
               return clear;
             }
 
             return ListTile(
               mouseCursor: MouseCursor.defer,
-              title: Text(ss.settings.developerMode[index]),
+              title: Text(SettingsSvc.settings.developerMode[index]),
             );
-          }, childCount: ss.settings.developerEnabled.value ? ss.settings.developerMode.length + 3 : 0),
+          }, childCount: SettingsSvc.settings.developerEnabled.value ? SettingsSvc.settings.developerMode.length + 3 : 0),
         ),)
       ]
     );
@@ -213,6 +213,6 @@ class _DeveloperModePanelState extends OptimizedState<DeveloperModePanel> {
 
   void saveSettings() {
     placeholder.value += 1;
-    ss.saveSettings();
+    SettingsSvc.settings.saveAsync();
   }
 }

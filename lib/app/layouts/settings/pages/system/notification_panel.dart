@@ -1,13 +1,15 @@
 import 'package:bluebubbles/helpers/helpers.dart';
+import 'package:bluebubbles/app/wrappers/bb_annotated_region.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/pages/conversation_list.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/widgets/tile/conversation_tile.dart';
 import 'package:bluebubbles/app/layouts/settings/dialogs/notification_settings_dialog.dart';
 import 'package:bluebubbles/app/wrappers/scrollbar_wrapper.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/settings_widgets.dart';
+import 'package:bluebubbles/app/layouts/settings/widgets/reaction_type_picker.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:animated_size_and_fade/animated_size_and_fade.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -16,11 +18,13 @@ import 'package:get/get.dart';
 import 'package:universal_html/html.dart' as uh;
 
 class NotificationPanel extends StatefulWidget {
+  const NotificationPanel({super.key});
+
   @override
   State<StatefulWidget> createState() => _NotificationPanelState();
 }
 
-class _NotificationPanelState extends OptimizedState<NotificationPanel> with SingleTickerProviderStateMixin {
+class _NotificationPanelState extends State<NotificationPanel> with SingleTickerProviderStateMixin, ThemeHelpers {
   final ScrollController controller1 = ScrollController();
   late final TabController tabController;
   final RxInt index = 0.obs;
@@ -37,32 +41,28 @@ class _NotificationPanelState extends OptimizedState<NotificationPanel> with Sin
       SliverList(
         delegate: SliverChildListDelegate(
           <Widget>[
-            if (ss.settings.skin.value != Skins.Samsung)
+            if (SettingsSvc.settings.skin.value != Skins.Samsung)
               Container(
                   height: 50,
                   alignment: Alignment.bottomLeft,
                   color: iOS ? headerColor : tileColor,
                   child: Padding(
                     padding: EdgeInsets.only(bottom: 8.0, left: iOS ? 30 : 15),
-                    child: Text("Notifications".psCapitalize,
-                        style: iOS
-                            ? iosSubtitle
-                            : materialSubtitle),
+                    child: Text("Notifications".psCapitalize, style: iOS ? iosSubtitle : materialSubtitle),
                   )),
             SettingsSection(backgroundColor: tileColor, children: [
               if (!kIsWeb)
                 Obx(() => SettingsSwitch(
-                  onChanged: (bool val) {
-                    ss.settings.notifyOnChatList.value = val;
-                    saveSettings();
-                  },
-                  initialVal: ss.settings.notifyOnChatList.value,
-                  title: "Send Notifications on Chat List",
-                  subtitle:
-                  "Sends notifications for new messages while in the chat list or chat creator",
-                  isThreeLine: true,
-                  backgroundColor: tileColor,
-                )),
+                      onChanged: (bool val) async {
+                        SettingsSvc.settings.notifyOnChatList.value = val;
+                        await SettingsSvc.settings.saveOneAsync('notifyOnChatList');
+                      },
+                      initialVal: SettingsSvc.settings.notifyOnChatList.value,
+                      title: "Send Notifications on Chat List",
+                      subtitle: "Sends notifications for new messages while in the chat list or chat creator",
+                      isThreeLine: true,
+                      backgroundColor: tileColor,
+                    )),
               if (kIsWeb)
                 SettingsTile(
                   onTap: () async {
@@ -73,103 +73,127 @@ class _NotificationPanelState extends OptimizedState<NotificationPanel> with Sin
                   title: uh.Notification.permission == "granted"
                       ? "Notifications enabled"
                       : uh.Notification.permission == "denied"
-                      ? "Notifications denied, please update your browser settings to re-enable notifications"
-                      : "Click to enable notifications",
+                          ? "Notifications denied, please update your browser settings to re-enable notifications"
+                          : "Click to enable notifications",
                   backgroundColor: tileColor,
                 ),
               const SettingsDivider(padding: EdgeInsets.only(left: 16.0)),
               Obx(() => SettingsSwitch(
-                onChanged: (bool val) {
-                  ss.settings.notifyReactions.value = val;
-                  saveSettings();
-                },
-                initialVal: ss.settings.notifyReactions.value,
-                title: "Notify for Reactions",
-                subtitle: "Sends notifications for incoming reactions",
-                backgroundColor: tileColor,
-              )),
+                    onChanged: (bool val) async {
+                      SettingsSvc.settings.notifyReactions.value = val;
+                      await SettingsSvc.settings.saveOneAsync('notifyReactions');
+                    },
+                    initialVal: SettingsSvc.settings.notifyReactions.value,
+                    title: "Notify for Reactions",
+                    subtitle: "Sends notifications for incoming reactions",
+                    backgroundColor: tileColor,
+                  )),
               const SettingsDivider(padding: EdgeInsets.only(left: 16.0)),
-              /*if (!kIsWeb)
-                                    Obx(() {
-                                      if (iOS)
-                                        return Container(
-                                          decoration: BoxDecoration(
-                                            color: tileColor,
-                                          ),
-                                          padding: EdgeInsets.only(left: 15),
-                                          child: Text("Select Notification Sound"),
-                                        );
-                                      else return SizedBox.shrink();
-                                    }),
-                                  if (!kIsWeb)
-                                    Obx(() => SettingsOptions<String>(
-                                      initial: settings.settings.notificationSound.value,
-                                      onChanged: (val) {
-                                        if (val == null) return;
-                                        settings.settings.notificationSound.value = val;
-                                        saveSettings();
-                                      },
-                                      options: ["default", "twig.wav", "walrus.wav", "sugarfree.wav", "raspberry.wav"],
-                                      textProcessing: (val) => val.toString().split(".").first.capitalizeFirst!,
-                                      capitalize: false,
-                                      title: "Notification Sound",
-                                      subtitle: "Set a custom notification sound for the app",
-                                      backgroundColor: tileColor,
-                                      secondaryColor: headerColor,
-                                    )),
-                                  if (!kIsWeb)
-                                    Container(
-                                      color: tileColor,
-                                      child: Padding(
-                                        padding: const EdgeInsets.only(left: 15.0),
-                                        child: SettingsDivider(color: context.theme.colorScheme.surfaceVariant),
-                                      ),
-                                    ),*/
-              SettingsTile(
-                title: "Text Detection",
-                onTap: () async {
-                  final TextEditingController controller = TextEditingController();
-                  controller.text = ss.settings.globalTextDetection.value;
-                  showDialog(
-                    context: context,
-                    builder: (context) => TextDetectionDialog(controller),
-                  );
-                  ss.settings.globalTextDetection.value = controller.text;
-                  saveSettings();
-                },
-                backgroundColor: tileColor,
-                subtitle: "Mute all chats except when your choice of text is found in a message",
-              ),
+              Obx(() => SettingsSwitch(
+                    title: "Text Detection",
+                    subtitle: "Mute all chats except when your choice of text is found in a message",
+                    initialVal: SettingsSvc.settings.globalTextDetection.value.isNotEmpty,
+                    onChanged: (bool val) async {
+                      if (!val) {
+                        SettingsSvc.settings.globalTextDetection.value = "";
+                        await SettingsSvc.settings.saveOneAsync('globalTextDetection');
+                        return;
+                      }
+                      final TextEditingController controller = TextEditingController();
+                      controller.text = SettingsSvc.settings.globalTextDetection.value;
+                      await showDialog(
+                        context: context,
+                        builder: (context) => TextDetectionDialog(controller),
+                      );
+                      SettingsSvc.settings.globalTextDetection.value = controller.text;
+                      await SettingsSvc.settings.saveOneAsync('globalTextDetection');
+                    },
+                    backgroundColor: tileColor,
+                  )),
+              Obx(() => SettingsSvc.settings.globalTextDetection.value.isNotEmpty
+                  ? SettingsTile(
+                      title: "Whitelisted Phrases",
+                      subtitle: SettingsSvc.settings.globalTextDetection.value,
+                      leading: Icon(iOS ? CupertinoIcons.pencil : Icons.edit_outlined),
+                      onTap: () async {
+                        final TextEditingController controller = TextEditingController();
+                        controller.text = SettingsSvc.settings.globalTextDetection.value;
+                        await showDialog(
+                          context: context,
+                          builder: (context) => TextDetectionDialog(controller),
+                        );
+                        SettingsSvc.settings.globalTextDetection.value = controller.text;
+                        await SettingsSvc.settings.saveOneAsync('globalTextDetection');
+                      },
+                    )
+                  : const SizedBox.shrink())
             ]),
-            SettingsHeader(
-                iosSubtitle: iosSubtitle,
-                materialSubtitle: materialSubtitle,
-                text: "Advanced"),
+            SettingsHeader(iosSubtitle: iosSubtitle, materialSubtitle: materialSubtitle, text: "Advanced"),
             SettingsSection(
               backgroundColor: tileColor,
               children: [
                 Obx(() => SettingsSwitch(
-                  onChanged: (bool val) {
-                    ss.settings.hideTextPreviews.value = val;
-                    saveSettings();
-                  },
-                  initialVal: ss.settings.hideTextPreviews.value,
-                  title: "Hide Message Text",
-                  subtitle: "Replaces message text with 'iMessage' in notifications",
-                  backgroundColor: tileColor,
-                )),
+                      onChanged: (bool val) async {
+                        SettingsSvc.settings.hideTextPreviews.value = val;
+                        await SettingsSvc.settings.saveOneAsync('hideTextPreviews');
+                      },
+                      initialVal: SettingsSvc.settings.hideTextPreviews.value,
+                      title: "Hide Message Text",
+                      subtitle: "Replaces message text with 'iMessage' in notifications",
+                      backgroundColor: tileColor,
+                    )),
                 const SettingsDivider(padding: EdgeInsets.only(left: 16.0)),
                 Obx(() => SettingsSwitch(
-                  onChanged: (bool val) {
-                    ss.settings.showIncrementalSync.value = val;
-                    saveSettings();
-                  },
-                  initialVal: ss.settings.showIncrementalSync.value,
-                  title: "Notify When Incremental Sync Complete",
-                  subtitle: "Show a snackbar whenever a message sync is completed",
-                  backgroundColor: tileColor,
-                  isThreeLine: true,
-                )),
+                      onChanged: (bool val) async {
+                        SettingsSvc.settings.showIncrementalSync.value = val;
+                        await SettingsSvc.settings.saveOneAsync('showIncrementalSync');
+                      },
+                      initialVal: SettingsSvc.settings.showIncrementalSync.value,
+                      title: "Notify When Incremental Sync Complete",
+                      subtitle: "Show a snackbar whenever a message sync is completed",
+                      backgroundColor: tileColor,
+                      isThreeLine: true,
+                    )),
+                if (!kIsWeb && !kIsDesktop) ...[
+                  AnimatedSizeAndFade.showHide(
+                    show: SettingsSvc.settings.enablePrivateAPI.value,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SettingsDivider(padding: EdgeInsets.only(left: 16.0)),
+                        Obx(() => SettingsSwitch(
+                              onChanged: (bool val) async {
+                                SettingsSvc.settings.notificationReactionAction.value = val;
+                                await SettingsSvc.settings.saveOneAsync('notificationReactionAction');
+                              },
+                              initialVal: SettingsSvc.settings.notificationReactionAction.value,
+                              title: "Quick Reaction from Notifications",
+                              subtitle: "Add a quick reaction button to your notifications (requires Private API)",
+                              backgroundColor: tileColor,
+                              isThreeLine: true,
+                            )),
+                      ],
+                    ),
+                  ),
+                  AnimatedSizeAndFade.showHide(
+                    show: SettingsSvc.settings.enablePrivateAPI.value &&
+                        SettingsSvc.settings.notificationReactionAction.value,
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 5.0),
+                      child: Obx(() => ReactionTypePicker(
+                            title: "Notification Reaction Type",
+                            currentValue: SettingsSvc.settings.notificationReactionActionType.value,
+                            reactions: [ReactionTypes.LOVE, ReactionTypes.LIKE],
+                            onChanged: (val) async {
+                              if (val == null) return;
+                              SettingsSvc.settings.notificationReactionActionType.value = val;
+                              await SettingsSvc.settings.saveOneAsync('notificationReactionActionType');
+                            },
+                            secondaryColor: headerColor,
+                          )),
+                    ),
+                  ),
+                ],
               ],
             ),
           ],
@@ -177,182 +201,182 @@ class _NotificationPanelState extends OptimizedState<NotificationPanel> with Sin
       )
     ];
 
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle(
-        systemNavigationBarColor: ss.settings.immersiveMode.value ? Colors.transparent : context.theme.colorScheme.background, // navigation bar color
-        systemNavigationBarIconBrightness: context.theme.colorScheme.brightness.opposite,
-        statusBarColor: Colors.transparent, // status bar color
-        statusBarIconBrightness: context.theme.colorScheme.brightness.opposite,
-      ),
-      child: Obx(() => Scaffold(
-        backgroundColor: material ? tileColor : headerColor,
-        appBar: samsung && index.value == 0
-            ? null
-            : PreferredSize(
-          preferredSize: Size(ns.width(context), 50),
-          child: AppBar(
-            systemOverlayStyle: context.theme.colorScheme.brightness == Brightness.dark
-                ? SystemUiOverlayStyle.light
-                : SystemUiOverlayStyle.dark,
-            toolbarHeight: 50,
-            elevation: 0,
-            scrolledUnderElevation: 3,
-            surfaceTintColor: context.theme.colorScheme.primary,
-            leading: buildBackButton(context),
-            backgroundColor: headerColor,
-            centerTitle: iOS,
-            title: Text(
-              "Notifications",
-              style: context.theme.textTheme.titleLarge,
-            ),
-          ),
-        ),
-        body: TabBarView(
-          physics: ThemeSwitcher.getScrollPhysics(),
-          controller: tabController,
-          children: <Widget>[
-            NotificationListener<ScrollEndNotification>(
-              onNotification: (_) {
-                if (ss.settings.skin.value != Skins.Samsung || kIsWeb || kIsDesktop) return false;
-                final scrollDistance = context.height / 3 - 57;
+    return BBAnnotatedRegion(
+        child: Obx(() => Scaffold(
+              backgroundColor: material ? tileColor : headerColor,
+              appBar: samsung && index.value == 0
+                  ? null
+                  : PreferredSize(
+                      preferredSize: Size(NavigationSvc.width(context), 50),
+                      child: AppBar(
+                        systemOverlayStyle: context.theme.colorScheme.brightness == Brightness.dark
+                            ? SystemUiOverlayStyle.light
+                            : SystemUiOverlayStyle.dark,
+                        toolbarHeight: 50,
+                        elevation: 0,
+                        scrolledUnderElevation: 3,
+                        surfaceTintColor: context.theme.colorScheme.primary,
+                        leading: buildBackButton(context),
+                        backgroundColor: headerColor,
+                        centerTitle: iOS,
+                        title: Text(
+                          "Notifications",
+                          style: context.theme.textTheme.titleLarge,
+                        ),
+                      ),
+                    ),
+              body: TabBarView(
+                physics: ThemeSwitcher.getScrollPhysics(),
+                controller: tabController,
+                children: <Widget>[
+                  NotificationListener<ScrollEndNotification>(
+                    onNotification: (_) {
+                      if (SettingsSvc.settings.skin.value != Skins.Samsung || kIsWeb || kIsDesktop) return false;
+                      final scrollDistance = context.height / 3 - 57;
 
-                if (controller1.offset > 0 && controller1.offset < scrollDistance) {
-                  final double snapOffset = controller1.offset / scrollDistance > 0.5 ? scrollDistance : 0;
+                      if (controller1.offset > 0 && controller1.offset < scrollDistance) {
+                        final double snapOffset = controller1.offset / scrollDistance > 0.5 ? scrollDistance : 0;
 
-                  Future.microtask(() =>
-                      controller1.animateTo(snapOffset, duration: const Duration(milliseconds: 200), curve: Curves.linear));
-                }
-                return false;
-              },
-              child: ScrollbarWrapper(
-                controller: controller1,
-                child: Obx(() => CustomScrollView(
-                    controller: controller1,
-                    physics:
-                    (kIsDesktop || kIsWeb) ? const NeverScrollableScrollPhysics() : ThemeSwitcher.getScrollPhysics(),
-                    slivers: <Widget>[
-                      if (samsung)
-                        SliverAppBar(
-                          backgroundColor: headerColor,
-                          pinned: true,
-                          stretch: true,
-                          expandedHeight: context.height / 3,
-                          elevation: 0,
-                          automaticallyImplyLeading: false,
-                          flexibleSpace: LayoutBuilder(
-                            builder: (context, constraints) {
-                              var expandRatio = (constraints.maxHeight - 100) / (context.height / 3 - 50);
+                        Future.microtask(() => controller1.animateTo(snapOffset,
+                            duration: const Duration(milliseconds: 200), curve: Curves.linear));
+                      }
+                      return false;
+                    },
+                    child: ScrollbarWrapper(
+                      controller: controller1,
+                      child: Obx(
+                        () => CustomScrollView(
+                          controller: controller1,
+                          physics: (kIsDesktop || kIsWeb)
+                              ? const NeverScrollableScrollPhysics()
+                              : ThemeSwitcher.getScrollPhysics(),
+                          slivers: <Widget>[
+                            if (samsung)
+                              SliverAppBar(
+                                backgroundColor: headerColor,
+                                pinned: true,
+                                stretch: true,
+                                expandedHeight: context.height / 3,
+                                elevation: 0,
+                                automaticallyImplyLeading: false,
+                                flexibleSpace: LayoutBuilder(
+                                  builder: (context, constraints) {
+                                    var expandRatio = (constraints.maxHeight - 100) / (context.height / 3 - 50);
 
-                              if (expandRatio > 1.0) expandRatio = 1.0;
-                              if (expandRatio < 0.0) expandRatio = 0.0;
-                              final animation = AlwaysStoppedAnimation<double>(expandRatio);
+                                    if (expandRatio > 1.0) expandRatio = 1.0;
+                                    if (expandRatio < 0.0) expandRatio = 0.0;
+                                    final animation = AlwaysStoppedAnimation<double>(expandRatio);
 
-                              return Stack(
-                                fit: StackFit.expand,
-                                children: [
-                                  FadeTransition(
-                                    opacity: Tween(begin: 0.0, end: 1.0).animate(CurvedAnimation(
-                                      parent: animation,
-                                      curve: const Interval(0.3, 1.0, curve: Curves.easeIn),
-                                    )),
-                                    child: Center(child: Text("Notifications", style: context.theme.textTheme.displaySmall!.copyWith(color: context.theme.colorScheme.onBackground), textAlign: TextAlign.center)),
-                                  ),
-                                  FadeTransition(
-                                    opacity: Tween(begin: 1.0, end: 0.0).animate(CurvedAnimation(
-                                      parent: animation,
-                                      curve: const Interval(0.0, 0.7, curve: Curves.easeOut),
-                                    )),
-                                    child: Align(
-                                      alignment: Alignment.bottomLeft,
-                                      child: Container(
-                                        padding: const EdgeInsets.only(left: 40),
-                                        height: 50,
-                                        child: Align(
-                                          alignment: Alignment.centerLeft,
-                                          child: Text(
-                                            "Notifications",
-                                            style: context.theme.textTheme.titleLarge,
+                                    return Stack(
+                                      fit: StackFit.expand,
+                                      children: [
+                                        FadeTransition(
+                                          opacity: Tween(begin: 0.0, end: 1.0).animate(CurvedAnimation(
+                                            parent: animation,
+                                            curve: const Interval(0.3, 1.0, curve: Curves.easeIn),
+                                          )),
+                                          child: Center(
+                                              child: Text("Notifications",
+                                                  style: context.theme.textTheme.displaySmall!
+                                                      .copyWith(color: context.theme.colorScheme.onSurface),
+                                                  textAlign: TextAlign.center)),
+                                        ),
+                                        FadeTransition(
+                                          opacity: Tween(begin: 1.0, end: 0.0).animate(CurvedAnimation(
+                                            parent: animation,
+                                            curve: const Interval(0.0, 0.7, curve: Curves.easeOut),
+                                          )),
+                                          child: Align(
+                                            alignment: Alignment.bottomLeft,
+                                            child: Container(
+                                              padding: const EdgeInsets.only(left: 40),
+                                              height: 50,
+                                              child: Align(
+                                                alignment: Alignment.centerLeft,
+                                                child: Text(
+                                                  "Notifications",
+                                                  style: context.theme.textTheme.titleLarge,
+                                                ),
+                                              ),
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                    ),
-                                  ),
-                                  Padding(
-                                    padding: const EdgeInsets.only(left: 8.0),
-                                    child: Align(
-                                      alignment: Alignment.bottomLeft,
-                                      child: Container(
-                                        height: 50,
-                                        child: Align(
-                                          alignment: Alignment.centerLeft,
-                                          child: buildBackButton(context),
+                                        Padding(
+                                          padding: const EdgeInsets.only(left: 8.0),
+                                          child: Align(
+                                            alignment: Alignment.bottomLeft,
+                                            child: SizedBox(
+                                              height: 50,
+                                              child: Align(
+                                                alignment: Alignment.centerLeft,
+                                                child: buildBackButton(context),
+                                              ),
+                                            ),
+                                          ),
                                         ),
-                                      ),
-                                    ),
+                                      ],
+                                    );
+                                  },
+                                ),
+                              ),
+                            if (SettingsSvc.settings.skin.value != Skins.Samsung) ...bodySlivers,
+                            if (SettingsSvc.settings.skin.value == Skins.Samsung)
+                              SliverToBoxAdapter(
+                                child: ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                      minHeight: context.height -
+                                          50 -
+                                          context.mediaQueryPadding.top -
+                                          context.mediaQueryViewPadding.top),
+                                  child: CustomScrollView(
+                                    physics: const NeverScrollableScrollPhysics(),
+                                    shrinkWrap: true,
+                                    slivers: bodySlivers,
                                   ),
-                                ],
-                              );
-                            },
-                          ),
+                                ),
+                              ),
+                          ],
                         ),
-                      if (ss.settings.skin.value != Skins.Samsung)
-                        ...bodySlivers,
-                      if (ss.settings.skin.value == Skins.Samsung)
-                        SliverToBoxAdapter(
-                          child: ConstrainedBox(
-                            constraints: BoxConstraints(minHeight: context.height - 50 - context.mediaQueryPadding.top - context.mediaQueryViewPadding.top),
-                            child: CustomScrollView(
-                              physics: const NeverScrollableScrollPhysics(),
-                              shrinkWrap: true,
-                              slivers: bodySlivers,
-                            ),
-                          ),
-                        ),
-                    ],
+                      ),
+                    ),
                   ),
-                ),
+                  if (!kIsWeb) const ChatList(),
+                ],
               ),
-            ),
-            if (!kIsWeb) ChatList(),
-          ],
-        ),
-        bottomNavigationBar: kIsWeb ? null : NavigationBar(
-          selectedIndex: index.value,
-          backgroundColor: headerColor,
-          destinations: [
-            NavigationDestination(
-              icon: Icon(iOS ? CupertinoIcons.globe : Icons.public),
-              label: "GLOBAL OPTIONS",
-            ),
-            NavigationDestination(
-              icon: Icon(
-                iOS
-                    ? CupertinoIcons.conversation_bubble
-                    : Icons.chat_bubble_outline,
-              ),
-              label: "CHAT OPTIONS",
-            ),
-          ],
-          onDestinationSelected: (page) {
-            index.value = page;
-            tabController.animateTo(page);
-          },
-        ),
-      )
-    ));
-  }
-
-  void saveSettings() {
-    ss.saveSettings();
+              bottomNavigationBar: kIsWeb
+                  ? null
+                  : NavigationBar(
+                      selectedIndex: index.value,
+                      backgroundColor: headerColor,
+                      destinations: [
+                        NavigationDestination(
+                          icon: Icon(iOS ? CupertinoIcons.globe : Icons.public),
+                          label: "GLOBAL OPTIONS",
+                        ),
+                        NavigationDestination(
+                          icon: Icon(
+                            iOS ? CupertinoIcons.conversation_bubble : Icons.chat_bubble_outline,
+                          ),
+                          label: "CHAT OPTIONS",
+                        ),
+                      ],
+                      onDestinationSelected: (page) {
+                        index.value = page;
+                        tabController.animateTo(page);
+                      },
+                    ),
+            )));
   }
 }
 
 class ChatList extends StatefulWidget {
+  const ChatList({super.key});
+
   @override
   State<StatefulWidget> createState() => ChatListState();
 }
 
-class ChatListState extends OptimizedState<ChatList> {
+class ChatListState extends State<ChatList> with ThemeHelpers {
   final ScrollController controller = ScrollController();
 
   String getSubtitle(Chat chat) {
@@ -362,8 +386,7 @@ class ChatListState extends OptimizedState<ChatList> {
       String muteArgsStr = "";
       if (chat.muteArgs != null) {
         if (chat.muteType == "mute_individuals") {
-          final participants =
-              chat.participants.where((element) => chat.muteArgs!.split(",").contains(element.address));
+          final participants = chat.handles.where((element) => chat.muteArgs!.split(",").contains(element.address));
           muteArgsStr = " - ${participants.length > 1 ? "${participants.length} people" : "1 person"}";
         } else if (chat.muteType == "temporary_mute") {
           final DateTime time = DateTime.parse(chat.muteArgs!).toLocal();
@@ -383,7 +406,7 @@ class ChatListState extends OptimizedState<ChatList> {
       physics: ThemeSwitcher.getScrollPhysics(),
       slivers: <Widget>[
         Obx(() {
-          if (!chats.loadedChatBatch.value) {
+          if (!ChatsSvc.loadedFirstChatBatch.value) {
             return SliverToBoxAdapter(
               child: Center(
                 child: Padding(
@@ -404,7 +427,7 @@ class ChatListState extends OptimizedState<ChatList> {
               ),
             );
           }
-          if (chats.loadedChatBatch.value && chats.chats.isEmpty) {
+          if (ChatsSvc.loadedFirstChatBatch.value && ChatsSvc.isEmpty) {
             return SliverToBoxAdapter(
               child: Center(
                 child: Padding(
@@ -434,20 +457,22 @@ class ChatListState extends OptimizedState<ChatList> {
                       physics: ThemeSwitcher.getScrollPhysics(),
                       shrinkWrap: true,
                       controller: _controller,
-                      findChildIndexCallback: (key) => findChildIndexByKey(chats.chats, key, (item) => item.guid),
+                      findChildIndexCallback: (key) => findChildIndexByKey(ChatsSvc.allChats, key, (item) => item.guid),
                       itemBuilder: (context, index) {
+                        final chat = ChatsSvc.allChats[index];
                         return ConversationTile(
-                          key: Key(chats.chats[index].guid.toString()),
-                          chat: chats.chats[index],
+                          key: Key(chat.guid.toString()),
+                          chat: chat,
                           controller: Get.put(
-                            ConversationListController(showUnknownSenders: true, showArchivedChats: true),
-                            tag: "notification-panel"
-                          ),
+                              ConversationListController(showUnknownSenders: true, showArchivedChats: true),
+                              tag: "notification-panel"),
                           inSelectMode: true,
-                          subtitle: Text(getSubtitle(chats.chats[index]),
-                              style: context.theme.textTheme.bodySmall!.copyWith(color: context.theme.colorScheme.properOnSurface),),
+                          subtitle: Text(
+                            getSubtitle(chat),
+                            style: context.theme.textTheme.bodySmall!
+                                .copyWith(color: context.theme.colorScheme.onSurfaceVariant),
+                          ),
                           onSelect: (_) async {
-                            final chat = chats.chats[index];
                             await showDialog(
                               context: context,
                               builder: (context) => NotificationSettingsDialog(chat, () {
@@ -457,7 +482,7 @@ class ChatListState extends OptimizedState<ChatList> {
                           },
                         );
                       },
-                      itemCount: chats.chats.length,
+                      itemCount: ChatsSvc.length,
                     ),
                   ),
                 ),

@@ -1,4 +1,3 @@
-import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:desktop_webview_auth/desktop_webview_auth.dart';
@@ -28,7 +27,7 @@ Future<String?> googleOAuth(BuildContext context) async {
         barrierDismissible: false,
         builder: (BuildContext context) {
           return AlertDialog(
-            backgroundColor: context.theme.colorScheme.properSurface,
+            backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
             title: Text("Important Notice", style: context.theme.textTheme.titleLarge),
             content: Text(
               'Please make sure to allow BlueBubbles to see, edit, configure, and delete your Google Cloud data after signing in. BlueBubbles will only use this ability to find your server URL.',
@@ -36,7 +35,8 @@ Future<String?> googleOAuth(BuildContext context) async {
             ),
             actions: <Widget>[
               TextButton(
-                child: Text("OK", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
+                child: Text("OK",
+                    style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
                 onPressed: () {
                   Navigator.of(context).pop();
                 },
@@ -48,34 +48,25 @@ Future<String?> googleOAuth(BuildContext context) async {
     }
 
     // initialize gsi
-    final gsi = GoogleSignIn(clientId: fdb.getClientId(), scopes: defaultScopes);
-    try {
-      // sign out then sign in
-      await gsi.signOut();
-      final account = await gsi.signIn();
-      if (account != null) {
+    final gsi = GoogleSignIn.instance;
+    await gsi.initialize(clientId: fdb.getClientId());
+    GoogleSignInAccount? account = await gsi.attemptLightweightAuthentication();
+    if (account == null) {
+      try {
+        // sign out then sign in
+        await gsi.signOut();
+        account = await gsi.authenticate(scopeHint: defaultScopes);
         // get access token
-        await account.clearAuthCache();
-        final auth = await account.authentication;
-        token = auth.accessToken;
-        // make sure scopes were granted on web
-        if (kIsWeb && !(await gsi.canAccessScopes(defaultScopes, accessToken: token))) {
-          final result = await gsi.requestScopes(defaultScopes);
-          if (!result) {
-            throw Exception("Scopes not granted!");
-          }
-        }
+        final auth = account.authentication;
+        token = auth.idToken;
         // error if token is not present
         if (token == null) {
           throw Exception("No access token!");
         }
-      } else {
-        // error if account is not present
-        throw Exception("No account!");
+      } catch (e, stack) {
+        Logger.error("Failed to sign in with Google (Android/Web)", error: e, trace: stack);
+        return null;
       }
-    } catch (e, stack) {
-      Logger.error("Failed to sign in with Google (Android/Web)", error: e, trace: stack);
-      return null;
     }
     // desktop implementation
   } else {
@@ -85,8 +76,8 @@ Future<String?> googleOAuth(BuildContext context) async {
       scope: defaultScopes.join(' '),
     );
     try {
-      final width = ss.prefs.getDouble('window-width')?.toInt();
-      final height = ss.prefs.getDouble('window-height')?.toInt();
+      final width = PrefsSvc.i.getDouble('window-width')?.toInt();
+      final height = PrefsSvc.i.getDouble('window-height')?.toInt();
       final result = await DesktopWebviewAuth.signIn(
         args,
         width: width != null ? (width * 0.9).ceil() : null,
@@ -110,7 +101,7 @@ Future<List<Map>> fetchFirebaseProjects(String token) async {
   List<Map> usableProjects = [];
   try {
     // query firebase projects
-    final response = await http.getFirebaseProjects(token);
+    final response = await HttpSvc.getFirebaseProjects(token);
     final projects = response.data['results'];
     List<Object> errors = [];
     // find projects with RTDB or cloud firestore
@@ -118,7 +109,7 @@ Future<List<Map>> fetchFirebaseProjects(String token) async {
       for (Map e in projects) {
         if (e['resources']['realtimeDatabaseInstance'] != null) {
           try {
-            final serverUrlResponse = await http.getServerUrlRTDB(e['resources']['realtimeDatabaseInstance'], token);
+            final serverUrlResponse = await HttpSvc.getServerUrlRTDB(e['resources']['realtimeDatabaseInstance'], token);
             e['serverUrl'] = serverUrlResponse.data['serverUrl'];
             usableProjects.add(e);
           } catch (ex) {
@@ -126,7 +117,7 @@ Future<List<Map>> fetchFirebaseProjects(String token) async {
           }
         } else {
           try {
-            final serverUrlResponse = await http.getServerUrlCF(e['projectId'], token);
+            final serverUrlResponse = await HttpSvc.getServerUrlCF(e['projectId'], token);
             e['serverUrl'] = serverUrlResponse.data['fields']['serverUrl']['stringValue'];
             usableProjects.add(e);
           } catch (ex) {
@@ -149,18 +140,21 @@ Future<List<Map>> fetchFirebaseProjects(String token) async {
   }
 }
 
-Future<void> requestPassword(BuildContext context, String serverUrl, Future<void> Function(String url, String password) connect) async {
+Future<void> requestPassword(
+    BuildContext context, String serverUrl, Future<void> Function(String url, String password) connect) async {
   final TextEditingController passController = TextEditingController();
   final RxBool enabled = false.obs;
   await showDialog(
+    barrierDismissible: false,
     context: context,
     builder: (_) {
       return Obx(
         () => AlertDialog(
           actions: [
             TextButton(
-              child: Text("Cancel", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-              onPressed: () => Get.back(),
+              child: Text("Cancel",
+                  style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
+              onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
             ),
             AnimatedContainer(
               decoration: BoxDecoration(
@@ -170,7 +164,8 @@ Future<void> requestPassword(BuildContext context, String serverUrl, Future<void
               child: AbsorbPointer(
                 absorbing: !enabled.value,
                 child: TextButton(
-                  child: Text("OK",
+                  child: Text(
+                    "OK",
                     style: context.theme.textTheme.bodyLarge!.copyWith(
                       color: enabled.value ? context.theme.colorScheme.primary : context.theme.disabledColor,
                     ),
@@ -179,7 +174,7 @@ Future<void> requestPassword(BuildContext context, String serverUrl, Future<void
                     if (passController.text.isEmpty) {
                       return;
                     }
-                    Get.back();
+                    Navigator.of(context, rootNavigator: true).pop();
                   },
                 ),
               ),
@@ -203,11 +198,11 @@ Future<void> requestPassword(BuildContext context, String serverUrl, Future<void
               if (passController.text.isEmpty) {
                 return;
               }
-              Get.back();
+              Navigator.of(context, rootNavigator: true).pop();
             },
           ),
           title: Text("Enter Server Password", style: context.theme.textTheme.titleLarge),
-          backgroundColor: context.theme.colorScheme.properSurface,
+          backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
         ),
       );
     },

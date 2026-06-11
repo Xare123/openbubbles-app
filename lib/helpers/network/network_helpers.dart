@@ -7,7 +7,7 @@ import 'package:universal_io/io.dart';
 /// Take the passed [address] or serverAddress from Settings
 /// and sanitize it, making sure it includes an http schema
 String? sanitizeServerAddress({String? address}) {
-  String serverAddress = address ?? http.origin;
+  String serverAddress = address ?? HttpSvc.origin;
 
   String sanitized = serverAddress.replaceAll('"', "").trim();
   if (sanitized.isEmpty) return null;
@@ -24,6 +24,17 @@ String? sanitizeServerAddress({String? address}) {
   return uri.toString();
 }
 
+Future<int> getOrCreateUniqueId() async {
+  int uniqueId = SettingsSvc.settings.firstFcmRegisterDate.value;
+  if (uniqueId == 0) {
+    uniqueId = (DateTime.now().millisecondsSinceEpoch / 1000).round();
+    SettingsSvc.settings.firstFcmRegisterDate.value = uniqueId;
+    await SettingsSvc.settings.saveOneAsync('firstFcmRegisterDate');
+  }
+
+  return uniqueId;
+}
+
 Future<String> getDeviceName() async {
   String deviceName = "bluebubbles-client";
 
@@ -34,12 +45,7 @@ Future<String> getDeviceName() async {
     // We need a unique identifier to be generated once per installation.
     // Device Info Plus doesn't provide us with an idempotent identifier,
     // so we'll have to generate one ourselves, and store it for future use.
-    int uniqueId = ss.settings.firstFcmRegisterDate.value;
-    if (uniqueId == 0) {
-      uniqueId = (DateTime.now().millisecondsSinceEpoch / 1000).round();
-      ss.settings.firstFcmRegisterDate.value = uniqueId;
-      await ss.settings.saveOne('firstFcmRegisterDate');
-    }
+    int uniqueId = await getOrCreateUniqueId();
 
     if (Platform.isAndroid) {
       AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;

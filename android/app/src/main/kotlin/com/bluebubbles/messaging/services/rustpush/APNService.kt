@@ -95,7 +95,7 @@ class APNService : Service(), MsgReceiver {
 
     override fun receievedMsg(ptr: ULong, retry: ULong) {
         Handler(Looper.getMainLooper()).post {
-            if (MainActivity.engine != null) {
+            if (MainActivity.getEngine() != null) {
                 Log.i("ugh running", "here $ptr $retry")
                 // app is alive, deliver directly there
                 MethodCallHandler.invokeMethod("APNMsg", mapOf("pointer" to ptr.toString(), "retry" to retry.toString()))
@@ -152,7 +152,7 @@ class APNService : Service(), MsgReceiver {
     fun launchAgent() {
         Log.i("launching agent", "herer")
         SMSObserver.init(applicationContext) { context, map ->
-            if (MainActivity.engine != null && MainActivity.engine_ready) {
+            if (MainActivity.getEngine() != null && MainActivity.isEngineReady()) {
                 // app is alive, deliver directly there
                 MethodCallHandler.invokeMethod("SMSMsg", map)
                 return@init

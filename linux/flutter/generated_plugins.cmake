@@ -9,6 +9,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   emoji_picker_flutter
   file_selector_linux
   flutter_acrylic
+  flutter_timezone
   gtk
   irondash_engine_context
   local_notifier
@@ -19,7 +20,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   pasteboard
   printing
   record_linux
-  screen_retriever
+  screen_retriever_linux
   super_native_extensions
   system_tray
   tray_manager
@@ -28,7 +29,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
-  media_kit_native_event_loop
+  jni
   rust_lib_bluebubbles
 )
 

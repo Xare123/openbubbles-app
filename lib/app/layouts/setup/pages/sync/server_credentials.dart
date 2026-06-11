@@ -6,7 +6,6 @@ import 'package:bluebubbles/app/layouts/setup/dialogs/failed_to_scan_dialog.dart
 import 'package:bluebubbles/app/layouts/setup/pages/page_template.dart';
 import 'package:bluebubbles/app/layouts/setup/pages/sync/qr_code_scanner.dart';
 import 'package:bluebubbles/app/layouts/setup/setup_view.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/helpers/backend/settings_helpers.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
@@ -15,32 +14,33 @@ import 'package:dio/dio.dart' as dio;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:get/get.dart' hide Response;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:universal_io/io.dart';
 
 class ServerCredentials extends StatefulWidget {
+  const ServerCredentials({super.key});
+
   @override
   State<ServerCredentials> createState() => _ServerCredentialsState();
 }
 
-class _ServerCredentialsState extends OptimizedState<ServerCredentials> {
+class _ServerCredentialsState extends State<ServerCredentials> with ThemeHelpers {
   final TextEditingController urlController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
   final controller = Get.find<SetupViewController>();
-  final FocusNode focusNode = FocusNode();
+  final FocusScopeNode focusScopeNode = FocusScopeNode(traversalEdgeBehavior: TraversalEdgeBehavior.stop);
 
-  bool showLoginButtons = true;
-  bool obscureText = true;
+  final RxBool showLoginButtons = true.obs;
+  final RxBool obscureText = true.obs;
 
-  String? token;
-  String? googleName;
-  String? googlePicture;
-  List<Map> usableProjects = [];
+  final Rxn<String> token = Rxn<String>();
+  final Rxn<String> googleName = Rxn<String>();
+  final Rxn<String> googlePicture = Rxn<String>();
+  final RxList<Map> usableProjects = <Map>[].obs;
   List<RxBool> triedConnecting = [];
   List<RxBool> reachable = [];
-  bool fetchingFirebase = false;
+  final RxBool fetchingFirebase = false.obs;
 
   @override
   Widget build(BuildContext context) {
@@ -50,503 +50,498 @@ class _ServerCredentialsState extends OptimizedState<ServerCredentials> {
       subtitle: kIsWeb || kIsDesktop
           ? "Enter your server URL and password to access your messages."
           : "We've created a QR code on your server that you can scan with your phone for easy setup.\nAlternatively, you can manually input your URL and password.",
-      contentWrapper: (child) => AnimatedSize(
-        duration: const Duration(milliseconds: 200),
-        child: !showLoginButtons && context.isPhone ? const SizedBox.shrink() : child,
-      ),
-      customButton: Column(
-        children: [
-          ErrorText(parentController: controller),
-          if (token != null)
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text("Signed in as", style: TextStyle(color: context.theme.colorScheme.primary)),
-                const SizedBox(height: 8),
-                Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(20),
-                    color: context.theme.colorScheme.primaryContainer.withOpacity(0.3),
-                  ),
-                  padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (googlePicture != null)
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(20),
-                          clipBehavior: Clip.antiAlias,
-                          child: Image.network(googlePicture!, width: 40, fit: BoxFit.contain),
-                        ),
-                      const SizedBox(width: 10),
-                      Text(googleName ?? "Unknown",
-                          style: context.theme.textTheme.bodyLarge!.apply(fontSizeFactor: 1.1, color: context.theme.colorScheme.onBackground)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          if (token != null) const SizedBox(height: 40),
-          if (token != null)
-            Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: context.theme.colorScheme.primaryContainer),
-              ),
-              child: usableProjects.isNotEmpty
-                  ? SingleChildScrollView(
-                      child: Container(
-                        width: double.maxFinite,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.all(10.0),
-                              child: Text(fetchingFirebase ? "Loading Firebase projects" : "Select the Firebase project to use"),
-                            ),
-                            if (!fetchingFirebase)
-                              ConstrainedBox(
-                                constraints: BoxConstraints(
-                                  maxHeight: context.mediaQuery.size.height * 0.4,
-                                ),
-                                child: ListView.builder(
-                                  shrinkWrap: true,
-                                  itemCount: usableProjects.length,
-                                  findChildIndexCallback: (key) => findChildIndexByKey(usableProjects, key, (item) => item['projectId']),
-                                  itemBuilder: (context, index) {
-                                    return Obx(() {
-                                      if (!triedConnecting[index].value) {
-                                        Future(() async {
-                                          try {
-                                            await http.dio.get(usableProjects[index]['serverUrl']);
-                                            reachable[index].value = true;
-                                          } catch (e) {
-                                            reachable[index].value = false;
-                                          }
-                                          triedConnecting[index].value = true;
-                                        });
-                                      }
-                                      return ClipRRect(
-                                        key: ValueKey(usableProjects[index]['projectId']),
-                                        clipBehavior: Clip.antiAlias,
-                                        borderRadius: BorderRadius.circular(20),
-                                        child: ListTile(
-                                          tileColor: context.theme.colorScheme.primaryContainer.withOpacity(0.3),
-                                          enabled: triedConnecting[index].value && reachable[index].value,
-                                          title: Text.rich(TextSpan(children: [
-                                            TextSpan(text: usableProjects[index]['displayName']),
-                                            TextSpan(
-                                              text: " ${triedConnecting[index].value ? "${reachable[index].value ? "R" : "Unr"}eachable" : "Checking"}",
-                                              style: TextStyle(
-                                                  fontWeight: reachable[index].value ? FontWeight.bold : FontWeight.normal,
-                                                  color: triedConnecting[index].value
-                                                      ? reachable[index].value
-                                                          ? Colors.green
-                                                          : Colors.red
-                                                      : Colors.yellow),
-                                            ),
-                                          ])),
-                                          subtitle: Text(
-                                            "${usableProjects[index]['projectId']}\n${usableProjects[index]['serverUrl']}",
-                                          ),
-                                          onTap: () {
-                                            requestPassword(context, usableProjects[index]['serverUrl'], connect);
-                                          },
-                                          isThreeLine: true,
-                                        ),
-                                      );
-                                    });
-                                  },
-                                ),
-                              ),
-                            if (fetchingFirebase) const CircularProgressIndicator(),
-                            const SizedBox(height: 10),
-                            if (!fetchingFirebase)
-                              ElevatedButton(
-                                onPressed: () {
-                                  for (int i = 0; i < triedConnecting.length; i++) {
-                                    triedConnecting[i].value = false;
-                                  }
-                                },
-                                child: const Text("Retry Connections"),
-                              ),
-                            if (!fetchingFirebase) const SizedBox(height: 10),
-                          ],
-                        ),
-                      ),
-                    )
-                  : Container(
-                      alignment: Alignment.center,
-                      width: double.maxFinite,
-                      padding: const EdgeInsets.all(24),
-                      child: const Text(
-                        "No Firebase Projects found!\n\nMake sure you're signed in to the same Google account that you used on your server!",
-                        textScaler: TextScaler.linear(1.1),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-            ),
-          if (token != null) const SizedBox(height: 10),
-          Container(
-              height: 40,
-              padding: const EdgeInsets.all(2),
-              child: TextButton(
-                onPressed: () async {
-                  await showCustomHeadersDialog(context);
-                },
-                child: Text("Enter Custom Headers",
-                        style: context.theme.textTheme.bodyLarge!.apply(color: context.theme.colorScheme.primary)),
-              ),
-            ),
-          const SizedBox(height: 10),
-          if (token != null)
-            Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20),
-              ),
-              height: 40,
-              padding: const EdgeInsets.all(2),
-              child: ElevatedButton(
-                style: ButtonStyle(
-                  shape: WidgetStateProperty.all<RoundedRectangleBorder>(
-                    RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20.0),
-                    ),
-                  ),
-                  backgroundColor: WidgetStateProperty.all(context.theme.colorScheme.background),
-                  shadowColor: WidgetStateProperty.all(context.theme.colorScheme.background),
-                  maximumSize: WidgetStateProperty.all(buttonSize),
-                  minimumSize: WidgetStateProperty.all(buttonSize),
-                ),
-                onPressed: () async {
-                  setState(() {
-                    token = null;
-                    googleName = null;
-                    googlePicture = null;
-                  });
-                },
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text("Choose a different account",
-                        style: context.theme.textTheme.bodyLarge!.apply(fontSizeFactor: 1.1, color: context.theme.colorScheme.primary)),
-                  ],
-                ),
-              ),
-            ),
-          if (token != null) const SizedBox(height: 10),
-          if (googleName == null && showLoginButtons && !isSnap)
-            Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20),
-                color: HexColor('4285F4'),
-              ),
-              height: 40,
-              child: ElevatedButton(
-                style: ButtonStyle(
-                  shape: WidgetStateProperty.all<RoundedRectangleBorder>(
-                    RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20.0),
-                    ),
-                  ),
-                  backgroundColor: WidgetStateProperty.all(Colors.transparent),
-                  shadowColor: WidgetStateProperty.all(Colors.transparent),
-                  maximumSize: WidgetStateProperty.all(buttonSize),
-                  minimumSize: WidgetStateProperty.all(buttonSize),
-                ),
-                onPressed: () async {
-                  token = await googleOAuth(context);
-                  if (token != null) {
-                    final response = await http.getGoogleInfo(token!);
-                    setState(() {
-                      googleName = response.data['name'];
-                      googlePicture = response.data['picture'];
-                      fetchingFirebase = true;
-                    });
-                    fetchFirebaseProjects(token!).then((List<Map> value) async {
-                      setState(() {
-                        usableProjects = value;
-                        triedConnecting = List.generate(usableProjects.length, (i) => false.obs);
-                        reachable = List.generate(usableProjects.length, (i) => false.obs);
-                        fetchingFirebase = false;
-                      });
-                    });
-                  }
-                },
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Image.asset("assets/images/google-sign-in.png", width: 30, fit: BoxFit.contain),
-                    const SizedBox(width: 10),
-                    Padding(
-                      padding: const EdgeInsets.only(right: 0.0, left: 5.0),
-                      child: Text("Sign in with Google", style: context.theme.textTheme.bodyLarge!.apply(fontSizeFactor: 1.1, color: Colors.white)),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          if (googleName == null && showLoginButtons && !isSnap) const SizedBox(height: 10),
-          if (googleName == null && !kIsWeb && !kIsDesktop && showLoginButtons)
-            Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20),
-                gradient: LinearGradient(
-                  begin: AlignmentDirectional.topStart,
-                  colors: [HexColor('2772C3'), HexColor('5CA7F8').darkenPercent(5)],
-                ),
-              ),
-              height: 40,
-              child: ElevatedButton(
-                style: ButtonStyle(
-                  shape: WidgetStateProperty.all<RoundedRectangleBorder>(
-                    RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20.0),
-                    ),
-                  ),
-                  backgroundColor: WidgetStateProperty.all(Colors.transparent),
-                  shadowColor: WidgetStateProperty.all(Colors.transparent),
-                  maximumSize: WidgetStateProperty.all(buttonSize),
-                  minimumSize: WidgetStateProperty.all(buttonSize),
-                ),
-                onPressed: scanQRCode,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(CupertinoIcons.camera, color: Colors.white, size: 20),
-                    const SizedBox(width: 10),
-                    Padding(
-                      padding: const EdgeInsets.only(right: 0.0, left: 5.0),
-                      child: Text("Scan QR Code", style: context.theme.textTheme.bodyLarge!.apply(fontSizeFactor: 1.1, color: Colors.white)),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          if (googleName == null && !kIsWeb && !kIsDesktop && showLoginButtons) const SizedBox(height: 10),
-          if (googleName == null)
-            Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20),
-                gradient: LinearGradient(
-                  begin: AlignmentDirectional.topStart,
-                  colors: [HexColor('2772C3'), HexColor('5CA7F8').darkenPercent(5)],
-                ),
-              ),
-              height: 40,
-              padding: const EdgeInsets.all(2),
-              child: ElevatedButton(
-                style: ButtonStyle(
-                  shape: WidgetStateProperty.all<RoundedRectangleBorder>(
-                    RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20.0),
-                    ),
-                  ),
-                  backgroundColor: WidgetStateProperty.all(context.theme.colorScheme.background),
-                  shadowColor: WidgetStateProperty.all(context.theme.colorScheme.background),
-                  maximumSize: WidgetStateProperty.all(buttonSize),
-                  minimumSize: WidgetStateProperty.all(buttonSize),
-                ),
-                onPressed: () async {
-                  setState(() {
-                    showLoginButtons = !showLoginButtons;
-                    focusNode.requestFocus();
-                  });
-                },
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(CupertinoIcons.text_cursor, color: context.theme.colorScheme.onBackground, size: 20),
-                    const SizedBox(width: 10),
-                    Text("Manual entry",
-                        style: context.theme.textTheme.bodyLarge!.apply(fontSizeFactor: 1.1, color: context.theme.colorScheme.onBackground)),
-                  ],
-                ),
-              ),
-            ),
-          AnimatedSize(
+      contentWrapper: (child) => Obx(() => AnimatedSize(
             duration: const Duration(milliseconds: 200),
-            child: showLoginButtons
-                ? const SizedBox.shrink()
-                : Theme(
-                    data: context.theme.copyWith(
-                      inputDecorationTheme: InputDecorationTheme(
-                        labelStyle: TextStyle(color: context.theme.colorScheme.outline),
+            child: !showLoginButtons.value && context.isPhone ? const SizedBox.shrink() : child,
+          )),
+      customButton: Obx(() => Column(
+            children: [
+              ErrorText(parentController: controller),
+              if (token.value != null)
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text("Signed in as", style: TextStyle(color: context.theme.colorScheme.primary)),
+                    const SizedBox(height: 8),
+                    Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(20),
+                        color: context.theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
                       ),
-                    ),
-                    child: AutofillGroup(
-                      child: Column(
+                      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          const SizedBox(height: 20),
-                          Container(
-                            width: context.width * 2 / 3,
-                            child: Focus(
-                              focusNode: focusNode,
-                              onKeyEvent: (node, event) {
-                                if (event is KeyDownEvent && !HardwareKeyboard.instance.isShiftPressed && event.logicalKey == LogicalKeyboardKey.tab) {
-                                  node.nextFocus();
-                                  return KeyEventResult.handled;
-                                }
-                                return KeyEventResult.ignored;
-                              },
-                              child: TextField(
-                                cursorColor: context.theme.colorScheme.primary,
-                                autocorrect: false,
-                                autofocus: false,
-                                controller: urlController,
-                                textInputAction: TextInputAction.next,
-                                autofillHints: [AutofillHints.username, AutofillHints.url],
-                                decoration: InputDecoration(
-                                  enabledBorder: OutlineInputBorder(
-                                      borderSide: BorderSide(color: context.theme.colorScheme.outline), borderRadius: BorderRadius.circular(20)),
-                                  focusedBorder: OutlineInputBorder(
-                                      borderSide: BorderSide(color: context.theme.colorScheme.primary), borderRadius: BorderRadius.circular(20)),
-                                  labelText: "URL",
-                                ),
-                              ),
+                          if (googlePicture.value != null)
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(20),
+                              clipBehavior: Clip.antiAlias,
+                              child: Image.network(googlePicture.value!, width: 40, fit: BoxFit.contain),
                             ),
-                          ),
-                          const SizedBox(height: 20),
-                          Container(
-                            width: context.width * 2 / 3,
-                            child: Focus(
-                              onKeyEvent: (node, event) {
-                                if (event is KeyDownEvent && HardwareKeyboard.instance.isShiftPressed && event.logicalKey == LogicalKeyboardKey.tab) {
-                                  node.previousFocus();
-                                  node.previousFocus(); // This is intentional. Should probably figure out why it's needed
-                                  return KeyEventResult.handled;
-                                }
-                                return KeyEventResult.ignored;
-                              },
-                              child: TextField(
-                                cursorColor: context.theme.colorScheme.primary,
-                                autocorrect: false,
-                                autofocus: false,
-                                controller: passwordController,
-                                textInputAction: TextInputAction.next,
-                                autofillHints: [AutofillHints.password],
-                                onSubmitted: (pass) => connect(urlController.text, pass),
-                                decoration: InputDecoration(
-                                  enabledBorder: OutlineInputBorder(
-                                      borderSide: BorderSide(color: context.theme.colorScheme.outline), borderRadius: BorderRadius.circular(20)),
-                                  focusedBorder: OutlineInputBorder(
-                                      borderSide: BorderSide(color: context.theme.colorScheme.primary), borderRadius: BorderRadius.circular(20)),
-                                  labelText: "Password",
-                                  contentPadding: const EdgeInsets.fromLTRB(12, 24, 40, 16),
-                                  suffixIcon: IconButton(
-                                    icon: Icon(obscureText ? Icons.visibility_off : Icons.visibility),
-                                    color: context.theme.colorScheme.outline,
-                                    onPressed: () {
-                                      setState(() {
-                                        obscureText = !obscureText;
-                                      });
-                                    },
-                                  ),
-                                ),
-                                obscureText: obscureText,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Container(
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(25),
-                                  gradient: LinearGradient(
-                                    begin: AlignmentDirectional.topStart,
-                                    colors: [HexColor('2772C3'), HexColor('5CA7F8').darkenPercent(5)],
-                                  ),
-                                ),
-                                height: 40,
-                                padding: const EdgeInsets.all(2),
-                                child: ElevatedButton(
-                                  style: ButtonStyle(
-                                    shape: WidgetStateProperty.all<RoundedRectangleBorder>(
-                                      RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(20.0),
-                                      ),
-                                    ),
-                                    backgroundColor: WidgetStateProperty.all(context.theme.colorScheme.background),
-                                    shadowColor: WidgetStateProperty.all(context.theme.colorScheme.background),
-                                    maximumSize: WidgetStateProperty.all(const Size(200, 36)),
-                                    minimumSize: WidgetStateProperty.all(const Size(30, 30)),
-                                  ),
-                                  onPressed: () async {
-                                    setState(() {
-                                      showLoginButtons = true;
-                                    });
-                                  },
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(Icons.close, color: context.theme.colorScheme.onBackground, size: 20),
-                                      const SizedBox(width: 10),
-                                      Text("Cancel",
-                                          style: context.theme.textTheme.bodyLarge!
-                                              .apply(fontSizeFactor: 1.1, color: context.theme.colorScheme.onBackground)),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              Container(
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(25),
-                                  gradient: LinearGradient(
-                                    begin: AlignmentDirectional.topStart,
-                                    colors: [HexColor('2772C3'), HexColor('5CA7F8').darkenPercent(5)],
-                                  ),
-                                ),
-                                height: 40,
-                                child: ElevatedButton(
-                                  style: ButtonStyle(
-                                    shape: WidgetStateProperty.all<RoundedRectangleBorder>(
-                                      RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(20.0),
-                                      ),
-                                    ),
-                                    backgroundColor: WidgetStateProperty.all(Colors.transparent),
-                                    shadowColor: WidgetStateProperty.all(Colors.transparent),
-                                    maximumSize: WidgetStateProperty.all(const Size(200, 36)),
-                                    minimumSize: WidgetStateProperty.all(const Size(30, 30)),
-                                  ),
-                                  onPressed: () async {
-                                    ss.settings.customHeaders.value = {};
-                                    http.onInit();
-                                    connect(urlController.text, passwordController.text);
-                                  },
-                                  onLongPress: () async {
-                                    await showCustomHeadersDialog(context);
-                                    connect(urlController.text, passwordController.text);
-                                  },
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text("Connect", style: context.theme.textTheme.bodyLarge!.apply(fontSizeFactor: 1.1, color: Colors.white)),
-                                      const SizedBox(width: 10),
-                                      const Icon(Icons.arrow_forward, color: Colors.white, size: 20),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
+                          const SizedBox(width: 10),
+                          Text(googleName.value ?? "Unknown",
+                              style: context.theme.textTheme.bodyLarge!
+                                  .apply(fontSizeFactor: 1.1, color: context.theme.colorScheme.onSurface)),
                         ],
                       ),
                     ),
+                  ],
+                ),
+              if (token.value != null) const SizedBox(height: 40),
+              if (token.value != null)
+                Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: context.theme.colorScheme.primaryContainer),
                   ),
-          ),
-        ],
-      ),
+                  child: usableProjects.isNotEmpty
+                      ? SingleChildScrollView(
+                          child: SizedBox(
+                            width: double.maxFinite,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.all(10.0),
+                                  child: Text(fetchingFirebase.value
+                                      ? "Loading Firebase projects"
+                                      : "Select the Firebase project to use"),
+                                ),
+                                if (!fetchingFirebase.value)
+                                  ConstrainedBox(
+                                    constraints: BoxConstraints(
+                                      maxHeight: context.mediaQuery.size.height * 0.4,
+                                    ),
+                                    child: ListView.builder(
+                                      shrinkWrap: true,
+                                      itemCount: usableProjects.length,
+                                      findChildIndexCallback: (key) =>
+                                          findChildIndexByKey(usableProjects, key, (item) => item['projectId']),
+                                      itemBuilder: (context, index) {
+                                        return Obx(() {
+                                          if (!triedConnecting[index].value) {
+                                            Future(() async {
+                                              try {
+                                                await HttpSvc.dio.get(usableProjects[index]['serverUrl']);
+                                                reachable[index].value = true;
+                                              } catch (e) {
+                                                reachable[index].value = false;
+                                              }
+                                              triedConnecting[index].value = true;
+                                            });
+                                          }
+                                          return ClipRRect(
+                                            key: ValueKey(usableProjects[index]['projectId']),
+                                            clipBehavior: Clip.antiAlias,
+                                            borderRadius: BorderRadius.circular(20),
+                                            child: ListTile(
+                                              tileColor:
+                                                  context.theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
+                                              enabled: triedConnecting[index].value && reachable[index].value,
+                                              title: Text.rich(TextSpan(children: [
+                                                TextSpan(text: usableProjects[index]['displayName']),
+                                                TextSpan(
+                                                  text:
+                                                      " ${triedConnecting[index].value ? "${reachable[index].value ? "R" : "Unr"}eachable" : "Checking"}",
+                                                  style: TextStyle(
+                                                      fontWeight:
+                                                          reachable[index].value ? FontWeight.bold : FontWeight.normal,
+                                                      color: triedConnecting[index].value
+                                                          ? reachable[index].value
+                                                              ? Colors.green
+                                                              : Colors.red
+                                                          : Colors.yellow),
+                                                ),
+                                              ])),
+                                              subtitle: Text(
+                                                "${usableProjects[index]['projectId']}\n${usableProjects[index]['serverUrl']}",
+                                              ),
+                                              onTap: () {
+                                                requestPassword(context, usableProjects[index]['serverUrl'], connect);
+                                              },
+                                              isThreeLine: true,
+                                            ),
+                                          );
+                                        });
+                                      },
+                                    ),
+                                  ),
+                                if (fetchingFirebase.value) const CircularProgressIndicator(),
+                                const SizedBox(height: 10),
+                                if (!fetchingFirebase.value)
+                                  ElevatedButton(
+                                    onPressed: () {
+                                      for (int i = 0; i < triedConnecting.length; i++) {
+                                        triedConnecting[i].value = false;
+                                      }
+                                    },
+                                    child: const Text("Retry Connections"),
+                                  ),
+                                if (!fetchingFirebase.value) const SizedBox(height: 10),
+                              ],
+                            ),
+                          ),
+                        )
+                      : Container(
+                          alignment: Alignment.center,
+                          width: double.maxFinite,
+                          padding: const EdgeInsets.all(24),
+                          child: const Text(
+                            "No Firebase Projects found!\n\nMake sure you're signed in to the same Google account that you used on your server!",
+                            textScaler: TextScaler.linear(1.1),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                ),
+              if (token.value != null) const SizedBox(height: 10),
+              Container(
+                height: 40,
+                padding: const EdgeInsets.all(2),
+                child: TextButton(
+                  onPressed: () async {
+                    await showCustomHeadersDialog(context);
+                  },
+                  child: Text("Enter Custom Headers",
+                      style: context.theme.textTheme.bodyLarge!.apply(color: context.theme.colorScheme.primary)),
+                ),
+              ),
+              const SizedBox(height: 10),
+              if (token.value != null)
+                Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  height: 40,
+                  padding: const EdgeInsets.all(2),
+                  child: ElevatedButton(
+                    style: ButtonStyle(
+                      shape: WidgetStateProperty.all<RoundedRectangleBorder>(
+                        RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20.0),
+                        ),
+                      ),
+                      backgroundColor: WidgetStateProperty.all(context.theme.colorScheme.surface),
+                      shadowColor: WidgetStateProperty.all(context.theme.colorScheme.surface),
+                      maximumSize: WidgetStateProperty.all(buttonSize),
+                      minimumSize: WidgetStateProperty.all(buttonSize),
+                    ),
+                    onPressed: () async {
+                      token.value = null;
+                      googleName.value = null;
+                      googlePicture.value = null;
+                    },
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text("Choose a different account",
+                            style: context.theme.textTheme.bodyLarge!
+                                .apply(fontSizeFactor: 1.1, color: context.theme.colorScheme.primary)),
+                      ],
+                    ),
+                  ),
+                ),
+              if (token.value != null) const SizedBox(height: 10),
+              if (googleName.value == null && showLoginButtons.value && !isSnap)
+                Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    color: HexColor('4285F4'),
+                  ),
+                  height: 40,
+                  child: ElevatedButton(
+                    style: ButtonStyle(
+                      shape: WidgetStateProperty.all<RoundedRectangleBorder>(
+                        RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20.0),
+                        ),
+                      ),
+                      backgroundColor: WidgetStateProperty.all(Colors.transparent),
+                      shadowColor: WidgetStateProperty.all(Colors.transparent),
+                      maximumSize: WidgetStateProperty.all(buttonSize),
+                      minimumSize: WidgetStateProperty.all(buttonSize),
+                    ),
+                    onPressed: () async {
+                      token.value = await googleOAuth(context);
+                      if (token.value != null) {
+                        final response = await HttpSvc.getGoogleInfo(token.value!);
+                        googleName.value = response.data['name'];
+                        googlePicture.value = response.data['picture'];
+                        fetchingFirebase.value = true;
+                        fetchFirebaseProjects(token.value!).then((List<Map> value) async {
+                          usableProjects.value = value;
+                          triedConnecting = List.generate(usableProjects.length, (i) => false.obs);
+                          reachable = List.generate(usableProjects.length, (i) => false.obs);
+                          fetchingFirebase.value = false;
+                        });
+                      }
+                    },
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Image.asset("assets/images/google-sign-in.png", width: 30, fit: BoxFit.contain),
+                        const SizedBox(width: 10),
+                        Padding(
+                          padding: const EdgeInsets.only(right: 0.0, left: 5.0),
+                          child: Text("Sign in with Google",
+                              style:
+                                  context.theme.textTheme.bodyLarge!.apply(fontSizeFactor: 1.1, color: Colors.white)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              if (googleName.value == null && showLoginButtons.value && !isSnap) const SizedBox(height: 10),
+              if (googleName.value == null && !kIsWeb && !kIsDesktop && showLoginButtons.value)
+                Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    gradient: LinearGradient(
+                      begin: AlignmentDirectional.topStart,
+                      colors: [HexColor('2772C3'), HexColor('5CA7F8').darkenPercent(5)],
+                    ),
+                  ),
+                  height: 40,
+                  child: ElevatedButton(
+                    style: ButtonStyle(
+                      shape: WidgetStateProperty.all<RoundedRectangleBorder>(
+                        RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20.0),
+                        ),
+                      ),
+                      backgroundColor: WidgetStateProperty.all(Colors.transparent),
+                      shadowColor: WidgetStateProperty.all(Colors.transparent),
+                      maximumSize: WidgetStateProperty.all(buttonSize),
+                      minimumSize: WidgetStateProperty.all(buttonSize),
+                    ),
+                    onPressed: scanQRCode,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(CupertinoIcons.camera, color: Colors.white, size: 20),
+                        const SizedBox(width: 10),
+                        Padding(
+                          padding: const EdgeInsets.only(right: 0.0, left: 5.0),
+                          child: Text("Scan QR Code",
+                              style:
+                                  context.theme.textTheme.bodyLarge!.apply(fontSizeFactor: 1.1, color: Colors.white)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              if (googleName.value == null && !kIsWeb && !kIsDesktop && showLoginButtons.value)
+                const SizedBox(height: 10),
+              if (googleName.value == null)
+                Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    gradient: LinearGradient(
+                      begin: AlignmentDirectional.topStart,
+                      colors: [HexColor('2772C3'), HexColor('5CA7F8').darkenPercent(5)],
+                    ),
+                  ),
+                  height: 40,
+                  padding: const EdgeInsets.all(2),
+                  child: ElevatedButton(
+                    style: ButtonStyle(
+                      shape: WidgetStateProperty.all<RoundedRectangleBorder>(
+                        RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20.0),
+                        ),
+                      ),
+                      backgroundColor: WidgetStateProperty.all(context.theme.colorScheme.surface),
+                      shadowColor: WidgetStateProperty.all(context.theme.colorScheme.surface),
+                      maximumSize: WidgetStateProperty.all(buttonSize),
+                      minimumSize: WidgetStateProperty.all(buttonSize),
+                    ),
+                    onPressed: () async {
+                      showLoginButtons.value = !showLoginButtons.value;
+                    },
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(CupertinoIcons.text_cursor, color: context.theme.colorScheme.onSurface, size: 20),
+                        const SizedBox(width: 10),
+                        Text("Manual entry",
+                            style: context.theme.textTheme.bodyLarge!
+                                .apply(fontSizeFactor: 1.1, color: context.theme.colorScheme.onSurface)),
+                      ],
+                    ),
+                  ),
+                ),
+              Obx(() => AnimatedSize(
+                    duration: const Duration(milliseconds: 200),
+                    child: showLoginButtons.value
+                        ? const SizedBox.shrink()
+                        : Theme(
+                            data: context.theme.copyWith(
+                              inputDecorationTheme: InputDecorationTheme(
+                                labelStyle: TextStyle(color: context.theme.colorScheme.outline),
+                              ),
+                            ),
+                            child: AutofillGroup(
+                              child: Column(
+                                children: [
+                                  const SizedBox(height: 20),
+                                  FocusScope(
+                                    node: focusScopeNode,
+                                    child: Column(
+                                      children: [
+                                        SizedBox(
+                                          width: context.width * 2 / 3,
+                                          child: TextField(
+                                            cursorColor: context.theme.colorScheme.primary,
+                                            autocorrect: false,
+                                            autofocus: true,
+                                            controller: urlController,
+                                            textInputAction: TextInputAction.next,
+                                            autofillHints: [AutofillHints.username, AutofillHints.url],
+                                            decoration: InputDecoration(
+                                              enabledBorder: OutlineInputBorder(
+                                                  borderSide: BorderSide(color: context.theme.colorScheme.outline),
+                                                  borderRadius: BorderRadius.circular(20)),
+                                              focusedBorder: OutlineInputBorder(
+                                                  borderSide: BorderSide(color: context.theme.colorScheme.primary),
+                                                  borderRadius: BorderRadius.circular(20)),
+                                              labelText: "URL",
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 20),
+                                        SizedBox(
+                                          width: context.width * 2 / 3,
+                                          child: TextField(
+                                            cursorColor: context.theme.colorScheme.primary,
+                                            autocorrect: false,
+                                            autofocus: false,
+                                            controller: passwordController,
+                                            textInputAction: TextInputAction.next,
+                                            autofillHints: [AutofillHints.password],
+                                            onSubmitted: (pass) => connect(urlController.text, pass),
+                                            decoration: InputDecoration(
+                                              enabledBorder: OutlineInputBorder(
+                                                  borderSide: BorderSide(color: context.theme.colorScheme.outline),
+                                                  borderRadius: BorderRadius.circular(20)),
+                                              focusedBorder: OutlineInputBorder(
+                                                  borderSide: BorderSide(color: context.theme.colorScheme.primary),
+                                                  borderRadius: BorderRadius.circular(20)),
+                                              labelText: "Password",
+                                              contentPadding: const EdgeInsets.fromLTRB(12, 24, 40, 16),
+                                              suffixIcon: Focus(
+                                                canRequestFocus: false,
+                                                descendantsAreFocusable: false,
+                                                child: IconButton(
+                                                  icon:
+                                                      Icon(obscureText.value ? Icons.visibility_off : Icons.visibility),
+                                                  color: context.theme.colorScheme.outline,
+                                                  onPressed: () {
+                                                    obscureText.value = !obscureText.value;
+                                                  },
+                                                ),
+                                              ),
+                                            ),
+                                            obscureText: obscureText.value,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 20),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Container(
+                                        decoration: BoxDecoration(
+                                          borderRadius: BorderRadius.circular(25),
+                                          gradient: LinearGradient(
+                                            begin: AlignmentDirectional.topStart,
+                                            colors: [HexColor('2772C3'), HexColor('5CA7F8').darkenPercent(5)],
+                                          ),
+                                        ),
+                                        height: 40,
+                                        padding: const EdgeInsets.all(2),
+                                        child: ElevatedButton(
+                                          style: ButtonStyle(
+                                            shape: WidgetStateProperty.all<RoundedRectangleBorder>(
+                                              RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(20.0),
+                                              ),
+                                            ),
+                                            backgroundColor: WidgetStateProperty.all(context.theme.colorScheme.surface),
+                                            shadowColor: WidgetStateProperty.all(context.theme.colorScheme.surface),
+                                            maximumSize: WidgetStateProperty.all(const Size(200, 36)),
+                                            minimumSize: WidgetStateProperty.all(const Size(30, 30)),
+                                          ),
+                                          onPressed: () async {
+                                            showLoginButtons.value = true;
+                                          },
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(Icons.close, color: context.theme.colorScheme.onSurface, size: 20),
+                                              const SizedBox(width: 10),
+                                              Text("Cancel",
+                                                  style: context.theme.textTheme.bodyLarge!.apply(
+                                                      fontSizeFactor: 1.1, color: context.theme.colorScheme.onSurface)),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                      Container(
+                                        decoration: BoxDecoration(
+                                          borderRadius: BorderRadius.circular(25),
+                                          gradient: LinearGradient(
+                                            begin: AlignmentDirectional.topStart,
+                                            colors: [HexColor('2772C3'), HexColor('5CA7F8').darkenPercent(5)],
+                                          ),
+                                        ),
+                                        height: 40,
+                                        child: ElevatedButton(
+                                          style: ButtonStyle(
+                                            shape: WidgetStateProperty.all<RoundedRectangleBorder>(
+                                              RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(20.0),
+                                              ),
+                                            ),
+                                            backgroundColor: WidgetStateProperty.all(Colors.transparent),
+                                            shadowColor: WidgetStateProperty.all(Colors.transparent),
+                                            maximumSize: WidgetStateProperty.all(const Size(200, 36)),
+                                            minimumSize: WidgetStateProperty.all(const Size(30, 30)),
+                                          ),
+                                          onPressed: () async {
+                                            SettingsSvc.settings.customHeaders.value = {};
+                                            HttpSvc.updateHeaders();
+                                            connect(urlController.text, passwordController.text);
+                                          },
+                                          onLongPress: () async {
+                                            await showCustomHeadersDialog(context);
+                                            connect(urlController.text, passwordController.text);
+                                          },
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text("Connect",
+                                                  style: context.theme.textTheme.bodyLarge!
+                                                      .apply(fontSizeFactor: 1.1, color: Colors.white)),
+                                              const SizedBox(width: 10),
+                                              const Icon(Icons.arrow_forward, color: Colors.white, size: 20),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                  )),
+            ],
+          )),
     );
   }
 
-  void goToNextPage() {
-    if (kIsWeb) {
-      setup.startSetup(25, true, false);
-    }
-
+  Future<void> goToNextPage() async {
     if (controller.currentPage == controller.pageOfNoReturn) {
       controller.pageController.nextPage(
         duration: const Duration(milliseconds: 300),
@@ -571,10 +566,10 @@ class _ServerCredentialsState extends OptimizedState<ServerCredentials> {
 
     // Open the QR Scanner and get the result
     try {
-      Uint8List? response = await Navigator.of(context).push(
+      final response = await Navigator.of(context).push(
         CupertinoPageRoute(
           builder: (BuildContext context) {
-            return QRCodeScanner();
+            return const QRCodeScanner();
           },
         ),
       );
@@ -647,7 +642,7 @@ class _ServerCredentialsState extends OptimizedState<ServerCredentials> {
       return;
     }
 
-    ss.settings.guidAuthKey.value = password;
+    SettingsSvc.settings.guidAuthKey.value = password;
     await saveNewServerUrl(addr, saveAdditionalSettings: ["guidAuthKey"]);
 
     // Request data from the API
@@ -662,7 +657,7 @@ class _ServerCredentialsState extends OptimizedState<ServerCredentials> {
               "Fetching server info...",
               style: context.theme.textTheme.titleLarge,
             ),
-            backgroundColor: context.theme.colorScheme.properSurface,
+            backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
             content: LinearProgressIndicator(
               backgroundColor: context.theme.colorScheme.outline,
               valueColor: AlwaysStoppedAnimation<Color>(context.theme.colorScheme.primary),
@@ -673,7 +668,7 @@ class _ServerCredentialsState extends OptimizedState<ServerCredentials> {
     );
 
     dio.Response? serverResponse;
-    await http.serverInfo().then((response) {
+    await HttpSvc.serverInfo().then((response) {
       serverResponse = response;
     }).catchError((err) {
       if (err is dio.Response) {
@@ -681,7 +676,7 @@ class _ServerCredentialsState extends OptimizedState<ServerCredentials> {
       }
     });
     dio.Response? fcmResponse;
-    await http.fcmClient().then((response) {
+    await HttpSvc.fcmClient().then((response) {
       fcmResponse = response;
     }).catchError((err) {
       if (err is dio.Response) {
@@ -689,26 +684,29 @@ class _ServerCredentialsState extends OptimizedState<ServerCredentials> {
       }
     });
 
-    Get.back();
-    SystemChannels.textInput.invokeMethod('TextInput.hide');
+    Navigator.of(context, rootNavigator: true).pop();
+    FocusManager.instance.primaryFocus?.unfocus();
+
     // Unauthorized request
     if (serverResponse?.statusCode == 401) {
-      socket.forgetConnection();
+      SocketSvc.forgetConnection();
       return controller.updateConnectError("Authentication failed. Incorrect password!");
     }
     // Server didn't even respond
     if (serverResponse?.statusCode != 200) {
-      socket.forgetConnection();
-      return controller.updateConnectError("Failed to connect to $addr! Please ensure your Server's URL is accessible from your device.");
+      SocketSvc.forgetConnection();
+      return controller.updateConnectError(
+          "Failed to connect to $addr! Please ensure your Server's URL is accessible from your device.");
     }
     // Ignore any other server errors unless user is using ngrok or cloudflare
     final data = fcmResponse?.data;
-    if ((data == null || isNullOrEmpty(data["data"])) && (addr.contains("ngrok.io") || addr.contains("trycloudflare.com"))) {
+    if ((data == null || isNullOrEmpty(data["data"])) &&
+        (addr.contains("ngrok.io") || addr.contains("trycloudflare.com"))) {
       return controller.updateConnectError("Firebase is required when using Ngrok or Cloudflare!");
     } else {
       try {
         FCMData fcmData = FCMData.fromMap(data["data"]);
-        await ss.saveFCMData(fcmData);
+        await SettingsSvc.saveFCMData(fcmData);
       } catch (_) {
         if (Platform.isAndroid) {
           showDialog(
@@ -724,10 +722,11 @@ class _ServerCredentialsState extends OptimizedState<ServerCredentials> {
                   "We couldn't find a Firebase setup on your server. To receive notifications, please enable the background service option from Settings > Misc & Advanced.",
                   style: context.theme.textTheme.bodyLarge,
                 ),
-                backgroundColor: context.theme.colorScheme.properSurface,
+                backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
                 actions: <Widget>[
                   TextButton(
-                    child: Text("Close", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
+                    child: Text("Close",
+                        style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
                     onPressed: () {
                       Navigator.of(context).pop();
                     },
@@ -738,7 +737,7 @@ class _ServerCredentialsState extends OptimizedState<ServerCredentials> {
           );
         }
       }
-      socket.restartSocket();
+      SocketSvc.restartSocket();
       goToNextPage();
     }
   }

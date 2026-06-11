@@ -7,7 +7,6 @@ import 'package:bluebubbles/app/layouts/conversation_view/dialogs/custom_mention
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/interactive/supported_interactive.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/text_field/picked_attachment.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
@@ -28,13 +27,15 @@ class PickedAttachmentsHolder extends StatefulWidget {
   final List<PlatformFile> initialAttachments;
 
   @override
-  OptimizedState createState() => _PickedAttachmentsHolderState();
+  State<StatefulWidget> createState() => _PickedAttachmentsHolderState();
 }
 
-class _PickedAttachmentsHolderState extends OptimizedState<PickedAttachmentsHolder> {
-  
-  List<PlatformFile> get pickedAttachments => widget.controller != null
-      ? widget.controller!.pickedAttachments : widget.initialAttachments;
+class _PickedAttachmentsHolderState extends State<PickedAttachmentsHolder> with ThemeHelpers {
+  // Cache platform check to avoid repeated lookups
+  late final bool _isIOS = SettingsSvc.settings.skin.value == Skins.iOS;
+
+  List<PlatformFile> get pickedAttachments =>
+      widget.controller != null ? widget.controller!.pickedAttachments : widget.initialAttachments;
 
   void selectMention(int index, bool custom) async {
     if (widget.textController is! MentionTextEditingController) return;
@@ -56,82 +57,84 @@ class _PickedAttachmentsHolderState extends OptimizedState<PickedAttachmentsHold
     widget.controller!.mentionMatches.clear();
     widget.controller!.focusNode.requestFocus();
   }
-  
+
   @override
   Widget build(BuildContext context) {
     return Stack(
       alignment: Alignment.center,
       children: [
+        // Attachments list - isolated Obx
         Obx(() {
-          if (pickedAttachments.isNotEmpty) {
-            return ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: iOS ? 150 : 100,
-                minHeight: iOS ? 150 : 100,
-              ),
-              child: Padding(
-                padding: iOS ? EdgeInsets.zero : const EdgeInsets.only(left: 7.5, right: 7.5),
-                child: CustomScrollView(
-                  physics: ThemeSwitcher.getScrollPhysics(),
-                  scrollDirection: Axis.horizontal,
-                  slivers: [
-                    SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                            (context, index) {
-                          return PickedAttachment(
-                            key: ValueKey(pickedAttachments[index].name),
-                            data: pickedAttachments[index],
-                            controller: widget.controller,
-                            onRemove: (file) {
-                              if (widget.controller == null) {
-                                pickedAttachments.removeWhere((e) => e.path == file.path);
-                                setState(() {});
-                              }
-                            },
-                          );
-                        },
-                        childCount: pickedAttachments.length,
-                      ),
-                    )
-                  ],
-                ),
-              ),
-            );
-          } else {
+          if (pickedAttachments.isEmpty) {
             return const SizedBox.shrink();
           }
+
+          return ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: _isIOS ? 150 : 100,
+              minHeight: _isIOS ? 150 : 100,
+            ),
+            child: Padding(
+              padding: _isIOS ? EdgeInsets.zero : const EdgeInsets.only(left: 7.5, right: 7.5),
+              child: CustomScrollView(
+                physics: ThemeSwitcher.getScrollPhysics(),
+                scrollDirection: Axis.horizontal,
+                slivers: [
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        return PickedAttachment(
+                          key: ValueKey(pickedAttachments[index].name),
+                          data: pickedAttachments[index],
+                          controller: widget.controller,
+                          onRemove: (file) {
+                            if (widget.controller == null) {
+                              pickedAttachments.removeAt(index);
+                              setState(() {});
+                            }
+                          },
+                          pickedAttachmentIndex: index,
+                        );
+                      },
+                      childCount: pickedAttachments.length,
+                    ),
+                  )
+                ],
+              ),
+            ),
+          );
         }),
         if (widget.controller != null)
           Obx(() {
             if (widget.controller!.pickedApp.value != null) {
-              var appData = widget.controller!.pickedApp.value!.$2.appData![0];
+              final appData = widget.controller!.pickedApp.value!.$2.appData![0];
               return Padding(
                 padding: const EdgeInsets.all(10),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(20),
                   child: Container(
-                    color: iOS ? context.theme.colorScheme.properSurface : null,
+                    color: _isIOS ? context.theme.colorScheme.surfaceContainerHighest : null,
                     child: Stack(
-                    children: [
-                      AbsorbPointer(
-                        child: SupportedInteractive(
-                          data: appData, 
-                          content: widget.controller!.pickedApp.value!.$1,
-                          guid: null,
-                        ),
-                      ),
-                      if (appData.icon != null && widget.controller!.pickedApp.value!.$1 != null)
-                        Positioned(
-                          child: ClipRRect(
-                            child: Image.memory(
-                              base64Decode(appData.icon!),
-                              width: 30,
-                            ),
-                            borderRadius: BorderRadius.circular(100),
+                      children: [
+                        AbsorbPointer(
+                          child: SupportedInteractive(
+                            data: appData,
+                            content: widget.controller!.pickedApp.value!.$1,
+                            guid: null,
                           ),
-                          top: 7,
-                          left: 7,
                         ),
+                        if (appData.icon != null && widget.controller!.pickedApp.value!.$1 != null)
+                          Positioned(
+                            top: 7,
+                            left: 7,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(100),
+                              child: Image.memory(
+                                base64Decode(appData.icon!),
+                                width: 30,
+                              ),
+                            ),
+                          ),
                         Positioned(
                           top: 7,
                           right: 7,
@@ -144,183 +147,239 @@ class _PickedAttachmentsHolderState extends OptimizedState<PickedAttachmentsHold
                               minimumSize: const Size(32, 32),
                               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             ),
+                            onPressed: () {
+                              widget.controller!.pickedApp.value = null;
+                            },
                             child: const Icon(
                               CupertinoIcons.xmark,
                               color: Colors.white,
                               size: 18,
                             ),
-                            onPressed: () {
-                              widget.controller!.pickedApp.value = null;
-                            },
                           ),
                         ),
-                    ]
-                  )
+                      ],
+                    ),
                   ),
-                )
+                ),
               );
             }
             return const SizedBox.shrink();
           }),
+        // Emoji/Mention suggestions overlay - isolated Obx
         if (widget.controller != null)
           Obx(() {
-            if (widget.controller!.emojiMatches.isNotEmpty) {
-              return ConstrainedBox(
-                constraints: BoxConstraints(maxHeight: min(widget.controller!.emojiMatches.length * 60, 180)),
-                child: Padding(
-                  padding: const EdgeInsets.all(5.0),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      border: iOS ? null : Border.fromBorderSide(
-                        BorderSide(color: context.theme.colorScheme.background, strokeAlign: BorderSide.strokeAlignOutside)
-                      ),
-                      borderRadius: BorderRadius.circular(20),
-                      color: context.theme.colorScheme.properSurface,
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: Scrollbar(
-                      radius: const Radius.circular(4),
-                      controller: widget.controller!.emojiScrollController,
-                      child: ListView.builder(
-                        padding: const EdgeInsets.symmetric(vertical: 0),
-                        controller: widget.controller!.emojiScrollController,
-                        physics: ThemeSwitcher.getScrollPhysics(),
-                        shrinkWrap: true,
-                        findChildIndexCallback: (key) => findChildIndexByKey(widget.controller!.emojiMatches, key, (item) => item.shortName),
-                        itemBuilder: (BuildContext context, int index) => Material(
-                          key: ValueKey(widget.controller!.emojiMatches[index].shortName),
-                          color: Colors.transparent,
-                          child: InkWell(
-                            onTapDown: (details) {
-                              widget.controller!.emojiSelectedIndex.value = index;
-                            },
-                            onTap: () {
-                              final _controller = widget.controller!.lastFocusedTextController;
-                              final text = _controller.text;
-                              final regExp = RegExp(r":[^: \n]+([ \n]|$)", multiLine: true);
-                              final matches = regExp.allMatches(text);
-                              if (matches.isNotEmpty && matches.any((m) => m.start < _controller.selection.start)) {
-                                final match = matches.lastWhere((m) => m.start < _controller.selection.start);
-                                final char = widget.controller!.emojiMatches[index].char;
-                                _controller.insert(TextSelection(baseOffset: match.start, extentOffset: match.end), "$char ");
-                                _controller.selection = TextSelection.fromPosition(TextPosition(offset: match.start + char.length + 1));
-                              }
-                              widget.controller!.emojiSelectedIndex.value = 0;
-                              widget.controller!.emojiMatches.clear();
-                              widget.controller!.lastFocusedNode.requestFocus();
-                            },
-                            child: Obx(() => ListTile(
-                                mouseCursor: MouseCursor.defer,
-                                dense: true,
-                                selectedTileColor: context.theme.colorScheme.properSurface.oppositeLightenOrDarken(20),
-                                selected: widget.controller!.emojiSelectedIndex.value == index,
-                                title: Row(
-                                  children: <Widget>[
-                                    Text(
-                                      widget.controller!.emojiMatches[index].char,
-                                      style:
-                                      context.textTheme.labelLarge!.apply(fontFamily: "Apple Color Emoji"),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      ":${widget.controller!.emojiMatches[index].shortName}:",
-                                      style: context.textTheme.labelLarge!.copyWith(fontWeight: FontWeight.bold),
-                                    ),
-                                  ],
-                                )),
-                            ),
-                          ),
-                        ),
-                        itemCount: widget.controller!.emojiMatches.length,
-                      ),
-                    ),
-                  ),
-                ),
+            final hasEmojiMatches = widget.controller!.emojiMatches.isNotEmpty;
+            final hasMentionMatches = widget.controller!.mentionMatches.isNotEmpty;
+
+            if (hasEmojiMatches) {
+              return _EmojiSuggestions(
+                controller: widget.controller!,
+                isIOS: _isIOS,
               );
-            } else if (widget.controller!.mentionMatches.isNotEmpty) {
-              return ConstrainedBox(
-                constraints: BoxConstraints(maxHeight: min(widget.controller!.mentionMatches.length * 60, 180)),
-                child: Padding(
-                  padding: const EdgeInsets.all(5.0),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      border: iOS ? null : Border.fromBorderSide(
-                          BorderSide(color: context.theme.colorScheme.background, strokeAlign: BorderSide.strokeAlignOutside)
-                      ),
-                      borderRadius: BorderRadius.circular(20),
-                      color: context.theme.colorScheme.properSurface,
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: Scrollbar(
-                      radius: const Radius.circular(4),
-                      controller: widget.controller!.emojiScrollController,
-                      child: ListView.builder(
-                        padding: const EdgeInsets.symmetric(vertical: 0),
-                        controller: widget.controller!.emojiScrollController,
-                        physics: ThemeSwitcher.getScrollPhysics(),
-                        shrinkWrap: true,
-                        findChildIndexCallback: (key) => findChildIndexByKey(widget.controller!.mentionMatches, key, (item) => item.address),
-                        itemBuilder: (BuildContext context, int index) => Material(
-                          key: ValueKey(widget.controller!.mentionMatches[index].address),
-                          color: Colors.transparent,
-                          child: InkWell(
-                            onTapDown: (details) {
-                              widget.controller!.mentionSelectedIndex.value = index;
-                            },
-                            onTap: () {
-                              selectMention(index, false);
-                            },
-                            onLongPress: () {
-                              selectMention(index, true);
-                            },
-                            onSecondaryTapUp: (details) {
-                              selectMention(index, true);
-                            },
-                            child: Obx(() => ListTile(
-                                mouseCursor: MouseCursor.defer,
-                                dense: true,
-                                selectedTileColor: context.theme.colorScheme.properSurface.oppositeLightenOrDarken(20),
-                                selected: widget.controller!.mentionSelectedIndex.value == index,
-                                title: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: <Widget>[
-                                    ContactAvatarWidget(
-                                      handle: widget.controller!.mentionMatches[index].handle,
-                                      size: 25,
-                                      fontSize: 15,
-                                      borderThickness: 0,
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Text(
-                                      widget.controller!.mentionMatches[index].displayName,
-                                      style:
-                                      context.textTheme.labelLarge!,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    if (widget.controller!.mentionMatches[index].displayName != widget.controller!.mentionMatches[index].address)
-                                      const SizedBox(width: 8),
-                                    if (widget.controller!.mentionMatches[index].displayName != widget.controller!.mentionMatches[index].address)
-                                      Text(
-                                        widget.controller!.mentionMatches[index].address,
-                                        style: context.textTheme.labelLarge!.copyWith(fontWeight: FontWeight.bold),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                  ],
-                                )),
-                            ),
-                          ),
-                        ),
-                        itemCount: widget.controller!.mentionMatches.length,
-                      ),
-                    ),
-                  ),
-                ),
+            } else if (hasMentionMatches) {
+              return _MentionSuggestions(
+                controller: widget.controller!,
+                isIOS: _isIOS,
+                onSelect: selectMention,
               );
-            } else {
-              return const SizedBox.shrink();
             }
+            return const SizedBox.shrink();
           }),
       ],
+    );
+  }
+}
+
+/// Extracted emoji suggestions to reduce parent rebuild scope
+class _EmojiSuggestions extends StatelessWidget {
+  const _EmojiSuggestions({
+    required this.controller,
+    required this.isIOS,
+  });
+
+  final ConversationViewController controller;
+  final bool isIOS;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: min(controller.emojiMatches.length * 60, 180)),
+      child: Padding(
+        padding: const EdgeInsets.all(5.0),
+        child: Container(
+          decoration: BoxDecoration(
+            border: isIOS
+                ? null
+                : Border.fromBorderSide(
+                    BorderSide(color: context.theme.colorScheme.surface, strokeAlign: BorderSide.strokeAlignOutside)),
+            borderRadius: BorderRadius.circular(20),
+            color: context.theme.colorScheme.surfaceContainerHighest,
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Scrollbar(
+            radius: const Radius.circular(4),
+            controller: controller.emojiScrollController,
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 0),
+              controller: controller.emojiScrollController,
+              physics: ThemeSwitcher.getScrollPhysics(),
+              shrinkWrap: true,
+              findChildIndexCallback: (key) =>
+                  findChildIndexByKey(controller.emojiMatches, key, (item) => item.unified),
+              itemBuilder: (BuildContext context, int index) {
+                final emoji = controller.emojiMatches[index];
+                return Material(
+                  key: ValueKey(emoji.unified),
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTapDown: (details) {
+                      controller.emojiSelectedIndex.value = index;
+                    },
+                    onTap: () {
+                      final _controller = controller.lastFocusedTextController;
+                      final text = _controller.text;
+                      final regExp = RegExp(r":[^: \n]+([ \n]|$)", multiLine: true);
+                      final matches = regExp.allMatches(text);
+                      if (matches.isNotEmpty && matches.any((m) => m.start < _controller.selection.start)) {
+                        final match = matches.lastWhere((m) => m.start < _controller.selection.start);
+                        final emojiChar = emoji.emoji;
+                        _controller.insert(
+                          TextSelection(baseOffset: match.start, extentOffset: match.end),
+                          "$emojiChar ",
+                        );
+                        _controller.selection = TextSelection.fromPosition(
+                          TextPosition(offset: match.start + emojiChar.length + 1),
+                        );
+                      }
+                      controller.emojiSelectedIndex.value = 0;
+                      controller.emojiMatches.clear();
+                      controller.lastFocusedNode.requestFocus();
+                    },
+                    child: ListTile(
+                      mouseCursor: MouseCursor.defer,
+                      dense: true,
+                      selectedTileColor: context.theme.colorScheme.surfaceContainerHighest.oppositeLightenOrDarken(20),
+                      selected: controller.emojiSelectedIndex.value == index,
+                      title: Row(
+                        children: <Widget>[
+                          Text(
+                            emoji.emoji,
+                            style: context.textTheme.labelLarge!.apply(fontFamily: "Apple Color Emoji"),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            ":${emoji.shortName}:",
+                            style: context.textTheme.labelLarge!.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+              itemCount: controller.emojiMatches.length,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Extracted mention suggestions to reduce parent rebuild scope
+class _MentionSuggestions extends StatelessWidget {
+  const _MentionSuggestions({
+    required this.controller,
+    required this.isIOS,
+    required this.onSelect,
+  });
+
+  final ConversationViewController controller;
+  final bool isIOS;
+  final Function(int, bool) onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: min(controller.mentionMatches.length * 60, 180)),
+      child: Padding(
+        padding: const EdgeInsets.all(5.0),
+        child: Container(
+          decoration: BoxDecoration(
+            border: isIOS
+                ? null
+                : Border.fromBorderSide(
+                    BorderSide(color: context.theme.colorScheme.surface, strokeAlign: BorderSide.strokeAlignOutside)),
+            borderRadius: BorderRadius.circular(20),
+            color: context.theme.colorScheme.surfaceContainerHighest,
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Scrollbar(
+            radius: const Radius.circular(4),
+            controller: controller.emojiScrollController,
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 0),
+              controller: controller.emojiScrollController,
+              physics: ThemeSwitcher.getScrollPhysics(),
+              shrinkWrap: true,
+              findChildIndexCallback: (key) =>
+                  findChildIndexByKey(controller.mentionMatches, key, (item) => item.address),
+              itemBuilder: (BuildContext context, int index) {
+                final mention = controller.mentionMatches[index];
+                return Material(
+                  key: ValueKey(mention.address),
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTapDown: (details) {
+                      controller.mentionSelectedIndex.value = index;
+                    },
+                    onTap: () {
+                      onSelect(index, false);
+                    },
+                    onLongPress: () {
+                      onSelect(index, true);
+                    },
+                    onSecondaryTapUp: (details) {
+                      onSelect(index, true);
+                    },
+                    child: ListTile(
+                      mouseCursor: MouseCursor.defer,
+                      dense: true,
+                      selectedTileColor: context.theme.colorScheme.surfaceContainerHighest.oppositeLightenOrDarken(20),
+                      selected: controller.mentionSelectedIndex.value == index,
+                      title: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          ContactAvatarWidget(
+                            handle: mention.handle,
+                            size: 25,
+                            fontSize: 15,
+                            borderThickness: 0,
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            mention.displayName,
+                            style: context.textTheme.labelLarge!,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (mention.displayName != mention.address) const SizedBox(width: 8),
+                          if (mention.displayName != mention.address)
+                            Text(
+                              mention.address,
+                              style: context.textTheme.labelLarge!.copyWith(fontWeight: FontWeight.bold),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+              itemCount: controller.mentionMatches.length,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

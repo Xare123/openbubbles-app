@@ -3,7 +3,7 @@ import 'package:bluebubbles/app/animations/fireworks_rendering.dart';
 import 'package:flutter/material.dart';
 
 class Celebration extends LeafRenderObjectWidget {
-  Celebration({
+  const Celebration({
     super.key,
     required this.controller,
   });

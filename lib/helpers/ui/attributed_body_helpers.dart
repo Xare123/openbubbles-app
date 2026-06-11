@@ -1,9 +1,9 @@
 import 'package:bluebubbles/database/models.dart';
 
 /// Get all audio transcripts from a list of attributed bodies
-/// 
+///
 /// [attrBodies] is a list of attributed body objects
-/// 
+///
 /// Returns a map of audio transcripts with the message part number as the key
 Map<int, String> getAudioTranscriptsFromAttributedBody(List<AttributedBody> attrBodies) {
   Map<int, String> transcripts = {};

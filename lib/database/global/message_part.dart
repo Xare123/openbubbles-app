@@ -1,6 +1,5 @@
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
-import 'package:bluebubbles/services/services.dart';
 import 'package:collection/collection.dart';
 import 'package:faker/faker.dart';
 import 'package:tuple/tuple.dart';
@@ -14,30 +13,35 @@ class MessagePart {
     this.isUnsent = false,
     this.edits = const [],
     required this.part,
+    this.shouldRedact = false,
   }) {
     if (attachments.isEmpty) attachments = [];
     if (annotations.isEmpty) annotations = [];
     if (edits.isEmpty) edits = [];
   }
 
+  /// Whether this part's display text/subject should be replaced with fake
+  /// content.  Managed by [MessageState.buildMessageParts] and updated via
+  /// [MessageState.updateShouldHideMessageContentInternal] so widgets never
+  /// need to check settings directly.
+  bool shouldRedact;
+
   String? subject;
   late final String fakeSubject = faker.lorem.words(subject?.split(" ").length ?? 0).join(" ");
   String? get displaySubject {
     if (subject == null) return null;
-    if (ss.settings.redactedMode.value && ss.settings.hideMessageContent.value) {
-      return fakeSubject;
-    }
+    if (shouldRedact) return fakeSubject;
     return subject;
   }
+
   String? text;
   late final String fakeText = faker.lorem.words(text?.split(" ").length ?? 0).join(" ");
   String? get displayText {
     if (text == null) return null;
-    if (ss.settings.redactedMode.value && ss.settings.hideMessageContent.value) {
-      return fakeText;
-    }
+    if (shouldRedact) return fakeText;
     return text;
   }
+
   List<Attachment> attachments;
   List<Annotation> annotations;
   bool isUnsent;
@@ -75,14 +79,14 @@ class Annotation {
   }
 
   factory Annotation.fromMap(Map<String, dynamic> json) => Annotation(
-    mentionedAddress: json["mentionedAddress"],
-    textEffect: json["textEffect"],
-    bold: json["bold"],
-    italic: json["italic"],
-    strikethrough: json["strikethrough"],
-    underline: json["underline"],
-    range: [json["range"][0], json["range"][1]],
-  );
+        mentionedAddress: json["mentionedAddress"],
+        textEffect: json["textEffect"],
+        bold: json["bold"],
+        italic: json["italic"],
+        strikethrough: json["strikethrough"],
+        underline: json["underline"],
+        range: [json["range"][0], json["range"][1]],
+      );
 
   int? textEffect;
   bool? bold;
@@ -97,11 +101,11 @@ class Annotation {
 
   bool eqUnranged(Annotation other) {
     return (other.textEffect ?? false) == (textEffect ?? false) &&
-      (other.bold ?? false) == (bold ?? false) &&
-      (other.italic ?? false) == (italic ?? false) &&
-      (other.strikethrough ?? false) == (strikethrough ?? false) &&
-      (other.underline ?? false) == (underline ?? false) && 
-      (other.mentionedAddress ?? false) == (mentionedAddress ?? false);
+        (other.bold ?? false) == (bold ?? false) &&
+        (other.italic ?? false) == (italic ?? false) &&
+        (other.strikethrough ?? false) == (strikethrough ?? false) &&
+        (other.underline ?? false) == (underline ?? false) &&
+        (other.mentionedAddress ?? false) == (mentionedAddress ?? false);
   }
 
   void applyTo(Annotation other) {
@@ -123,12 +127,12 @@ class Annotation {
 
   Annotation copy() {
     return Annotation(
-      bold: bold, 
-      textEffect: textEffect, 
-      italic: italic, 
-      strikethrough: strikethrough, 
-      underline: underline, 
-      range: [...range], 
+      bold: bold,
+      textEffect: textEffect,
+      italic: italic,
+      strikethrough: strikethrough,
+      underline: underline,
+      range: [...range],
       mentionedAddress: mentionedAddress,
       renderExtras: [...renderExtras],
     );

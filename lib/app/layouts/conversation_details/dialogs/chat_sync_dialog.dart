@@ -1,4 +1,3 @@
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
@@ -6,13 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 class ChatSyncDialog extends StatefulWidget {
-  ChatSyncDialog({
-    super.key,
-    required this.chat,
-    this.initialMessage,
-    this.withOffset = false,
-    this.limit = 100
-  });
+  const ChatSyncDialog({super.key, required this.chat, this.initialMessage, this.withOffset = false, this.limit = 100});
 
   final Chat chat;
   final String? initialMessage;
@@ -23,7 +16,7 @@ class ChatSyncDialog extends StatefulWidget {
   State<ChatSyncDialog> createState() => _ChatSyncDialogState();
 }
 
-class _ChatSyncDialogState extends OptimizedState<ChatSyncDialog> {
+class _ChatSyncDialogState extends State<ChatSyncDialog> {
   String? errorCode;
   bool finished = false;
   String? message;
@@ -42,7 +35,7 @@ class _ChatSyncDialogState extends OptimizedState<ChatSyncDialog> {
       offset = Message.countForChat(widget.chat) ?? 0;
     }
 
-    cm.getMessages(widget.chat.guid, offset: offset, limit: widget.limit).then((dynamic messages) {
+    ChatsSvc.getMessages(widget.chat.guid, offset: offset, limit: widget.limit).then((dynamic messages) {
       if (mounted) {
         setState(() {
           message = "Adding ${messages.length} messages...";
@@ -56,7 +49,16 @@ class _ChatSyncDialogState extends OptimizedState<ChatSyncDialog> {
           this.progress = progress / length;
         }
         setState(() {});
-      }).then((List<Message> __) {
+      }).then((List<Message> savedMessages) {
+        // Add the messages to the active messages view.
+        // They addition will get dropped if they already exist in the view.
+        // Only do this if we aren't using an offset, otherwise messages
+        // may end up out of order in the view.
+        if (!widget.withOffset && Get.isRegistered<MessagesService>(tag: widget.chat.guid)) {
+          for (var msg in savedMessages) {
+            Get.find<MessagesService>(tag: widget.chat.guid).addNewMessage(msg);
+          }
+        }
         onFinish(true);
       });
     }).catchError((_) {
@@ -85,14 +87,15 @@ class _ChatSyncDialogState extends OptimizedState<ChatSyncDialog> {
                 ),
               ),
             ),
-      backgroundColor: context.theme.colorScheme.properSurface,
+      backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
       actions: [
         TextButton(
           onPressed: () {
             Navigator.of(context).pop();
           },
           child: Text(
-            "OK", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary),
+            "OK",
+            style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary),
           ),
         )
       ],

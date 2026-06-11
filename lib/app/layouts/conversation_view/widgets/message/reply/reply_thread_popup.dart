@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/message_holder.dart';
+import 'package:bluebubbles/app/wrappers/bb_annotated_region.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
@@ -9,11 +10,11 @@ import 'package:collection/collection.dart';
 import 'package:defer_pointer/defer_pointer.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart';
 
-void showReplyThread(BuildContext context, Message message, MessagePart part, MessagesService service, ConversationViewController cvController) {
+void showReplyThread(BuildContext context, Message message, MessagePart part, MessagesService service,
+    ConversationViewController cvController) {
   final originatorPart = message.threadOriginatorGuid != null ? message.normalizedThreadPart : part.part;
   final _messages = service.struct.threads(message.threadOriginatorGuid ?? message.guid!, originatorPart);
   _messages.sort((a, b) => Message.sort(a, b, descending: false));
@@ -22,21 +23,23 @@ void showReplyThread(BuildContext context, Message message, MessagePart part, Me
 
 void showBookmarksThread(ConversationViewController cvController, BuildContext context) async {
   final _messages = (Database.messages.query(Message_.isBookmarked.equals(true))
-    ..link(Message_.chat, Chat_.guid.equals(cvController.chat.guid))
-    ..order(Message_.dateCreated, flags: Order.descending)).build().find();
+        ..link(Message_.chat, Chat_.guid.equals(cvController.chat.guid))
+        ..order(Message_.dateCreated, flags: Order.descending))
+      .build()
+      .find();
   if (_messages.isEmpty) {
     return showSnackbar("Error", "There are no bookmarked messages in this chat!");
   }
   for (Message m in _messages) {
     m.realAttachments;
     m.fetchAssociatedMessages();
-    m.handle = m.getHandle();
   }
   _messages.sort((a, b) => Message.sort(a, b, descending: false));
   _buildThreadView(_messages, null, cvController, context);
 }
 
-void _buildThreadView(List<Message> _messages, int? originatorPart, ConversationViewController cvController, BuildContext context) {
+void _buildThreadView(
+    List<Message> _messages, int? originatorPart, ConversationViewController cvController, BuildContext context) {
   final controller = ScrollController();
   Navigator.push(
     context,
@@ -53,10 +56,10 @@ void _buildThreadView(List<Message> _messages, int? originatorPart, Conversation
                 colorScheme: context.theme.colorScheme.copyWith(
                   primary: context.theme.colorScheme.bubble(context, true),
                   onPrimary: context.theme.colorScheme.onBubble(context, true),
-                  surface: ss.settings.monetTheming.value == Monet.full
+                  surface: SettingsSvc.settings.monetTheming.value == Monet.full
                       ? null
                       : (context.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
-                  onSurface: ss.settings.monetTheming.value == Monet.full
+                  onSurface: SettingsSvc.settings.monetTheming.value == Monet.full
                       ? null
                       : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
                 ),
@@ -66,28 +69,24 @@ void _buildThreadView(List<Message> _messages, int? originatorPart, Conversation
                   onTap: () {
                     Navigator.of(context).pop();
                   },
-                  child: AnnotatedRegion<SystemUiOverlayStyle>(
-                    value: SystemUiOverlayStyle(
-                      systemNavigationBarColor: ss.settings.immersiveMode.value ? Colors.transparent : context.theme.colorScheme.background,
-                      // navigation bar color
-                      systemNavigationBarIconBrightness: context.theme.colorScheme.brightness.opposite,
-                      statusBarColor: Colors.transparent,
-                      // status bar color
-                      statusBarIconBrightness: context.theme.colorScheme.brightness.opposite,
-                    ),
+                  child: BBAnnotatedRegion(
                     child: Scaffold(
-                      backgroundColor: kIsDesktop && ss.settings.windowEffect.value != WindowEffect.disabled
-                          ? context.theme.colorScheme.properSurface.withOpacity(0.9)
+                      backgroundColor: kIsDesktop && SettingsSvc.settings.windowEffect.value != WindowEffect.disabled
+                          ? context.theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.9)
                           : Colors.transparent,
                       body: Stack(
                         fit: StackFit.expand,
                         children: [
                           BackdropFilter(
                             filter: ImageFilter.blur(
-                                sigmaX: kIsDesktop && ss.settings.windowEffect.value != WindowEffect.disabled ? 0 : 30,
-                                sigmaY: kIsDesktop && ss.settings.windowEffect.value != WindowEffect.disabled ? 0 : 30),
+                                sigmaX: kIsDesktop && SettingsSvc.settings.windowEffect.value != WindowEffect.disabled
+                                    ? 0
+                                    : 30,
+                                sigmaY: kIsDesktop && SettingsSvc.settings.windowEffect.value != WindowEffect.disabled
+                                    ? 0
+                                    : 30),
                             child: Container(
-                              color: context.theme.colorScheme.properSurface.withOpacity(0.3),
+                              color: context.theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
                             ),
                           ),
                           Container(
@@ -98,30 +97,34 @@ void _buildThreadView(List<Message> _messages, int? originatorPart, Conversation
                                   child: SingleChildScrollView(
                                     controller: controller,
                                     child: Column(
-                                      children: _messages.mapIndexed((index, e) => GestureDetector(
-                                        onTap: () {
-                                          Navigator.of(context).pop();
-                                          if (originatorPart == null && ss.settings.skin.value == Skins.iOS) {
-                                            // pop twice to remove convo details page
-                                            Navigator.of(context).pop();
-                                          }
-                                          ms(cvController.chat.guid).jumpToMessage.call(e.guid!);
-                                        },
-                                        child: AbsorbPointer(
-                                          absorbing: true,
-                                          child: Padding(
-                                              padding: const EdgeInsets.only(left: 5.0, right: 5.0),
-                                              child: MessageHolder(
-                                                cvController: cvController,
-                                                message: _messages[index],
-                                                oldMessageGuid: index > 0 ? _messages[index - 1].guid : null,
-                                                newMessageGuid: index < _messages.length - 1 ? _messages[index + 1].guid : null,
-                                                isReplyThread: true,
-                                                replyPart: index == 0 ? originatorPart : null,
-                                              ),
-                                          ),
-                                        ),
-                                      )).toList(),
+                                      children: _messages
+                                          .mapIndexed((index, e) => GestureDetector(
+                                                onTap: () {
+                                                  Navigator.of(context).pop();
+                                                  if (originatorPart == null &&
+                                                      SettingsSvc.settings.skin.value == Skins.iOS) {
+                                                    // pop twice to remove convo details page
+                                                    Navigator.of(context).pop();
+                                                  }
+                                                  MessagesSvc(cvController.chat.guid).jumpToMessage.call(e.guid!);
+                                                },
+                                                child: AbsorbPointer(
+                                                  absorbing: true,
+                                                  child: Padding(
+                                                    padding: const EdgeInsets.only(left: 5.0, right: 5.0),
+                                                    child: MessageHolder(
+                                                      cvController: cvController,
+                                                      message: _messages[index],
+                                                      oldMessage: index > 0 ? _messages[index - 1] : null,
+                                                      newMessage:
+                                                          index < _messages.length - 1 ? _messages[index + 1] : null,
+                                                      isReplyThread: true,
+                                                      replyPart: index == 0 ? originatorPart : null,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ))
+                                          .toList(),
                                     ),
                                   ),
                                 ),

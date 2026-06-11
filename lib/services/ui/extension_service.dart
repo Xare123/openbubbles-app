@@ -1,5 +1,3 @@
-
-
 import 'dart:convert';
 
 import 'package:bluebubbles/database/database.dart';
@@ -12,65 +10,64 @@ import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:bluebubbles/helpers/types/constants.dart' as constants;
-
+import 'package:get_it/get_it.dart';
 
 class App {
-    int appId;
-    String store;
-    String madridName;
-    String madridBundleId;
-    AvailableApp? available;
+  int appId;
+  String store;
+  String madridName;
+  String madridBundleId;
+  AvailableApp? available;
 
-    App({
-        required this.appId,
-        required this.store,
-        required this.madridName,
-        required this.madridBundleId,
-        this.available,
-    });
+  App({
+    required this.appId,
+    required this.store,
+    required this.madridName,
+    required this.madridBundleId,
+    this.available,
+  });
 
-    factory App.fromMap(Map<String, dynamic> json) => App(
+  factory App.fromMap(Map<String, dynamic> json) => App(
         appId: json["appId"],
         store: json["store"],
         madridName: json["madridName"],
         madridBundleId: json["madridBundleId"],
         available: json["available"] == null ? null : AvailableApp.fromMap(json["available"]),
-    );
+      );
 
-    Map<String, dynamic> toMap() => {
+  Map<String, dynamic> toMap() => {
         "appId": appId,
         "store": store,
         "madridName": madridName,
         "madridBundleId": madridBundleId,
         "available": available?.toMap(),
-    };
+      };
 }
 
 class AvailableApp {
-    String name;
-    String icon;
+  String name;
+  String icon;
 
-    AvailableApp({
-        required this.name,
-        required this.icon,
-    });
+  AvailableApp({
+    required this.name,
+    required this.icon,
+  });
 
-    factory AvailableApp.fromMap(Map<String, dynamic> json) => AvailableApp(
+  factory AvailableApp.fromMap(Map<String, dynamic> json) => AvailableApp(
         name: json["name"],
         icon: json["icon"],
-    );
+      );
 
-    Map<String, dynamic> toMap() => {
+  Map<String, dynamic> toMap() => {
         "name": name,
         "icon": icon,
-    };
+      };
 }
 
-
-ExtensionService es = Get.isRegistered<ExtensionService>() ? Get.find<ExtensionService>() : Get.put(ExtensionService());
+// ignore: non_constant_identifier_names
+ExtensionService ExtensionSvc = GetIt.I<ExtensionService>();
 
 class ExtensionService extends GetxService {
-
   List<App> cachedStatus = [];
 
   Map<String, List<String?>> amkToLatest = {};
@@ -81,22 +78,17 @@ class ExtensionService extends GetxService {
       return amkToLatest[amk]!;
     }
 
-    final query = (Database.messages.query(Message_.amkSessionId.equals(amk))
-            ..order(Message_.dateCreated, flags: Order.descending))
-          .build();
-          query.limit = 3;
+    final messages = Database.messages.getAll().where((message) => message.amkSessionId == amk).toList()
+      ..sort((a, b) => (b.dateCreated ?? DateTime.fromMillisecondsSinceEpoch(0))
+          .compareTo(a.dateCreated ?? DateTime.fromMillisecondsSinceEpoch(0)));
 
-      final messages = query.find();
-      query.close();
-    
-
-    var results = messages.map((i) => i.stagingGuid ?? i.guid).toList();
+    final results = messages.take(3).map((i) => i.stagingGuid ?? i.guid).toList();
     amkToLatest[amk] = results;
     return results;
   }
 
   bool isAppAvailable(int app) {
-    return es.cachedStatus.firstWhereOrNull((i) => i.appId == app)?.available != null;
+    return ExtensionSvc.cachedStatus.firstWhereOrNull((i) => i.appId == app)?.available != null;
   }
 
   bool isAppSupported(int app) {
@@ -121,17 +113,17 @@ class ExtensionService extends GetxService {
     var myMap = payload.toNative(null);
     myMap["messageGuid"] = data.guid;
     myMap["userCount"] = data.chat.target!.participants.length + 1;
-    await mcs.invokeMethod("extension-template-tap", myMap);
+    await MethodChannelSvc.invokeMethod("extension-template-tap", myMap);
   }
 
   Future<void> refreshCache() async {
     Logger.debug("Refreshing extension state");
-    if (ss.settings.developerEnabled.value) {
-      for (var item in ss.settings.developerMode) {
+    if (SettingsSvc.settings.developerEnabled.value) {
+      for (var item in SettingsSvc.settings.developerMode) {
         await addDevExtension(item);
       }
     }
-    var result = await mcs.invokeMethod("extension-status");
+    var result = await MethodChannelSvc.invokeMethod("extension-status");
     if (result == null) return;
     List<dynamic> parsed = json.decode(result);
     cachedStatus = parsed.map((item) => App.fromMap(item)).toList();
@@ -139,9 +131,7 @@ class ExtensionService extends GetxService {
   }
 
   Future<void> addDevExtension(String package) async {
-     await mcs.invokeMethod("dev-extension-handler", {
-      "serviceName": package
-     });
+    await MethodChannelSvc.invokeMethod("dev-extension-handler", {"serviceName": package});
   }
 
   Future<void> setSuppress(Map<String, dynamic> args) async {
@@ -160,9 +150,7 @@ class ExtensionService extends GetxService {
     var app = cachedStatus.firstWhere((a) => a.appId == args["appId"]);
     var payload = PayloadData(
       type: constants.PayloadType.app,
-      appData: [
-        iMessageAppData.fromNative(args, app)
-      ],
+      appData: [iMessageAppData.fromNative(args, app)],
     );
 
     var old = Message.findOne(guid: args["messageGuid"])!;
@@ -177,11 +165,12 @@ class ExtensionService extends GetxService {
       );
     }
 
-    var message = await backend.updateMessage(old.chat.target!, old, payload, file, false, null);
-    inq.queue(IncomingItem(
+    var message = await BackendSvc.updateMessage(old.chat.target!, old, payload, file, false, null);
+    await IncomingMsgHandler.handle(IncomingPayload(
+      type: MessageEventType.newMessage,
+      source: MessageSource.apiResponse,
       chat: old.chat.target!,
       message: message,
-      type: QueueType.newMessage
     ));
   }
 
@@ -189,7 +178,7 @@ class ExtensionService extends GetxService {
     var payload = message.payloadData!.appData![0];
     var myMap = payload.toNative(null);
     myMap["messageGuid"] = message.guid;
-    await mcs.invokeMethod("message-update-handler", myMap);
+    await MethodChannelSvc.invokeMethod("message-update-handler", myMap);
   }
 
   void addMessage(Map<String, dynamic> args) {
@@ -197,9 +186,7 @@ class ExtensionService extends GetxService {
 
     var payload = PayloadData(
       type: constants.PayloadType.app,
-      appData: [
-        iMessageAppData.fromNative(args, app)
-      ],
+      appData: [iMessageAppData.fromNative(args, app)],
     );
 
     PlatformFile? file;
@@ -212,8 +199,8 @@ class ExtensionService extends GetxService {
       );
     }
 
-    cm.activeChat!.controller!.pickedApp.value = (file, payload);
-    cm.activeChat!.controller!.triggerTypingIndicator();
+    ChatsSvc.activeChat!.controller!.pickedApp.value = (file, payload);
+    ChatsSvc.activeChat!.controller!.triggerTypingIndicator();
     Logger.debug("set");
   }
 }

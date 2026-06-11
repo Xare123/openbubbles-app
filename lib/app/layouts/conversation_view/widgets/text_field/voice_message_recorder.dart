@@ -1,10 +1,8 @@
 import 'dart:async';
 
 import 'package:audio_waveforms/audio_waveforms.dart';
-import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-
 
 class VoiceMessageRecorder extends StatefulWidget {
   const VoiceMessageRecorder({
@@ -45,12 +43,13 @@ class _VoiceMessageRecorderState extends State<VoiceMessageRecorder> {
           children: [
             AudioWaveforms(
               size: Size(
-                  widget.textFieldSize.width - getWidth(widget.iOS, widget.samsung),
-                  widget.textFieldSize.height - 15),
+                  widget.textFieldSize.width - getWidth(widget.iOS, widget.samsung), widget.textFieldSize.height - 15),
               recorderController: widget.recorderController!,
-              padding: EdgeInsets.symmetric(vertical: 5, horizontal: widget.iOS ? 10 : 15), // need extra spacing in case of iOS for recording duration
+              padding: EdgeInsets.symmetric(
+                  vertical: 5,
+                  horizontal: widget.iOS ? 10 : 15), // need extra spacing in case of iOS for recording duration
               waveStyle: WaveStyle(
-                waveColor: widget.iOS ? context.theme.colorScheme.primary : context.theme.colorScheme.properOnSurface,
+                waveColor: widget.iOS ? context.theme.colorScheme.primary : context.theme.colorScheme.onSurfaceVariant,
                 waveCap: StrokeCap.square,
                 spacing: 4.0,
                 showBottom: true,
@@ -59,50 +58,44 @@ class _VoiceMessageRecorderState extends State<VoiceMessageRecorder> {
               ),
               decoration: BoxDecoration(
                 border: Border.fromBorderSide(BorderSide(
-                  color: widget.iOS
-                      ? Colors.transparent
-                      : context.theme.colorScheme.outline,
+                  color: widget.iOS ? Colors.transparent : context.theme.colorScheme.outline,
                   width: 1,
                 )),
                 borderRadius: BorderRadius.circular(20),
-                color: widget.iOS
-                    ? Colors.transparent
-                    : context.theme.colorScheme.properSurface,
+                color: widget.iOS ? Colors.transparent : context.theme.colorScheme.surfaceContainerHighest,
               ),
             ),
             Visibility(
               visible: widget.iOS,
               child: Center(
-              child: StreamBuilder<Duration>(
-                stream: recordingDurationStream,
-                builder: (context, snapshot) {
-                  if (snapshot.hasData) {
-                    final minutes = snapshot.data!.inMinutes;
+                child: StreamBuilder<Duration>(
+                  stream: recordingDurationStream,
+                  builder: (context, snapshot) {
+                    if (snapshot.hasData) {
+                      final minutes = snapshot.data!.inMinutes;
 
-                    final seconds = (snapshot.data!.inSeconds % 60)
-                        .toString()
-                        .padLeft(2, '0');
+                      final seconds = (snapshot.data!.inSeconds % 60).toString().padLeft(2, '0');
 
-                    return Text(
-                      '$minutes:$seconds',
-                      style: TextStyle(color: context.theme.colorScheme.primary),
-                    );
-                  } else {
-                    return Container();
-                  }
-                },
+                      return Text(
+                        '$minutes:$seconds',
+                        style: TextStyle(color: context.theme.colorScheme.primary),
+                      );
+                    } else {
+                      return Container();
+                    }
+                  },
+                ),
               ),
             ),
-          ),
           ],
         ));
   }
 
-  int getWidth(bool iOS, bool samsung){
-    if (samsung){
+  int getWidth(bool iOS, bool samsung) {
+    if (samsung) {
       // width for samsung style
       return 0;
-    } else if (iOS){
+    } else if (iOS) {
       return 105;
     }
     // for material

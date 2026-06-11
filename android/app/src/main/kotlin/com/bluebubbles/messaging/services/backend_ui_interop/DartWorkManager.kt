@@ -34,16 +34,28 @@ object DartWorkManager {
         lateinit var observer: Observer<WorkInfo>
         observer = Observer { workInfo ->
             if (workInfo.state.isFinished) {
-                Log.d(Constants.logTag, "Running callback after worker with method $method completed")
-                callback()
+                Log.d(Constants.logTag, "Running callback after worker with method $method completed (state: ${workInfo.state})")
+                try {
+                    callback()
+                } catch (e: Exception) {
+                    Log.e(Constants.logTag, "Error running callback for worker $method", e)
+                }
                 CoroutineScope(Dispatchers.Main).launch {
-                    WorkManager.getInstance(context).getWorkInfoByIdLiveData(work.id).removeObserver(observer)
+                    try {
+                        WorkManager.getInstance(context).getWorkInfoByIdLiveData(work.id).removeObserver(observer)
+                    } catch (e: Exception) {
+                        Log.e(Constants.logTag, "Error removing observer for worker $method", e)
+                    }
                 }
             }
         }
         // Cannot observe unless running on main thread
         CoroutineScope(Dispatchers.Main).launch {
-            WorkManager.getInstance(context).getWorkInfoByIdLiveData(work.id).observeForever(observer)
+            try {
+                WorkManager.getInstance(context).getWorkInfoByIdLiveData(work.id).observeForever(observer)
+            } catch (e: Exception) {
+                Log.e(Constants.logTag, "Error observing worker $method", e)
+            }
         }
     }
 }

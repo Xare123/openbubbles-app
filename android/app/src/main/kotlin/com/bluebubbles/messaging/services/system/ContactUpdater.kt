@@ -12,7 +12,15 @@ import android.content.OperationApplicationException
 
 object ContactUpdater {
 
-    fun updateContact(context: Context, contactId: Long, newDisplayName: String, newPhoto: ByteArray?) {
+    fun updateContact(
+        context: Context,
+        contactId: Long,
+        newDisplayName: String,
+        newFirstName: String?,
+        newMiddleName: String?,
+        newLastName: String?,
+        newPhoto: ByteArray?
+    ) {
         val ops = ArrayList<ContentProviderOperation>()
         val resolver = context.contentResolver
 
@@ -25,6 +33,9 @@ object ContactUpdater {
                         arrayOf(contactId.toString(), ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
                     )
                     .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, newDisplayName)
+                    .withValue(ContactsContract.CommonDataKinds.StructuredName.GIVEN_NAME, newFirstName)
+                    .withValue(ContactsContract.CommonDataKinds.StructuredName.MIDDLE_NAME, newMiddleName)
+                    .withValue(ContactsContract.CommonDataKinds.StructuredName.FAMILY_NAME, newLastName)
                     .build()
             )
         } else {
@@ -34,6 +45,9 @@ object ContactUpdater {
                         .withValue(ContactsContract.Data.RAW_CONTACT_ID, rawContactId)
                         .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
                         .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, newDisplayName)
+                        .withValue(ContactsContract.CommonDataKinds.StructuredName.GIVEN_NAME, newFirstName)
+                        .withValue(ContactsContract.CommonDataKinds.StructuredName.MIDDLE_NAME, newMiddleName)
+                        .withValue(ContactsContract.CommonDataKinds.StructuredName.FAMILY_NAME, newLastName)
                         .build()
                 )
             }

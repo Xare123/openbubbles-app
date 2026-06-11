@@ -104,8 +104,8 @@ List<Attachment> syncAttachments(List<Attachment> attachments) {
   List<String> existingAttachmentGuids = existingAttachments.map((e) => e.guid!).toList();
 
   // Insert any non-existing attachments
-  List<Attachment> newAttachments = attachments.where(
-          (element) => !existingAttachmentGuids.contains(element.guid)).toList();
+  List<Attachment> newAttachments =
+      attachments.where((element) => !existingAttachmentGuids.contains(element.guid)).toList();
   Database.attachments.putMany(newAttachments);
 
   // Update any existing attachments
@@ -187,7 +187,7 @@ List<Message> syncMessages(Chat c, List<Message> messages) {
     // Apply the chats
     Database.messages.putMany(messages, mode: PutMode.update);
   }
-    
+
   // Try the matchChats function 3 times, or until it succeeds
   int tries = 0;
   bool success = false;
@@ -207,7 +207,8 @@ List<Message> syncMessages(Chat c, List<Message> messages) {
   }
 
   if (!success) {
-    Logger.error("Failed to match messages to chats after 3 attempts, skipping...", error: lastError, trace: stackTrace);
+    Logger.error("Failed to match messages to chats after 3 attempts, skipping...",
+        error: lastError, trace: stackTrace);
   } else {
     Logger.debug("Successfully matched messages to chats after ${tries + 1} attempts!");
   }

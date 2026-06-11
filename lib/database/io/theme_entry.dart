@@ -1,5 +1,5 @@
 import 'package:bluebubbles/helpers/ui/theme_helpers.dart';
-import 'package:bluebubbles/objectbox.g.dart';
+import 'package:bluebubbles/generated/objectbox.g.dart';
 import 'package:bluebubbles/database/io/theme_object.dart';
 import 'package:flutter/material.dart';
 // (needed when generating objectbox model code)
@@ -16,7 +16,7 @@ class ThemeEntry {
   int? fontWeight;
 
   Color? color;
-  String? get dbColor => color?.value.toRadixString(16);
+  String? get dbColor => color?.toARGB32().toRadixString(16);
   set dbColor(String? s) => s == null ? color = null : color = HexColor(s);
 
   // ignore: deprecated_member_use_from_same_package
@@ -49,5 +49,4 @@ class ThemeEntry {
           fontSize: fontSize?.toDouble(),
         )
       : color;
-
 }

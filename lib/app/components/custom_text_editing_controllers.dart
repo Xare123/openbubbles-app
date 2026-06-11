@@ -7,18 +7,16 @@ import "package:bluebubbles/database/models.dart";
 import "package:bluebubbles/services/services.dart";
 import 'package:bluebubbles/utils/emoji.dart';
 import "package:bluebubbles/utils/emoticons.dart";
+import 'package:bluebubbles/utils/logger/logger.dart';
 import "package:collection/collection.dart";
-import "package:emojis/emoji.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "package:get/get.dart";
-import "package:languagetool_textfield/core/enums/mistake_type.dart";
+import "package:languagetool_textfield/src/core/enums/mistake_type.dart";
 import 'package:languagetool_textfield/languagetool_textfield.dart';
-import "package:languagetool_textfield/utils/closed_range.dart";
-import "package:languagetool_textfield/utils/keep_latest_response_service.dart";
-import 'package:tuple/tuple.dart';
-import 'package:bluebubbles/utils/logger/logger.dart';
+import "package:languagetool_textfield/src/utils/closed_range.dart";
+import "package:languagetool_textfield/src/utils/keep_latest_response_service.dart";
 
 class Mentionable {
   Mentionable({required this.handle});
@@ -26,7 +24,8 @@ class Mentionable {
   final Handle handle;
   String? customDisplayName;
 
-  String get displayName => customDisplayName ?? (handle.contact != null ? handle.displayName.split(" ").first : handle.displayName);
+  String get displayName =>
+      customDisplayName ?? (handle.contactsV2.isNotEmpty ? handle.displayName.split(" ").first : handle.displayName);
 
   String get address => handle.address;
 
@@ -44,9 +43,9 @@ class Mentionable {
 class SpellCheckTextEditingController extends TextEditingController {
   SpellCheckTextEditingController({super.text, this.focusNode}) {
     assert(focusNode != null || !(kIsDesktop || kIsWeb));
-    _languageCheckService =
-        DebounceLangToolService(LangToolService(LanguageToolClient(language: ss.settings.spellcheckLanguage.value)),
-            const Duration(milliseconds: 500));
+    _languageCheckService = DebounceLangToolService(
+        LangToolService(LanguageToolClient(language: SettingsSvc.settings.spellcheckLanguage.value)),
+        const Duration(milliseconds: 1000));
     _processMistakes(text);
   }
 
@@ -80,7 +79,20 @@ class SpellCheckTextEditingController extends TextEditingController {
     String newText = newValue.text;
     int newOffset = newValue.selection.start;
 
-    if (ss.settings.replaceEmoticonsWithEmoji.value) {
+    // OPTIMIZATION: Skip processing if only selection changed (cursor moved, no text change)
+    if (origText == text && origOffset != selection.start) {
+      // Only selection changed, skip all text processing
+      if (kIsDesktop || kIsWeb) {
+        _handleSelectionChange(newValue.selection);
+        // Only remove tooltip when selection changes
+        _mistakeTooltip?.remove();
+        _mistakeTooltip = null;
+      }
+      super.value = newValue;
+      return;
+    }
+
+    if (SettingsSvc.settings.replaceEmoticonsWithEmoji.value) {
       List<(int, int)> offsetsAndDifferences;
       (newText, offsetsAndDifferences) = replaceEmoticons(newText);
 
@@ -100,11 +112,11 @@ class SpellCheckTextEditingController extends TextEditingController {
       RegExpMatch match = matches.lastWhere((m) => m.start < newOffset);
       // Full emoji text (do not search for partial matches)
       String emojiName = newText.substring(match.start + 1, match.end - 1).toLowerCase();
-      if (emojiNames.keys.contains(emojiName)) {
+      if (shortNameToEmoji.keys.contains(emojiName) || shortNameToSkinToneEmoji.keys.contains(emojiName)) {
         // We can replace the :emoji: with the actual emoji here
-        final emoji = Emoji.byShortName(emojiName)!;
-        newText = newText.substring(0, match.start) + emoji.char + newText.substring(match.end);
-        newOffset = match.start + emoji.char.length;
+        final emoji = shortNameToEmoji[emojiName] ?? shortNameToSkinToneEmoji[emojiName]!;
+        newText = newText.substring(0, match.start) + emoji.emoji + newText.substring(match.end);
+        newOffset = match.start + emoji.emoji.length;
       }
     }
 
@@ -116,9 +128,10 @@ class SpellCheckTextEditingController extends TextEditingController {
     }
 
     if (kIsDesktop || kIsWeb) {
-      _handleTextChange(newValue.text);
-      _mistakeTooltip?.remove();
-      _mistakeTooltip = null;
+      // Only process text change if text actually changed
+      if (newValue.text != text) {
+        _handleTextChange(newValue.text);
+      }
     }
 
     super.value = newValue;
@@ -140,7 +153,7 @@ class SpellCheckTextEditingController extends TextEditingController {
     super.dispose();
   }
 
-  void insert(TextSelection selection, String value, { Annotation? newAnnotation }) {
+  void insert(TextSelection selection, String value, {Annotation? newAnnotation}) {
     text = text.substring(0, selection.baseOffset) + value + text.substring(selection.extentOffset);
   }
 
@@ -182,7 +195,7 @@ class SpellCheckTextEditingController extends TextEditingController {
   }
 
   Future<void> _processMistakes(String newText) async {
-    if (!ss.settings.spellcheck.value || newText.isEmpty) {
+    if (!SettingsSvc.settings.spellcheck.value || newText.isEmpty) {
       _mistakes.clear();
       _mistakeTooltip?.remove();
       _mistakeTooltip = null;
@@ -193,7 +206,7 @@ class SpellCheckTextEditingController extends TextEditingController {
     _mistakes = filteredMistakes.toList();
 
     final mistakesWrapper = await _latestResponseService.processLatestOperation(
-          () => _languageCheckService.findMistakes(newText),
+      () => _languageCheckService.findMistakes(newText),
     );
     if (mistakesWrapper == null || !mistakesWrapper.hasResult) return;
 
@@ -215,13 +228,13 @@ class SpellCheckTextEditingController extends TextEditingController {
 
       newMistake = isSelectionRangeEmpty
           ? _adjustMistakeOffsetWithCaretCursor(
-        mistake: mistake,
-        lengthDiscrepancy: lengthDiscrepancy,
-      )
+              mistake: mistake,
+              lengthDiscrepancy: lengthDiscrepancy,
+            )
           : _adjustMistakeOffsetWithSelectionRange(
-        mistake: mistake,
-        lengthDiscrepancy: lengthDiscrepancy,
-      );
+              mistake: mistake,
+              lengthDiscrepancy: lengthDiscrepancy,
+            );
 
       if (newMistake != null) yield newMistake;
     }
@@ -291,67 +304,66 @@ class SpellCheckTextEditingController extends TextEditingController {
     final Color color = _getMistakeColor(mistake.type);
     Iterable<String> replacements = mistake.replacements.take(15);
     return OverlayEntry(
-      builder: (context) =>
-          Positioned(
-            left: offset.dx - 100,
-            width: 200,
-            bottom: (context.height - offset.dy) ~/ 60 * 60 + 60,
-            child: Center(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: context.theme.colorScheme.properSurface,
-                  borderRadius: BorderRadius.circular(8.0),
-                ),
-                padding: const EdgeInsets.all(8.0),
-                child: Material(
-                  color: Colors.transparent,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(mistake.type.value.capitalizeFirst!,
-                          style: context.textTheme.titleSmall!.copyWith(color: color)),
-                      Text(
-                        "\"$mistakeText\"",
-                        style: context.textTheme.bodySmall!.copyWith(color: context.theme.colorScheme.outline),
-                      ),
-                      const SizedBox(height: 8.0),
-                      replacements.isEmpty
-                          ? Text(
-                        "No Replacements",
-                        style: context.textTheme.bodySmall!.copyWith(color: context.theme.colorScheme.outline),
-                      )
-                          : Wrap(
-                        alignment: WrapAlignment.center,
-                        spacing: 4.0,
-                        runSpacing: 4.0,
-                        children: List.generate(replacements.length, (index) {
-                          final replacement = mistake.replacements[index];
-                          return InkWell(
-                            borderRadius: BorderRadius.circular(8.0),
-                            hoverColor: color.withOpacity(0.2),
-                            onTapDown: (_) {
-                              replaceMistake(mistake, replacement);
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.all(4.0),
-                              decoration: BoxDecoration(
-                                border: Border.all(color: context.theme.colorScheme.outline),
-                                borderRadius: BorderRadius.circular(8.0),
-                              ),
-                              child: Padding(
-                                padding: const EdgeInsets.all(4.0),
-                                child: Text(replacement, style: context.textTheme.bodySmall),
-                              ),
-                            ),
-                          );
-                        }),
-                      ),
-                    ],
+      builder: (context) => Positioned(
+        left: offset.dx - 100,
+        width: 200,
+        bottom: (context.height - offset.dy) ~/ 60 * 60 + 60,
+        child: Center(
+          child: Container(
+            decoration: BoxDecoration(
+              color: context.theme.colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(8.0),
+            ),
+            padding: const EdgeInsets.all(8.0),
+            child: Material(
+              color: Colors.transparent,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(mistake.type.value.capitalizeFirst!,
+                      style: context.textTheme.titleSmall!.copyWith(color: color)),
+                  Text(
+                    "\"$mistakeText\"",
+                    style: context.textTheme.bodySmall!.copyWith(color: context.theme.colorScheme.outline),
                   ),
-                ),
+                  const SizedBox(height: 8.0),
+                  replacements.isEmpty
+                      ? Text(
+                          "No Replacements",
+                          style: context.textTheme.bodySmall!.copyWith(color: context.theme.colorScheme.outline),
+                        )
+                      : Wrap(
+                          alignment: WrapAlignment.center,
+                          spacing: 4.0,
+                          runSpacing: 4.0,
+                          children: List.generate(replacements.length, (index) {
+                            final replacement = mistake.replacements[index];
+                            return InkWell(
+                              borderRadius: BorderRadius.circular(8.0),
+                              hoverColor: color.withValues(alpha: 0.2),
+                              onTapDown: (_) {
+                                replaceMistake(mistake, replacement);
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.all(4.0),
+                                decoration: BoxDecoration(
+                                  border: Border.all(color: context.theme.colorScheme.outline),
+                                  borderRadius: BorderRadius.circular(8.0),
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(4.0),
+                                  child: Text(replacement, style: context.textTheme.bodySmall),
+                                ),
+                              ),
+                            );
+                          }),
+                        ),
+                ],
               ),
             ),
           ),
+        ),
+      ),
     );
   }
 
@@ -380,7 +392,7 @@ class SpellCheckTextEditingController extends TextEditingController {
           final mistakeEnd = mistake.endOffset - offset;
           final mistakeText = chunk.substring(mistakeStart, mistakeEnd);
           final mistakeStyle = (style ?? const TextStyle()).copyWith(
-            backgroundColor: _getMistakeColor(mistake.type).withOpacity(highlightStyle.backgroundOpacity),
+            backgroundColor: _getMistakeColor(mistake.type).withValues(alpha: highlightStyle.backgroundOpacity),
             decoration: highlightStyle.decoration,
             decorationColor: _getMistakeColor(mistake.type),
             decorationThickness: highlightStyle.mistakeLineThickness,
@@ -388,7 +400,9 @@ class SpellCheckTextEditingController extends TextEditingController {
 
           final prevMistakeEnd = i == 0 ? 0 : mistakes[i - 1].endOffset - offset;
           final leadingNonMistakeText = chunk.substring(prevMistakeEnd, mistakeStart);
-          if (leadingNonMistakeText.isNotEmpty) spans.add(TextSpan(text: leadingNonMistakeText, style: style));
+          if (leadingNonMistakeText.isNotEmpty) {
+            spans.addAll(buildAppleEmojiTextSpans(text: leadingNonMistakeText, style: style));
+          }
 
           spans.add(
             TextSpan(
@@ -398,8 +412,11 @@ class SpellCheckTextEditingController extends TextEditingController {
                 if (_mistakeTooltip != null) {
                   _mistakeTooltip!.remove();
                 }
-                _mistakeTooltip = _createTooltip(context,
-                    Offset(event.position.dx - ns.widthChatListLeft(context), event.position.dy), mistake, mistakeText);
+                _mistakeTooltip = _createTooltip(
+                    context,
+                    Offset(event.position.dx - NavigationSvc.widthChatListLeft(context), event.position.dy),
+                    mistake,
+                    mistakeText);
                 Overlay.of(context).insert(_mistakeTooltip!);
               },
             ),
@@ -408,13 +425,45 @@ class SpellCheckTextEditingController extends TextEditingController {
           if (i == mistakes.length - 1) {
             final nextMistakeStart = i == mistakes.length - 1 ? chunk.length : mistakes[i + 1].offset - offset;
             final trailingNonMistakeText = chunk.substring(mistakeEnd, nextMistakeStart);
-            if (trailingNonMistakeText.isNotEmpty) spans.add(TextSpan(text: trailingNonMistakeText, style: style));
+            if (trailingNonMistakeText.isNotEmpty) {
+              spans.addAll(buildAppleEmojiTextSpans(text: trailingNonMistakeText, style: style));
+            }
           }
         }
         return TextSpan(children: spans);
       }
     }
-    return TextSpan(text: chunk, style: style);
+
+    return TextSpan(children: buildAppleEmojiTextSpans(text: chunk, style: style));
+  }
+
+  List<InlineSpan> buildAppleEmojiTextSpans({required String text, required TextStyle? style}) {
+    // OPTIMIZATION: Early exit if font doesn't exist to avoid regex processing
+    if (!FilesystemSvc.fontExistsOnDisk.value) return [TextSpan(text: text, style: style)];
+
+    // OPTIMIZATION: Cache regex matches to avoid recomputation on every render
+    final emojiMatches = emojiRegex.allMatches(text);
+    if (emojiMatches.isEmpty) return [TextSpan(text: text, style: style)];
+
+    List<InlineSpan> spans = [];
+    int lastIndex = 0;
+    for (final match in emojiMatches) {
+      if (match.start > lastIndex) {
+        spans.add(TextSpan(text: text.substring(lastIndex, match.start), style: style));
+      }
+      spans.add(
+        TextSpan(
+            text: match.group(0),
+            style:
+                style?.copyWith(fontFamily: "Apple Color Emoji") ?? const TextStyle(fontFamily: "Apple Color Emoji")),
+      );
+      lastIndex = match.end;
+    }
+    if (lastIndex < text.length) {
+      spans.add(TextSpan(text: text.substring(lastIndex), style: style));
+    }
+
+    return spans;
   }
 
   @override
@@ -438,50 +487,50 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
   TextSelection oldTextFieldSelection = const TextSelection.collapsed(offset: 0);
   String lastText = "";
   bool supportsFormatting;
+  Map<String, String> mentionCache = {};
+  List<Annotation> annotations = [];
+  bool changeLock = false;
+
+  List<Mentionable> mentionables;
 
   @override
   void notifyListeners() {
     super.notifyListeners();
     Logger.info("a $lastText $text");
     if (lastText != text) {
-      // something changed, compute deltas
-      // use text diff because some keyboards can bump the cursor forward into an existing space when typing a period during an autocorrect.
-      int caret = min(selection.baseOffset, selection.extentOffset) - min(oldTextFieldSelection.baseOffset, oldTextFieldSelection.extentOffset);
-      var textdiff = text.length - lastText.length;
-      if (caret != textdiff) {
-        Logger.info("Caret diff $caret $textdiff");
+      final caret = min(selection.baseOffset, selection.extentOffset) -
+          min(oldTextFieldSelection.baseOffset, oldTextFieldSelection.extentOffset);
+      final textDiff = text.length - lastText.length;
+      if (caret != textDiff) {
+        Logger.info("Caret diff $caret $textDiff");
       }
       try {
-        mutateRange(oldTextFieldSelection, oldTextFieldSelection.isCollapsed ? textdiff : caret);
+        mutateRange(
+          oldTextFieldSelection,
+          (oldTextFieldSelection.isCollapsed ? textDiff : caret).toInt(),
+        );
       } catch (e, s) {
         Logger.error("Invalid changed annotations!", error: e, trace: s);
-        if (text.isNotEmpty) {
-          annotations = [Annotation(range: [0, text.length])];
-        } else {
-          annotations = [];
-        }
-        mentionCache = {};
+        resetAnnotations();
       }
     }
     oldTextFieldSelection = selection;
     lastText = text;
   }
 
-  Map<String, String> mentionCache = {};
-  List<Mentionable> mentionables;
-  List<Annotation> annotations = [];
-
   String saveAnnotations() {
-    var values = {
+    final values = {
       "annotations": annotations.map((i) => i.toMap()).toList(),
-      "cache": mentionCache
+      "cache": mentionCache,
     };
     return jsonEncode(values);
   }
 
   void resetAnnotations() {
     if (text.isNotEmpty) {
-      annotations = [Annotation(range: [0, text.length])];
+      annotations = [
+        Annotation(range: [0, text.length])
+      ];
     } else {
       annotations = [];
     }
@@ -491,11 +540,11 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
   void restoreAnnotations(String myText, String values) {
     try {
       changeLock = true;
-      text = myText; // this triggers a rebuild
+      text = myText;
     } finally {
       changeLock = false;
     }
-    var data = jsonDecode(values);
+    final data = jsonDecode(values);
     annotations = data["annotations"].map((i) => Annotation.fromMap(i)).toList().cast<Annotation>();
     mentionCache = data["cache"].cast<String, String>();
     try {
@@ -506,26 +555,33 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
     }
   }
 
-  bool changeLock = false;
+  void processMentions() {
+    if (annotations.isEmpty && text.isNotEmpty) {
+      resetAnnotations();
+    } else {
+      validateRange();
+    }
+  }
 
   void validateRange() {
     annotations.sort((a, b) => a.range[0].compareTo(b.range[0]));
     if (text.isEmpty) {
       assert(annotations.isEmpty);
+      return;
     }
     Annotation? lastAnnotation;
     var pointer = 0;
     while (pointer < text.length) {
-      var annotation = annotations.firstWhere((a) => a.range[0] == pointer);
-      // do we overlap with any other annotation?
-      assert(!annotations.any((a) => ((a.range[0] >= annotation.range[0] && a.range[0] < annotation.range[1]) ||
-          (a.range[1] > annotation.range[0] && a.range[1] <= annotation.range[1])) && annotation != a));
-      // we cannot have zero length
+      final annotation = annotations.firstWhere((a) => a.range[0] == pointer);
+      assert(!annotations.any((a) =>
+          ((a.range[0] >= annotation.range[0] && a.range[0] < annotation.range[1]) ||
+              (a.range[1] > annotation.range[0] && a.range[1] <= annotation.range[1])) &&
+          annotation != a));
       assert(annotation.range[0] != annotation.range[1]);
       pointer = annotation.range[1];
 
       if (lastAnnotation?.eqUnranged(annotation) ?? false) {
-        lastAnnotation!.range[1] = annotation.range[1]; // merge equal annotations
+        lastAnnotation!.range[1] = annotation.range[1];
         annotations.remove(annotation);
       } else {
         lastAnnotation = annotation;
@@ -536,24 +592,25 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
   }
 
   List<Annotation> annotationsForRange(TextSelection range) {
-    return annotations.where((a) =>
-        ((a.range[0] >= range.baseOffset && a.range[0] < range.extentOffset) ||
-          (a.range[1] > range.baseOffset && a.range[1] <= range.extentOffset) ||
-          (range.baseOffset >= a.range[0] && range.baseOffset < a.range[1] &&
-          range.extentOffset >= a.range[0] && range.extentOffset < a.range[1]))
-    ).toList();
+    return annotations
+        .where((a) => ((a.range[0] >= range.baseOffset && a.range[0] < range.extentOffset) ||
+            (a.range[1] > range.baseOffset && a.range[1] <= range.extentOffset) ||
+            (range.baseOffset >= a.range[0] &&
+                range.baseOffset < a.range[1] &&
+                range.extentOffset >= a.range[0] &&
+                range.extentOffset < a.range[1])))
+        .toList();
   }
 
-  void mutateRange(TextSelection collapse, int length, { Annotation? newAnnotation }) {
+  void mutateRange(TextSelection collapse, int length, {Annotation? newAnnotation}) {
     Logger.info("annotations ${annotations.map((a) => a.toMap()).toList()}");
-    // base < offset
     if (collapse.baseOffset > collapse.extentOffset) {
       collapse = TextSelection(baseOffset: collapse.extentOffset, extentOffset: collapse.baseOffset);
     }
     if (changeLock) return;
     if (!collapse.isCollapsed) {
       annotations.retainWhere((a) {
-        var deleteLen = collapse.extentOffset - collapse.baseOffset;
+        final deleteLen = collapse.extentOffset - collapse.baseOffset;
         if (a.range[0] >= collapse.extentOffset) {
           a.range[0] -= deleteLen;
         } else if (a.range[0] >= collapse.baseOffset) {
@@ -568,8 +625,9 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
       });
     }
 
-    var annotation = annotations.firstWhereOrNull((a) => collapse.baseOffset > a.range[0] && collapse.baseOffset <= a.range[1]);
-  
+    final annotation =
+        annotations.firstWhereOrNull((a) => collapse.baseOffset > a.range[0] && collapse.baseOffset <= a.range[1]);
+
     annotations.retainWhere((a) {
       if (a.range[0] >= collapse.baseOffset) {
         a.range[0] += length;
@@ -580,14 +638,13 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
       return a.range[0] != a.range[1];
     });
 
-    // initial case where there is an empty text field and no annotations
-    if (annotation == null || (annotation.mentionedAddress != null /* can't add to this*/ && length > 0)) {
+    if (annotation == null || (annotation.mentionedAddress != null && length > 0)) {
       if (annotations.isNotEmpty && annotation?.mentionedAddress == null && collapse.baseOffset > 0) {
         throw Exception("Not empty no annotation??");
       }
       if (length > 0) {
-        annotation?.range[1] -= length; // this was grown in the retainWhere above; make space for my new one
-        var annotation2 = newAnnotation ?? Annotation();
+        annotation?.range[1] -= length;
+        final annotation2 = newAnnotation ?? Annotation();
         annotation2.range = [annotation?.range[1] ?? 0, (annotation?.range[1] ?? 0) + length];
         annotations.add(annotation2);
       }
@@ -597,43 +654,37 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
     }
 
     if (newAnnotation != null) {
-      // mark the range as annotated
-      markRange(TextSelection(baseOffset: collapse.baseOffset, extentOffset: collapse.baseOffset + length), newAnnotation);
+      markRange(
+          TextSelection(baseOffset: collapse.baseOffset, extentOffset: collapse.baseOffset + length), newAnnotation);
     }
 
     validateRange();
   }
 
   void markRange(TextSelection range, Annotation annotation) {
-    // base < offset
     if (range.baseOffset > range.extentOffset) {
       range = TextSelection(baseOffset: range.extentOffset, extentOffset: range.baseOffset);
     }
     if (changeLock) return;
-    List<Annotation> extras = [];
-    // split em up correctly
-    for (var a in annotations) {
+    final extras = <Annotation>[];
+    for (final a in annotations) {
       if (a.range[0] < range.baseOffset && a.range[1] > range.baseOffset) {
-        var dup = a.copy();
+        final dup = a.copy();
         dup.range[1] = range.baseOffset;
         extras.add(dup);
-
-        // end this range at the start of my new range
         a.range[0] = range.baseOffset;
       }
 
       if (a.range[0] < range.extentOffset && a.range[1] > range.extentOffset) {
-        var dup = a.copy();
+        final dup = a.copy();
         dup.range[0] = range.extentOffset;
         extras.add(dup);
-
-        // end this range at the start of my new range
         a.range[1] = range.extentOffset;
       }
     }
     annotations.addAll(extras);
 
-    for (var a in annotations) {
+    for (final a in annotations) {
       if (a.range[0] >= range.baseOffset && a.range[1] <= range.extentOffset) {
         annotation.applyTo(a);
       }
@@ -653,10 +704,14 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
   }
 
   @override
-  void insert(TextSelection selection, String value, { Annotation? newAnnotation, int? moveCursor }) {
+  void insert(TextSelection selection, String value, {Annotation? newAnnotation}) {
+    insertWithMetadata(selection, value, newAnnotation: newAnnotation);
+  }
+
+  void insertWithMetadata(TextSelection selection, String value, {Annotation? newAnnotation, int? moveCursor}) {
     try {
       changeLock = true;
-      text = text.substring(0, selection.baseOffset) + value + text.substring(selection.extentOffset); // this triggers a rebuild
+      text = text.substring(0, selection.baseOffset) + value + text.substring(selection.extentOffset);
     } finally {
       changeLock = false;
     }
@@ -669,89 +724,83 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
   void addMention(String candidate, Mentionable mentionable) {
     final indexSelection = selection.base.offset;
     final atIndex = text.substring(0, indexSelection).lastIndexOf("@");
-    final index = mentionables.indexOf(mentionable);
-    if (index == -1 || atIndex == -1) return;
+    if (atIndex == -1) return;
 
     mentionCache[mentionable.address] = mentionable.displayName;
 
-    // always store mentions as one character since WidgetSpan takes one character.
-    
-    var next = text.substring(indexSelection);
-    var needsSpace = !next.startsWith(" ");
-    var removeSelection = TextSelection(baseOffset: atIndex, extentOffset: indexSelection);
-    insert(removeSelection, " ", newAnnotation: Annotation(mentionedAddress: mentionable.address), moveCursor: !needsSpace ? 1 : null);
+    final next = text.substring(indexSelection);
+    final needsSpace = !next.startsWith(" ");
+    final removeSelection = TextSelection(baseOffset: atIndex, extentOffset: indexSelection);
+    insertWithMetadata(removeSelection, " ",
+        newAnnotation: Annotation(mentionedAddress: mentionable.address), moveCursor: !needsSpace ? 1 : null);
     if (needsSpace) {
-      insert(TextSelection.collapsed(offset: atIndex + 1), " ", moveCursor: 0);
+      insertWithMetadata(TextSelection.collapsed(offset: atIndex + 1), " ", moveCursor: 0);
     }
-
-    // processMentions();
   }
 
   void importMessagePart(MessagePart part) {
-    List<Annotation> copiedAnnotations = part.annotations.map((a) => a.copy()).toList();
+    final copiedAnnotations = part.annotations.map((a) => a.copy()).toList();
     var savedText = part.text!;
 
     var waterfall = 0;
-    for (var annotation in copiedAnnotations) {
+    for (final annotation in copiedAnnotations) {
       annotation.range[0] += waterfall;
       annotation.range[1] += waterfall;
       if (annotation.mentionedAddress == null) continue;
 
-      var address = savedText.substring(annotation.range[0], annotation.range[1]);
+      final address = savedText.substring(annotation.range[0], annotation.range[1]);
       mentionCache[annotation.mentionedAddress!] = address;
 
-      // ignore: prefer_interpolation_to_compose_strings
       savedText = savedText.substring(0, annotation.range[0]) + " " + savedText.substring(annotation.range[1]);
       annotation.range[1] = annotation.range[0] + 1;
-      waterfall += 1 - address.length; // it already had 1 accouted for the space
+      waterfall += 1 - address.length;
     }
 
     annotations = copiedAnnotations;
     try {
       changeLock = true;
-      text = savedText; // this triggers a rebuild
+      text = savedText;
     } finally {
       changeLock = false;
     }
   }
 
   void refresh() {
-    var position = selection;
+    final position = selection;
     text = text;
-
     selection = position;
   }
 
   AttributedBody getFinalAnnotations() {
-    var saved = annotations;
+    final saved = annotations.map((e) => e.copy()).toList();
     var savedText = text;
-    restoreAnnotations(savedText, saveAnnotations()); // duplicate annotations
-    // replace mentions with proper text
     var waterfall = 0;
-    for (var annotation in saved) {
+    for (final annotation in saved) {
       annotation.range[0] += waterfall;
       annotation.range[1] += waterfall;
       if (annotation.mentionedAddress == null) continue;
-      var address = mentionCache[annotation.mentionedAddress]!;
+      final address = mentionCache[annotation.mentionedAddress] ?? "";
 
       savedText = savedText.substring(0, annotation.range[0]) + address + savedText.substring(annotation.range[1]);
       annotation.range[1] = annotation.range[0] + address.length;
-      waterfall += address.length - 1; // it already had 1 accouted for the space
+      waterfall += address.length - 1;
     }
     return AttributedBody(
       string: savedText,
-      runs: saved.map((a) => Run(
-        range: [a.range[0], a.range[1] - a.range[0]],
-        attributes: Attributes(
-          mention: a.mentionedAddress,
-          textEffect: a.textEffect,
-          bold: a.bold,
-          italic: a.italic,
-          strikethrough: a.strikethrough,
-          underline: a.underline,
-          messagePart: 0,
-        ),
-      )).toList().cast<Run>(),
+      runs: saved
+          .map((a) => Run(
+                range: [a.range[0], a.range[1] - a.range[0]],
+                attributes: Attributes(
+                  mention: a.mentionedAddress,
+                  textEffect: a.textEffect,
+                  bold: a.bold,
+                  italic: a.italic,
+                  strikethrough: a.strikethrough,
+                  underline: a.underline,
+                  messagePart: 0,
+                ),
+              ))
+          .toList(),
     );
   }
 
@@ -763,9 +812,8 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
         if (range.baseOffset > range.extentOffset) {
           range = TextSelection(baseOffset: range.extentOffset, extentOffset: range.baseOffset);
         }
-
-        var annotations = annotationsForRange(range);
-        var already = annotations!.every((a) => a.bold == true);
+        final selectedAnnotations = annotationsForRange(range);
+        final already = selectedAnnotations.every((a) => a.bold == true);
         markRange(range, Annotation(bold: !already));
         refresh();
       },
@@ -775,9 +823,8 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
         if (range.baseOffset > range.extentOffset) {
           range = TextSelection(baseOffset: range.extentOffset, extentOffset: range.baseOffset);
         }
-
-        var annotations = annotationsForRange(range);
-        var already = annotations!.every((a) => a.italic == true);
+        final selectedAnnotations = annotationsForRange(range);
+        final already = selectedAnnotations.every((a) => a.italic == true);
         markRange(range, Annotation(italic: !already));
         refresh();
       },
@@ -787,9 +834,8 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
         if (range.baseOffset > range.extentOffset) {
           range = TextSelection(baseOffset: range.extentOffset, extentOffset: range.baseOffset);
         }
-
-        var annotations = annotationsForRange(range);
-        var already = annotations!.every((a) => a.strikethrough == true);
+        final selectedAnnotations = annotationsForRange(range);
+        final already = selectedAnnotations.every((a) => a.strikethrough == true);
         markRange(range, Annotation(strikethrough: !already));
         refresh();
       },
@@ -799,9 +845,8 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
         if (range.baseOffset > range.extentOffset) {
           range = TextSelection(baseOffset: range.extentOffset, extentOffset: range.baseOffset);
         }
-
-        var annotations = annotationsForRange(range);
-        var already = annotations!.every((a) => a.underline == true);
+        final selectedAnnotations = annotationsForRange(range);
+        final already = selectedAnnotations.every((a) => a.underline == true);
         markRange(range, Annotation(underline: !already));
         refresh();
       },
@@ -814,100 +859,95 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
       if (range.baseOffset > range.extentOffset) {
         range = TextSelection(baseOffset: range.extentOffset, extentOffset: range.baseOffset);
       }
-      var annotations = annotationsForRange(range);
-      var mention = annotations?.firstWhereOrNull((r) => r.mentionedAddress != null);
+      final selectedAnnotations = annotationsForRange(range);
+      final mention = selectedAnnotations.firstWhereOrNull((r) => r.mentionedAddress != null);
 
-      return AdaptiveTextSelectionToolbar.editableText(
-        editableTextState: editableTextState
-      )..buttonItems?.addAllIf(
+      return AdaptiveTextSelectionToolbar.editableText(editableTextState: editableTextState)
+        ..buttonItems?.addAllIf(
           mention != null,
           [
             ContextMenuButtonItem(
               onPressed: () {
-                insert(TextSelection(baseOffset: mention!.range[0], extentOffset: mention.range[1]), 
-                  "@${mentionCache[mention.mentionedAddress!]}", moveCursor: 1);
-
+                insertWithMetadata(
+                  TextSelection(baseOffset: mention!.range[0], extentOffset: mention.range[1]),
+                  "@${mentionCache[mention.mentionedAddress!] ?? ""}",
+                  moveCursor: 1,
+                );
                 editableTextState.hideToolbar();
               },
               label: "Remove Mention",
             ),
             ContextMenuButtonItem(
               onPressed: () async {
-                // if (kIsDesktop || kIsWeb) {
-                //   controller?.showingOverlays = true;
-                // }
                 final changed = await showCustomMentionDialog(context, mentionCache[mention!.mentionedAddress!]);
-                // if (kIsDesktop || kIsWeb) {
-                //   controller?.showingOverlays = false;
-                // }
                 if (!isNullOrEmpty(changed)) {
                   mentionCache[mention.mentionedAddress!] = changed!;
                 }
-
                 editableTextState.hideToolbar();
-                
               },
               label: "Custom Mention",
             ),
           ],
-        )..buttonItems?.addAllIf(
+        )
+        ..buttonItems?.addAllIf(
           supportsFormatting,
           [
-          ContextMenuButtonItem(
-            onPressed: () {
-              var already = annotations!.every((a) => a.bold == true);
-              markRange(range, Annotation(bold: !already));
-              editableTextState.hideToolbar();
-              refresh();
-            },
-            label: "Bold",
-          ),
-          ContextMenuButtonItem(
-            onPressed: () {
-              var already = annotations!.every((a) => a.italic == true);
-              markRange(range, Annotation(italic: !already));
-              editableTextState.hideToolbar();
-              refresh();
-            },
-            label: "Italic",
-          ),
-          ContextMenuButtonItem(
-            onPressed: () {
-              var already = annotations!.every((a) => a.strikethrough == true);
-              markRange(range, Annotation(strikethrough: !already));
-              editableTextState.hideToolbar();
-              refresh();
-            },
-            label: "Strikethrough",
-          ),
-          ContextMenuButtonItem(
-            onPressed: () {
-              var already = annotations!.every((a) => a.underline == true);
-              markRange(range, Annotation(underline: !already));
-              editableTextState.hideToolbar();
-              refresh();
-            },
-            label: "Underline",
-          ),
-          ContextMenuButtonItem(
-            onPressed: () {
-              var already = annotations!.every((a) => a.textEffect == Attributes.BIG);
-              markRange(range, Annotation(textEffect: already ? null : Attributes.BIG));
-              editableTextState.hideToolbar();
-              refresh();
-            },
-            label: "Big",
-          ),
-          ContextMenuButtonItem(
-            onPressed: () {
-              var already = annotations!.every((a) => a.textEffect == Attributes.SMALL);
-              markRange(range, Annotation(textEffect: already ? null : Attributes.SMALL));
-              editableTextState.hideToolbar();
-              refresh();
-            },
-            label: "Small",
-          ),
-        ]);
+            ContextMenuButtonItem(
+              onPressed: () {
+                final already = selectedAnnotations.every((a) => a.bold == true);
+                markRange(range, Annotation(bold: !already));
+                editableTextState.hideToolbar();
+                refresh();
+              },
+              label: "Bold",
+            ),
+            ContextMenuButtonItem(
+              onPressed: () {
+                final already = selectedAnnotations.every((a) => a.italic == true);
+                markRange(range, Annotation(italic: !already));
+                editableTextState.hideToolbar();
+                refresh();
+              },
+              label: "Italic",
+            ),
+            ContextMenuButtonItem(
+              onPressed: () {
+                final already = selectedAnnotations.every((a) => a.strikethrough == true);
+                markRange(range, Annotation(strikethrough: !already));
+                editableTextState.hideToolbar();
+                refresh();
+              },
+              label: "Strikethrough",
+            ),
+            ContextMenuButtonItem(
+              onPressed: () {
+                final already = selectedAnnotations.every((a) => a.underline == true);
+                markRange(range, Annotation(underline: !already));
+                editableTextState.hideToolbar();
+                refresh();
+              },
+              label: "Underline",
+            ),
+            ContextMenuButtonItem(
+              onPressed: () {
+                final already = selectedAnnotations.every((a) => a.textEffect == Attributes.BIG);
+                markRange(range, Annotation(textEffect: already ? null : Attributes.BIG));
+                editableTextState.hideToolbar();
+                refresh();
+              },
+              label: "Big",
+            ),
+            ContextMenuButtonItem(
+              onPressed: () {
+                final already = selectedAnnotations.every((a) => a.textEffect == Attributes.SMALL);
+                markRange(range, Annotation(textEffect: already ? null : Attributes.SMALL));
+                editableTextState.hideToolbar();
+                refresh();
+              },
+              label: "Small",
+            ),
+          ],
+        );
     };
   }
 
@@ -917,15 +957,17 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
     TextStyle? style,
     required bool withComposing,
   }) {
+    if (annotations.isEmpty && text.isNotEmpty) {
+      resetAnnotations();
+    }
     return TextSpan(
       children: annotations.mapIndexed((idx, annotation) {
-        // uncomment top variant for annotation debugging (give each annotation a unique color)
-        // var s = style!.copyWith(color: Color((0xff << 0x18) | (annotation.hashCode & 0xffffff)));
         var s = style!;
 
         if (annotation.bold ?? false) s = s.apply(fontWeightDelta: 2);
         if (annotation.italic ?? false) s = s.apply(fontStyle: FontStyle.italic);
-        s = s.apply(decoration: TextDecoration.combine([
+        s = s.apply(
+            decoration: TextDecoration.combine([
           if (annotation.strikethrough ?? false) TextDecoration.lineThrough,
           if (annotation.underline ?? false) TextDecoration.underline,
         ]));
@@ -933,36 +975,34 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
         if (annotation.textEffect == Attributes.SMALL) s = s.apply(fontSizeDelta: -2);
 
         if (annotation.mentionedAddress != null) {
-          // Mandatory WidgetSpan so that it takes the appropriate char number.
           return WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
             child: Listener(
               onPointerDown: (PointerDownEvent e) {
                 if (selection.isCollapsed && e.buttons == 2) {
-                  // Right click
                   selection = TextSelection(baseOffset: annotation.range[0], extentOffset: annotation.range[1]);
                 }
               },
               child: ShaderMask(
                 blendMode: BlendMode.srcIn,
-                shaderCallback: (bounds) =>
-                    LinearGradient(
-                      colors: <Color>[
-                        context.theme.colorScheme.primary.darkenPercent(20),
-                        context.theme.colorScheme.primary.lightenPercent(20)
-                      ],
-                    ).createShader(
-                      Rect.fromLTWH(0, 0, bounds.width, bounds.height),
-                    ),
+                shaderCallback: (bounds) => LinearGradient(
+                  colors: <Color>[
+                    context.theme.colorScheme.primary.darkenPercent(20),
+                    context.theme.colorScheme.primary.lightenPercent(20)
+                  ],
+                ).createShader(
+                  Rect.fromLTWH(0, 0, bounds.width, bounds.height),
+                ),
                 child: Text(
-                  mentionCache[annotation.mentionedAddress!]!,
+                  mentionCache[annotation.mentionedAddress!] ?? "",
                   style: s.copyWith(fontWeight: FontWeight.bold).apply(heightFactor: 1.1),
                 ),
               ),
             ),
           );
         }
-        String range = "";
 
+        String range = "";
         try {
           range = text.substring(annotation.range[0], annotation.range[1]);
         } catch (e, stack) {
@@ -971,7 +1011,6 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
           refresh();
         }
 
-        // Anything beyond this point is not a mention. So fallback to original style.
         return buildMistakeTextSpans(
           context: context,
           chunk: range,

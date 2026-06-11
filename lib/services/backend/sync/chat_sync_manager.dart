@@ -5,8 +5,7 @@ import 'package:bluebubbles/services/backend/sync/sync_manager_impl.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:dio/dio.dart';
-import 'package:get/get.dart' hide Response;
-import 'package:tuple/tuple.dart';
+import 'package:bluebubbles/models/models.dart' show ChatSyncPage;
 import 'package:universal_io/io.dart';
 import 'package:windows_taskbar/windows_taskbar.dart';
 
@@ -62,14 +61,14 @@ class ChatSyncManager extends SyncManager {
 
       addToOutput("Streaming chats from server...");
       await for (final chatEvent in streamChatPages(totalChats, batchSize: 100)) {
-        double chatProgress = chatEvent.item1;
-        List<Chat> serverChats = chatEvent.item2;
+        double chatProgress = chatEvent.progress;
+        List<Chat> serverChats = chatEvent.chats;
 
         addToOutput('Saving chunk of ${serverChats.length} chats(s)...');
 
         await Chat.bulkSyncChats(serverChats);
         chatsSynced += serverChats.length;
-        
+
         addToOutput('Fetching group chat icons from the server...');
         for (Chat chat in serverChats) {
           if (!chat.isGroup) continue;
@@ -116,7 +115,7 @@ class ChatSyncManager extends SyncManager {
   }
 
   Future<int?> getChatCount() async {
-    Response chatCountResponse = await http.chatCount();
+    Response chatCountResponse = await HttpSvc.chatCount();
     Map<String, dynamic> res = chatCountResponse.data;
     if (chatCountResponse.statusCode == 200) {
       return res["data"]["total"];
@@ -125,7 +124,7 @@ class ChatSyncManager extends SyncManager {
     return null;
   }
 
-  Stream<Tuple2<double, List<Chat>>> streamChatPages(int? count, {int batchSize = 200}) async* {
+  Stream<ChatSyncPage> streamChatPages(int? count, {int batchSize = 200}) async* {
     // Set some default sync values
     int batches = 1;
     int countPerBatch = batchSize;
@@ -140,13 +139,9 @@ class ChatSyncManager extends SyncManager {
     for (int i = 0; i < batches; i++) {
       // Fetch the handles and throw an error if we don't get back a good response.
       // Throwing an error should cancel the sync
-      Response chatPage = await http.chats(
-        offset: i * countPerBatch,
-        limit: countPerBatch,
-        withQuery: [
-          "participants",
-        ]
-      );
+      Response chatPage = await HttpSvc.chats(offset: i * countPerBatch, limit: countPerBatch, withQuery: [
+        "participants",
+      ]);
       dynamic data = chatPage.data;
       if (chatPage.statusCode != 200) {
         throw ChatRequestException(
@@ -156,7 +151,7 @@ class ChatSyncManager extends SyncManager {
       // Convert the returned handle dictionaries to a list of Handle Objects
       List<dynamic> chatResponse = data["data"];
       List<Chat> chats = chatResponse.map((e) => Chat.fromMap(e)).toList();
-      yield Tuple2<double, List<Chat>>((i + 1) / batches, chats);
+      yield ChatSyncPage((i + 1) / batches, chats);
     }
   }
 
@@ -164,8 +159,9 @@ class ChatSyncManager extends SyncManager {
   Future<void> complete() async {
     addToOutput("Successfully synced $chatsSynced chats(s)!");
     addToOutput("Reloading your chats...");
-    Get.reload<ChatsService>(force: true);
-    await chats.init(force: true);
+
+    ChatsSvc.reset();
+    await ChatsSvc.init(force: true);
     await super.complete();
   }
 }

@@ -46,9 +46,8 @@ class PasswordEditorPanel extends StatefulWidget {
   State<PasswordEditorPanel> createState() => _PasswordEditorPanelState();
 }
 
-class _PasswordEditorPanelState extends OptimizedState<PasswordEditorPanel> {
-  static const String _passwordChars =
-      'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#\$%^&*()-_=+';
+class _PasswordEditorPanelState extends State<PasswordEditorPanel> with ThemeHelpers {
+  static const String _passwordChars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#\$%^&*()-_=+';
 
   late final TextEditingController _titleController;
   late final TextEditingController _serverController;
@@ -143,9 +142,7 @@ class _PasswordEditorPanelState extends OptimizedState<PasswordEditorPanel> {
             [
               SettingsSection(
                 backgroundColor: tileColor,
-                children: _isWifi
-                    ? _buildWifiFields(context)
-                    : _buildWebFields(context),
+                children: _isWifi ? _buildWifiFields(context) : _buildWebFields(context),
               ),
               if (error != null)
                 Padding(
@@ -310,8 +307,7 @@ class _PasswordEditorPanelState extends OptimizedState<PasswordEditorPanel> {
       );
     }
     final selectedGroup = _selectedGroup;
-    if (selectedGroup != null &&
-        !widget.availableGroups.containsKey(selectedGroup)) {
+    if (selectedGroup != null && !widget.availableGroups.containsKey(selectedGroup)) {
       items.add(
         DropdownMenuItem<String?>(
           value: selectedGroup,
@@ -454,9 +450,7 @@ class _PasswordEditorPanelState extends OptimizedState<PasswordEditorPanel> {
           entry: entry,
         );
       } else {
-        final templateHistory = widget.passwordMeta == null
-            ? await _maybeLoadPasswordHistoryTemplate()
-            : null;
+        final templateHistory = widget.passwordMeta == null ? await _maybeLoadPasswordHistoryTemplate() : null;
         final passwordEntry = _buildPasswordRecord(
           existing: widget.passwordRaw,
         );
@@ -521,9 +515,7 @@ class _PasswordEditorPanelState extends OptimizedState<PasswordEditorPanel> {
       }
     } catch (error, stack) {
       Logger.error("Failed to save password", error: error, trace: stack);
-      final message = error is StateError
-          ? error.message.toString()
-          : "Unable to save password. $error";
+      final message = error is StateError ? error.message.toString() : "Unable to save password. $error";
       showSnackbar("Error", message);
     } finally {
       if (mounted) {
@@ -536,8 +528,7 @@ class _PasswordEditorPanelState extends OptimizedState<PasswordEditorPanel> {
     return DateTime.now().toUtc().millisecondsSinceEpoch;
   }
 
-  Future<List<api.PasswordManagerMetaChange>?>
-      _maybeLoadPasswordHistoryTemplate() async {
+  Future<List<api.PasswordManagerMetaChange>?> _maybeLoadPasswordHistoryTemplate() async {
     final entries = await api.getPasswordsMeta(passwords: widget.provider);
     for (final entry in entries.values) {
       final history = entry.$2.getPasswordData().history;
@@ -656,8 +647,7 @@ class _PasswordEditorPanelState extends OptimizedState<PasswordEditorPanel> {
     final updated = api.PasswordManagerMetaChange(
       date: now,
       password: password,
-      oldPassword:
-          shouldAppend ? priorPassword : (isNew ? null : priorPassword),
+      oldPassword: shouldAppend ? priorPassword : (isNew ? null : priorPassword),
       id: id,
       typ: "pwch",
     );
@@ -803,9 +793,7 @@ class _PasswordEditorPanelState extends OptimizedState<PasswordEditorPanel> {
   Future<void> _copyTotpUri() async {
     final uri = _totp == null
         ? ""
-        : (_totp!.originalUrl?.trim().isNotEmpty == true
-            ? _totp!.originalUrl!.trim()
-            : _buildTotpUri(_totp!));
+        : (_totp!.originalUrl?.trim().isNotEmpty == true ? _totp!.originalUrl!.trim() : _buildTotpUri(_totp!));
     if (uri.isEmpty) return;
     await Clipboard.setData(ClipboardData(text: uri));
     showSnackbar("Copied", "TOTP link copied to clipboard.");
@@ -908,8 +896,7 @@ class _PasswordEditorPanelState extends OptimizedState<PasswordEditorPanel> {
     final issuer = uri.queryParameters["issuer"];
     final digits = int.tryParse(uri.queryParameters["digits"] ?? "") ?? 6;
     final period = int.tryParse(uri.queryParameters["period"] ?? "") ?? 30;
-    final algorithmLabel =
-        (uri.queryParameters["algorithm"] ?? "SHA1").toUpperCase();
+    final algorithmLabel = (uri.queryParameters["algorithm"] ?? "SHA1").toUpperCase();
     final algorithm = switch (algorithmLabel) {
       "SHA1" => 0,
       "SHA256" => 1,
@@ -969,8 +956,7 @@ class _PasswordEditorPanelState extends OptimizedState<PasswordEditorPanel> {
         return null;
       }
     } else if (status.isPermanentlyDenied) {
-      showSnackbar("Error",
-          "Camera permission permanently denied, please modify permissions.");
+      showSnackbar("Error", "Camera permission permanently denied, please modify permissions.");
       return null;
     }
 
@@ -993,8 +979,7 @@ class _PasswordEditorPanelState extends OptimizedState<PasswordEditorPanel> {
   }
 
   Uint8List _decodeBase32(String input) {
-    final normalized =
-        input.trim().replaceAll(" ", "").replaceAll("=", "").toUpperCase();
+    final normalized = input.trim().replaceAll(" ", "").replaceAll("=", "").toUpperCase();
     const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
     var buffer = 0;
     var bitsLeft = 0;
@@ -1056,9 +1041,7 @@ class _PasswordEditorPanelState extends OptimizedState<PasswordEditorPanel> {
       if (value.isEmpty) continue;
       domains.add(value);
     }
-    return domains
-        .map((domain) => api.PasswordManagerAltDomain(domain: domain))
-        .toList();
+    return domains.map((domain) => api.PasswordManagerAltDomain(domain: domain)).toList();
   }
 
   void _confirmDelete() {

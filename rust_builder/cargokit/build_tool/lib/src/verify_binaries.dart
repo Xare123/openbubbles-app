@@ -48,10 +48,12 @@ class VerifyBinaries {
 
         for (final artifact in artifacts) {
           final fileName = PrecompileBinaries.fileName(target, artifact);
-          final signatureFileName = PrecompileBinaries.signatureFileName(target, artifact);
+          final signatureFileName =
+              PrecompileBinaries.signatureFileName(target, artifact);
 
           final url = Uri.parse('$prefix$crateHash/$fileName');
-          final signatureUrl = Uri.parse('$prefix$crateHash/$signatureFileName');
+          final signatureUrl =
+              Uri.parse('$prefix$crateHash/$signatureFileName');
 
           final signature = await get(signatureUrl);
           if (signature.statusCode != 200) {
@@ -66,7 +68,8 @@ class VerifyBinaries {
             break;
           }
 
-          if (!verify(precompiledBinaries.publicKey, asset.bodyBytes, signature.bodyBytes)) {
+          if (!verify(precompiledBinaries.publicKey, asset.bodyBytes,
+              signature.bodyBytes)) {
             stdout.writeln('INVALID SIGNATURE');
             ok = false;
           }

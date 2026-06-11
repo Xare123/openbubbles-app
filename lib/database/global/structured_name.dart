@@ -1,34 +1,35 @@
 class StructuredName {
-  StructuredName({
-    required this.namePrefix,
-    required this.givenName,
-    required this.middleName,
-    required this.familyName,
-    required this.nameSuffix,
+  final String? givenName;
+  final String? familyName;
+  final String? middleName;
+  final String? namePrefix;
+  final String? nameSuffix;
+  final String? nickname;
+
+  const StructuredName({
+    this.givenName,
+    this.familyName,
+    this.middleName,
+    this.namePrefix,
+    this.nameSuffix,
+    this.nickname,
   });
 
-  static StructuredName? fromMap(Map<String, dynamic>? map) {
-    if (map == null) return null;
-    return StructuredName(
-      namePrefix: map['namePrefix'] as String,
-      givenName: map['givenName'] as String,
-      middleName: map['middleName'] as String,
-      familyName: map['familyName'] as String,
-      nameSuffix: map['nameSuffix'] as String,
-    );
-  }
+  Map<String, dynamic> toMap() => {
+        'givenName': givenName,
+        'familyName': familyName,
+        'middleName': middleName,
+        'namePrefix': namePrefix,
+        'nameSuffix': nameSuffix,
+        'nickname': nickname,
+      };
 
-  Map<String, String> toMap() => {
-    "namePrefix": namePrefix,
-    "givenName": givenName,
-    "middleName": middleName,
-    "familyName": familyName,
-    "nameSuffix": nameSuffix,
-  };
-
-  final String namePrefix;
-  final String givenName;
-  final String middleName;
-  final String familyName;
-  final String nameSuffix;
+  factory StructuredName.fromMap(Map<String, dynamic> map) => StructuredName(
+        givenName: map['givenName'],
+        familyName: map['familyName'],
+        middleName: map['middleName'],
+        namePrefix: map['namePrefix'],
+        nameSuffix: map['nameSuffix'],
+        nickname: map['nickname'],
+      );
 }

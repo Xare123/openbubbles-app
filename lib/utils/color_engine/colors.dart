@@ -74,9 +74,7 @@ class Srgb extends Color {
   final double g;
   final double b;
 
-  Srgb(int r, int g, int b)
-      : this._(
-      r.toDouble() / 255.0, g.toDouble() / 255.0, b.toDouble() / 255.0);
+  Srgb(int r, int g, int b) : this._(r.toDouble() / 255.0, g.toDouble() / 255.0, b.toDouble() / 255.0);
   const Srgb._(this.r, this.g, this.b);
 
   // Convenient constructors for quantized values
@@ -84,14 +82,13 @@ class Srgb extends Color {
 
   @override
   LinearSrgb toLinearSrgb() => LinearSrgb(
-    LinearSrgb._eotf(r),
-    LinearSrgb._eotf(g),
-    LinearSrgb._eotf(b),
-  );
+        LinearSrgb._eotf(r),
+        LinearSrgb._eotf(g),
+        LinearSrgb._eotf(b),
+      );
 
   int quantize8() {
-    return ui.Color.fromRGBO(_quantize8(r), _quantize8(g), _quantize8(b), 1)
-        .value;
+    return ui.Color.fromRGBO(_quantize8(r), _quantize8(g), _quantize8(b), 1).toARGB32();
   }
 
   static int _quantize8(double n) => (n * 255.0).toInt().clamp(0, 255);
@@ -248,7 +245,6 @@ double toDegrees(double radians) {
   return radians * 180 / math.pi;
 }
 
-double root(num base, num factor) =>
-    (math.pow(base, 1 / factor) * 1000000000).round() / 1000000000;
+double root(num base, num factor) => (math.pow(base, 1 / factor) * 1000000000).round() / 1000000000;
 
 const CieXyz illuminantsD65 = CieXyz(0.95047, 1.0, 0.108883);

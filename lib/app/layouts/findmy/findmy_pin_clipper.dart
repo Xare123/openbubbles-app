@@ -2,18 +2,21 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
-class FindMyPinClipper extends CustomClipper<Path>{
+class FindMyPinClipper extends CustomClipper<Path> {
   const FindMyPinClipper();
 
   @override
   Path getClip(Size size) {
     final path = Path();
     path.moveTo(size.width / 2, size.width / 2);
-    path.addArc(Rect.fromCenter(
-      center: Offset(size.width / 2, size.width / 2),
-      height: size.width,
-      width: size.width,
-    ), 4 * pi / 9, - 17 * pi / 9);
+    path.addArc(
+        Rect.fromCenter(
+          center: Offset(size.width / 2, size.width / 2),
+          height: size.width,
+          width: size.width,
+        ),
+        4 * pi / 9,
+        -17 * pi / 9);
     path.lineTo(size.width / 2, size.height);
     path.close();
     return path;
@@ -44,7 +47,7 @@ class ClipShadowPath extends StatelessWidget {
         clipper: clipper,
         shadow: shadow,
       ),
-      child: ClipPath(child: child, clipper: clipper),
+      child: ClipPath(clipper: clipper, child: child),
     );
   }
 }

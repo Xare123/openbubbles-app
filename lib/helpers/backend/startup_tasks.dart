@@ -1,23 +1,37 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show AppLifecycleState;
 
 import 'package:bitsdojo_window/bitsdojo_window.dart';
+import 'package:bluebubbles/env.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/database.dart';
+import 'package:bluebubbles/services/isolates/global_isolate.dart';
+import 'package:bluebubbles/services/isolates/incremental_sync_isolate.dart';
+import 'package:bluebubbles/services/network/backend_service.dart';
+import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/services/ui/extension_service.dart';
 import 'package:bluebubbles/src/rust/frb_generated.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:in_app_review/in_app_review.dart';
 import 'package:on_exit/init.dart';
 import 'package:app_install_date/app_install_date.dart';
 import 'package:path/path.dart';
-import 'package:tuple/tuple.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:get_it/get_it.dart';
+
+class WindowEntry {
+  final String id;
+  final String name;
+
+  const WindowEntry(this.id, this.name);
+}
 
 class StartupTasks {
-
   static final Completer<void> uiReady = Completer<void>();
 
   static Future<void> waitForUI() async {
@@ -26,108 +40,582 @@ class StartupTasks {
 
   static Future<void> initStartupServices({bool isBubble = false}) async {
     debugPrint("Initializing startup services...");
-
     await RustLib.init();
-    
-    // First, initialize the filesystem service as it's used by other necessary services
-    await fs.init();
 
-    // Initialize the logger so we can start logging things immediately
-    await Logger.init();
-    Logger.debug("Initializing startup services...");
+    debugPrint("Registering FilesystemService...");
+    GetIt.I.registerSingletonAsync<FilesystemService>(() async {
+      final fsService = FilesystemService();
+      await fsService.init(headless: false);
+      return fsService;
+    });
+    await GetIt.I.isReady<FilesystemService>();
+    debugPrint("FilesystemService ready");
+
+    debugPrint("Registering SharedPreferencesService...");
+    GetIt.I.registerSingletonAsync<SharedPreferencesService>(() async {
+      final prefsService = SharedPreferencesService();
+      await prefsService.init();
+      return prefsService;
+    });
+    await GetIt.I.isReady<SharedPreferencesService>();
+    debugPrint("SharedPreferencesService ready");
+
+    debugPrint("Registering SettingsService...");
+    GetIt.I.registerSingletonAsync<SettingsService>(() async {
+      final settingsService = SettingsService();
+      await settingsService.init();
+      return settingsService;
+    });
+    await GetIt.I.isReady<SettingsService>();
+    debugPrint("SettingsService ready");
+
+    debugPrint("Registering BaseLogger...");
+    GetIt.I.registerSingletonAsync<BaseLogger>(() async {
+      final logService = BaseLogger();
+      await logService.init();
+      return logService;
+    });
+    await GetIt.I.isReady<BaseLogger>();
+    Logger.info("BaseLogger ready - switching to Logger for remaining logs");
+    Logger.info("BaseLogger ready - switching to Logger for remaining logs");
 
     // Check if another instance is running (Linux Only).
     // Automatically handled on Windows (I think)
+    Logger.info("Checking instance lock...");
     await StartupTasks.checkInstanceLock();
-
-    // Setup the settings service
-    await ss.init();
 
     // The next thing we need to do is initialize the database.
     // If the database is not initialized, we cannot do anything.
+    Logger.info("Initializing database...");
     await Database.init();
+    Logger.info("Database initialized");
+
+    // Register the global isolate
+    Logger.info("Registering isolates...");
+    GetIt.I.registerSingleton<GlobalIsolate>(GlobalIsolate());
+    NetworkTasks.registerIsolate(GetIt.I<GlobalIsolate>());
+    GetIt.I.registerSingleton<IncrementalSyncIsolate>(IncrementalSyncIsolate());
+    NetworkTasks.registerIsolate(GetIt.I<IncrementalSyncIsolate>());
+
+    Logger.info("Registering backend...");
+    GetIt.I.registerSingleton<BackendService>(RustPushBackend());
 
     // Load FCM data into settings from the database
     // We only need to do this for the main startup
-    ss.getFcmData();
-    
+    Logger.info("Loading FCM data...");
+    SettingsSvc.loadFcmDataFromDatabase();
+
+    Logger.info("Registering HttpService...");
+    GetIt.I.registerSingleton<HttpService>(HttpService());
+    await HttpSvc.init();
+
     // We then have to initialize all the services that the app will use.
     // Order matters here as some services may rely on others. For instance,
     // The MethodChannel service needs the database to be initialized to handle events.
     // The Lifecycle service needs the MethodChannel service to be initialized to send events.
-    await mcs.init();
-    await ls.init(isBubble: isBubble);
-    await ts.init();
-    
-    es.refreshCache();
 
-    if (!kIsWeb) {
-      await cs.init();
-      GlobalChatService;
-    }
+    Logger.info("Registering MethodChannelService...");
+    GetIt.I.registerSingletonAsync<MethodChannelService>(() async {
+      final channelService = MethodChannelService();
+      await channelService.init(isBubble: isBubble);
+      return channelService;
+    });
 
-    await notif.init();
-    await intents.init();
+    Logger.info("Registering LifecycleService...");
+    GetIt.I.registerSingletonAsync<LifecycleService>(() async {
+      final lifecycleService = LifecycleService();
+      await lifecycleService.init(isBubble: isBubble);
+      return lifecycleService;
+    });
+
+    Logger.info("Registering CloudMessagingService...");
+    GetIt.I.registerSingleton<CloudMessagingService>(CloudMessagingService());
+
+    Logger.info("Registering ContactServiceV2...");
+    GetIt.I.registerSingletonAsync<ContactServiceV2>(() async {
+      final contactServiceV2 = ContactServiceV2();
+      await contactServiceV2.init();
+      return contactServiceV2;
+    });
+
+    Logger.info("Registering IntentsService, SyncService, and ThemesService...");
+    GetIt.I.registerSingleton<IntentsService>(IntentsService());
+    GetIt.I.registerSingleton<SyncService>(SyncService());
+    GetIt.I.registerSingleton<ThemesService>(ThemesService());
+
+    // Parallelize independent services for faster startup
+    Logger.info("Waiting for services to be ready...");
+    await Future.wait([
+      GetIt.I.isReady<MethodChannelService>(),
+      GetIt.I.isReady<LifecycleService>(),
+      ThemeSvc.init(),
+      IntentsSvc.init(),
+      GetIt.I.isReady<ContactServiceV2>(),
+    ]);
+    Logger.info("All parallel services ready");
+
+    Logger.info("Registering NavigatorService...");
+    GetIt.I.registerSingleton<NavigatorService>(NavigatorService());
+
+    // Do not init here. We will init after authentication
+    Logger.info("Registering HandleService...");
+    GetIt.I.registerSingleton<HandleService>(HandleService());
+    HandleSvc.init();
+
+    Logger.info("Registering ChatsService, SocketService, and NotificationsService...");
+    GetIt.I.registerSingleton<ChatsService>(ChatsService());
+    GetIt.I.registerSingleton<SocketService>(SocketService());
+    GetIt.I.registerSingletonAsync<NotificationsService>(() async {
+      final notificationsService = NotificationsService();
+      await notificationsService.init();
+      return notificationsService;
+    });
+    await GetIt.I.isReady<NotificationsService>();
+
+    Logger.info("Registering ExtensionService...");
+    GetIt.I.registerSingleton<ExtensionService>(ExtensionService());
+    unawaited(ExtensionSvc.refreshCache());
+
+    Logger.info("Registering rustpush...");
+    final pushService = RustPushService();
+    pushService.init();
+    GetIt.I.registerSingleton<RustPushService>(pushService);
+
+    GetIt.I.registerSingleton<EventDispatcher>(EventDispatcher());
+
+    Logger.info("Registering IncomingMessageHandler...");
+    GetIt.I.registerSingleton<IncomingMessageHandler>(
+      IncomingMessageHandler(),
+      dispose: (svc) => svc.dispose(),
+    );
+
+    Logger.info("Registering OutgoingMessageHandler...");
+    GetIt.I.registerSingleton<OutgoingMessageHandler>(
+      OutgoingMessageHandler(),
+      dispose: (svc) => svc.dispose(),
+    );
+
+    Logger.info(
+        "Startup services initialization complete! Running localhost detection then starting incremental sync...");
+    unawaited(NetworkTasks.detectLocalhost().then((_) => SyncSvc.startIncrementalSync()));
   }
 
-  static Future<void> initIsolateServices() async {
+  static Future<void> initGlobalIsolateServices(RootIsolateToken? rootIsolateToken) async {
+    debugPrint("Initializing isolate services...");
     await RustLib.init();
 
-    debugPrint("Initializing isolate services...");
-    await fs.init(headless: true);
-    await Logger.init();
-    Logger.debug("Initializing isolate services...");
-    await ss.init(headless: true);
+    BinaryMessenger? messenger;
+    if (rootIsolateToken != null) {
+      debugPrint("Initializing Background Isolate Binary Messenger");
+      BackgroundIsolateBinaryMessenger.ensureInitialized(rootIsolateToken);
+      messenger = BackgroundIsolateBinaryMessenger.instance;
+    }
+
+    debugPrint("Registering FilesystemService...");
+    GetIt.I.registerSingletonAsync<FilesystemService>(() async {
+      final fsService = FilesystemService();
+      await fsService.init(headless: true);
+      return fsService;
+    });
+    await GetIt.I.isReady<FilesystemService>();
+    debugPrint("FilesystemService ready");
+
+    debugPrint("Registering SharedPreferencesService...");
+    GetIt.I.registerSingletonAsync<SharedPreferencesService>(() async {
+      final prefsService = SharedPreferencesService();
+      await prefsService.init();
+      return prefsService;
+    });
+    await GetIt.I.isReady<SharedPreferencesService>();
+    debugPrint("SharedPreferencesService ready");
+
+    debugPrint("Registering SettingsService...");
+    GetIt.I.registerSingletonAsync<SettingsService>(() async {
+      final settingsService = SettingsService();
+      await settingsService.init(headless: true);
+      return settingsService;
+    });
+    await GetIt.I.isReady<SettingsService>();
+    debugPrint("SettingsService ready");
+
+    // Initialize the logger so we can start logging things immediately
+    debugPrint("Registering BaseLogger...");
+    GetIt.I.registerSingletonAsync<BaseLogger>(() async {
+      final logService = BaseLogger();
+      await logService.init();
+      return logService;
+    });
+    await GetIt.I.isReady<BaseLogger>();
+    Logger.info("BaseLogger ready - switching to Logger for remaining logs");
+
+    Logger.info("Initializing database...");
     await Database.init();
-    await mcs.init(headless: true);
-    await ls.init(headless: true);
+    Logger.info("Database initialized");
+
+    // Since we are starting it headless, it can safely be started early on in the startup.
+    Logger.info("Registering ContactServiceV2...");
+    GetIt.I.registerSingletonAsync<ContactServiceV2>(() async {
+      final contactServiceV2 = ContactServiceV2();
+      await contactServiceV2.init(headless: true);
+      return contactServiceV2;
+    });
+    await GetIt.I.isReady<ContactServiceV2>();
+    Logger.info("ContactServiceV2 ready");
+
+    // Since we are starting it headless, it can safely be started early on in the startup.
+    Logger.info("Registering HandleService...");
+    GetIt.I.registerSingleton<HandleService>(HandleService());
+    HandleSvc.init();
+
+    // Since we are starting it headless, it can safely be started early on in the startup.
+    Logger.info("Registering ChatsService...");
+    GetIt.I.registerSingleton<ChatsService>(ChatsService());
+    await ChatsSvc.init(headless: true);
+    Logger.info("ChatsService ready");
+
+    Logger.info("Registering MethodChannelService...");
+    GetIt.I.registerSingletonAsync<MethodChannelService>(() async {
+      final channelService = MethodChannelService();
+      await channelService.init(headless: true, binaryMessenger: messenger);
+      return channelService;
+    });
+    await GetIt.I.isReady<MethodChannelService>();
+    Logger.info("MethodChannelService ready");
+
+    Logger.info("Registering HttpService...");
+    GetIt.I.registerSingleton<HttpService>(HttpService());
+    await HttpSvc.init();
+
+    Logger.info("Global isolate services initialization complete");
   }
 
-  static Future<void> initIncrementalSyncServices() async {
-    debugPrint("Initializing incremental sync services...");
-    await fs.init();
-    await Logger.init();
-    Logger.debug("Initializing incremental sync services...");
-    await ss.init();
+  /// Initialize only the services required for sync operations (lighter than full global isolate)
+  static Future<void> initSyncIsolateServices(RootIsolateToken? rootIsolateToken) async {
+    debugPrint("Initializing sync isolate services...");
+
+    if (rootIsolateToken != null) {
+      debugPrint("Initializing Background Isolate Binary Messenger");
+      BackgroundIsolateBinaryMessenger.ensureInitialized(rootIsolateToken);
+    }
+
+    debugPrint("Registering FilesystemService...");
+    GetIt.I.registerSingletonAsync<FilesystemService>(() async {
+      final fsService = FilesystemService();
+      await fsService.init(headless: true);
+      return fsService;
+    });
+    await GetIt.I.isReady<FilesystemService>();
+    debugPrint("FilesystemService ready");
+
+    debugPrint("Registering SharedPreferencesService...");
+    GetIt.I.registerSingletonAsync<SharedPreferencesService>(() async {
+      final prefsService = SharedPreferencesService();
+      await prefsService.init();
+      return prefsService;
+    });
+    await GetIt.I.isReady<SharedPreferencesService>();
+    debugPrint("SharedPreferencesService ready");
+
+    debugPrint("Registering SettingsService...");
+    GetIt.I.registerSingletonAsync<SettingsService>(() async {
+      final settingsService = SettingsService();
+      await settingsService.init(headless: true);
+      return settingsService;
+    });
+    await GetIt.I.isReady<SettingsService>();
+    debugPrint("SettingsService ready");
+
+    // Initialize the logger so we can start logging things immediately
+    debugPrint("Registering BaseLogger...");
+    GetIt.I.registerSingletonAsync<BaseLogger>(() async {
+      final logService = BaseLogger();
+      await logService.init();
+      return logService;
+    });
+    await GetIt.I.isReady<BaseLogger>();
+    Logger.info("BaseLogger ready - switching to Logger for remaining logs");
+
+    Logger.info("Initializing database...");
     await Database.init();
+    Logger.info("Database initialized");
+
+    // Sync operations need ContactServiceV2
+    Logger.info("Registering ContactServiceV2...");
+    GetIt.I.registerSingletonAsync<ContactServiceV2>(() async {
+      final contactServiceV2 = ContactServiceV2();
+      await contactServiceV2.init(headless: true);
+      return contactServiceV2;
+    });
+    await GetIt.I.isReady<ContactServiceV2>();
+    Logger.info("ContactServiceV2 ready");
+
+    Logger.info("Registering backend...");
+    GetIt.I.registerSingleton<BackendService>(RustPushBackend());
+
+    Logger.info("Registering ExtensionService...");
+    GetIt.I.registerSingleton<ExtensionService>(ExtensionService());
+    unawaited(ExtensionSvc.refreshCache());
+
+    Logger.info("Registering rustpush...");
+    final pushService = RustPushService(isFrontEnd: false);
+    pushService.init();
+    GetIt.I.registerSingleton<RustPushService>(pushService);
+
+    // Sync operations need ChatsService
+    Logger.info("Registering HandleService...");
+    GetIt.I.registerSingleton<HandleService>(HandleService());
+    HandleSvc.init();
+
+    Logger.info("Registering ChatsService...");
+    GetIt.I.registerSingleton<ChatsService>(ChatsService());
+    await ChatsSvc.init(headless: true);
+    Logger.info("ChatsService ready");
+
+    Logger.info("Registering HttpService...");
+    GetIt.I.registerSingleton<HttpService>(HttpService());
+    await HttpSvc.init();
+    Logger.info("HttpService ready");
+
+    Logger.info("Sync isolate services initialization complete");
+  }
+
+  static Future<void> initBackgroundIsolate() async {
+    debugPrint("Initializing background isolate services...");
+    await RustLib.init();
+
+    // When the DartWorker spins up the isolate, the Isolate.current.debugName == "main".
+    // While this might be the only flutter engine/instance running, it's still not technically the "main" isolate.
+    // So we set isIsolateOverride to true to force isIsolate to return true.
+    isIsolateOverride = true;
+
+    debugPrint("Registering FilesystemService...");
+    GetIt.I.registerSingletonAsync<FilesystemService>(() async {
+      final fsService = FilesystemService();
+      await fsService.init(headless: true);
+      return fsService;
+    });
+    await GetIt.I.isReady<FilesystemService>();
+    debugPrint("FilesystemService ready");
+
+    debugPrint("Registering SharedPreferencesService...");
+    GetIt.I.registerSingletonAsync<SharedPreferencesService>(() async {
+      final prefsService = SharedPreferencesService();
+      await prefsService.init();
+      return prefsService;
+    });
+    await GetIt.I.isReady<SharedPreferencesService>();
+    debugPrint("SharedPreferencesService ready");
+
+    debugPrint("Registering SettingsService...");
+    GetIt.I.registerSingletonAsync<SettingsService>(() async {
+      final settingsService = SettingsService();
+      await settingsService.init(headless: true);
+      return settingsService;
+    });
+    await GetIt.I.isReady<SettingsService>();
+    debugPrint("SettingsService ready");
+
+    // Initialize the logger so we can start logging things immediately
+    debugPrint("Registering BaseLogger...");
+    GetIt.I.registerSingletonAsync<BaseLogger>(() async {
+      final logService = BaseLogger();
+      await logService.init();
+      return logService;
+    });
+    await GetIt.I.isReady<BaseLogger>();
+    Logger.info("BaseLogger ready - switching to Logger for remaining logs");
+
+    Logger.info("Initializing database...");
+    await Database.init();
+    Logger.info("Database initialized");
+
+    // Since we are starting it headless, it can safely be started early on in the startup.
+    Logger.info("Registering ContactServiceV2...");
+    GetIt.I.registerSingletonAsync<ContactServiceV2>(() async {
+      final contactServiceV2 = ContactServiceV2();
+      await contactServiceV2.init(headless: true);
+      return contactServiceV2;
+    });
+    await GetIt.I.isReady<ContactServiceV2>();
+    Logger.info("ContactServiceV2 ready");
+
+    // Since we are starting it headless, it can safely be started early on in the startup.
+    Logger.info("Registering HandleService...");
+    GetIt.I.registerSingleton<HandleService>(HandleService());
+    HandleSvc.init();
+
+    // Since we are starting it headless, it can safely be started early on in the startup.
+    Logger.info("Registering ChatsService...");
+    GetIt.I.registerSingleton<ChatsService>(ChatsService());
+    await ChatsSvc.init(headless: true);
+    Logger.info("ChatsService ready");
+
+    Logger.info("Registering NotificationsService...");
+    GetIt.I.registerSingletonAsync<NotificationsService>(() async {
+      final notificationsService = NotificationsService();
+      await notificationsService.init(headless: true);
+      return notificationsService;
+    });
+    await GetIt.I.isReady<NotificationsService>();
+    Logger.info("NotificationsService ready");
+
+    Logger.info("Registering MethodChannelService...");
+    GetIt.I.registerSingletonAsync<MethodChannelService>(() async {
+      final channelService = MethodChannelService();
+      await channelService.init(headless: true);
+      return channelService;
+    });
+    await GetIt.I.isReady<MethodChannelService>();
+    Logger.info("MethodChannelService ready");
+
+    Logger.info("Registering LifecycleService...");
+    GetIt.I.registerSingletonAsync<LifecycleService>(() async {
+      final lifecycleService = LifecycleService();
+      await lifecycleService.init(headless: true);
+      return lifecycleService;
+    });
+    await GetIt.I.isReady<LifecycleService>();
+
+    Logger.info("Registering backend...");
+    GetIt.I.registerSingleton<BackendService>(RustPushBackend());
+
+    Logger.info("Registering ExtensionService...");
+    GetIt.I.registerSingleton<ExtensionService>(ExtensionService());
+    unawaited(ExtensionSvc.refreshCache());
+
+    Logger.info("Registering rustpush...");
+    final pushService = RustPushService(isFrontEnd: false);
+    pushService.init();
+    GetIt.I.registerSingleton<RustPushService>(pushService);
+
+    Logger.info("Registering HttpService...");
+    GetIt.I.registerSingleton<HttpService>(HttpService());
+    await HttpSvc.init();
+
+    Logger.info("Registering IncomingMessageHandler...");
+    GetIt.I.registerSingleton<IncomingMessageHandler>(
+      IncomingMessageHandler(),
+      dispose: (svc) => svc.dispose(),
+    );
+
+    Logger.info("Background isolate services initialization complete");
   }
 
   static Future<void> onStartup() async {
-    if (!ss.settings.finishedSetup.value) return;
+    Logger.info("Running onStartup tasks...");
 
-    if (!kIsDesktop) {
-      chats.init();
-      socket;
+    if (!SettingsSvc.settings.finishedSetup.value) {
+      Logger.info("Setup not finished, skipping onStartup tasks");
+      return;
     }
 
-    // Fetch server details for the rest of the app.
-    // We only need to fetch it on startup since the metadata shouldn't change.
-    await ss.getServerDetails(refresh: true);
+    if (!kIsDesktop) {
+      Logger.info("Initializing ChatsService and SocketService...");
+      ChatsSvc.init(headless: false);
+      SocketSvc.init();
+    }
+
+    // Refresh server details in the background via the GlobalIsolate.
+    // Error handling is inside refreshServerDetails(); no need to catch here.
+    Logger.info("Refreshing server details in background...");
+    unawaited(SettingsSvc.refreshServerDetails());
 
     // Only register FCM device on startup
-    await fcm.registerDevice();
+    // Don't await - let this happen in background
+    Logger.info("Registering FCM device in background...");
+    FirebaseSvc.registerDevice().catchError((e, s) {
+      Logger.warn("Failed to register FCM device on startup!", error: e, trace: s);
+      return null; // Return null on error
+    });
 
     // We don't need to check for updates immediately, so delay it so other
     // code has a chance to run and we don't block the UI thread.
+    Logger.info("Scheduling update checks for 30 seconds from now...");
     Future.delayed(const Duration(seconds: 30), () {
+      Logger.info("Running scheduled update checks...");
       try {
-        ss.checkServerUpdate();
+        SettingsSvc.checkServerUpdate();
       } catch (ex, stack) {
         Logger.warn("Failed to check for server update!", error: ex, trace: stack);
       }
 
       try {
-        ss.checkClientUpdate();
+        SettingsSvc.checkClientUpdate();
       } catch (ex, stack) {
         Logger.warn("Failed to check for client update!", error: ex, trace: stack);
       }
     });
 
+    Logger.info("Updating share targets...");
+    await ChatsSvc.updateShareTargets();
+    Logger.info("Share targets updated");
+
     // Check if we need to request a review
     if (Platform.isAndroid) {
+      Logger.info("Scheduling review flow check for 1 minute from now...");
       Future.delayed(const Duration(minutes: 1), () async {
         await reviewFlow();
       });
+    }
+
+    Logger.info("onStartup tasks complete");
+  }
+
+  static Future<void> onAppResume() async {
+    // Observer is permanently registered in init() and should never be removed
+    if (!kIsDesktop || LifecycleSvc.wasActiveAliveBefore != false) {
+      ChatsSvc.setActiveToAlive();
+    }
+
+    final activeChat = ChatsSvc.activeChat;
+    if (activeChat != null) {
+      // Skip marking the active chat as read when we know a notification-tap
+      // is about to redirect us to a *different* chat.  pendingOpenChatGuid is
+      // set synchronously in IntentsService.openChat before the first await, so
+      // it is always visible here even though we are inside an async callback.
+      final pendingGuid = (!kIsWeb && !kIsDesktop && GetIt.I.isRegistered<IntentsService>())
+          ? GetIt.I<IntentsService>().pendingOpenChatGuid
+          : null;
+      final redirectingAway = pendingGuid != null && pendingGuid != activeChat.chat.guid;
+      if (!redirectingAway) {
+        ChatsSvc.setChatHasUnread(activeChat.chat, false);
+      }
+
+      // On desktop, always restore focus when the app is resumed (window regains focus).
+      // On mobile, only refocus if the user has auto-open keyboard enabled AND the
+      // conversation view is the active route (not obscured by ConversationDetails etc.).
+      if (kIsDesktop || SettingsSvc.settings.autoOpenKeyboard.value) {
+        ConversationViewController _cvc = cvc(activeChat.chat);
+        if (!_cvc.showingOverlays && !_cvc.showingSubRoute && _cvc.editing.isEmpty) {
+          _cvc.lastFocusedNode.requestFocus();
+        }
+      }
+    }
+
+    if (HttpSvc.originOverride == null && SettingsSvc.settings.localhostPort.value != null) {
+      await NetworkTasks.detectLocalhost();
+    }
+
+    // Start the incremental sync on open, rather than on the socket connection.
+    // Detect localhost first so the sync (and its isolate) use the local address.
+    // Don't need to await these calls
+    if (!Platform.isAndroid) {
+      SyncSvc.startIncrementalSync();
+    } else if (!LifecycleSvc.hasResumed ||
+        (LifecycleSvc.currentState == AppLifecycleState.resumed && LifecycleSvc.wasPaused)) {
+      SyncSvc.startIncrementalSync();
+    }
+
+    if (!kIsDesktop && !kIsWeb) {
+      if (!LifecycleSvc.isBubble) {
+        LifecycleSvc.createFakePort();
+      }
+
+      SocketSvc.reconnect();
+    }
+
+    if (kIsDesktop) {
+      LifecycleSvc.windowFocused = true;
     }
   }
 
@@ -135,8 +623,8 @@ class StartupTasks {
     if (!kIsDesktop || !Platform.isLinux) return;
     Logger.debug("Starting process with PID $pid");
 
-    final lockFile = File(join(fs.appDocDir.path, 'bluebubbles.lck'));
-    final instanceFile = File(join(fs.appDocDir.path, '.instance'));
+    final lockFile = File(join(FilesystemSvc.appDocDir.path, 'bluebubbles.lck'));
+    final instanceFile = File(join(FilesystemSvc.appDocDir.path, '.instance'));
     onExit(() {
       if (lockFile.existsSync()) lockFile.deleteSync();
     });
@@ -162,18 +650,18 @@ class StartupTasks {
       Logger.debug("Got Signal to go to foreground");
       doWhenWindowReady(() async {
         await windowManager.show();
-        List<Tuple2<String, String>?> widAndNames = await (await Process.start('wmctrl', ['-pl']))
+        List<WindowEntry?> widAndNames = await (await Process.start('wmctrl', ['-pl']))
             .stdout
             .transform(utf8.decoder)
             .transform(const LineSplitter())
             .map((line) => line.replaceAll(RegExp(r"\s+"), " ").split(" "))
-            .map((split) => split[2] == "$pid" ? Tuple2(split.first, split.last) : null)
-            .where((tuple) => tuple != null)
+            .map((split) => split[2] == "$pid" ? WindowEntry(split.first, split.last) : null)
+            .where((entry) => entry != null)
             .toList();
 
-        for (Tuple2<String, String>? window in widAndNames) {
-          if (window?.item2 == "BlueBubbles") {
-            Process.runSync('wmctrl', ['-iR', window!.item1]);
+        for (WindowEntry? window in widAndNames) {
+          if (window?.name == "BlueBubbles") {
+            Process.runSync('wmctrl', ['-iR', window!.id]);
             break;
           }
         }
@@ -183,12 +671,12 @@ class StartupTasks {
 }
 
 Future<void> reviewFlow() async {
-  if (!ls.isAlive) return;
+  if (!LifecycleSvc.isAlive) return;
   Logger.info('Checking if we should request a review');
 
   try {
     DateTime sinceDate = await AppInstallDate().installDate;
-    int lastReviewRequest = ss.settings.lastReviewRequestTimestamp.value;
+    int lastReviewRequest = SettingsSvc.settings.lastReviewRequestTimestamp.value;
     if (lastReviewRequest > 0) {
       sinceDate = DateTime.fromMillisecondsSinceEpoch(lastReviewRequest);
     }
@@ -196,18 +684,18 @@ Future<void> reviewFlow() async {
     final DateTime now = DateTime.now();
     final int days = now.difference(sinceDate).inDays;
 
-    // If the app has been installed for 7 days, request a review
+    // If the app has been installed for 30 days, request a review
     // And if the user has not been asked for a review ever.
-    // If the user has already been asked, ask again after 30 days
-    if ((lastReviewRequest == 0 && days >= 7) || (lastReviewRequest > 0 && days >= 30)) {
-      ss.settings.lastReviewRequestTimestamp.value = now.millisecondsSinceEpoch;
-      await ss.settings.saveOne("lastReviewRequestTimestamp");
+    // If the user has already been asked, ask again after 90 days
+    if ((lastReviewRequest == 0 && days >= 30) || (lastReviewRequest > 0 && days >= 90)) {
+      SettingsSvc.settings.lastReviewRequestTimestamp.value = now.millisecondsSinceEpoch;
+      await SettingsSvc.settings.saveOneAsync("lastReviewRequestTimestamp");
       await requestReview();
     } else {
       Logger.info('Not requesting review, days since install/last request: $days');
     }
   } catch (e, st) {
-      Logger.warn("Failed to request app review", error: e, trace: st);
+    Logger.warn("Failed to request app review", error: e, trace: st);
   }
 }
 

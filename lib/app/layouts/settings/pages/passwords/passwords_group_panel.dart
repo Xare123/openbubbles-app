@@ -36,7 +36,7 @@ class PasswordsGroupPanel extends StatefulWidget {
   State<PasswordsGroupPanel> createState() => _PasswordsGroupPanelState();
 }
 
-class _PasswordsGroupPanelState extends OptimizedState<PasswordsGroupPanel> {
+class _PasswordsGroupPanelState extends State<PasswordsGroupPanel> with ThemeHelpers {
   late Future<List<CredentialEntry>> _credentialsFuture;
 
   @override
@@ -81,8 +81,7 @@ class _PasswordsGroupPanelState extends OptimizedState<PasswordsGroupPanel> {
           );
         }).toList(growable: false);
         items.sort(
-          (a, b) =>
-              (b.passwordMeta?.mdat ?? b.passwordRaw?.mdat ?? 0).compareTo(
+          (a, b) => (b.passwordMeta?.mdat ?? b.passwordRaw?.mdat ?? 0).compareTo(
             a.passwordMeta?.mdat ?? a.passwordRaw?.mdat ?? 0,
           ),
         );
@@ -189,8 +188,7 @@ class _PasswordsGroupPanelState extends OptimizedState<PasswordsGroupPanel> {
     }
   }
 
-  Map<String, List<(String, String?, api.PasswordManagerMeta)>>
-      _indexMetasBySiteAndUser(
+  Map<String, List<(String, String?, api.PasswordManagerMeta)>> _indexMetasBySiteAndUser(
     Map<String, (String?, api.PasswordManagerMeta)> metas,
   ) {
     final result = <String, List<(String, String?, api.PasswordManagerMeta)>>{};
@@ -198,16 +196,14 @@ class _PasswordsGroupPanelState extends OptimizedState<PasswordsGroupPanel> {
       final group = entry.value.$1;
       final meta = entry.value.$2;
       final key = _siteUserKey(site: meta.srvr, user: meta.acct);
-      result.putIfAbsent(
-          key, () => <(String, String?, api.PasswordManagerMeta)>[]);
+      result.putIfAbsent(key, () => <(String, String?, api.PasswordManagerMeta)>[]);
       result[key]!.add((entry.key, group, meta));
     }
     return result;
   }
 
   (String, api.PasswordManagerMeta)? _takeMatchingMeta(
-    Map<String, List<(String, String?, api.PasswordManagerMeta)>>
-        metasBySiteUser, {
+    Map<String, List<(String, String?, api.PasswordManagerMeta)>> metasBySiteUser, {
     required String site,
     required String user,
     required String? group,
@@ -296,20 +292,20 @@ class _PasswordsGroupPanelState extends OptimizedState<PasswordsGroupPanel> {
   }
 
   EdgeInsets get _sectionPadding {
-    if (ss.settings.skin.value == Skins.iOS) {
+    if (SettingsSvc.settings.skin.value == Skins.iOS) {
       return const EdgeInsets.symmetric(horizontal: 20);
     }
-    if (ss.settings.skin.value == Skins.Samsung) {
+    if (SettingsSvc.settings.skin.value == Skins.Samsung) {
       return const EdgeInsets.symmetric(vertical: 5);
     }
     return EdgeInsets.zero;
   }
 
   double get _sectionRadius {
-    if (ss.settings.skin.value == Skins.Samsung) {
+    if (SettingsSvc.settings.skin.value == Skins.Samsung) {
       return 25;
     }
-    if (ss.settings.skin.value == Skins.iOS) {
+    if (SettingsSvc.settings.skin.value == Skins.iOS) {
       return 10;
     }
     return 0;
@@ -365,10 +361,8 @@ class _PasswordsGroupPanelState extends OptimizedState<PasswordsGroupPanel> {
                       borderRadius: BorderRadius.only(
                         topLeft: Radius.circular(isFirst ? _sectionRadius : 0),
                         topRight: Radius.circular(isFirst ? _sectionRadius : 0),
-                        bottomLeft:
-                            Radius.circular(isLast ? _sectionRadius : 0),
-                        bottomRight:
-                            Radius.circular(isLast ? _sectionRadius : 0),
+                        bottomLeft: Radius.circular(isLast ? _sectionRadius : 0),
+                        bottomRight: Radius.circular(isLast ? _sectionRadius : 0),
                       ),
                       child: Container(
                         color: tileColor,
@@ -394,7 +388,7 @@ class _PasswordsGroupPanelState extends OptimizedState<PasswordsGroupPanel> {
 
   Widget _buildCredentialTile(CredentialEntry entry) {
     Future<void> openDetails() async {
-      final result = await ns.pushSettings(
+      final result = await NavigationSvc.pushSettings(
         context,
         CredentialDetailPanel(
           credential: entry,
@@ -449,8 +443,7 @@ class _PasswordsGroupPanelState extends OptimizedState<PasswordsGroupPanel> {
   }
 
   Widget? _buildFab(BuildContext context) {
-    if (widget.groupType != PasswordGroupType.web &&
-        widget.groupType != PasswordGroupType.wifi) {
+    if (widget.groupType != PasswordGroupType.web && widget.groupType != PasswordGroupType.wifi) {
       return null;
     }
     return FloatingActionButton(
@@ -461,7 +454,7 @@ class _PasswordsGroupPanelState extends OptimizedState<PasswordsGroupPanel> {
         size: 22,
       ),
       onPressed: () async {
-        final result = await ns.pushSettings(
+        final result = await NavigationSvc.pushSettings(
           context,
           PasswordEditorPanel(
             provider: widget.provider,
@@ -500,8 +493,7 @@ class TotpCodeListTile extends StatefulWidget {
   State<TotpCodeListTile> createState() => _TotpCodeListTileState();
 }
 
-class _TotpCodeListTileState extends State<TotpCodeListTile>
-    with SingleTickerProviderStateMixin {
+class _TotpCodeListTileState extends State<TotpCodeListTile> with SingleTickerProviderStateMixin {
   late final Ticker _ticker;
   int _expiryMicros = 0;
   String _code = "";
@@ -553,9 +545,7 @@ class _TotpCodeListTileState extends State<TotpCodeListTile>
     final nowMicros = DateTime.now().toUtc().microsecondsSinceEpoch;
     final periodMicros = (totp?.period ?? 0) * 1000000;
     final remainingMicros = (_expiryMicros - nowMicros).clamp(0, periodMicros);
-    final progress = periodMicros == 0
-        ? 0.0
-        : (1.0 - (remainingMicros / periodMicros)).clamp(0.0, 1.0);
+    final progress = periodMicros == 0 ? 0.0 : (1.0 - (remainingMicros / periodMicros)).clamp(0.0, 1.0);
     return SettingsTile(
       backgroundColor: widget.tileColor,
       title: widget.title,

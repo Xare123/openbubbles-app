@@ -4,7 +4,20 @@ import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart';
-import 'package:tuple/tuple.dart';
+
+class WindowsVersionRange {
+  final int? min;
+  final int? max;
+
+  const WindowsVersionRange(this.min, this.max);
+}
+
+class WindowEffectOpacity {
+  final double dark;
+  final double light;
+
+  const WindowEffectOpacity(this.dark, this.light);
+}
 
 enum EffectDependencies { brightness, color }
 
@@ -18,20 +31,19 @@ class WindowEffects {
     WindowEffect.disabled
   ];
 
-  static final Map<WindowEffect, Tuple2<int?, int?>> _versions = {
-    WindowEffect.tabbed: const Tuple2(22523, null),
-    WindowEffect.mica: const Tuple2(22000, null),
-    WindowEffect.aero: const Tuple2(0, 22523),
-    WindowEffect.acrylic: const Tuple2(17134, null),
-    WindowEffect.transparent: const Tuple2(0, null),
-    WindowEffect.disabled: const Tuple2(0, null),
+  static final Map<WindowEffect, WindowsVersionRange> _versions = {
+    WindowEffect.tabbed: const WindowsVersionRange(22523, null),
+    WindowEffect.mica: const WindowsVersionRange(22000, null),
+    WindowEffect.aero: const WindowsVersionRange(0, 22523),
+    WindowEffect.acrylic: const WindowsVersionRange(17134, null),
+    WindowEffect.transparent: const WindowsVersionRange(0, null),
+    WindowEffect.disabled: const WindowsVersionRange(0, null),
   };
 
-  static List<WindowEffect> get effects =>
-      _effects.where((effect) {
+  static List<WindowEffect> get effects => _effects.where((effect) {
         int version = parsedWindowsVersion();
-        return version >= _versions[effect]!.item1! &&
-            (_versions[effect]!.item2 == null || (version <= _versions[effect]!.item2!));
+        return version >= _versions[effect]!.min! &&
+            (_versions[effect]!.max == null || (version <= _versions[effect]!.max!));
       }).toList();
 
   static final _descriptions = {
@@ -57,40 +69,27 @@ class WindowEffects {
   };
 
   // Map from window effect to opacity in <dark theme, light theme>
-  static final Map<WindowEffect, Tuple2<double, double>> _opacities = {
-    WindowEffect.tabbed: const Tuple2(0, 0),
-    WindowEffect.mica: const Tuple2(0, 0),
-    WindowEffect.aero: const Tuple2(0.6, 0.75),
-    WindowEffect.acrylic: const Tuple2(0, 0.6),
-    WindowEffect.transparent: const Tuple2(0.7, 0.7),
-    WindowEffect.disabled: const Tuple2(1, 1),
+  static final Map<WindowEffect, WindowEffectOpacity> _opacities = {
+    WindowEffect.tabbed: const WindowEffectOpacity(0, 0),
+    WindowEffect.mica: const WindowEffectOpacity(0, 0),
+    WindowEffect.aero: const WindowEffectOpacity(0.6, 0.75),
+    WindowEffect.acrylic: const WindowEffectOpacity(0, 0.6),
+    WindowEffect.transparent: const WindowEffectOpacity(0.7, 0.7),
+    WindowEffect.disabled: const WindowEffectOpacity(1, 1),
   };
 
   static Map<WindowEffect, String> get descriptions {
     return Map.fromEntries(effects.map((effect) => MapEntry(effect, _descriptions[effect] ?? "")));
   }
 
-  static double getOpacity({required Color color}) {
-    bool dark = isDark(color: color);
-
-    if (dark) {
-      return ss.settings.windowEffectCustomOpacityDark.value;
-    }
-    return ss.settings.windowEffectCustomOpacityLight.value;
-  }
-
   static double defaultOpacity({required bool dark}) {
-    WindowEffect effect = ss.settings.windowEffect.value;
-    return dark ? _opacities[effect]!.item1 : _opacities[effect]!.item2;
+    WindowEffect effect = SettingsSvc.settings.windowEffect.value;
+    return dark ? _opacities[effect]!.dark : _opacities[effect]!.light;
   }
 
   static bool dependsOnColor() {
-    WindowEffect effect = ss.settings.windowEffect.value;
+    WindowEffect effect = SettingsSvc.settings.windowEffect.value;
     return _dependencies[effect]!.contains(EffectDependencies.color);
-  }
-
-  static Color withOpacity({required Color color}) {
-    return color.withOpacity(getOpacity(color: color));
   }
 
   static bool isDark({required Color color}) {
@@ -99,12 +98,11 @@ class WindowEffects {
 
   static Future<void> setEffect({required Color color}) async {
     if (!kIsDesktop || !Platform.isWindows) return;
-    WindowEffect effect = ss.settings.windowEffect.value;
-    if (!effects.contains(effect)) ss.settings.windowEffect.value = WindowEffect.disabled;
-    ss.saveSettings(ss.settings);
+    WindowEffect effect = SettingsSvc.settings.windowEffect.value;
+    if (!effects.contains(effect)) SettingsSvc.settings.windowEffect.value = WindowEffect.disabled;
 
     bool supportsTransparentAcrylic = parsedWindowsVersion() >= 22000;
-    bool addOpacity = ss.settings.windowEffect.value == WindowEffect.acrylic && !supportsTransparentAcrylic;
+    bool addOpacity = SettingsSvc.settings.windowEffect.value == WindowEffect.acrylic && !supportsTransparentAcrylic;
 
     // withOpacity uses withAlpha((255.0 * opacity).round());
     // so, the minimum nonzero alpha can be made with opacity 1 / 255
@@ -114,7 +112,8 @@ class WindowEffects {
     if (_dependencies[effect]?.contains(EffectDependencies.brightness) ?? false) {
       _dark = isDark(color: color);
     }
-    await Window.setEffect(effect: effect, color: color.withOpacity(addOpacity ? _extra : 0), dark: _dark);
+    await Window.setEffect(effect: effect, color: color.withValues(alpha: addOpacity ? _extra : 0), dark: _dark);
+    await SettingsSvc.settings.saveOneAsync('windowEffect');
   }
 }
 

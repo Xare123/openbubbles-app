@@ -7,11 +7,24 @@ import io.flutter.plugin.common.MethodChannel
 
 class BubbleActivity : FlutterFragmentActivity() {
     companion object {
-        var engine: FlutterEngine? = null
+        private val engineLock = Any()
+        @Volatile private var _engine: FlutterEngine? = null
+        
+        fun getEngine(): FlutterEngine? {
+            synchronized(engineLock) {
+                return _engine
+            }
+        }
+        
+        fun setEngine(newEngine: FlutterEngine?) {
+            synchronized(engineLock) {
+                _engine = newEngine
+            }
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-        engine = flutterEngine
+        setEngine(flutterEngine)
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, Constants.methodChannel).setMethodCallHandler {
                 call, result -> MethodCallHandler().methodCallHandler(call, result, this)
@@ -23,7 +36,7 @@ class BubbleActivity : FlutterFragmentActivity() {
     }
 
     override fun onDestroy() {
-        engine = null
+        setEngine(null)
         super.onDestroy()
     }
 }

@@ -3,7 +3,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
 class Fireworks extends LeafRenderObjectWidget {
-  Fireworks({
+  const Fireworks({
     super.key,
     required this.controller,
   });
@@ -28,7 +28,7 @@ class Fireworks extends LeafRenderObjectWidget {
 class RenderFireworks extends RenderBox {
   RenderFireworks({
     required FireworkController controller,
-  })   : _controller = controller;
+  }) : _controller = controller;
 
   /// The controller that manages the fireworks and tells the render box what
   /// and when to paint.
@@ -92,8 +92,7 @@ class RenderFireworks extends RenderBox {
   void _drawFireworks(Canvas canvas) {
     for (final rocket in controller.rockets) {
       final paint = Paint()
-        ..color =
-        HSVColor.fromAHSV(1, rocket.hue, 1, rocket.brightness).toColor()
+        ..color = HSVColor.fromAHSV(1, rocket.hue, 1, rocket.brightness).toColor()
         ..strokeWidth = rocket.size
         ..style = PaintingStyle.stroke;
 
@@ -123,9 +122,8 @@ class RenderFireworks extends RenderBox {
             particle.position.y,
           ),
         Paint()
-          ..color = HSVColor.fromAHSV(
-              particle.alpha, particle.saturation != null
-              ? particle.hue : particle.hue % 360, particle.saturation ?? 1, particle.brightness)
+          ..color = HSVColor.fromAHSV(particle.alpha, particle.saturation != null ? particle.hue : particle.hue % 360,
+                  particle.saturation ?? 1, particle.brightness)
               .toColor()
           ..blendMode = BlendMode.screen
           ..strokeWidth = particle.size

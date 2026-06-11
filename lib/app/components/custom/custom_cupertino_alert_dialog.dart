@@ -199,7 +199,7 @@ class CupertinoAlertDialog extends StatelessWidget {
     return BackdropFilter(
       filter: ImageFilter.blur(sigmaX: _kBlurAmount * 2, sigmaY: _kBlurAmount * 2),
       child: Container(
-        color: CupertinoDynamicColor.resolve(backgroundColor.withOpacity(0.5), context),
+        color: CupertinoDynamicColor.resolve(backgroundColor.withValues(alpha: 0.5), context),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -215,8 +215,8 @@ class CupertinoAlertDialog extends StatelessWidget {
     );
     if (actions.isNotEmpty) {
       actionSection = _CupertinoAlertActionSection(
-        children: actions,
         scrollController: actionScrollController,
+        children: actions,
       );
     }
 
@@ -1159,7 +1159,7 @@ class CupertinoDialogAction extends StatelessWidget {
     }
 
     if (!enabled) {
-      style = style.copyWith(color: style.color!.withOpacity(0.5));
+      style = style.copyWith(color: style.color!.withValues(alpha: 0.5));
     }
 
     // Apply a sizing policy to the action button's content based on whether or
@@ -1205,7 +1205,7 @@ class CupertinoDialogAction extends StatelessWidget {
 //
 // See [_RenderCupertinoDialogActions] for specific layout policy details.
 class _CupertinoDialogActionsRenderWidget extends MultiChildRenderObjectWidget {
-  _CupertinoDialogActionsRenderWidget({
+  const _CupertinoDialogActionsRenderWidget({
     required List<Widget> actionButtons,
     double dividerThickness = 0.0,
   })  : _dividerThickness = dividerThickness,

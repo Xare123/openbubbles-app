@@ -78,7 +78,11 @@ class RenderSliverDecoration extends RenderProxySliver {
   @override
   void paint(PaintingContext context, Offset offset) {
     if (geometry!.visible && _clipRRect != null) {
-      context.canvas.drawRRect(_clipRRect!, Paint()..color = color..style = PaintingStyle.fill);
+      context.canvas.drawRRect(
+          _clipRRect!,
+          Paint()
+            ..color = color
+            ..style = PaintingStyle.fill);
     }
     if (child != null && child!.geometry!.visible) {
       assert(needsCompositing);

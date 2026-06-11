@@ -26,46 +26,46 @@ class ScrollbarWrapper extends StatelessWidget {
   Widget build(BuildContext context) => !kIsDesktop && !kIsWeb
       ? child
       : Focus(
-                onKeyEvent: (node, event) {
-                  if (!HardwareKeyboard.instance.isAltPressed &&
-                      !HardwareKeyboard.instance.isControlPressed &&
-                      !HardwareKeyboard.instance.isMetaPressed &&
-                      !HardwareKeyboard.instance.isShiftPressed &&
-                      event.physicalKey == PhysicalKeyboardKey.tab) {
-                    if (cm.activeChat != null) {
-                      cvc(cm.activeChat!.chat).lastFocusedNode.requestFocus();
-                      return KeyEventResult.handled;
-                    }
-                  }
-                  return KeyEventResult.ignored;
-                },
-                child: ImprovedScrolling(
-                  enableMMBScrolling: true,
-                  mmbScrollConfig: MMBScrollConfig(
-                    customScrollCursor: DefaultCustomScrollCursor(
-                      cursorColor: context.textTheme.labelLarge!.color!,
-                      backgroundColor: context.theme.colorScheme.background,
-                      borderColor: context.textTheme.headlineMedium!.color!,
+          onKeyEvent: (node, event) {
+            if (!HardwareKeyboard.instance.isAltPressed &&
+                !HardwareKeyboard.instance.isControlPressed &&
+                !HardwareKeyboard.instance.isMetaPressed &&
+                !HardwareKeyboard.instance.isShiftPressed &&
+                event.physicalKey == PhysicalKeyboardKey.tab) {
+              if (ChatsSvc.activeChat != null) {
+                cvc(ChatsSvc.activeChat!.chat).lastFocusedNode.requestFocus();
+                return KeyEventResult.handled;
+              }
+            }
+            return KeyEventResult.ignored;
+          },
+          child: ImprovedScrolling(
+            enableMMBScrolling: true,
+            mmbScrollConfig: MMBScrollConfig(
+              customScrollCursor: DefaultCustomScrollCursor(
+                cursorColor: context.textTheme.labelLarge!.color!,
+                backgroundColor: context.theme.colorScheme.surface,
+                borderColor: context.textTheme.headlineMedium!.color!,
+              ),
+              decelerationForce: reverse ? -1000.0 : 1000.0,
+              velocityBackpropagationPercent: 0.1,
+            ),
+            scrollController: controller,
+            child: showScrollbar
+                ? RawScrollbar(
+                    controller: controller,
+                    thumbColor: context.theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
+                    thickness: 10,
+                    radius: const Radius.circular(5),
+                    child: ScrollConfiguration(
+                      behavior: ScrollConfiguration.of(context).copyWith(scrollbars: !showScrollbar),
+                      child: child,
                     ),
-                    decelerationForce: reverse ? -1000.0 : 1000.0,
-                    velocityBackpropagationPercent: 0.1,
+                  )
+                : ScrollConfiguration(
+                    behavior: ScrollConfiguration.of(context).copyWith(scrollbars: showScrollbar),
+                    child: child,
                   ),
-                  scrollController: controller,
-                  child: showScrollbar
-                      ? RawScrollbar(
-                          controller: controller,
-                          thumbColor: context.theme.colorScheme.properOnSurface.withOpacity(0.3),
-                          thickness: 10,
-                          radius: const Radius.circular(5),
-                          child: ScrollConfiguration(
-                            behavior: ScrollConfiguration.of(context).copyWith(scrollbars: !showScrollbar),
-                            child: child,
-                          ),
-                        )
-                      : ScrollConfiguration(
-                          behavior: ScrollConfiguration.of(context).copyWith(scrollbars: showScrollbar),
-                          child: child,
-                        ),
-                ),
+          ),
         );
 }

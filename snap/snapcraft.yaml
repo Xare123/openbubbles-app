@@ -1,9 +1,9 @@
 name: bluebubbles
 title: BlueBubbles
-version: 1.14.0.0
+version: 1.15.5.0
 summary: BlueBubbles client for Linux
 description: BlueBubbles is an open-source and cross-platform ecosystem of apps aimed to bring iMessage to Android, Windows, Linux, and more! With BlueBubbles, you'll be able to send messages, media, and much more to your friends and family.
-
+license: Apache-2.0
 confinement: strict
 base: core24
 grade: stable
@@ -52,7 +52,7 @@ apps:
       - audio-playback
       - audio-record
     environment:
-      LD_LIBRARY_PATH: $LD_LIBRARY_PATH:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/blas:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/lapack:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/vdpau:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/dri
+      LD_LIBRARY_PATH: $LD_LIBRARY_PATH:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/blas:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/lapack:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/samba:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/vdpau:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/dri:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/libproxy
       ALWAYS_USE_PULSEAUDIO: '1'
 
 parts:
@@ -91,7 +91,7 @@ parts:
 
   fmedia:
     source:
-      - on amd64: https://github.com/stsaz/fmedia/releases/download/v1.31/fmedia-1.31-linux-amd64.tar.xz
+      - on amd64: https://master.dl.sourceforge.net/project/fmedia/v1.23.1/fmedia-1.23.1-linux-amd64.tar.xz
       - on arm64: ""
     plugin: dump
     override-build: |
@@ -110,8 +110,8 @@ parts:
       - alsa-mixin
       - fmedia
     source:
-      - on amd64: https://github.com/BlueBubblesApp/bluebubbles-app/releases/download/v1.14.0%2B69/bluebubbles-linux-x86_64.tar
-      - on arm64: https://github.com/BlueBubblesApp/bluebubbles-app/releases/download/v1.14.0%2B69/bluebubbles-linux-aarch64.tar
+      - on amd64: https://github.com/BlueBubblesApp/bluebubbles-app/releases/download/v1.15.4%2B73-desktop/bluebubbles-linux-x86_64.tar
+      - on arm64: https://github.com/BlueBubblesApp/bluebubbles-app/releases/download/v1.15.4%2B73-desktop/bluebubbles-linux-aarch64.tar
     plugin: nil
     override-build: |
       set -eux
@@ -123,6 +123,7 @@ parts:
       - libglu1-mesa
       - libmpv2
       - libnotify4
+      - libproxy1v5
       - net-tools
       - wmctrl
       - zenity
@@ -147,7 +148,7 @@ parts:
       - gtk-common-themes
     override-prime: |
       set -eux
-      for snap in "core22" "gtk-common-themes"; do
+      for snap in "core24" "gtk-common-themes"; do
           cd "/snap/$snap/current" && find . -type f,l -exec rm -f "$SNAPCRAFT_PRIME/{}" \;
       done
 

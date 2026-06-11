@@ -101,13 +101,8 @@ class BalloonController implements Listenable {
 }
 
 class BalloonObject {
-  BalloonObject({
-    required this.random,
-    required this.position,
-    required this.color,
-    required this.radius,
-    required this.angle
-  });
+  BalloonObject(
+      {required this.random, required this.position, required this.color, required this.radius, required this.angle});
 
   final Random random;
   Point<double> position;

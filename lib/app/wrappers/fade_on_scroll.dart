@@ -1,4 +1,3 @@
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:flutter/material.dart';
 
 class FadeOnScroll extends StatefulWidget {
@@ -7,19 +6,18 @@ class FadeOnScroll extends StatefulWidget {
   final double fullOpacityOffset;
   final Widget child;
 
-  FadeOnScroll(
-      {Key? key,
-        required this.scrollController,
-        required this.child,
-        this.zeroOpacityOffset = 0,
-        this.fullOpacityOffset = 0
-      });
+  const FadeOnScroll(
+      {super.key,
+      required this.scrollController,
+      required this.child,
+      this.zeroOpacityOffset = 0,
+      this.fullOpacityOffset = 0});
 
   @override
   State<StatefulWidget> createState() => _FadeOnScrollState();
 }
 
-class _FadeOnScrollState extends OptimizedState<FadeOnScroll> {
+class _FadeOnScrollState extends State<FadeOnScroll> {
   late double _offset;
 
   @override

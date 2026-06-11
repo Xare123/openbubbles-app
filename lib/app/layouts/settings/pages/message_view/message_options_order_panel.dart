@@ -1,7 +1,7 @@
 import 'dart:ui';
 
+import 'package:bluebubbles/app/wrappers/bb_annotated_region.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/details_menu_action.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/backend/settings/settings_service.dart';
 import 'package:bluebubbles/services/ui/navigator/navigator_service.dart';
@@ -12,72 +12,74 @@ import 'package:flutter_acrylic/window_effect.dart';
 import 'package:get/get.dart';
 
 class MessageOptionsOrderPanel extends StatefulWidget {
+  const MessageOptionsOrderPanel({super.key});
+
   @override
   State<StatefulWidget> createState() => _MessageOptionsOrderPanelState();
 }
 
-class _MessageOptionsOrderPanelState extends OptimizedState<MessageOptionsOrderPanel> {
+class _MessageOptionsOrderPanelState extends State<MessageOptionsOrderPanel> with ThemeHelpers {
   final RxList<DetailsMenuAction> actionList = RxList();
 
   @override
   void initState() {
     super.initState();
 
-    actionList.value = ss.settings.detailsMenuActions.platformSupportedActions;
+    actionList.value = SettingsSvc.settings.detailsMenuActions.platformSupportedActions;
   }
 
   @override
   Widget build(BuildContext context) {
-    final Rx<Color> _backgroundColor =
-        (kIsDesktop && ss.settings.windowEffect.value != WindowEffect.disabled ? Colors.transparent : context.theme.colorScheme.background).obs;
+    final Rx<Color> _backgroundColor = (kIsDesktop && SettingsSvc.settings.windowEffect.value != WindowEffect.disabled
+            ? Colors.transparent
+            : context.theme.colorScheme.surface)
+        .obs;
 
-    final Color tileColor = (ts.inDarkMode(context) ? context.theme.colorScheme.properSurface : context.theme.colorScheme.background)
-        .withAlpha(ss.settings.windowEffect.value != WindowEffect.disabled ? 100 : 255);
+    final Color tileColor = (ThemeSvc.inDarkMode(context)
+            ? context.theme.colorScheme.surfaceContainerHighest
+            : context.theme.colorScheme.surface)
+        .withAlpha(SettingsSvc.settings.windowEffect.value != WindowEffect.disabled ? 100 : 255);
 
     if (kIsDesktop) {
-      ss.settings.windowEffect.listen((WindowEffect effect) =>
-          _backgroundColor.value = effect != WindowEffect.disabled ? Colors.transparent : context.theme.colorScheme.background);
+      SettingsSvc.settings.windowEffect.listen((WindowEffect effect) => _backgroundColor.value =
+          effect != WindowEffect.disabled ? Colors.transparent : context.theme.colorScheme.surface);
     }
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle(
-        systemNavigationBarColor: ss.settings.immersiveMode.value ? Colors.transparent : context.theme.colorScheme.background, // navigation bar color
-        systemNavigationBarIconBrightness: context.theme.colorScheme.brightness.opposite,
-        statusBarColor: Colors.transparent, // status bar color
-        statusBarIconBrightness: context.theme.colorScheme.brightness.opposite,
-      ),
+    return BBAnnotatedRegion(
       child: Obx(
         () => Scaffold(
           backgroundColor: _backgroundColor.value,
           appBar: PreferredSize(
-            preferredSize: Size(ns.width(context), 80),
+            preferredSize: Size(NavigationSvc.width(context), 80),
             child: ClipRRect(
               child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
                 child: AppBar(
-                  systemOverlayStyle: ThemeData.estimateBrightnessForColor(context.theme.colorScheme.background) == Brightness.dark
-                      ? SystemUiOverlayStyle.light
-                      : SystemUiOverlayStyle.dark,
+                  systemOverlayStyle:
+                      ThemeData.estimateBrightnessForColor(context.theme.colorScheme.surface) == Brightness.dark
+                          ? SystemUiOverlayStyle.light
+                          : SystemUiOverlayStyle.dark,
                   toolbarHeight: kIsDesktop ? 80 : 50,
                   elevation: 0,
                   scrolledUnderElevation: 3,
                   surfaceTintColor: context.theme.colorScheme.primary,
                   leading: buildBackButton(context),
                   backgroundColor: _backgroundColor.value,
-                  centerTitle: ss.settings.skin.value == Skins.iOS,
+                  centerTitle: SettingsSvc.settings.skin.value == Skins.iOS,
                   title: Text(
                     "Message Options Order",
                     style: context.theme.textTheme.titleLarge,
                   ),
                   actions: [
                     TextButton(
-                      child: Text("Reset", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
+                      child: Text("Reset",
+                          style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
                       onPressed: () {
                         actionList.value = DetailsMenuAction.values.platformSupportedActions;
-                        ss.settings.resetDetailsMenuActions();
+                        SettingsSvc.settings.resetDetailsMenuActions();
                       },
                     ),
                   ],
                 ),
-                filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
               ),
             ),
           ),
@@ -90,7 +92,7 @@ class _MessageOptionsOrderPanelState extends OptimizedState<MessageOptionsOrderP
                   if (start == end) return;
                   actionList.insert(end, actionList.elementAt(start));
                   actionList.removeAt(start + (end < start ? 1 : 0));
-                  ss.settings.setDetailsMenuActions(actionList.toList());
+                  SettingsSvc.settings.setDetailsMenuActions(actionList.toList());
                 },
                 buildDefaultDragHandles: false,
                 itemBuilder: (context, index) {

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:bluebubbles/app/state/chat_state_scope.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
 import 'package:bluebubbles/app/layouts/fullscreen_media/fullscreen_holder.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
@@ -14,13 +15,76 @@ import 'package:get/get.dart';
 import 'package:mime_type/mime_type.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:universal_html/html.dart' as html;
 import 'package:universal_io/io.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+/// The visual content of a generic (non-media) file attachment: an icon on the
+/// left and the filename + type•size label on the right.  Contains no tap or
+/// interactive behaviour so it can be reused inside both [OtherFile] (which
+/// wraps it in an [InkWell]) and the upload-progress overlay (which sits on
+/// top of it).
+class OtherFileRow extends StatelessWidget {
+  const OtherFileRow({
+    super.key,
+    required this.attachment,
+    this.file,
+  });
+
+  final Attachment attachment;
+
+  /// The resolved local file.  May be `null` during upload before the file has
+  /// been cached; falls back to [Attachment.transferName] and
+  /// [Attachment.getFriendlySize] in that case.
+  final PlatformFile? file;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = file?.name ?? attachment.transferName ?? "";
+    final typeLabel = (mime(name)?.split("/").lastOrNull ?? mime(name) ?? "file").toUpperCase();
+    final sizeLabel = file != null ? file!.size.toDouble().getFriendlySize() : attachment.getFriendlySize();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 15),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(
+            getAttachmentIcon(attachment.mimeType ?? ""),
+            color: context.theme.colorScheme.onSurfaceVariant,
+            size: 35,
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: context.theme.textTheme.bodyMedium!.apply(fontWeightDelta: 2),
+                ),
+                const SizedBox(height: 2.5),
+                Text(
+                  "$typeLabel \u2022 $sizeLabel",
+                  style: context.theme.textTheme.labelMedium!
+                      .copyWith(fontWeight: FontWeight.normal, color: context.theme.colorScheme.outline),
+                  overflow: TextOverflow.clip,
+                  maxLines: 1,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class OtherFile extends StatelessWidget {
-  OtherFile({
+  const OtherFile({
     super.key,
     required this.attachment,
     required this.file,
@@ -30,13 +94,14 @@ class OtherFile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final currentChat = ChatStateScope.maybeChatOf(context);
     return InkWell(
       onTap: () async {
         if (attachment.mimeStart == "image" || (attachment.mimeStart == "video" && !isSnap)) {
           Navigator.of(Get.context!).push(
             ThemeSwitcher.buildPageRoute(
               builder: (context) => FullscreenMediaHolder(
-                currentChat: cm.activeChat,
+                currentChat: currentChat,
                 attachment: attachment,
                 showInteractions: true,
               ),
@@ -46,12 +111,12 @@ class OtherFile extends StatelessWidget {
         }
         if (kIsWeb || file.path == null) {
           final content = base64.encode(file.bytes!);
-          html.AnchorElement(
-              href: "data:application/octet-stream;charset=utf-16le;base64,$content")
+          html.AnchorElement(href: "data:application/octet-stream;charset=utf-16le;base64,$content")
             ..setAttribute("download", file.name)
             ..click();
         } else if (kIsDesktop) {
-          File _file = File(join((await getTemporaryDirectory()).path, "BlueBubbles", "attachments", attachment.guid, basename(file.path!)));
+          File _file = File(
+              join(FilesystemSvc.sysTempPath, "BlueBubbles", "attachments", attachment.guid, basename(file.path!)));
           if (!_file.existsSync()) {
             _file.createSync(recursive: true);
             File(file.path!).copySync(_file.path);
@@ -59,19 +124,21 @@ class OtherFile extends StatelessWidget {
           launchUrl(Uri.file(_file.path));
         } else {
           try {
-            final res = await OpenFilex.open("${fs.appDocDir.path}/attachments/${attachment.guid!}/${basename(file.path!)}");
+            final res =
+                await OpenFilex.open(join(FilesystemSvc.attachmentsPath, attachment.guid!, basename(file.path!)));
             if (res.type == ResultType.noAppToOpen) {
               showSnackbar('Error', "No handler for this file type! Using share menu instead.");
               await Future.delayed(const Duration(seconds: 1));
-              Share.file(file.name, file.path!);
+              Share.files([file.path!]);
             } else if (res.type == ResultType.error) {
               showSnackbar('Error', res.message);
             } else if (res.type == ResultType.fileNotFound) {
               showSnackbar('Not Found', "File not found at path: ${file.path}");
             } else if (res.type == ResultType.permissionDenied) {
-              showSnackbar('Permission Denied', "BlueBubbles does not have access to this file! Using share menu instead.");
+              showSnackbar(
+                  'Permission Denied', "BlueBubbles does not have access to this file! Using share menu instead.");
               await Future.delayed(const Duration(seconds: 1));
-              Share.file(file.name, file.path!);
+              Share.files([file.path!]);
             }
           } catch (ex) {
             Logger.error("Error opening file: ${file.path}", error: ex);
@@ -79,42 +146,7 @@ class OtherFile extends StatelessWidget {
           }
         }
       },
-      child: Padding(
-        padding: const EdgeInsets.all(15.0),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Icon(
-              getAttachmentIcon(attachment.mimeType ?? ""),
-              color: context.theme.colorScheme.properOnSurface,
-              size: 35,
-            ),
-            const SizedBox(width: 10),
-            Flexible(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    file.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: context.theme.textTheme.bodyMedium!.apply(fontWeightDelta: 2),
-                  ),
-                  const SizedBox(height: 2.5),
-                  Text(
-                    "${(mime(file.name)?.split("/").lastOrNull ?? mime(file.name) ?? "file").toUpperCase()} • ${file.size.toDouble().getFriendlySize()}",
-                    style: context.theme.textTheme.labelMedium!.copyWith(fontWeight: FontWeight.normal, color: context.theme.colorScheme.outline),
-                    overflow: TextOverflow.clip,
-                    maxLines: 1,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+      child: OtherFileRow(attachment: attachment, file: file),
     );
   }
 }

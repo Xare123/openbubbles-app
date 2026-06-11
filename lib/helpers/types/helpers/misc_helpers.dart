@@ -39,11 +39,7 @@ Map<String, dynamic> mergeTopLevelDicts(Map<String, dynamic>? d1, Map<String, dy
 ///
 /// Used for heavy ObjectBox read/writes to avoid causing jank
 Future<T?> createAsyncTask<T>(AsyncTask<List<dynamic>, T> task) async {
-  final executor = AsyncExecutor(
-    parallelism: 0,
-    taskTypeRegister: () => [task],
-    logger: asyncTaskLogger
-  );
+  final executor = AsyncExecutor(parallelism: 0, taskTypeRegister: () => [task], logger: asyncTaskLogger);
   executor.logger.enabled = true;
   executor.logger.enabledExecution = true;
   await executor.execute(task);
@@ -56,7 +52,11 @@ bool get isSnap => !kIsWeb && Platform.isLinux && Platform.environment.containsK
 
 bool get isFlatpak => !kIsWeb && Platform.isLinux && Platform.environment.containsKey('FLATPAK_ID');
 
-bool get isMsix => !kIsWeb && Platform.isWindows && Platform.resolvedExecutable.contains('WindowsApps') && Platform.resolvedExecutable.contains(msStorePackageName);
+bool get isMsix =>
+    !kIsWeb &&
+    Platform.isWindows &&
+    Platform.resolvedExecutable.contains('WindowsApps') &&
+    Platform.resolvedExecutable.contains(msStorePackageName);
 
 /// From https://github.com/modulovalue/dart_intersperse/blob/master/lib/src/intersperse.dart
 Iterable<T> intersperse<T>(T element, Iterable<T> iterable) sync* {

@@ -1,23 +1,24 @@
 import 'dart:async';
-import 'dart:isolate';
 
+import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/attachment/live_photo_mixin.dart';
 import 'package:bluebubbles/app/layouts/fullscreen_media/dialogs/metadata_dialog.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/utils/share.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/backend/interfaces/image_interface.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:photo_view/photo_view.dart';
-import 'package:universal_io/io.dart';
+import 'dart:io';
 
 class FullscreenImage extends StatefulWidget {
-  FullscreenImage({
+  const FullscreenImage({
     super.key,
     required this.file,
     required this.attachment,
@@ -36,47 +37,58 @@ class FullscreenImage extends StatefulWidget {
   State<FullscreenImage> createState() => _FullscreenImageState();
 }
 
-class _FullscreenImageState extends OptimizedState<FullscreenImage> with AutomaticKeepAliveClientMixin {
+class _FullscreenImageState extends State<FullscreenImage>
+    with AutomaticKeepAliveClientMixin, LivePhotoMixin, ThemeHelpers {
   final PhotoViewController controller = PhotoViewController();
   bool showOverlay = true;
   bool hasError = false;
   Uint8List? bytes;
+  String? compatiblePath; // For converted HEIC/TIFF files
 
   PlatformFile get file => widget.file;
   Attachment get attachment => widget.attachment;
   Message? get message => attachment.message.target;
 
+  // Implement required getter for LivePhotoMixin
+  @override
+  Attachment get livePhotoAttachment => attachment;
+
   @override
   void initState() {
     super.initState();
-    message?.handle = message?.getHandle();
-    updateObx(() {
-      initBytes();
-    });
+    _setFullscreen(true);
+    initBytes();
+  }
+
+  void _setFullscreen(bool fullscreen) {
+    if (fullscreen) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
+    } else {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
   }
 
   Future<void> initBytes() async {
+    // For web, we need bytes in memory
     if (kIsWeb || file.path == null) {
       if (attachment.mimeType?.contains("image/tif") ?? false) {
-        final receivePort = ReceivePort();
-        await Isolate.spawn(unsupportedToPngIsolate, IsolateData(file, receivePort.sendPort));
-        // Get the processed image from the isolate.
-        final image = await receivePort.first as Uint8List?;
-        bytes = image;
+        bytes = await ImageInterface.convertToPng(file);
       } else {
         bytes = file.bytes;
       }
-    } else if (attachment.canCompress) {
-      bytes = await as.loadAndGetProperties(attachment, actualPath: file.path!);
-      // All other attachments can be held in memory as bytes
-    } else {
-      bytes = await File(file.path!).readAsBytes();
+      setState(() {});
+      return;
     }
+
+    // For non-web platforms, ensure we have a compatible image path
+    // but don't load bytes into memory - let Image.file handle it
+    compatiblePath = await AttachmentsSvc.ensureImageCompatibility(attachment, actualPath: file.path!);
     setState(() {});
   }
 
   @override
   void dispose() {
+    _setFullscreen(false);
     controller.dispose();
     super.dispose();
   }
@@ -85,11 +97,17 @@ class _FullscreenImageState extends OptimizedState<FullscreenImage> with Automat
     showSnackbar('In Progress', 'Redownloading attachment. Please wait...');
     setState(() {
       bytes = null;
+      compatiblePath = null;
+      hasError = false;
     });
-    as.redownloadAttachment(widget.attachment, onComplete: (file) {
-      setState(() {
-        bytes = file.bytes;
-      });
+    AttachmentsSvc.redownloadAttachment(widget.attachment, onComplete: (newFile) {
+      if (kIsWeb || newFile.path == null) {
+        setState(() {
+          bytes = newFile.bytes;
+        });
+      } else {
+        initBytes();
+      }
     }, onError: () {
       setState(() {
         hasError = true;
@@ -100,108 +118,9 @@ class _FullscreenImageState extends OptimizedState<FullscreenImage> with Automat
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return Scaffold(
-      backgroundColor: Colors.black,
-      floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
-      floatingActionButton: widget.showInteractions && showOverlay && material
-          ? Row(
-              children: [
-                FloatingActionButton(
-                  backgroundColor: context.theme.colorScheme.secondary,
-                  child: Icon(
-                    Icons.file_download_outlined,
-                    color: context.theme.colorScheme.onSecondary,
-                  ),
-                  onPressed: () async {
-                    await as.saveToDisk(widget.file);
-                  },
-                ),
-                if (!kIsWeb && !kIsDesktop)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 20.0),
-                    child: FloatingActionButton(
-                      backgroundColor: context.theme.colorScheme.secondary,
-                      child: Icon(
-                        Icons.share_outlined,
-                        color: context.theme.colorScheme.onSecondary,
-                      ),
-                      onPressed: () async {
-                        if (widget.file.path == null)
-                          return showSnackbar("Error", "Failed to find a path to share attachment!");
-                        Share.file(
-                          "Shared ${widget.attachment.mimeType!.split("/")[0]} from OpenBubbles: ${widget.attachment.transferName}",
-                          widget.file.path!,
-                        );
-                      },
-                    ),
-                  ),
-              ],
-            )
-          : null,
-      extendBody: true,
-      bottomNavigationBar: !widget.showInteractions || !showOverlay || material
-          ? null
-          : Theme(
-              data: context.theme.copyWith(
-                navigationBarTheme: context.theme.navigationBarTheme.copyWith(
-                  indicatorColor: samsung ? Colors.black : context.theme.colorScheme.properSurface,
-                ),
-              ),
-              child: NavigationBar(
-                selectedIndex: 0,
-                backgroundColor: samsung ? Colors.black : context.theme.colorScheme.properSurface,
-                elevation: 0,
-                labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
-                height: 60,
-                destinations: [
-                  NavigationDestination(
-                      icon: Icon(
-                        iOS ? CupertinoIcons.cloud_download : Icons.file_download,
-                        color: samsung ? Colors.white : context.theme.colorScheme.primary,
-                      ),
-                      label: 'Download'),
-                  if (!kIsWeb && !kIsDesktop)
-                    NavigationDestination(
-                        icon: Icon(
-                          iOS ? CupertinoIcons.share : Icons.share,
-                          color: samsung ? Colors.white : context.theme.colorScheme.primary,
-                        ),
-                        label: 'Share'),
-                  if (iOS)
-                    NavigationDestination(
-                        icon: Icon(
-                          iOS ? CupertinoIcons.info : Icons.info,
-                          color: context.theme.colorScheme.primary,
-                        ),
-                        label: 'Metadata'),
-                  if (iOS)
-                    NavigationDestination(
-                        icon: Icon(
-                          iOS ? CupertinoIcons.refresh : Icons.refresh,
-                          color: context.theme.colorScheme.primary,
-                        ),
-                        label: 'Refresh'),
-                ],
-                onDestinationSelected: (value) async {
-                  if (value == 0) {
-                    await as.saveToDisk(widget.file);
-                  } else if (value == 1) {
-                    if (kIsWeb || kIsDesktop) return showMetadataDialog(widget.attachment, context);
-                    if (widget.file.path == null) return;
-                    Share.file(
-                      "Shared ${widget.attachment.mimeType!.split("/")[0]} from OpenBubbles: ${widget.attachment.transferName}",
-                      widget.file.path!,
-                    );
-                  } else if (value == 2) {
-                    if (kIsWeb || kIsDesktop) return refreshAttachment();
-                    showMetadataDialog(widget.attachment, context);
-                  } else if (value == 3) {
-                    refreshAttachment();
-                  }
-                },
-              ),
-            ),
-      body: GestureDetector(
+    return Container(
+      color: Colors.black,
+      child: GestureDetector(
         onTap: () {
           if (!widget.showInteractions) return;
           bool newVal = !showOverlay;
@@ -215,49 +134,51 @@ class _FullscreenImageState extends OptimizedState<FullscreenImage> with Automat
 
           // eventDispatcher.emit('overlay-toggle', newVal);
         },
+        onLongPress: () {
+          if (attachment.hasLivePhoto && !isDownloadingLivePhoto.value) {
+            handleLivePhotoTap();
+          }
+        },
         child: Stack(
           children: [
-            bytes != null
-                ? Padding(
-                    padding: EdgeInsets.only(bottom: widget.showInteractions ? 60.0 : 0),
-                    child: PhotoView(
-                      gaplessPlayback: true,
-                      minScale: PhotoViewComputedScale.contained,
-                      maxScale: PhotoViewComputedScale.contained * 10,
-                      controller: controller,
-                      imageProvider: MemoryImage(bytes!),
-                      loadingBuilder: (BuildContext context, ImageChunkEvent? ev) {
-                        return Center(child: buildProgressIndicator(context));
-                      },
-                      scaleStateChangedCallback: (scale) {
-                        if (scale == PhotoViewScaleState.zoomedIn ||
-                            scale == PhotoViewScaleState.covering ||
-                            scale == PhotoViewScaleState.originalSize) {
-                          widget.updatePhysics(const NeverScrollableScrollPhysics());
-                        } else {
-                          widget.updatePhysics(ThemeSwitcher.getScrollPhysics());
-                        }
-                      },
-                      errorBuilder: (context, object, stacktrace) =>
-                          Center(child: Text("Failed to display image", style: context.theme.textTheme.bodyLarge)),
-                      filterQuality: FilterQuality.high,
-                    ),
+            (bytes != null || compatiblePath != null)
+                ? PhotoView(
+                    gaplessPlayback: true,
+                    minScale: PhotoViewComputedScale.contained,
+                    maxScale: PhotoViewComputedScale.contained * 10,
+                    controller: controller,
+                    imageProvider: bytes != null
+                        ? MemoryImage(bytes!) as ImageProvider
+                        : FileImage(File(compatiblePath ?? file.path!)),
+                    loadingBuilder: (BuildContext context, ImageChunkEvent? ev) {
+                      return Center(child: buildProgressIndicator(context));
+                    },
+                    scaleStateChangedCallback: (scale) {
+                      if (scale == PhotoViewScaleState.zoomedIn ||
+                          scale == PhotoViewScaleState.covering ||
+                          scale == PhotoViewScaleState.originalSize) {
+                        widget.updatePhysics(const NeverScrollableScrollPhysics());
+                      } else {
+                        widget.updatePhysics(ThemeSwitcher.getScrollPhysics());
+                      }
+                    },
+                    errorBuilder: (context, object, stacktrace) =>
+                        Center(child: Text("Failed to display image", style: context.theme.textTheme.bodyLarge)),
+                    filterQuality: FilterQuality.high,
                   )
                 : hasError
                     ? Center(child: Text("Failed to load image", style: context.theme.textTheme.bodyLarge))
-                    : Center(
-                        child: Padding(
-                        padding: EdgeInsets.only(bottom: widget.showInteractions ? 60.0 : 0),
-                        child: buildProgressIndicator(context),
-                      )),
+                    : Center(child: buildProgressIndicator(context)),
+            // Live photo video overlay
+            if (attachment.hasLivePhoto) buildLivePhotoOverlay(),
             if (!iOS)
               AnimatedOpacity(
                 opacity: showOverlay ? 1.0 : 0.0,
                 duration: const Duration(milliseconds: 125),
                 child: Container(
                   height: kIsDesktop ? 80 : 100.0,
-                  width: ns.width(context),
-                  color: context.theme.colorScheme.shadow.withOpacity(samsung ? 1 : 0.65),
+                  width: NavigationSvc.width(context),
+                  color: context.theme.colorScheme.shadow.withValues(alpha: samsung ? 1 : 0.65),
                   child: SafeArea(
                     left: false,
                     right: false,
@@ -291,7 +212,7 @@ class _FullscreenImageState extends OptimizedState<FullscreenImage> with Automat
                                     Text(
                                         (message?.isFromMe ?? false)
                                             ? 'You'
-                                            : message?.handle?.displayName ?? "Unknown",
+                                            : message?.handleRelation.target?.displayName ?? "Unknown",
                                         style: context.theme.textTheme.titleLarge!.copyWith(color: Colors.white)),
                                     if (message?.dateCreated != null)
                                       Padding(
@@ -342,6 +263,106 @@ class _FullscreenImageState extends OptimizedState<FullscreenImage> with Automat
                                 ],
                               ),
                       ]),
+                    ),
+                  ),
+                ),
+              ),
+            // Bottom actions bar (iOS style)
+            if (widget.showInteractions && iOS)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: AnimatedOpacity(
+                  opacity: showOverlay ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 200),
+                  child: SafeArea(
+                    top: false,
+                    child: Container(
+                      height: 60,
+                      decoration: BoxDecoration(
+                        color:
+                            samsung ? Colors.black : context.theme.colorScheme.surfaceContainerHighest.withOpacity(0.9),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          IconButton(
+                            icon: Icon(
+                              CupertinoIcons.cloud_download,
+                              color: samsung ? Colors.white : context.theme.colorScheme.primary,
+                            ),
+                            onPressed: () => AttachmentsSvc.saveToDisk(widget.file),
+                          ),
+                          if (!kIsWeb && !kIsDesktop)
+                            IconButton(
+                              icon: Icon(
+                                CupertinoIcons.share,
+                                color: samsung ? Colors.white : context.theme.colorScheme.primary,
+                              ),
+                              onPressed: () {
+                                if (widget.file.path != null) {
+                                  Share.files([widget.file.path!]);
+                                }
+                              },
+                            ),
+                          IconButton(
+                            icon: Icon(
+                              CupertinoIcons.info,
+                              color: samsung ? Colors.white : context.theme.colorScheme.primary,
+                            ),
+                            onPressed: () => showMetadataDialog(widget.attachment, context),
+                          ),
+                          IconButton(
+                            icon: Icon(
+                              CupertinoIcons.refresh,
+                              color: samsung ? Colors.white : context.theme.colorScheme.primary,
+                            ),
+                            onPressed: () => refreshAttachment(),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            // Bottom FABs (Material style)
+            if (widget.showInteractions && material)
+              Positioned(
+                left: 16,
+                bottom: 16,
+                child: AnimatedOpacity(
+                  opacity: showOverlay ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 200),
+                  child: SafeArea(
+                    top: false,
+                    child: Row(
+                      children: [
+                        FloatingActionButton(
+                          backgroundColor: context.theme.colorScheme.secondary,
+                          child: Icon(
+                            Icons.file_download_outlined,
+                            color: context.theme.colorScheme.onSecondary,
+                          ),
+                          onPressed: () => AttachmentsSvc.saveToDisk(widget.file),
+                        ),
+                        if (!kIsWeb && !kIsDesktop)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 16.0),
+                            child: FloatingActionButton(
+                              backgroundColor: context.theme.colorScheme.secondary,
+                              child: Icon(
+                                Icons.share_outlined,
+                                color: context.theme.colorScheme.onSecondary,
+                              ),
+                              onPressed: () {
+                                if (widget.file.path != null) {
+                                  Share.files([widget.file.path!]);
+                                }
+                              },
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ),

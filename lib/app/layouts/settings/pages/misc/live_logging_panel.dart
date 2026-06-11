@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:ui';
 
+import 'package:bluebubbles/app/wrappers/bb_annotated_region.dart';
 import 'package:bluebubbles/app/wrappers/scrollbar_wrapper.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/services.dart';
@@ -10,6 +12,8 @@ import 'package:flutter_acrylic/flutter_acrylic.dart';
 import 'package:get/get.dart';
 
 class LiveLoggingPanel extends StatefulWidget {
+  const LiveLoggingPanel({super.key});
+
   @override
   State<StatefulWidget> createState() => _LiveLoggingPanel();
 }
@@ -20,6 +24,7 @@ class _LiveLoggingPanel extends State<LiveLoggingPanel> {
   final List<String> _logs = [];
   final ScrollController scrollController = ScrollController();
   bool _shouldAutoScroll = true;
+  StreamSubscription<String>? _logSubscription;
 
   @override
   void initState() {
@@ -35,7 +40,7 @@ class _LiveLoggingPanel extends State<LiveLoggingPanel> {
       }
     });
 
-    Logger.logStream.stream.listen((event) {
+    _logSubscription = Logger.logStream.stream.listen((event) {
       if (_shouldAutoScroll) {
         _scrollToBottom();
       }
@@ -49,6 +54,7 @@ class _LiveLoggingPanel extends State<LiveLoggingPanel> {
 
   @override
   void dispose() {
+    _logSubscription?.cancel();
     scrollController.dispose();
     Logger.disableLiveLogging();
     super.dispose();
@@ -64,136 +70,122 @@ class _LiveLoggingPanel extends State<LiveLoggingPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final Rx<Color> _backgroundColor =
-        (kIsDesktop && ss.settings.windowEffect.value == WindowEffect.disabled
-                ? Colors.transparent
-                : context.theme.colorScheme.background)
-            .obs;
+    final Rx<Color> _backgroundColor = (kIsDesktop && SettingsSvc.settings.windowEffect.value == WindowEffect.disabled
+            ? Colors.transparent
+            : context.theme.colorScheme.surface)
+        .obs;
 
     if (kIsDesktop) {
-      ss.settings.windowEffect.listen((WindowEffect effect) =>
-          _backgroundColor.value = effect != WindowEffect.disabled
-              ? Colors.transparent
-              : context.theme.colorScheme.background);
+      SettingsSvc.settings.windowEffect.listen((WindowEffect effect) => _backgroundColor.value =
+          effect != WindowEffect.disabled ? Colors.transparent : context.theme.colorScheme.surface);
     }
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-        value: SystemUiOverlayStyle(
-          systemNavigationBarColor: ss.settings.immersiveMode.value
-              ? Colors.transparent
-              : context.theme.colorScheme.background, // navigation bar color
-          systemNavigationBarIconBrightness:
-              context.theme.colorScheme.brightness.opposite,
-          statusBarColor: Colors.transparent, // status bar color
-          statusBarIconBrightness:
-              context.theme.colorScheme.brightness.opposite,
-        ),
+    return BBAnnotatedRegion(
         child: Obx(
-          () => Scaffold(
-            backgroundColor: _backgroundColor.value,
-            appBar: PreferredSize(
-              preferredSize: Size(ns.width(context), 80),
-              child: ClipRRect(
-                child: BackdropFilter(
-                  child: AppBar(
-                    systemOverlayStyle: ThemeData.estimateBrightnessForColor(
-                                context.theme.colorScheme.background) ==
-                            Brightness.dark
+      () => Scaffold(
+        backgroundColor: _backgroundColor.value,
+        appBar: PreferredSize(
+          preferredSize: Size(NavigationSvc.width(context), 80),
+          child: ClipRRect(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+              child: AppBar(
+                systemOverlayStyle:
+                    ThemeData.estimateBrightnessForColor(context.theme.colorScheme.surface) == Brightness.dark
                         ? SystemUiOverlayStyle.light
                         : SystemUiOverlayStyle.dark,
-                    toolbarHeight: kIsDesktop ? 80 : 50,
-                    elevation: 0,
-                    scrolledUnderElevation: 3,
-                    surfaceTintColor: context.theme.colorScheme.primary,
-                    leading: buildBackButton(context),
-                    backgroundColor: _backgroundColor.value,
-                    centerTitle: ss.settings.skin.value == Skins.iOS,
-                    title: Text(
-                      "Live Logging",
-                      style: context.theme.textTheme.titleLarge,
-                    ),
-                    actions: [
-                      // Menu button with 2 options, Play/Pause and Clear
-                      PopupMenuButton(
-                        icon: const Icon(Icons.more_vert),
-                        itemBuilder: (context) => [
-                          PopupMenuItem(
-                            child: Obx(
-                              () => ListTile(
-                                title: Text(isPaused.value ? "Play" : "Pause"),
-                                onTap: () {
-                                  isPaused.toggle();
-                                  if (isPaused.value) {
-                                    Logger.disableLiveLogging();
-                                  } else {
-                                    Logger.enableLiveLogging();
-                                  }
-                                },
-                              ),
-                            ),
+                toolbarHeight: kIsDesktop ? 80 : 50,
+                elevation: 0,
+                scrolledUnderElevation: 3,
+                surfaceTintColor: context.theme.colorScheme.primary,
+                leading: buildBackButton(context),
+                backgroundColor: _backgroundColor.value,
+                centerTitle: SettingsSvc.settings.skin.value == Skins.iOS,
+                title: Text(
+                  "Live Logging",
+                  style: context.theme.textTheme.titleLarge,
+                ),
+                actions: [
+                  // Menu button with 2 options, Play/Pause and Clear
+                  PopupMenuButton(
+                    icon: const Icon(Icons.more_vert),
+                    itemBuilder: (context) => [
+                      PopupMenuItem(
+                        child: Obx(
+                          () => ListTile(
+                            title: Text(isPaused.value ? "Play" : "Pause"),
+                            onTap: () {
+                              isPaused.toggle();
+                              if (isPaused.value) {
+                                Logger.disableLiveLogging();
+                              } else {
+                                Logger.enableLiveLogging();
+                              }
+                            },
                           ),
-                          PopupMenuItem(
-                            child: ListTile(
-                              title: const Text("Clear"),
-                              onTap: () {
-                                _logs.clear();
-                                setState(() {});
-                              },
-                            ),
-                          ),
-                        ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        child: ListTile(
+                          title: const Text("Clear"),
+                          onTap: () {
+                            _logs.clear();
+                            setState(() {});
+                          },
+                        ),
                       ),
                     ],
                   ),
-                  filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                ),
-              ),
-            ),
-            body: ScrollbarWrapper(
-              showScrollbar: true,
-              controller: scrollController,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10.0),
-                child: StreamBuilder<String>(
-                  stream: Logger.logStream.stream,
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: Text('Waiting for logs...'));
-                    } else if (snapshot.hasError) {
-                      return Center(child: Text('Error: ${snapshot.error}'));
-                    } else if (snapshot.hasData) {
-                      _logs.add(snapshot.data!);
-                    }
-
-                    return ListView.separated(
-                      itemCount: _logs.length,
-                      shrinkWrap: true,
-                      controller: scrollController,
-                      separatorBuilder: (context, index) => Divider(thickness: 0.25, color: context.theme.colorScheme.onSurface),
-                      itemBuilder: (context, index) {
-                        Color textColor = Colors.black;
-                        if (_logs[index].startsWith('[ERROR]')) {
-                          textColor = Colors.red;
-                        } else if (_logs[index].startsWith('[WARNING]')) {
-                          textColor = Colors.orange;
-                        } else if (_logs[index].startsWith('[TRACE]')) {
-                          textColor = context.theme.colorScheme.primary;
-                        } else if (_logs[index].startsWith('[FATAL]')) {
-                          textColor = Colors.red;
-                        } else if (_logs[index].startsWith('[DEBUG]')) {
-                          textColor = context.theme.colorScheme.secondary;
-                        }
-
-                        return Text(
-                          _logs[index].trim(),
-                          style: TextStyle(fontSize: 12.0, color: textColor),
-                        );
-                      },
-                    );
-                  },
-                )
+                ],
               ),
             ),
           ),
-        ));
+        ),
+        body: ScrollbarWrapper(
+          showScrollbar: true,
+          controller: scrollController,
+          child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10.0),
+              child: StreamBuilder<String>(
+                stream: Logger.logStream.stream,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: Text('Waiting for logs...'));
+                  } else if (snapshot.hasError) {
+                    return Center(child: Text('Error: ${snapshot.error}'));
+                  } else if (snapshot.hasData) {
+                    _logs.add(snapshot.data!);
+                  }
+
+                  return ListView.separated(
+                    itemCount: _logs.length,
+                    shrinkWrap: true,
+                    controller: scrollController,
+                    separatorBuilder: (context, index) =>
+                        Divider(thickness: 0.25, color: context.theme.colorScheme.onSurface),
+                    itemBuilder: (context, index) {
+                      Color textColor = Colors.black;
+                      if (_logs[index].startsWith('[ERROR]')) {
+                        textColor = Colors.red;
+                      } else if (_logs[index].startsWith('[WARNING]')) {
+                        textColor = Colors.orange;
+                      } else if (_logs[index].startsWith('[TRACE]')) {
+                        textColor = context.theme.colorScheme.primary;
+                      } else if (_logs[index].startsWith('[FATAL]')) {
+                        textColor = Colors.red;
+                      } else if (_logs[index].startsWith('[DEBUG]')) {
+                        textColor = context.theme.colorScheme.secondary;
+                      }
+
+                      return Text(
+                        _logs[index].trim(),
+                        style: TextStyle(fontSize: 12.0, color: textColor),
+                      );
+                    },
+                  );
+                },
+              )),
+        ),
+      ),
+    ));
   }
 }

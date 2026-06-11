@@ -4,10 +4,8 @@ import 'dart:typed_data';
 import 'package:bluebubbles/services/services.dart';
 import 'package:dio/dio.dart';
 import 'package:xml/xml.dart';
-import 'package:dio/io.dart';
-import 'package:flutter_contacts/flutter_contacts.dart';
-import 'package:bluebubbles/database/io/contact.dart' as contacts;
-import 'package:bluebubbles/database/global/structured_name.dart' as structured;
+import 'package:flutter_contacts/flutter_contacts.dart' as fc;
+import 'package:bluebubbles/database/io/contact_v2.dart';
 
 // 690 lines of beautiful AI slop. It works great!
 
@@ -44,7 +42,7 @@ enum ChangeType { upsert, deleted }
 class ContactChange {
   final ChangeType type;
   final Uri href;
-  final contacts.Contact? contact; // present for upsert
+  final ContactV2? contact; // present for upsert
   final String? vcard; // present for upsert
   final String? etag;
 
@@ -76,21 +74,21 @@ class MemoryStateStore implements CardDavStateStore {
   String _k(Uri u) => u.toString();
 
   @override
-  Future<String?> getCtag(Uri addressBookUrl) async => ss.settings.ctags[_k(addressBookUrl)];
+  Future<String?> getCtag(Uri addressBookUrl) async => SettingsSvc.settings.ctags[_k(addressBookUrl)];
 
   @override
   Future<void> setCtag(Uri addressBookUrl, String? ctag) async {
-    ss.settings.ctags[_k(addressBookUrl)] = ctag;
-    ss.saveSettings();
+    SettingsSvc.settings.ctags[_k(addressBookUrl)] = ctag;
+    await SettingsSvc.settings.saveOneAsync('ctags');
   }
 
   @override
-  Future<String?> getSyncToken(Uri addressBookUrl) async => ss.settings.tokens[_k(addressBookUrl)];
+  Future<String?> getSyncToken(Uri addressBookUrl) async => SettingsSvc.settings.tokens[_k(addressBookUrl)];
 
   @override
   Future<void> setSyncToken(Uri addressBookUrl, String? syncToken) async {
-    ss.settings.tokens[_k(addressBookUrl)] = syncToken;
-    ss.saveSettings();
+    SettingsSvc.settings.tokens[_k(addressBookUrl)] = syncToken;
+    await SettingsSvc.settings.saveOneAsync('tokens');
   }
 }
 
@@ -131,17 +129,16 @@ class CardDavClient {
         _dio = dio ??
             Dio(
               BaseOptions(
-                // You can set baseUrl to principalUrl.origin if you like.
-                followRedirects: true,
-                validateStatus: (s) => s != null && s >= 200 && s < 500,
-                headers: {
-                  'User-Agent': 'macOS/15.5 (24F74) AddressBookCore/2695.500.71',
-                  'Cache-Control': 'no-transform',
-                  'Accept-Language': 'en-US,en;q=0.9',
-                },
-                responseType: ResponseType.plain,
-                requestEncoder: gzipEncoder
-              ),
+                  // You can set baseUrl to principalUrl.origin if you like.
+                  followRedirects: true,
+                  validateStatus: (s) => s != null && s >= 200 && s < 500,
+                  headers: {
+                    'User-Agent': 'macOS/15.5 (24F74) AddressBookCore/2695.500.71',
+                    'Cache-Control': 'no-transform',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                  },
+                  responseType: ResponseType.plain,
+                  requestEncoder: gzipEncoder),
             ) {
     // final adapter = _dio.httpClientAdapter;
     // if (adapter is DefaultHttpClientAdapter) {
@@ -290,8 +287,8 @@ class CardDavClient {
     );
 
     final doc = XmlDocument.parse(res);
-    final href = _firstPropHref(doc, ['DAV:', 'current-user-principal']) ??
-        _firstPropHref(doc, ['DAV:', 'principal-URL']);
+    final href =
+        _firstPropHref(doc, ['DAV:', 'current-user-principal']) ?? _firstPropHref(doc, ['DAV:', 'principal-URL']);
     if (href == null) return null;
     return _resolve(baseUrl, href);
   }
@@ -306,7 +303,7 @@ class CardDavClient {
       'DAV:': 'd',
       'urn:ietf:params:xml:ns:carddav': 'card',
       'http://calendarserver.org/ns/': 'cs', // getctag often here
-      'http://apple.com/ns/ical/': 'apple',  // some servers put it here
+      'http://apple.com/ns/ical/': 'apple', // some servers put it here
     }, [
       XmlElement(XmlName('d:prop'), [], [
         XmlElement(XmlName('d:displayname')),
@@ -462,7 +459,7 @@ class CardDavClient {
             .findAllElements('getetag', namespace: 'DAV:')
             .map((e) => e.innerText.trim())
             .firstWhere((t) => t.isNotEmpty, orElse: () => '');
-        if (etag != null && etag.isEmpty) etag = null;
+        if (etag.isEmpty) etag = null;
       }
 
       items.add(_SyncItem(href: href, etag: etag, deleted: deleted));
@@ -534,8 +531,8 @@ class CardDavClient {
     return null;
   }
 
-  Future<contacts.Contact> _myContactFromVCard(String vcard, Uri href) async {
-    final contact = Contact.fromVCard(vcard);
+  Future<ContactV2> _myContactFromVCard(String vcard, Uri href) async {
+    final contact = fc.Contact.fromVCard(vcard);
     final inlinePhoto = _extractInlinePhotoBytes(vcard);
     if (inlinePhoto != null && inlinePhoto.isNotEmpty) {
       contact.photo = inlinePhoto;
@@ -561,9 +558,7 @@ class CardDavClient {
       final params = parts.first.toUpperCase();
       final value = parts.sublist(1).join(':').trim();
       if (value.isEmpty) continue;
-      if (!params.contains('ENCODING=B') &&
-          !params.contains('VALUE=BINARY') &&
-          !params.contains('BASE64')) {
+      if (!params.contains('ENCODING=B') && !params.contains('VALUE=BINARY') && !params.contains('BASE64')) {
         continue;
       }
       final cleaned = value.replaceAll(RegExp(r'\s'), '');
@@ -638,30 +633,36 @@ class CardDavClient {
     return results.whereType<T>().toList();
   }
 
-  contacts.Contact _toMyContact(Contact contact) {
+  ContactV2 _toMyContact(fc.Contact contact) {
     final name = contact.name;
-    final phones = contact.phones
-        .map((p) => p.number.trim())
-        .where((p) => p.isNotEmpty)
-        .toList();
-    final emails = contact.emails
-        .map((e) => e.address.trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
-    return contacts.Contact(
-      id: contact.id,
+    final phones = contact.phones.map((p) => p.number.trim()).where((p) => p.isNotEmpty).toList();
+    final emails = contact.emails.map((e) => e.address.trim()).where((e) => e.isNotEmpty).toList();
+    final converted = ContactV2(
+      nativeContactId: contact.id,
       displayName: contact.displayName,
-      phones: phones,
-      emails: emails,
-      structuredName: structured.StructuredName(
-        namePrefix: name.prefix,
-        givenName: name.first,
-        middleName: name.middle,
-        familyName: name.last,
-        nameSuffix: name.suffix,
-      ),
-      avatar: contact.photoOrThumbnail,
+      addresses: [
+        ...phones.map(ContactV2.normalizePhoneNumber),
+        ...emails.map(ContactV2.normalizeEmail),
+      ],
+      firstName: name.first,
+      lastName: name.last,
+      middleName: name.middle,
+      namePrefix: name.prefix,
+      nameSuffix: name.suffix,
+      nickname: name.nickname,
+      isNative: false,
     );
+    converted.phoneNumbers = phones.map((e) => ContactPhone(number: e, label: '')).toList();
+    converted.emailAddresses = emails.map((e) => ContactEmail(address: e, label: '')).toList();
+    final avatar = contact.photoOrThumbnail;
+    if (avatar != null && avatar.isNotEmpty) {
+      final avatarsDir = Directory(FilesystemSvc.contactAvatarsPath);
+      if (!avatarsDir.existsSync()) avatarsDir.createSync(recursive: true);
+      final file = File('${avatarsDir.path}/${converted.nativeContactId}.jpg');
+      file.writeAsBytesSync(avatar);
+      converted.avatarPath = file.path;
+    }
+    return converted;
   }
 
   /// ===== HTTP/XML helpers =====

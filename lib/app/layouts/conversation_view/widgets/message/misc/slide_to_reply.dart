@@ -9,7 +9,7 @@ import 'package:get/get.dart';
 
 class SlideToReply extends StatelessWidget {
   const SlideToReply({super.key, required this.width, required this.isFromMe});
-  
+
   final double width;
   final bool isFromMe;
   static const double replyThreshold = 40;
@@ -29,16 +29,16 @@ class SlideToReply extends StatelessWidget {
               min(replyThreshold, width) * 0.4,
             ),
           ),
-          color: context.theme.colorScheme.properSurface,
+          color: context.theme.colorScheme.surfaceContainerHighest,
         ),
         child: AnimatedSize(
           duration: Duration(milliseconds: width == 0 ? 150 : 0),
           child: Offstage(
             offstage: kIsWeb && width == 0,
             child: Icon(
-              ss.settings.skin.value == Skins.iOS ? CupertinoIcons.reply : Icons.reply,
+              SettingsSvc.settings.skin.value == Skins.iOS ? CupertinoIcons.reply : Icons.reply,
               size: min(replyThreshold, width) * (width >= replyThreshold ? 0.5 : 0.4),
-              color: context.theme.colorScheme.properOnSurface,
+              color: context.theme.colorScheme.onSurfaceVariant,
             ),
           ),
         ),

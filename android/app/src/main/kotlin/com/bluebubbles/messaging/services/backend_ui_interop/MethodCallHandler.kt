@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import com.bluebubbles.messaging.Constants
 import com.bluebubbles.messaging.MainActivity
-import com.bluebubbles.messaging.MainActivity.Companion.engine
 import com.bluebubbles.messaging.services.extension.DevExtensionHandler
 import com.bluebubbles.messaging.services.extension.MessageUpdateHandler
 import com.bluebubbles.messaging.services.extension.StatusQuery
@@ -65,20 +64,21 @@ import io.flutter.plugin.common.MethodChannel
 class MethodCallHandler {
     companion object {
         var getNotificationListenerResult: MethodChannel.Result? = null
-
         var queueId = 0
         var queuedMessages = HashMap<Int, String>()
 
         /// Send a method call back to Dart (app must be launched, otherwise use the DartWorker!)
         fun invokeMethod(method: String, arguments: Map<String, Any>) {
-            if (engine != null) {
-                MethodChannel(engine!!.dartExecutor.binaryMessenger, Constants.methodChannel).invokeMethod(method, arguments)
+            val currentEngine = MainActivity.getEngine()
+            if (currentEngine != null) {
+                MethodChannel(currentEngine.dartExecutor.binaryMessenger, Constants.methodChannel).invokeMethod(method, arguments)
             }
         }
 
         fun invokeMethodCb(method: String, arguments: Map<String, Any>, callback: MethodChannel.Result) {
-            if (engine != null) {
-                MethodChannel(engine!!.dartExecutor.binaryMessenger, Constants.methodChannel).invokeMethod(method, arguments, callback)
+            val currentEngine = MainActivity.getEngine()
+            if (currentEngine != null) {
+                MethodChannel(currentEngine.dartExecutor.binaryMessenger, Constants.methodChannel).invokeMethod(method, arguments, callback)
             }
         }
     }
@@ -86,6 +86,11 @@ class MethodCallHandler {
     fun methodCallHandler(call: MethodCall, result: MethodChannel.Result, context: Context) {
         Log.d(Constants.logTag, "Received new method call from Dart with method ${call.method}")
         when(call.method) {
+            "ready" -> {
+                Log.d(Constants.logTag, "Dart engine is ready!")
+                MainActivity.setEngineReady(true)
+                result.success(null)
+            }
             UnifiedPushHandler.tag -> UnifiedPushHandler().handleMethodCall(call, result, context)
             FirebaseAuthHandler.tag -> FirebaseAuthHandler().handleMethodCall(call, result, context)
             FirebaseDeleteTokenHandler.tag -> FirebaseDeleteTokenHandler().handleMethodCall(call, result, context)
@@ -143,7 +148,6 @@ class MethodCallHandler {
             ProvisionNative.tag -> ProvisionNative().handleMethodCall(call, result, context)
             EAPAKAGateway.tag -> EAPAKAGateway().handleMethodCall(call, result, context)
             KeystoreUnlockHandler.tag -> KeystoreUnlockHandler().handleMethodCall(call, result, context)
-            "ready" -> { MainActivity.engine_ready = true }
             else -> {
                 val error = "Could not find method call handler for ${call.method}!"
                 Log.d(Constants.logTag, error)

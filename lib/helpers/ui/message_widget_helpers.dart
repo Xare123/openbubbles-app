@@ -13,12 +13,14 @@ import 'package:maps_launcher/maps_launcher.dart';
 import 'package:tuple/tuple.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-List<InlineSpan> buildMessageSpans(BuildContext context, MessagePart part, Message message, {Color? colorOverride, bool hideBodyText = false}) {
+List<InlineSpan> buildMessageSpans(BuildContext context, MessagePart part, Message message,
+    {Color? colorOverride, bool hideBodyText = false}) {
   final textSpans = <InlineSpan>[];
   final textStyle = (context.theme.extensions[BubbleText] as BubbleText).bubbleText.apply(
-    color: colorOverride ?? (message.isFromMe! ? context.theme.colorScheme.onPrimary : context.theme.colorScheme.properOnSurface),
-    fontSizeFactor: message.isBigEmoji ? 3 : 1,
-  );
+        color: colorOverride ??
+            (message.isFromMe! ? context.theme.colorScheme.onPrimary : context.theme.colorScheme.onSurfaceVariant),
+        fontSizeFactor: message.isBigEmoji ? 3 : 1,
+      );
 
   if (!isNullOrEmpty(part.subject)) {
     textSpans.addAll(MessageHelper.buildEmojiText(
@@ -32,7 +34,8 @@ List<InlineSpan> buildMessageSpans(BuildContext context, MessagePart part, Messa
       var style = textStyle;
       if (e.bold ?? false) style = style.apply(fontWeightDelta: 2);
       if (e.italic ?? false) style = style.apply(fontStyle: FontStyle.italic);
-      style = style.apply(decoration: TextDecoration.combine([
+      style = style.apply(
+          decoration: TextDecoration.combine([
         if (e.strikethrough ?? false) TextDecoration.lineThrough,
         if (e.underline ?? false) TextDecoration.underline,
       ]));
@@ -40,23 +43,25 @@ List<InlineSpan> buildMessageSpans(BuildContext context, MessagePart part, Messa
       if (e.textEffect == Attributes.SMALL) style = style.apply(fontSizeDelta: -2);
       if (e.mentionedAddress != null) {
         textSpans.addAll(MessageHelper.buildEmojiText(
-          part.displayText!.substring(range.first, range.last),
-          style.apply(fontWeightDelta: 2),
-          recognizer: TapGestureRecognizer()..onTap = () async {
-            if (kIsDesktop || kIsWeb) return;
-            final handle = cm.activeChat!.chat.participants.firstWhereOrNull((e) => e.address == part.annotations[i].mentionedAddress);
-            if (handle?.contact == null && handle != null) {
-              await mcs.invokeMethod("open-contact-form", {'address': handle.address, 'address_type': handle.address.isEmail ? 'email' : 'phone'});
-            } else if (handle?.contact != null) {
-              try {
-                await mcs.invokeMethod("view-contact-form", {'id': handle!.contact!.id});
-              } catch (_) {
-                showSnackbar("Error", "Failed to find contact on device!");
-              }
-            }
-          }
-        ));
-      } else {  
+            part.displayText!.substring(range.first, range.last), style.apply(fontWeightDelta: 2),
+            recognizer: TapGestureRecognizer()
+              ..onTap = () async {
+                if (kIsDesktop || kIsWeb) return;
+                final handle = ChatsSvc.activeChat!.chat.handles
+                    .firstWhereOrNull((h) => h.address == part.annotations[i].mentionedAddress);
+                if (handle?.contactsV2.isNotEmpty == true && handle!.contactsV2.first.isNative) {
+                  try {
+                    await MethodChannelSvc.invokeMethod(
+                        "view-contact-form", {'id': handle.contactsV2.first.nativeContactId});
+                  } catch (_) {
+                    showSnackbar("Error", "Failed to find contact on device!");
+                  }
+                } else if (handle != null) {
+                  await MethodChannelSvc.invokeMethod("open-contact-form",
+                      {'address': handle.address, 'address_type': handle.address.isEmail ? 'email' : 'phone'});
+                }
+              }));
+      } else {
         textSpans.addAll(MessageHelper.buildEmojiText(
           part.displayText!.substring(range.first, range.last),
           style,
@@ -73,55 +78,59 @@ List<InlineSpan> buildMessageSpans(BuildContext context, MessagePart part, Messa
   return textSpans;
 }
 
-Future<List<InlineSpan>> buildEnrichedMessageSpans(BuildContext context, MessagePart part, Message message, {Color? colorOverride, bool hideBodyText = false}) async {
+Future<List<InlineSpan>> buildEnrichedMessageSpans(BuildContext context, MessagePart part, Message message,
+    {Color? colorOverride, bool hideBodyText = false}) async {
   final textSpans = <InlineSpan>[];
   final textStyle = (context.theme.extensions[BubbleText] as BubbleText).bubbleText.apply(
-    color: colorOverride ?? (message.isFromMe! ? context.theme.colorScheme.onPrimary : context.theme.colorScheme.properOnSurface),
-    fontSizeFactor: message.isBigEmoji ? 3 : 1,
-  );
-  // extract rich content
-  final urlRegex = RegExp(r'((https?://)|(www\.))[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}([-a-zA-Z0-9/()@:%_.~#?&=*\[\]]*)\b');
+        color: colorOverride ??
+            (message.isFromMe! ? context.theme.colorScheme.onPrimary : context.theme.colorScheme.onPrimary),
+        fontSizeFactor: message.isBigEmoji ? 3 : 1,
+      );
 
-  List<Annotation> annotations = part.annotations.map((a) => a.copy()).toList();
+  // extract rich content
+  final urlRegex = RegExp(
+      r'((https?://)|(www\.))[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}([-a-zA-Z0-9/()@:%_.~#?&=*\[\]]*)\b');
+  List<Annotation> annotations = part.annotations.isNotEmpty
+      ? part.annotations.map((a) => a.copy()).toList()
+      : (!isNullOrEmpty(part.displayText)
+          ? [
+              Annotation(range: [0, part.displayText!.length])
+            ]
+          : []);
   void markRange(Tuple3<String, List<int>, List?> annotation) {
     var range = annotation.item2;
-    List<Annotation> extras = [];
-    // split em up correctly
-    for (var a in annotations) {
+    final extras = <Annotation>[];
+    for (final a in annotations) {
       if (a.range[0] < range[0] && a.range[1] > range[0]) {
-        var dup = a.copy();
+        final dup = a.copy();
         dup.range[1] = range[0];
         extras.add(dup);
-
-        // end this range at the start of my new range
         a.range[0] = range[0];
       }
 
       if (a.range[0] < range[1] && a.range[1] > range[1]) {
-        var dup = a.copy();
+        final dup = a.copy();
         dup.range[0] = range[1];
         extras.add(dup);
-
-        // end this range at the start of my new range
         a.range[1] = range[1];
       }
     }
     annotations.addAll(extras);
 
-    for (var a in annotations) {
+    for (final a in annotations) {
       if (a.range[0] >= range[0] && a.range[1] <= range[1]) {
         a.renderExtras.add(annotation);
       }
     }
   }
 
-  final controller = cvc(message.chat.target ?? cm.activeChat!.chat);
+  final controller = cvc(message.chat.target ?? ChatsSvc.activeChat!.chat);
   if (!isNullOrEmpty(part.text)) {
-    if (!kIsWeb && !kIsDesktop && ss.settings.smartReply.value) {
+    if (!kIsWeb && !kIsDesktop && SettingsSvc.settings.smartReply.value) {
       if (controller.mlKitParsedText["${message.guid!}-${part.part}"] == null) {
         try {
-          controller.mlKitParsedText["${message.guid!}-${part.part}"] = await GoogleMlKit.nlp.entityExtractor(EntityExtractorLanguage.english)
-              .annotateText(part.text!);
+          controller.mlKitParsedText["${message.guid!}-${part.part}"] =
+              await GoogleMlKit.nlp.entityExtractor(EntityExtractorLanguage.english).annotateText(part.text!);
         } catch (ex, stack) {
           Logger.warn('Failed to extract entities using mlkit!', error: ex, trace: stack);
         }
@@ -151,15 +160,12 @@ Future<List<InlineSpan>> buildEnrichedMessageSpans(BuildContext context, Message
         }
       }
     } else {
-      List<RegExpMatch> matches = urlRegex.allMatches(part.text!).toList();
-      for (RegExpMatch match in matches) {
+      final matches = urlRegex.allMatches(part.text!).toList();
+      for (final match in matches) {
         markRange(Tuple3("link", [match.start, match.end], null));
       }
     }
   }
-
-  annotations.sort((a, b) => a.range[0].compareTo(b.range[0]));
-  
   // render subject
   if (!isNullOrEmpty(part.subject)) {
     textSpans.addAll(MessageHelper.buildEmojiText(
@@ -167,46 +173,50 @@ Future<List<InlineSpan>> buildEnrichedMessageSpans(BuildContext context, Message
       textStyle.apply(fontWeightDelta: 2),
     ));
   }
-  // render rich content if needed
+  annotations.sort((a, b) => a.range[0].compareTo(b.range[0]));
   if (annotations.isNotEmpty) {
     annotations.forEachIndexed((i, e) {
-      
-      var item = e.renderExtras.firstOrNull;
-
+      final item = e.renderExtras.firstOrNull;
       final type = item?.item1;
       final range = e.range;
       final data = item?.item3;
       final text = part.displayText!.substring(range.first, range.last);
-
       var style = textStyle;
       if (e.bold ?? false) style = style.apply(fontWeightDelta: 2);
       if (e.italic ?? false) style = style.apply(fontStyle: FontStyle.italic);
-      style = style.apply(decoration: TextDecoration.combine([
+      style = style.apply(
+          decoration: TextDecoration.combine([
         if (e.strikethrough ?? false) TextDecoration.lineThrough,
         if (e.underline ?? false) TextDecoration.underline,
       ]));
       if (e.textEffect == Attributes.BIG) style = style.apply(fontSizeDelta: 4);
       if (e.textEffect == Attributes.SMALL) style = style.apply(fontSizeDelta: -2);
-
       if (e.mentionedAddress != null) {
-        textSpans.addAll(MessageHelper.buildEmojiText(
-          text,
-          style.apply(fontWeightDelta: 2),
-          recognizer: TapGestureRecognizer()..onTap = () async {
-            if (kIsDesktop || kIsWeb) return;
-            final handle = cm.activeChat!.chat.participants.firstWhereOrNull((e) => e.address == data!.first);
-            if (handle?.contact == null && handle != null) {
-              await mcs.invokeMethod("open-contact-form", {'address': handle.address, 'address_type': handle.address.isEmail ? 'email' : 'phone'});
-            } else if (handle?.contact != null) {
-              try {
-                await mcs.invokeMethod("view-contact-form", {'id': handle!.contact!.id});
-              } catch (_) {
-                showSnackbar("Error", "Failed to find contact on device!");
-              }
-            }
-          }
-        ));
-      } else if (urlRegex.hasMatch(text) || type == "map" || text.isPhoneNumber || text.isEmail || type == "date" || type == "tracking" || type == "flight") {
+        textSpans.addAll(MessageHelper.buildEmojiText(text, style.apply(fontWeightDelta: 2),
+            recognizer: TapGestureRecognizer()
+              ..onTap = () async {
+                if (kIsDesktop || kIsWeb) return;
+                final handle =
+                    ChatsSvc.activeChat!.chat.handles.firstWhereOrNull((h) => h.address == e.mentionedAddress);
+                if (handle?.contactsV2.isNotEmpty == true && handle!.contactsV2.first.isNative) {
+                  try {
+                    await MethodChannelSvc.invokeMethod(
+                        "view-contact-form", {'id': handle.contactsV2.first.nativeContactId});
+                  } catch (_) {
+                    showSnackbar("Error", "Failed to find contact on device!");
+                  }
+                } else if (handle != null) {
+                  await MethodChannelSvc.invokeMethod("open-contact-form",
+                      {'address': handle.address, 'address_type': handle.address.isEmail ? 'email' : 'phone'});
+                }
+              }));
+      } else if (urlRegex.hasMatch(text) ||
+          type == "map" ||
+          text.isPhoneNumber ||
+          text.isEmail ||
+          type == "date" ||
+          type == "tracking" ||
+          type == "flight") {
         textSpans.add(
           TextSpan(
             text: text,
@@ -225,16 +235,18 @@ Future<List<InlineSpan>> buildEnrichedMessageSpans(BuildContext context, Message
                 } else if (type == "email") {
                   await launchUrl(Uri(scheme: "mailto", path: text));
                 } else if (type == "date") {
-                  await mcs.invokeMethod("open-calendar", {"date": data!.first});
+                  await MethodChannelSvc.invokeMethod("open-calendar", {"date": data!.first});
                 } else if (type == "tracking") {
                   final TrackingCarrier c = data!.first;
                   final String number = data.last;
                   Clipboard.setData(ClipboardData(text: number));
-                  await launchUrl(Uri.parse("https://www.google.com/search?q=${c.name} $number"), mode: LaunchMode.externalApplication);
+                  await launchUrl(Uri.parse("https://www.google.com/search?q=${c.name} $number"),
+                      mode: LaunchMode.externalApplication);
                 } else if (type == "flight") {
                   final String c = data!.first;
                   final String number = data.last;
-                  await launchUrl(Uri.parse("https://www.google.com/search?q=flight $c$number"), mode: LaunchMode.externalApplication);
+                  await launchUrl(Uri.parse("https://www.google.com/search?q=flight $c$number"),
+                      mode: LaunchMode.externalApplication);
                 }
               },
             style: style.apply(decoration: TextDecoration.underline),

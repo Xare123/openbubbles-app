@@ -44,8 +44,10 @@ class SocketIOForegroundService : Service() {
 
     private var currentNotification: String? = null
 
+    @Volatile
     private var isBeingDestroyed: Boolean = false
 
+    @Volatile
     private var hasStarted: Boolean = false
 
     private val eventBlacklist: Array<String> = arrayOf(
@@ -189,12 +191,18 @@ class SocketIOForegroundService : Service() {
     }
 
     private fun tryReconnect() {
-        if (mSocket != null && !mSocket!!.connected()) {
-            Log.e(Constants.logTag, "Waiting 30 seconds before reconnecting...")
+        val socket = mSocket
+        if (socket != null && !socket.connected()) {
+            Log.e(Constants.logTag, "Scheduling reconnection in 30 seconds...")
 
-            // Sleep for 30 seconds before attempting to reconnect
-            Thread.sleep(30000)
-            mSocket!!.connect()
+            // Schedule reconnection asynchronously to avoid blocking
+            Thread {
+                Thread.sleep(30000)
+                // Double-check socket still exists and isn't destroyed
+                if (!isBeingDestroyed && mSocket != null && !mSocket!!.connected()) {
+                    mSocket!!.connect()
+                }
+            }.start()
         }
     }
 

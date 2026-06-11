@@ -24,29 +24,27 @@ class CustomCupertinoPageTransition extends StatelessWidget {
     required Animation<double> primaryRouteAnimation,
     required this.child,
     required bool linearTransition,
-  }) : _primaryPositionAnimation =
-        (linearTransition
-            ? primaryRouteAnimation
-            : CurvedAnimation(
-          // The curves below have been rigorously derived from plots of native
-          // iOS animation frames. Specifically, a video was taken of a page
-          // transition animation and the distance in each frame that the page
-          // moved was measured. A best fit bezier curve was the fitted to the
-          // point set, which is linearToEaseIn. Conversely, easeInToLinear is the
-          // reflection over the origin of linearToEaseIn.
-          parent: primaryRouteAnimation,
-          curve: Curves.linearToEaseOut,
-          reverseCurve: Curves.easeInToLinear,
-        )
-        ).drive(_kRightMiddleTween),
-        _primaryShadowAnimation =
-        (linearTransition
-            ? primaryRouteAnimation
-            : CurvedAnimation(
-          parent: primaryRouteAnimation,
-          curve: Curves.linearToEaseOut,
-        )
-        ).drive(_CupertinoEdgeShadowDecoration.kTween);
+  })  : _primaryPositionAnimation = (linearTransition
+                ? primaryRouteAnimation
+                : CurvedAnimation(
+                    // The curves below have been rigorously derived from plots of native
+                    // iOS animation frames. Specifically, a video was taken of a page
+                    // transition animation and the distance in each frame that the page
+                    // moved was measured. A best fit bezier curve was the fitted to the
+                    // point set, which is linearToEaseIn. Conversely, easeInToLinear is the
+                    // reflection over the origin of linearToEaseIn.
+                    parent: primaryRouteAnimation,
+                    curve: Curves.linearToEaseOut,
+                    reverseCurve: Curves.easeInToLinear,
+                  ))
+            .drive(_kRightMiddleTween),
+        _primaryShadowAnimation = (linearTransition
+                ? primaryRouteAnimation
+                : CurvedAnimation(
+                    parent: primaryRouteAnimation,
+                    curve: Curves.linearToEaseOut,
+                  ))
+            .drive(_CupertinoEdgeShadowDecoration.kTween);
 
   // When this page is coming in to cover another page.
   final Animation<Offset> _primaryPositionAnimation;
@@ -117,18 +115,24 @@ class _CupertinoEdgeShadowDecoration extends Decoration {
   //
   //  * [Decoration.lerp].
   static _CupertinoEdgeShadowDecoration? lerp(
-      _CupertinoEdgeShadowDecoration? a,
-      _CupertinoEdgeShadowDecoration? b,
-      double t,
-      ) {
+    _CupertinoEdgeShadowDecoration? a,
+    _CupertinoEdgeShadowDecoration? b,
+    double t,
+  ) {
     if (a == null && b == null) {
       return null;
     }
     if (a == null) {
-      return b!._colors == null ? b : _CupertinoEdgeShadowDecoration._(b._colors!.map<Color>((Color color) => Color.lerp(null, color, t)!).toList());
+      return b!._colors == null
+          ? b
+          : _CupertinoEdgeShadowDecoration._(
+              b._colors!.map<Color>((Color color) => Color.lerp(null, color, t)!).toList());
     }
     if (b == null) {
-      return a._colors == null ? a : _CupertinoEdgeShadowDecoration._(a._colors!.map<Color>((Color color) => Color.lerp(null, color, 1.0 - t)!).toList());
+      return a._colors == null
+          ? a
+          : _CupertinoEdgeShadowDecoration._(
+              a._colors!.map<Color>((Color color) => Color.lerp(null, color, 1.0 - t)!).toList());
     }
     assert(b._colors != null || a._colors != null);
     // If it ever becomes necessary, we could allow decorations with different
@@ -136,8 +140,7 @@ class _CupertinoEdgeShadowDecoration extends Decoration {
     assert(b._colors == null || a._colors == null || a._colors!.length == b._colors!.length);
     return _CupertinoEdgeShadowDecoration._(
       <Color>[
-        for (int i = 0; i < b._colors!.length; i += 1)
-          Color.lerp(a._colors?[i], b._colors?[i], t)!,
+        for (int i = 0; i < b._colors!.length; i += 1) Color.lerp(a._colors?[i], b._colors?[i], t)!,
       ],
     );
   }
@@ -159,7 +162,7 @@ class _CupertinoEdgeShadowDecoration extends Decoration {
   }
 
   @override
-  _CupertinoEdgeShadowPainter createBoxPainter([ VoidCallback? onChanged ]) {
+  _CupertinoEdgeShadowPainter createBoxPainter([VoidCallback? onChanged]) {
     return _CupertinoEdgeShadowPainter(this, onChanged);
   }
 
@@ -168,8 +171,7 @@ class _CupertinoEdgeShadowDecoration extends Decoration {
     if (other.runtimeType != runtimeType) {
       return false;
     }
-    return other is _CupertinoEdgeShadowDecoration
-        && other._colors == _colors;
+    return other is _CupertinoEdgeShadowDecoration && other._colors == _colors;
   }
 
   @override
@@ -185,9 +187,9 @@ class _CupertinoEdgeShadowDecoration extends Decoration {
 /// A [BoxPainter] used to draw the page transition shadow using gradients.
 class _CupertinoEdgeShadowPainter extends BoxPainter {
   _CupertinoEdgeShadowPainter(
-      this._decoration,
-      VoidCallback? onChange,
-      ) : assert(_decoration._colors == null || _decoration._colors!.length > 1),
+    this._decoration,
+    VoidCallback? onChange,
+  )   : assert(_decoration._colors == null || _decoration._colors!.length > 1),
         super(onChange);
 
   final _CupertinoEdgeShadowDecoration _decoration;

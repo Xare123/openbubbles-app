@@ -3,21 +3,15 @@ import 'dart:math';
 
 import 'package:bluebubbles/app/components/custom_text_editing_controllers.dart';
 import 'package:bluebubbles/app/layouts/chat_creator/widgets/chat_creator_tile.dart';
-import 'package:bluebubbles/app/layouts/conversation_view/pages/conversation_view.dart';
-import 'package:bluebubbles/app/layouts/conversation_view/widgets/text_field/conversation_text_field.dart';
-import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
-import 'package:bluebubbles/app/wrappers/titlebar_wrapper.dart';
-import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/pages/messages_view.dart';
-import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
-import 'package:bluebubbles/database/database.dart';
+import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
+import 'package:bluebubbles/helpers/helpers.dart';
+import 'package:bluebubbles/helpers/ui/theme_helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
-import 'package:bluebubbles/utils/string_utils.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
-import 'package:dio/dio.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -25,7 +19,6 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_acrylic/window_effect.dart';
 import 'package:get/get.dart' hide Response;
-import 'package:slugify/slugify.dart';
 import 'package:tuple/tuple.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 
@@ -55,15 +48,16 @@ class GroupInviteCreator extends StatefulWidget {
   GroupInviteCreatorState createState() => GroupInviteCreatorState();
 }
 
-class GroupInviteCreatorState extends OptimizedState<GroupInviteCreator> {
+class GroupInviteCreatorState extends State<GroupInviteCreator> with ThemeHelpers {
   final TextEditingController addressController = TextEditingController();
   final messageNode = FocusNode();
-  late final MentionTextEditingController textController = MentionTextEditingController(text: widget.initialText, focusNode: messageNode);
+  late final MentionTextEditingController textController =
+      MentionTextEditingController(text: widget.initialText, focusNode: messageNode);
   final FocusNode addressNode = FocusNode();
   final ScrollController addressScrollController = ScrollController();
 
-  List<Contact> contacts = [];
-  List<Contact> filteredContacts = [];
+  List<ContactV2> contacts = [];
+  List<ContactV2> filteredContacts = [];
   late final RxList<SelectedContact> selectedContacts = List<SelectedContact>.from(widget.initialSelected).obs;
   final Rxn<ConversationViewController> fakeController = Rxn(null);
   bool iMessage = true;
@@ -92,7 +86,7 @@ class GroupInviteCreatorState extends OptimizedState<GroupInviteCreator> {
             oldText = addressController.text;
             // if user has typed stuff, remove the message view and show filtered results
             if (addressController.text.isNotEmpty && fakeController.value != null) {
-              await cm.setAllInactive();
+              await ChatsSvc.setAllInactive();
               oldController = fakeController.value;
               fakeController.value = null;
             }
@@ -101,42 +95,43 @@ class GroupInviteCreatorState extends OptimizedState<GroupInviteCreator> {
           Logger.debug("here");
           final _contacts = contacts
               .where((e) =>
-                  e.displayName.toLowerCase().contains(query) ||
-                  e.phones.firstWhereOrNull((e) => cleansePhoneNumber(e.toLowerCase()).contains(query)) != null ||
-                  e.emails.firstWhereOrNull((e) => e.toLowerCase().contains(query)) != null)
+                  e.computedDisplayName.toLowerCase().contains(query) ||
+                  e.phoneNumbers.firstWhereOrNull(
+                          (p) => p.number.toLowerCase().numericOnly().contains(query.numericOnly())) !=
+                      null ||
+                  e.emailAddresses.firstWhereOrNull((a) => a.address.toLowerCase().contains(query)) != null)
               .toList();
           Logger.debug("contacts  $_contacts");
           return Tuple2(_contacts, []);
         }, Priority.animation);
         _debounce = null;
         setState(() {
-          filteredContacts = List<Contact>.from(tuple.item1);
+          filteredContacts = List<ContactV2>.from(tuple.item1);
         });
       });
     });
 
-    updateObx(() {
+    () async {
       if (widget.initialAttachments.isEmpty && !kIsWeb) {
-        final query = (Database.contacts.query()..order(Contact_.displayName)).build();
-        contacts = query.find().toSet().toList();
-        filteredContacts = List<Contact>.from(contacts);
+        contacts = await ContactsSvcV2.getAllContacts();
+        filteredContacts = List<ContactV2>.from(contacts);
       }
-      setState(() {});
+      if (mounted) setState(() {});
       if (widget.initialSelected.isNotEmpty) {
-        findExistingChat();
+        await findExistingChat();
       }
-    });
+    }();
 
     if (widget.initialSelected.isNotEmpty) messageNode.requestFocus();
   }
 
   Future<void> addSelected(SelectedContact c) async {
     selectedContacts.add(c);
-    var handle = await (backend as RustPushBackend).getDefaultHandle();
+    var handle = await (BackendSvc as RustPushBackend).getDefaultHandle();
     try {
       var target = await RustPushBBUtils.formatAndAddPrefix(c.address);
       c.iMessage.value = await api.queryHandle(
-        passwords: pushService.state!.icloudServices!.passwords!,
+        passwords: PushSvc.state!.icloudServices!.passwords!,
         handle: target,
       );
     } catch (_) {}
@@ -158,7 +153,7 @@ class GroupInviteCreatorState extends OptimizedState<GroupInviteCreator> {
   Future<void> findExistingChat({bool checkDeleted = false, bool update = true}) async {
     // no selected items, remove message view
     if (selectedContacts.isEmpty) {
-      await cm.setAllInactive();
+      await ChatsSvc.setAllInactive();
       fakeController.value = null;
       return;
     }
@@ -183,10 +178,13 @@ class GroupInviteCreatorState extends OptimizedState<GroupInviteCreator> {
         address: text,
       ));
     } else if (filteredContacts.length == 1) {
-      final possibleAddresses = [...filteredContacts.first.phones, ...filteredContacts.first.emails];
+      final possibleAddresses = [
+        ...filteredContacts.first.phoneNumbers.map((p) => p.number),
+        ...filteredContacts.first.emailAddresses.map((e) => e.address),
+      ];
       if (possibleAddresses.length == 1) {
         await addSelected(SelectedContact(
-          displayName: filteredContacts.first.displayName,
+          displayName: filteredContacts.first.computedDisplayName,
           address: possibleAddresses.first,
         ));
       }
@@ -197,7 +195,7 @@ class GroupInviteCreatorState extends OptimizedState<GroupInviteCreator> {
   Widget build(BuildContext context) {
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle(
-        systemNavigationBarColor: ss.settings.immersiveMode.value
+        systemNavigationBarColor: SettingsSvc.settings.immersiveMode.value
             ? Colors.transparent
             : context.theme.colorScheme.background, // navigation bar color
         systemNavigationBarIconBrightness: context.theme.colorScheme.brightness.opposite,
@@ -205,11 +203,11 @@ class GroupInviteCreatorState extends OptimizedState<GroupInviteCreator> {
         statusBarIconBrightness: context.theme.colorScheme.brightness.opposite,
       ),
       child: Scaffold(
-        backgroundColor: ss.settings.windowEffect.value != WindowEffect.disabled
+        backgroundColor: SettingsSvc.settings.windowEffect.value != WindowEffect.disabled
             ? Colors.transparent
             : context.theme.colorScheme.background,
         appBar: PreferredSize(
-          preferredSize: Size(ns.width(context), kIsDesktop ? 90 : 50),
+          preferredSize: Size(NavigationSvc.width(context), kIsDesktop ? 90 : 50),
           child: AppBar(
             systemOverlayStyle: context.theme.colorScheme.brightness == Brightness.dark
                 ? SystemUiOverlayStyle.light
@@ -220,7 +218,7 @@ class GroupInviteCreatorState extends OptimizedState<GroupInviteCreator> {
             surfaceTintColor: context.theme.colorScheme.primary,
             leading: buildBackButton(context),
             backgroundColor: Colors.transparent,
-            centerTitle: ss.settings.skin.value == Skins.iOS,
+            centerTitle: SettingsSvc.settings.skin.value == Skins.iOS,
             title: Text(
               "Add members",
               style: context.theme.textTheme.titleLarge,
@@ -283,7 +281,8 @@ class GroupInviteCreatorState extends OptimizedState<GroupInviteCreator> {
                                       shrinkWrap: true,
                                       scrollDirection: Axis.horizontal,
                                       physics: const NeverScrollableScrollPhysics(),
-                                      findChildIndexCallback: (key) => findChildIndexByKey(selectedContacts, key, (item) => item.address),
+                                      findChildIndexCallback: (key) =>
+                                          findChildIndexByKey(selectedContacts, key, (item) => item.address),
                                       itemBuilder: (context, index) {
                                         final e = selectedContacts[index];
                                         return Padding(
@@ -296,7 +295,7 @@ class GroupInviteCreatorState extends OptimizedState<GroupInviteCreator> {
                                                         ? context.theme.colorScheme
                                                             .bubble(context, false)
                                                             .withOpacity(0.2)
-                                                        : context.theme.colorScheme.properSurface,
+                                                        : context.theme.colorScheme.surfaceContainerHighest,
                                                 borderRadius: BorderRadius.circular(5),
                                                 clipBehavior: Clip.antiAlias,
                                                 child: InkWell(
@@ -315,11 +314,13 @@ class GroupInviteCreatorState extends OptimizedState<GroupInviteCreator> {
                                                                   ? context.theme.colorScheme.bubble(context, true)
                                                                   : e.iMessage.value == false
                                                                       ? context.theme.colorScheme.bubble(context, false)
-                                                                      : context.theme.colorScheme.properOnSurface,
+                                                                      : context.theme.colorScheme.onSurface,
                                                             )),
                                                         const SizedBox(width: 5.0),
                                                         Icon(
-                                                          iOS ? CupertinoIcons.xmark : Icons.close,
+                                                          SettingsSvc.settings.skin.value == Skins.iOS
+                                                              ? CupertinoIcons.xmark
+                                                              : Icons.close,
                                                           size: 15.0,
                                                         ),
                                                       ],
@@ -332,10 +333,9 @@ class GroupInviteCreatorState extends OptimizedState<GroupInviteCreator> {
                                     )),
                               ),
                             ),
-                            if (selectedContacts.isNotEmpty)
-                            const SizedBox(width: 4),
+                            if (selectedContacts.isNotEmpty) const SizedBox(width: 4),
                             ConstrainedBox(
-                              constraints: BoxConstraints(maxWidth: ns.width(context) - 50),
+                              constraints: BoxConstraints(maxWidth: NavigationSvc.width(context) - 50),
                               child: Focus(
                                 onKeyEvent: (node, event) {
                                   if (event is KeyDownEvent) {
@@ -360,10 +360,13 @@ class GroupInviteCreatorState extends OptimizedState<GroupInviteCreator> {
                                   controller: addressController,
                                   style: context.theme.textTheme.bodyMedium,
                                   maxLines: 1,
-                                  selectionControls:
-                                      iOS ? cupertinoTextSelectionControls : materialTextSelectionControls,
-                                  autofocus: widget.initialAttachments.isEmpty && (widget.initialText?.isEmpty ?? true) && widget.initialSelected.isEmpty,
-                                  enableIMEPersonalizedLearning: !ss.settings.incognitoKeyboard.value,
+                                  selectionControls: SettingsSvc.settings.skin.value == Skins.iOS
+                                      ? cupertinoTextSelectionControls
+                                      : materialTextSelectionControls,
+                                  autofocus: widget.initialAttachments.isEmpty &&
+                                      (widget.initialText?.isEmpty ?? true) &&
+                                      widget.initialSelected.isEmpty,
+                                  enableIMEPersonalizedLearning: !SettingsSvc.settings.incognitoKeyboard.value,
                                   textInputAction: TextInputAction.done,
                                   cursorColor: context.theme.colorScheme.primary,
                                   cursorHeight: context.theme.textTheme.bodyMedium!.fontSize! * 1.25,
@@ -395,10 +398,10 @@ class GroupInviteCreatorState extends OptimizedState<GroupInviteCreator> {
                     colorScheme: context.theme.colorScheme.copyWith(
                       primary: context.theme.colorScheme.bubble(context, iMessage),
                       onPrimary: context.theme.colorScheme.onBubble(context, iMessage),
-                      surface: ss.settings.monetTheming.value == Monet.full
+                      surface: SettingsSvc.settings.monetTheming.value == Monet.full
                           ? null
                           : (context.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
-                      onSurface: ss.settings.monetTheming.value == Monet.full
+                      onSurface: SettingsSvc.settings.monetTheming.value == Monet.full
                           ? null
                           : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
                     ),
@@ -415,42 +418,44 @@ class GroupInviteCreatorState extends OptimizedState<GroupInviteCreator> {
                                   delegate: SliverChildBuilderDelegate(
                                     (context, index) {
                                       final contact = filteredContacts[index];
-                                      contact.phones = getUniqueNumbers(contact.phones);
-                                      contact.emails = getUniqueEmails(contact.emails);
-                                      final hideInfo =
-                                          ss.settings.redactedMode.value && ss.settings.hideContactInfo.value;
+                                      final uniquePhones =
+                                          getUniqueNumbers(contact.phoneNumbers.map((p) => p.number).toList());
+                                      final uniqueEmails =
+                                          getUniqueEmails(contact.emailAddresses.map((e) => e.address).toList());
+                                      final hideInfo = SettingsSvc.settings.redactedMode.value &&
+                                          SettingsSvc.settings.hideContactInfo.value;
                                       return Column(
-                                        key: ValueKey(contact.id),
+                                        key: ValueKey(contact.nativeContactId),
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          ...contact.phones.map((e) => Material(
+                                          ...uniquePhones.map((e) => Material(
                                                 color: Colors.transparent,
                                                 child: InkWell(
                                                   onTap: () {
                                                     if (selectedContacts.firstWhereOrNull((c) => c.address == e) !=
                                                         null) return;
-                                                    addSelected(
-                                                        SelectedContact(displayName: contact.displayName, address: e));
+                                                    addSelected(SelectedContact(
+                                                        displayName: contact.computedDisplayName, address: e));
                                                   },
                                                   child: ChatCreatorTile(
-                                                    title: hideInfo ? "Contact" : contact.displayName,
+                                                    title: hideInfo ? "Contact" : contact.computedDisplayName,
                                                     subtitle: hideInfo ? "" : e,
                                                     contact: contact,
                                                     format: true,
                                                   ),
                                                 ),
                                               )),
-                                          ...contact.emails.map((e) => Material(
+                                          ...uniqueEmails.map((e) => Material(
                                                 color: Colors.transparent,
                                                 child: InkWell(
                                                   onTap: () {
                                                     if (selectedContacts.firstWhereOrNull((c) => c.address == e) !=
                                                         null) return;
-                                                    addSelected(
-                                                        SelectedContact(displayName: contact.displayName, address: e));
+                                                    addSelected(SelectedContact(
+                                                        displayName: contact.computedDisplayName, address: e));
                                                   },
                                                   child: ChatCreatorTile(
-                                                    title: hideInfo ? "Contact" : contact.displayName,
+                                                    title: hideInfo ? "Contact" : contact.computedDisplayName,
                                                     subtitle: hideInfo ? "" : e,
                                                     contact: contact,
                                                   ),

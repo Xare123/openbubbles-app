@@ -27,16 +27,17 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:bluebubbles/app/layouts/facetime/facetime_creator.dart';
 
 class FaceTimePanel extends StatefulWidget {
+  const FaceTimePanel({super.key});
+
   @override
   State<StatefulWidget> createState() => _FaceTimePanelState();
 }
 
-class _FaceTimePanelState extends OptimizedState<FaceTimePanel> {
-
+class _FaceTimePanelState extends State<FaceTimePanel> with ThemeHelpers {
   @override
   void initState() {
     super.initState();
-    pushService.updateState();
+    PushSvc.updateState();
   }
 
   @override
@@ -58,59 +59,68 @@ class _FaceTimePanelState extends OptimizedState<FaceTimePanel> {
       title: participants.isEmpty ? "Empty" : participants.map((a) => a.displayName).join(", "),
       subtitle: active ? "Tap to Join" : "FaceTime",
       leading: ContactAvatarGroupWidget(
-              chat: Chat(guid: "", participants: participants),
-              size: 40,
-              editable: false,
-            ),
-      trailing: active ? Container(
-        child: Icon(CupertinoIcons.videocam_fill, size: 20, color: context.theme.colorScheme.onBubble(context, false),),
-        padding: const EdgeInsets.all(4),
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: context.theme.colorScheme.bubble(context, false),
-        ),
-      ) : Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (session.mode == api.FTMode.outgoing)
-          Icon(Icons.call_made, color: context.theme.colorScheme.bubble(context, false), size: 17,),
-          if (session.mode == api.FTMode.incoming)
-          Icon(Icons.call_received, color: context.theme.colorScheme.bubble(context, false), size: 17,),
-          if (session.mode == api.FTMode.missed)
-          const Icon(Icons.call_missed, color: Colors.redAccent, size: 17),
-          if (session.mode == api.FTMode.missedOutgoing)
-          const Icon(Icons.call_missed_outgoing, color: Colors.redAccent, size: 17),
-          if (session.mode != null)
-          const SizedBox(width: 5),
-          if (session.startTime != null)
-          Text(
-            buildDate(DateTime.fromMillisecondsSinceEpoch(session.startTime!)),
-            style: context.theme.textTheme.bodyMedium!.apply(color: context.theme.colorScheme.outline.withOpacity(0.85)),
-          ),
-        ]
+        participants: participants,
+        size: 40,
+        editable: false,
       ),
+      trailing: active
+          ? Container(
+              child: Icon(
+                CupertinoIcons.videocam_fill,
+                size: 20,
+                color: context.theme.colorScheme.onBubble(context, false),
+              ),
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: context.theme.colorScheme.bubble(context, false),
+              ),
+            )
+          : Row(mainAxisSize: MainAxisSize.min, children: [
+              if (session.mode == api.FTMode.outgoing)
+                Icon(
+                  Icons.call_made,
+                  color: context.theme.colorScheme.bubble(context, false),
+                  size: 17,
+                ),
+              if (session.mode == api.FTMode.incoming)
+                Icon(
+                  Icons.call_received,
+                  color: context.theme.colorScheme.bubble(context, false),
+                  size: 17,
+                ),
+              if (session.mode == api.FTMode.missed) const Icon(Icons.call_missed, color: Colors.redAccent, size: 17),
+              if (session.mode == api.FTMode.missedOutgoing)
+                const Icon(Icons.call_missed_outgoing, color: Colors.redAccent, size: 17),
+              if (session.mode != null) const SizedBox(width: 5),
+              if (session.startTime != null)
+                Text(
+                  buildDate(DateTime.fromMillisecondsSinceEpoch(session.startTime!)),
+                  style: context.theme.textTheme.bodyMedium!
+                      .apply(color: context.theme.colorScheme.outline.withOpacity(0.85)),
+                ),
+            ]),
       onTap: () async {
         if (session.members.length == 2 && !active) {
           // 1-1 facetime, call again
-          await pushService.placeOutgoingCall(session.myHandles.first, [session.members.firstWhere((a) => !session.myHandles.contains(a.handle)).handle]);
+          await PushSvc.placeOutgoingCall(session.myHandles.first,
+              [session.members.firstWhere((a) => !session.myHandles.contains(a.handle)).handle]);
           return;
         }
-        pushService.chosenFTRoomGuid = session.groupId;
+        PushSvc.chosenFTRoomGuid = session.groupId;
         // should be cached
-        var link = await api.getFtLink(facetime: pushService.state!.ftClient, usage: "next");
+        var link = await api.getFtLink(facetime: PushSvc.state!.ftClient, usage: "next");
         var desc = participants.map((p) => p.displayName).join(" & ");
         // rotate link
-        pushService.rotateLink().catchError((e, s) {
+        PushSvc.rotateLink().catchError((e, s) {
           Logger.error("Failed to rotate link", error: e, trace: s);
         });
 
         if (Platform.isAndroid) {
-          await mcs.invokeMethod("launch-facetime", {'link': link, 'desc': desc, 'callUuid': session.groupId});
+          await MethodChannelSvc.invokeMethod(
+              "launch-facetime", {'link': link, 'desc': desc, 'callUuid': session.groupId});
         } else {
-          await launchUrl(
-              Uri.parse(link),
-              mode: LaunchMode.externalApplication
-          );
+          await launchUrl(Uri.parse(link), mode: LaunchMode.externalApplication);
         }
       },
     );
@@ -119,58 +129,59 @@ class _FaceTimePanelState extends OptimizedState<FaceTimePanel> {
   @override
   Widget build(BuildContext context) {
     return Obx(() => SettingsScaffold(
-        title: "Video Calls",
-        initialHeader: pushService.activeSessions.isEmpty ? "Calls" : "Active",
-        iosSubtitle: iosSubtitle,
-        materialSubtitle: materialSubtitle,
-        tileColor: tileColor,
-        headerColor: headerColor,
-        actions: [
-          IconButton(
-            icon: Icon(iOS ? CupertinoIcons.add : Icons.add, color: context.theme.colorScheme.primary),
-            onPressed: () {
-              Navigator.of(context).push(
-                ThemeSwitcher.buildPageRoute(
-                  builder: (context) => const FaceTimeCreator(),
-                ),
-              );
-            },
-          ),
-        ],
-        bodySlivers: [
-          SliverList(
-            delegate: SliverChildListDelegate(
-              <Widget>[
-                if (pushService.activeSessions.isNotEmpty)
-                SettingsSection(
-                  backgroundColor: tileColor,
-                  children: pushService.activeSessions.map((s) => buildSession(s, true)).toList(),
-                ),
-                if (pushService.activeSessions.isNotEmpty && pushService.sessions.isNotEmpty)
-                SettingsHeader(
-                    iosSubtitle: iosSubtitle,
-                    materialSubtitle: materialSubtitle,
-                    text: "Calls"),
-                if (pushService.sessions.isNotEmpty)
-                SettingsSection(
-                  backgroundColor: tileColor,
-                  children: [
-                    ListView.builder(itemBuilder: (context, idx) => buildSession(pushService.sessions[idx], false), itemCount: pushService.sessions.length,
-                      shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), findChildIndexCallback: (key) => findChildIndexByKey(pushService.sessions, key, (item) => item.groupId),)
-                  ]
-                ),
-                if (pushService.sessions.isEmpty && pushService.activeSessions.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 30),
-                  child: Text("No Calls! Users can add you to FaceTime calls. They'll show up here, where you can join them.", style: context.textTheme.bodyMedium!,),
-                ),
-              ]),
-          )
-        ])
-      );
+            title: "Video Calls",
+            initialHeader: PushSvc.activeSessions.isEmpty ? "Calls" : "Active",
+            iosSubtitle: iosSubtitle,
+            materialSubtitle: materialSubtitle,
+            tileColor: tileColor,
+            headerColor: headerColor,
+            actions: [
+              IconButton(
+                icon: Icon(iOS ? CupertinoIcons.add : Icons.add, color: context.theme.colorScheme.primary),
+                onPressed: () {
+                  Navigator.of(context).push(
+                    ThemeSwitcher.buildPageRoute(
+                      builder: (context) => const FaceTimeCreator(),
+                    ),
+                  );
+                },
+              ),
+            ],
+            bodySlivers: [
+              SliverList(
+                delegate: SliverChildListDelegate(<Widget>[
+                  if (PushSvc.activeSessions.isNotEmpty)
+                    SettingsSection(
+                      backgroundColor: tileColor,
+                      children: PushSvc.activeSessions.map((s) => buildSession(s, true)).toList(),
+                    ),
+                  if (PushSvc.activeSessions.isNotEmpty && PushSvc.sessions.isNotEmpty)
+                    SettingsHeader(iosSubtitle: iosSubtitle, materialSubtitle: materialSubtitle, text: "Calls"),
+                  if (PushSvc.sessions.isNotEmpty)
+                    SettingsSection(backgroundColor: tileColor, children: [
+                      ListView.builder(
+                        itemBuilder: (context, idx) => buildSession(PushSvc.sessions[idx], false),
+                        itemCount: PushSvc.sessions.length,
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        findChildIndexCallback: (key) =>
+                            findChildIndexByKey(PushSvc.sessions, key, (item) => item.groupId),
+                      )
+                    ]),
+                  if (PushSvc.sessions.isEmpty && PushSvc.activeSessions.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 30),
+                      child: Text(
+                        "No Calls! Users can add you to FaceTime calls. They'll show up here, where you can join them.",
+                        style: context.textTheme.bodyMedium!,
+                      ),
+                    ),
+                ]),
+              )
+            ]));
   }
 
   void saveSettings() {
-    ss.saveSettings();
+    SettingsSvc.settings.saveAsync();
   }
 }

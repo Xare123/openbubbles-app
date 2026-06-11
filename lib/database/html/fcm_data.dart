@@ -1,4 +1,4 @@
-import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/services/backend/settings/shared_preferences_service.dart';
 
 class FCMData {
   int? id;
@@ -36,33 +36,33 @@ class FCMData {
   FCMData save() {
     if (isNull) return this;
     Future.delayed(Duration.zero, () async {
-      await ss.prefs.setString('projectID', projectID!);
-      await ss.prefs.setString('storageBucket', storageBucket!);
-      await ss.prefs.setString('apiKey', apiKey!);
-      if (firebaseURL != null) await ss.prefs.setString('firebaseURL', firebaseURL!);
-      await ss.prefs.setString('clientID', clientID!);
-      await ss.prefs.setString('applicationID', applicationID!);
+      await PrefsSvc.i.setString('projectID', projectID!);
+      await PrefsSvc.i.setString('storageBucket', storageBucket!);
+      await PrefsSvc.i.setString('apiKey', apiKey!);
+      if (firebaseURL != null) await PrefsSvc.i.setString('firebaseURL', firebaseURL!);
+      await PrefsSvc.i.setString('clientID', clientID!);
+      await PrefsSvc.i.setString('applicationID', applicationID!);
     });
     return this;
   }
 
   static void deleteFcmData() async {
-    await ss.prefs.remove('projectID');
-    await ss.prefs.remove('storageBucket');
-    await ss.prefs.remove('apiKey');
-    await ss.prefs.remove('firebaseURL');
-    await ss.prefs.remove('clientID');
-    await ss.prefs.remove('applicationID');
+    await PrefsSvc.i.remove('projectID');
+    await PrefsSvc.i.remove('storageBucket');
+    await PrefsSvc.i.remove('apiKey');
+    await PrefsSvc.i.remove('firebaseURL');
+    await PrefsSvc.i.remove('clientID');
+    await PrefsSvc.i.remove('applicationID');
   }
 
   static FCMData getFCM() {
     return FCMData(
-      projectID: ss.prefs.getString('projectID'),
-      storageBucket: ss.prefs.getString('storageBucket'),
-      apiKey: ss.prefs.getString('apiKey'),
-      firebaseURL: ss.prefs.getString('firebaseURL'),
-      clientID: ss.prefs.getString('clientID'),
-      applicationID: ss.prefs.getString('applicationID'),
+      projectID: PrefsSvc.i.getString('projectID'),
+      storageBucket: PrefsSvc.i.getString('storageBucket'),
+      apiKey: PrefsSvc.i.getString('apiKey'),
+      firebaseURL: PrefsSvc.i.getString('firebaseURL'),
+      clientID: PrefsSvc.i.getString('clientID'),
+      applicationID: PrefsSvc.i.getString('applicationID'),
     );
   }
 
@@ -76,9 +76,5 @@ class FCMData {
       };
 
   bool get isNull =>
-      projectID == null ||
-      storageBucket == null ||
-      apiKey == null ||
-      clientID == null ||
-      applicationID == null;
+      projectID == null || storageBucket == null || apiKey == null || clientID == null || applicationID == null;
 }

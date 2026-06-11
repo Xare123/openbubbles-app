@@ -8,16 +8,25 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
-NavigatorService ns = Get.isRegistered<NavigatorService>() ? Get.find<NavigatorService>() : Get.put(NavigatorService());
+// ignore: non_constant_identifier_names
+NavigatorService get NavigationSvc =>
+    Get.isRegistered<NavigatorService>() ? Get.find<NavigatorService>() : Get.put(NavigatorService());
+
+/// Global route observer — register with GetMaterialApp.navigatorObservers and subscribe
+/// widgets using the RouteAware mixin to receive didPushNext / didPopNext callbacks.
+final RouteObserver<ModalRoute<void>> routeObserver = RouteObserver<ModalRoute<void>>();
 
 /// Handles navigation for the app
-class NavigatorService extends GetxService {
+class NavigatorService {
   final GlobalKey<NavigatorState> key = GlobalKey<NavigatorState>();
   final Rxn listener = Rxn();
+
   /// width of left side of split screen view
   double? _widthChatListLeft;
+
   /// width of right side of split screen view
   double? _widthChatListRight;
+
   /// width of settings right side split screen
   double? _widthSettings;
 
@@ -28,8 +37,10 @@ class NavigatorService extends GetxService {
   /// Returns widthChatListLeft if in tablet mode, and 0 otherwise
   double widthChatListLeft(BuildContext context) => isTabletMode(context) ? _widthChatListLeft ?? 0 : 0;
 
-  bool isTabletMode(BuildContext context) => (!context.isPhone || context.width / context.height > 0.8) &&
-      ss.settings.tabletMode.value && context.width > 600;
+  bool isTabletMode(BuildContext context) =>
+      (!context.isPhone || context.width / context.height > 0.8) &&
+      SettingsSvc.settings.tabletMode.value &&
+      context.width > 600;
 
   /// grab the available screen width, returning the split screen width if applicable
   /// this should *always* be used in place of context.width or similar
@@ -45,8 +56,9 @@ class NavigatorService extends GetxService {
   }
 
   double ratio(BuildContext context) => (_widthChatListLeft ?? context.width) / context.width;
-  
-  bool isAvatarOnly(BuildContext context) => (kIsDesktop || kIsWeb) && isTabletMode(context) && (_widthChatListLeft ?? context.width) < 300;
+
+  bool isAvatarOnly(BuildContext context) =>
+      (kIsDesktop || kIsWeb) && isTabletMode(context) && (_widthChatListLeft ?? context.width) < 300;
 
   /// Push a new route onto the chat list right side navigator
   void push(BuildContext context, Widget widget) {
@@ -86,9 +98,9 @@ class NavigatorService extends GetxService {
   Future<void> pushAndRemoveUntil(BuildContext context, Widget widget, bool Function(Route) predicate,
       {bool closeActiveChat = true, PageRoute? customRoute}) async {
     if (Get.keys.containsKey(2) && isTabletMode(context)) {
-      if (closeActiveChat && cm.activeChat != null) {
-        Logger.debug("Closing active chat: ${cm.activeChat!.chat.guid}", tag: "NavigatorService");
-        cvc(cm.activeChat!.chat).close();
+      if (closeActiveChat && ChatsSvc.activeChat != null) {
+        Logger.debug("Closing active chat: ${ChatsSvc.activeChat!.chat.guid}", tag: "NavigatorService");
+        cvc(ChatsSvc.activeChat!.chat).close();
       }
 
       await Get.offUntil(
@@ -100,9 +112,12 @@ class NavigatorService extends GetxService {
           predicate,
           id: 2);
     } else {
-      await Navigator.of(context).pushAndRemoveUntil(customRoute ?? ThemeSwitcher.buildPageRoute(
-        builder: (BuildContext context) => TitleBarWrapper(child: widget),
-      ), predicate);
+      await Navigator.of(context).pushAndRemoveUntil(
+          customRoute ??
+              ThemeSwitcher.buildPageRoute(
+                builder: (BuildContext context) => TitleBarWrapper(child: widget),
+              ),
+          predicate);
     }
   }
 
@@ -111,12 +126,15 @@ class NavigatorService extends GetxService {
       {Bindings? binding}) {
     if (Get.keys.containsKey(3) && isTabletMode(context)) {
       // we only want to offUntil when in landscape, otherwise when the user presses back, the previous page will be the chat list
-      Get.offUntil(GetPageRoute(
-        page: () => widget,
-        binding: binding,
-        transition: Transition.noTransition,
-        transitionDuration: Duration.zero,
-      ), predicate, id: 3);
+      Get.offUntil(
+          GetPageRoute(
+            page: () => widget,
+            binding: binding,
+            transition: Transition.noTransition,
+            transitionDuration: Duration.zero,
+          ),
+          predicate,
+          id: 3);
     } else {
       binding?.dependencies();
       // only push here because we don't want to remove underlying routes when in portrait
@@ -127,9 +145,7 @@ class NavigatorService extends GetxService {
   }
 
   void backConversationView(BuildContext context) {
-    if (Get.keys.containsKey(3) &&
-        Get.keys[3]?.currentContext != null &&
-        isTabletMode(context)) {
+    if (Get.keys.containsKey(3) && Get.keys[3]?.currentContext != null && isTabletMode(context)) {
       Get.until((route) {
         if (route.settings.name == "initial") {
           Get.back();
@@ -138,9 +154,7 @@ class NavigatorService extends GetxService {
         }
         return true;
       }, id: 3);
-    } else if (Get.keys.containsKey(2) &&
-        Get.keys[2]?.currentContext != null &&
-        isTabletMode(context)) {
+    } else if (Get.keys.containsKey(2) && Get.keys[2]?.currentContext != null && isTabletMode(context)) {
       if (Get.currentRoute.isEmpty) {
         Get.back();
         return;
@@ -154,10 +168,10 @@ class NavigatorService extends GetxService {
             id2result = true;
           }
           if (!(Get.global(2).currentState?.canPop() ?? true)) {
-            if (cm.activeChat != null) {
-              cvc(cm.activeChat!.chat).close();
+            if (ChatsSvc.activeChat != null) {
+              cvc(ChatsSvc.activeChat!.chat).close();
             }
-            eventDispatcher.emit('update-highlight', null);
+            EventDispatcherSvc.emit('update-highlight', null);
           }
           return true;
         }, id: 2);
@@ -180,14 +194,14 @@ class NavigatorService extends GetxService {
     }
   }
 
-  /// Remember to call `await cm.setAllInactive()` after calling this function
+  /// Remember to call `await ChatsSvc.setAllInactive()` after calling this function
   void closeAllConversationView(BuildContext context) {
-    if (Get.keys.containsKey(2) && Get.keys[2]?.currentContext != null && ns.isTabletMode(context)) {
+    if (Get.keys.containsKey(2) && Get.keys[2]?.currentContext != null && NavigationSvc.isTabletMode(context)) {
       Get.until((route) {
         return route.settings.name == "initial";
       }, id: 2);
     }
-    eventDispatcher.emit("update-highlight", null);
+    EventDispatcherSvc.emit("update-highlight", null);
   }
 
   void backSettings(BuildContext context, {dynamic result, bool closeOverlays = false}) {

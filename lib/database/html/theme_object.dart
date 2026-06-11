@@ -43,7 +43,7 @@ class ThemeObject {
         ThemeEntry.fromStyle(ThemeColors.Subtitle2, data!.textTheme.titleSmall!),
         ThemeEntry(name: ThemeColors.AccentColor, color: data!.colorScheme.secondary, isFont: false),
         ThemeEntry(name: ThemeColors.DividerColor, color: data!.dividerColor, isFont: false),
-        ThemeEntry(name: ThemeColors.BackgroundColor, color: data!.colorScheme.background, isFont: false),
+        ThemeEntry(name: ThemeColors.BackgroundColor, color: data!.colorScheme.surface, isFont: false),
         ThemeEntry(name: ThemeColors.PrimaryColor, color: data!.primaryColor, isFont: false),
       ];
 
@@ -55,11 +55,11 @@ class ThemeObject {
   List<ThemeEntry> fetchData() {
     if (isPreset && !name!.contains("Music")) {
       if (name == "OLED Dark") {
-        data = ts.oledDarkTheme;
+        data = ThemesService.oledDarkTheme;
       } else if (name == "Bright White") {
-        data = ts.whiteLightTheme;
+        data = ThemesService.whiteLightTheme;
       } else if (name == "Nord Theme") {
-        data = ts.nordDarkTheme;
+        data = ThemesService.nordDarkTheme;
       }
 
       entries = toEntries();
@@ -104,8 +104,8 @@ class ThemeObject {
           titleSmall: data[ThemeColors.Subtitle2]!.style,
         ),
         colorScheme: ColorScheme.fromSwatch(
-            accentColor: data[ThemeColors.AccentColor]!.style,
-            backgroundColor: data[ThemeColors.BackgroundColor]!.style,
+          accentColor: data[ThemeColors.AccentColor]!.style,
+          backgroundColor: data[ThemeColors.BackgroundColor]!.style,
         ),
         dividerColor: data[ThemeColors.DividerColor]!.style,
         primaryColor: data[ThemeColors.PrimaryColor]!.style);

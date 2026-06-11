@@ -35,8 +35,7 @@ class CredentialDetailPanel extends StatefulWidget {
   State<CredentialDetailPanel> createState() => _CredentialDetailPanelState();
 }
 
-class _CredentialDetailPanelState
-    extends OptimizedState<CredentialDetailPanel> {
+class _CredentialDetailPanelState extends State<CredentialDetailPanel> with ThemeHelpers {
   bool get _canEdit => widget.credential.isEditable;
   bool _showPassword = false;
   bool get _isApplePasskey {
@@ -78,7 +77,7 @@ class _CredentialDetailPanelState
                 size: 22,
               ),
               onPressed: () async {
-                final result = await ns.pushSettings(
+                final result = await NavigationSvc.pushSettings(
                   context,
                   PasswordEditorPanel(
                     provider: widget.provider,
@@ -110,8 +109,7 @@ class _CredentialDetailPanelState
                     backgroundColor: tileColor,
                     title: widget.credential.item.title,
                     subtitle: widget.credential.item.subtitle,
-                    leading:
-                        CredentialAvatar(credential: widget.credential.item),
+                    leading: CredentialAvatar(credential: widget.credential.item),
                   ),
                 ],
               ),
@@ -138,13 +136,9 @@ class _CredentialDetailPanelState
         SettingsTile(
           backgroundColor: tileColor,
           title: fields[i].label,
-          subtitle: fields[i].label == "Password" && !_showPassword
-              ? "••••••••"
-              : fields[i].value,
+          subtitle: fields[i].label == "Password" && !_showPassword ? "••••••••" : fields[i].value,
           isThreeLine: fields[i].value.length > 36,
-          onTap: fields[i].label == "Password"
-              ? () => setState(() => _showPassword = !_showPassword)
-              : null,
+          onTap: fields[i].label == "Password" ? () => setState(() => _showPassword = !_showPassword) : null,
         ),
         if (i != fields.length - 1) const SettingsDivider(),
       ],
@@ -173,8 +167,7 @@ class _CredentialDetailPanelState
         ),
       );
     }
-    if (widget.credential.groupType == PasswordGroupType.passkeys &&
-        !_isApplePasskey) {
+    if (widget.credential.groupType == PasswordGroupType.passkeys && !_isApplePasskey) {
       if (tiles.isNotEmpty) {
         tiles.add(const SettingsDivider());
       }
@@ -198,11 +191,7 @@ class _CredentialDetailPanelState
     if (uri != null && uri.host.isNotEmpty) {
       return uri.host.toLowerCase();
     }
-    return value
-        .toLowerCase()
-        .replaceFirst(RegExp(r"^https?://"), "")
-        .split("/")
-        .first;
+    return value.toLowerCase().replaceFirst(RegExp(r"^https?://"), "").split("/").first;
   }
 
   void _showWifiQr() {
@@ -219,7 +208,7 @@ class _CredentialDetailPanelState
       context: context,
       builder: (context) => AlertDialog(
         title: const Text("Wi‑Fi QR Code"),
-        backgroundColor: context.theme.colorScheme.properSurface,
+        backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
         content: AspectRatio(
           aspectRatio: 1,
           child: BarcodeWidget(
@@ -250,16 +239,10 @@ class _CredentialDetailPanelState
   }
 
   String _buildWifiQrPayload(String ssid, String password) {
-    final escapedSsid = ssid
-        .replaceAll(r"\", r"\\")
-        .replaceAll(";", r"\;")
-        .replaceAll(",", r"\,")
-        .replaceAll(":", r"\:");
-    final escapedPassword = password
-        .replaceAll(r"\", r"\\")
-        .replaceAll(";", r"\;")
-        .replaceAll(",", r"\,")
-        .replaceAll(":", r"\:");
+    final escapedSsid =
+        ssid.replaceAll(r"\", r"\\").replaceAll(";", r"\;").replaceAll(",", r"\,").replaceAll(":", r"\:");
+    final escapedPassword =
+        password.replaceAll(r"\", r"\\").replaceAll(";", r"\;").replaceAll(",", r"\,").replaceAll(":", r"\:");
     return "WIFI:T:WPA;S:$escapedSsid;P:$escapedPassword;;";
   }
 
@@ -317,8 +300,7 @@ class TotpCodeTile extends StatefulWidget {
   State<TotpCodeTile> createState() => _TotpCodeTileState();
 }
 
-class _TotpCodeTileState extends State<TotpCodeTile>
-    with SingleTickerProviderStateMixin {
+class _TotpCodeTileState extends State<TotpCodeTile> with SingleTickerProviderStateMixin {
   late final Ticker _ticker;
   int _expiryMicros = 0;
   String _code = "";
@@ -363,9 +345,7 @@ class _TotpCodeTileState extends State<TotpCodeTile>
     final nowMicros = DateTime.now().toUtc().microsecondsSinceEpoch;
     final periodMicros = widget.totp.period * 1000000;
     final remainingMicros = (_expiryMicros - nowMicros).clamp(0, periodMicros);
-    final progress = widget.totp.period == 0
-        ? 0.0
-        : (1.0 - (remainingMicros / periodMicros)).clamp(0.0, 1.0);
+    final progress = widget.totp.period == 0 ? 0.0 : (1.0 - (remainingMicros / periodMicros)).clamp(0.0, 1.0);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Column(
@@ -382,8 +362,7 @@ class _TotpCodeTileState extends State<TotpCodeTile>
                 value: progress,
                 strokeWidth: 4.5,
                 strokeCap: StrokeCap.round,
-                backgroundColor:
-                    context.theme.colorScheme.outline.withOpacity(0.3),
+                backgroundColor: context.theme.colorScheme.outline.withOpacity(0.3),
               ),
             ),
             onTap: _copyCode,

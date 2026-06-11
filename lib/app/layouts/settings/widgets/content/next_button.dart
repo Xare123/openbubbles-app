@@ -9,12 +9,12 @@ class NextButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Obx(() => ss.settings.skin.value != Skins.Material ? Icon(
-        ss.settings.skin.value != Skins.Material
-            ? CupertinoIcons.chevron_right
-            : Icons.arrow_forward,
-        color: context.theme.colorScheme.outline.withOpacity(0.5),
-        size: 18,
-      ) : const SizedBox.shrink());
+    return Obx(() => SettingsSvc.settings.skin.value != Skins.Material
+        ? Icon(
+            SettingsSvc.settings.skin.value != Skins.Material ? CupertinoIcons.chevron_right : Icons.arrow_forward,
+            color: context.theme.colorScheme.outline.withValues(alpha: 0.5),
+            size: 18,
+          )
+        : const SizedBox.shrink());
   }
 }

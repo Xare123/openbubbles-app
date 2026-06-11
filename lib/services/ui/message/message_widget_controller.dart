@@ -4,6 +4,7 @@ import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/attach
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/message_holder.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/misc/message_properties.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/timestamp/delivered_indicator.dart';
+import 'package:bluebubbles/app/state/message_state.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/database.dart';
@@ -41,9 +42,9 @@ class MessageWidgetController extends StatefulController with GetSingleTickerPro
   }
 
   Message? get newMessage =>
-      newMessageGuid == null ? null : ms(cvController!.chat.guid).struct.getMessage(newMessageGuid!);
+      newMessageGuid == null ? null : MessagesSvc(cvController!.chat.guid).struct.getMessage(newMessageGuid!);
   Message? get oldMessage =>
-      oldMessageGuid == null ? null : ms(cvController!.chat.guid).struct.getMessage(oldMessageGuid!);
+      oldMessageGuid == null ? null : MessagesSvc(cvController!.chat.guid).struct.getMessage(oldMessageGuid!);
 
   @override
   void onInit() {
@@ -67,9 +68,9 @@ class MessageWidgetController extends StatefulController with GetSingleTickerPro
         }
       });
     } else if (kIsWeb) {
-      sub = WebListeners.messageUpdate.listen((tuple) {
-        final _message = tuple.item1;
-        final tempGuid = tuple.item2;
+      sub = WebListeners.messageUpdate.listen((event) {
+        final _message = event.message;
+        final tempGuid = event.tempGuid;
         if (_message.guid == message.guid || tempGuid == message.guid) {
           updateMessage(_message);
         }
@@ -88,17 +89,17 @@ class MessageWidgetController extends StatefulController with GetSingleTickerPro
   }
 
   void buildMessageParts() {
-    parts = message.buildMessageParts();
+    final chatGuid = message.chat.target?.guid ?? cvController?.chat.guid;
+    if (chatGuid == null) return;
+    parts = List<MessagePart>.from(MessagesSvc(chatGuid).getOrCreateState(message).parts);
   }
 
-
-
   void updateMessage(Message newItem) {
-    final chat = message.chat.target?.guid ?? cvController?.chat.guid ?? cm.activeChat!.chat.guid;
+    final chat = message.chat.target?.guid ?? cvController?.chat.guid ?? ChatsSvc.activeChat!.chat.guid;
     final oldGuid = message.guid;
     if (newItem.guid != oldGuid && oldGuid!.contains("temp")) {
       message = Message.merge(newItem, message);
-      ms(chat).updateMessage(message, oldGuid: oldGuid);
+      MessagesSvc(chat).updateMessage(message, oldGuid: oldGuid);
       updateWidgets<MessageHolder>(null);
       // mark this for the new guid
       Get.put(this, tag: newItem.guid);
@@ -110,9 +111,9 @@ class MessageWidgetController extends StatefulController with GetSingleTickerPro
         newItem.didNotifyRecipient != message.didNotifyRecipient) {
       final edited = newItem.dateEdited != message.dateEdited;
       message = Message.merge(newItem, message);
-      ms(chat).updateMessage(message);
+      MessagesSvc(chat).updateMessage(message);
       // update the latest 2 messages in case their indicators need to go away
-      final messages = ms(chat)
+      final messages = MessagesSvc(chat)
           .struct
           .messages
           .where((e) => e.isFromMe! && (e.dateDelivered != null || e.dateRead != null))
@@ -127,11 +128,13 @@ class MessageWidgetController extends StatefulController with GetSingleTickerPro
         updateWidgets<MessageHolder>(null);
       }
       updateWidgets<DeliveredIndicator>(null);
-    } else if (newItem.dateEdited != message.dateEdited || message.dateScheduled != null || newItem.error != message.error) {
+    } else if (newItem.dateEdited != message.dateEdited ||
+        message.dateScheduled != null ||
+        newItem.error != message.error) {
       message = Message.merge(newItem, message);
       parts.clear();
       buildMessageParts();
-      ms(chat).updateMessage(message);
+      MessagesSvc(chat).updateMessage(message);
       updateWidgets<MessageHolder>(null);
     }
   }
