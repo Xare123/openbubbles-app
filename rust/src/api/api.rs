@@ -35,7 +35,7 @@ use base64::prelude::*;
 pub use rustpush::IdmsAuthListener;
 pub use broadcast::Receiver;
 
-use crate::{RUNTIME, frb_generated::{SseEncode, StreamSink}, init_logger, native::{HANDLE_WIFI_NETWORKS, PACKAGER_LOCK, PackagedFile, QUEUED_MESSAGES}};
+use crate::{RUNTIME, frb_generated::{SseEncode, StreamSink}, init_logger, native::{HANDLE_WIFI_NETWORKS, MESSAGE_LOG, PACKAGER_LOCK, PackagedFile, QUEUED_MESSAGES}};
 
 use flutter_rust_bridge::for_generated::{SimpleHandler, SimpleExecutor, NoOpErrorListener, SimpleThreadPool, BaseAsyncRuntime, lazy_static};
 
@@ -1174,6 +1174,25 @@ pub fn config_from_encoded(encoded: Vec<u8>) -> anyhow::Result<JoinedOSConfig> {
     })))
 }
 
+#[frb(type_64bit_int)]
+pub async fn read_queued_message() -> Option<(u64, u8, PushMessage)> {
+    let log_lock = MESSAGE_LOG.lock().await;
+    log_lock.messages.iter().next().map(|i| (*i.0, i.1.attempts, PushMessage::IMessage(i.1.msg.clone())))
+}
+
+#[frb(type_64bit_int)]
+pub async fn mark_queue_attempt(id: u64, success: bool) {
+    let mut log_lock = MESSAGE_LOG.lock().await;
+    if success {
+        log_lock.finish(id);
+    } else {
+        let count = log_lock.attempt(id);
+        if count >= 2 {
+            warn!("Dropping queue attempt failed!");
+            log_lock.finish(id);
+        }
+    }
+}
 
 pub async fn ptr_to_dart(ptr: String) -> Option<PushMessage> {
     let pointer: u64 = ptr.parse().unwrap();
@@ -1238,7 +1257,8 @@ pub enum PushMessage {
         sender: String,
         beacon: String,
         attributes: BeaconAttributes,
-    }
+    },
+    ProcessQueue,
 }
 
 pub async fn sync_passwords(passwords: &Arc<PasswordManager<DefaultAnisetteProvider>>, conn: &APSConnection) -> anyhow::Result<()> {

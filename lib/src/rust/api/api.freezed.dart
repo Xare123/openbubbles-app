@@ -9153,6 +9153,7 @@ extension PushMessagePatterns on PushMessage {
     TResult Function(PushMessage_TwoFaAuthEvent value)? twoFaAuthEvent,
     TResult Function(PushMessage_CircleFinishEvent value)? circleFinishEvent,
     TResult Function(PushMessage_BeaconShared value)? beaconShared,
+    TResult Function(PushMessage_ProcessQueue value)? processQueue,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -9177,6 +9178,8 @@ extension PushMessagePatterns on PushMessage {
         return circleFinishEvent(_that);
       case PushMessage_BeaconShared() when beaconShared != null:
         return beaconShared(_that);
+      case PushMessage_ProcessQueue() when processQueue != null:
+        return processQueue(_that);
       case _:
         return orElse();
     }
@@ -9209,6 +9212,7 @@ extension PushMessagePatterns on PushMessage {
     required TResult Function(PushMessage_CircleFinishEvent value)
         circleFinishEvent,
     required TResult Function(PushMessage_BeaconShared value) beaconShared,
+    required TResult Function(PushMessage_ProcessQueue value) processQueue,
   }) {
     final _that = this;
     switch (_that) {
@@ -9232,6 +9236,8 @@ extension PushMessagePatterns on PushMessage {
         return circleFinishEvent(_that);
       case PushMessage_BeaconShared():
         return beaconShared(_that);
+      case PushMessage_ProcessQueue():
+        return processQueue(_that);
     }
   }
 
@@ -9259,6 +9265,7 @@ extension PushMessagePatterns on PushMessage {
     TResult? Function(PushMessage_TwoFaAuthEvent value)? twoFaAuthEvent,
     TResult? Function(PushMessage_CircleFinishEvent value)? circleFinishEvent,
     TResult? Function(PushMessage_BeaconShared value)? beaconShared,
+    TResult? Function(PushMessage_ProcessQueue value)? processQueue,
   }) {
     final _that = this;
     switch (_that) {
@@ -9282,6 +9289,8 @@ extension PushMessagePatterns on PushMessage {
         return circleFinishEvent(_that);
       case PushMessage_BeaconShared() when beaconShared != null:
         return beaconShared(_that);
+      case PushMessage_ProcessQueue() when processQueue != null:
+        return processQueue(_that);
       case _:
         return null;
     }
@@ -9312,6 +9321,7 @@ extension PushMessagePatterns on PushMessage {
     TResult Function()? circleFinishEvent,
     TResult Function(String sender, String beacon, BeaconAttributes attributes)?
         beaconShared,
+    TResult Function()? processQueue,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -9336,6 +9346,8 @@ extension PushMessagePatterns on PushMessage {
         return circleFinishEvent();
       case PushMessage_BeaconShared() when beaconShared != null:
         return beaconShared(_that.sender, _that.beacon, _that.attributes);
+      case PushMessage_ProcessQueue() when processQueue != null:
+        return processQueue();
       case _:
         return orElse();
     }
@@ -9368,6 +9380,7 @@ extension PushMessagePatterns on PushMessage {
     required TResult Function(
             String sender, String beacon, BeaconAttributes attributes)
         beaconShared,
+    required TResult Function() processQueue,
   }) {
     final _that = this;
     switch (_that) {
@@ -9391,6 +9404,8 @@ extension PushMessagePatterns on PushMessage {
         return circleFinishEvent();
       case PushMessage_BeaconShared():
         return beaconShared(_that.sender, _that.beacon, _that.attributes);
+      case PushMessage_ProcessQueue():
+        return processQueue();
     }
   }
 
@@ -9420,6 +9435,7 @@ extension PushMessagePatterns on PushMessage {
     TResult? Function(
             String sender, String beacon, BeaconAttributes attributes)?
         beaconShared,
+    TResult? Function()? processQueue,
   }) {
     final _that = this;
     switch (_that) {
@@ -9443,6 +9459,8 @@ extension PushMessagePatterns on PushMessage {
         return circleFinishEvent();
       case PushMessage_BeaconShared() when beaconShared != null:
         return beaconShared(_that.sender, _that.beacon, _that.attributes);
+      case PushMessage_ProcessQueue() when processQueue != null:
+        return processQueue();
       case _:
         return null;
     }
@@ -10126,6 +10144,26 @@ class _$PushMessage_BeaconSharedCopyWithImpl<$Res>
           : attributes // ignore: cast_nullable_to_non_nullable
               as BeaconAttributes,
     ));
+  }
+}
+
+/// @nodoc
+
+class PushMessage_ProcessQueue extends PushMessage {
+  const PushMessage_ProcessQueue() : super._();
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is PushMessage_ProcessQueue);
+  }
+
+  @override
+  int get hashCode => runtimeType.hashCode;
+
+  @override
+  String toString() {
+    return 'PushMessage.processQueue()';
   }
 }
 

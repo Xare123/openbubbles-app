@@ -4673,10 +4673,50 @@ class RustPushService {
     await api.completeMsg(ptr: ptr);
   }
 
+  bool queueRequested = false;
+  bool processingQueue = false;
+  void processQueue() async {
+    queueRequested = true;
+    if (processingQueue || !Platform.isAndroid) return;
+    try {
+      processingQueue = true;
+      await initFuture;
+      while (true) {
+        queueRequested = false;
+        var queued = await api.readQueuedMessage();
+        if (queued == null) {
+          if (queueRequested) {
+            continue;
+          } else {
+            break;
+          }
+        }
+        var success = true;
+        try {
+          Logger.info("Handling ${queued.$1}");
+          await handleMsg(queued.$3, queued.$2 >= 2);
+          Logger.info("Marking as handled ${queued.$1}");
+        } catch (e, s) {
+          Logger.error("Handle failed", error: e, trace: s);
+          success = false;
+        }
+        await api.markQueueAttempt(id: queued.$1, success: success);
+      }
+    } finally {
+      processingQueue = false;
+    }
+  }
+
   Future recievedMsgPointer(String pointer, String retry) async {
     var message = await api.ptrToDart(ptr: pointer);
     if (message == null) {
       Logger.info("bad pointer $pointer $retry");
+      return;
+    }
+
+    if (message is api.PushMessage_ProcessQueue) {
+      processQueue();
+      await markAsHandledAfter(pointer);
       return;
     }
     Logger.info("waitingForInit $pointer $retry");
@@ -5073,6 +5113,7 @@ class RustPushService {
     initMixPanel();
     await initFuture;
     Timer(const Duration(seconds: 2), checkIncident);
+    processQueue();
     // pre-cache next FT link
     if (PushSvc.state != null) api.getFtLink(facetime: PushSvc.state!.ftClient, usage: "next");
     Logger.info("initDone");

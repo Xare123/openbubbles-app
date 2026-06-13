@@ -1,9 +1,11 @@
-use std::{collections::{BTreeMap, HashMap}, fmt::Debug, io::Cursor, sync::{Arc, LazyLock, OnceLock, RwLock, Weak}, time::{Duration, SystemTime}};
+use std::{collections::{BTreeMap, HashMap, VecDeque}, fmt::Debug, fs::{File, OpenOptions}, io::{self, Cursor, Read, Seek, Write}, sync::{Arc, LazyLock, OnceLock, RwLock, Weak}, time::{Duration, SystemTime}};
 
 use flexi_logger::{FileSpec, Logger, WriteMode};
+use keystore::software::plist_to_bin;
 use log::{error, info, warn};
 use openssl::{ec::EcKey, pkey::PKey};
-use rustpush::{EntitlementAuthState, GenerateVerificationTokenRequest, PushError, get_gateways_for_mccmnc, passwords::{Passkey, PasskeyCriteria, PasswordCriteria, PasswordManager, PasswordManagerMeta, PasswordManagerMetaChange, PasswordManagerMetaData, PasswordManagerMetaDataCtx, PasswordRawEntry}};
+use rustpush::{EntitlementAuthState, GenerateVerificationTokenRequest, MessageInst, PushError, get_gateways_for_mccmnc, passwords::{Passkey, PasskeyCriteria, PasswordCriteria, PasswordManager, PasswordManagerMeta, PasswordManagerMetaChange, PasswordManagerMetaData, PasswordManagerMetaDataCtx, PasswordRawEntry}};
+use serde::{Deserialize, Serialize};
 use tokio::{runtime::{Handle, Runtime}, sync::Mutex};
 
 use futures::FutureExt;
@@ -82,6 +84,7 @@ pub trait SpecialAppleAuthCallback: Send + Sync + Debug {
 }
 
 pub static HANDLE_WIFI_NETWORKS: OnceLock<Arc<dyn HandleWifiNetworksCallback>> = OnceLock::new();
+pub static CONFIG_PATH: OnceLock<String> = OnceLock::new();
 
 #[uniffi::export(with_foreign)]
 pub trait HandleWifiNetworksCallback: Send + Sync + Debug {
@@ -104,6 +107,7 @@ pub fn start(dir: String, packager: Arc<dyn KotlinFilePackager>, wifi: Arc<dyn H
 #[uniffi::export]
 pub fn init_native(dir: String, handle: Option<String>, handler: Arc<dyn MsgReceiver>) {
     info!("rpljslf start");
+    let _ = CONFIG_PATH.set(dir.clone());
     RUNTIME.spawn(async move {
         info!("rpljslf initting");
 
@@ -151,6 +155,167 @@ pub fn plist_to_string<T: serde::Serialize>(value: &T) -> Result<String, plist::
     plist_to_buf(value).map(|val| String::from_utf8(val).unwrap())
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+pub struct MessageLogEntry {
+    pub attempts: u8,
+    pub msg: MessageInst,
+}
+
+#[derive(Serialize, Deserialize)]
+enum MessageJournal {
+    Message {
+        id: u64,
+        item: MessageLogEntry,
+    },
+    Attempt {
+        id: u64,
+    },
+    Finish {
+        id: u64,
+        success: bool,
+    }
+}
+
+impl MessageJournal {
+    fn read(mut reader: impl Read) -> anyhow::Result<(usize, Self)> {
+        let mut len = [0u8; 4];
+        reader.read_exact(&mut len)?;
+        let len = u32::from_be_bytes(len) as usize;
+        let mut data = vec![0u8; len];
+        reader.read_exact(&mut data)?;
+
+        Ok((len + 4, plist::from_bytes(&data)?))
+    }
+
+    fn write(&self, mut writer: impl Write) -> anyhow::Result<usize> {
+        let bytes = plist_to_bin(self)?;
+        writer.write_all(&(bytes.len() as u32).to_be_bytes())?;
+        writer.write_all(&bytes)?;
+
+        Ok(bytes.len() + 4)
+    }
+}
+
+pub struct MessageLog {
+    pub messages: BTreeMap<u64, MessageLogEntry>,
+    journal: File,
+    journal_len: usize,
+    current_id: u64,
+}
+
+impl MessageLog {
+    fn create(mut journal: File) -> Self {
+        let mut total_read = 0;
+        let mut current_id = 0;
+        let mut messages: BTreeMap<u64, MessageLogEntry> = BTreeMap::new();
+        while let Ok((size, len)) = MessageJournal::read(&mut journal) {
+            total_read += size;
+            match len {
+                MessageJournal::Message { id, item } => {
+                    current_id = id;
+                    messages.insert(id, item);
+                },
+                MessageJournal::Attempt { id } => {
+                    let Some(msg) = messages.get_mut(&id) else { continue };
+                    msg.attempts += 1;
+                },
+                MessageJournal::Finish { id, success } => {
+                    messages.remove(&id);
+                    // TODO handle success later
+                },
+            }
+        }
+        journal.set_len(total_read as u64).unwrap();
+        journal.seek(std::io::SeekFrom::Start(total_read as u64)).unwrap();
+        Self {
+            messages,
+            journal,
+            journal_len: total_read,
+            current_id,
+        }
+    }
+
+    fn compact_journal(&mut self) -> anyhow::Result<()> {
+        info!("Compacting journal!");
+        self.journal.set_len(0)?;
+        self.journal.seek(std::io::SeekFrom::Start(0))?;
+        self.journal_len = 0;
+        for (id, item) in self.messages.clone() {
+            let message = MessageJournal::Message { id, item };
+
+            match message.write(&mut self.journal) {
+                Ok(len) => self.journal_len += len,
+                Err(e) => {
+                    warn!("Failed to write to journal {e}");
+                    let _ = self.journal.set_len(self.journal_len as u64);
+                    let _ = self.journal.seek(std::io::SeekFrom::Start(self.journal_len as u64));
+                }
+            }
+        }
+
+        info!("Compacted journal!");
+        Ok(())
+    }
+
+    fn log_entry(&mut self, item: MessageJournal) {
+        if self.journal_len > 1024 * 128 {
+            if let Err(e) = self.compact_journal() {
+                warn!("Error compacting journal {e}");
+            }
+        }
+
+        match item.write(&mut self.journal) {
+            Ok(len) => self.journal_len += len,
+            Err(e) => {
+                warn!("Failed to write to journal {e}");
+                let _ = self.journal.set_len(self.journal_len as u64);
+                let _ = self.journal.seek(std::io::SeekFrom::Start(self.journal_len as u64));
+            }
+        }
+    }
+    
+    pub fn insert(&mut self, item: MessageInst) -> u64 {
+        let id: u64 = self.current_id + 1;
+        self.current_id = self.current_id.wrapping_add(1);
+        let log = MessageLogEntry { attempts: 0, msg: item.clone() };
+
+        self.log_entry(MessageJournal::Message { 
+            id, 
+            item: log.clone(),
+        });
+        
+        self.messages.insert(id, log);
+        id
+    }
+
+    pub fn attempt(&mut self, id: u64) -> u8 {
+        self.log_entry(MessageJournal::Attempt { id });
+        let Some(msg) = self.messages.get_mut(&id) else {
+            warn!("Attempting unknown ID!");
+            return u8::MAX;
+        };
+        let attempts = msg.attempts;
+        msg.attempts += 1;
+        attempts
+    }
+
+    pub fn finish(&mut self, id: u64) {
+        let Some(msg) = self.messages.remove(&id) else {
+            return;
+        };
+        self.log_entry(MessageJournal::Finish { id, success: true });
+    }
+}
+
+pub static MESSAGE_LOG: LazyLock<Mutex<MessageLog>> = LazyLock::new(|| {
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(format!("{}/messages.journal", CONFIG_PATH.get().expect("no path configured!"))).expect("Failed to create jorunal!");
+    
+    Mutex::new(MessageLog::create(file))
+});
 
 pub static QUEUED_MESSAGES: LazyLock<Mutex<(u64, HashMap<u64, PushMessage>)>> = LazyLock::new(|| Mutex::new((0, HashMap::new())));
 
@@ -164,12 +329,17 @@ impl NativePushState {
                 match std::panic::AssertUnwindSafe(recv_wait(&mut watcher, &self.state)).catch_unwind().await {
                     Ok(yes) => {
                         match yes {
-                            PollResult::Cont(Some(msg)) => {
+                            PollResult::Cont(Some(mut msg)) => {
                                 if let PushMessage::TwoFaAuthEvent(event) = &msg {
                                     handler.twofa_event(*event);
                                     continue;
                                 }
 
+                                if let PushMessage::IMessage(message) = &msg {
+                                    let mut log_lock = MESSAGE_LOG.lock().await;
+                                    log_lock.insert(message.clone());
+                                    msg = PushMessage::ProcessQueue;
+                                }
                                 let mut locked_messages = QUEUED_MESSAGES.lock().await;
                                 let key = locked_messages.0;
                                 locked_messages.1.insert(key, msg);

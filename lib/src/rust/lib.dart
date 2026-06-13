@@ -13,19 +13,23 @@ abstract class ApsConnection implements RustOpaqueInterface {}
 abstract class ApsState implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ArcAnisetteClient < DefaultAnisetteProvider >>>
-abstract class ArcAnisetteClientDefaultAnisetteProvider implements RustOpaqueInterface {}
+abstract class ArcAnisetteClientDefaultAnisetteProvider
+    implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < CloudKitClient < DefaultAnisetteProvider > >>>
-abstract class ArcCloudKitClientDefaultAnisetteProvider implements RustOpaqueInterface {}
+abstract class ArcCloudKitClientDefaultAnisetteProvider
+    implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < CloudMessagesClient < DefaultAnisetteProvider > >>>
-abstract class ArcCloudMessagesClientDefaultAnisetteProvider implements RustOpaqueInterface {}
+abstract class ArcCloudMessagesClientDefaultAnisetteProvider
+    implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < FTClient >>>
 abstract class ArcFtClient implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < FindMyClient < DefaultAnisetteProvider > >>>
-abstract class ArcFindMyClientDefaultAnisetteProvider implements RustOpaqueInterface {}
+abstract class ArcFindMyClientDefaultAnisetteProvider
+    implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < IMClient >>>
 abstract class ArcImClient implements RustOpaqueInterface {}
@@ -34,22 +38,27 @@ abstract class ArcImClient implements RustOpaqueInterface {}
 abstract class ArcIdmsAuthListener implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < KeychainClient < DefaultAnisetteProvider > >>>
-abstract class ArcKeychainClientDefaultAnisetteProvider implements RustOpaqueInterface {}
+abstract class ArcKeychainClientDefaultAnisetteProvider
+    implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < Mutex < AppleAccount < DefaultAnisetteProvider > > >>>
-abstract class ArcMutexAppleAccountDefaultAnisetteProvider implements RustOpaqueInterface {}
+abstract class ArcMutexAppleAccountDefaultAnisetteProvider
+    implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < Mutex < Option < CircleClientSession < DefaultAnisetteProvider > > > >>>
-abstract class ArcMutexOptionCircleClientSessionDefaultAnisetteProvider implements RustOpaqueInterface {}
+abstract class ArcMutexOptionCircleClientSessionDefaultAnisetteProvider
+    implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < Mutex < Vec < ActiveCircleSession > > >>>
 abstract class ArcMutexVecActiveCircleSession implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < PasswordManager < DefaultAnisetteProvider > >>>
-abstract class ArcPasswordManagerDefaultAnisetteProvider implements RustOpaqueInterface {}
+abstract class ArcPasswordManagerDefaultAnisetteProvider
+    implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < ProfilesClient < DefaultAnisetteProvider > >>>
-abstract class ArcProfilesClientDefaultAnisetteProvider implements RustOpaqueInterface {}
+abstract class ArcProfilesClientDefaultAnisetteProvider
+    implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < Sender < PushMessage > >>>
 abstract class ArcSenderPushMessage implements RustOpaqueInterface {}
@@ -58,10 +67,12 @@ abstract class ArcSenderPushMessage implements RustOpaqueInterface {}
 abstract class ArcSharedPushState implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < StatusKitClient < DefaultAnisetteProvider > >>>
-abstract class ArcStatusKitClientDefaultAnisetteProvider implements RustOpaqueInterface {}
+abstract class ArcStatusKitClientDefaultAnisetteProvider
+    implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc < TokenProvider < DefaultAnisetteProvider > >>>
-abstract class ArcTokenProviderDefaultAnisetteProvider implements RustOpaqueInterface {}
+abstract class ArcTokenProviderDefaultAnisetteProvider
+    implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<NSArray < LPIconMetadata >>>
 abstract class NsArrayLpIconMetadata implements RustOpaqueInterface {}
@@ -73,4 +84,5 @@ abstract class NsArrayLpImageMetadata implements RustOpaqueInterface {}
 abstract class Sender implements RustOpaqueInterface {}
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<SyncManager < DefaultAnisetteProvider , MyFilePackager >>>
-abstract class SyncManagerDefaultAnisetteProviderMyFilePackager implements RustOpaqueInterface {}
+abstract class SyncManagerDefaultAnisetteProviderMyFilePackager
+    implements RustOpaqueInterface {}
