@@ -78,6 +78,7 @@ class StatusQuery: MethodCallHandlerImpl() {
                 val service = packageManager.getServiceInfo(extension.value.getServiceName(), PackageManager.GET_META_DATA);
 
                 val id = service.metaData.getInt("madrid_icon")
+                val color = service.metaData.getInt("color", 0xFF00BFA6.toInt())
                 val app = resources.getDrawable(id, null)
 
                 val bitmap = drawableToBitmap(app)
@@ -89,6 +90,7 @@ class StatusQuery: MethodCallHandlerImpl() {
                 val appInfo = hashMapOf(
                     "name" to name,
                     "icon" to imageEncoded,
+                    "color" to color
                 )
                 myMap["available"] = appInfo
             } catch (_: NameNotFoundException) { }

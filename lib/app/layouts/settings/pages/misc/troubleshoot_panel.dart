@@ -696,7 +696,7 @@ class _TroubleshootPanelState extends State<TroubleshootPanel> with ThemeHelpers
                                       SettingsSvc.settings.developerMode.add(participantController.text);
                                       await SettingsSvc.settings.saveOneAsync('developerMode');
                                       await ExtensionSvc.refreshCache();
-                                      Get.back();
+                                      Navigator.of(Get.context!, rootNavigator: true).pop();
                                     },
                                   ),
                                 ],

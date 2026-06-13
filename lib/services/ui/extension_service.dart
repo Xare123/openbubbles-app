@@ -47,20 +47,24 @@ class App {
 class AvailableApp {
   String name;
   String icon;
+  int color;
 
   AvailableApp({
     required this.name,
     required this.icon,
+    required this.color,
   });
 
   factory AvailableApp.fromMap(Map<String, dynamic> json) => AvailableApp(
         name: json["name"],
         icon: json["icon"],
+        color: json["color"],
       );
 
   Map<String, dynamic> toMap() => {
         "name": name,
         "icon": icon,
+        "color": color,
       };
 }
 

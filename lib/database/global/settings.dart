@@ -751,6 +751,65 @@ class Settings {
         map['replaceEmoticonsWithEmoji'] ?? SettingsSvc.settings.replaceEmoticonsWithEmoji.value;
     SettingsSvc.settings.lastReviewRequestTimestamp.value =
         map['lastReviewRequestTimestamp'] ?? SettingsSvc.settings.lastReviewRequestTimestamp.value;
+    SettingsSvc.settings.defaultHandle.value = map['defaultHandle'] ?? SettingsSvc.settings.defaultHandle.value;
+    SettingsSvc.settings.cardDavServer.value = map['cardDavServer'] ?? SettingsSvc.settings.cardDavServer.value;
+    SettingsSvc.settings.cardDavUser.value = map['cardDavUser'] ?? SettingsSvc.settings.cardDavUser.value;
+    SettingsSvc.settings.cardDavPass.value = map['cardDavPass'] ?? SettingsSvc.settings.cardDavPass.value;
+    SettingsSvc.settings.contactSyncProvider.value =
+        map['contactSyncProvider'] ?? SettingsSvc.settings.contactSyncProvider.value;
+    SettingsSvc.settings.macIsMine.value = map['macIsMine'] ?? SettingsSvc.settings.macIsMine.value;
+    SettingsSvc.settings.deviceIsHosted.value = map['deviceIsHosted'] ?? SettingsSvc.settings.deviceIsHosted.value;
+    SettingsSvc.settings.hostedToken.value = map['hostedToken'] ?? SettingsSvc.settings.hostedToken.value;
+    SettingsSvc.settings.keychainDefaultPassword.value =
+        map['keychainDefaultPassword'] ?? SettingsSvc.settings.keychainDefaultPassword.value;
+    SettingsSvc.settings.isSmsRouter.value = map['isSmsRouter'] ?? SettingsSvc.settings.isSmsRouter.value;
+    SettingsSvc.settings.developerEnabled.value =
+        map['developerEnabled'] ?? SettingsSvc.settings.developerEnabled.value;
+    SettingsSvc.settings.vpnWarned.value = map['vpnWarned'] ?? SettingsSvc.settings.vpnWarned.value;
+    SettingsSvc.settings.enableShareZen.value = map['enableShareZen'] ?? SettingsSvc.settings.enableShareZen.value;
+    SettingsSvc.settings.warnedTextChats.value = map['warnedTextChats'] ?? SettingsSvc.settings.warnedTextChats.value;
+    SettingsSvc.settings.nonIMessageWarning.value =
+        map['nonIMessageWarning'] ?? SettingsSvc.settings.nonIMessageWarning.value;
+    SettingsSvc.settings.zenModeAware.value = map['zenModeAware'] ?? SettingsSvc.settings.zenModeAware.value;
+    SettingsSvc.settings.isTester.value = map['isTester'] ?? SettingsSvc.settings.isTester.value;
+    SettingsSvc.settings.isDumb.value = map['isDumb'] ?? SettingsSvc.settings.isDumb.value;
+    SettingsSvc.settings.cloudSyncingEnabled.value =
+        map['cloudSyncingEnabled'] ?? SettingsSvc.settings.cloudSyncingEnabled.value;
+    SettingsSvc.settings.attachmentSyncEnabled.value =
+        map['attachmentSyncEnabled'] ?? SettingsSvc.settings.attachmentSyncEnabled.value;
+    SettingsSvc.settings.syncHistoryTime.value =
+        map['syncHistoryTime'] ?? SettingsSvc.settings.syncHistoryTime.value;
+    if (map.containsKey('cachedCodes')) {
+      SettingsSvc.settings.cachedCodes.value = map['cachedCodes'] is Map
+          ? (map['cachedCodes'] as Map).cast<String, String>()
+          : jsonDecode(map['cachedCodes'] ?? '{}').cast<String, String>();
+    }
+    if (map.containsKey('smsIncomingTargets')) {
+      SettingsSvc.settings.smsForwardingTargets.value = map['smsIncomingTargets'] is Map
+          ? (map['smsIncomingTargets'] as Map).cast<String, String>()
+          : jsonDecode(map['smsIncomingTargets'] ?? '{}').cast<String, String>();
+    }
+    if (map.containsKey('ctags')) {
+      SettingsSvc.settings.ctags.value = map['ctags'] is Map
+          ? (map['ctags'] as Map).cast<String, String?>()
+          : jsonDecode(map['ctags'] ?? '{}').cast<String, String?>();
+    }
+    if (map.containsKey('tokens')) {
+      SettingsSvc.settings.tokens.value = map['tokens'] is Map
+          ? (map['tokens'] as Map).cast<String, String?>()
+          : jsonDecode(map['tokens'] ?? '{}').cast<String, String?>();
+    }
+    if (map.containsKey('smsForwardingTargets')) {
+      SettingsSvc.settings.smsRoutingTargets.value = (map['smsForwardingTargets'] is List
+              ? map['smsForwardingTargets']
+              : jsonDecode(map['smsForwardingTargets'] ?? '[]') as List)
+          .cast<String>();
+    }
+    if (map.containsKey('developerMode')) {
+      SettingsSvc.settings.developerMode.value =
+          (map['developerMode'] is List ? map['developerMode'] : jsonDecode(map['developerMode'] ?? '[]') as List)
+              .cast<String>();
+    }
     SettingsSvc.settings.save();
 
     if (!isIsolate) {
@@ -928,20 +987,23 @@ class Settings {
     s.isSmsRouter.value = map['isSmsRouter'] ?? false;
     s.developerEnabled.value = map['developerEnabled'] ?? false;
     s.vpnWarned.value = map['vpnWarned'] ?? false;
-    s.cachedCodes.value =
-        map['cachedCodes'] is String ? jsonDecode(map['cachedCodes']).cast<String, String>() : <String, String>{};
-    s.smsForwardingTargets.value = map['smsIncomingTargets'] is String
-        ? jsonDecode(map['smsIncomingTargets']).cast<String, String>()
-        : <String, String>{};
+    s.cachedCodes.value = map['cachedCodes'] is Map
+        ? (map['cachedCodes'] as Map).cast<String, String>()
+        : jsonDecode(map['cachedCodes'] ?? '{}').cast<String, String>();
+    s.smsForwardingTargets.value = map['smsIncomingTargets'] is Map
+        ? (map['smsIncomingTargets'] as Map).cast<String, String>()
+        : jsonDecode(map['smsIncomingTargets'] ?? '{}').cast<String, String>();
     s.enableShareZen.value = map['enableShareZen'] ?? false;
     s.warnedTextChats.value = map['warnedTextChats'] ?? false;
     s.nonIMessageWarning.value = map['nonIMessageWarning'] ?? false;
     s.zenModeAware.value = map['zenModeAware'] ?? false;
-    s.smsRoutingTargets.value =
-        (map['smsForwardingTargets']?.runtimeType == String ? jsonDecode(map['smsForwardingTargets']) as List : [])
-            .cast<String>();
+    s.smsRoutingTargets.value = (map['smsForwardingTargets'] is List
+            ? map['smsForwardingTargets']
+            : jsonDecode(map['smsForwardingTargets'] ?? '[]') as List)
+        .cast<String>();
     s.developerMode.value =
-        (map['developerMode']?.runtimeType == String ? jsonDecode(map['developerMode']) as List : []).cast<String>();
+        (map['developerMode'] is List ? map['developerMode'] : jsonDecode(map['developerMode'] ?? '[]') as List)
+            .cast<String>();
     s.lastLocation.value = map['lastLocation'];
     s.isTester.value = map['isTester'] ?? false;
     s.isDumb.value = map['isDumb'] ?? false;
@@ -949,8 +1011,12 @@ class Settings {
     s.attachmentSyncEnabled.value = map['attachmentSyncEnabled'] ?? false;
     s.syncHistoryTime.value = map['syncHistoryTime'] ?? 0;
 
-    s.ctags.value = map['ctags'] is String ? jsonDecode(map['ctags']).cast<String, String?>() : <String, String?>{};
-    s.tokens.value = map['tokens'] is String ? jsonDecode(map['tokens']).cast<String, String?>() : <String, String?>{};
+    s.ctags.value = map['ctags'] is Map
+        ? (map['ctags'] as Map).cast<String, String?>()
+        : jsonDecode(map['ctags'] ?? '{}').cast<String, String?>();
+    s.tokens.value = map['tokens'] is Map
+        ? (map['tokens'] as Map).cast<String, String?>()
+        : jsonDecode(map['tokens'] ?? '{}').cast<String, String?>();
     return s;
   }
 

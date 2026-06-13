@@ -272,7 +272,7 @@ class AttachmentPickerState extends State<AttachmentPicker> with ThemeHelpers {
   Widget build(BuildContext context) {
     if (currentApp != null) {
       return SizedBox(
-        height: 300,
+        height: 340,
         child: AndroidView(
           viewType: "extension-keyboard",
           layoutDirection: TextDirection.ltr,
@@ -369,7 +369,7 @@ class AttachmentPickerState extends State<AttachmentPicker> with ThemeHelpers {
                 _QuickActionItem(
                   logo: base64Decode(app.available!.icon),
                   label: app.available!.name,
-                  color: const Color(0xFF5856D6),
+                  color: Color(app.available!.color),
                   onTap: () {
                     setState(() {
                       currentApp = app;
