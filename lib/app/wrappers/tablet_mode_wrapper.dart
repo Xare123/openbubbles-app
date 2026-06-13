@@ -53,10 +53,10 @@ class _TabletModeWrapperState extends State<TabletModeWrapper> with ThemeHelpers
   void initState() {
     super.initState();
     _ratio =
-        RxDouble((PrefsSvc.i.getDouble('splitRatio') ?? widget.initialRatio).clamp(widget.minRatio, widget.maxRatio));
+        RxDouble((PrefsSvc.desktop.getSplitRatio() ?? widget.initialRatio).clamp(widget.minRatio, widget.maxRatio));
     EventDispatcherSvc.stream.listen((event) {
       if (event.type == 'split-refresh') {
-        _ratio.value = PrefsSvc.i.getDouble('splitRatio') ?? _ratio.value;
+        _ratio.value = PrefsSvc.desktop.getSplitRatio() ?? _ratio.value;
         setState(() {});
       } else if (event.type == 'override-split') {
         _ratio.value = event.data;
@@ -64,7 +64,7 @@ class _TabletModeWrapperState extends State<TabletModeWrapper> with ThemeHelpers
       }
     });
     debounce<double>(_ratio, (val) async {
-      await PrefsSvc.i.setDouble('splitRatio', val);
+      await PrefsSvc.desktop.setSplitRatio(val);
       EventDispatcherSvc.emit('split-refresh', null);
     });
   }

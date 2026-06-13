@@ -997,7 +997,7 @@ class RustPushBackend implements BackendService {
   @override
   Future<bool> markRead(Chat chat, bool notifyOthers) async {
     if (chat.isRpSms) notifyOthers = false;
-    var latestMsg = chat.latestMessage.guid;
+    var latestMsg = chat.dbLatestMessage.target?.guid;
     var data = await chat.getConversationData();
     if (data.participants.length > 2) notifyOthers = false;
     if (!notifyOthers) {
@@ -1016,7 +1016,7 @@ class RustPushBackend implements BackendService {
 
   @override
   Future<bool> markUnread(Chat chat) async {
-    var latestMsg = chat.latestMessage.guid;
+    var latestMsg = chat.dbLatestMessage.target?.guid;
     var data = await chat.getConversationData();
     data.participants = [await chat.ensureHandle()];
     var msg = await api.newMsg(
@@ -1691,7 +1691,6 @@ class RustPushService {
         threadOriginatorGuid: innerMsg.field0.replyGuid,
         expressiveSendStyleId: innerMsg.field0.effect,
         attributedBody: [attributedBodyData.$1],
-        attachments: attributedBodyData.$3,
         hasAttachments: attributedBodyData.$3.isNotEmpty,
         balloonBundleId: innerMsg.field0.app?.balloon != null
             ? innerMsg.field0.app?.bundleId
@@ -1707,7 +1706,7 @@ class RustPushService {
         verificationFailed: myMsg.verificationFailed,
         hasApplePayloadData: innerMsg.field0.app?.balloon != null,
         hasBeenForwarded: hasBeenForwarded,
-      );
+      )..attachments = attributedBodyData.$3;
 
       if (innerMsg.field0.service is api.MessageType_SMS && chat != null) {
         msg.inferReaction(chat);
@@ -1870,14 +1869,13 @@ class RustPushService {
         associatedMessageEmoji: emoji,
         text: attributedBodyData?.$2,
         attributedBody: attributedBodyData != null ? [attributedBodyData.$1] : [],
-        attachments: attributedBodyData?.$3 ?? [],
         hasAttachments: attributedBodyData?.$3.isNotEmpty ?? false,
         balloonBundleId: app?.bundleId,
         payloadData: app?.balloon != null ? appToData(app!) : null,
         amkSessionId: app?.balloon != null && reaction == null ? msg.field0.toUuid : null,
         verificationFailed: myMsg.verificationFailed,
         hasApplePayloadData: app?.balloon != null,
-      );
+      )..attachments = attributedBodyData?.$3 ?? [];
 
       if (app?.balloon != null) {
         ExtensionSvc.informUpdate(message);

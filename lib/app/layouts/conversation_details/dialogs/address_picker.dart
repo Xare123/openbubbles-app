@@ -12,7 +12,7 @@ void launchIntent(bool video, String address) async {
   } else if (await Permission.phone.request().isGranted) {
     if (video) {
       try {
-        await MethodChannelSvc.invokeMethod("google-duo", {"number": address});
+        await MethodChannelSvc.actions.googleDuo(number: address);
       } catch (_) {
         showSnackbar("Error", "Something went wrong, Google Duo may not be installed!");
       }

@@ -27,20 +27,19 @@ class ConversationTileController extends StatefulController {
   final RxBool shouldHighlight = false.obs;
   final RxBool shouldPartialHighlight = false.obs;
   final RxBool hoverHighlight = false.obs;
-  final Chat chat;
+  final ChatState chatState;
   final ConversationListController listController;
   final Function(bool)? onSelect;
   final bool inSelectMode;
   final Widget? subtitle;
 
-  /// Get the ChatState for this chat (if it exists)
-  ChatState? get chatState => ChatsSvc.getChatState(chat.guid);
+  Chat get chat => chatState.chat;
 
   bool get isSelected => listController.selectedChats.firstWhereOrNull((e) => e.guid == chat.guid) != null;
 
   ConversationTileController({
     Key? key,
-    required this.chat,
+    required this.chatState,
     required this.listController,
     this.onSelect,
     this.inSelectMode = false,
@@ -209,7 +208,7 @@ class ConversationTile extends CustomStateful<ConversationTileController> {
                 ? Get.find<ConversationTileController>(tag: chat.guid)
                 : Get.put(
                     ConversationTileController(
-                      chat: chat,
+                      chatState: ChatsSvc.getOrCreateChatState(chat),
                       listController: controller,
                       onSelect: onSelect,
                       inSelectMode: inSelectMode,
@@ -338,8 +337,7 @@ class _ChatTitleState extends CustomState<ChatTitle, void, ConversationTileContr
   Widget build(BuildContext context) {
     return Obx(() {
       // Get title from ChatState - it handles all title logic including redacted mode
-      final chatState = ChatsSvc.getChatState(controller.chat.guid);
-      final _title = chatState?.title.value ?? controller.chat.getTitle();
+      final _title = controller.chatState.title.value ?? controller.chat.getTitle();
 
       return RichText(
         text: TextSpan(
@@ -376,20 +374,20 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
   @override
   Widget build(BuildContext context) {
     return Obx(() {
-      final chatState = ChatsSvc.getChatState(controller.chat.guid);
-      final latestMessage = chatState?.latestMessage.value;
+      final chatState = controller.chatState;
+      final latestMessage = chatState.latestMessage.value;
       final isFromMe = latestMessage?.isFromMe ?? false;
       final isDelivered =
           controller.chat.isGroup || !isFromMe || latestMessage?.isDelivered == true || latestMessage?.dateRead != null;
 
       // subtitle.value is already contact-info-free when redacted mode is on
       // (ChatState.redactContactInfo / updateChatLatestMessage ensure this).
-      final String _subtitle = chatState?.subtitle.value ?? '';
+      final String _subtitle = chatState.subtitle.value ?? '';
 
       // Draft detection — show "Draft: ..." when there is staged text or attachments.
-      final draftText = chatState?.textFieldText.value ?? '';
+      final draftText = chatState.textFieldText.value ?? '';
       final hasDraftText = draftText.isNotEmpty;
-      final hasDraftAttachments = chatState?.textFieldAttachments.isNotEmpty ?? false;
+      final hasDraftAttachments = chatState.textFieldAttachments.isNotEmpty;
       final hasDraft = hasDraftText || hasDraftAttachments;
 
       final maxLines = SettingsSvc.settings.denseChatTiles.value ? 1 : 2;
@@ -399,7 +397,7 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
       // instead of italic styling — mirrors the Google Messages visual pattern.
       // Suppress when showing a draft so the layout stays clean.
       final showDeliveryIcon = material && isFromMe && !controller.chat.isGroup && !hasDraft;
-      final isMonet = SettingsSvc.settings.monetTheming.value != Monet.none;
+      final isMonet = ThemeSvc.isAnyMaterialYouSelected;
       final iconColor = isMonet ? context.theme.colorScheme.primary : context.theme.colorScheme.outline;
 
       final TextSpan subtitleSpan;

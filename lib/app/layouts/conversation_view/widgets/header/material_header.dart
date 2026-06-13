@@ -31,12 +31,12 @@ class MaterialHeader extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Rx<Color> _backgroundColor = (SettingsSvc.settings.monetTheming.value != Monet.none
+    final Rx<Color> _backgroundColor = (ThemeSvc.isAnyMaterialYouSelected
             ? context.theme.colorScheme.surfaceContainerHighest
             : context.theme.colorScheme.surface)
         .withValues(alpha: (kIsDesktop && SettingsSvc.settings.windowEffect.value != WindowEffect.disabled) ? 0.4 : 1)
         .obs;
-    final Color _foregroundColor = SettingsSvc.settings.monetTheming.value != Monet.none
+    final Color _foregroundColor = ThemeSvc.isAnyMaterialYouSelected
         ? context.theme.colorScheme.onSurfaceVariant
         : context.theme.colorScheme.onSurface;
 
@@ -96,11 +96,13 @@ class MaterialHeader extends StatelessWidget implements PreferredSizeWidget {
                         final handle = controller.chat.handles.first;
                         final contact = handle.contactsV2.firstOrNull;
                         if (contact == null || !contact.isNative) {
-                          await MethodChannelSvc.invokeMethod("open-contact-form",
-                              {'address': handle.address, 'address_type': handle.address.isEmail ? 'email' : 'phone'});
+                          await MethodChannelSvc.actions.openContactForm(
+                            address: handle.address,
+                            isEmail: handle.address.isEmail,
+                          );
                         } else {
                           try {
-                            await MethodChannelSvc.invokeMethod("view-contact-form", {'id': contact.nativeContactId});
+                            await MethodChannelSvc.actions.viewContactForm(nativeContactId: contact.nativeContactId);
                           } catch (_) {
                             showSnackbar("Error", "Failed to find contact on device!");
                           }

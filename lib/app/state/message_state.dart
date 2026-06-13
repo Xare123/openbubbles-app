@@ -277,12 +277,12 @@ class MessageState extends StatefulController {
       // deterministic temp→real GUID mapping even for multi-attachment
       // messages (no ambiguous heuristic).
       String? tempKey = _pendingGuidPromotions[guid];
-      if (tempKey != null && attachmentStates.containsKey(guid)) {
-        _pendingGuidPromotions.remove(guid);
-        final promoted = attachmentStates.remove(guid)!;
+      if (tempKey != null && attachmentStates.containsKey(tempKey)) {
+        _pendingGuidPromotions.remove(tempKey);
+        final promoted = attachmentStates.remove(tempKey)!;
         promoted.updateFromAttachment(attachment);
-        promoted.updateGuidInternal(tempKey);
-        attachmentStates[tempKey] = promoted;
+        promoted.updateGuidInternal(guid);
+        attachmentStates[guid] = promoted;
       }
 
       if (attachmentStates.containsKey(guid)) {
@@ -631,12 +631,8 @@ class MessageState extends StatefulController {
     message.stagingGuid = updatedMessage.stagingGuid;
     message.ckRecordId = updatedMessage.ckRecordId;
 
-    // Update the in-memory attachment list so UI widgets see the new GUIDs
-    // (e.g. after a temp→real GUID swap via _replaceAttachments).
-    if (updatedMessage.dbAttachments.isNotEmpty) {
-      message.attachments = updatedMessage.dbAttachments;
-      _syncAttachmentStates(updatedMessage.dbAttachments);
-    }
+    // Keep AttachmentState as the UI source of truth, synchronized from dbAttachments.
+    _syncAttachmentStates(updatedMessage.dbAttachments);
   }
 
   /// Convenience getter: Is this message in an error state?

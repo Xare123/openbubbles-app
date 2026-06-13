@@ -12,7 +12,8 @@ import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:bluebubbles/services/isolates/global_isolate.dart';
+
 import 'package:universal_html/html.dart' hide Platform;
 import 'dart:io' show Platform;
 import 'package:get_it/get_it.dart';
@@ -25,7 +26,6 @@ class LifecycleService with WidgetsBindingObserver {
   bool headless = false;
   bool windowFocused = true;
   bool? wasActiveAliveBefore;
-  bool _keepAppAlive = false;
   bool isDead = false;
   Timer? closeTimer;
 
@@ -46,25 +46,24 @@ class LifecycleService with WidgetsBindingObserver {
       statesSinceLastResume.contains(AppLifecycleState.detached);
   bool get hasResumed => statesSinceLastResume.contains(AppLifecycleState.resumed);
 
-  bool incrementalSyncShouldRun = false;
-
   Future<void> init({bool headless = false, bool isBubble = false}) async {
     Logger.debug("Initializing LifecycleService${headless ? " in headless mode" : ""}");
-    WidgetsBinding.instance.addObserver(this);
+
+    if (!headless) {
+      WidgetsFlutterBinding.ensureInitialized();
+      WidgetsBinding.instance.addObserver(this);
+    }
 
     this.headless = headless;
     this.isBubble = isBubble;
 
-    // Cache keepAppAlive setting to avoid repeated async calls
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    _keepAppAlive = prefs.getBool("keepAppAlive") ?? false;
-
-    handleForegroundService(AppLifecycleState.resumed);
+    unawaited(handleForegroundService(AppLifecycleState.resumed));
     Logger.debug("LifecycleService initialized");
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) async {
+    if (headless) return;
     Logger.debug("App State changed to $state");
 
     // If the current state is resume, and we've already had a resume, clear states from before the last resume
@@ -78,7 +77,23 @@ class LifecycleService with WidgetsBindingObserver {
     statesSinceLastResume.add(state);
 
     if (state == AppLifecycleState.resumed) {
+      // Restore active-chat liveness immediately to avoid a race where
+      // incoming messages are processed while lifecycle is already resumed
+      // but chat state is still marked dead from the previous close().
+      // This also happens in the `open -> StartupTasks.onAppResume` flow.
+      // We still want to do it here to avoid any race conditions.
+      if (GetIt.I.isRegistered<ChatsService>()) {
+        if (!kIsDesktop || wasActiveAliveBefore != false) {
+          ChatsSvc.setActiveToAlive();
+        }
+      }
+
       await Database.waitForInit();
+
+      if (GetIt.I.isRegistered<SocketService>()) {
+        GetIt.I<SocketService>().resetScheduledRestartBackoff(cancelPendingTimer: true);
+      }
+
       open();
     } else if (state != AppLifecycleState.inactive) {
       SystemChannels.textInput.invokeMethod('TextInput.hide').catchError((e, stack) {
@@ -91,7 +106,7 @@ class LifecycleService with WidgetsBindingObserver {
       }
     }
 
-    handleForegroundService(state);
+    unawaited(handleForegroundService(state));
 
     if (state == AppLifecycleState.detached && !(kIsDesktop || kIsWeb)) {
       isDead = true;
@@ -102,7 +117,7 @@ class LifecycleService with WidgetsBindingObserver {
     }
   }
 
-  void handleForegroundService(AppLifecycleState state) {
+  Future<void> handleForegroundService(AppLifecycleState state) async {
     // If an isolate is invoking this, we don't want to start/stop the foreground service.
     // It should already be running. We don't need to stop it because the socket service
     // is not started when in headless mode.
@@ -111,15 +126,22 @@ class LifecycleService with WidgetsBindingObserver {
     // Don't handle foreground service for inactive/hidden states
     if ([AppLifecycleState.inactive, AppLifecycleState.hidden].contains(state)) return;
 
-    // Use cached value instead of async SharedPreferences call
-    if (Platform.isAndroid && _keepAppAlive) {
+    // Read live from the reactive settings value so toggling the setting during
+    // a session takes effect immediately without requiring an app restart.
+    if (Platform.isAndroid && SettingsSvc.settings.keepAppAlive.value) {
       // We only want the foreground service to run when the app is not active
       if (state == AppLifecycleState.resumed) {
         Logger.info(tag: "LifecycleService", "Stopping foreground service");
-        MethodChannelSvc.invokeMethod("stop-foreground-service");
+        if (GetIt.I.isRegistered<MethodChannelService>()) {
+          await GetIt.I.isReady<MethodChannelService>();
+          unawaited(GetIt.I<MethodChannelService>().actions.stopForegroundService());
+        }
       } else if ([AppLifecycleState.paused, AppLifecycleState.detached].contains(state)) {
         Logger.info(tag: "LifecycleService", "Starting foreground service");
-        MethodChannelSvc.invokeMethod("start-foreground-service");
+        if (GetIt.I.isRegistered<MethodChannelService>()) {
+          await GetIt.I.isReady<MethodChannelService>();
+          unawaited(GetIt.I<MethodChannelService>().actions.startForegroundService());
+        }
       }
     }
   }
@@ -155,32 +177,55 @@ class LifecycleService with WidgetsBindingObserver {
   }
 
   void close() {
-    // DO NOT remove observer here - it needs to stay registered to receive resumed events.
+    // DO NOT remove observer here, it needs to stay registered to receive resumed events.
     // Leaving this commented out as a reminder.
     // WidgetsBinding.instance.removeObserver(this);
 
-    if (kIsDesktop) {
+    if (kIsDesktop && GetIt.I.isRegistered<ChatsService>()) {
       wasActiveAliveBefore = ChatsSvc.activeChat?.isAlive.value;
     }
-    if (!kIsDesktop || wasActiveAliveBefore != false) {
+
+    if ((!kIsDesktop || wasActiveAliveBefore != false) && GetIt.I.isRegistered<ChatsService>()) {
       ChatsSvc.setActiveToDead();
     }
-    if (!kIsDesktop && !kIsWeb) {
+
+    // Only stop the isolate and disconnect if the app is paused.
+    // This is when the app is actually in the background. If it's inactive or hidden,
+    // the app is still technically in the foregronud, but might just be obscured.
+    if (Platform.isAndroid && currentState == AppLifecycleState.paused) {
       IsolateNameServer.removePortNameMapping('bg_isolate');
-      SocketSvc.disconnect();
+      if (GetIt.I.isRegistered<SocketService>()) {
+        GetIt.I<SocketService>().disconnect();
+      }
+
+      // Request graceful isolate shutdown. Do not force-kill on timeout:
+      // in-flight MethodChannel handlers may still need to post their reply,
+      // and killing early can trigger a fatal platform reply-port abort.
+      if (GetIt.I.isRegistered<GlobalIsolate>()) {
+        unawaited(GetIt.I<GlobalIsolate>().drainAndStop());
+      }
     }
-    final activeChat = ChatsSvc.activeChat;
-    if (activeChat != null) {
-      ConversationViewController _cvc = cvc(activeChat.chat);
-      _cvc.lastFocusedNode.unfocus();
+
+    if (GetIt.I.isRegistered<ChatsService>()) {
+      final activeChat = ChatsSvc.activeChat;
+      if (activeChat != null) {
+        ConversationViewController _cvc = cvc(activeChat.chat);
+        _cvc.lastFocusedNode.unfocus();
+      }
     }
+
     if (kIsDesktop) {
       windowFocused = false;
     }
   }
 
   void closeBubble() {
-    ChatsSvc.setActiveToDead();
-    SocketSvc.disconnect();
+    if (GetIt.I.isRegistered<ChatsService>()) {
+      GetIt.I<ChatsService>().setActiveToDead();
+    }
+
+    if (GetIt.I.isRegistered<SocketService>()) {
+      GetIt.I<SocketService>().disconnect();
+    }
   }
 }

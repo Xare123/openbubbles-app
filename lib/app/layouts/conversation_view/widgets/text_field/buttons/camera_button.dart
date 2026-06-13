@@ -1,4 +1,3 @@
-import 'package:bluebubbles/app/layouts/camera/camera_screen.dart';
 import 'package:bluebubbles/services/ui/chat/conversation_view_controller.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
@@ -68,16 +67,10 @@ Future<void> openFullCamera(
   }
 
   final XFile? file;
-  if (Platform.isAndroid && !kIsWeb) {
-    file = await Navigator.of(context).push<XFile?>(
-      MaterialPageRoute(
-        builder: (_) => CameraScreen(initialMode: type == 'video' ? 'video' : 'photo'),
-      ),
-    );
-  } else if (type == 'camera') {
-    file = await ImagePicker().pickImage(source: ImageSource.camera);
-  } else {
+  if (type == 'video') {
     file = await ImagePicker().pickVideo(source: ImageSource.camera);
+  } else {
+    file = await ImagePicker().pickImage(source: ImageSource.camera);
   }
 
   if (file != null) {

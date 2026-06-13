@@ -4,6 +4,8 @@ import 'package:bluebubbles/env.dart';
 import 'package:bluebubbles/services/backend/actions/chat_actions.dart';
 import 'package:bluebubbles/models/models.dart' show MessageSaveResult;
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
+import 'package:flutter/foundation.dart';
 import 'package:get_it/get_it.dart';
 import 'package:bluebubbles/services/isolates/global_isolate.dart';
 
@@ -39,6 +41,24 @@ class ChatInterface {
       return await ChatActions.markChatReadUnread(data);
     } else {
       return await GetIt.I<GlobalIsolate>().send<void>(IsolateRequestType.markChatReadUnread, input: data);
+    }
+  }
+
+  static Future<void> startTyping({required String chatGuid}) async {
+    final data = {'chatGuid': chatGuid};
+    if (isIsolate || kIsWeb) {
+      return await ChatActions.startTyping(data);
+    } else {
+      return await GetIt.I<GlobalIsolate>().send<void>(IsolateRequestType.startTyping, input: data);
+    }
+  }
+
+  static Future<void> stopTyping({required String chatGuid}) async {
+    final data = {'chatGuid': chatGuid};
+    if (isIsolate || kIsWeb) {
+      return await ChatActions.stopTyping(data);
+    } else {
+      return await GetIt.I<GlobalIsolate>().send<void>(IsolateRequestType.stopTyping, input: data);
     }
   }
 
@@ -108,12 +128,14 @@ class ChatInterface {
 
   static Future<MessageSaveResult> addMessageToChat({
     required Map<String, dynamic> messageData,
+    List<Map<String, dynamic>> attachmentsData = const [],
     required Map<String, dynamic> chatData,
     required Map<String, dynamic> latestMessageData,
     required bool checkForMessageText,
   }) async {
     final data = {
       'messageData': messageData,
+      'attachmentsData': attachmentsData,
       'chatData': chatData,
       'latestMessageData': latestMessageData,
       'checkForMessageText': checkForMessageText,
@@ -127,8 +149,33 @@ class ChatInterface {
           await GetIt.I<GlobalIsolate>().send<Map<String, dynamic>>(IsolateRequestType.addMessageToChat, input: data);
     }
 
-    final message = Database.messages.get(result['messageId'] as int)!;
-    final isNewer = result['isNewer'] as bool;
+    final messageId = result['messageId'] as int?;
+    final isNewer = result['isNewer'] as bool? ?? false;
+
+    Message? message;
+    if (messageId != null) {
+      message = Database.messages.get(messageId);
+    }
+
+    // Fallback: resolve by GUID when ObjectBox put collided / retried and ID
+    // is absent or stale by the time we hydrate on this isolate.
+    if (message == null) {
+      Logger.warn('[addMessageToChat] Message ID was null or not found, attempting to resolve by GUID');
+      final guid = messageData['guid'] as String?;
+      if (guid != null) {
+        message = Message.findOne(guid: guid);
+        if (message != null) {
+          Logger.info('[addMessageToChat] Successfully resolved message by GUID');
+        } else {
+          Logger.error('[addMessageToChat] Failed to resolve message by GUID: $guid');
+        }
+      }
+    }
+
+    // Last resort: keep pipeline moving and let downstream save/reload logic
+    // reconcile this object without crashing on a null force-unwrap.
+    message ??= Message.fromMap(messageData);
+
     return MessageSaveResult(message, isNewer);
   }
 
@@ -154,23 +201,6 @@ class ChatInterface {
     // This automatically loads ToMany relationships like dbAttachments and ToOne like handleRelation
     final reactions = Database.messages.getMany(reactionIds);
     return reactions.whereType<Message>().toList();
-  }
-
-  static Future<List<Chat>> syncLatestMessages({required List<String> chatGuids, required bool toggleUnread}) async {
-    final data = {
-      'chatGuids': chatGuids,
-      'toggleUnread': toggleUnread,
-    };
-
-    late List<int> chatIds;
-    if (isIsolate) {
-      chatIds = await ChatActions.syncLatestMessages(data);
-    } else {
-      chatIds = await GetIt.I<GlobalIsolate>().send<List<int>>(IsolateRequestType.syncLatestMessages, input: data);
-    }
-
-    // Fetch chats by ID using getMany for efficiency
-    return Database.chats.getMany(chatIds).whereType<Chat>().toList();
   }
 
   static Future<({List<Chat> chats, List<int> affectedHandleIds})> bulkSyncChats(
@@ -221,27 +251,6 @@ class ChatInterface {
       messageIds = await ChatActions.getMessagesAsync(data);
     } else {
       messageIds = await GetIt.I<GlobalIsolate>().send<List<int>>(IsolateRequestType.getMessagesAsync, input: data);
-    }
-
-    // Fetch messages by ID using getMany for efficiency
-    return Database.messages.getMany(messageIds).whereType<Message>().toList();
-  }
-
-  static Future<List<Message>> bulkSyncMessages({
-    required Map<String, dynamic> chatData,
-    required List<Map<String, dynamic>> messagesData,
-    bool hydrateAttachments = true,
-  }) async {
-    final data = {
-      'chatData': chatData,
-      'messagesData': messagesData,
-    };
-
-    late List<int> messageIds;
-    if (isIsolate) {
-      messageIds = await ChatActions.bulkSyncMessages(data);
-    } else {
-      messageIds = await GetIt.I<GlobalIsolate>().send<List<int>>(IsolateRequestType.bulkSyncMessages, input: data);
     }
 
     // Fetch messages by ID using getMany for efficiency

@@ -56,20 +56,22 @@ class _RequestPermissionsState extends State<RequestPermissions> with WidgetsBin
       await Permission.contacts.request();
     }
     final status = await Permission.contacts.status;
-    if (mounted)
+    if (mounted) {
       setState(() {
         _contactsStatus = status;
         _contactsRequested = true;
       });
+    }
   }
 
   Future<void> _requestNotifications() async {
     final result = await Permission.notification.request();
-    if (mounted)
+    if (mounted) {
       setState(() {
         _notifStatus = result;
         _notifRequested = true;
       });
+    }
   }
 
   bool get _notifRequired {

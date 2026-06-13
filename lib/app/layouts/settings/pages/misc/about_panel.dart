@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:adaptive_theme/adaptive_theme.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/content/next_button.dart';
+import 'package:bluebubbles/app/wrappers/bb_app_bar.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/settings_widgets.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
@@ -11,7 +12,6 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:get/get.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -280,15 +280,10 @@ class _AboutPanelState extends State<AboutPanel> with ThemeHelpers {
                                 ),
                               ),
                               backgroundColor: context.theme.colorScheme.surface,
-                              appBar: AppBar(
+                              appBar: BBAppBar(
                                 toolbarHeight: 50,
-                                elevation: 0,
-                                scrolledUnderElevation: 3,
-                                surfaceTintColor: context.theme.colorScheme.primary,
                                 leading: buildBackButton(context),
-                                backgroundColor: headerColor,
                                 iconTheme: IconThemeData(color: context.theme.colorScheme.primary),
-                                centerTitle: iOS,
                                 title: Padding(
                                   padding: EdgeInsets.only(top: kIsDesktop ? 20 : 0),
                                   child: Text(
@@ -296,9 +291,6 @@ class _AboutPanelState extends State<AboutPanel> with ThemeHelpers {
                                     style: context.theme.textTheme.titleLarge,
                                   ),
                                 ),
-                                systemOverlayStyle: context.theme.colorScheme.brightness == Brightness.dark
-                                    ? SystemUiOverlayStyle.light
-                                    : SystemUiOverlayStyle.dark,
                               ),
                             ),
                           ),

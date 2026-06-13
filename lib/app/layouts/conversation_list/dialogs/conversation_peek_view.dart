@@ -101,10 +101,10 @@ class _ConversationPeekViewState extends State<ConversationPeekView>
           colorScheme: context.theme.colorScheme.copyWith(
             primary: context.theme.colorScheme.bubble(context, widget.chat.isIMessage),
             onPrimary: context.theme.colorScheme.onBubble(context, widget.chat.isIMessage),
-            surface: SettingsSvc.settings.monetTheming.value == Monet.full
+            surface: ThemeSvc.isMaterialYouActive(context)
                 ? null
                 : (context.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
-            onSurface: SettingsSvc.settings.monetTheming.value == Monet.full
+            onSurface: ThemeSvc.isMaterialYouActive(context)
                 ? null
                 : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
           ),

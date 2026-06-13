@@ -318,20 +318,21 @@ extension MessageNotificationExtension on Message {
       if (isInteractive) {
         return "$sender$interactiveText";
       }
+
       if (isNullOrEmpty(fullText) && !hasAttachments && isNullOrEmpty(associatedMessageGuid)) {
         if (dateEdited != null) {
           return "${sender}Unsent message";
         }
         return "${sender}Empty message";
       }
-      if (hasAttachments && attachments.isEmpty) {
-        fetchAttachments();
-      }
-
       // If there are attachments, return the number of attachments
       if (realAttachments.isNotEmpty) {
         if (isSticker) return "${sender}1 Sticker";
         return "$sender${_getAttachmentText(realAttachments)}";
+      } else if (hasAttachments) {
+        // Fallback: message is marked as having attachments but they haven't loaded yet
+        // (can happen with outgoing messages before the attachment links are fully persisted)
+        return "${sender}Attachment";
       } else if (!isNullOrEmpty(associatedMessageGuid)) {
         // It's a reaction message, get the sender
         String reactionSender = isFromMe!
@@ -369,7 +370,8 @@ extension MessageNotificationExtension on Message {
               if (attachmentGuids.isNotEmpty) {
                 attachment = true;
                 messageText = _getAttachmentText(
-                    associatedMessage.fetchAttachments()!.where((e) => attachmentGuids.contains(e?.guid)).toList());
+                  associatedMessage.dbAttachments.where((e) => attachmentGuids.contains(e.guid)).toList(),
+                );
               } else if (ranges.isNotEmpty) {
                 messageText = "";
                 for (List range in ranges) {
@@ -382,7 +384,7 @@ extension MessageNotificationExtension on Message {
             if (messageText == null) {
               if (associatedMessage.hasAttachments) {
                 attachment = true;
-                messageText = _getAttachmentText(associatedMessage.fetchAttachments()!);
+                messageText = _getAttachmentText(associatedMessage.dbAttachments.toList());
               } else {
                 messageText = (associatedMessage.subject ?? "") +
                     (!isNullOrEmpty(associatedMessage.subject?.trim()) ? "\n" : "") +

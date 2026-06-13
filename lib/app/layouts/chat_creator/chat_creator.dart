@@ -2,12 +2,15 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:bluebubbles/app/components/custom_text_editing_controllers.dart';
+import 'package:bluebubbles/app/layouts/chat_creator/chat_creator_dialogs.dart';
+import 'package:bluebubbles/app/layouts/chat_creator/chat_creator_utils.dart';
 import 'package:bluebubbles/app/layouts/chat_creator/widgets/chat_list_section.dart';
 import 'package:bluebubbles/app/layouts/chat_creator/widgets/message_type_toggle.dart';
 import 'package:bluebubbles/app/layouts/chat_creator/widgets/selected_contact_chip.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/pages/conversation_view.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/text_field/text_field_component.dart';
 import 'package:bluebubbles/app/state/chat_state_scope.dart';
+import 'package:bluebubbles/app/wrappers/bb_app_bar.dart';
 import 'package:bluebubbles/app/wrappers/bb_scaffold.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
 import 'package:bluebubbles/app/wrappers/titlebar_wrapper.dart';
@@ -18,9 +21,9 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/services/backend/interfaces/sync_interface.dart';
 import 'package:bluebubbles/services/ui/chat/send_data.dart';
 import 'package:bluebubbles/utils/string_utils.dart';
-import 'package:dio/dio.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -113,22 +116,8 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
             }
           }
           final query = addressController.text.toLowerCase();
-          final _contacts = contacts
-              .where((e) =>
-                  e.computedDisplayName.toLowerCase().contains(query) ||
-                  (e.nickname?.toLowerCase().contains(query) ?? false) ||
-                  e.phoneNumbers.firstWhereOrNull((p) => cleansePhoneNumber(p.number.toLowerCase()).contains(query)) !=
-                      null ||
-                  e.emailAddresses.firstWhereOrNull((e) => e.address.toLowerCase().contains(query)) != null)
-              .toList();
-          final _chats = existingChats
-              .where((e) =>
-                  (selectedService.value.isIMessageService == e.isIMessage) &&
-                  ((e.getTitle().toLowerCase().contains(query)) ||
-                      e.handles.firstWhereOrNull(
-                              (e) => e.address.contains(query) || e.displayName.toLowerCase().contains(query)) !=
-                          null))
-              .toList();
+          final _contacts = ChatCreatorUtils.filterContacts(contacts, query);
+          final _chats = ChatCreatorUtils.filterChats(existingChats, query, selectedService.value);
           return ContactSearchResult(_contacts, _chats);
         }, Priority.animation);
         _debounce = null;
@@ -330,26 +319,7 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
     // match each selected contact to a participant in a chat
     if (existingChat == null) {
       for (Chat c in (checkDeleted ? Database.chats.getAll() : filteredChats)) {
-        if (c.handles.length != selectedContacts.length) continue;
-        int matches = 0;
-        for (SelectedContact contact in selectedContacts) {
-          for (Handle participant in c.handles) {
-            // If one is an email and the other isn't, skip
-            if (contact.address.isEmail && !participant.address.isEmail) continue;
-            if (contact.address == participant.address) {
-              matches += 1;
-              break;
-            }
-            // match last digits
-            final matchLengths = [15, 14, 13, 12, 11, 10, 9, 8, 7];
-            final numeric = contact.address.numericOnly();
-            if (matchLengths.contains(numeric.length) && cleansePhoneNumber(participant.address).endsWith(numeric)) {
-              matches += 1;
-              break;
-            }
-          }
-        }
-        if (matches == selectedContacts.length) {
+        if (ChatCreatorUtils.chatMatchesSelectedContacts(c, selectedContacts.map((e) => e.address).toList())) {
           existingChat = c;
           break;
         }
@@ -425,58 +395,21 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
   @override
   Widget build(BuildContext context) {
     return BBScaffold(
-      appBar: PreferredSize(
-        preferredSize: Size(NavigationSvc.width(context), kIsDesktop ? 90 : 50),
-        child: AppBar(
-          systemOverlayStyle: context.theme.colorScheme.brightness == Brightness.dark
-              ? SystemUiOverlayStyle.light
-              : SystemUiOverlayStyle.dark,
-          toolbarHeight: kIsDesktop ? 90 : 50,
-          elevation: 0,
-          scrolledUnderElevation: 3,
-          surfaceTintColor: context.theme.colorScheme.primary,
-          leading: buildBackButton(context),
-          backgroundColor: Colors.transparent,
-          centerTitle: SettingsSvc.settings.skin.value == Skins.iOS,
-          title: Text(
-            "New Conversation",
-            style: context.theme.textTheme.titleLarge,
-          ),
-          actions: [
-            if (!canCreateGroupChats)
-              IconButton(
-                icon: Icon(iOS ? CupertinoIcons.exclamationmark_circle : Icons.error_outline,
-                    color: context.theme.colorScheme.error),
-                onPressed: () {
-                  showDialog(
-                      barrierDismissible: false,
-                      context: Get.context!,
-                      builder: (BuildContext context) {
-                        return AlertDialog(
-                          title: Text(
-                            "Group Chat Creation",
-                            style: context.theme.textTheme.titleLarge,
-                          ),
-                          content: Text(
-                              "Creating group chats from BlueBubbles is not possible on macOS 11 (Big Sur) and later due to limitations from Apple. You must setup the Private API to gain this feature.",
-                              style: context.theme.textTheme.bodyLarge),
-                          backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                          actions: <Widget>[
-                            TextButton(
-                              child: Text("Close",
-                                  style: context.theme.textTheme.bodyLarge!
-                                      .copyWith(color: context.theme.colorScheme.primary)),
-                              onPressed: () {
-                                Navigator.of(context).pop();
-                              },
-                            ),
-                          ],
-                        );
-                      });
-                },
-              ),
-          ],
-        ),
+      appBar: BBAppBar(
+        titleText: "New Conversation",
+        leading: buildBackButton(context),
+        backgroundColor: Colors.transparent,
+        toolbarHeight: kIsDesktop ? 90 : 50,
+        actions: [
+          if (!canCreateGroupChats)
+            IconButton(
+              icon: Icon(iOS ? CupertinoIcons.exclamationmark_circle : Icons.error_outline,
+                  color: context.theme.colorScheme.error),
+              onPressed: () {
+                ChatCreatorDialogs.showGroupChatCreationDialog(Get.context!);
+              },
+            ),
+        ],
       ),
       body: FocusScope(
         child: Column(
@@ -628,10 +561,10 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
                       colorScheme: context.theme.colorScheme.copyWith(
                         primary: context.theme.colorScheme.bubble(context, selectedService.value.isIMessageService),
                         onPrimary: context.theme.colorScheme.onBubble(context, selectedService.value.isIMessageService),
-                        surface: SettingsSvc.settings.monetTheming.value == Monet.full
+                        surface: ThemeSvc.isMaterialYouActive(context)
                             ? null
                             : (context.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
-                        onSurface: SettingsSvc.settings.monetTheming.value == Monet.full
+                        onSurface: ThemeSvc.isMaterialYouActive(context)
                             ? null
                             : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
                       ),
@@ -680,10 +613,10 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
                       colorScheme: context.theme.colorScheme.copyWith(
                         primary: context.theme.colorScheme.bubble(context, selectedService.value.isIMessageService),
                         onPrimary: context.theme.colorScheme.onBubble(context, selectedService.value.isIMessageService),
-                        surface: SettingsSvc.settings.monetTheming.value == Monet.full
+                        surface: ThemeSvc.isMaterialYouActive(context)
                             ? null
                             : (context.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
-                        onSurface: SettingsSvc.settings.monetTheming.value == Monet.full
+                        onSurface: ThemeSvc.isMaterialYouActive(context)
                             ? null
                             : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
                       ),
@@ -750,7 +683,7 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
                             bool existsOnServer = true;
                             if (chat != null && BackendSvc.getRemoteService() != null) {
                               try {
-                                await BackendSvc.getRemoteService()!.singleChat(chat.guid);
+                                await BackendSvc.getRemoteService()!.chat.fetchOne(chat.guid);
                               } catch (_) {
                                 existsOnServer = false;
                               }
@@ -877,32 +810,7 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
                               // the server's createChat API only accepts a text body. Show an error
                               // and let the user pick an existing contact instead.
                               if (widget.initialAttachments.isNotEmpty) {
-                                showDialog(
-                                  context: context,
-                                  builder: (BuildContext context) {
-                                    return AlertDialog(
-                                      backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                                      title: Text(
-                                        "Cannot Forward Attachment",
-                                        style: context.theme.textTheme.titleLarge,
-                                      ),
-                                      content: Text(
-                                        "Attachments cannot be forwarded to a new conversation. Please select an existing contact.",
-                                        style: context.theme.textTheme.bodyLarge,
-                                      ),
-                                      actions: [
-                                        TextButton(
-                                          child: Text(
-                                            "OK",
-                                            style: context.theme.textTheme.bodyLarge!
-                                                .copyWith(color: context.theme.colorScheme.primary),
-                                          ),
-                                          onPressed: () => Navigator.of(context).pop(),
-                                        ),
-                                      ],
-                                    );
-                                  },
-                                );
+                                ChatCreatorDialogs.showCannotForwardAttachmentDialog(context);
                                 return;
                               }
 
@@ -922,23 +830,7 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
                                   barrierDismissible: false,
                                   builder: (BuildContext dialogContext) {
                                     createDialogCtx = dialogContext;
-                                    return AlertDialog(
-                                      backgroundColor: dialogContext.theme.colorScheme.surfaceContainerHighest,
-                                      title: Text(
-                                        "Creating a new $method chat...",
-                                        style: dialogContext.theme.textTheme.titleLarge,
-                                      ),
-                                      content: SizedBox(
-                                        height: 70,
-                                        child: Center(
-                                          child: CircularProgressIndicator(
-                                            backgroundColor: dialogContext.theme.colorScheme.surfaceContainerHighest,
-                                            valueColor:
-                                                AlwaysStoppedAnimation<Color>(dialogContext.theme.colorScheme.primary),
-                                          ),
-                                        ),
-                                      ),
-                                    );
+                                    return ChatCreatorDialogs.buildCreatingChatDialog(dialogContext, method);
                                   });
                               BackendSvc.createChat(
                                 participants.map((i) => RustPushBBUtils.formatAddress(i)).toList(),
@@ -965,12 +857,14 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
 
                                 // Fetch the last message for the chat and save it.
                                 final messageRes =
-                                    await BackendSvc.getRemoteService()?.chatMessages(newChat.guid, limit: 1);
+                                    await BackendSvc.getRemoteService()?.chat.getMessages(newChat.guid, limit: 1);
                                 if (messageRes != null && messageRes.data["data"].length > 0) {
-                                  final messages = (messageRes.data["data"] as List<dynamic>)
-                                      .map((e) => Message.fromMap(e))
-                                      .toList();
-                                  await Chat.bulkSyncMessages(newChat, messages);
+                                  final rawMessages =
+                                      (messageRes.data["data"] as List<dynamic>).cast<Map<String, dynamic>>();
+                                  await SyncInterface.bulkSyncData(
+                                    chatData: newChat.toMap(),
+                                    messagesData: rawMessages,
+                                  );
                                 }
 
                                 // Force close the message service for the chat so it can be reloaded.
@@ -1007,29 +901,7 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
                                     barrierDismissible: false,
                                     context: context,
                                     builder: (BuildContext dialogContext) {
-                                      return AlertDialog(
-                                        backgroundColor: dialogContext.theme.colorScheme.surfaceContainerHighest,
-                                        title: Text(
-                                          "Failed to create chat!",
-                                          style: dialogContext.theme.textTheme.titleLarge,
-                                        ),
-                                        content: Text(
-                                          error is Response
-                                              ? "Reason: (${error.data["error"]["type"]}) -> ${error.data["error"]["message"]}"
-                                              : error.toString(),
-                                          style: dialogContext.theme.textTheme.bodyLarge,
-                                        ),
-                                        actions: [
-                                          TextButton(
-                                            child: Text("OK",
-                                                style: dialogContext.theme.textTheme.bodyLarge!
-                                                    .copyWith(color: Get.context!.theme.colorScheme.primary)),
-                                            onPressed: () {
-                                              Navigator.of(dialogContext).pop();
-                                            },
-                                          )
-                                        ],
-                                      );
+                                      return ChatCreatorDialogs.buildCreateChatErrorDialog(dialogContext, error);
                                     });
                                 if (!createCompleter!.isCompleted) {
                                   createCompleter?.completeError(error);

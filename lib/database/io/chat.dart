@@ -69,24 +69,22 @@ class Chat {
   String? textFieldText;
   String? textFieldAnnotations;
   List<String> textFieldAttachments = [];
-  Message? _latestMessage;
-  Message get latestMessage {
-    if (_latestMessage != null) return _latestMessage!;
-    return dbLatestMessage;
-  }
 
-  Message get dbLatestMessage {
-    _latestMessage = Chat.getMessages(this, limit: 1, getDetails: true).firstOrNull ??
-        Message(
-          dateCreated: DateTime.fromMillisecondsSinceEpoch(0),
-          guid: guid,
-        );
-    return _latestMessage!;
-  }
+  /// ObjectBox ToOne relation to the latest message for O(1) lookup.
+  /// Keep [dbOnlyLatestMessageDate] in sync via [setLatestMessage].
+  final dbLatestMessage = ToOne<Message>();
 
-  set latestMessage(Message m) => _latestMessage = m;
   @Property(uid: 526293286661780207)
   DateTime? dbOnlyLatestMessageDate;
+
+  /// Update the latest-message relation and its sort-key in one step.
+  /// Persists both fields to the DB asynchronously (fire-and-forget).
+  void setLatestMessage(Message m) {
+    dbLatestMessage.target = m;
+    dbOnlyLatestMessageDate = m.dateCreated;
+    unawaited(saveAsync(updateLatestMessage: true));
+  }
+
   DateTime? dateDeleted;
   int? style;
   bool lockChatName;
@@ -208,7 +206,7 @@ class Chat {
     customBackgroundPath = customBackground;
     pinIndex = pinnedIndex;
     if (textFieldAttachments.isEmpty) textFieldAttachments = [];
-    _latestMessage = latestMessage;
+    if (latestMessage != null) dbOnlyLatestMessageDate ??= latestMessage.dateCreated;
   }
 
   factory Chat.fromMap(Map<String, dynamic> json) {
@@ -275,6 +273,7 @@ class Chat {
     bool updateLockChatName = false,
     bool updateLockChatIcon = false,
     bool updateLastReadMessageGuid = false,
+    bool updateLatestMessage = false,
     bool updateGroupVersion = false,
     bool updateUsingHandle = false,
     bool updateIsSms = false,
@@ -316,6 +315,7 @@ class Chat {
         'updateLockChatName': updateLockChatName,
         'updateLockChatIcon': updateLockChatIcon,
         'updateLastReadMessageGuid': updateLastReadMessageGuid,
+        'updateLatestMessage': updateLatestMessage,
         'updateGroupVersion': updateGroupVersion,
         'updateUsingHandle': updateUsingHandle,
         'updateIsSms': updateIsSms,
@@ -434,7 +434,7 @@ class Chat {
         participants[i] = participants[i].save();
       }
 
-      dbOnlyLatestMessageDate ??= latestMessage.dateCreated;
+      dbOnlyLatestMessageDate ??= dbLatestMessage.target?.dateCreated;
       try {
         id = Database.chats.put(this);
         final stored = id == null ? null : Database.chats.get(id!);
@@ -880,7 +880,7 @@ class Chat {
               ],
             ),
           ],
-          attachments: [
+        )..attachments = [
             Attachment(
               guid: myUuid,
               uti: utiMap[part["contentType"] as String] ?? "public.data",
@@ -890,8 +890,7 @@ class Chat {
               totalBytes: partContent.length,
               transferName: "${part["id"]}.${extensionFromMime(part["contentType"] as String) ?? "bin"}",
             ),
-          ],
-        );
+          ];
         final attachment = message.attachments.first!;
         final directory = Directory(attachment.directory);
         if (!directory.existsSync()) {
@@ -946,25 +945,18 @@ class Chat {
       return handles.first.displayName;
     }
 
-    // For group chats, extract first names only from reactionDisplayName when
-    // the handle has a contact (i.e., the name is a real person's name).
-    // Without a contact, the name is a phone number or email — use the full value.
-    String shortName(Handle h) {
-      return h.contactsV2.isNotEmpty ? h.reactionDisplayName.firstWord : h.reactionDisplayName;
-    }
-
     if (count <= 4) {
       final buffer = StringBuffer();
       for (int i = 0; i < count; i++) {
         if (i > 0) buffer.write(i == count - 1 ? ' & ' : ', ');
-        buffer.write(shortName(handles[i]));
+        buffer.write(handles[i].shortName);
       }
       return buffer.toString();
     } else {
       final buffer = StringBuffer();
       for (int i = 0; i < 3; i++) {
         if (i > 0) buffer.write(', ');
-        buffer.write(shortName(handles[i]));
+        buffer.write(handles[i].shortName);
       }
       buffer.write(' & ${count - 3} others');
       return buffer.toString();
@@ -1088,17 +1080,21 @@ class Chat {
   /// Add message to chat - pure DB operation
   /// Note: For full message add with service updates, use ChatsSvc.addMessageToChat
   Future<MessageSaveResult> addMessage(Message message,
-      {bool changeUnreadStatus = true, bool checkForMessageText = true, bool clearNotificationsIfFromMe = true}) async {
+      {bool changeUnreadStatus = true,
+      bool checkForMessageText = true,
+      bool clearNotificationsIfFromMe = true,
+      List<Attachment> attachments = const []}) async {
     // Save the message using the interface
-    Message? latest = latestMessage;
+    Message? latest = dbLatestMessage.target;
     Message? newMessage;
     bool isNewer = false;
 
     try {
       final result = await ChatInterface.addMessageToChat(
         messageData: message.toMap(),
+        attachmentsData: attachments.map((e) => e.toMap()).toList(),
         chatData: toMap(),
-        latestMessageData: latest.toMap(),
+        latestMessageData: (latest ?? Message(dateCreated: DateTime.fromMillisecondsSinceEpoch(0), guid: guid)).toMap(),
         checkForMessageText: checkForMessageText,
       );
 
@@ -1115,12 +1111,12 @@ class Chat {
 
     // Handle post-save operations on main thread
     if (isNewer) {
-      _latestMessage = message;
+      setLatestMessage(message);
       if (dateDeleted != null) {
         dateDeleted = null;
         await saveAsync(updateDateDeleted: true);
       }
-      if (isArchived! && !_latestMessage!.isFromMe! && SettingsSvc.settings.unarchiveOnNewMessage.value) {
+      if (isArchived! && !message.isFromMe! && SettingsSvc.settings.unarchiveOnNewMessage.value) {
         await toggleArchivedAsync(false);
       }
     }
@@ -1158,11 +1154,11 @@ class Chat {
 
   Message addMessageLocal(Message message,
       {bool changeUnreadStatus = true, bool checkForMessageText = true, bool clearNotificationsIfFromMe = true}) {
-    final latest = latestMessage;
-    final isNewer = latest.dateCreated == null || (message.dateCreated?.isAfter(latest.dateCreated!) ?? false);
+    final latest = dbLatestMessage.target;
+    final isNewer = latest?.dateCreated == null || (message.dateCreated?.isAfter(latest!.dateCreated!) ?? false);
 
     if (isNewer) {
-      _latestMessage = message;
+      dbLatestMessage.target = message;
       dbOnlyLatestMessageDate = message.dateCreated;
       if (dateDeleted != null) {
         dateDeleted = null;
@@ -1170,7 +1166,7 @@ class Chat {
         unawaited(ChatsSvc.addChat(this));
       }
       if (isArchived! &&
-          !_latestMessage!.isFromMe! &&
+          !message.isFromMe! &&
           SettingsSvc.settings.unarchiveOnNewMessage.value &&
           !(participants.firstOrNull?.isBlocked() ?? false)) {
         toggleArchived(false);
@@ -1211,7 +1207,7 @@ class Chat {
     // Sync participants from server - delegates to service layer
     // Note: For full sync with service updates, this is called by ChatsSvc.addMessageToChat
     try {
-      final response = await HttpSvc.singleChat(guid, withQuery: "participants");
+      final response = await HttpSvc.chat.fetchOne(guid, withQuery: "participants");
       if (response.statusCode == 200 && response.data["data"] != null) {
         final chatData = response.data["data"];
         final updatedChat = (await ChatInterface.bulkSyncChats(chatsData: [chatData])).chats;
@@ -1309,7 +1305,6 @@ class Chat {
         associatedMessagesQuery.close();
         associatedMessages = MessageHelper.normalizedAssociatedMessages(associatedMessages);
         for (Message m in messages) {
-          m.attachments = List<Attachment>.from(m.dbAttachments);
           m.associatedMessages = associatedMessages.where((e) => e.associatedMessageGuid == m.guid).toList();
         }
       }
@@ -1462,9 +1457,7 @@ class Chat {
     if (id == null) return this;
     this.autoSendReadReceipts = autoSendReadReceipts;
     await saveAsync(updateAutoSendReadReceipts: true);
-    if (autoSendReadReceipts ?? SettingsSvc.settings.privateMarkChatAsRead.value) {
-      HttpSvc.markChatRead(guid);
-    }
+    BackendSvc.markRead(this, autoSendReadReceipts ?? SettingsSvc.settings.privateMarkChatAsRead.value);
     return this;
   }
 
@@ -1481,7 +1474,7 @@ class Chat {
     this.autoSendTypingIndicators = autoSendTypingIndicators;
     await saveAsync(updateAutoSendTypingIndicators: true);
     if (!(autoSendTypingIndicators ?? SettingsSvc.settings.privateSendTypingIndicators.value)) {
-      SocketSvc.sendMessage("stopped-typing", {"chatGuid": guid});
+      unawaited(ChatInterface.stopTyping(chatGuid: guid));
     }
     return this;
   }
@@ -1647,18 +1640,6 @@ class Chat {
     return chats;
   }
 
-  static Future<List<Chat>> syncLatestMessages(List<Chat> chats, bool toggleUnread) async {
-    if (kIsWeb) throw Exception("Use socket to sync the last message on Web!");
-    if (chats.isEmpty) return chats;
-
-    final inputGuids = chats.map((e) => e.guid).toList();
-
-    return await ChatInterface.syncLatestMessages(
-      chatGuids: inputGuids,
-      toggleUnread: toggleUnread,
-    );
-  }
-
   static Future<List<Chat>> bulkSyncChats(List<Chat> chats) async {
     if (kIsWeb) throw Exception("Web does not support saving chats!");
     if (chats.isEmpty) return [];
@@ -1667,16 +1648,6 @@ class Chat {
       chatsData: chats.map((e) => e.toMap()).toList(),
     ))
         .chats;
-  }
-
-  static Future<List<Message>> bulkSyncMessages(Chat chat, List<Message> messages) async {
-    if (kIsWeb) throw Exception("Web does not support saving messages!");
-
-    if (messages.isEmpty) return [];
-    return await ChatInterface.bulkSyncMessages(
-      chatData: chat.toMap(),
-      messagesData: messages.map((e) => e.toMap()).toList(),
-    );
   }
 
   static void delete(Chat chat) async {
@@ -1795,7 +1766,9 @@ class Chat {
     hasUnreadMessage ??= other.hasUnreadMessage;
     isArchived ??= other.isArchived;
     isPinned ??= other.isPinned;
-    _latestMessage ??= other.latestMessage;
+    if (dbLatestMessage.target == null && other.dbLatestMessage.target != null) {
+      setLatestMessage(other.dbLatestMessage.target!);
+    }
     muteArgs ??= other.muteArgs;
     dateDeleted ??= other.dateDeleted;
     style ??= other.style;
@@ -1841,8 +1814,8 @@ class Chat {
     }
 
     // Compare the last message dates (negate to sort newest first)
-    final aDate = a.latestMessage.dateCreated!;
-    final bDate = b.latestMessage.dateCreated!;
+    final aDate = a.dbOnlyLatestMessageDate ?? DateTime.fromMillisecondsSinceEpoch(0);
+    final bDate = b.dbOnlyLatestMessageDate ?? DateTime.fromMillisecondsSinceEpoch(0);
     return -aDate.compareTo(bDate);
   }
 
@@ -1852,7 +1825,7 @@ class Chat {
 
   static Future<void> getIcon(Chat c, {bool force = false}) async {
     if ((!force && c.lockChatIcon) || BackendSvc.getRemoteService() == null) return;
-    final response = await BackendSvc.getRemoteService()!.getChatIcon(c.guid).catchError((err, stack) async {
+    final response = await BackendSvc.getRemoteService()!.chat.getIcon(c.guid).catchError((err, stack) async {
       Logger.error("Failed to get chat icon for chat ${c.getTitle()}", error: err, trace: stack);
       return Response(statusCode: 500, requestOptions: RequestOptions(path: ""));
     });
@@ -1917,6 +1890,8 @@ class Chat {
       "textFieldText": textFieldText,
       "textFieldAnnotations": textFieldAnnotations,
       "textFieldAttachments": textFieldAttachments,
+      "dbOnlyLatestMessageDate": dbOnlyLatestMessageDate?.millisecondsSinceEpoch,
+      "dbLatestMessageId": dbLatestMessage.targetId,
     };
   }
 }

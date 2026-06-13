@@ -127,7 +127,7 @@ Future<bool> showCustomHeadersDialog(BuildContext context) async {
 
                   SettingsSvc.settings.customHeaders.value = map;
                   await SettingsSvc.settings.saveOneAsync('customHeaders');
-                  await PrefsSvc.i.setString('customHeaders', jsonEncode(HttpSvc.headers));
+                  await PrefsSvc.network.setCustomHeadersJson(jsonEncode(HttpSvc.headers));
                   HttpSvc.updateHeaders();
                   Navigator.of(context).pop(true);
                 }),

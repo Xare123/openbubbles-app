@@ -24,76 +24,158 @@ class TypingIndicator extends StatefulWidget {
   State<TypingIndicator> createState() => _TypingIndicatorState();
 }
 
-class _TypingIndicatorState extends State<TypingIndicator> with ThemeHelpers {
+class _TypingIndicatorState extends State<TypingIndicator> with SingleTickerProviderStateMixin, ThemeHelpers {
+  late final AnimationController _scaleController;
+  late final Animation<double> _scaleAnimation;
+
+  /// Whether the bubble content is present in the tree (false only after the
+  /// hide animation has fully completed).
+  bool _isShowing = false;
+
+  /// GetX worker that reacts to [ConversationViewController.showTypingIndicatorFor]
+  /// changes. Only created when a controller is provided.
+  Worker? _visibilityWorker;
+
+  bool get _currentVisibility => widget.controller?.showTypingIndicatorFor.isNotEmpty ?? widget.visible ?? false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scaleController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
+    );
+    _scaleAnimation = CurvedAnimation(
+      parent: _scaleController,
+      curve: Curves.easeOutBack,
+      reverseCurve: Curves.easeIn,
+    );
+
+    // After the hide animation finishes, remove the content from the tree so
+    // it no longer occupies layout space.
+    _scaleController.addStatusListener((status) {
+      if (status == AnimationStatus.dismissed && mounted) {
+        setState(() => _isShowing = false);
+      }
+    });
+
+    _isShowing = _currentVisibility;
+    if (_isShowing) {
+      _scaleController.forward(from: 0.0);
+    }
+
+    // When a controller is provided, use a GetX worker to reliably observe
+    // the reactive list of typing participants. This is more direct than
+    // relying on didUpdateWidget, which can miss repaints for scale-only changes.
+    if (widget.controller != null) {
+      _visibilityWorker =
+          ever(widget.controller!.showTypingIndicatorFor, (_) => _onVisibilityChanged(_currentVisibility));
+    }
+  }
+
+  void _onVisibilityChanged(bool isVisible) {
+    if (!mounted) return;
+    if (isVisible && !_isShowing) {
+      setState(() => _isShowing = true);
+      _scaleController.forward(from: 0.0);
+    } else if (!isVisible && _isShowing) {
+      // _scaleController status listener will set _isShowing = false once dismissed.
+      _scaleController.reverse();
+    } else if (isVisible && _isShowing) {
+      // The set of typing participants (or their avatars) may have changed
+      // while already showing — rebuild so the bubble reflects the new state.
+      setState(() {});
+    }
+  }
+
+  @override
+  void dispose() {
+    _visibilityWorker?.dispose();
+    _scaleController.dispose();
+    super.dispose();
+  }
+
+  Widget _buildBubble(BuildContext context) {
+    return iOS || ChatStateScope.maybeChatOf(context) == null
+        ? ClipPath(
+            clipper: const TypingClipper(),
+            child: Container(
+              height: 50,
+              color: context.theme.colorScheme.surfaceContainerHighest,
+              padding: const EdgeInsets.fromLTRB(30, 10, 14, 20),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (widget.controller != null &&
+                      widget.controller!.showTypingIndicatorFor.length == 1 &&
+                      widget.controller!.typingIndicatorData[widget.controller!.showTypingIndicatorFor.first.address]
+                              ?.$2 !=
+                          null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(99),
+                        child: Image.memory(
+                          widget.controller!
+                              .typingIndicatorData[widget.controller!.showTypingIndicatorFor.first.address]!.$2!,
+                        ),
+                      ),
+                    ),
+                  const AnimatedDot(index: 2),
+                  const AnimatedDot(index: 1),
+                  const AnimatedDot(index: 0),
+                ],
+              ),
+            ),
+          )
+        : Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(left: 10, right: 10),
+                child: ContactAvatarGroupWidget(
+                  participants: [...(widget.controller?.showTypingIndicatorFor ?? [])],
+                  size: 25,
+                  editable: false,
+                ),
+              ),
+              if (widget.controller != null &&
+                  widget.controller!.showTypingIndicatorFor.length == 1 &&
+                  widget.controller!.typingIndicatorData[widget.controller!.showTypingIndicatorFor.first.address]?.$2 !=
+                      null)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  height: 25,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(99),
+                    child: Image.memory(
+                      widget.controller!.typingIndicatorData[widget.controller!.showTypingIndicatorFor.first.address]!
+                          .$2!,
+                    ),
+                  ),
+                ),
+              const AnimatedDot(index: 2),
+              const AnimatedDot(index: 1),
+              const AnimatedDot(index: 0),
+            ],
+          );
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedSize(
       duration: const Duration(milliseconds: 200),
-      child: (widget.controller?.showTypingIndicatorFor.isNotEmpty ?? widget.visible)!
-          ? (iOS || ChatStateScope.maybeChatOf(context) == null
-              ? ClipPath(
-                  clipper: const TypingClipper(),
-                  child: Container(
-                    height: 50,
-                    color: context.theme.colorScheme.surfaceContainerHighest,
-                    padding: const EdgeInsets.fromLTRB(30, 10, 14, 20),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (widget.controller != null &&
-                            widget.controller!.showTypingIndicatorFor.length == 1 &&
-                            widget.controller!
-                                    .typingIndicatorData[widget.controller!.showTypingIndicatorFor.first.address]?.$2 !=
-                                null)
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(99),
-                              child: Image.memory(
-                                widget.controller!
-                                    .typingIndicatorData[widget.controller!.showTypingIndicatorFor.first.address]!.$2!,
-                              ),
-                            ),
-                          ),
-                        const AnimatedDot(index: 2),
-                        const AnimatedDot(index: 1),
-                        const AnimatedDot(index: 0),
-                      ],
-                    ),
-                  ),
-                )
-              : Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.only(left: 10, right: 10),
-                      child: ContactAvatarGroupWidget(
-                        participants: [...(widget.controller?.showTypingIndicatorFor ?? [])],
-                        size: 25,
-                        editable: false,
-                      ),
-                    ),
-                    if (widget.controller != null &&
-                        widget.controller!.showTypingIndicatorFor.length == 1 &&
-                        widget.controller!.typingIndicatorData[widget.controller!.showTypingIndicatorFor.first.address]
-                                ?.$2 !=
-                            null)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        height: 25,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(99),
-                          child: Image.memory(
-                            widget.controller!
-                                .typingIndicatorData[widget.controller!.showTypingIndicatorFor.first.address]!.$2!,
-                          ),
-                        ),
-                      ),
-                    const AnimatedDot(index: 2),
-                    const AnimatedDot(index: 1),
-                    const AnimatedDot(index: 0),
-                  ],
-                ))
+      curve: Curves.easeOut,
+      child: _isShowing
+          ? ScaleTransition(
+              scale: _scaleAnimation,
+              // Anchor the grow/shrink at the bottom-left — the tail of the
+              // speech bubble — so it feels like a real iMessage bubble.
+              alignment: Alignment.bottomLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 5),
+                child: _buildBubble(context),
+              ))
           : const SizedBox.shrink(),
     );
   }

@@ -269,8 +269,7 @@ class _ConversationPanelState extends State<ConversationPanel> with ThemeHelpers
                             ? basename(SettingsSvc.settings.sendSoundPath.value!).substring("send-".length)
                             : "Adds a sound to be played when sending a message",
                         onTap: () async {
-                          FilePickerResult? result =
-                              await FilePicker.platform.pickFiles(type: FileType.audio, withData: true);
+                          FilePickerResult? result = await FilePicker.pickFiles(type: FileType.audio, withData: true);
                           if (result != null) {
                             PlatformFile platformFile = result.files.first;
                             String path = join(FilesystemSvc.soundsPath, "send-${platformFile.name}");
@@ -343,8 +342,7 @@ class _ConversationPanelState extends State<ConversationPanel> with ThemeHelpers
                             ? basename(SettingsSvc.settings.receiveSoundPath.value!).substring("receive-".length)
                             : "Adds a sound to be played when receiving a message",
                         onTap: () async {
-                          FilePickerResult? result =
-                              await FilePicker.platform.pickFiles(type: FileType.audio, withData: true);
+                          FilePickerResult? result = await FilePicker.pickFiles(type: FileType.audio, withData: true);
                           if (result != null) {
                             PlatformFile platformFile = result.files.first;
                             String path = join(FilesystemSvc.soundsPath, "receive-${platformFile.name}");

@@ -1,6 +1,6 @@
-import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/services/backend/interfaces/sync_interface.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -35,21 +35,30 @@ class _ChatSyncDialogState extends State<ChatSyncDialog> {
       offset = Message.countForChat(widget.chat) ?? 0;
     }
 
-    ChatsSvc.getMessages(widget.chat.guid, offset: offset, limit: widget.limit).then((dynamic messages) {
+    ChatsSvc.getMessages(widget.chat.guid, offset: offset, limit: widget.limit).then((dynamic rawData) {
+      final rawMessages = (rawData as List).cast<Map<String, dynamic>>();
       if (mounted) {
         setState(() {
-          message = "Adding ${messages.length} messages...";
+          message = "Adding ${rawMessages.length} messages...";
         });
       }
 
-      MessageHelper.bulkAddMessages(widget.chat, messages, onProgress: (int progress, int length) {
-        if (progress == 0 || length == 0) {
-          this.progress = null;
-        } else {
-          this.progress = progress / length;
+      SyncInterface.bulkSyncData(
+        chatData: widget.chat.toMap(),
+        messagesData: rawMessages,
+      ).then((result) {
+        final savedMessages = result.messages;
+
+        // Update ChatState with the new latest message so the conversation-list
+        // tile subtitle, sort position, and unread indicator stay in sync.
+        if (savedMessages.isNotEmpty) {
+          final latest = savedMessages.reduce((a, b) => (a.dateCreated ?? DateTime.fromMillisecondsSinceEpoch(0))
+                  .isAfter(b.dateCreated ?? DateTime.fromMillisecondsSinceEpoch(0))
+              ? a
+              : b);
+          ChatsSvc.updateChatLatestMessage(widget.chat.guid, latest);
         }
-        setState(() {});
-      }).then((List<Message> savedMessages) {
+
         // Add the messages to the active messages view.
         // They addition will get dropped if they already exist in the view.
         // Only do this if we aren't using an offset, otherwise messages

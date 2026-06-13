@@ -30,7 +30,7 @@ mixin ScheduledMessagesMixin<T extends StatefulWidget> on State<T> {
   }
 
   void getExistingMessages() async {
-    final response = await HttpSvc.getScheduled().catchError((_) {
+    final response = await HttpSvc.message.getScheduled().catchError((_) {
       if (mounted) fetching.value = null;
       return Response(requestOptions: RequestOptions(path: ''));
     });
@@ -42,7 +42,7 @@ mixin ScheduledMessagesMixin<T extends StatefulWidget> on State<T> {
   }
 
   void deleteMessage(ScheduledMessage item) async {
-    final response = await HttpSvc.deleteScheduled(item.id);
+    final response = await HttpSvc.message.deleteScheduled(item.id);
     if (response.statusCode == 200) {
       scheduled.remove(item);
     } else {

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:isolate';
 
 import 'package:archive/archive_io.dart';
+import 'package:bluebubbles/env.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/utils/logger/outputs/log_stream_output.dart';
 import 'package:flutter/foundation.dart';
@@ -16,6 +17,7 @@ import 'package:logger/logger.dart' as LoggerFactory;
 
 import 'outputs/debug_console_output.dart';
 import 'outputs/file_output_wrapper.dart';
+import 'outputs/rotating_file_output.dart';
 
 // ignore: non_constant_identifier_names
 BaseLogger get Logger => GetIt.I<BaseLogger>();
@@ -38,18 +40,17 @@ class BaseLogger {
   final latestLogName = 'bluebubbles-latest.log';
 
   LoggerFactory.LogOutput get fileOutput {
-    final baseFileOutput = LoggerFactory.AdvancedFileOutput(
-        path: logDir,
-        maxFileSizeKB: 1024, // 1 MB
-        maxRotatedFilesCount: 5,
-        maxDelay: const Duration(seconds: 5),
-        latestFileName: latestLogName,
-        overrideExisting: false,
-        encoding: utf8,
-        fileNameFormatter: (timestamp) {
-          final now = DateTime.now();
-          return 'bluebubbles-${now.toIso8601String().split('T').first}-${now.millisecondsSinceEpoch ~/ 1000}.log';
-        });
+    final baseFileOutput = RotatingFileOutput(
+      dirPath: logDir,
+      latestFileName: latestLogName,
+      maxFileSizeKB: 1024 * 5, // 5 MB
+      maxRotatedFilesCount: 5, // Total: 25 MB of logs before old logs are deleted
+      encoding: utf8,
+      fileNameFormatter: (_) {
+        final now = DateTime.now();
+        return 'bluebubbles-${now.toIso8601String().split('T').first}-${now.millisecondsSinceEpoch ~/ 1000}.log';
+      },
+    );
 
     // Wrap with ANSI stripper to ensure file is valid UTF-8
     return FileOutputWrapper(baseFileOutput);
@@ -120,7 +121,7 @@ class BaseLogger {
     return _logger;
   }
 
-  String _isolateName = "Main";
+  String _isolateName = "main";
 
   Future<void> init() async {
     // Ensure log directory and latest log file exist before AdvancedFileOutput
@@ -134,7 +135,7 @@ class BaseLogger {
     }
 
     _logger = createLogger();
-    _isolateName = Isolate.current.debugName ?? "Main";
+    _isolateName = isolateNameOverride ?? Isolate.current.debugName ?? "main";
 
     if (SettingsSvc.initCompleted.isCompleted) {
       currentLevel = SettingsSvc.settings.logLevel.value;
@@ -203,7 +204,7 @@ class BaseLogger {
     _logger = createLogger();
   }
 
-  String compressLogs() {
+  Future<String> compressLogs() async {
     try {
       final Directory logDir = Directory(Logger.logDir);
       if (!logDir.existsSync()) {
@@ -226,9 +227,9 @@ class BaseLogger {
       final encoder = ZipFileEncoder();
       encoder.create(zippedLogFile.path);
       for (final logPath in logPaths) {
-        encoder.addFile(File(logPath));
+        await encoder.addFile(File(logPath));
       }
-      encoder.close();
+      await encoder.close();
 
       return zippedLogFile.path;
     } catch (e, stackTrace) {
@@ -249,7 +250,11 @@ class BaseLogger {
       final File logFile = logFiles.first as File;
       if (!logFile.existsSync()) return [];
 
-      List<String> lines = await logFile.readAsLines(encoding: Encoding.getByName("latin1")!);
+      final List<String> lines = await logFile
+          .openRead()
+          .transform(const Utf8Decoder(allowMalformed: true))
+          .transform(const LineSplitter())
+          .toList();
 
       // Combine lines that are part of the same log message
       List<String> logs = [];

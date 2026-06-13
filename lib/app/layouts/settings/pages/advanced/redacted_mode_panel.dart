@@ -21,28 +21,30 @@ class RedactedModePanel extends StatefulWidget {
 }
 
 class _RedactedModePanelState extends State<RedactedModePanel> with ThemeHelpers {
-  final message = Message(
-    guid: "redacted-mode-demo",
-    dateDelivered: DateTime.now().toLocal(),
-    dateCreated: DateTime.now().toLocal(),
-    isFromMe: false,
-    hasReactions: true,
-    hasAttachments: true,
-    text: "This is a preview of Redacted Mode settings.",
-    handle: Handle(
-      id: Random.secure().nextInt(10000),
-      address: "John Doe",
-    ),
-    associatedMessages: [
-      Message(
-        dateCreated: DateTime.now().toLocal(),
-        guid: "redacted-mode-demo",
-        text: "Jane Doe liked a message you sent",
-        associatedMessageType: "like",
-        isFromMe: true,
+  late final Message message = (() {
+    final m = Message(
+      guid: "redacted-mode-demo",
+      dateDelivered: DateTime.now().toLocal(),
+      dateCreated: DateTime.now().toLocal(),
+      isFromMe: false,
+      hasReactions: true,
+      hasAttachments: true,
+      text: "This is a preview of Redacted Mode settings.",
+      handle: Handle(
+        id: Random.secure().nextInt(10000),
+        address: "John Doe",
       ),
-    ],
-    attachments: [
+      associatedMessages: [
+        Message(
+          dateCreated: DateTime.now().toLocal(),
+          guid: "redacted-mode-demo",
+          text: "Jane Doe liked a message you sent",
+          associatedMessageType: "like",
+          isFromMe: true,
+        ),
+      ],
+    );
+    m.dbAttachments.add(
       Attachment(
         guid: "redacted-mode-demo-attachment",
         originalROWID: Random.secure().nextInt(10000),
@@ -50,9 +52,10 @@ class _RedactedModePanelState extends State<RedactedModePanel> with ThemeHelpers
         mimeType: "image/png",
         width: 100,
         height: 100,
-      )
-    ],
-  );
+      ),
+    );
+    return m;
+  })();
   late final MessagePart _previewPart = MessagePart(part: 0, text: message.text, subject: message.subject);
   final RxInt placeholder = 0.obs;
 
@@ -86,10 +89,10 @@ class _RedactedModePanelState extends State<RedactedModePanel> with ThemeHelpers
                     colorScheme: context.theme.colorScheme.copyWith(
                       primary: context.theme.colorScheme.bubble(context, true),
                       onPrimary: context.theme.colorScheme.onBubble(context, true),
-                      surface: SettingsSvc.settings.monetTheming.value == Monet.full
+                      surface: ThemeSvc.isMaterialYouActive(context)
                           ? null
                           : (context.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
-                      onSurface: SettingsSvc.settings.monetTheming.value == Monet.full
+                      onSurface: ThemeSvc.isMaterialYouActive(context)
                           ? null
                           : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
                     ),
@@ -146,8 +149,8 @@ class _RedactedModePanelState extends State<RedactedModePanel> with ThemeHelpers
                                               ? 0
                                               : 1,
                                           child: ImageViewer(
-                                            file: AttachmentsSvc.getContent(message.attachments.first!),
-                                            attachment: message.attachments.first!,
+                                            file: AttachmentsSvc.getContent(message.dbAttachments.first),
+                                            attachment: message.dbAttachments.first,
                                             isFromMe: false,
                                           ),
                                         ),

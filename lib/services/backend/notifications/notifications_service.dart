@@ -7,17 +7,15 @@ import 'package:bluebubbles/app/layouts/findmy/findmy_page.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/misc/shared_streams_panel.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/profile_panel.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/scheduling/scheduled_messages_panel.dart';
-import 'package:bluebubbles/app/layouts/settings/pages/server/server_management_panel.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
-import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/helpers/ui/facetime_helpers.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/services/ui/extension_service.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
-import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' hide Notification;
@@ -85,18 +83,28 @@ class NotificationsService {
 
   Future<void> init({bool headless = false}) async {
     this.headless = headless;
-    if (!kIsWeb && !kIsDesktop) {
+    if (!kIsWeb && !kIsDesktop && !headless) {
       const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('ic_stat_icon');
       const InitializationSettings initializationSettings =
           InitializationSettings(android: initializationSettingsAndroid);
-      await flnp.initialize(initializationSettings, onDidReceiveNotificationResponse: (NotificationResponse? response) {
-        if (response?.payload != null) {
-          IntentsSvc.openChat(response!.payload);
-        }
-      });
+      await flnp.initialize(
+          settings: initializationSettings,
+          onDidReceiveNotificationResponse: (NotificationResponse? response) {
+            if (response?.payload != null) {
+              if (GetIt.I.isRegistered<IntentsService>()) {
+                IntentsSvc.openChat(response!.payload);
+              } else {
+                Logger.warn('IntentsService not registered, cannot open chat from notification tap');
+              }
+            }
+          });
       final details = await flnp.getNotificationAppLaunchDetails();
       if (details != null && details.didNotificationLaunchApp && details.notificationResponse?.payload != null) {
-        IntentsSvc.openChat(details.notificationResponse!.payload!);
+        if (GetIt.I.isRegistered<IntentsService>()) {
+          IntentsSvc.openChat(details.notificationResponse!.payload!);
+        } else {
+          Logger.warn('IntentsService not registered, cannot process notification launch payload');
+        }
       }
     }
   }
@@ -108,11 +116,11 @@ class NotificationsService {
   Future<void> createReminder(Chat? chat, Message? message, DateTime time,
       {String? chatTitle, String? messageText}) async {
     await flnp.zonedSchedule(
-      Random().nextInt(9998) + 50000,
-      chatTitle ?? 'Reminder: ${chat!.getTitle()}',
-      messageText ?? (hideContent ? "iMessage" : message!.getNotificationText()),
-      TZDateTime.from(time, local),
-      NotificationDetails(
+      id: Random().nextInt(9998) + 50000,
+      title: chatTitle ?? 'Reminder: ${chat!.getTitle()}',
+      body: messageText ?? (hideContent ? "iMessage" : message!.getNotificationText()),
+      scheduledDate: TZDateTime.from(time, local),
+      notificationDetails: NotificationDetails(
         android: AndroidNotificationDetails(
           REMINDER_CHANNEL,
           'Reminders',
@@ -128,6 +136,10 @@ class NotificationsService {
   }
 
   Future<void> createNotification(Chat chat, Message message, {bool notifyAnyways = false}) async {
+    if (GetIt.I.isRegistered<LifecycleService>()) {
+      await GetIt.I.isReady<LifecycleService>();
+    }
+
     if ((!notifyAnyways && chat.shouldMuteNotification(message)) || message.isFromMe!) return;
     final isGroup = chat.isGroup;
     final guid = chat.guid;
@@ -135,64 +147,74 @@ class NotificationsService {
     final title = isGroup ? chat.getTitle() : contactName;
     final text = hideContent ? "iMessage" : message.getNotificationText();
     final isReaction = !isNullOrEmpty(message.associatedMessageGuid);
-    final personIcon = (await rootBundle.load("assets/images/person64.png")).buffer.asUint8List();
-
-    Uint8List chatIcon = await avatarAsBytes(chat: chat, quality: 256);
-    final isFromMe = message.isFromMe ?? false;
-    Uint8List contactIcon = isFromMe
-        ? personIcon
-        : await avatarAsBytes(
-            participantsOverride: !chat.isGroup
-                ? null
-                : chat.handles.where((e) => e.address == message.handleRelation.target?.address).toList(),
-            chat: chat,
-            quality: 256);
-    if (chatIcon.isEmpty) {
-      chatIcon = personIcon;
-    }
-    if (contactIcon.isEmpty) {
-      contactIcon = personIcon;
-    }
 
     if (kIsWeb && Notification.permission == "granted") {
+      final chatIcon = await avatarAsBytes(chat: chat, quality: 256);
       final notif =
           Notification(title, body: text, icon: "data:image/png;base64,${base64Encode(chatIcon)}", tag: message.guid);
       notif.onClick.listen((event) async {
         await IntentsSvc.openChat(guid);
       });
     } else if (kIsDesktop) {
+      // Avatar loading is deferred to _buildAndShowToast — don't load it here.
       _lock.synchronized(
           () => showDesktopNotif(text, chat, title, contactName, message, isReaction, message.isGroupEvent));
     } else {
       if (message.guid != null && message.dateCreated != null) {
+        if (!GetIt.I.isRegistered<MethodChannelService>()) {
+          Logger.warn('MethodChannelService not registered; skipping incoming message notification');
+          return;
+        }
+
+        final personIcon = (await rootBundle.load("assets/images/person64.png")).buffer.asUint8List();
+        Uint8List chatIcon = await avatarAsBytes(chat: chat, quality: 256);
+        final isFromMe = message.isFromMe ?? false;
+        Uint8List contactIcon = isFromMe
+            ? personIcon
+            : await avatarAsBytes(
+                participantsOverride: !chat.isGroup
+                    ? null
+                    : chat.handles.where((e) => e.address == message.handleRelation.target?.address).toList(),
+                chat: chat,
+                quality: 256);
+        if (chatIcon.isEmpty) chatIcon = personIcon;
+        if (contactIcon.isEmpty) contactIcon = personIcon;
+
         // Determine if reaction action should be shown (only if Private API is enabled & not a reaction message)
         final bool showReactionAction = SettingsSvc.settings.enablePrivateAPI.value &&
             SettingsSvc.settings.notificationReactionAction.value &&
             message.associatedMessageGuid == null;
         final String reactionType = SettingsSvc.settings.notificationReactionActionType.value;
 
-        await MethodChannelSvc.invokeMethod("create-incoming-message-notification", {
-          "channel_id": NEW_MESSAGE_CHANNEL,
-          "chat_id": chat.id,
-          "chat_guid": guid,
-          "chat_is_group": isGroup,
-          "chat_title": title,
-          "chat_icon": isGroup ? chatIcon : contactIcon,
-          "contact_name": contactName,
-          "contact_avatar": contactIcon,
-          "message_guid": message.guid!,
-          "message_text": text,
-          "message_date": message.dateCreated!.millisecondsSinceEpoch,
-          "message_is_from_me": false,
-          "show_reaction_action": showReactionAction,
-          "reaction_type": reactionType,
-        });
+        await GetIt.I.isReady<MethodChannelService>();
+        await MethodChannelSvc.actions.createIncomingMessageNotification(
+          channelId: NEW_MESSAGE_CHANNEL,
+          chatId: chat.id,
+          chatGuid: guid,
+          chatIsGroup: isGroup,
+          chatTitle: title,
+          chatIcon: isGroup ? chatIcon : contactIcon,
+          contactName: contactName,
+          contactAvatar: contactIcon,
+          messageGuid: message.guid!,
+          messageText: text,
+          messageDate: message.dateCreated!.millisecondsSinceEpoch,
+          messageIsFromMe: false,
+          showReactionAction: showReactionAction,
+          reactionType: reactionType,
+        );
       }
     }
   }
 
   Future<void> tryCreateNewMessageNotification(Message message, Chat chat) async {
     if (message.isFromMe! || !message.handleRelation.hasValue || message.handleRelation.target?.isBlocked() == true) {
+      if (!(message.isFromMe ?? false) && !message.handleRelation.hasValue) {
+        Logger.warn(
+          'Skipping notification for ${message.guid} — handle relation not resolved',
+          tag: 'NotificationsService',
+        );
+      }
       return;
     }
     final session = message.payloadData?.appData?.firstOrNull?.session;
@@ -259,8 +281,10 @@ class NotificationsService {
       await clearDesktopFaceTimeNotif(callUuid);
     } else if (!kIsWeb) {
       final numeric = callUuid.numericOnly();
-      MethodChannelSvc.invokeMethod("delete-notification",
-          {"notification_id": int.parse(numeric.substring(0, min(8, numeric.length))), "tag": NEW_FACETIME_TAG});
+      MethodChannelSvc.actions.deleteNotification(
+        notificationId: int.parse(numeric.substring(0, min(8, numeric.length))),
+        tag: NEW_FACETIME_TAG,
+      );
     }
   }
 
@@ -346,7 +370,7 @@ class NotificationsService {
     final oldTimer = debounceTimers[guid];
     oldTimer?.cancel();
     debounceTimers[guid] = Timer(
-      const Duration(milliseconds: 1000),
+      const Duration(milliseconds: 300),
       () async => await _buildAndShowToast(chat, title, message),
     );
   }
@@ -498,11 +522,10 @@ class NotificationsService {
         );
         _message.generateTempGuid();
         OutgoingMsgHandler.queue(
-          OutgoingItem(
-            type: QueueType.sendMessage,
+          OutgoingReaction(
             chat: chat,
             message: _message,
-            selected: message,
+            selectedMessage: message,
             reaction: reaction,
           ),
         );
@@ -524,8 +547,7 @@ class NotificationsService {
       _message.generateTempGuid();
 
       OutgoingMsgHandler.queue(
-        OutgoingItem(
-          type: QueueType.sendMessage,
+        OutgoingMessage(
           chat: chat,
           message: _message,
         ),
@@ -579,56 +601,6 @@ class NotificationsService {
       }
       await desktopNotificationPlayer.setVolume(SettingsSvc.settings.desktopNotificationSoundVolume.value.toDouble());
       await desktopNotificationPlayer.open(Media(SettingsSvc.settings.desktopNotificationSoundPath.value!));
-    }
-  }
-
-  Future<void> createSocketError() async {
-    const title = 'Could not connect';
-    const subtitle = 'Your server may be offline!';
-    if (kIsDesktop) {
-      // Don't create duplicate socket error toasts
-      if (socketToast != null) return;
-      socketToast = LocalNotification(
-        type: LocalNotificationType.text02,
-        title: title,
-        body: subtitle,
-        actions: [],
-      );
-
-      socketToast!.onClick = () async {
-        socketToast = null;
-        await windowManager.show();
-        Navigator.of(Get.context!).push(
-          ThemeSwitcher.buildPageRoute(
-            builder: (BuildContext context) {
-              return ServerManagementPanel();
-            },
-          ),
-        );
-      };
-
-      await socketToast!.show();
-      return;
-    } else {
-      final notifs = await flnp.getActiveNotifications();
-      if (notifs.firstWhereOrNull((element) => element.id == -2) != null) return;
-      await flnp.show(
-        -2,
-        title,
-        subtitle,
-        NotificationDetails(
-          android: AndroidNotificationDetails(
-            ERROR_CHANNEL,
-            'Errors',
-            channelDescription: 'Displays message send failures, connection failures, and more',
-            priority: Priority.max,
-            importance: Importance.max,
-            color: HexColor("4990de"),
-            ongoing: true,
-            onlyAlertOnce: true,
-          ),
-        ),
-      );
     }
   }
 
@@ -775,7 +747,7 @@ class NotificationsService {
     }
 
     if (status == null) {
-      await flnp.cancel(-3 - 50);
+      await flnp.cancel(id: -3 - 50);
       return;
     }
 
@@ -794,10 +766,10 @@ class NotificationsService {
     const NotificationDetails platformChannelSpecifics = NotificationDetails(android: androidPlatformChannelSpecifics);
 
     await flnp.show(
-        -3 - 50, // OB
-        'Syncing with iCloud',
-        status,
-        platformChannelSpecifics,
+        id: -3 - 50, // OB
+        title: 'Syncing with iCloud',
+        body: status,
+        notificationDetails: platformChannelSpecifics,
         payload: "-53");
   }
 
@@ -818,10 +790,10 @@ class NotificationsService {
     const NotificationDetails platformChannelSpecifics = NotificationDetails(android: androidPlatformChannelSpecifics);
 
     await flnp.show(
-      -3 - 50, // OB
-      'Syncing with iCloud Failed',
-      status,
-      platformChannelSpecifics,
+      id: -3 - 50, // OB
+      title: 'Syncing with iCloud Failed',
+      body: status,
+      notificationDetails: platformChannelSpecifics,
     );
   }
 
@@ -896,10 +868,10 @@ class NotificationsService {
       }
 
       await flnp.show(
-        notifId,
-        title,
-        text,
-        NotificationDetails(
+        id: notifId,
+        title: title,
+        body: text,
+        notificationDetails: NotificationDetails(
           android: AndroidNotificationDetails(ERROR_CHANNEL, 'Errors',
               channelDescription: 'Displays message send failures, connection failures, and more',
               priority: Priority.max,
@@ -953,10 +925,10 @@ class NotificationsService {
       return;
     }
     await flnp.show(
-      (chat.id! + 75000) * (scheduled ? -1 : 1),
-      title,
-      subtitle,
-      NotificationDetails(
+      id: (chat.id! + 75000) * (scheduled ? -1 : 1),
+      title: title,
+      body: subtitle,
+      notificationDetails: NotificationDetails(
         android: AndroidNotificationDetails(
           ERROR_CHANNEL,
           'Errors',
@@ -1000,10 +972,10 @@ class NotificationsService {
       return;
     }
     await flnp.show(
-        -1 - 50 /* OB */,
-        title,
-        subtitle,
-        NotificationDetails(
+        id: -1 - 50 /* OB */,
+        title: title,
+        body: subtitle,
+        notificationDetails: NotificationDetails(
           android: AndroidNotificationDetails(
             ERROR_CHANNEL,
             'Errors',
@@ -1038,10 +1010,10 @@ class NotificationsService {
       return;
     }
     await flnp.show(
-        -1 - 50 /* OB */,
-        title,
-        subtitle,
-        NotificationDetails(
+        id: -1 - 50 /* OB */,
+        title: title,
+        body: subtitle,
+        notificationDetails: NotificationDetails(
           android: AndroidNotificationDetails(
             ERROR_CHANNEL,
             'Errors',
@@ -1077,10 +1049,10 @@ class NotificationsService {
       return;
     }
     await flnp.show(
-        -4 - 50 /* OB */,
-        title,
-        subtitle,
-        NotificationDetails(
+        id: -4 - 50 /* OB */,
+        title: title,
+        body: subtitle,
+        notificationDetails: NotificationDetails(
           android: AndroidNotificationDetails(
             SHARED_BEACONS_CHANNEL,
             'Shared Items',
@@ -1115,10 +1087,10 @@ class NotificationsService {
       return;
     }
     await flnp.show(
-        -2 - 50 /* OB */,
-        title,
-        subtitle,
-        NotificationDetails(
+        id: -2 - 50 /* OB */,
+        title: title,
+        body: subtitle,
+        notificationDetails: NotificationDetails(
           android: AndroidNotificationDetails(
             SHARED_STREAMS_CHANNEL,
             'Shared Albums',
@@ -1131,22 +1103,13 @@ class NotificationsService {
         payload: "-52");
   }
 
-  Future<void> clearSocketError() async {
-    if (kIsDesktop) {
-      await socketToast?.close();
-      socketToast = null;
-      return;
-    }
-    await flnp.cancel(-2);
-  }
-
   Future<void> clearFailedToSend(int id) async {
     if (kIsDesktop) {
       await failedToast?.close();
       failedToast = null;
       return;
     }
-    await flnp.cancel(id);
+    await flnp.cancel(id: id);
   }
 
   Future<void> clearDesktopNotificationsForChat(String chatGuid) async {

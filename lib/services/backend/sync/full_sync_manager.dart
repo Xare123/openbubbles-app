@@ -5,6 +5,7 @@ import 'package:bluebubbles/models/models.dart';
 import 'package:bluebubbles/services/backend/sync/sync_manager_impl.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/services/backend/interfaces/sync_interface.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:universal_io/io.dart';
@@ -53,7 +54,7 @@ class FullSyncManager extends SyncManager {
     addToOutput('Fetching chats from the server...');
 
     // Get the total chats so we can properly fetch them all
-    Response chatCountResponse = await HttpSvc.chatCount();
+    Response chatCountResponse = await HttpSvc.chat.getCount();
     Map<String, dynamic> res = chatCountResponse.data;
     int? totalChats;
     if (chatCountResponse.statusCode == 200) {
@@ -93,7 +94,7 @@ class FullSyncManager extends SyncManager {
           if (kIsWeb || (chat.chatIdentifier ?? "").startsWith("urn:biz")) continue;
           try {
             await for (final messageEvent in streamChatMessages(chat.guid, messageCount, batchSize: messageCount)) {
-              List<Message> newMessages = messageEvent.messages;
+              List<Map<String, dynamic>> newMessages = messageEvent.messages;
               String? displayName = chat.guid;
               if (chat.displayName != null && chat.displayName!.isNotEmpty) {
                 displayName = chat.displayName;
@@ -125,7 +126,10 @@ class FullSyncManager extends SyncManager {
               addToOutput('Saving chunk of ${newMessages.length} message(s) for chat: $displayName');
 
               // Asyncronously save the messages
-              List<Message> insertedMessages = await Message.bulkSaveNewMessages(chat, newMessages);
+              List<Message> insertedMessages = await SyncInterface.bulkSyncData(
+                chatData: chat.toMap(),
+                messagesData: newMessages,
+              ).then((r) => r.messages);
               messagesSynced += insertedMessages.length;
 
               // Fetch group chat icon if available.
@@ -198,7 +202,7 @@ class FullSyncManager extends SyncManager {
     for (int i = 0; i < batches; i++) {
       // Fetch the chats and throw an error if we don't get back a good response.
       // Throwing an error should cancel the sync
-      Response chatPage = await HttpSvc.chats(
+      Response chatPage = await HttpSvc.chat.query(
           offset: i * countPerBatch,
           limit: countPerBatch,
           sort: kIsWeb ? "lastmessage" : null,
@@ -221,9 +225,9 @@ class FullSyncManager extends SyncManager {
         final originalCount = chats.length;
         chats = chats.where((chat) {
           // Use the latestMessage from the Chat object
-          final latestMessage = chat.latestMessage;
-          if (latestMessage.dateCreated != null) {
-            return latestMessage.dateCreated!.isAfter(cutoffDate);
+          final latestDate = chat.dbOnlyLatestMessageDate;
+          if (latestDate != null) {
+            return latestDate.isAfter(cutoffDate);
           }
 
           // If no latestMessage date, exclude the chat (it's likely empty)
@@ -251,7 +255,7 @@ class FullSyncManager extends SyncManager {
     for (int i = 0; i < batches; i++) {
       // Fetch the messages and throw an error if we don't get back a good response.
       // Throwing an error should _not_ cancel the sync
-      Response messagePage = await HttpSvc.chatMessages(chatGuid,
+      Response messagePage = await HttpSvc.chat.getMessages(chatGuid,
           after: 0,
           before: endTimestamp,
           offset: i * countPerBatch,
@@ -265,11 +269,7 @@ class FullSyncManager extends SyncManager {
 
       // Convert the returned chat dictionaries to a list of Chat Objects
       List<dynamic> messageResponse = data["data"];
-      List<Message> messages = messageResponse.map((e) {
-        final m = Message.fromMap(e);
-        if (m.error > 0) m.errorMessage = serverErrorMessage(m.error);
-        return m;
-      }).toList();
+      List<Map<String, dynamic>> messages = messageResponse.cast<Map<String, dynamic>>();
       yield MessageSyncPage((i + 1) / batches, messages);
     }
   }

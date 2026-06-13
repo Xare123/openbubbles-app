@@ -7,7 +7,10 @@ Settings panels for managing the BlueBubbles server connection, authentication, 
 | File | Purpose |
 |------|---------|
 | `server_management_panel.dart` | Main server settings panel: URL, QR scan, ping, restart server |
-| `backup_restore_panel.dart` | JSON export/import of settings and chat themes |
+| `backup_restore_panel.dart` | Backup/restore UI for settings + themes |
+| `backup_restore_actions.dart` | Backup/restore data operations (fetch, delete, device default naming) |
+| `backup_restore_dialogs.dart` | Shared backup/restore dialogs (destination picker) |
+| `backup_restore_types.dart` | Backup enums (`BackupDestination`, `BackupKind`) |
 | `oauth_panel.dart` | OAuth /Google sign-in for cloud relay connection |
 
 ## Subdirectories
@@ -38,3 +41,8 @@ Live stats fetched from the server (account status, active handles, relay info):
 - HTTP API calls: `lib/services/network/http_service.dart`
 - Setup flow (first-run): `lib/app/layouts/setup/CLAUDE.md`
 - Settings router: `../CLAUDE.md`
+
+## Backup/Restore Notes
+- Keep side-effectful API/file operations in `backup_restore_actions.dart`.
+- Keep destination selection and other shared prompts in `backup_restore_dialogs.dart`.
+- Use `BackupDestination`/`BackupKind` enums rather than implicit bool/string mode flags.

@@ -71,21 +71,20 @@ class _SamsungConnectionPanelState extends CustomState<SamsungConnectionPanel, v
   }
 
   Widget _buildStatusGrid() {
-    // Pre-compute cards here (inside the Obx callback) so GetX tracks reactive reads.
-    final cards = ConnectionPanelHelpersMixin.kStatusItems.map((item) => _buildStatusCard(item)).toList();
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final itemWidth = (constraints.maxWidth - 12) / 2;
-        return Wrap(
-          spacing: 0,
-          runSpacing: 0,
-          children: List.generate(
-            cards.length,
-            (i) => SizedBox(width: itemWidth, child: cards[i]),
-          ),
-        );
-      },
-    );
+    // Each card is wrapped in its own Obx so only the affected card rebuilds
+    // when a single observable changes. No LayoutBuilder needed — Row+Expanded
+    // gives each card exactly half the available width without a layout pass.
+    final items = ConnectionPanelHelpersMixin.kStatusItems;
+    final rows = <Widget>[];
+    for (int i = 0; i < items.length; i += 2) {
+      rows.add(Row(
+        children: [
+          Expanded(child: Obx(() => _buildStatusCard(items[i]))),
+          if (i + 1 < items.length) Expanded(child: Obx(() => _buildStatusCard(items[i + 1]))),
+        ],
+      ));
+    }
+    return Column(mainAxisSize: MainAxisSize.min, children: rows);
   }
 
   Widget _buildInfoRow(InfoItemConfig item) {
@@ -152,7 +151,7 @@ class _SamsungConnectionPanelState extends CustomState<SamsungConnectionPanel, v
                   ),
                 ),
               ),
-              Center(child: Obx(() => _buildStatusGrid())),
+              Center(child: _buildStatusGrid()),
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 16, 8, 6),
                 child: Row(

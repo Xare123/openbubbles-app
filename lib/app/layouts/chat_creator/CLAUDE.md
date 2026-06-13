@@ -9,6 +9,8 @@
 
 ### Legacy
 - `chat_creator.dart` — original multi-skin implementation; kept as reference
+- `chat_creator_utils.dart` — shared legacy helper logic (contact filtering, chat filtering, selected-contact-to-chat matching)
+- `chat_creator_dialogs.dart` — shared legacy dialog builders and wrappers (group-chat limitation, create-chat progress/error, attachment warning)
 
 ## Widgets (`widgets/`)
 - `service_type_picker.dart` — `CupertinoSegmentedControl` for visible service types
@@ -19,6 +21,11 @@
 - `selected_contact_chip.dart` — removable chip for each selected contact (shared)
 - `chat_list_section.dart` — chat+contact list used by legacy creator
 - `message_type_toggle.dart` — SMS vs iMessage toggle used by legacy creator
+
+## Legacy Structure Notes
+- Keep heavy matching/filtering logic in `chat_creator_utils.dart`; `chat_creator.dart` should primarily orchestrate UI + navigation.
+- If adding new contact/chat matching heuristics for legacy flow, implement in `chat_creator_utils.dart` first, then call from `chat_creator.dart`.
+- Keep `AlertDialog` definitions in `chat_creator_dialogs.dart`; `chat_creator.dart` should only invoke dialog helpers / `showDialog` lifecycle wrappers.
 
 ## Drop-in swap
 When ready to replace the legacy creator, update these two call sites:

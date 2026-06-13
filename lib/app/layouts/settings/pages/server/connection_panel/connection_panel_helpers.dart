@@ -693,7 +693,9 @@ mixin ConnectionPanelHelpersMixin {
                       }
                     },
                   )),
-            if (!kIsWeb && SettingsSvc.settings.localhostPort.value != null) const SettingsDivider(),
+            if (!kIsWeb)
+              Obx(() =>
+                  SettingsSvc.settings.localhostPort.value != null ? const SettingsDivider() : const SizedBox.shrink()),
             if (!kIsWeb)
               Obx(() => SettingsSvc.settings.localhostPort.value != null
                   ? SettingsSwitch(
@@ -748,7 +750,7 @@ mixin ConnectionPanelHelpersMixin {
                   onTap: () {
                     if (SocketSvc.state.value != SocketState.connected) return;
                     controller.fetchStatus.value = "Fetching logs, please wait...";
-                    HttpSvc.serverLogs().then((response) async {
+                    HttpSvc.server.getLogs().then((response) async {
                       if (kIsDesktop) {
                         final downloadsPath = await FilesystemSvc.downloadsDirectory;
                         await File(join(downloadsPath, "main.log")).writeAsString(response.data['data']);
@@ -802,7 +804,7 @@ mixin ConnectionPanelHelpersMixin {
                       return;
                     }
                     controller.lastRestartMessages = now;
-                    HttpSvc.restartImessage().then((_) {
+                    HttpSvc.server.restartImessage().then((_) {
                       controller.isRestartingMessages.value = false;
                     }).catchError((_) {
                       controller.isRestartingMessages.value = false;
@@ -850,7 +852,7 @@ mixin ConnectionPanelHelpersMixin {
                             return;
                           }
                           controller.lastRestartPrivateAPI = now;
-                          HttpSvc.softRestart().then((_) {
+                          HttpSvc.server.softRestart().then((_) {
                             controller.isRestartingPrivateAPI.value = false;
                           }).catchError((_) {
                             controller.isRestartingPrivateAPI.value = false;
@@ -893,8 +895,9 @@ mixin ConnectionPanelHelpersMixin {
                     try {
                       if (Platform.isAndroid) {
                         try {
-                          await MethodChannelSvc.invokeMethod(
-                              "set-next-restart", {"value": DateTime.now().toUtc().millisecondsSinceEpoch});
+                          await MethodChannelSvc.actions.setNextRestart(
+                            value: DateTime.now().toUtc().millisecondsSinceEpoch,
+                          );
                         } catch (e, s) {
                           Logger.error("Failed to update Firebase Database!", error: e, trace: s);
                           showSnackbar("Error", "Something went wrong when updating Firebase Database!");
@@ -905,7 +908,7 @@ mixin ConnectionPanelHelpersMixin {
                           var ref = db.reference().child('config').child('nextRestart');
                           await ref.set(DateTime.now().toUtc().millisecondsSinceEpoch);
                         } else {
-                          await HttpSvc.setRestartDateCF(SettingsSvc.fcmData.projectID!);
+                          await HttpSvc.firebase.setRestartDateCF(SettingsSvc.fcmData.projectID!);
                         }
                       }
                     } finally {

@@ -5,7 +5,7 @@
   "entities": [
     {
       "id": "1:2065429213543838585",
-      "lastPropertyId": "21:2764853127656662090",
+      "lastPropertyId": "23:1257111100929524871",
       "name": "Attachment",
       "properties": [
         {
@@ -93,13 +93,23 @@
           "id": "21:2764853127656662090",
           "name": "ckRecordId",
           "type": 9
+        },
+        {
+          "id": "22:2536839596571513252",
+          "name": "metadata",
+          "type": 13
+        },
+        {
+          "id": "23:1257111100929524871",
+          "name": "exif",
+          "type": 13
         }
       ],
       "relations": []
     },
     {
       "id": "3:9017250848141753702",
-      "lastPropertyId": "50:4867070277806451178",
+      "lastPropertyId": "51:6955316130211494309",
       "name": "Chat",
       "properties": [
         {
@@ -319,6 +329,14 @@
           "id": "50:4867070277806451178",
           "name": "transcriptBackgroundVersion",
           "type": 6
+        },
+        {
+          "id": "51:6955316130211494309",
+          "name": "dbLatestMessageId",
+          "indexId": "20:1616198983552164629",
+          "type": 11,
+          "flags": 520,
+          "relationTarget": "Message"
         }
       ],
       "relations": [
@@ -498,7 +516,7 @@
     },
     {
       "id": "13:4148278195232901830",
-      "lastPropertyId": "62:7382995798356840320",
+      "lastPropertyId": "63:7041738987312010964",
       "name": "Message",
       "properties": [
         {
@@ -771,6 +789,11 @@
           "id": "62:7382995798356840320",
           "name": "ckSyncState",
           "type": 1
+        },
+        {
+          "id": "63:7041738987312010964",
+          "name": "metadata",
+          "type": 13
         }
       ],
       "relations": []
@@ -956,7 +979,7 @@
     }
   ],
   "lastEntityId": "19:6214689188541664840",
-  "lastIndexId": "19:731057577812797355",
+  "lastIndexId": "20:1616198983552164629",
   "lastRelationId": "2:2117154782513366348",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

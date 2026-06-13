@@ -76,23 +76,22 @@ class _CupertinoConnectionPanelState
   }
 
   Widget _buildStatusGrid() {
-    // Pre-compute cards here (inside the Obx callback) so GetX tracks reactive reads.
-    final cards = ConnectionPanelHelpersMixin.kStatusItems.map((item) => _buildStatusCard(item)).toList();
+    // Each card is wrapped in its own Obx so only the affected card rebuilds
+    // when a single observable changes. No LayoutBuilder needed — Row+Expanded
+    // gives each card exactly half the available width without a layout pass.
+    const items = ConnectionPanelHelpersMixin.kStatusItems;
+    final rows = <Widget>[];
+    for (int i = 0; i < items.length; i += 2) {
+      rows.add(Row(
+        children: [
+          Expanded(child: Obx(() => _buildStatusCard(items[i]))),
+          if (i + 1 < items.length) Expanded(child: Obx(() => _buildStatusCard(items[i + 1]))),
+        ],
+      ));
+    }
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final itemWidth = (constraints.maxWidth - 10) / 2;
-          return Wrap(
-            spacing: 0,
-            runSpacing: 0,
-            children: List.generate(
-              cards.length,
-              (i) => SizedBox(width: itemWidth, child: cards[i]),
-            ),
-          );
-        },
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 15),
+      child: Column(mainAxisSize: MainAxisSize.min, children: rows),
     );
   }
 
@@ -143,7 +142,7 @@ class _CupertinoConnectionPanelState
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Obx(() => _buildStatusGrid()),
+              _buildStatusGrid(),
               Container(
                 height: 60,
                 color: Colors.transparent,

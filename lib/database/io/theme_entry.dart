@@ -16,7 +16,7 @@ class ThemeEntry {
   int? fontWeight;
 
   Color? color;
-  String? get dbColor => color?.toARGB32().toRadixString(16);
+  String? get dbColor => color?.value.toRadixString(16);
   set dbColor(String? s) => s == null ? color = null : color = HexColor(s);
 
   // ignore: deprecated_member_use_from_same_package

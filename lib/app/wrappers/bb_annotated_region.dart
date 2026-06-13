@@ -1,25 +1,10 @@
 import 'package:bluebubbles/helpers/ui/theme_helpers.dart';
-import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:get/get.dart';
 
 /// BlueBubbles base page wrapper that handles system UI overlay styling
 ///
-/// Provides consistent status bar and navigation bar styling across the app
-/// with support for immersive mode and theme-aware colors.
-///
-/// Example:
-/// ```dart
-/// @override
-/// Widget build(BuildContext context) {
-///   return BBAnnotatedRegion(
-///     child: Scaffold(
-///       body: YourContent(),
-///     ),
-///   );
-/// }
-/// ```
+/// Provides consistent status bar and navigation bar styling across the app.
 class BBAnnotatedRegion extends StatelessWidget {
   /// The child widget to wrap
   final Widget child;
@@ -47,21 +32,17 @@ class BBAnnotatedRegion extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Obx(() {
-      final immersiveMode = SettingsSvc.settings.immersiveMode.value;
-      final colorScheme = Theme.of(context).colorScheme;
-      final brightness = colorScheme.brightness;
+    final colorScheme = Theme.of(context).colorScheme;
+    final brightness = colorScheme.brightness;
 
-      return AnnotatedRegion<SystemUiOverlayStyle>(
-        value: SystemUiOverlayStyle(
-          systemNavigationBarColor:
-              systemNavigationBarColor ?? (immersiveMode ? Colors.transparent : colorScheme.surface),
-          systemNavigationBarIconBrightness: systemNavigationBarIconBrightness ?? brightness.opposite,
-          statusBarColor: statusBarColor ?? Colors.transparent,
-          statusBarIconBrightness: statusBarIconBrightness ?? brightness.opposite,
-        ),
-        child: child,
-      );
-    });
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle(
+        systemNavigationBarColor: systemNavigationBarColor ?? Colors.transparent,
+        systemNavigationBarIconBrightness: systemNavigationBarIconBrightness ?? brightness.opposite,
+        statusBarColor: statusBarColor ?? Colors.transparent,
+        statusBarIconBrightness: statusBarIconBrightness ?? brightness.opposite,
+      ),
+      child: child,
+    );
   }
 }

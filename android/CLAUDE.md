@@ -21,5 +21,5 @@ Flutter side: `lib/services/backend/java_dart_interop/`
 - `background_isolate.dart` — background Dart execution
 
 ## Build Config
-- Target SDK: 35 | NDK: 27.0 | Java/Kotlin compat: version 17
+- Target SDK: 35 | NDK: 27.0 | Java/Kotlin compat: version 21
 - Gradle with Kotlin plugin

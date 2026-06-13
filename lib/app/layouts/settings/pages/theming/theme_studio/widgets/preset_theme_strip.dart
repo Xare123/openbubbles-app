@@ -1,6 +1,8 @@
 import 'package:bluebubbles/app/layouts/settings/pages/theming/theme_studio/theme_studio_panel.dart';
+import 'package:bluebubbles/app/layouts/settings/pages/theming/theme_studio/widgets/preset_theme_dialogs.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
+import 'package:bluebubbles/services/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -34,7 +36,9 @@ class _ThemeSelectorSectionState extends State<ThemeSelectorSection> {
 
   @override
   Widget build(BuildContext context) {
+    final sw = Stopwatch()..start();
     if (!_ready) {
+      sw.stop();
       // Approximate placeholder height keeps the page layout stable once
       // content appears. Adjust if the rendered height changes significantly.
       return const SizedBox(height: 380);
@@ -50,50 +54,54 @@ class _ThemeSelectorSectionState extends State<ThemeSelectorSection> {
     // Canonical defaults shown full-width; everything else goes in the scroll row
     final brightWhite = lightAll.firstWhereOrNull((t) => t.name == "Bright White");
     final oledDark = darkAll.firstWhereOrNull((t) => t.name == "OLED Dark");
-    final lightOther = lightAll.where((t) => t.name != "Bright White").toList();
-    final darkOther = darkAll.where((t) => t.name != "OLED Dark").toList();
+    final materialLight = lightAll.where((t) => ThemesService.isMaterialYouThemeName(t.name)).toList()
+      ..sort(
+          (a, b) => ThemesService.materialYouSortOrder(a.name).compareTo(ThemesService.materialYouSortOrder(b.name)));
+    final materialDark = darkAll.where((t) => ThemesService.isMaterialYouThemeName(t.name)).toList()
+      ..sort(
+          (a, b) => ThemesService.materialYouSortOrder(a.name).compareTo(ThemesService.materialYouSortOrder(b.name)));
+    final lightOther =
+        lightAll.where((t) => t.name != "Bright White" && !ThemesService.isMaterialYouThemeName(t.name)).toList();
+    final darkOther =
+        darkAll.where((t) => t.name != "OLED Dark" && !ThemesService.isMaterialYouThemeName(t.name)).toList();
 
     final pendingChanges = controller.pendingChanges.value;
+    final bool showDark = controller.previewDark.value;
 
-    return Padding(
+    final widgetTree = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _ModeGroup(
+            key: ValueKey<bool>(showDark),
             controller: controller,
-            title: "Light Themes",
-            defaultTheme: brightWhite,
-            otherThemes: lightOther,
-            isForDark: false,
-            activeTheme: controller.lightTheme,
-            appliedThemeName: controller.appliedLightName,
-            pendingChanges: pendingChanges,
-          ),
-          const SizedBox(height: 24),
-          _ModeGroup(
-            controller: controller,
-            title: "Dark Themes",
-            defaultTheme: oledDark,
-            otherThemes: darkOther,
-            isForDark: true,
-            activeTheme: controller.darkTheme,
-            appliedThemeName: controller.appliedDarkName,
+            title: showDark ? "Dark Themes" : "Light Themes",
+            defaultTheme: showDark ? oledDark : brightWhite,
+            materialYouThemes: showDark ? materialDark : materialLight,
+            otherThemes: showDark ? darkOther : lightOther,
+            isForDark: showDark,
+            activeTheme: showDark ? controller.darkTheme : controller.lightTheme,
+            appliedThemeName: showDark ? controller.appliedDarkName : controller.appliedLightName,
             pendingChanges: pendingChanges,
           ),
         ],
       ),
     );
+    sw.stop();
+    return widgetTree;
   }
 }
 
 // ─── One mode group (Light or Dark) ───────────────────────────────────────────
 
-class _ModeGroup extends StatelessWidget {
+class _ModeGroup extends StatefulWidget {
   const _ModeGroup({
+    super.key,
     required this.controller,
     required this.title,
     required this.defaultTheme,
+    required this.materialYouThemes,
     required this.otherThemes,
     required this.isForDark,
     required this.activeTheme,
@@ -104,31 +112,70 @@ class _ModeGroup extends StatelessWidget {
   final ThemeStudioController controller;
   final String title;
   final ThemeStruct? defaultTheme;
+  final List<ThemeStruct> materialYouThemes;
   final List<ThemeStruct> otherThemes;
   final bool isForDark;
   final ThemeStruct activeTheme;
   final String appliedThemeName;
   final bool pendingChanges;
 
-  /// Whether a different theme is staged (pending) for this mode.
-  bool get _selectionIsPending => pendingChanges && activeTheme.name != appliedThemeName;
+  @override
+  State<_ModeGroup> createState() => _ModeGroupState();
+}
+
+class _ModeGroupState extends State<_ModeGroup> {
+  static const int _presetPageSize = 10;
+  int _visiblePresetCount = _presetPageSize;
+  late List<ThemeStruct> _presets;
+  late List<ThemeStruct> _custom;
+
+  bool get _selectionIsPending => widget.pendingChanges && widget.activeTheme.name != widget.appliedThemeName;
+
+  @override
+  void initState() {
+    super.initState();
+    _recomputeThemeBuckets();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ModeGroup oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.otherThemes, widget.otherThemes)) {
+      _recomputeThemeBuckets();
+    }
+  }
+
+  void _recomputeThemeBuckets() {
+    _presets = widget.otherThemes.where((t) => t.isPreset).toList(growable: false);
+    _custom = widget.otherThemes.where((t) => !t.isPreset).toList(growable: false);
+    if (_visiblePresetCount > _presets.length) {
+      _visiblePresetCount = _presets.length;
+    } else if (_visiblePresetCount < _presetPageSize) {
+      _visiblePresetCount = _presets.isEmpty ? 0 : _presetPageSize.clamp(0, _presets.length).toInt();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    // Presets before custom in the scroll row
-    final presets = otherThemes.where((t) => t.isPreset).toList();
-    final custom = otherThemes.where((t) => !t.isPreset).toList();
+    final sw = Stopwatch()..start();
+    final dialogs = PresetThemeDialogs(
+      controller: widget.controller,
+      isForDark: widget.isForDark,
+      showImportDialog: _showImportDialog,
+    );
 
-    final bool isCurrentMode = controller.isDark.value == isForDark;
+    final presets = _presets;
+    final custom = _custom;
 
-    return Column(
+    final bool isCurrentMode = widget.controller.isDark.value == widget.isForDark;
+
+    final widgetTree = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Mode header with action buttons
         Row(
           children: [
             Text(
-              title,
+              widget.title,
               style: context.theme.textTheme.titleSmall?.copyWith(
                 fontWeight: FontWeight.w700,
                 color: isCurrentMode ? context.theme.colorScheme.primary : context.theme.colorScheme.onSurface,
@@ -136,7 +183,7 @@ class _ModeGroup extends StatelessWidget {
             ),
             const Spacer(),
             TextButton.icon(
-              onPressed: () => _showImportDialog(context),
+              onPressed: () => dialogs.showImportDialog(context),
               style: TextButton.styleFrom(
                 visualDensity: VisualDensity.compact,
                 foregroundColor: context.theme.colorScheme.secondary,
@@ -147,7 +194,7 @@ class _ModeGroup extends StatelessWidget {
             ),
             const SizedBox(width: 4),
             FilledButton.icon(
-              onPressed: () => _showCreateDialog(context),
+              onPressed: () => dialogs.showCreateDialog(context),
               style: FilledButton.styleFrom(
                 visualDensity: VisualDensity.compact,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -173,23 +220,50 @@ class _ModeGroup extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 10),
-
-        // ─ Default card ───────────────────────────────────────────────────
-        if (defaultTheme != null) ...[
+        if (widget.defaultTheme != null) ...[
           const _SubLabel("Default"),
           const SizedBox(height: 6),
           _DefaultCard(
-            struct: defaultTheme!,
-            isActive: activeTheme.name == defaultTheme!.name,
-            isApplied: appliedThemeName == defaultTheme!.name,
+            struct: widget.defaultTheme!,
+            isActive: widget.activeTheme.name == widget.defaultTheme!.name,
+            isApplied: widget.appliedThemeName == widget.defaultTheme!.name,
             selectionIsPending: _selectionIsPending,
-            onTap: () => controller.applyTheme(context, defaultTheme!),
-            onLongPress: () => _showContextMenu(context, defaultTheme!),
+            onTap: () => widget.controller.applyTheme(context, widget.defaultTheme!),
+            onLongPress: () => dialogs.showContextMenu(context, widget.defaultTheme!),
+            onSecondaryTap: () => dialogs.showContextMenu(context, widget.defaultTheme!),
           ),
           const SizedBox(height: 14),
         ],
-
-        // ─ Custom themes ──────────────────────────────────────────────────
+        if (widget.materialYouThemes.isNotEmpty) ...[
+          const _SubLabel("Material You"),
+          const SizedBox(height: 6),
+          SizedBox(
+            height: 110,
+            child: RepaintBoundary(
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: widget.materialYouThemes.length,
+                itemBuilder: (ctx, i) {
+                  final t = widget.materialYouThemes[i];
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 10),
+                    child: _ThemeCard(
+                      struct: t,
+                      titleOverride: ThemesService.materialYouDisplayName(t.name),
+                      isActive: widget.activeTheme.name == t.name,
+                      isApplied: widget.appliedThemeName == t.name,
+                      selectionIsPending: _selectionIsPending,
+                      onTap: () => widget.controller.applyTheme(context, t),
+                      onLongPress: () => dialogs.showContextMenu(context, t),
+                      onSecondaryTap: () => dialogs.showContextMenu(context, t),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
         if (custom.isNotEmpty) ...[
           const _SubLabel("Custom"),
           const SizedBox(height: 6),
@@ -204,11 +278,12 @@ class _ModeGroup extends StatelessWidget {
                   padding: const EdgeInsets.only(right: 10),
                   child: _ThemeCard(
                     struct: t,
-                    isActive: activeTheme.name == t.name,
-                    isApplied: appliedThemeName == t.name,
+                    isActive: widget.activeTheme.name == t.name,
+                    isApplied: widget.appliedThemeName == t.name,
                     selectionIsPending: _selectionIsPending,
-                    onTap: () => controller.applyTheme(context, t),
-                    onLongPress: () => _showContextMenu(context, t),
+                    onTap: () => widget.controller.applyTheme(context, t),
+                    onLongPress: () => dialogs.showContextMenu(context, t),
+                    onSecondaryTap: () => dialogs.showContextMenu(context, t),
                   ),
                 );
               },
@@ -216,258 +291,104 @@ class _ModeGroup extends StatelessWidget {
           ),
           const SizedBox(height: 14),
         ],
-
-        // ─ Other presets ──────────────────────────────────────────────────
         if (presets.isNotEmpty) ...[
           const _SubLabel("More"),
           const SizedBox(height: 6),
-          SizedBox(
-            height: 110,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: presets.length,
-              itemBuilder: (ctx, i) {
-                final t = presets[i];
-                return Padding(
-                  padding: const EdgeInsets.only(right: 10),
-                  child: _ThemeCard(
-                    struct: t,
-                    isActive: activeTheme.name == t.name,
-                    isApplied: appliedThemeName == t.name,
-                    selectionIsPending: _selectionIsPending,
-                    onTap: () => controller.applyTheme(context, t),
-                    onLongPress: () => _showContextMenu(context, t),
-                  ),
-                );
-              },
+          _PaginatedPresetRow(
+            themes: presets,
+            visibleCount: _visiblePresetCount,
+            onLoadMore: _loadMorePresets,
+            cardBuilder: (t) => _ThemeCard(
+              struct: t,
+              isActive: widget.activeTheme.name == t.name,
+              isApplied: widget.appliedThemeName == t.name,
+              selectionIsPending: _selectionIsPending,
+              onTap: () => widget.controller.applyTheme(context, t),
+              onLongPress: () => dialogs.showContextMenu(context, t),
+              onSecondaryTap: () => dialogs.showContextMenu(context, t),
             ),
           ),
         ],
       ],
     );
+    sw.stop();
+    return widgetTree;
   }
 
-  void _showContextMenu(BuildContext context, ThemeStruct theme) {
-    final isCustom = !theme.isPreset;
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-                child: Row(
-                  children: [
-                    const Icon(Icons.palette_outlined, size: 18),
-                    const SizedBox(width: 8),
-                    Text(
-                      theme.name,
-                      style: context.theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(height: 8),
-              ListTile(
-                leading: const Icon(Icons.copy_outlined),
-                title: const Text("Clone"),
-                subtitle: const Text("Create a copy of this theme"),
-                onTap: () {
-                  Navigator.of(ctx).pop();
-                  _showCloneDialog(context, theme);
-                },
-              ),
-              if (isCustom) ...[
-                ListTile(
-                  leading: const Icon(Icons.edit_outlined),
-                  title: const Text("Rename"),
-                  onTap: () {
-                    Navigator.of(ctx).pop();
-                    _showRenameDialogForTheme(context, theme);
-                  },
-                ),
-                ListTile(
-                  leading: Icon(Icons.delete_outline, color: context.theme.colorScheme.error),
-                  title: Text("Delete", style: TextStyle(color: context.theme.colorScheme.error)),
-                  onTap: () {
-                    Navigator.of(ctx).pop();
-                    _confirmDelete(context, theme);
-                  },
-                ),
-              ],
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  void _showCloneDialog(BuildContext context, ThemeStruct source) {
-    final textController = TextEditingController(text: "${source.name} Copy");
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-        title: Text("Clone \"${source.name}\"", style: context.theme.textTheme.titleLarge),
-        content: TextField(
-          controller: textController,
-          autofocus: true,
-          decoration: InputDecoration(
-            labelText: "New Theme Name",
-            enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: context.theme.colorScheme.outline)),
-            focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: context.theme.colorScheme.primary)),
-          ),
-          onSubmitted: (_) => _doClone(ctx, context, source, textController.text),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text("Cancel", style: TextStyle(color: context.theme.colorScheme.primary)),
-          ),
-          TextButton(
-            onPressed: () => _doClone(ctx, context, source, textController.text),
-            child: Text("Clone", style: TextStyle(color: context.theme.colorScheme.primary)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _doClone(BuildContext dialogCtx, BuildContext pageCtx, ThemeStruct source, String name) {
-    if (name.trim().isEmpty) {
-      showSnackbar("Error", "Please enter a theme name");
-      return;
-    }
-    if (ThemeStruct.findOne(name.trim()) != null) {
-      showSnackbar("Error", "A theme with that name already exists");
-      return;
-    }
-    Navigator.of(dialogCtx).pop();
-    controller.cloneTheme(name.trim(), source);
-  }
-
-  void _showRenameDialogForTheme(BuildContext context, ThemeStruct theme) {
-    // Rename only works on the active theme via the controller, so select it first
-    controller.applyTheme(context, theme);
-    final textController = TextEditingController(text: theme.name);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-        title: Text("Rename \"${theme.name}\"", style: context.theme.textTheme.titleLarge),
-        content: TextField(
-          controller: textController,
-          autofocus: true,
-          decoration: InputDecoration(
-            labelText: "New Name",
-            enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: context.theme.colorScheme.outline)),
-            focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: context.theme.colorScheme.primary)),
-          ),
-          onSubmitted: (_) => _doRename(ctx, context, textController.text),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text("Cancel", style: TextStyle(color: context.theme.colorScheme.primary)),
-          ),
-          TextButton(
-            onPressed: () => _doRename(ctx, context, textController.text),
-            child: Text("Rename", style: TextStyle(color: context.theme.colorScheme.primary)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _doRename(BuildContext dialogCtx, BuildContext pageCtx, String newName) async {
-    Navigator.of(dialogCtx).pop();
-    final ok = await controller.renameTheme(pageCtx, newName.trim());
-    if (!ok) showSnackbar("Error", "Could not rename — name is empty or already taken");
-  }
-
-  void _confirmDelete(BuildContext context, ThemeStruct theme) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Delete Theme"),
-        content: Text("Delete \"${theme.name}\"? This cannot be undone."),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text("Cancel", style: TextStyle(color: context.theme.colorScheme.primary)),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              // Select it so deleteTheme acts on the right one, then delete
-              controller.applyTheme(context, theme);
-              controller.deleteTheme(context);
-            },
-            child: Text("Delete", style: TextStyle(color: context.theme.colorScheme.error)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showCreateDialog(BuildContext context) {
-    final textController = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-        title: Text(
-          "New ${isForDark ? 'Dark' : 'Light'} Theme",
-          style: context.theme.textTheme.titleLarge,
-        ),
-        content: TextField(
-          controller: textController,
-          autofocus: true,
-          decoration: InputDecoration(
-            labelText: "Theme Name",
-            hintText: "e.g. My Custom Theme",
-            enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: context.theme.colorScheme.outline)),
-            focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: context.theme.colorScheme.primary)),
-          ),
-          onSubmitted: (_) => _doCreate(ctx, context, textController.text),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text("Cancel", style: TextStyle(color: context.theme.colorScheme.primary)),
-          ),
-          TextButton(
-            onPressed: () => _doCreate(ctx, context, textController.text),
-            child: Text("Create", style: TextStyle(color: context.theme.colorScheme.primary)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _doCreate(BuildContext dialogCtx, BuildContext pageCtx, String name) {
-    if (name.trim().isEmpty) {
-      showSnackbar("Error", "Please enter a theme name");
-      return;
-    }
-    if (ThemeStruct.findOne(name.trim()) != null) {
-      showSnackbar("Error", "A theme with that name already exists");
-      return;
-    }
-    Navigator.of(dialogCtx).pop();
-    controller.createTheme(pageCtx, name.trim(), forDark: isForDark);
+  void _loadMorePresets() {
+    setState(() {
+      _visiblePresetCount = (_visiblePresetCount + _presetPageSize).clamp(0, _presets.length).toInt();
+    });
   }
 
   void _showImportDialog(BuildContext context) {
     showDialog(
       context: context,
-      builder: (ctx) => _ImportDialog(controller: controller, pageContext: context),
+      builder: (ctx) => _ImportDialog(controller: widget.controller, pageContext: context),
+    );
+  }
+}
+
+class _PaginatedPresetRow extends StatefulWidget {
+  const _PaginatedPresetRow({
+    required this.themes,
+    required this.visibleCount,
+    required this.onLoadMore,
+    required this.cardBuilder,
+  });
+
+  final List<ThemeStruct> themes;
+  final int visibleCount;
+  final VoidCallback onLoadMore;
+  final Widget Function(ThemeStruct theme) cardBuilder;
+
+  @override
+  State<_PaginatedPresetRow> createState() => _PaginatedPresetRowState();
+}
+
+class _PaginatedPresetRowState extends State<_PaginatedPresetRow> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    if (widget.visibleCount >= widget.themes.length) return;
+    if (_scrollController.position.extentAfter < 180) {
+      widget.onLoadMore();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = widget.visibleCount.clamp(0, widget.themes.length);
+    return SizedBox(
+      height: 110,
+      child: RepaintBoundary(
+        child: ListView.builder(
+          controller: _scrollController,
+          scrollDirection: Axis.horizontal,
+          itemCount: visible,
+          itemBuilder: (ctx, i) {
+            final t = widget.themes[i];
+            return Padding(
+              padding: const EdgeInsets.only(right: 10),
+              child: widget.cardBuilder(t),
+            );
+          },
+        ),
+      ),
     );
   }
 }
@@ -493,7 +414,7 @@ class _SubLabel extends StatelessWidget {
 
 // ─── Full-width default card ───────────────────────────────────────────────────
 
-class _DefaultCard extends StatelessWidget {
+class _DefaultCard extends StatefulWidget {
   const _DefaultCard({
     required this.struct,
     required this.isActive,
@@ -501,6 +422,7 @@ class _DefaultCard extends StatelessWidget {
     required this.selectionIsPending,
     required this.onTap,
     this.onLongPress,
+    this.onSecondaryTap,
   });
 
   final ThemeStruct struct;
@@ -509,27 +431,57 @@ class _DefaultCard extends StatelessWidget {
   final bool selectionIsPending;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
+  final VoidCallback? onSecondaryTap;
+
+  @override
+  State<_DefaultCard> createState() => _DefaultCardState();
+}
+
+class _DefaultCardState extends State<_DefaultCard> {
+  bool _suppressNextTap = false;
+
+  void _onLongPress() {
+    _suppressNextTap = true;
+    widget.onLongPress?.call();
+  }
+
+  void _onSecondaryTap() {
+    _suppressNextTap = true;
+    widget.onSecondaryTap?.call();
+  }
+
+  void _onTap() {
+    if (_suppressNextTap) {
+      _suppressNextTap = false;
+      return;
+    }
+    widget.onTap();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final cs = struct.data.colorScheme;
+    final cs = widget.struct.data.colorScheme;
+    final bubbleColors = widget.struct.data.extension<BubbleColors>();
+    final sentBubble = bubbleColors?.iMessageBubbleColor ?? cs.primary;
+    final receivedBubble = bubbleColors?.receivedBubbleColor ?? cs.surfaceContainerHighest;
     // isPending: staged for this slot but not yet applied
-    final isPending = isActive && selectionIsPending;
+    final isPending = widget.isActive && widget.selectionIsPending;
     // wasApplied: this is the current live theme but something else is staged
-    final wasApplied = isApplied && !isActive;
+    final wasApplied = widget.isApplied && !widget.isActive;
 
     final borderColor = isPending
         ? context.theme.colorScheme.tertiary
-        : isActive
+        : widget.isActive
             ? context.theme.colorScheme.primary
             : wasApplied
                 ? context.theme.colorScheme.secondary.withValues(alpha: 0.5)
                 : context.theme.colorScheme.outline.withValues(alpha: 0.3);
-    final borderWidth = (isActive || wasApplied) ? 2.0 : 1.0;
+    final borderWidth = (widget.isActive || wasApplied) ? 2.0 : 1.0;
 
     return GestureDetector(
-      onTap: onTap,
-      onLongPress: onLongPress,
+      onTap: _onTap,
+      onSecondaryTap: _onSecondaryTap,
+      onLongPress: _onLongPress,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         decoration: BoxDecoration(
@@ -542,12 +494,15 @@ class _DefaultCard extends StatelessWidget {
             // 2×2 color swatch preview
             ClipRRect(
               borderRadius: const BorderRadius.horizontal(left: Radius.circular(10)),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(children: [_FixedSwatch(cs.primary), _FixedSwatch(cs.secondary)]),
-                  Row(children: [_FixedSwatch(cs.tertiary), _FixedSwatch(cs.surface)]),
-                ],
+              child: SizedBox(
+                width: 72,
+                height: 60,
+                child: _PalettePreview(
+                  topLeft: sentBubble,
+                  topRight: receivedBubble,
+                  bottomLeft: cs.surface,
+                  bottomRight: cs.surfaceContainerHighest,
+                ),
               ),
             ),
             // Name + caption
@@ -559,7 +514,7 @@ class _DefaultCard extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      struct.name,
+                      widget.struct.name,
                       style: context.theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
                     ),
                     const SizedBox(height: 2),
@@ -577,7 +532,7 @@ class _DefaultCard extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(right: 14),
               child: _SelectionIcon(
-                isActive: isActive,
+                isActive: widget.isActive,
                 isPending: isPending,
                 wasApplied: wasApplied,
                 size: 20,
@@ -590,26 +545,18 @@ class _DefaultCard extends StatelessWidget {
   }
 }
 
-class _FixedSwatch extends StatelessWidget {
-  const _FixedSwatch(this.color);
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(width: 36, height: 30, child: ColoredBox(color: color));
-  }
-}
-
 // ─── Individual theme card ─────────────────────────────────────────────────────
 
-class _ThemeCard extends StatelessWidget {
+class _ThemeCard extends StatefulWidget {
   const _ThemeCard({
     required this.struct,
     required this.isActive,
     required this.isApplied,
     required this.selectionIsPending,
     required this.onTap,
+    this.titleOverride,
     this.onLongPress,
+    this.onSecondaryTap,
   });
 
   final ThemeStruct struct;
@@ -617,26 +564,57 @@ class _ThemeCard extends StatelessWidget {
   final bool isApplied;
   final bool selectionIsPending;
   final VoidCallback onTap;
+  final String? titleOverride;
   final VoidCallback? onLongPress;
+  final VoidCallback? onSecondaryTap;
+
+  @override
+  State<_ThemeCard> createState() => _ThemeCardState();
+}
+
+class _ThemeCardState extends State<_ThemeCard> {
+  bool _suppressNextTap = false;
+
+  void _onLongPress() {
+    _suppressNextTap = true;
+    widget.onLongPress?.call();
+  }
+
+  void _onSecondaryTap() {
+    _suppressNextTap = true;
+    widget.onSecondaryTap?.call();
+  }
+
+  void _onTap() {
+    if (_suppressNextTap) {
+      _suppressNextTap = false;
+      return;
+    }
+    widget.onTap();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final cs = struct.data.colorScheme;
-    final isPending = isActive && selectionIsPending;
-    final wasApplied = isApplied && !isActive;
+    final cs = widget.struct.data.colorScheme;
+    final bubbleColors = widget.struct.data.extension<BubbleColors>();
+    final sentBubble = bubbleColors?.iMessageBubbleColor ?? cs.primary;
+    final receivedBubble = bubbleColors?.receivedBubbleColor ?? cs.surfaceContainerHighest;
+    final isPending = widget.isActive && widget.selectionIsPending;
+    final wasApplied = widget.isApplied && !widget.isActive;
 
     final borderColor = isPending
         ? context.theme.colorScheme.tertiary
-        : isActive
+        : widget.isActive
             ? context.theme.colorScheme.primary
             : wasApplied
                 ? context.theme.colorScheme.secondary.withValues(alpha: 0.5)
                 : context.theme.colorScheme.outline.withValues(alpha: 0.3);
-    final borderWidth = (isActive || wasApplied) ? 2.0 : 1.0;
+    final borderWidth = (widget.isActive || wasApplied) ? 2.0 : 1.0;
 
     return GestureDetector(
-      onTap: onTap,
-      onLongPress: onLongPress,
+      onTap: _onTap,
+      onSecondaryTap: _onSecondaryTap,
+      onLongPress: _onLongPress,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         width: 76,
@@ -658,28 +636,18 @@ class _ThemeCard extends StatelessWidget {
                 height: 60,
                 child: Stack(
                   children: [
-                    Column(
-                      children: [
-                        Row(
-                          children: [
-                            _Swatch(cs.primary),
-                            _Swatch(cs.secondary),
-                          ],
-                        ),
-                        Row(
-                          children: [
-                            _Swatch(cs.tertiary),
-                            _Swatch(cs.surface),
-                          ],
-                        ),
-                      ],
+                    _PalettePreview(
+                      topLeft: sentBubble,
+                      topRight: receivedBubble,
+                      bottomLeft: cs.surface,
+                      bottomRight: cs.surfaceContainerHighest,
                     ),
-                    if (isActive || wasApplied)
+                    if (widget.isActive || wasApplied)
                       Positioned(
                         right: 4,
                         bottom: 4,
                         child: _SelectionIcon(
-                          isActive: isActive,
+                          isActive: widget.isActive,
                           isPending: isPending,
                           wasApplied: wasApplied,
                           size: 14,
@@ -694,7 +662,7 @@ class _ThemeCard extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
                 child: Text(
-                  struct.name,
+                  widget.titleOverride ?? widget.struct.name,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
@@ -712,13 +680,62 @@ class _ThemeCard extends StatelessWidget {
   }
 }
 
-class _Swatch extends StatelessWidget {
-  const _Swatch(this.color);
-  final Color color;
+class _PalettePreview extends StatelessWidget {
+  const _PalettePreview({
+    required this.topLeft,
+    required this.topRight,
+    required this.bottomLeft,
+    required this.bottomRight,
+  });
+
+  final Color topLeft;
+  final Color topRight;
+  final Color bottomLeft;
+  final Color bottomRight;
 
   @override
   Widget build(BuildContext context) {
-    return Expanded(child: SizedBox(height: 30, child: ColoredBox(color: color)));
+    return CustomPaint(
+      painter: _PalettePreviewPainter(
+        topLeft: topLeft,
+        topRight: topRight,
+        bottomLeft: bottomLeft,
+        bottomRight: bottomRight,
+      ),
+      child: const SizedBox.expand(),
+    );
+  }
+}
+
+class _PalettePreviewPainter extends CustomPainter {
+  const _PalettePreviewPainter({
+    required this.topLeft,
+    required this.topRight,
+    required this.bottomLeft,
+    required this.bottomRight,
+  });
+
+  final Color topLeft;
+  final Color topRight;
+  final Color bottomLeft;
+  final Color bottomRight;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final halfW = size.width / 2;
+    final halfH = size.height / 2;
+    canvas.drawRect(Rect.fromLTWH(0, 0, halfW, halfH), Paint()..color = topLeft);
+    canvas.drawRect(Rect.fromLTWH(halfW, 0, halfW, halfH), Paint()..color = topRight);
+    canvas.drawRect(Rect.fromLTWH(0, halfH, halfW, halfH), Paint()..color = bottomLeft);
+    canvas.drawRect(Rect.fromLTWH(halfW, halfH, halfW, halfH), Paint()..color = bottomRight);
+  }
+
+  @override
+  bool shouldRepaint(covariant _PalettePreviewPainter oldDelegate) {
+    return topLeft != oldDelegate.topLeft ||
+        topRight != oldDelegate.topRight ||
+        bottomLeft != oldDelegate.bottomLeft ||
+        bottomRight != oldDelegate.bottomRight;
   }
 }
 
@@ -787,7 +804,7 @@ class _ImportDialogState extends State<_ImportDialog> {
   }
 
   Future<void> _pickFile() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['json', 'txt'],
     );

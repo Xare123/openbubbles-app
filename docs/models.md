@@ -181,7 +181,7 @@ Adding a new setting: add an `Rx*` field to `settings.dart`, persist in `toMap()
 |------|---------|
 | `payload_data.dart` | URL preview + iMessage app data wrapper |
 | `server_payload.dart` | Server event envelope -- wraps action payloads from socket |
-| `queue_items.dart` | Outgoing message queue item type wrappers (OutgoingItem) |
+| `queue_items.dart` | Typed outgoing message queue models (`OutgoingQueueItem`, `OutgoingMessage`, `OutgoingReaction`, `OutgoingAttachment`, `OutgoingMultipartMessage`) |
 | `scheduled_message.dart` | Scheduled send DTO -- nested Payload + Schedule objects |
 
 ### Contact & Location

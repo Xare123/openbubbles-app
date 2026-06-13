@@ -28,6 +28,7 @@ class TypingIndicatorRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final chat = ChatStateScope.chatOf(context);
     return Obx(() => Row(
+          key: controller.typingInfoKey,
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             if (controller.showTypingIndicatorFor.isNotEmpty &&
@@ -41,12 +42,9 @@ class TypingIndicatorRow extends StatelessWidget {
                   editable: false,
                 ),
               ),
-            Padding(
-              padding: const EdgeInsets.only(top: 5),
-              child: TypingIndicator(
-                controller: controller,
-              ),
-            ),
+            TypingIndicator(
+              controller: controller,
+            )
           ],
         ));
   }
@@ -278,32 +276,84 @@ class ReportJunkBanner extends StatelessWidget {
 class SmartRepliesRow extends StatelessWidget {
   const SmartRepliesRow({
     super.key,
+    required this.controller,
     required this.smartReplies,
     required this.internalSmartReplies,
   });
 
-  final RxList<Widget> smartReplies;
+  final ConversationViewController controller;
+  final RxList<String> smartReplies;
   final RxMap<String, Widget> internalSmartReplies;
 
   @override
   Widget build(BuildContext context) {
-    return Obx(() => AnimatedSize(
-          duration: const Duration(milliseconds: 400),
-          child: smartReplies.isNotEmpty || internalSmartReplies.isNotEmpty
-              ? Padding(
-                  padding: EdgeInsets.only(top: iOS ? 8.0 : 0.0, right: 5),
-                  child: SizedBox(
-                    height: context.theme.extension<BubbleText>()!.bubbleText.fontSize! + 35,
-                    child: ListView(
-                      scrollDirection: Axis.horizontal,
-                      reverse: true,
-                      children: List<Widget>.from(smartReplies)..addAll(internalSmartReplies.values),
-                    ),
+    return Obx(() {
+      final bool visible = smartReplies.isNotEmpty || internalSmartReplies.isNotEmpty;
+      final double rowHeight = context.theme.extension<BubbleText>()!.bubbleText.fontSize! + 35;
+      final double topPadding = iOS ? 8.0 : 0.0;
+      final double totalHeight = visible ? rowHeight + topPadding : 0.0;
+
+      controller.updateSmartReplyLayout(visible: visible, height: totalHeight);
+
+      return AnimatedSize(
+        duration: const Duration(milliseconds: 400),
+        child: visible
+            ? Padding(
+                padding: EdgeInsets.only(top: topPadding, right: 5),
+                child: SizedBox(
+                  height: rowHeight,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    reverse: true,
+                    children: smartReplies.map((suggestion) => _buildReplyWidget(context, suggestion)).toList()
+                      ..addAll(internalSmartReplies.values),
                   ),
-                )
-              : const SizedBox.shrink(),
-        ));
+                ),
+              )
+            : const SizedBox.shrink(),
+      );
+    });
   }
+
+  Widget _buildReplyWidget(BuildContext context, String suggestion) => Container(
+        margin: const EdgeInsets.all(5),
+        decoration: BoxDecoration(
+          border: Border.all(
+            width: 2,
+            style: BorderStyle.solid,
+            color: context.theme.colorScheme.surfaceContainerHighest,
+          ),
+          borderRadius: BorderRadius.circular(19),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(19),
+          onTap: () {
+            OutgoingMsgHandler.queue(OutgoingMessage(
+              chat: controller.chat,
+              message: Message(
+                text: suggestion,
+                dateCreated: DateTime.now(),
+                hasAttachments: false,
+                isFromMe: true,
+                handleId: 0,
+              ),
+            ));
+          },
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 1.5, left: 13.0, right: 13.0),
+              child: RichText(
+                text: TextSpan(
+                  children: MessageHelper.buildEmojiText(
+                    suggestion,
+                    context.theme.extension<BubbleText>()!.bubbleText,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
 }
 
 /// Extracted widget for scroll down button

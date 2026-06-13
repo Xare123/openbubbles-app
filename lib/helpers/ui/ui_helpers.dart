@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gesture_x_detector/gesture_x_detector.dart';
 import 'package:get/get.dart';
+import 'package:get_it/get_it.dart';
 import 'package:image/image.dart' as img;
 import 'package:universal_io/io.dart';
 
@@ -126,6 +127,9 @@ Widget buildProgressIndicator(BuildContext context,
           ),
           child: CupertinoActivityIndicator(
             radius: size / 2,
+            color: ThemeSvc.isAnyMaterialYouSelected
+                ? context.theme.colorScheme.primary
+                : context.theme.colorScheme.onSurfaceVariant,
           ),
         )
       : Container(
@@ -136,9 +140,9 @@ Widget buildProgressIndicator(BuildContext context,
             height: size,
             child: CircularProgressIndicator(
               strokeWidth: strokeWidth,
-              valueColor: AlwaysStoppedAnimation<Color>(brightness == ui.Brightness.dark
-                  ? context.theme.colorScheme.onPrimary
-                  : context.theme.colorScheme.primary),
+              valueColor: AlwaysStoppedAnimation<Color>(ThemeSvc.isAnyMaterialYouSelected
+                  ? context.theme.colorScheme.primary
+                  : context.theme.colorScheme.onSurfaceVariant),
             ),
           ),
         );
@@ -472,13 +476,13 @@ void showSnackbar(String title, String message,
   );
 }
 
-Widget getIndicatorIcon(SocketState socketState, {double size = 24, bool showAlpha = true}) {
+Widget getSocketStateIndicatorIcon(SocketState socketState, {double size = 24, bool showAlpha = true}) {
   return Icon(Icons.fiber_manual_record,
       color: getIndicatorColor(socketState).withAlpha(showAlpha ? 200 : 255), size: size);
 }
 
 Color getIndicatorColor(SocketState socketState) {
-  if (socketState == SocketState.connecting) {
+  if (socketState == SocketState.connecting || socketState == SocketState.reconnecting) {
     return HexColor('ffd500');
   } else if (socketState == SocketState.connected) {
     return HexColor('32CD32');
@@ -520,7 +524,8 @@ Future<void> paintGroupAvatar({
 }) async {
   late final ThemeData theme;
   final bool systemDark = PlatformDispatcher.instance.platformBrightness == Brightness.dark;
-  if (!LifecycleSvc.isAlive) {
+  final isAlive = GetIt.I.isRegistered<LifecycleService>() ? GetIt.I<LifecycleService>().isAlive : false;
+  if (!isAlive) {
     if (systemDark) {
       theme = ThemeStruct.getDarkTheme().data;
     } else {

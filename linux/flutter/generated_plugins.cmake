@@ -21,6 +21,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   printing
   record_linux
   screen_retriever_linux
+  sqlite3_flutter_libs
   super_native_extensions
   system_tray
   tray_manager

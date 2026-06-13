@@ -10,6 +10,7 @@ import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/services/backend/interfaces/sync_interface.dart';
 import 'package:bluebubbles/services/ui/chat/send_data.dart';
 import 'package:bluebubbles/utils/string_utils.dart';
 import 'package:dio/dio.dart';
@@ -612,11 +613,15 @@ class ChatCreatorController extends StatefulController {
         // isFromMe / no-tempGuid messages).
         if (messageSentWithChat) {
           try {
-            final msgResponse = await BackendSvc.getRemoteService()?.chatMessages(resolvedChat.guid, limit: 1);
+            final msgResponse = await BackendSvc.getRemoteService()?.chat.getMessages(resolvedChat.guid, limit: 1);
             final msgData = msgResponse?.data['data'];
             if (msgData is List && msgData.isNotEmpty) {
-              final messages = msgData.map((e) => Message.fromMap(e as Map<String, dynamic>)).toList();
-              syncedMessages = await Chat.bulkSyncMessages(resolvedChat, messages);
+              final rawMessages = msgData.cast<Map<String, dynamic>>();
+              syncedMessages = (await SyncInterface.bulkSyncData(
+                chatData: resolvedChat.toMap(),
+                messagesData: rawMessages,
+              ))
+                  .messages;
             }
           } catch (_) {
             // Non-fatal: the socket echo will still arrive and display the message

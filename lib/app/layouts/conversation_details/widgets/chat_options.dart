@@ -66,8 +66,10 @@ class _ChatOptionsState extends State<ChatOptions> with ThemeHelpers {
                     ),
                     isThreeLine: true,
                     onTap: () async {
-                      await MethodChannelSvc.invokeMethod("open-conversation-notification-settings",
-                          {"channel_id": chat.guid, "display_name": chat.getTitle()});
+                      await MethodChannelSvc.actions.openConversationNotificationSettings(
+                        channelId: chat.guid,
+                        displayName: chat.getTitle(),
+                      );
                     },
                   ),
                 if (!kIsWeb)
@@ -79,7 +81,7 @@ class _ChatOptionsState extends State<ChatOptions> with ThemeHelpers {
                         SettingsSvc.settings.skin.value == Skins.iOS ? CupertinoIcons.person : Icons.person_outlined,
                       ),
                     ),
-                    onTap: () {
+                    onTap: () async {
                       if (chat.customAvatarPath != null) {
                         showDialog(
                           context: context,
@@ -109,11 +111,8 @@ class _ChatOptionsState extends State<ChatOptions> with ThemeHelpers {
                                     child: Text("Reset",
                                         style: context.theme.textTheme.bodyLarge!
                                             .copyWith(color: context.theme.colorScheme.primary)),
-                                    onPressed: () {
-                                      File file = File(chat.customAvatarPath!);
-                                      file.delete();
-                                      chat.customAvatarPath = null;
-                                      chat.saveAsync(updateCustomAvatarPath: true);
+                                    onPressed: () async {
+                                      await ChatsSvc.setChatCustomAvatarPath(chat, null);
                                       Navigator.of(context, rootNavigator: true).pop();
                                     },
                                   ),
@@ -121,16 +120,21 @@ class _ChatOptionsState extends State<ChatOptions> with ThemeHelpers {
                                     child: Text("Set New",
                                         style: context.theme.textTheme.bodyLarge!
                                             .copyWith(color: context.theme.colorScheme.primary)),
-                                    onPressed: () {
+                                    onPressed: () async {
                                       Navigator.of(context, rootNavigator: true).pop();
-                                      Get.to(() => AvatarCrop(chat: chat));
+                                      final result = await Get.to<String?>(() => AvatarCrop(chat: chat));
+                                      if (result != null) {
+                                        await ChatsSvc.setChatCustomAvatarPath(chat, result);
+                                      }
                                     },
                                   ),
                                 ]);
                           },
                         );
                       } else {
-                        Get.to(() => AvatarCrop(chat: chat));
+                        final result = await Get.to<String?>(() => AvatarCrop(chat: chat));
+                        if (result == null) return;
+                        await ChatsSvc.setChatCustomAvatarPath(chat, result);
                       }
                     },
                   ),

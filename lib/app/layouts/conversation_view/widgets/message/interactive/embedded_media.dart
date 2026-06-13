@@ -70,7 +70,7 @@ class _EmbeddedMediaState extends State<EmbeddedMedia> with AutomaticKeepAliveCl
     } else {
       content = Rx<_DownloadProgress>(const _DownloadProgress(0, 0));
       setState(() {});
-      HttpSvc.embeddedMedia(message.guid!, onReceiveProgress: (current, total) {
+      HttpSvc.message.downloadEmbeddedMedia(message.guid!, onReceiveProgress: (current, total) {
         if (content is Rx) {
           (content as Rx<_DownloadProgress>).value = _DownloadProgress(current, total);
         }

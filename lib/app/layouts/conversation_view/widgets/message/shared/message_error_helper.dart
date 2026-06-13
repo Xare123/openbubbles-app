@@ -17,11 +17,11 @@ class ErrorHelper {
   /// Returns the dialog title for the given numeric error code.
   /// Client-side errors show their [ClientMessageError.friendlyTitle].
   /// Server-side errors (including the well-known code 22) fall back to
-  /// "iMessage Error", and zero / unrecognised codes use a generic title.
+  /// "iMessage Error (Code X)", and zero / unrecognised codes use a generic title.
   static String getErrorTitle(int errorCode) {
     final clientError = ClientMessageErrorExtension.fromCode(errorCode);
     if (clientError != null) return clientError.friendlyTitle;
-    if (errorCode > 0) return "iMessage Error";
+    if (errorCode > 0) return "iMessage Error (Code $errorCode)";
     return "Message Failed to Send";
   }
 }
@@ -97,21 +97,22 @@ Future<void> retryReaction({
   }
 
   // Re-send
-  OutgoingMsgHandler.queue(OutgoingItem(
-    type: QueueType.sendMessage,
-    chat: chat,
-    message: Message(
-      associatedMessageGuid: selected.guid,
-      associatedMessageType: reaction.associatedMessageType,
-      associatedMessagePart: reaction.associatedMessagePart,
-      dateCreated: DateTime.now(),
-      hasAttachments: false,
-      isFromMe: true,
-      handleId: 0,
+  OutgoingMsgHandler.queue(
+    OutgoingReaction(
+      chat: chat,
+      message: Message(
+        associatedMessageGuid: selected.guid,
+        associatedMessageType: reaction.associatedMessageType,
+        associatedMessagePart: reaction.associatedMessagePart,
+        dateCreated: DateTime.now(),
+        hasAttachments: false,
+        isFromMe: true,
+        handleId: 0,
+      ),
+      selectedMessage: selected,
+      reaction: reaction.associatedMessageType!,
     ),
-    selected: selected,
-    reaction: reaction.associatedMessageType!,
-  ));
+  );
 }
 
 /// Shared remove logic for reactions
@@ -131,7 +132,7 @@ Future<void> removeReaction({
   await NotificationsSvc.clearFailedToSend(chat.id!);
   // Get the "new" latest info
   List<Message> latest = await Chat.getMessagesAsync(chat, limit: 1);
-  chat.latestMessage = latest.first;
+  ChatsSvc.setChatLatestMessage(chat, latest.first);
   await chat.saveAsync();
 }
 

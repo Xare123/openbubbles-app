@@ -9,7 +9,7 @@ import 'package:universal_io/io.dart';
 class BackgroundIsolate {
   static void initialize() {
     CallbackHandle callbackHandle = PluginUtilities.getCallbackHandle(backgroundIsolateEntrypoint)!;
-    PrefsSvc.i.setInt("backgroundCallbackHandle", callbackHandle.toRawHandle());
+    PrefsSvc.system.setBackgroundCallbackHandle(callbackHandle.toRawHandle());
   }
 }
 
@@ -18,6 +18,7 @@ backgroundIsolateEntrypoint() async {
   // can't use logger here
   debugPrint("(ISOLATE) Starting up...");
   WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
   HttpOverrides.global = CustomHttpContext();
 
   await StartupTasks.initBackgroundIsolate();

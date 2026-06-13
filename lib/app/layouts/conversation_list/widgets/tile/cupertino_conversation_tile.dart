@@ -71,6 +71,7 @@ class _CupertinoConversationTileState extends CustomState<CupertinoConversationT
                             : null),
                   ),
                 ),
+                if (!widget.deletedMode) const SizedBox(width: 10),
                 if (!widget.deletedMode) CupertinoTrailing(parentController: controller),
                 if (widget.deletedMode)
                   Builder(builder: (context) {
@@ -135,7 +136,7 @@ class _CupertinoConversationTileState extends CustomState<CupertinoConversationT
     );
 
     return ChatStateScope(
-      chatState: controller.chatState ?? ChatsSvc.getOrCreateChatState(controller.chat),
+      chatState: controller.chatState,
       child: Obx(() {
         NavigationSvc.listener.value;
         return AnimatedContainer(

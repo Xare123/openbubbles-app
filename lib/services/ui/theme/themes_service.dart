@@ -18,7 +18,32 @@ import 'package:get_it/get_it.dart';
 // ignore: non_constant_identifier_names
 ThemesService get ThemeSvc => GetIt.I<ThemesService>();
 
+enum MaterialYouVariant {
+  base,
+  vibrant,
+  expressive,
+  soft,
+  neutral,
+  lagoon,
+  sunset,
+  neonPop,
+  earthy,
+}
+
 class ThemesService {
+  static const String materialYouLightName = "Material You (Light)";
+  static const String materialYouDarkName = "Material You (Dark)";
+  static const Map<MaterialYouVariant, String> _variantTokens = {
+    MaterialYouVariant.base: "Material You",
+    MaterialYouVariant.vibrant: "Material You - Vibrant",
+    MaterialYouVariant.expressive: "Material You - Expressive",
+    MaterialYouVariant.soft: "Material You - Soft",
+    MaterialYouVariant.neutral: "Material You - Neutral",
+    MaterialYouVariant.lagoon: "Material You - Style 1",
+    MaterialYouVariant.sunset: "Material You - Style 2",
+    MaterialYouVariant.neonPop: "Material You - Style 3",
+    MaterialYouVariant.earthy: "Material You - Style 4",
+  };
   mui_utils.CorePalette? monetPalette;
   Color? desktopAccentColor;
 
@@ -40,6 +65,7 @@ class ThemesService {
       for (final preset in defaultThemes) {
         preset.save(updateIfNotAbsent: true);
       }
+      _refreshMaterialYouThemePresets();
     }
   }
 
@@ -128,9 +154,280 @@ class ThemesService {
     );
   }();
 
+  static String materialYouThemeName(MaterialYouVariant variant, Brightness brightness) {
+    final base = _variantTokens[variant]!;
+    return variant == MaterialYouVariant.base
+        ? (brightness == Brightness.dark ? materialYouDarkName : materialYouLightName)
+        : "$base (${brightness == Brightness.dark ? "Dark" : "Light"})";
+  }
+
+  static bool isMaterialYouThemeName(String name) {
+    return MaterialYouVariant.values
+        .expand((variant) => [
+              materialYouThemeName(variant, Brightness.light),
+              materialYouThemeName(variant, Brightness.dark),
+            ])
+        .contains(name);
+  }
+
+  static String materialYouDisplayName(String name) {
+    if (!isMaterialYouThemeName(name)) return name;
+    if (name == materialYouLightName || name == materialYouDarkName) return "Default";
+    if (name.contains("Vibrant")) return "Vibrant";
+    if (name.contains("Expressive")) return "Expressive";
+    if (name.contains("Soft")) return "Soft";
+    if (name.contains("Neutral")) return "Neutral";
+    if (name.contains("Style 1") || name.contains("Drift") || name.contains("Lagoon")) return "Style 1";
+    if (name.contains("Style 2") || name.contains("Ember") || name.contains("Sunset")) return "Style 2";
+    if (name.contains("Style 3") || name.contains("Bloom") || name.contains("Neon Pop")) return "Style 3";
+    if (name.contains("Style 4") || name.contains("Moss") || name.contains("Earthy")) return "Style 4";
+    return "Default";
+  }
+
+  static int materialYouSortOrder(String name) {
+    if (name == materialYouLightName || name == materialYouDarkName) return 0;
+    if (name.contains("Vibrant")) return 1;
+    if (name.contains("Expressive")) return 2;
+    if (name.contains("Soft")) return 3;
+    if (name.contains("Neutral")) return 4;
+    if (name.contains("Style 1") || name.contains("Drift") || name.contains("Lagoon")) return 5;
+    if (name.contains("Style 2") || name.contains("Ember") || name.contains("Sunset")) return 6;
+    if (name.contains("Style 3") || name.contains("Bloom") || name.contains("Neon Pop")) return 7;
+    if (name.contains("Style 4") || name.contains("Moss") || name.contains("Earthy")) return 8;
+    return 99;
+  }
+
+  static Color _tone(Color color, {double sat = 0, double light = 0, double hue = 0}) {
+    final hsl = HSLColor.fromColor(color);
+    final nHue = (hsl.hue + hue) % 360;
+    final nSat = (hsl.saturation + sat).clamp(0.0, 1.0);
+    final nLight = (hsl.lightness + light).clamp(0.0, 1.0);
+    return hsl.withHue(nHue).withSaturation(nSat).withLightness(nLight).toColor();
+  }
+
+  static ThemeData materialYouTheme(
+    Brightness brightness, {
+    mui_utils.CorePalette? palette,
+    MaterialYouVariant variant = MaterialYouVariant.base,
+  }) {
+    final resolvedPalette = palette;
+    if (resolvedPalette == null) {
+      return brightness == Brightness.dark ? oledDarkTheme : whiteLightTheme;
+    }
+
+    final bool isDark = brightness == Brightness.dark;
+    final satDelta = switch (variant) {
+      MaterialYouVariant.base => 0.0,
+      MaterialYouVariant.vibrant => 0.24,
+      MaterialYouVariant.expressive => 0.14,
+      MaterialYouVariant.soft => -0.30,
+      MaterialYouVariant.neutral => -0.46,
+      MaterialYouVariant.lagoon => 0.04,
+      MaterialYouVariant.sunset => 0.06,
+      MaterialYouVariant.neonPop => 0.10,
+      MaterialYouVariant.earthy => -0.18,
+    };
+    final hueDelta = switch (variant) {
+      MaterialYouVariant.base => 0.0,
+      MaterialYouVariant.vibrant => 0.0,
+      MaterialYouVariant.expressive => 22.0,
+      MaterialYouVariant.soft => -16.0,
+      MaterialYouVariant.neutral => 0.0,
+      MaterialYouVariant.lagoon => -14.0,
+      MaterialYouVariant.sunset => 20.0,
+      MaterialYouVariant.neonPop => 6.0,
+      MaterialYouVariant.earthy => -6.0,
+    };
+    final lightDelta = switch (variant) {
+      MaterialYouVariant.base => 0.0,
+      MaterialYouVariant.vibrant => isDark ? -0.03 : 0.0,
+      MaterialYouVariant.expressive => isDark ? -0.05 : 0.01,
+      MaterialYouVariant.soft => isDark ? 0.01 : 0.08,
+      MaterialYouVariant.neutral => isDark ? -0.03 : 0.03,
+      MaterialYouVariant.lagoon => isDark ? -0.02 : 0.01,
+      MaterialYouVariant.sunset => isDark ? -0.01 : 0.03,
+      MaterialYouVariant.neonPop => isDark ? -0.03 : 0.01,
+      MaterialYouVariant.earthy => isDark ? 0.0 : 0.02,
+    };
+    Color tone(Color color) => _tone(color, sat: satDelta, light: lightDelta, hue: hueDelta);
+
+    Color primary = tone(Color(resolvedPalette.primary.get(isDark ? 80 : 40)));
+    Color onPrimary = tone(Color(resolvedPalette.primary.get(isDark ? 20 : 100)));
+    Color primaryContainer = tone(Color(resolvedPalette.primary.get(isDark ? 30 : 90)));
+    Color onPrimaryContainer = tone(Color(resolvedPalette.primary.get(isDark ? 90 : 10)));
+    Color secondary = tone(Color(resolvedPalette.secondary.get(isDark ? 80 : 40)));
+    Color onSecondary = tone(Color(resolvedPalette.secondary.get(isDark ? 20 : 100)));
+    Color secondaryContainer = tone(Color(resolvedPalette.secondary.get(isDark ? 30 : 90)));
+    Color onSecondaryContainer = tone(Color(resolvedPalette.secondary.get(isDark ? 90 : 10)));
+    Color tertiary = tone(Color(resolvedPalette.tertiary.get(isDark ? 80 : 40)));
+    Color onTertiary = tone(Color(resolvedPalette.tertiary.get(isDark ? 20 : 100)));
+    Color tertiaryContainer = tone(Color(resolvedPalette.tertiary.get(isDark ? 30 : 90)));
+    Color onTertiaryContainer = tone(Color(resolvedPalette.tertiary.get(isDark ? 90 : 10)));
+    Color surface = Color(resolvedPalette.neutral.get(isDark ? 10 : 99));
+    Color onSurface = Color(resolvedPalette.neutral.get(isDark ? 90 : 10));
+    Color surfaceVariant = Color(resolvedPalette.neutralVariant.get(isDark ? 30 : 90));
+    Color onSurfaceVariant = Color(resolvedPalette.neutralVariant.get(isDark ? 80 : 30));
+    Color outline = Color(resolvedPalette.neutralVariant.get(isDark ? 60 : 50));
+    Color outlineVariant = Color(resolvedPalette.neutralVariant.get(isDark ? 30 : 80));
+
+    if (variant == MaterialYouVariant.vibrant) {
+      // Make vibrant clearly "punchy primary" while muting supporting accents.
+      primary = _tone(primary, sat: 0.14, light: isDark ? 0.0 : -0.02);
+      onPrimary = _tone(onPrimary, sat: 0.05);
+      primaryContainer = _tone(primaryContainer, sat: 0.12, light: isDark ? -0.01 : 0.0);
+      secondary = _tone(secondary, sat: -0.10, hue: 10);
+      tertiary = _tone(tertiary, sat: -0.12, hue: -10);
+      secondaryContainer = _tone(secondaryContainer, sat: -0.12, light: isDark ? 0.0 : 0.01);
+      tertiaryContainer = _tone(tertiaryContainer, sat: -0.14, light: isDark ? 0.0 : 0.01);
+    } else if (variant == MaterialYouVariant.expressive) {
+      // Expressive: rotate primary away from base and swap accent personalities.
+      primary = _tone(Color(resolvedPalette.primary.get(isDark ? 80 : 40)), sat: 0.06, hue: 20);
+      onPrimary = _tone(Color(resolvedPalette.primary.get(isDark ? 20 : 100)), sat: 0.04, hue: 14);
+      primaryContainer = _tone(Color(resolvedPalette.primary.get(isDark ? 30 : 90)), sat: 0.05, hue: 18);
+      onPrimaryContainer = _tone(Color(resolvedPalette.primary.get(isDark ? 90 : 10)), sat: 0.04, hue: 14);
+
+      secondary = _tone(Color(resolvedPalette.tertiary.get(isDark ? 80 : 40)), sat: 0.08, hue: 24);
+      onSecondary = _tone(Color(resolvedPalette.tertiary.get(isDark ? 20 : 100)), sat: 0.04, hue: 16);
+      secondaryContainer = _tone(Color(resolvedPalette.tertiary.get(isDark ? 30 : 90)), sat: 0.06, hue: 22);
+      onSecondaryContainer = _tone(Color(resolvedPalette.tertiary.get(isDark ? 90 : 10)), sat: 0.04, hue: 16);
+
+      tertiary = _tone(Color(resolvedPalette.secondary.get(isDark ? 80 : 40)), sat: 0.04, hue: -18);
+      onTertiary = _tone(Color(resolvedPalette.secondary.get(isDark ? 20 : 100)), sat: 0.03, hue: -12);
+      tertiaryContainer = _tone(Color(resolvedPalette.secondary.get(isDark ? 30 : 90)), sat: 0.03, hue: -16);
+      onTertiaryContainer = _tone(Color(resolvedPalette.secondary.get(isDark ? 90 : 10)), sat: 0.03, hue: -12);
+    } else if (variant == MaterialYouVariant.soft) {
+      // Soft: low-chroma, airy surfaces, subdued accents.
+      surface = _tone(surface, sat: -0.12, light: isDark ? 0.05 : 0.04, hue: -10);
+      surfaceVariant = _tone(surfaceVariant, sat: -0.14, light: isDark ? 0.04 : 0.05, hue: -10);
+      primary = _tone(primary, sat: -0.18, light: isDark ? 0.05 : 0.05, hue: -6);
+      secondary = _tone(secondary, sat: -0.20, light: isDark ? 0.05 : 0.05, hue: -8);
+      tertiary = _tone(tertiary, sat: -0.20, light: isDark ? 0.05 : 0.05, hue: -8);
+      primaryContainer = _tone(primaryContainer, sat: -0.16, light: isDark ? 0.04 : 0.04);
+      secondaryContainer = _tone(secondaryContainer, sat: -0.18, light: isDark ? 0.04 : 0.05);
+      tertiaryContainer = _tone(tertiaryContainer, sat: -0.18, light: isDark ? 0.04 : 0.05);
+      outline = _tone(outline, sat: -0.16, light: isDark ? 0.03 : 0.02);
+      outlineVariant = _tone(outlineVariant, sat: -0.16, light: isDark ? 0.03 : 0.02);
+    } else if (variant == MaterialYouVariant.neutral) {
+      // Neutral: near-monochrome, minimal accent saturation.
+      primary = _tone(primary, sat: -0.28);
+      secondary = _tone(secondary, sat: -0.42);
+      tertiary = _tone(tertiary, sat: -0.42);
+      primaryContainer = _tone(primaryContainer, sat: -0.34);
+      secondaryContainer = _tone(secondaryContainer, sat: -0.38);
+      tertiaryContainer = _tone(tertiaryContainer, sat: -0.38);
+      surface = _tone(surface, sat: -0.22);
+      surfaceVariant = _tone(surfaceVariant, sat: -0.24);
+      onSurface = _tone(onSurface, sat: -0.16);
+      onSurfaceVariant = _tone(onSurfaceVariant, sat: -0.16);
+      outline = _tone(outline, sat: -0.22);
+      outlineVariant = _tone(outlineVariant, sat: -0.22);
+    } else if (variant == MaterialYouVariant.lagoon) {
+      // Secondary-led cool variant.
+      primary = _tone(Color(resolvedPalette.secondary.get(isDark ? 80 : 40)), sat: 0.06, hue: -10);
+      onPrimary = _tone(Color(resolvedPalette.secondary.get(isDark ? 20 : 100)), sat: 0.06, hue: -6);
+      primaryContainer = _tone(Color(resolvedPalette.secondary.get(isDark ? 30 : 90)), sat: 0.04, hue: -8);
+      onPrimaryContainer = _tone(Color(resolvedPalette.secondary.get(isDark ? 90 : 10)), sat: 0.08, hue: -8);
+      secondary = _tone(Color(resolvedPalette.tertiary.get(isDark ? 80 : 40)), sat: -0.04, hue: -16);
+      tertiary = _tone(Color(resolvedPalette.primary.get(isDark ? 80 : 40)), sat: -0.12, hue: -10);
+    } else if (variant == MaterialYouVariant.sunset) {
+      // Tertiary-led warm variant.
+      primary = _tone(Color(resolvedPalette.tertiary.get(isDark ? 80 : 40)), sat: 0.08, hue: 12);
+      onPrimary = _tone(Color(resolvedPalette.tertiary.get(isDark ? 20 : 100)), sat: 0.08, hue: 10);
+      primaryContainer = _tone(Color(resolvedPalette.tertiary.get(isDark ? 30 : 90)), sat: 0.06, hue: 12);
+      onPrimaryContainer = _tone(Color(resolvedPalette.tertiary.get(isDark ? 90 : 10)), sat: 0.08, hue: 10);
+      secondary = _tone(Color(resolvedPalette.primary.get(isDark ? 80 : 40)), sat: -0.08, hue: 6);
+      tertiary = _tone(Color(resolvedPalette.secondary.get(isDark ? 80 : 40)), sat: -0.05, hue: 14);
+      surfaceVariant = _tone(surfaceVariant, sat: 0.03, hue: 8);
+    } else if (variant == MaterialYouVariant.neonPop) {
+      // High-contrast accent swap for maximal separation.
+      primary = _tone(Color(resolvedPalette.secondary.get(isDark ? 80 : 40)), sat: 0.10, hue: 14);
+      onPrimary = _tone(Color(resolvedPalette.secondary.get(isDark ? 20 : 100)), sat: 0.10, hue: 12);
+      secondary = _tone(Color(resolvedPalette.tertiary.get(isDark ? 80 : 40)), sat: -0.02, hue: -16);
+      onSecondary = _tone(Color(resolvedPalette.tertiary.get(isDark ? 20 : 100)), sat: 0.10, hue: -14);
+      tertiary = _tone(Color(resolvedPalette.primary.get(isDark ? 80 : 40)), sat: -0.06, hue: 6);
+      primaryContainer = _tone(Color(resolvedPalette.secondary.get(isDark ? 30 : 90)), sat: 0.06, hue: 14);
+      secondaryContainer = _tone(Color(resolvedPalette.tertiary.get(isDark ? 30 : 90)), sat: -0.04, hue: -14);
+      tertiaryContainer = _tone(Color(resolvedPalette.primary.get(isDark ? 30 : 90)), sat: -0.08, hue: 4);
+    } else if (variant == MaterialYouVariant.earthy) {
+      // Muted warm/olive leaning variant.
+      primary = _tone(Color(resolvedPalette.tertiary.get(isDark ? 80 : 40)), sat: -0.08, hue: -10);
+      onPrimary = _tone(Color(resolvedPalette.tertiary.get(isDark ? 20 : 100)), sat: -0.02, hue: -8);
+      secondary = _tone(Color(resolvedPalette.secondary.get(isDark ? 80 : 40)), sat: -0.16, hue: -16);
+      tertiary = _tone(Color(resolvedPalette.primary.get(isDark ? 80 : 40)), sat: -0.20, hue: -20);
+      surface = _tone(surface, sat: -0.04, light: isDark ? 0.01 : 0.02, hue: -8);
+      surfaceVariant = _tone(surfaceVariant, sat: -0.06, light: isDark ? 0.01 : 0.02, hue: -10);
+    }
+
+    final base = FlexColorScheme(
+      textTheme: Typography.englishLike2021.merge(isDark ? Typography.whiteMountainView : Typography.blackMountainView),
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: primary,
+        brightness: brightness,
+      ).copyWith(
+        primary: primary,
+        onPrimary: onPrimary,
+        primaryContainer: primaryContainer,
+        onPrimaryContainer: onPrimaryContainer,
+        secondary: secondary,
+        onSecondary: onSecondary,
+        secondaryContainer: secondaryContainer,
+        onSecondaryContainer: onSecondaryContainer,
+        tertiary: tertiary,
+        onTertiary: onTertiary,
+        tertiaryContainer: tertiaryContainer,
+        onTertiaryContainer: onTertiaryContainer,
+        error: Color(resolvedPalette.error.get(isDark ? 80 : 40)),
+        onError: Color(resolvedPalette.error.get(isDark ? 20 : 100)),
+        errorContainer: Color(resolvedPalette.error.get(isDark ? 30 : 90)),
+        onErrorContainer: Color(resolvedPalette.error.get(isDark ? 80 : 10)),
+        surface: surface,
+        onSurface: onSurface,
+        surfaceVariant: surfaceVariant,
+        onSurfaceVariant: onSurfaceVariant,
+        outline: outline,
+        outlineVariant: outlineVariant,
+        shadow: Color(resolvedPalette.neutral.get(0)),
+        inverseSurface: Color(resolvedPalette.neutral.get(isDark ? 90 : 20)),
+        onInverseSurface: Color(resolvedPalette.neutral.get(isDark ? 20 : 95)),
+        inversePrimary: _tone(primary, light: isDark ? -0.18 : 0.18),
+        scrim: Color(resolvedPalette.neutral.get(0)),
+      ),
+      useMaterial3: true,
+    ).toTheme;
+
+    return base.copyWith(
+      splashFactory: InkSparkle.splashFactory,
+      extensions: [
+        BubbleColors(
+          iMessageBubbleColor: primary,
+          oniMessageBubbleColor: onPrimary,
+          smsBubbleColor: secondary,
+          onSmsBubbleColor: onSecondary,
+          receivedBubbleColor: surfaceVariant,
+          onReceivedBubbleColor: onSurfaceVariant,
+        ),
+        BubbleText(
+          bubbleText: Typography.englishLike2021.bodyMedium!.copyWith(
+            fontSize: ThemeStruct.defaultTextSizes["bubbleText"],
+            height: Typography.englishLike2021.bodyMedium!.height! * 0.85,
+            color: Color(resolvedPalette.neutral.get(isDark ? 90 : 10)),
+          ),
+        ),
+      ],
+    );
+  }
+
   static List<ThemeStruct> get defaultThemes => [
-        ThemeStruct(name: "OLED Dark", themeData: oledDarkTheme),
         ThemeStruct(name: "Bright White", themeData: whiteLightTheme),
+        ThemeStruct(name: "OLED Dark", themeData: oledDarkTheme),
+        ...MaterialYouVariant.values.expand((variant) => [
+              ThemeStruct(
+                  name: materialYouThemeName(variant, Brightness.light),
+                  themeData: materialYouTheme(Brightness.light, variant: variant)),
+              ThemeStruct(
+                  name: materialYouThemeName(variant, Brightness.dark),
+                  themeData: materialYouTheme(Brightness.dark, variant: variant)),
+            ]),
         ThemeStruct(name: "Nord Theme", themeData: nordDarkTheme),
         ThemeStruct(name: "Music Theme ☀", themeData: whiteLightTheme),
         ThemeStruct(name: "Music Theme 🌙", themeData: oledDarkTheme),
@@ -175,6 +472,12 @@ class ThemesService {
 
   Skins get skin => SettingsSvc.settings.skin.value;
 
+  bool get isMaterialYouSelectedLight => isMaterialYouThemeName(PrefsSvc.theme.getSelectedLightTheme() ?? '');
+  bool get isMaterialYouSelectedDark => isMaterialYouThemeName(PrefsSvc.theme.getSelectedDarkTheme() ?? '');
+  bool get isAnyMaterialYouSelected => isMaterialYouSelectedLight || isMaterialYouSelectedDark;
+  bool isMaterialYouActive(BuildContext context) =>
+      inDarkMode(context) ? isMaterialYouSelectedDark : isMaterialYouSelectedLight;
+
   ScrollPhysics get scrollPhysics {
     if (SettingsSvc.settings.skin.value == Skins.iOS) {
       return const AlwaysScrollableScrollPhysics(
@@ -186,8 +489,6 @@ class ThemesService {
       );
     }
   }
-
-  bool get isFullMonet => SettingsSvc.settings.monetTheming.value == Monet.full;
 
   bool inDarkMode(BuildContext context) => (AdaptiveTheme.of(context).mode == AdaptiveThemeMode.dark ||
       (AdaptiveTheme.of(context).mode == AdaptiveThemeMode.system &&
@@ -203,11 +504,30 @@ class ThemesService {
 
   Future<void> refreshMonet(BuildContext context) async {
     monetPalette = await DynamicColorPlugin.getCorePalette();
+    _refreshMaterialYouThemePresets();
+    if (!context.mounted) return;
     _loadTheme(context);
+  }
+
+  void _refreshMaterialYouThemePresets() {
+    if (kIsWeb) return;
+    for (final variant in MaterialYouVariant.values) {
+      final light = ThemeStruct.findOne(materialYouThemeName(variant, Brightness.light));
+      if (light != null) {
+        light.data = materialYouTheme(Brightness.light, palette: monetPalette, variant: variant);
+        light.save();
+      }
+      final dark = ThemeStruct.findOne(materialYouThemeName(variant, Brightness.dark));
+      if (dark != null) {
+        dark.data = materialYouTheme(Brightness.dark, palette: monetPalette, variant: variant);
+        dark.save();
+      }
+    }
   }
 
   Future<void> refreshDesktopAccent(BuildContext context) async {
     desktopAccentColor = await DynamicColorPlugin.getAccentColor();
+    if (!context.mounted) return;
     _loadTheme(context);
   }
 
@@ -237,31 +557,31 @@ class ThemesService {
   }
 
   ThemePair getStructsFromData(ThemeData light, ThemeData dark) {
-    return Platform.isWindows ? _applyWindowsAccent(light, dark) : _applyMonet(light, dark);
+    return Platform.isWindows ? _applyWindowsAccent(light, dark) : ThemePair(light: light, dark: dark);
   }
 
   Future<ThemeStruct> revertToPreviousDarkTheme() async {
     List<ThemeStruct> allThemes = ThemeStruct.getThemes();
-    final darkName = PrefsSvc.i.getString("previous-dark");
+    final darkName = PrefsSvc.theme.getPreviousDarkTheme();
     ThemeStruct? previous = allThemes.firstWhereOrNull((e) => e.name == darkName);
 
     previous ??= defaultThemes.firstWhere((element) => element.name == "OLED Dark");
 
     // Remove the previous flags
-    await PrefsSvc.i.remove("previous-dark");
+    await PrefsSvc.theme.clearPreviousDarkTheme();
 
     return previous;
   }
 
   Future<ThemeStruct> revertToPreviousLightTheme() async {
     List<ThemeStruct> allThemes = ThemeStruct.getThemes();
-    final lightName = PrefsSvc.i.getString("previous-light");
+    final lightName = PrefsSvc.theme.getPreviousLightTheme();
     ThemeStruct? previous = allThemes.firstWhereOrNull((e) => e.name == lightName);
 
     previous ??= defaultThemes.firstWhere((element) => element.name == "Bright White");
 
     // Remove the previous flags
-    await PrefsSvc.i.remove("previous-light");
+    await PrefsSvc.theme.clearPreviousLightTheme();
 
     return previous;
   }
@@ -269,148 +589,13 @@ class ThemesService {
   Future<void> changeTheme(BuildContext context, {ThemeStruct? light, ThemeStruct? dark}) async {
     light?.save();
     dark?.save();
-    if (light != null) await PrefsSvc.i.setString("selected-light", light.name);
-    if (dark != null) await PrefsSvc.i.setString("selected-dark", dark.name);
+    await PrefsSvc.theme.setSelectedThemes(
+      lightTheme: light?.name,
+      darkTheme: dark?.name,
+    );
 
+    if (!context.mounted) return;
     _loadTheme(context);
-  }
-
-  ThemePair _applyMonet(ThemeData light, ThemeData dark) {
-    if (SettingsSvc.settings.monetTheming.value == Monet.harmonize && monetPalette != null) {
-      light = light.copyWith(
-        colorScheme: light.colorScheme.copyWith(
-          primary: Color(monetPalette!.primary.get(40)),
-          onPrimary: Color(monetPalette!.primary.get(100)),
-          primaryContainer: Color(monetPalette!.primary.get(90)),
-          onPrimaryContainer: Color(monetPalette!.primary.get(10)),
-          secondary: light.colorScheme.secondary.harmonizeWith(Color(monetPalette!.secondary.get(40))),
-          onSecondary: light.colorScheme.onSecondary.harmonizeWith(Color(monetPalette!.secondary.get(100))),
-          secondaryContainer:
-              light.colorScheme.secondaryContainer.harmonizeWith(Color(monetPalette!.secondary.get(90))),
-          onSecondaryContainer:
-              light.colorScheme.onSecondaryContainer.harmonizeWith(Color(monetPalette!.secondary.get(10))),
-          tertiary: light.colorScheme.tertiary.harmonizeWith(Color(monetPalette!.tertiary.get(40))),
-          onTertiary: light.colorScheme.onTertiary.harmonizeWith(Color(monetPalette!.tertiary.get(100))),
-          tertiaryContainer: light.colorScheme.tertiaryContainer.harmonizeWith(Color(monetPalette!.tertiary.get(90))),
-          onTertiaryContainer:
-              light.colorScheme.onTertiaryContainer.harmonizeWith(Color(monetPalette!.tertiary.get(10))),
-          error: light.colorScheme.error.harmonizeWith(Color(monetPalette!.error.get(40))),
-          onError: light.colorScheme.onError.harmonizeWith(Color(monetPalette!.error.get(100))),
-          errorContainer: light.colorScheme.errorContainer.harmonizeWith(Color(monetPalette!.error.get(90))),
-          onErrorContainer: light.colorScheme.onErrorContainer.harmonizeWith(Color(monetPalette!.error.get(10))),
-          surface: light.colorScheme.surface.harmonizeWith(Color(monetPalette!.neutral.get(99))),
-          onSurface: light.colorScheme.onSurface.harmonizeWith(Color(monetPalette!.neutral.get(10))),
-          surfaceVariant: light.colorScheme.surfaceVariant.harmonizeWith(Color(monetPalette!.neutralVariant.get(90))),
-          onSurfaceVariant:
-              light.colorScheme.onSurfaceVariant.harmonizeWith(Color(monetPalette!.neutralVariant.get(30))),
-          outline: light.colorScheme.outline.harmonizeWith(Color(monetPalette!.neutralVariant.get(50))),
-          outlineVariant: light.colorScheme.outlineVariant.harmonizeWith(Color(monetPalette!.neutralVariant.get(80))),
-          shadow: light.colorScheme.shadow.harmonizeWith(Color(monetPalette!.neutral.get(0))),
-          inverseSurface: light.colorScheme.inverseSurface.harmonizeWith(Color(monetPalette!.neutral.get(20))),
-          onInverseSurface: light.colorScheme.onInverseSurface.harmonizeWith(Color(monetPalette!.neutral.get(95))),
-          inversePrimary: light.colorScheme.inversePrimary.harmonizeWith(Color(monetPalette!.primary.get(80))),
-          scrim: light.colorScheme.outlineVariant.harmonizeWith(Color(monetPalette!.neutral.get(0))),
-        ),
-      );
-      dark = dark.copyWith(
-        colorScheme: dark.colorScheme.copyWith(
-          primary: Color(monetPalette!.primary.get(80)),
-          onPrimary: Color(monetPalette!.primary.get(20)),
-          primaryContainer: Color(monetPalette!.primary.get(30)),
-          onPrimaryContainer: Color(monetPalette!.primary.get(90)),
-          secondary: dark.colorScheme.secondary.harmonizeWith(Color(monetPalette!.secondary.get(80))),
-          onSecondary: dark.colorScheme.onSecondary.harmonizeWith(Color(monetPalette!.secondary.get(20))),
-          secondaryContainer: dark.colorScheme.secondaryContainer.harmonizeWith(Color(monetPalette!.secondary.get(30))),
-          onSecondaryContainer:
-              dark.colorScheme.onSecondaryContainer.harmonizeWith(Color(monetPalette!.secondary.get(90))),
-          tertiary: dark.colorScheme.tertiary.harmonizeWith(Color(monetPalette!.tertiary.get(80))),
-          onTertiary: dark.colorScheme.onTertiary.harmonizeWith(Color(monetPalette!.tertiary.get(20))),
-          tertiaryContainer: dark.colorScheme.tertiaryContainer.harmonizeWith(Color(monetPalette!.tertiary.get(30))),
-          onTertiaryContainer:
-              dark.colorScheme.onTertiaryContainer.harmonizeWith(Color(monetPalette!.tertiary.get(90))),
-          error: dark.colorScheme.error.harmonizeWith(Color(monetPalette!.error.get(80))),
-          onError: dark.colorScheme.onError.harmonizeWith(Color(monetPalette!.error.get(20))),
-          errorContainer: dark.colorScheme.errorContainer.harmonizeWith(Color(monetPalette!.error.get(30))),
-          onErrorContainer: dark.colorScheme.onErrorContainer.harmonizeWith(Color(monetPalette!.error.get(80))),
-          surface: dark.colorScheme.surface.harmonizeWith(Color(monetPalette!.neutral.get(10))),
-          onSurface: dark.colorScheme.onSurface.harmonizeWith(Color(monetPalette!.neutral.get(90))),
-          surfaceVariant: dark.colorScheme.surfaceVariant.harmonizeWith(Color(monetPalette!.neutralVariant.get(30))),
-          onSurfaceVariant:
-              dark.colorScheme.onSurfaceVariant.harmonizeWith(Color(monetPalette!.neutralVariant.get(80))),
-          outline: dark.colorScheme.outline.harmonizeWith(Color(monetPalette!.neutralVariant.get(60))),
-          outlineVariant: dark.colorScheme.outlineVariant.harmonizeWith(Color(monetPalette!.neutralVariant.get(30))),
-          shadow: dark.colorScheme.shadow.harmonizeWith(Color(monetPalette!.neutral.get(0))),
-          inverseSurface: dark.colorScheme.inverseSurface.harmonizeWith(Color(monetPalette!.neutral.get(90))),
-          onInverseSurface: dark.colorScheme.onInverseSurface.harmonizeWith(Color(monetPalette!.neutral.get(20))),
-          inversePrimary: dark.colorScheme.inversePrimary.harmonizeWith(Color(monetPalette!.primary.get(40))),
-          scrim: dark.colorScheme.outlineVariant.harmonizeWith(Color(monetPalette!.neutral.get(0))),
-        ),
-      );
-    } else if (isFullMonet && monetPalette != null) {
-      light = light.copyWith(
-        colorScheme: light.colorScheme.copyWith(
-          primary: Color(monetPalette!.primary.get(40)),
-          onPrimary: Color(monetPalette!.primary.get(100)),
-          primaryContainer: Color(monetPalette!.primary.get(90)),
-          onPrimaryContainer: Color(monetPalette!.primary.get(10)),
-          secondary: Color(monetPalette!.secondary.get(40)),
-          onSecondary: Color(monetPalette!.secondary.get(100)),
-          secondaryContainer: Color(monetPalette!.secondary.get(90)),
-          onSecondaryContainer: Color(monetPalette!.secondary.get(10)),
-          tertiary: Color(monetPalette!.tertiary.get(40)),
-          onTertiary: Color(monetPalette!.tertiary.get(100)),
-          tertiaryContainer: Color(monetPalette!.tertiary.get(90)),
-          onTertiaryContainer: Color(monetPalette!.tertiary.get(10)),
-          error: Color(monetPalette!.error.get(40)),
-          onError: Color(monetPalette!.error.get(100)),
-          errorContainer: Color(monetPalette!.error.get(90)),
-          onErrorContainer: Color(monetPalette!.error.get(10)),
-          surface: Color(monetPalette!.neutral.get(99)),
-          onSurface: Color(monetPalette!.neutral.get(10)),
-          surfaceVariant: Color(monetPalette!.neutralVariant.get(90)),
-          onSurfaceVariant: Color(monetPalette!.neutralVariant.get(30)),
-          outline: Color(monetPalette!.neutralVariant.get(50)),
-          outlineVariant: Color(monetPalette!.neutralVariant.get(80)),
-          shadow: Color(monetPalette!.neutral.get(0)),
-          inverseSurface: Color(monetPalette!.neutral.get(20)),
-          onInverseSurface: Color(monetPalette!.neutral.get(95)),
-          inversePrimary: Color(monetPalette!.primary.get(80)),
-          scrim: Color(monetPalette!.neutral.get(0)),
-        ),
-      );
-      dark = dark.copyWith(
-        colorScheme: dark.colorScheme.copyWith(
-          primary: Color(monetPalette!.primary.get(80)),
-          onPrimary: Color(monetPalette!.primary.get(20)),
-          primaryContainer: Color(monetPalette!.primary.get(30)),
-          onPrimaryContainer: Color(monetPalette!.primary.get(90)),
-          secondary: Color(monetPalette!.secondary.get(80)),
-          onSecondary: Color(monetPalette!.secondary.get(20)),
-          secondaryContainer: Color(monetPalette!.secondary.get(30)),
-          onSecondaryContainer: Color(monetPalette!.secondary.get(90)),
-          tertiary: Color(monetPalette!.tertiary.get(80)),
-          onTertiary: Color(monetPalette!.tertiary.get(20)),
-          tertiaryContainer: Color(monetPalette!.tertiary.get(30)),
-          onTertiaryContainer: Color(monetPalette!.tertiary.get(90)),
-          error: Color(monetPalette!.error.get(80)),
-          onError: Color(monetPalette!.error.get(20)),
-          errorContainer: Color(monetPalette!.error.get(30)),
-          onErrorContainer: Color(monetPalette!.error.get(80)),
-          surface: Color(monetPalette!.neutral.get(10)),
-          onSurface: Color(monetPalette!.neutral.get(90)),
-          surfaceVariant: Color(monetPalette!.neutralVariant.get(30)),
-          onSurfaceVariant: Color(monetPalette!.neutralVariant.get(80)),
-          outline: Color(monetPalette!.neutralVariant.get(60)),
-          outlineVariant: Color(monetPalette!.neutralVariant.get(30)),
-          shadow: Color(monetPalette!.neutral.get(0)),
-          inverseSurface: Color(monetPalette!.neutral.get(90)),
-          onInverseSurface: Color(monetPalette!.neutral.get(20)),
-          inversePrimary: Color(monetPalette!.primary.get(40)),
-          scrim: Color(monetPalette!.neutral.get(0)),
-        ),
-      );
-    }
-    return ThemePair(light: light, dark: dark);
   }
 
   ThemePair _applyWindowsAccent(ThemeData light, ThemeData dark) {
@@ -418,7 +603,7 @@ class ThemesService {
       return ThemePair(light: light, dark: dark);
     }
 
-    CorePalette palette = CorePalette.of(desktopAccentColor!.toARGB32());
+    CorePalette palette = CorePalette.of(desktopAccentColor!.value);
 
     light = light.copyWith(
       colorScheme: light.colorScheme.copyWith(

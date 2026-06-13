@@ -17,16 +17,19 @@ class GlobalIsolate {
   ReceivePort? _errorPort;
   SendPort? _sendPort;
   final Map<String, _RequestInfo> _pendingRequests = {};
+  bool _shutdownPending = false;
   final StreamController<dynamic> _controller = StreamController.broadcast();
   final Map<IsolateEvent, List<Function(dynamic)>> _eventListeners = {};
   bool _isRunning = false;
   bool _isStarting = false;
   Completer<void> _startCompleter = Completer<void>();
+
+  /// Completer resolved when the spawned isolate sends back its SendPort.
+  Completer<void>? _sendPortCompleter;
   final List<Future<void> Function()> _onStartedCallbacks = [];
 
   /// Timer for tracking isolate inactivity
   Timer? _idleTimer;
-  DateTime? _lastActivityTime;
 
   /// Timeout duration for individual task requests
   final Duration taskTimeout;
@@ -93,8 +96,11 @@ class GlobalIsolate {
     // Clear any stale SendPort left over from a previous failed/timed-out attempt so
     // that _waitForSendPort does not complete prematurely on a dead port.
     _sendPort = null;
+    // Fresh completer for this startup attempt.
+    _sendPortCompleter = Completer<void>();
 
     _isStarting = true;
+    _shutdownPending = false;
 
     try {
       // Create a new ReceivePort for this isolate instance
@@ -141,7 +147,7 @@ class GlobalIsolate {
       await _waitForSendPort();
 
       _isRunning = true;
-      _lastActivityTime = DateTime.now();
+      _scheduleIdleShutdown();
 
       if (!_startCompleter.isCompleted) {
         _startCompleter.complete();
@@ -162,31 +168,13 @@ class GlobalIsolate {
   }
 
   Future<void> _waitForSendPort() async {
-    final completer = Completer<void>();
-    final startTime = DateTime.now();
-    final maxWaitTime = startupTimeout;
-
-    Timer.periodic(const Duration(milliseconds: 10), (timer) {
-      if (_sendPort != null) {
-        timer.cancel();
-        completer.complete();
-      } else if (_isolate == null) {
-        // Isolate exited (or was killed) before it could send its SendPort — fail immediately
-        // rather than burning the full startupTimeout.
-        timer.cancel();
-        if (!completer.isCompleted) {
-          completer.completeError('Isolate exited before sending SendPort');
-        }
-      } else if (DateTime.now().difference(startTime) > maxWaitTime) {
-        timer.cancel();
-        if (!completer.isCompleted) {
-          completer.completeError('Timeout waiting for isolate SendPort after ${maxWaitTime.inSeconds}s');
-        }
-      }
-    });
-
     try {
-      await completer.future;
+      await _sendPortCompleter!.future.timeout(
+        startupTimeout,
+        onTimeout: () => throw TimeoutException(
+          'Timeout waiting for isolate SendPort after ${startupTimeout.inSeconds}s',
+        ),
+      );
       Logger.debug('Received SendPort from isolate');
     } catch (e) {
       Logger.error('Failed to receive SendPort: $e');
@@ -199,8 +187,9 @@ class GlobalIsolate {
     }
   }
 
-  /// Stops the isolate
-  void stop() {
+  /// Stops the isolate process but keeps runtime listeners/state by default so
+  /// lazy restarts continue to deliver events to existing subscribers.
+  void stop({bool clearEventListeners = false, bool closeOutputStream = false}) {
     if (!_isRunning) return;
 
     // Cancel the idle timer
@@ -216,7 +205,9 @@ class GlobalIsolate {
     _exitPort = null;
     _errorPort?.close();
     _errorPort = null;
-    _controller.close();
+    if (closeOutputStream) {
+      _controller.close();
+    }
 
     // Complete all pending requests with an error
     for (final requestInfo in _pendingRequests.values) {
@@ -227,11 +218,13 @@ class GlobalIsolate {
     }
 
     _pendingRequests.clear();
-    _eventListeners.clear();
+    _shutdownPending = false;
+    if (clearEventListeners) {
+      _eventListeners.clear();
+    }
     _isolate = null;
     _sendPort = null;
     _isRunning = false;
-    _lastActivityTime = null;
 
     // Reset the start completer
     if (_startCompleter.isCompleted) {
@@ -239,9 +232,29 @@ class GlobalIsolate {
     }
   }
 
+  /// Requests graceful shutdown:
+  /// - blocks new requests while draining
+  /// - stops immediately once in-flight requests reach zero
+  ///
+  /// Safe to fire-and-forget with [unawaited].
+  Future<void> drainAndStop() async {
+    _shutdownPending = true;
+
+    if (_pendingRequests.isEmpty) {
+      Logger.info('$isolateDebugName draining complete (0 pending). Stopping now.');
+      stop();
+      return;
+    }
+
+    Logger.info(
+      '$isolateDebugName drain requested with ${_pendingRequests.length} pending request(s). '
+      'Will stop when all pending requests complete.',
+    );
+  }
+
   /// Closes the isolate and clears all listeners
   void close() {
-    stop();
+    stop(clearEventListeners: true, closeOutputStream: true);
   }
 
   /// Register a listener for a specific event type
@@ -294,11 +307,15 @@ class GlobalIsolate {
           if (!requestInfo.completer.isCompleted) {
             requestInfo.completer.completeError('Request timeout after ${customTimeout ?? taskTimeout}');
           }
+          _maybeStopAfterDrain();
         }
       });
     }
 
     _pendingRequests[requestId] = _RequestInfo(completer: completer, timer: timer, type: type);
+
+    // Reset idle shutdown when new work is queued.
+    _scheduleIdleShutdown();
 
     // Create a standard request message
     final message = IsolateRequest(uuid: requestId, type: type, data: input).toMap();
@@ -311,6 +328,8 @@ class GlobalIsolate {
   /// Fire-and-forget send (no response expected)
   void broadcast(IsolateRequestType type, dynamic input) {
     _ensureStarted().then((_) {
+      _scheduleIdleShutdown();
+
       // Create a standard request message with empty UUID since no response is expected
       final message = IsolateRequest(uuid: '', type: type, data: input).toMap();
 
@@ -321,6 +340,9 @@ class GlobalIsolate {
   void _handleIsolateMessage(dynamic message) {
     if (message is SendPort) {
       _sendPort = message;
+      if (_sendPortCompleter != null && !_sendPortCompleter!.isCompleted) {
+        _sendPortCompleter!.complete();
+      }
       return;
     }
 
@@ -344,15 +366,18 @@ class GlobalIsolate {
         final requestInfo = _pendingRequests.remove(uuid)!;
         requestInfo.timer?.cancel();
 
-        // Track activity when work completes
-        _lastActivityTime = DateTime.now();
-        _resetIdleTimer();
+        // Reset idle shutdown after work completes.
+        // This controls the idle timeout, not the shutdownPending case.
+        _scheduleIdleShutdown();
 
         if (isolateResponse.ok) {
           requestInfo.completer.complete(isolateResponse.data);
         } else {
           requestInfo.completer.completeError(isolateResponse.error ?? 'Unknown error');
         }
+
+        // If we have a pending shutdown and this was the last in-flight request, stop the isolate now
+        _maybeStopAfterDrain();
       } else if (isolateResponse.data != null) {
         // Broadcast the response data
         _controller.add(isolateResponse.data);
@@ -379,44 +404,33 @@ class GlobalIsolate {
     }
   }
 
-  /// Start the idle timer to automatically shutdown the isolate after a period of inactivity
-  void _startIdleTimer() {
+  void _maybeStopAfterDrain() {
+    if (!_shutdownPending) return;
+    if (_pendingRequests.isNotEmpty) return;
+    Logger.info('$isolateDebugName draining complete. Stopping isolate.');
+    stop();
+  }
+
+  /// Schedules isolate shutdown to happen [idleTimeout] after the latest activity.
+  /// This avoids periodic polling and makes idle shutdown precise.
+  void _scheduleIdleShutdown() {
     if (idleTimeout == null) return;
 
     _idleTimer?.cancel();
-    _idleTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
-      if (_lastActivityTime == null) return;
+    _idleTimer = Timer(idleTimeout!, () {
+      if (!_isRunning) return;
 
-      final idleDuration = DateTime.now().difference(_lastActivityTime!);
-      if (idleDuration >= idleTimeout!) {
-        Logger.info('$isolateDebugName has been idle for ${idleDuration.inMinutes} minutes. Shutting down...');
-        timer.cancel();
-        stop();
+      // Never stop while work is in flight. Re-schedule from "now" and check again.
+      if (_pendingRequests.isNotEmpty) {
+        _scheduleIdleShutdown();
+        return;
       }
+
+      Logger.info(
+        '$isolateDebugName has been idle for ${idleTimeout!.inSeconds}s. Shutting down...',
+      );
+      stop();
     });
-  }
-
-  /// Reset the idle timer after activity
-  void _resetIdleTimer() {
-    if (idleTimeout == null) return;
-
-    _lastActivityTime = DateTime.now();
-
-    // Start the idle timer if it's not already running (starts after first work completion)
-    if (_idleTimer == null || !_idleTimer!.isActive) {
-      _startIdleTimer();
-    }
-
-    // Special handling for Duration.zero - shutdown immediately after work completes
-    if (idleTimeout == Duration.zero) {
-      // Use a short delay to allow any pending cleanup
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (_isRunning && _pendingRequests.isEmpty) {
-          Logger.info('$isolateDebugName idleTimeout is zero. Shutting down after work completion...');
-          stop();
-        }
-      });
-    }
   }
 
   /// Verify that the isolate is actually alive and responsive
@@ -458,7 +472,6 @@ class GlobalIsolate {
     _isolate = null;
     _sendPort = null;
     _isRunning = false;
-    _lastActivityTime = null;
 
     // Reset the start completer
     if (_startCompleter.isCompleted) {
@@ -471,6 +484,12 @@ class GlobalIsolate {
     // Guard against double-cleanup but allow the startup case:
     // during startup _isRunning is false, so the old guard would wrongly skip cleanup.
     if (!_isRunning && !_isStarting) return;
+
+    // If we're still waiting for the SendPort, fail the completer immediately so
+    // _waitForSendPort() unblocks rather than waiting for the full startup timeout.
+    if (_isStarting && _sendPortCompleter != null && !_sendPortCompleter!.isCompleted) {
+      _sendPortCompleter!.completeError('Isolate exited before sending SendPort');
+    }
 
     Logger.warn('$isolateDebugName has exited unexpectedly (isRunning=$_isRunning, isStarting=$_isStarting)');
     _cleanupDeadIsolate();
@@ -532,7 +551,7 @@ class GlobalIsolate {
         sendPort.send(IsolateResponse.success(uuid: uuid, data: result).toMap());
         Logger.debug('Returning request: $type');
       } catch (e, s) {
-        Logger.error('Error in isolate action: $e', trace: s);
+        Logger.error('Error in isolate action: [$type] $e', trace: s);
 
         // Send standardized error response
         sendPort.send(
@@ -589,6 +608,8 @@ enum IsolateRequestType {
   // Chat actions
   clearNotificationForChat,
   markChatReadUnread,
+  startTyping,
+  stopTyping,
   saveChat,
   deleteChat,
   softDeleteChat,
@@ -598,7 +619,6 @@ enum IsolateRequestType {
   syncLatestMessages,
   bulkSyncChats,
   getMessagesAsync,
-  bulkSyncMessages,
   getParticipantsAsync,
   clearTranscriptAsync,
   getChatsAsync,
@@ -633,13 +653,16 @@ enum IsolateRequestType {
 
   // Sync actions
   performIncrementalSync,
+  bulkSyncData,
+
+  // Send message actions (routed through isolate so sends survive backgrounding)
+  sendTextMessage,
+  sendTapback,
+  sendMultipartMessage,
+  sendAttachmentMessage,
 
   // Message actions
-  bulkSaveNewMessages,
-  bulkAddMessages,
   replaceMessage,
-  fetchAttachmentsAsync,
-  getChatAsync,
   deleteMessage,
   softDeleteMessage,
   fetchAssociatedMessagesAsync,

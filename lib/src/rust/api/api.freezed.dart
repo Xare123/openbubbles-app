@@ -25,7 +25,8 @@ mixin _$AttachmentType {
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
+  int get hashCode =>
+      Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
 
   @override
   String toString() {
@@ -222,7 +223,8 @@ class AttachmentType_Inline extends AttachmentType {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $AttachmentType_InlineCopyWith<AttachmentType_Inline> get copyWith =>
-      _$AttachmentType_InlineCopyWithImpl<AttachmentType_Inline>(this, _$identity);
+      _$AttachmentType_InlineCopyWithImpl<AttachmentType_Inline>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -233,7 +235,8 @@ class AttachmentType_Inline extends AttachmentType {
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
+  int get hashCode =>
+      Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
 
   @override
   String toString() {
@@ -242,15 +245,18 @@ class AttachmentType_Inline extends AttachmentType {
 }
 
 /// @nodoc
-abstract mixin class $AttachmentType_InlineCopyWith<$Res> implements $AttachmentTypeCopyWith<$Res> {
-  factory $AttachmentType_InlineCopyWith(AttachmentType_Inline value, $Res Function(AttachmentType_Inline) _then) =
+abstract mixin class $AttachmentType_InlineCopyWith<$Res>
+    implements $AttachmentTypeCopyWith<$Res> {
+  factory $AttachmentType_InlineCopyWith(AttachmentType_Inline value,
+          $Res Function(AttachmentType_Inline) _then) =
       _$AttachmentType_InlineCopyWithImpl;
   @useResult
   $Res call({Uint8List field0});
 }
 
 /// @nodoc
-class _$AttachmentType_InlineCopyWithImpl<$Res> implements $AttachmentType_InlineCopyWith<$Res> {
+class _$AttachmentType_InlineCopyWithImpl<$Res>
+    implements $AttachmentType_InlineCopyWith<$Res> {
   _$AttachmentType_InlineCopyWithImpl(this._self, this._then);
 
   final AttachmentType_Inline _self;
@@ -304,15 +310,18 @@ class AttachmentType_MMCS extends AttachmentType {
 }
 
 /// @nodoc
-abstract mixin class $AttachmentType_MMCSCopyWith<$Res> implements $AttachmentTypeCopyWith<$Res> {
-  factory $AttachmentType_MMCSCopyWith(AttachmentType_MMCS value, $Res Function(AttachmentType_MMCS) _then) =
+abstract mixin class $AttachmentType_MMCSCopyWith<$Res>
+    implements $AttachmentTypeCopyWith<$Res> {
+  factory $AttachmentType_MMCSCopyWith(
+          AttachmentType_MMCS value, $Res Function(AttachmentType_MMCS) _then) =
       _$AttachmentType_MMCSCopyWithImpl;
   @useResult
   $Res call({MMCSFile field0});
 }
 
 /// @nodoc
-class _$AttachmentType_MMCSCopyWithImpl<$Res> implements $AttachmentType_MMCSCopyWith<$Res> {
+class _$AttachmentType_MMCSCopyWithImpl<$Res>
+    implements $AttachmentType_MMCSCopyWith<$Res> {
   _$AttachmentType_MMCSCopyWithImpl(this._self, this._then);
 
   final AttachmentType_MMCS _self;
@@ -348,27 +357,31 @@ mixin _$BalloonLayout {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $BalloonLayoutCopyWith<BalloonLayout> get copyWith =>
-      _$BalloonLayoutCopyWithImpl<BalloonLayout>(this as BalloonLayout, _$identity);
+      _$BalloonLayoutCopyWithImpl<BalloonLayout>(
+          this as BalloonLayout, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is BalloonLayout &&
-            (identical(other.imageSubtitle, imageSubtitle) || other.imageSubtitle == imageSubtitle) &&
-            (identical(other.imageTitle, imageTitle) || other.imageTitle == imageTitle) &&
+            (identical(other.imageSubtitle, imageSubtitle) ||
+                other.imageSubtitle == imageSubtitle) &&
+            (identical(other.imageTitle, imageTitle) ||
+                other.imageTitle == imageTitle) &&
             (identical(other.caption, caption) || other.caption == caption) &&
             (identical(other.secondarySubcaption, secondarySubcaption) ||
                 other.secondarySubcaption == secondarySubcaption) &&
             (identical(other.tertiarySubcaption, tertiarySubcaption) ||
                 other.tertiarySubcaption == tertiarySubcaption) &&
-            (identical(other.subcaption, subcaption) || other.subcaption == subcaption) &&
+            (identical(other.subcaption, subcaption) ||
+                other.subcaption == subcaption) &&
             (identical(other.class_, class_) || other.class_ == class_));
   }
 
   @override
-  int get hashCode => Object.hash(
-      runtimeType, imageSubtitle, imageTitle, caption, secondarySubcaption, tertiarySubcaption, subcaption, class_);
+  int get hashCode => Object.hash(runtimeType, imageSubtitle, imageTitle,
+      caption, secondarySubcaption, tertiarySubcaption, subcaption, class_);
 
   @override
   String toString() {
@@ -378,7 +391,9 @@ mixin _$BalloonLayout {
 
 /// @nodoc
 abstract mixin class $BalloonLayoutCopyWith<$Res> {
-  factory $BalloonLayoutCopyWith(BalloonLayout value, $Res Function(BalloonLayout) _then) = _$BalloonLayoutCopyWithImpl;
+  factory $BalloonLayoutCopyWith(
+          BalloonLayout value, $Res Function(BalloonLayout) _then) =
+      _$BalloonLayoutCopyWithImpl;
   @useResult
   $Res call(
       {String imageSubtitle,
@@ -391,7 +406,8 @@ abstract mixin class $BalloonLayoutCopyWith<$Res> {
 }
 
 /// @nodoc
-class _$BalloonLayoutCopyWithImpl<$Res> implements $BalloonLayoutCopyWith<$Res> {
+class _$BalloonLayoutCopyWithImpl<$Res>
+    implements $BalloonLayoutCopyWith<$Res> {
   _$BalloonLayoutCopyWithImpl(this._self, this._then);
 
   final BalloonLayout _self;
@@ -486,7 +502,8 @@ extension BalloonLayoutPatterns on BalloonLayout {
 
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
-    required TResult Function(BalloonLayout_TemplateLayout value) templateLayout,
+    required TResult Function(BalloonLayout_TemplateLayout value)
+        templateLayout,
   }) {
     final _that = this;
     switch (_that) {
@@ -534,16 +551,28 @@ extension BalloonLayoutPatterns on BalloonLayout {
 
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
-    TResult Function(String imageSubtitle, String imageTitle, String caption, String secondarySubcaption,
-            String tertiarySubcaption, String subcaption, NSDictionaryClass class_)?
+    TResult Function(
+            String imageSubtitle,
+            String imageTitle,
+            String caption,
+            String secondarySubcaption,
+            String tertiarySubcaption,
+            String subcaption,
+            NSDictionaryClass class_)?
         templateLayout,
     required TResult orElse(),
   }) {
     final _that = this;
     switch (_that) {
       case BalloonLayout_TemplateLayout() when templateLayout != null:
-        return templateLayout(_that.imageSubtitle, _that.imageTitle, _that.caption, _that.secondarySubcaption,
-            _that.tertiarySubcaption, _that.subcaption, _that.class_);
+        return templateLayout(
+            _that.imageSubtitle,
+            _that.imageTitle,
+            _that.caption,
+            _that.secondarySubcaption,
+            _that.tertiarySubcaption,
+            _that.subcaption,
+            _that.class_);
       case _:
         return orElse();
     }
@@ -564,15 +593,27 @@ extension BalloonLayoutPatterns on BalloonLayout {
 
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
-    required TResult Function(String imageSubtitle, String imageTitle, String caption, String secondarySubcaption,
-            String tertiarySubcaption, String subcaption, NSDictionaryClass class_)
+    required TResult Function(
+            String imageSubtitle,
+            String imageTitle,
+            String caption,
+            String secondarySubcaption,
+            String tertiarySubcaption,
+            String subcaption,
+            NSDictionaryClass class_)
         templateLayout,
   }) {
     final _that = this;
     switch (_that) {
       case BalloonLayout_TemplateLayout():
-        return templateLayout(_that.imageSubtitle, _that.imageTitle, _that.caption, _that.secondarySubcaption,
-            _that.tertiarySubcaption, _that.subcaption, _that.class_);
+        return templateLayout(
+            _that.imageSubtitle,
+            _that.imageTitle,
+            _that.caption,
+            _that.secondarySubcaption,
+            _that.tertiarySubcaption,
+            _that.subcaption,
+            _that.class_);
     }
   }
 
@@ -590,15 +631,27 @@ extension BalloonLayoutPatterns on BalloonLayout {
 
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(String imageSubtitle, String imageTitle, String caption, String secondarySubcaption,
-            String tertiarySubcaption, String subcaption, NSDictionaryClass class_)?
+    TResult? Function(
+            String imageSubtitle,
+            String imageTitle,
+            String caption,
+            String secondarySubcaption,
+            String tertiarySubcaption,
+            String subcaption,
+            NSDictionaryClass class_)?
         templateLayout,
   }) {
     final _that = this;
     switch (_that) {
       case BalloonLayout_TemplateLayout() when templateLayout != null:
-        return templateLayout(_that.imageSubtitle, _that.imageTitle, _that.caption, _that.secondarySubcaption,
-            _that.tertiarySubcaption, _that.subcaption, _that.class_);
+        return templateLayout(
+            _that.imageSubtitle,
+            _that.imageTitle,
+            _that.caption,
+            _that.secondarySubcaption,
+            _that.tertiarySubcaption,
+            _that.subcaption,
+            _that.class_);
       case _:
         return null;
     }
@@ -638,28 +691,32 @@ class BalloonLayout_TemplateLayout extends BalloonLayout {
   @override
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $BalloonLayout_TemplateLayoutCopyWith<BalloonLayout_TemplateLayout> get copyWith =>
-      _$BalloonLayout_TemplateLayoutCopyWithImpl<BalloonLayout_TemplateLayout>(this, _$identity);
+  $BalloonLayout_TemplateLayoutCopyWith<BalloonLayout_TemplateLayout>
+      get copyWith => _$BalloonLayout_TemplateLayoutCopyWithImpl<
+          BalloonLayout_TemplateLayout>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is BalloonLayout_TemplateLayout &&
-            (identical(other.imageSubtitle, imageSubtitle) || other.imageSubtitle == imageSubtitle) &&
-            (identical(other.imageTitle, imageTitle) || other.imageTitle == imageTitle) &&
+            (identical(other.imageSubtitle, imageSubtitle) ||
+                other.imageSubtitle == imageSubtitle) &&
+            (identical(other.imageTitle, imageTitle) ||
+                other.imageTitle == imageTitle) &&
             (identical(other.caption, caption) || other.caption == caption) &&
             (identical(other.secondarySubcaption, secondarySubcaption) ||
                 other.secondarySubcaption == secondarySubcaption) &&
             (identical(other.tertiarySubcaption, tertiarySubcaption) ||
                 other.tertiarySubcaption == tertiarySubcaption) &&
-            (identical(other.subcaption, subcaption) || other.subcaption == subcaption) &&
+            (identical(other.subcaption, subcaption) ||
+                other.subcaption == subcaption) &&
             (identical(other.class_, class_) || other.class_ == class_));
   }
 
   @override
-  int get hashCode => Object.hash(
-      runtimeType, imageSubtitle, imageTitle, caption, secondarySubcaption, tertiarySubcaption, subcaption, class_);
+  int get hashCode => Object.hash(runtimeType, imageSubtitle, imageTitle,
+      caption, secondarySubcaption, tertiarySubcaption, subcaption, class_);
 
   @override
   String toString() {
@@ -668,9 +725,11 @@ class BalloonLayout_TemplateLayout extends BalloonLayout {
 }
 
 /// @nodoc
-abstract mixin class $BalloonLayout_TemplateLayoutCopyWith<$Res> implements $BalloonLayoutCopyWith<$Res> {
+abstract mixin class $BalloonLayout_TemplateLayoutCopyWith<$Res>
+    implements $BalloonLayoutCopyWith<$Res> {
   factory $BalloonLayout_TemplateLayoutCopyWith(
-          BalloonLayout_TemplateLayout value, $Res Function(BalloonLayout_TemplateLayout) _then) =
+          BalloonLayout_TemplateLayout value,
+          $Res Function(BalloonLayout_TemplateLayout) _then) =
       _$BalloonLayout_TemplateLayoutCopyWithImpl;
   @override
   @useResult
@@ -685,7 +744,8 @@ abstract mixin class $BalloonLayout_TemplateLayoutCopyWith<$Res> implements $Bal
 }
 
 /// @nodoc
-class _$BalloonLayout_TemplateLayoutCopyWithImpl<$Res> implements $BalloonLayout_TemplateLayoutCopyWith<$Res> {
+class _$BalloonLayout_TemplateLayoutCopyWithImpl<$Res>
+    implements $BalloonLayout_TemplateLayoutCopyWith<$Res> {
   _$BalloonLayout_TemplateLayoutCopyWithImpl(this._self, this._then);
 
   final BalloonLayout_TemplateLayout _self;
@@ -750,7 +810,8 @@ mixin _$DeleteTarget {
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
+  int get hashCode =>
+      Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
 
   @override
   String toString() {
@@ -967,15 +1028,18 @@ class DeleteTarget_Chat extends DeleteTarget {
 }
 
 /// @nodoc
-abstract mixin class $DeleteTarget_ChatCopyWith<$Res> implements $DeleteTargetCopyWith<$Res> {
-  factory $DeleteTarget_ChatCopyWith(DeleteTarget_Chat value, $Res Function(DeleteTarget_Chat) _then) =
+abstract mixin class $DeleteTarget_ChatCopyWith<$Res>
+    implements $DeleteTargetCopyWith<$Res> {
+  factory $DeleteTarget_ChatCopyWith(
+          DeleteTarget_Chat value, $Res Function(DeleteTarget_Chat) _then) =
       _$DeleteTarget_ChatCopyWithImpl;
   @useResult
   $Res call({OperatedChat field0});
 }
 
 /// @nodoc
-class _$DeleteTarget_ChatCopyWithImpl<$Res> implements $DeleteTarget_ChatCopyWith<$Res> {
+class _$DeleteTarget_ChatCopyWithImpl<$Res>
+    implements $DeleteTarget_ChatCopyWith<$Res> {
   _$DeleteTarget_ChatCopyWithImpl(this._self, this._then);
 
   final DeleteTarget_Chat _self;
@@ -1016,7 +1080,8 @@ class DeleteTarget_Messages extends DeleteTarget {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $DeleteTarget_MessagesCopyWith<DeleteTarget_Messages> get copyWith =>
-      _$DeleteTarget_MessagesCopyWithImpl<DeleteTarget_Messages>(this, _$identity);
+      _$DeleteTarget_MessagesCopyWithImpl<DeleteTarget_Messages>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -1027,7 +1092,8 @@ class DeleteTarget_Messages extends DeleteTarget {
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, const DeepCollectionEquality().hash(_field0));
+  int get hashCode =>
+      Object.hash(runtimeType, const DeepCollectionEquality().hash(_field0));
 
   @override
   String toString() {
@@ -1036,15 +1102,18 @@ class DeleteTarget_Messages extends DeleteTarget {
 }
 
 /// @nodoc
-abstract mixin class $DeleteTarget_MessagesCopyWith<$Res> implements $DeleteTargetCopyWith<$Res> {
-  factory $DeleteTarget_MessagesCopyWith(DeleteTarget_Messages value, $Res Function(DeleteTarget_Messages) _then) =
+abstract mixin class $DeleteTarget_MessagesCopyWith<$Res>
+    implements $DeleteTargetCopyWith<$Res> {
+  factory $DeleteTarget_MessagesCopyWith(DeleteTarget_Messages value,
+          $Res Function(DeleteTarget_Messages) _then) =
       _$DeleteTarget_MessagesCopyWithImpl;
   @useResult
   $Res call({List<String> field0});
 }
 
 /// @nodoc
-class _$DeleteTarget_MessagesCopyWithImpl<$Res> implements $DeleteTarget_MessagesCopyWith<$Res> {
+class _$DeleteTarget_MessagesCopyWithImpl<$Res>
+    implements $DeleteTarget_MessagesCopyWith<$Res> {
   _$DeleteTarget_MessagesCopyWithImpl(this._self, this._then);
 
   final DeleteTarget_Messages _self;
@@ -1069,7 +1138,8 @@ class _$DeleteTarget_MessagesCopyWithImpl<$Res> implements $DeleteTarget_Message
 mixin _$FTMessage {
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is FTMessage);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is FTMessage);
   }
 
   @override
@@ -1161,7 +1231,8 @@ extension FTMessagePatterns on FTMessage {
     required TResult Function(FTMessage_LeaveEvent value) leaveEvent,
     required TResult Function(FTMessage_Ring value) ring,
     required TResult Function(FTMessage_Decline value) decline,
-    required TResult Function(FTMessage_RespondedElsewhere value) respondedElsewhere,
+    required TResult Function(FTMessage_RespondedElsewhere value)
+        respondedElsewhere,
   }) {
     final _that = this;
     switch (_that) {
@@ -1251,10 +1322,12 @@ extension FTMessagePatterns on FTMessage {
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(LetMeInRequest field0)? letMeInRequest,
     TResult Function(String guid)? linkChanged,
-    TResult Function(String guid, BigInt participant, String handle, bool ring)? joinEvent,
+    TResult Function(String guid, BigInt participant, String handle, bool ring)?
+        joinEvent,
     TResult Function(String guid, Set<FTMember> members, bool ring)? addMembers,
     TResult Function(String guid, Set<FTMember> members)? removeMembers,
-    TResult Function(String guid, BigInt participant, String handle)? leaveEvent,
+    TResult Function(String guid, BigInt participant, String handle)?
+        leaveEvent,
     TResult Function(String guid)? ring,
     TResult Function(String guid)? decline,
     TResult Function(String guid)? respondedElsewhere,
@@ -1267,7 +1340,8 @@ extension FTMessagePatterns on FTMessage {
       case FTMessage_LinkChanged() when linkChanged != null:
         return linkChanged(_that.guid);
       case FTMessage_JoinEvent() when joinEvent != null:
-        return joinEvent(_that.guid, _that.participant, _that.handle, _that.ring);
+        return joinEvent(
+            _that.guid, _that.participant, _that.handle, _that.ring);
       case FTMessage_AddMembers() when addMembers != null:
         return addMembers(_that.guid, _that.members, _that.ring);
       case FTMessage_RemoveMembers() when removeMembers != null:
@@ -1302,10 +1376,14 @@ extension FTMessagePatterns on FTMessage {
   TResult when<TResult extends Object?>({
     required TResult Function(LetMeInRequest field0) letMeInRequest,
     required TResult Function(String guid) linkChanged,
-    required TResult Function(String guid, BigInt participant, String handle, bool ring) joinEvent,
-    required TResult Function(String guid, Set<FTMember> members, bool ring) addMembers,
+    required TResult Function(
+            String guid, BigInt participant, String handle, bool ring)
+        joinEvent,
+    required TResult Function(String guid, Set<FTMember> members, bool ring)
+        addMembers,
     required TResult Function(String guid, Set<FTMember> members) removeMembers,
-    required TResult Function(String guid, BigInt participant, String handle) leaveEvent,
+    required TResult Function(String guid, BigInt participant, String handle)
+        leaveEvent,
     required TResult Function(String guid) ring,
     required TResult Function(String guid) decline,
     required TResult Function(String guid) respondedElsewhere,
@@ -1317,7 +1395,8 @@ extension FTMessagePatterns on FTMessage {
       case FTMessage_LinkChanged():
         return linkChanged(_that.guid);
       case FTMessage_JoinEvent():
-        return joinEvent(_that.guid, _that.participant, _that.handle, _that.ring);
+        return joinEvent(
+            _that.guid, _that.participant, _that.handle, _that.ring);
       case FTMessage_AddMembers():
         return addMembers(_that.guid, _that.members, _that.ring);
       case FTMessage_RemoveMembers():
@@ -1349,10 +1428,14 @@ extension FTMessagePatterns on FTMessage {
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(LetMeInRequest field0)? letMeInRequest,
     TResult? Function(String guid)? linkChanged,
-    TResult? Function(String guid, BigInt participant, String handle, bool ring)? joinEvent,
-    TResult? Function(String guid, Set<FTMember> members, bool ring)? addMembers,
+    TResult? Function(
+            String guid, BigInt participant, String handle, bool ring)?
+        joinEvent,
+    TResult? Function(String guid, Set<FTMember> members, bool ring)?
+        addMembers,
     TResult? Function(String guid, Set<FTMember> members)? removeMembers,
-    TResult? Function(String guid, BigInt participant, String handle)? leaveEvent,
+    TResult? Function(String guid, BigInt participant, String handle)?
+        leaveEvent,
     TResult? Function(String guid)? ring,
     TResult? Function(String guid)? decline,
     TResult? Function(String guid)? respondedElsewhere,
@@ -1364,7 +1447,8 @@ extension FTMessagePatterns on FTMessage {
       case FTMessage_LinkChanged() when linkChanged != null:
         return linkChanged(_that.guid);
       case FTMessage_JoinEvent() when joinEvent != null:
-        return joinEvent(_that.guid, _that.participant, _that.handle, _that.ring);
+        return joinEvent(
+            _that.guid, _that.participant, _that.handle, _that.ring);
       case FTMessage_AddMembers() when addMembers != null:
         return addMembers(_that.guid, _that.members, _that.ring);
       case FTMessage_RemoveMembers() when removeMembers != null:
@@ -1395,7 +1479,8 @@ class FTMessage_LetMeInRequest extends FTMessage {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $FTMessage_LetMeInRequestCopyWith<FTMessage_LetMeInRequest> get copyWith =>
-      _$FTMessage_LetMeInRequestCopyWithImpl<FTMessage_LetMeInRequest>(this, _$identity);
+      _$FTMessage_LetMeInRequestCopyWithImpl<FTMessage_LetMeInRequest>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -1415,16 +1500,18 @@ class FTMessage_LetMeInRequest extends FTMessage {
 }
 
 /// @nodoc
-abstract mixin class $FTMessage_LetMeInRequestCopyWith<$Res> implements $FTMessageCopyWith<$Res> {
-  factory $FTMessage_LetMeInRequestCopyWith(
-          FTMessage_LetMeInRequest value, $Res Function(FTMessage_LetMeInRequest) _then) =
+abstract mixin class $FTMessage_LetMeInRequestCopyWith<$Res>
+    implements $FTMessageCopyWith<$Res> {
+  factory $FTMessage_LetMeInRequestCopyWith(FTMessage_LetMeInRequest value,
+          $Res Function(FTMessage_LetMeInRequest) _then) =
       _$FTMessage_LetMeInRequestCopyWithImpl;
   @useResult
   $Res call({LetMeInRequest field0});
 }
 
 /// @nodoc
-class _$FTMessage_LetMeInRequestCopyWithImpl<$Res> implements $FTMessage_LetMeInRequestCopyWith<$Res> {
+class _$FTMessage_LetMeInRequestCopyWithImpl<$Res>
+    implements $FTMessage_LetMeInRequestCopyWith<$Res> {
   _$FTMessage_LetMeInRequestCopyWithImpl(this._self, this._then);
 
   final FTMessage_LetMeInRequest _self;
@@ -1457,7 +1544,8 @@ class FTMessage_LinkChanged extends FTMessage {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $FTMessage_LinkChangedCopyWith<FTMessage_LinkChanged> get copyWith =>
-      _$FTMessage_LinkChangedCopyWithImpl<FTMessage_LinkChanged>(this, _$identity);
+      _$FTMessage_LinkChangedCopyWithImpl<FTMessage_LinkChanged>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -1477,15 +1565,18 @@ class FTMessage_LinkChanged extends FTMessage {
 }
 
 /// @nodoc
-abstract mixin class $FTMessage_LinkChangedCopyWith<$Res> implements $FTMessageCopyWith<$Res> {
-  factory $FTMessage_LinkChangedCopyWith(FTMessage_LinkChanged value, $Res Function(FTMessage_LinkChanged) _then) =
+abstract mixin class $FTMessage_LinkChangedCopyWith<$Res>
+    implements $FTMessageCopyWith<$Res> {
+  factory $FTMessage_LinkChangedCopyWith(FTMessage_LinkChanged value,
+          $Res Function(FTMessage_LinkChanged) _then) =
       _$FTMessage_LinkChangedCopyWithImpl;
   @useResult
   $Res call({String guid});
 }
 
 /// @nodoc
-class _$FTMessage_LinkChangedCopyWithImpl<$Res> implements $FTMessage_LinkChangedCopyWith<$Res> {
+class _$FTMessage_LinkChangedCopyWithImpl<$Res>
+    implements $FTMessage_LinkChangedCopyWith<$Res> {
   _$FTMessage_LinkChangedCopyWithImpl(this._self, this._then);
 
   final FTMessage_LinkChanged _self;
@@ -1509,7 +1600,11 @@ class _$FTMessage_LinkChangedCopyWithImpl<$Res> implements $FTMessage_LinkChange
 /// @nodoc
 
 class FTMessage_JoinEvent extends FTMessage {
-  const FTMessage_JoinEvent({required this.guid, required this.participant, required this.handle, required this.ring})
+  const FTMessage_JoinEvent(
+      {required this.guid,
+      required this.participant,
+      required this.handle,
+      required this.ring})
       : super._();
 
   final String guid;
@@ -1530,7 +1625,8 @@ class FTMessage_JoinEvent extends FTMessage {
         (other.runtimeType == runtimeType &&
             other is FTMessage_JoinEvent &&
             (identical(other.guid, guid) || other.guid == guid) &&
-            (identical(other.participant, participant) || other.participant == participant) &&
+            (identical(other.participant, participant) ||
+                other.participant == participant) &&
             (identical(other.handle, handle) || other.handle == handle) &&
             (identical(other.ring, ring) || other.ring == ring));
   }
@@ -1545,15 +1641,18 @@ class FTMessage_JoinEvent extends FTMessage {
 }
 
 /// @nodoc
-abstract mixin class $FTMessage_JoinEventCopyWith<$Res> implements $FTMessageCopyWith<$Res> {
-  factory $FTMessage_JoinEventCopyWith(FTMessage_JoinEvent value, $Res Function(FTMessage_JoinEvent) _then) =
+abstract mixin class $FTMessage_JoinEventCopyWith<$Res>
+    implements $FTMessageCopyWith<$Res> {
+  factory $FTMessage_JoinEventCopyWith(
+          FTMessage_JoinEvent value, $Res Function(FTMessage_JoinEvent) _then) =
       _$FTMessage_JoinEventCopyWithImpl;
   @useResult
   $Res call({String guid, BigInt participant, String handle, bool ring});
 }
 
 /// @nodoc
-class _$FTMessage_JoinEventCopyWithImpl<$Res> implements $FTMessage_JoinEventCopyWith<$Res> {
+class _$FTMessage_JoinEventCopyWithImpl<$Res>
+    implements $FTMessage_JoinEventCopyWith<$Res> {
   _$FTMessage_JoinEventCopyWithImpl(this._self, this._then);
 
   final FTMessage_JoinEvent _self;
@@ -1592,7 +1691,10 @@ class _$FTMessage_JoinEventCopyWithImpl<$Res> implements $FTMessage_JoinEventCop
 /// @nodoc
 
 class FTMessage_AddMembers extends FTMessage {
-  const FTMessage_AddMembers({required this.guid, required final Set<FTMember> members, required this.ring})
+  const FTMessage_AddMembers(
+      {required this.guid,
+      required final Set<FTMember> members,
+      required this.ring})
       : _members = members,
         super._();
 
@@ -1611,7 +1713,8 @@ class FTMessage_AddMembers extends FTMessage {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $FTMessage_AddMembersCopyWith<FTMessage_AddMembers> get copyWith =>
-      _$FTMessage_AddMembersCopyWithImpl<FTMessage_AddMembers>(this, _$identity);
+      _$FTMessage_AddMembersCopyWithImpl<FTMessage_AddMembers>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -1624,7 +1727,8 @@ class FTMessage_AddMembers extends FTMessage {
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, guid, const DeepCollectionEquality().hash(_members), ring);
+  int get hashCode => Object.hash(
+      runtimeType, guid, const DeepCollectionEquality().hash(_members), ring);
 
   @override
   String toString() {
@@ -1633,15 +1737,18 @@ class FTMessage_AddMembers extends FTMessage {
 }
 
 /// @nodoc
-abstract mixin class $FTMessage_AddMembersCopyWith<$Res> implements $FTMessageCopyWith<$Res> {
-  factory $FTMessage_AddMembersCopyWith(FTMessage_AddMembers value, $Res Function(FTMessage_AddMembers) _then) =
+abstract mixin class $FTMessage_AddMembersCopyWith<$Res>
+    implements $FTMessageCopyWith<$Res> {
+  factory $FTMessage_AddMembersCopyWith(FTMessage_AddMembers value,
+          $Res Function(FTMessage_AddMembers) _then) =
       _$FTMessage_AddMembersCopyWithImpl;
   @useResult
   $Res call({String guid, Set<FTMember> members, bool ring});
 }
 
 /// @nodoc
-class _$FTMessage_AddMembersCopyWithImpl<$Res> implements $FTMessage_AddMembersCopyWith<$Res> {
+class _$FTMessage_AddMembersCopyWithImpl<$Res>
+    implements $FTMessage_AddMembersCopyWith<$Res> {
   _$FTMessage_AddMembersCopyWithImpl(this._self, this._then);
 
   final FTMessage_AddMembers _self;
@@ -1675,7 +1782,8 @@ class _$FTMessage_AddMembersCopyWithImpl<$Res> implements $FTMessage_AddMembersC
 /// @nodoc
 
 class FTMessage_RemoveMembers extends FTMessage {
-  const FTMessage_RemoveMembers({required this.guid, required final Set<FTMember> members})
+  const FTMessage_RemoveMembers(
+      {required this.guid, required final Set<FTMember> members})
       : _members = members,
         super._();
 
@@ -1692,7 +1800,8 @@ class FTMessage_RemoveMembers extends FTMessage {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $FTMessage_RemoveMembersCopyWith<FTMessage_RemoveMembers> get copyWith =>
-      _$FTMessage_RemoveMembersCopyWithImpl<FTMessage_RemoveMembers>(this, _$identity);
+      _$FTMessage_RemoveMembersCopyWithImpl<FTMessage_RemoveMembers>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -1704,7 +1813,8 @@ class FTMessage_RemoveMembers extends FTMessage {
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, guid, const DeepCollectionEquality().hash(_members));
+  int get hashCode => Object.hash(
+      runtimeType, guid, const DeepCollectionEquality().hash(_members));
 
   @override
   String toString() {
@@ -1713,16 +1823,18 @@ class FTMessage_RemoveMembers extends FTMessage {
 }
 
 /// @nodoc
-abstract mixin class $FTMessage_RemoveMembersCopyWith<$Res> implements $FTMessageCopyWith<$Res> {
-  factory $FTMessage_RemoveMembersCopyWith(
-          FTMessage_RemoveMembers value, $Res Function(FTMessage_RemoveMembers) _then) =
+abstract mixin class $FTMessage_RemoveMembersCopyWith<$Res>
+    implements $FTMessageCopyWith<$Res> {
+  factory $FTMessage_RemoveMembersCopyWith(FTMessage_RemoveMembers value,
+          $Res Function(FTMessage_RemoveMembers) _then) =
       _$FTMessage_RemoveMembersCopyWithImpl;
   @useResult
   $Res call({String guid, Set<FTMember> members});
 }
 
 /// @nodoc
-class _$FTMessage_RemoveMembersCopyWithImpl<$Res> implements $FTMessage_RemoveMembersCopyWith<$Res> {
+class _$FTMessage_RemoveMembersCopyWithImpl<$Res>
+    implements $FTMessage_RemoveMembersCopyWith<$Res> {
   _$FTMessage_RemoveMembersCopyWithImpl(this._self, this._then);
 
   final FTMessage_RemoveMembers _self;
@@ -1751,7 +1863,9 @@ class _$FTMessage_RemoveMembersCopyWithImpl<$Res> implements $FTMessage_RemoveMe
 /// @nodoc
 
 class FTMessage_LeaveEvent extends FTMessage {
-  const FTMessage_LeaveEvent({required this.guid, required this.participant, required this.handle}) : super._();
+  const FTMessage_LeaveEvent(
+      {required this.guid, required this.participant, required this.handle})
+      : super._();
 
   final String guid;
   final BigInt participant;
@@ -1762,7 +1876,8 @@ class FTMessage_LeaveEvent extends FTMessage {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $FTMessage_LeaveEventCopyWith<FTMessage_LeaveEvent> get copyWith =>
-      _$FTMessage_LeaveEventCopyWithImpl<FTMessage_LeaveEvent>(this, _$identity);
+      _$FTMessage_LeaveEventCopyWithImpl<FTMessage_LeaveEvent>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -1770,7 +1885,8 @@ class FTMessage_LeaveEvent extends FTMessage {
         (other.runtimeType == runtimeType &&
             other is FTMessage_LeaveEvent &&
             (identical(other.guid, guid) || other.guid == guid) &&
-            (identical(other.participant, participant) || other.participant == participant) &&
+            (identical(other.participant, participant) ||
+                other.participant == participant) &&
             (identical(other.handle, handle) || other.handle == handle));
   }
 
@@ -1784,15 +1900,18 @@ class FTMessage_LeaveEvent extends FTMessage {
 }
 
 /// @nodoc
-abstract mixin class $FTMessage_LeaveEventCopyWith<$Res> implements $FTMessageCopyWith<$Res> {
-  factory $FTMessage_LeaveEventCopyWith(FTMessage_LeaveEvent value, $Res Function(FTMessage_LeaveEvent) _then) =
+abstract mixin class $FTMessage_LeaveEventCopyWith<$Res>
+    implements $FTMessageCopyWith<$Res> {
+  factory $FTMessage_LeaveEventCopyWith(FTMessage_LeaveEvent value,
+          $Res Function(FTMessage_LeaveEvent) _then) =
       _$FTMessage_LeaveEventCopyWithImpl;
   @useResult
   $Res call({String guid, BigInt participant, String handle});
 }
 
 /// @nodoc
-class _$FTMessage_LeaveEventCopyWithImpl<$Res> implements $FTMessage_LeaveEventCopyWith<$Res> {
+class _$FTMessage_LeaveEventCopyWithImpl<$Res>
+    implements $FTMessage_LeaveEventCopyWith<$Res> {
   _$FTMessage_LeaveEventCopyWithImpl(this._self, this._then);
 
   final FTMessage_LeaveEvent _self;
@@ -1855,15 +1974,18 @@ class FTMessage_Ring extends FTMessage {
 }
 
 /// @nodoc
-abstract mixin class $FTMessage_RingCopyWith<$Res> implements $FTMessageCopyWith<$Res> {
-  factory $FTMessage_RingCopyWith(FTMessage_Ring value, $Res Function(FTMessage_Ring) _then) =
+abstract mixin class $FTMessage_RingCopyWith<$Res>
+    implements $FTMessageCopyWith<$Res> {
+  factory $FTMessage_RingCopyWith(
+          FTMessage_Ring value, $Res Function(FTMessage_Ring) _then) =
       _$FTMessage_RingCopyWithImpl;
   @useResult
   $Res call({String guid});
 }
 
 /// @nodoc
-class _$FTMessage_RingCopyWithImpl<$Res> implements $FTMessage_RingCopyWith<$Res> {
+class _$FTMessage_RingCopyWithImpl<$Res>
+    implements $FTMessage_RingCopyWith<$Res> {
   _$FTMessage_RingCopyWithImpl(this._self, this._then);
 
   final FTMessage_Ring _self;
@@ -1916,15 +2038,18 @@ class FTMessage_Decline extends FTMessage {
 }
 
 /// @nodoc
-abstract mixin class $FTMessage_DeclineCopyWith<$Res> implements $FTMessageCopyWith<$Res> {
-  factory $FTMessage_DeclineCopyWith(FTMessage_Decline value, $Res Function(FTMessage_Decline) _then) =
+abstract mixin class $FTMessage_DeclineCopyWith<$Res>
+    implements $FTMessageCopyWith<$Res> {
+  factory $FTMessage_DeclineCopyWith(
+          FTMessage_Decline value, $Res Function(FTMessage_Decline) _then) =
       _$FTMessage_DeclineCopyWithImpl;
   @useResult
   $Res call({String guid});
 }
 
 /// @nodoc
-class _$FTMessage_DeclineCopyWithImpl<$Res> implements $FTMessage_DeclineCopyWith<$Res> {
+class _$FTMessage_DeclineCopyWithImpl<$Res>
+    implements $FTMessage_DeclineCopyWith<$Res> {
   _$FTMessage_DeclineCopyWithImpl(this._self, this._then);
 
   final FTMessage_Decline _self;
@@ -1956,8 +2081,9 @@ class FTMessage_RespondedElsewhere extends FTMessage {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $FTMessage_RespondedElsewhereCopyWith<FTMessage_RespondedElsewhere> get copyWith =>
-      _$FTMessage_RespondedElsewhereCopyWithImpl<FTMessage_RespondedElsewhere>(this, _$identity);
+  $FTMessage_RespondedElsewhereCopyWith<FTMessage_RespondedElsewhere>
+      get copyWith => _$FTMessage_RespondedElsewhereCopyWithImpl<
+          FTMessage_RespondedElsewhere>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -1977,16 +2103,19 @@ class FTMessage_RespondedElsewhere extends FTMessage {
 }
 
 /// @nodoc
-abstract mixin class $FTMessage_RespondedElsewhereCopyWith<$Res> implements $FTMessageCopyWith<$Res> {
+abstract mixin class $FTMessage_RespondedElsewhereCopyWith<$Res>
+    implements $FTMessageCopyWith<$Res> {
   factory $FTMessage_RespondedElsewhereCopyWith(
-          FTMessage_RespondedElsewhere value, $Res Function(FTMessage_RespondedElsewhere) _then) =
+          FTMessage_RespondedElsewhere value,
+          $Res Function(FTMessage_RespondedElsewhere) _then) =
       _$FTMessage_RespondedElsewhereCopyWithImpl;
   @useResult
   $Res call({String guid});
 }
 
 /// @nodoc
-class _$FTMessage_RespondedElsewhereCopyWithImpl<$Res> implements $FTMessage_RespondedElsewhereCopyWith<$Res> {
+class _$FTMessage_RespondedElsewhereCopyWithImpl<$Res>
+    implements $FTMessage_RespondedElsewhereCopyWith<$Res> {
   _$FTMessage_RespondedElsewhereCopyWithImpl(this._self, this._then);
 
   final FTMessage_RespondedElsewhere _self;
@@ -2020,7 +2149,8 @@ mixin _$IdmsMessage {
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
+  int get hashCode =>
+      Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
 
   @override
   String toString() {
@@ -2082,7 +2212,8 @@ extension IdmsMessagePatterns on IdmsMessage {
 
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
-    required TResult Function(IdmsMessage_RequestedSignIn value) requestedSignIn,
+    required TResult Function(IdmsMessage_RequestedSignIn value)
+        requestedSignIn,
     required TResult Function(IdmsMessage_TeardownSignIn value) teardownSignIn,
     required TResult Function(IdmsMessage_CircleRequest value) circleRequest,
   }) {
@@ -2144,7 +2275,8 @@ extension IdmsMessagePatterns on IdmsMessage {
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(IdmsRequestedSignIn field0)? requestedSignIn,
     TResult Function(TeardownSignIn field0)? teardownSignIn,
-    TResult Function(IdmsCircleMessage field0, IdmsRequestedSignIn? field1)? circleRequest,
+    TResult Function(IdmsCircleMessage field0, IdmsRequestedSignIn? field1)?
+        circleRequest,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -2177,7 +2309,9 @@ extension IdmsMessagePatterns on IdmsMessage {
   TResult when<TResult extends Object?>({
     required TResult Function(IdmsRequestedSignIn field0) requestedSignIn,
     required TResult Function(TeardownSignIn field0) teardownSignIn,
-    required TResult Function(IdmsCircleMessage field0, IdmsRequestedSignIn? field1) circleRequest,
+    required TResult Function(
+            IdmsCircleMessage field0, IdmsRequestedSignIn? field1)
+        circleRequest,
   }) {
     final _that = this;
     switch (_that) {
@@ -2206,7 +2340,8 @@ extension IdmsMessagePatterns on IdmsMessage {
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(IdmsRequestedSignIn field0)? requestedSignIn,
     TResult? Function(TeardownSignIn field0)? teardownSignIn,
-    TResult? Function(IdmsCircleMessage field0, IdmsRequestedSignIn? field1)? circleRequest,
+    TResult? Function(IdmsCircleMessage field0, IdmsRequestedSignIn? field1)?
+        circleRequest,
   }) {
     final _that = this;
     switch (_that) {
@@ -2234,8 +2369,9 @@ class IdmsMessage_RequestedSignIn extends IdmsMessage {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $IdmsMessage_RequestedSignInCopyWith<IdmsMessage_RequestedSignIn> get copyWith =>
-      _$IdmsMessage_RequestedSignInCopyWithImpl<IdmsMessage_RequestedSignIn>(this, _$identity);
+  $IdmsMessage_RequestedSignInCopyWith<IdmsMessage_RequestedSignIn>
+      get copyWith => _$IdmsMessage_RequestedSignInCopyWithImpl<
+          IdmsMessage_RequestedSignIn>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -2255,16 +2391,19 @@ class IdmsMessage_RequestedSignIn extends IdmsMessage {
 }
 
 /// @nodoc
-abstract mixin class $IdmsMessage_RequestedSignInCopyWith<$Res> implements $IdmsMessageCopyWith<$Res> {
+abstract mixin class $IdmsMessage_RequestedSignInCopyWith<$Res>
+    implements $IdmsMessageCopyWith<$Res> {
   factory $IdmsMessage_RequestedSignInCopyWith(
-          IdmsMessage_RequestedSignIn value, $Res Function(IdmsMessage_RequestedSignIn) _then) =
+          IdmsMessage_RequestedSignIn value,
+          $Res Function(IdmsMessage_RequestedSignIn) _then) =
       _$IdmsMessage_RequestedSignInCopyWithImpl;
   @useResult
   $Res call({IdmsRequestedSignIn field0});
 }
 
 /// @nodoc
-class _$IdmsMessage_RequestedSignInCopyWithImpl<$Res> implements $IdmsMessage_RequestedSignInCopyWith<$Res> {
+class _$IdmsMessage_RequestedSignInCopyWithImpl<$Res>
+    implements $IdmsMessage_RequestedSignInCopyWith<$Res> {
   _$IdmsMessage_RequestedSignInCopyWithImpl(this._self, this._then);
 
   final IdmsMessage_RequestedSignIn _self;
@@ -2297,8 +2436,10 @@ class IdmsMessage_TeardownSignIn extends IdmsMessage {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $IdmsMessage_TeardownSignInCopyWith<IdmsMessage_TeardownSignIn> get copyWith =>
-      _$IdmsMessage_TeardownSignInCopyWithImpl<IdmsMessage_TeardownSignIn>(this, _$identity);
+  $IdmsMessage_TeardownSignInCopyWith<IdmsMessage_TeardownSignIn>
+      get copyWith =>
+          _$IdmsMessage_TeardownSignInCopyWithImpl<IdmsMessage_TeardownSignIn>(
+              this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -2318,16 +2459,18 @@ class IdmsMessage_TeardownSignIn extends IdmsMessage {
 }
 
 /// @nodoc
-abstract mixin class $IdmsMessage_TeardownSignInCopyWith<$Res> implements $IdmsMessageCopyWith<$Res> {
-  factory $IdmsMessage_TeardownSignInCopyWith(
-          IdmsMessage_TeardownSignIn value, $Res Function(IdmsMessage_TeardownSignIn) _then) =
+abstract mixin class $IdmsMessage_TeardownSignInCopyWith<$Res>
+    implements $IdmsMessageCopyWith<$Res> {
+  factory $IdmsMessage_TeardownSignInCopyWith(IdmsMessage_TeardownSignIn value,
+          $Res Function(IdmsMessage_TeardownSignIn) _then) =
       _$IdmsMessage_TeardownSignInCopyWithImpl;
   @useResult
   $Res call({TeardownSignIn field0});
 }
 
 /// @nodoc
-class _$IdmsMessage_TeardownSignInCopyWithImpl<$Res> implements $IdmsMessage_TeardownSignInCopyWith<$Res> {
+class _$IdmsMessage_TeardownSignInCopyWithImpl<$Res>
+    implements $IdmsMessage_TeardownSignInCopyWith<$Res> {
   _$IdmsMessage_TeardownSignInCopyWithImpl(this._self, this._then);
 
   final IdmsMessage_TeardownSignIn _self;
@@ -2362,7 +2505,8 @@ class IdmsMessage_CircleRequest extends IdmsMessage {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $IdmsMessage_CircleRequestCopyWith<IdmsMessage_CircleRequest> get copyWith =>
-      _$IdmsMessage_CircleRequestCopyWithImpl<IdmsMessage_CircleRequest>(this, _$identity);
+      _$IdmsMessage_CircleRequestCopyWithImpl<IdmsMessage_CircleRequest>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -2383,16 +2527,18 @@ class IdmsMessage_CircleRequest extends IdmsMessage {
 }
 
 /// @nodoc
-abstract mixin class $IdmsMessage_CircleRequestCopyWith<$Res> implements $IdmsMessageCopyWith<$Res> {
-  factory $IdmsMessage_CircleRequestCopyWith(
-          IdmsMessage_CircleRequest value, $Res Function(IdmsMessage_CircleRequest) _then) =
+abstract mixin class $IdmsMessage_CircleRequestCopyWith<$Res>
+    implements $IdmsMessageCopyWith<$Res> {
+  factory $IdmsMessage_CircleRequestCopyWith(IdmsMessage_CircleRequest value,
+          $Res Function(IdmsMessage_CircleRequest) _then) =
       _$IdmsMessage_CircleRequestCopyWithImpl;
   @useResult
   $Res call({IdmsCircleMessage field0, IdmsRequestedSignIn? field1});
 }
 
 /// @nodoc
-class _$IdmsMessage_CircleRequestCopyWithImpl<$Res> implements $IdmsMessage_CircleRequestCopyWith<$Res> {
+class _$IdmsMessage_CircleRequestCopyWithImpl<$Res>
+    implements $IdmsMessage_CircleRequestCopyWith<$Res> {
   _$IdmsMessage_CircleRequestCopyWithImpl(this._self, this._then);
 
   final IdmsMessage_CircleRequest _self;
@@ -2422,7 +2568,8 @@ class _$IdmsMessage_CircleRequestCopyWithImpl<$Res> implements $IdmsMessage_Circ
 mixin _$LoginState {
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is LoginState);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is LoginState);
   }
 
   @override
@@ -2457,9 +2604,11 @@ extension LoginStatePatterns on LoginState {
   TResult maybeMap<TResult extends Object?>({
     TResult Function(LoginState_LoggedIn value)? loggedIn,
     TResult Function(LoginState_NeedsDevice2FA value)? needsDevice2Fa,
-    TResult Function(LoginState_Needs2FAVerification value)? needs2FaVerification,
+    TResult Function(LoginState_Needs2FAVerification value)?
+        needs2FaVerification,
     TResult Function(LoginState_NeedsSMS2FA value)? needsSms2Fa,
-    TResult Function(LoginState_NeedsSMS2FAVerification value)? needsSms2FaVerification,
+    TResult Function(LoginState_NeedsSMS2FAVerification value)?
+        needsSms2FaVerification,
     TResult Function(LoginState_NeedsExtraStep value)? needsExtraStep,
     TResult Function(LoginState_NeedsLogin value)? needsLogin,
     required TResult orElse(),
@@ -2474,7 +2623,8 @@ extension LoginStatePatterns on LoginState {
         return needs2FaVerification(_that);
       case LoginState_NeedsSMS2FA() when needsSms2Fa != null:
         return needsSms2Fa(_that);
-      case LoginState_NeedsSMS2FAVerification() when needsSms2FaVerification != null:
+      case LoginState_NeedsSMS2FAVerification()
+          when needsSms2FaVerification != null:
         return needsSms2FaVerification(_that);
       case LoginState_NeedsExtraStep() when needsExtraStep != null:
         return needsExtraStep(_that);
@@ -2502,9 +2652,11 @@ extension LoginStatePatterns on LoginState {
   TResult map<TResult extends Object?>({
     required TResult Function(LoginState_LoggedIn value) loggedIn,
     required TResult Function(LoginState_NeedsDevice2FA value) needsDevice2Fa,
-    required TResult Function(LoginState_Needs2FAVerification value) needs2FaVerification,
+    required TResult Function(LoginState_Needs2FAVerification value)
+        needs2FaVerification,
     required TResult Function(LoginState_NeedsSMS2FA value) needsSms2Fa,
-    required TResult Function(LoginState_NeedsSMS2FAVerification value) needsSms2FaVerification,
+    required TResult Function(LoginState_NeedsSMS2FAVerification value)
+        needsSms2FaVerification,
     required TResult Function(LoginState_NeedsExtraStep value) needsExtraStep,
     required TResult Function(LoginState_NeedsLogin value) needsLogin,
   }) {
@@ -2543,9 +2695,11 @@ extension LoginStatePatterns on LoginState {
   TResult? mapOrNull<TResult extends Object?>({
     TResult? Function(LoginState_LoggedIn value)? loggedIn,
     TResult? Function(LoginState_NeedsDevice2FA value)? needsDevice2Fa,
-    TResult? Function(LoginState_Needs2FAVerification value)? needs2FaVerification,
+    TResult? Function(LoginState_Needs2FAVerification value)?
+        needs2FaVerification,
     TResult? Function(LoginState_NeedsSMS2FA value)? needsSms2Fa,
-    TResult? Function(LoginState_NeedsSMS2FAVerification value)? needsSms2FaVerification,
+    TResult? Function(LoginState_NeedsSMS2FAVerification value)?
+        needsSms2FaVerification,
     TResult? Function(LoginState_NeedsExtraStep value)? needsExtraStep,
     TResult? Function(LoginState_NeedsLogin value)? needsLogin,
   }) {
@@ -2559,7 +2713,8 @@ extension LoginStatePatterns on LoginState {
         return needs2FaVerification(_that);
       case LoginState_NeedsSMS2FA() when needsSms2Fa != null:
         return needsSms2Fa(_that);
-      case LoginState_NeedsSMS2FAVerification() when needsSms2FaVerification != null:
+      case LoginState_NeedsSMS2FAVerification()
+          when needsSms2FaVerification != null:
         return needsSms2FaVerification(_that);
       case LoginState_NeedsExtraStep() when needsExtraStep != null:
         return needsExtraStep(_that);
@@ -2603,7 +2758,8 @@ extension LoginStatePatterns on LoginState {
         return needs2FaVerification();
       case LoginState_NeedsSMS2FA() when needsSms2Fa != null:
         return needsSms2Fa();
-      case LoginState_NeedsSMS2FAVerification() when needsSms2FaVerification != null:
+      case LoginState_NeedsSMS2FAVerification()
+          when needsSms2FaVerification != null:
         return needsSms2FaVerification(_that.field0);
       case LoginState_NeedsExtraStep() when needsExtraStep != null:
         return needsExtraStep(_that.field0);
@@ -2688,7 +2844,8 @@ extension LoginStatePatterns on LoginState {
         return needs2FaVerification();
       case LoginState_NeedsSMS2FA() when needsSms2Fa != null:
         return needsSms2Fa();
-      case LoginState_NeedsSMS2FAVerification() when needsSms2FaVerification != null:
+      case LoginState_NeedsSMS2FAVerification()
+          when needsSms2FaVerification != null:
         return needsSms2FaVerification(_that.field0);
       case LoginState_NeedsExtraStep() when needsExtraStep != null:
         return needsExtraStep(_that.field0);
@@ -2707,7 +2864,8 @@ class LoginState_LoggedIn extends LoginState {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is LoginState_LoggedIn);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is LoginState_LoggedIn);
   }
 
   @override
@@ -2726,7 +2884,9 @@ class LoginState_NeedsDevice2FA extends LoginState {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is LoginState_NeedsDevice2FA);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is LoginState_NeedsDevice2FA);
   }
 
   @override
@@ -2745,7 +2905,9 @@ class LoginState_Needs2FAVerification extends LoginState {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is LoginState_Needs2FAVerification);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is LoginState_Needs2FAVerification);
   }
 
   @override
@@ -2764,7 +2926,8 @@ class LoginState_NeedsSMS2FA extends LoginState {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is LoginState_NeedsSMS2FA);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is LoginState_NeedsSMS2FA);
   }
 
   @override
@@ -2787,8 +2950,10 @@ class LoginState_NeedsSMS2FAVerification extends LoginState {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $LoginState_NeedsSMS2FAVerificationCopyWith<LoginState_NeedsSMS2FAVerification> get copyWith =>
-      _$LoginState_NeedsSMS2FAVerificationCopyWithImpl<LoginState_NeedsSMS2FAVerification>(this, _$identity);
+  $LoginState_NeedsSMS2FAVerificationCopyWith<
+          LoginState_NeedsSMS2FAVerification>
+      get copyWith => _$LoginState_NeedsSMS2FAVerificationCopyWithImpl<
+          LoginState_NeedsSMS2FAVerification>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -2808,9 +2973,11 @@ class LoginState_NeedsSMS2FAVerification extends LoginState {
 }
 
 /// @nodoc
-abstract mixin class $LoginState_NeedsSMS2FAVerificationCopyWith<$Res> implements $LoginStateCopyWith<$Res> {
+abstract mixin class $LoginState_NeedsSMS2FAVerificationCopyWith<$Res>
+    implements $LoginStateCopyWith<$Res> {
   factory $LoginState_NeedsSMS2FAVerificationCopyWith(
-          LoginState_NeedsSMS2FAVerification value, $Res Function(LoginState_NeedsSMS2FAVerification) _then) =
+          LoginState_NeedsSMS2FAVerification value,
+          $Res Function(LoginState_NeedsSMS2FAVerification) _then) =
       _$LoginState_NeedsSMS2FAVerificationCopyWithImpl;
   @useResult
   $Res call({VerifyBody field0});
@@ -2851,7 +3018,8 @@ class LoginState_NeedsExtraStep extends LoginState {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $LoginState_NeedsExtraStepCopyWith<LoginState_NeedsExtraStep> get copyWith =>
-      _$LoginState_NeedsExtraStepCopyWithImpl<LoginState_NeedsExtraStep>(this, _$identity);
+      _$LoginState_NeedsExtraStepCopyWithImpl<LoginState_NeedsExtraStep>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -2871,16 +3039,18 @@ class LoginState_NeedsExtraStep extends LoginState {
 }
 
 /// @nodoc
-abstract mixin class $LoginState_NeedsExtraStepCopyWith<$Res> implements $LoginStateCopyWith<$Res> {
-  factory $LoginState_NeedsExtraStepCopyWith(
-          LoginState_NeedsExtraStep value, $Res Function(LoginState_NeedsExtraStep) _then) =
+abstract mixin class $LoginState_NeedsExtraStepCopyWith<$Res>
+    implements $LoginStateCopyWith<$Res> {
+  factory $LoginState_NeedsExtraStepCopyWith(LoginState_NeedsExtraStep value,
+          $Res Function(LoginState_NeedsExtraStep) _then) =
       _$LoginState_NeedsExtraStepCopyWithImpl;
   @useResult
   $Res call({String field0});
 }
 
 /// @nodoc
-class _$LoginState_NeedsExtraStepCopyWithImpl<$Res> implements $LoginState_NeedsExtraStepCopyWith<$Res> {
+class _$LoginState_NeedsExtraStepCopyWithImpl<$Res>
+    implements $LoginState_NeedsExtraStepCopyWith<$Res> {
   _$LoginState_NeedsExtraStepCopyWithImpl(this._self, this._then);
 
   final LoginState_NeedsExtraStep _self;
@@ -2908,7 +3078,8 @@ class LoginState_NeedsLogin extends LoginState {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is LoginState_NeedsLogin);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is LoginState_NeedsLogin);
   }
 
   @override
@@ -2930,15 +3101,18 @@ mixin _$LPSpecializationMetadata {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $LPSpecializationMetadataCopyWith<LPSpecializationMetadata> get copyWith =>
-      _$LPSpecializationMetadataCopyWithImpl<LPSpecializationMetadata>(this as LPSpecializationMetadata, _$identity);
+      _$LPSpecializationMetadataCopyWithImpl<LPSpecializationMetadata>(
+          this as LPSpecializationMetadata, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is LPSpecializationMetadata &&
-            (identical(other.groupName, groupName) || other.groupName == groupName) &&
-            (identical(other.urlParameters, urlParameters) || other.urlParameters == urlParameters));
+            (identical(other.groupName, groupName) ||
+                other.groupName == groupName) &&
+            (identical(other.urlParameters, urlParameters) ||
+                other.urlParameters == urlParameters));
   }
 
   @override
@@ -2952,15 +3126,16 @@ mixin _$LPSpecializationMetadata {
 
 /// @nodoc
 abstract mixin class $LPSpecializationMetadataCopyWith<$Res> {
-  factory $LPSpecializationMetadataCopyWith(
-          LPSpecializationMetadata value, $Res Function(LPSpecializationMetadata) _then) =
+  factory $LPSpecializationMetadataCopyWith(LPSpecializationMetadata value,
+          $Res Function(LPSpecializationMetadata) _then) =
       _$LPSpecializationMetadataCopyWithImpl;
   @useResult
   $Res call({String groupName, String urlParameters});
 }
 
 /// @nodoc
-class _$LPSpecializationMetadataCopyWithImpl<$Res> implements $LPSpecializationMetadataCopyWith<$Res> {
+class _$LPSpecializationMetadataCopyWithImpl<$Res>
+    implements $LPSpecializationMetadataCopyWith<$Res> {
   _$LPSpecializationMetadataCopyWithImpl(this._self, this._then);
 
   final LPSpecializationMetadata _self;
@@ -3003,12 +3178,14 @@ extension LPSpecializationMetadataPatterns on LPSpecializationMetadata {
 
   @optionalTypeArgs
   TResult maybeMap<TResult extends Object?>({
-    TResult Function(LPSpecializationMetadata_LPPasswordsInviteMetadata value)? lpPasswordsInviteMetadata,
+    TResult Function(LPSpecializationMetadata_LPPasswordsInviteMetadata value)?
+        lpPasswordsInviteMetadata,
     required TResult orElse(),
   }) {
     final _that = this;
     switch (_that) {
-      case LPSpecializationMetadata_LPPasswordsInviteMetadata() when lpPasswordsInviteMetadata != null:
+      case LPSpecializationMetadata_LPPasswordsInviteMetadata()
+          when lpPasswordsInviteMetadata != null:
         return lpPasswordsInviteMetadata(_that);
       case _:
         return orElse();
@@ -3030,7 +3207,9 @@ extension LPSpecializationMetadataPatterns on LPSpecializationMetadata {
 
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
-    required TResult Function(LPSpecializationMetadata_LPPasswordsInviteMetadata value) lpPasswordsInviteMetadata,
+    required TResult Function(
+            LPSpecializationMetadata_LPPasswordsInviteMetadata value)
+        lpPasswordsInviteMetadata,
   }) {
     final _that = this;
     switch (_that) {
@@ -3053,11 +3232,13 @@ extension LPSpecializationMetadataPatterns on LPSpecializationMetadata {
 
   @optionalTypeArgs
   TResult? mapOrNull<TResult extends Object?>({
-    TResult? Function(LPSpecializationMetadata_LPPasswordsInviteMetadata value)? lpPasswordsInviteMetadata,
+    TResult? Function(LPSpecializationMetadata_LPPasswordsInviteMetadata value)?
+        lpPasswordsInviteMetadata,
   }) {
     final _that = this;
     switch (_that) {
-      case LPSpecializationMetadata_LPPasswordsInviteMetadata() when lpPasswordsInviteMetadata != null:
+      case LPSpecializationMetadata_LPPasswordsInviteMetadata()
+          when lpPasswordsInviteMetadata != null:
         return lpPasswordsInviteMetadata(_that);
       case _:
         return null;
@@ -3078,12 +3259,14 @@ extension LPSpecializationMetadataPatterns on LPSpecializationMetadata {
 
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
-    TResult Function(String groupName, String urlParameters)? lpPasswordsInviteMetadata,
+    TResult Function(String groupName, String urlParameters)?
+        lpPasswordsInviteMetadata,
     required TResult orElse(),
   }) {
     final _that = this;
     switch (_that) {
-      case LPSpecializationMetadata_LPPasswordsInviteMetadata() when lpPasswordsInviteMetadata != null:
+      case LPSpecializationMetadata_LPPasswordsInviteMetadata()
+          when lpPasswordsInviteMetadata != null:
         return lpPasswordsInviteMetadata(_that.groupName, _that.urlParameters);
       case _:
         return orElse();
@@ -3105,7 +3288,8 @@ extension LPSpecializationMetadataPatterns on LPSpecializationMetadata {
 
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
-    required TResult Function(String groupName, String urlParameters) lpPasswordsInviteMetadata,
+    required TResult Function(String groupName, String urlParameters)
+        lpPasswordsInviteMetadata,
   }) {
     final _that = this;
     switch (_that) {
@@ -3128,11 +3312,13 @@ extension LPSpecializationMetadataPatterns on LPSpecializationMetadata {
 
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(String groupName, String urlParameters)? lpPasswordsInviteMetadata,
+    TResult? Function(String groupName, String urlParameters)?
+        lpPasswordsInviteMetadata,
   }) {
     final _that = this;
     switch (_that) {
-      case LPSpecializationMetadata_LPPasswordsInviteMetadata() when lpPasswordsInviteMetadata != null:
+      case LPSpecializationMetadata_LPPasswordsInviteMetadata()
+          when lpPasswordsInviteMetadata != null:
         return lpPasswordsInviteMetadata(_that.groupName, _that.urlParameters);
       case _:
         return null;
@@ -3142,8 +3328,10 @@ extension LPSpecializationMetadataPatterns on LPSpecializationMetadata {
 
 /// @nodoc
 
-class LPSpecializationMetadata_LPPasswordsInviteMetadata extends LPSpecializationMetadata {
-  const LPSpecializationMetadata_LPPasswordsInviteMetadata({required this.groupName, required this.urlParameters})
+class LPSpecializationMetadata_LPPasswordsInviteMetadata
+    extends LPSpecializationMetadata {
+  const LPSpecializationMetadata_LPPasswordsInviteMetadata(
+      {required this.groupName, required this.urlParameters})
       : super._();
 
   @override
@@ -3156,17 +3344,22 @@ class LPSpecializationMetadata_LPPasswordsInviteMetadata extends LPSpecializatio
   @override
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $LPSpecializationMetadata_LPPasswordsInviteMetadataCopyWith<LPSpecializationMetadata_LPPasswordsInviteMetadata>
-      get copyWith => _$LPSpecializationMetadata_LPPasswordsInviteMetadataCopyWithImpl<
-          LPSpecializationMetadata_LPPasswordsInviteMetadata>(this, _$identity);
+  $LPSpecializationMetadata_LPPasswordsInviteMetadataCopyWith<
+          LPSpecializationMetadata_LPPasswordsInviteMetadata>
+      get copyWith =>
+          _$LPSpecializationMetadata_LPPasswordsInviteMetadataCopyWithImpl<
+                  LPSpecializationMetadata_LPPasswordsInviteMetadata>(
+              this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is LPSpecializationMetadata_LPPasswordsInviteMetadata &&
-            (identical(other.groupName, groupName) || other.groupName == groupName) &&
-            (identical(other.urlParameters, urlParameters) || other.urlParameters == urlParameters));
+            (identical(other.groupName, groupName) ||
+                other.groupName == groupName) &&
+            (identical(other.urlParameters, urlParameters) ||
+                other.urlParameters == urlParameters));
   }
 
   @override
@@ -3179,11 +3372,12 @@ class LPSpecializationMetadata_LPPasswordsInviteMetadata extends LPSpecializatio
 }
 
 /// @nodoc
-abstract mixin class $LPSpecializationMetadata_LPPasswordsInviteMetadataCopyWith<$Res>
-    implements $LPSpecializationMetadataCopyWith<$Res> {
+abstract mixin class $LPSpecializationMetadata_LPPasswordsInviteMetadataCopyWith<
+    $Res> implements $LPSpecializationMetadataCopyWith<$Res> {
   factory $LPSpecializationMetadata_LPPasswordsInviteMetadataCopyWith(
           LPSpecializationMetadata_LPPasswordsInviteMetadata value,
-          $Res Function(LPSpecializationMetadata_LPPasswordsInviteMetadata) _then) =
+          $Res Function(LPSpecializationMetadata_LPPasswordsInviteMetadata)
+              _then) =
       _$LPSpecializationMetadata_LPPasswordsInviteMetadataCopyWithImpl;
   @override
   @useResult
@@ -3192,8 +3386,10 @@ abstract mixin class $LPSpecializationMetadata_LPPasswordsInviteMetadataCopyWith
 
 /// @nodoc
 class _$LPSpecializationMetadata_LPPasswordsInviteMetadataCopyWithImpl<$Res>
-    implements $LPSpecializationMetadata_LPPasswordsInviteMetadataCopyWith<$Res> {
-  _$LPSpecializationMetadata_LPPasswordsInviteMetadataCopyWithImpl(this._self, this._then);
+    implements
+        $LPSpecializationMetadata_LPPasswordsInviteMetadataCopyWith<$Res> {
+  _$LPSpecializationMetadata_LPPasswordsInviteMetadataCopyWithImpl(
+      this._self, this._then);
 
   final LPSpecializationMetadata_LPPasswordsInviteMetadata _self;
   final $Res Function(LPSpecializationMetadata_LPPasswordsInviteMetadata) _then;
@@ -3223,7 +3419,8 @@ class _$LPSpecializationMetadata_LPPasswordsInviteMetadataCopyWithImpl<$Res>
 mixin _$Message {
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is Message);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is Message);
   }
 
   @override
@@ -3281,7 +3478,8 @@ extension MessagePatterns on Message {
     TResult Function(Message_UpdateProfileSharing value)? updateProfileSharing,
     TResult Function(Message_ShareProfile value)? shareProfile,
     TResult Function(Message_NotifyAnyways value)? notifyAnyways,
-    TResult Function(Message_SetTranscriptBackground value)? setTranscriptBackground,
+    TResult Function(Message_SetTranscriptBackground value)?
+        setTranscriptBackground,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -3336,7 +3534,8 @@ extension MessagePatterns on Message {
         return shareProfile(_that);
       case Message_NotifyAnyways() when notifyAnyways != null:
         return notifyAnyways(_that);
-      case Message_SetTranscriptBackground() when setTranscriptBackground != null:
+      case Message_SetTranscriptBackground()
+          when setTranscriptBackground != null:
         return setTranscriptBackground(_that);
       case _:
         return orElse();
@@ -3360,7 +3559,8 @@ extension MessagePatterns on Message {
   TResult map<TResult extends Object?>({
     required TResult Function(Message_Message value) message,
     required TResult Function(Message_RenameMessage value) renameMessage,
-    required TResult Function(Message_ChangeParticipants value) changeParticipants,
+    required TResult Function(Message_ChangeParticipants value)
+        changeParticipants,
     required TResult Function(Message_React value) react,
     required TResult Function(Message_Delivered value) delivered,
     required TResult Function(Message_Read value) read,
@@ -3368,11 +3568,14 @@ extension MessagePatterns on Message {
     required TResult Function(Message_Unsend value) unsend,
     required TResult Function(Message_Edit value) edit,
     required TResult Function(Message_IconChange value) iconChange,
-    required TResult Function(Message_EnableSmsActivation value) enableSmsActivation,
-    required TResult Function(Message_MessageReadOnDevice value) messageReadOnDevice,
+    required TResult Function(Message_EnableSmsActivation value)
+        enableSmsActivation,
+    required TResult Function(Message_MessageReadOnDevice value)
+        messageReadOnDevice,
     required TResult Function(Message_SmsConfirmSent value) smsConfirmSent,
     required TResult Function(Message_MarkUnread value) markUnread,
-    required TResult Function(Message_PeerCacheInvalidate value) peerCacheInvalidate,
+    required TResult Function(Message_PeerCacheInvalidate value)
+        peerCacheInvalidate,
     required TResult Function(Message_UpdateExtension value) updateExtension,
     required TResult Function(Message_Error value) error,
     required TResult Function(Message_MoveToRecycleBin value) moveToRecycleBin,
@@ -3380,10 +3583,12 @@ extension MessagePatterns on Message {
     required TResult Function(Message_PermanentDelete value) permanentDelete,
     required TResult Function(Message_Unschedule value) unschedule,
     required TResult Function(Message_UpdateProfile value) updateProfile,
-    required TResult Function(Message_UpdateProfileSharing value) updateProfileSharing,
+    required TResult Function(Message_UpdateProfileSharing value)
+        updateProfileSharing,
     required TResult Function(Message_ShareProfile value) shareProfile,
     required TResult Function(Message_NotifyAnyways value) notifyAnyways,
-    required TResult Function(Message_SetTranscriptBackground value) setTranscriptBackground,
+    required TResult Function(Message_SetTranscriptBackground value)
+        setTranscriptBackground,
   }) {
     final _that = this;
     switch (_that) {
@@ -3481,7 +3686,8 @@ extension MessagePatterns on Message {
     TResult? Function(Message_UpdateProfileSharing value)? updateProfileSharing,
     TResult? Function(Message_ShareProfile value)? shareProfile,
     TResult? Function(Message_NotifyAnyways value)? notifyAnyways,
-    TResult? Function(Message_SetTranscriptBackground value)? setTranscriptBackground,
+    TResult? Function(Message_SetTranscriptBackground value)?
+        setTranscriptBackground,
   }) {
     final _that = this;
     switch (_that) {
@@ -3535,7 +3741,8 @@ extension MessagePatterns on Message {
         return shareProfile(_that);
       case Message_NotifyAnyways() when notifyAnyways != null:
         return notifyAnyways(_that);
-      case Message_SetTranscriptBackground() when setTranscriptBackground != null:
+      case Message_SetTranscriptBackground()
+          when setTranscriptBackground != null:
         return setTranscriptBackground(_that);
       case _:
         return null;
@@ -3581,7 +3788,8 @@ extension MessagePatterns on Message {
     TResult Function(UpdateProfileSharingMessage field0)? updateProfileSharing,
     TResult Function(ShareProfileMessage field0)? shareProfile,
     TResult Function()? notifyAnyways,
-    TResult Function(SetTranscriptBackgroundMessage field0)? setTranscriptBackground,
+    TResult Function(SetTranscriptBackgroundMessage field0)?
+        setTranscriptBackground,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -3636,7 +3844,8 @@ extension MessagePatterns on Message {
         return shareProfile(_that.field0);
       case Message_NotifyAnyways() when notifyAnyways != null:
         return notifyAnyways();
-      case Message_SetTranscriptBackground() when setTranscriptBackground != null:
+      case Message_SetTranscriptBackground()
+          when setTranscriptBackground != null:
         return setTranscriptBackground(_that.field0);
       case _:
         return orElse();
@@ -3660,7 +3869,8 @@ extension MessagePatterns on Message {
   TResult when<TResult extends Object?>({
     required TResult Function(NormalMessage field0) message,
     required TResult Function(RenameMessage field0) renameMessage,
-    required TResult Function(ChangeParticipantMessage field0) changeParticipants,
+    required TResult Function(ChangeParticipantMessage field0)
+        changeParticipants,
     required TResult Function(ReactMessage field0) react,
     required TResult Function() delivered,
     required TResult Function() read,
@@ -3680,10 +3890,12 @@ extension MessagePatterns on Message {
     required TResult Function(PermanentDeleteMessage field0) permanentDelete,
     required TResult Function() unschedule,
     required TResult Function(UpdateProfileMessage field0) updateProfile,
-    required TResult Function(UpdateProfileSharingMessage field0) updateProfileSharing,
+    required TResult Function(UpdateProfileSharingMessage field0)
+        updateProfileSharing,
     required TResult Function(ShareProfileMessage field0) shareProfile,
     required TResult Function() notifyAnyways,
-    required TResult Function(SetTranscriptBackgroundMessage field0) setTranscriptBackground,
+    required TResult Function(SetTranscriptBackgroundMessage field0)
+        setTranscriptBackground,
   }) {
     final _that = this;
     switch (_that) {
@@ -3781,7 +3993,8 @@ extension MessagePatterns on Message {
     TResult? Function(UpdateProfileSharingMessage field0)? updateProfileSharing,
     TResult? Function(ShareProfileMessage field0)? shareProfile,
     TResult? Function()? notifyAnyways,
-    TResult? Function(SetTranscriptBackgroundMessage field0)? setTranscriptBackground,
+    TResult? Function(SetTranscriptBackgroundMessage field0)?
+        setTranscriptBackground,
   }) {
     final _that = this;
     switch (_that) {
@@ -3835,7 +4048,8 @@ extension MessagePatterns on Message {
         return shareProfile(_that.field0);
       case Message_NotifyAnyways() when notifyAnyways != null:
         return notifyAnyways();
-      case Message_SetTranscriptBackground() when setTranscriptBackground != null:
+      case Message_SetTranscriptBackground()
+          when setTranscriptBackground != null:
         return setTranscriptBackground(_that.field0);
       case _:
         return null;
@@ -3875,15 +4089,18 @@ class Message_Message extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_MessageCopyWith<$Res> implements $MessageCopyWith<$Res> {
-  factory $Message_MessageCopyWith(Message_Message value, $Res Function(Message_Message) _then) =
+abstract mixin class $Message_MessageCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
+  factory $Message_MessageCopyWith(
+          Message_Message value, $Res Function(Message_Message) _then) =
       _$Message_MessageCopyWithImpl;
   @useResult
   $Res call({NormalMessage field0});
 }
 
 /// @nodoc
-class _$Message_MessageCopyWithImpl<$Res> implements $Message_MessageCopyWith<$Res> {
+class _$Message_MessageCopyWithImpl<$Res>
+    implements $Message_MessageCopyWith<$Res> {
   _$Message_MessageCopyWithImpl(this._self, this._then);
 
   final Message_Message _self;
@@ -3916,7 +4133,8 @@ class Message_RenameMessage extends Message {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $Message_RenameMessageCopyWith<Message_RenameMessage> get copyWith =>
-      _$Message_RenameMessageCopyWithImpl<Message_RenameMessage>(this, _$identity);
+      _$Message_RenameMessageCopyWithImpl<Message_RenameMessage>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -3936,15 +4154,18 @@ class Message_RenameMessage extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_RenameMessageCopyWith<$Res> implements $MessageCopyWith<$Res> {
-  factory $Message_RenameMessageCopyWith(Message_RenameMessage value, $Res Function(Message_RenameMessage) _then) =
+abstract mixin class $Message_RenameMessageCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
+  factory $Message_RenameMessageCopyWith(Message_RenameMessage value,
+          $Res Function(Message_RenameMessage) _then) =
       _$Message_RenameMessageCopyWithImpl;
   @useResult
   $Res call({RenameMessage field0});
 }
 
 /// @nodoc
-class _$Message_RenameMessageCopyWithImpl<$Res> implements $Message_RenameMessageCopyWith<$Res> {
+class _$Message_RenameMessageCopyWithImpl<$Res>
+    implements $Message_RenameMessageCopyWith<$Res> {
   _$Message_RenameMessageCopyWithImpl(this._self, this._then);
 
   final Message_RenameMessage _self;
@@ -3976,8 +4197,10 @@ class Message_ChangeParticipants extends Message {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $Message_ChangeParticipantsCopyWith<Message_ChangeParticipants> get copyWith =>
-      _$Message_ChangeParticipantsCopyWithImpl<Message_ChangeParticipants>(this, _$identity);
+  $Message_ChangeParticipantsCopyWith<Message_ChangeParticipants>
+      get copyWith =>
+          _$Message_ChangeParticipantsCopyWithImpl<Message_ChangeParticipants>(
+              this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -3997,16 +4220,18 @@ class Message_ChangeParticipants extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_ChangeParticipantsCopyWith<$Res> implements $MessageCopyWith<$Res> {
-  factory $Message_ChangeParticipantsCopyWith(
-          Message_ChangeParticipants value, $Res Function(Message_ChangeParticipants) _then) =
+abstract mixin class $Message_ChangeParticipantsCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
+  factory $Message_ChangeParticipantsCopyWith(Message_ChangeParticipants value,
+          $Res Function(Message_ChangeParticipants) _then) =
       _$Message_ChangeParticipantsCopyWithImpl;
   @useResult
   $Res call({ChangeParticipantMessage field0});
 }
 
 /// @nodoc
-class _$Message_ChangeParticipantsCopyWithImpl<$Res> implements $Message_ChangeParticipantsCopyWith<$Res> {
+class _$Message_ChangeParticipantsCopyWithImpl<$Res>
+    implements $Message_ChangeParticipantsCopyWith<$Res> {
   _$Message_ChangeParticipantsCopyWithImpl(this._self, this._then);
 
   final Message_ChangeParticipants _self;
@@ -4038,7 +4263,8 @@ class Message_React extends Message {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $Message_ReactCopyWith<Message_React> get copyWith => _$Message_ReactCopyWithImpl<Message_React>(this, _$identity);
+  $Message_ReactCopyWith<Message_React> get copyWith =>
+      _$Message_ReactCopyWithImpl<Message_React>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -4058,14 +4284,18 @@ class Message_React extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_ReactCopyWith<$Res> implements $MessageCopyWith<$Res> {
-  factory $Message_ReactCopyWith(Message_React value, $Res Function(Message_React) _then) = _$Message_ReactCopyWithImpl;
+abstract mixin class $Message_ReactCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
+  factory $Message_ReactCopyWith(
+          Message_React value, $Res Function(Message_React) _then) =
+      _$Message_ReactCopyWithImpl;
   @useResult
   $Res call({ReactMessage field0});
 }
 
 /// @nodoc
-class _$Message_ReactCopyWithImpl<$Res> implements $Message_ReactCopyWith<$Res> {
+class _$Message_ReactCopyWithImpl<$Res>
+    implements $Message_ReactCopyWith<$Res> {
   _$Message_ReactCopyWithImpl(this._self, this._then);
 
   final Message_React _self;
@@ -4093,7 +4323,8 @@ class Message_Delivered extends Message {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is Message_Delivered);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is Message_Delivered);
   }
 
   @override
@@ -4112,7 +4343,8 @@ class Message_Read extends Message {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is Message_Read);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is Message_Read);
   }
 
   @override
@@ -4158,15 +4390,18 @@ class Message_Typing extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_TypingCopyWith<$Res> implements $MessageCopyWith<$Res> {
-  factory $Message_TypingCopyWith(Message_Typing value, $Res Function(Message_Typing) _then) =
+abstract mixin class $Message_TypingCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
+  factory $Message_TypingCopyWith(
+          Message_Typing value, $Res Function(Message_Typing) _then) =
       _$Message_TypingCopyWithImpl;
   @useResult
   $Res call({bool field0, TypingApp? field1});
 }
 
 /// @nodoc
-class _$Message_TypingCopyWithImpl<$Res> implements $Message_TypingCopyWith<$Res> {
+class _$Message_TypingCopyWithImpl<$Res>
+    implements $Message_TypingCopyWith<$Res> {
   _$Message_TypingCopyWithImpl(this._self, this._then);
 
   final Message_Typing _self;
@@ -4224,15 +4459,18 @@ class Message_Unsend extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_UnsendCopyWith<$Res> implements $MessageCopyWith<$Res> {
-  factory $Message_UnsendCopyWith(Message_Unsend value, $Res Function(Message_Unsend) _then) =
+abstract mixin class $Message_UnsendCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
+  factory $Message_UnsendCopyWith(
+          Message_Unsend value, $Res Function(Message_Unsend) _then) =
       _$Message_UnsendCopyWithImpl;
   @useResult
   $Res call({UnsendMessage field0});
 }
 
 /// @nodoc
-class _$Message_UnsendCopyWithImpl<$Res> implements $Message_UnsendCopyWith<$Res> {
+class _$Message_UnsendCopyWithImpl<$Res>
+    implements $Message_UnsendCopyWith<$Res> {
   _$Message_UnsendCopyWithImpl(this._self, this._then);
 
   final Message_Unsend _self;
@@ -4264,7 +4502,8 @@ class Message_Edit extends Message {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $Message_EditCopyWith<Message_Edit> get copyWith => _$Message_EditCopyWithImpl<Message_Edit>(this, _$identity);
+  $Message_EditCopyWith<Message_Edit> get copyWith =>
+      _$Message_EditCopyWithImpl<Message_Edit>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -4284,8 +4523,11 @@ class Message_Edit extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_EditCopyWith<$Res> implements $MessageCopyWith<$Res> {
-  factory $Message_EditCopyWith(Message_Edit value, $Res Function(Message_Edit) _then) = _$Message_EditCopyWithImpl;
+abstract mixin class $Message_EditCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
+  factory $Message_EditCopyWith(
+          Message_Edit value, $Res Function(Message_Edit) _then) =
+      _$Message_EditCopyWithImpl;
   @useResult
   $Res call({EditMessage field0});
 }
@@ -4344,15 +4586,18 @@ class Message_IconChange extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_IconChangeCopyWith<$Res> implements $MessageCopyWith<$Res> {
-  factory $Message_IconChangeCopyWith(Message_IconChange value, $Res Function(Message_IconChange) _then) =
+abstract mixin class $Message_IconChangeCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
+  factory $Message_IconChangeCopyWith(
+          Message_IconChange value, $Res Function(Message_IconChange) _then) =
       _$Message_IconChangeCopyWithImpl;
   @useResult
   $Res call({IconChangeMessage field0});
 }
 
 /// @nodoc
-class _$Message_IconChangeCopyWithImpl<$Res> implements $Message_IconChangeCopyWith<$Res> {
+class _$Message_IconChangeCopyWithImpl<$Res>
+    implements $Message_IconChangeCopyWith<$Res> {
   _$Message_IconChangeCopyWithImpl(this._self, this._then);
 
   final Message_IconChange _self;
@@ -4384,8 +4629,9 @@ class Message_EnableSmsActivation extends Message {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $Message_EnableSmsActivationCopyWith<Message_EnableSmsActivation> get copyWith =>
-      _$Message_EnableSmsActivationCopyWithImpl<Message_EnableSmsActivation>(this, _$identity);
+  $Message_EnableSmsActivationCopyWith<Message_EnableSmsActivation>
+      get copyWith => _$Message_EnableSmsActivationCopyWithImpl<
+          Message_EnableSmsActivation>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -4405,16 +4651,19 @@ class Message_EnableSmsActivation extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_EnableSmsActivationCopyWith<$Res> implements $MessageCopyWith<$Res> {
+abstract mixin class $Message_EnableSmsActivationCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
   factory $Message_EnableSmsActivationCopyWith(
-          Message_EnableSmsActivation value, $Res Function(Message_EnableSmsActivation) _then) =
+          Message_EnableSmsActivation value,
+          $Res Function(Message_EnableSmsActivation) _then) =
       _$Message_EnableSmsActivationCopyWithImpl;
   @useResult
   $Res call({bool field0});
 }
 
 /// @nodoc
-class _$Message_EnableSmsActivationCopyWithImpl<$Res> implements $Message_EnableSmsActivationCopyWith<$Res> {
+class _$Message_EnableSmsActivationCopyWithImpl<$Res>
+    implements $Message_EnableSmsActivationCopyWith<$Res> {
   _$Message_EnableSmsActivationCopyWithImpl(this._self, this._then);
 
   final Message_EnableSmsActivation _self;
@@ -4442,7 +4691,9 @@ class Message_MessageReadOnDevice extends Message {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is Message_MessageReadOnDevice);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is Message_MessageReadOnDevice);
   }
 
   @override
@@ -4466,7 +4717,8 @@ class Message_SmsConfirmSent extends Message {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $Message_SmsConfirmSentCopyWith<Message_SmsConfirmSent> get copyWith =>
-      _$Message_SmsConfirmSentCopyWithImpl<Message_SmsConfirmSent>(this, _$identity);
+      _$Message_SmsConfirmSentCopyWithImpl<Message_SmsConfirmSent>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -4486,15 +4738,18 @@ class Message_SmsConfirmSent extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_SmsConfirmSentCopyWith<$Res> implements $MessageCopyWith<$Res> {
-  factory $Message_SmsConfirmSentCopyWith(Message_SmsConfirmSent value, $Res Function(Message_SmsConfirmSent) _then) =
+abstract mixin class $Message_SmsConfirmSentCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
+  factory $Message_SmsConfirmSentCopyWith(Message_SmsConfirmSent value,
+          $Res Function(Message_SmsConfirmSent) _then) =
       _$Message_SmsConfirmSentCopyWithImpl;
   @useResult
   $Res call({bool field0});
 }
 
 /// @nodoc
-class _$Message_SmsConfirmSentCopyWithImpl<$Res> implements $Message_SmsConfirmSentCopyWith<$Res> {
+class _$Message_SmsConfirmSentCopyWithImpl<$Res>
+    implements $Message_SmsConfirmSentCopyWith<$Res> {
   _$Message_SmsConfirmSentCopyWithImpl(this._self, this._then);
 
   final Message_SmsConfirmSent _self;
@@ -4522,7 +4777,8 @@ class Message_MarkUnread extends Message {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is Message_MarkUnread);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is Message_MarkUnread);
   }
 
   @override
@@ -4541,7 +4797,9 @@ class Message_PeerCacheInvalidate extends Message {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is Message_PeerCacheInvalidate);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is Message_PeerCacheInvalidate);
   }
 
   @override
@@ -4565,7 +4823,8 @@ class Message_UpdateExtension extends Message {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $Message_UpdateExtensionCopyWith<Message_UpdateExtension> get copyWith =>
-      _$Message_UpdateExtensionCopyWithImpl<Message_UpdateExtension>(this, _$identity);
+      _$Message_UpdateExtensionCopyWithImpl<Message_UpdateExtension>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -4585,16 +4844,18 @@ class Message_UpdateExtension extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_UpdateExtensionCopyWith<$Res> implements $MessageCopyWith<$Res> {
-  factory $Message_UpdateExtensionCopyWith(
-          Message_UpdateExtension value, $Res Function(Message_UpdateExtension) _then) =
+abstract mixin class $Message_UpdateExtensionCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
+  factory $Message_UpdateExtensionCopyWith(Message_UpdateExtension value,
+          $Res Function(Message_UpdateExtension) _then) =
       _$Message_UpdateExtensionCopyWithImpl;
   @useResult
   $Res call({UpdateExtensionMessage field0});
 }
 
 /// @nodoc
-class _$Message_UpdateExtensionCopyWithImpl<$Res> implements $Message_UpdateExtensionCopyWith<$Res> {
+class _$Message_UpdateExtensionCopyWithImpl<$Res>
+    implements $Message_UpdateExtensionCopyWith<$Res> {
   _$Message_UpdateExtensionCopyWithImpl(this._self, this._then);
 
   final Message_UpdateExtension _self;
@@ -4626,7 +4887,8 @@ class Message_Error extends Message {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $Message_ErrorCopyWith<Message_Error> get copyWith => _$Message_ErrorCopyWithImpl<Message_Error>(this, _$identity);
+  $Message_ErrorCopyWith<Message_Error> get copyWith =>
+      _$Message_ErrorCopyWithImpl<Message_Error>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -4646,14 +4908,18 @@ class Message_Error extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_ErrorCopyWith<$Res> implements $MessageCopyWith<$Res> {
-  factory $Message_ErrorCopyWith(Message_Error value, $Res Function(Message_Error) _then) = _$Message_ErrorCopyWithImpl;
+abstract mixin class $Message_ErrorCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
+  factory $Message_ErrorCopyWith(
+          Message_Error value, $Res Function(Message_Error) _then) =
+      _$Message_ErrorCopyWithImpl;
   @useResult
   $Res call({ErrorMessage field0});
 }
 
 /// @nodoc
-class _$Message_ErrorCopyWithImpl<$Res> implements $Message_ErrorCopyWith<$Res> {
+class _$Message_ErrorCopyWithImpl<$Res>
+    implements $Message_ErrorCopyWith<$Res> {
   _$Message_ErrorCopyWithImpl(this._self, this._then);
 
   final Message_Error _self;
@@ -4686,7 +4952,8 @@ class Message_MoveToRecycleBin extends Message {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $Message_MoveToRecycleBinCopyWith<Message_MoveToRecycleBin> get copyWith =>
-      _$Message_MoveToRecycleBinCopyWithImpl<Message_MoveToRecycleBin>(this, _$identity);
+      _$Message_MoveToRecycleBinCopyWithImpl<Message_MoveToRecycleBin>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -4706,16 +4973,18 @@ class Message_MoveToRecycleBin extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_MoveToRecycleBinCopyWith<$Res> implements $MessageCopyWith<$Res> {
-  factory $Message_MoveToRecycleBinCopyWith(
-          Message_MoveToRecycleBin value, $Res Function(Message_MoveToRecycleBin) _then) =
+abstract mixin class $Message_MoveToRecycleBinCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
+  factory $Message_MoveToRecycleBinCopyWith(Message_MoveToRecycleBin value,
+          $Res Function(Message_MoveToRecycleBin) _then) =
       _$Message_MoveToRecycleBinCopyWithImpl;
   @useResult
   $Res call({MoveToRecycleBinMessage field0});
 }
 
 /// @nodoc
-class _$Message_MoveToRecycleBinCopyWithImpl<$Res> implements $Message_MoveToRecycleBinCopyWith<$Res> {
+class _$Message_MoveToRecycleBinCopyWithImpl<$Res>
+    implements $Message_MoveToRecycleBinCopyWith<$Res> {
   _$Message_MoveToRecycleBinCopyWithImpl(this._self, this._then);
 
   final Message_MoveToRecycleBin _self;
@@ -4768,15 +5037,18 @@ class Message_RecoverChat extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_RecoverChatCopyWith<$Res> implements $MessageCopyWith<$Res> {
-  factory $Message_RecoverChatCopyWith(Message_RecoverChat value, $Res Function(Message_RecoverChat) _then) =
+abstract mixin class $Message_RecoverChatCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
+  factory $Message_RecoverChatCopyWith(
+          Message_RecoverChat value, $Res Function(Message_RecoverChat) _then) =
       _$Message_RecoverChatCopyWithImpl;
   @useResult
   $Res call({OperatedChat field0});
 }
 
 /// @nodoc
-class _$Message_RecoverChatCopyWithImpl<$Res> implements $Message_RecoverChatCopyWith<$Res> {
+class _$Message_RecoverChatCopyWithImpl<$Res>
+    implements $Message_RecoverChatCopyWith<$Res> {
   _$Message_RecoverChatCopyWithImpl(this._self, this._then);
 
   final Message_RecoverChat _self;
@@ -4809,7 +5081,8 @@ class Message_PermanentDelete extends Message {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $Message_PermanentDeleteCopyWith<Message_PermanentDelete> get copyWith =>
-      _$Message_PermanentDeleteCopyWithImpl<Message_PermanentDelete>(this, _$identity);
+      _$Message_PermanentDeleteCopyWithImpl<Message_PermanentDelete>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -4829,16 +5102,18 @@ class Message_PermanentDelete extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_PermanentDeleteCopyWith<$Res> implements $MessageCopyWith<$Res> {
-  factory $Message_PermanentDeleteCopyWith(
-          Message_PermanentDelete value, $Res Function(Message_PermanentDelete) _then) =
+abstract mixin class $Message_PermanentDeleteCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
+  factory $Message_PermanentDeleteCopyWith(Message_PermanentDelete value,
+          $Res Function(Message_PermanentDelete) _then) =
       _$Message_PermanentDeleteCopyWithImpl;
   @useResult
   $Res call({PermanentDeleteMessage field0});
 }
 
 /// @nodoc
-class _$Message_PermanentDeleteCopyWithImpl<$Res> implements $Message_PermanentDeleteCopyWith<$Res> {
+class _$Message_PermanentDeleteCopyWithImpl<$Res>
+    implements $Message_PermanentDeleteCopyWith<$Res> {
   _$Message_PermanentDeleteCopyWithImpl(this._self, this._then);
 
   final Message_PermanentDelete _self;
@@ -4866,7 +5141,8 @@ class Message_Unschedule extends Message {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is Message_Unschedule);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is Message_Unschedule);
   }
 
   @override
@@ -4890,7 +5166,8 @@ class Message_UpdateProfile extends Message {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $Message_UpdateProfileCopyWith<Message_UpdateProfile> get copyWith =>
-      _$Message_UpdateProfileCopyWithImpl<Message_UpdateProfile>(this, _$identity);
+      _$Message_UpdateProfileCopyWithImpl<Message_UpdateProfile>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -4910,15 +5187,18 @@ class Message_UpdateProfile extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_UpdateProfileCopyWith<$Res> implements $MessageCopyWith<$Res> {
-  factory $Message_UpdateProfileCopyWith(Message_UpdateProfile value, $Res Function(Message_UpdateProfile) _then) =
+abstract mixin class $Message_UpdateProfileCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
+  factory $Message_UpdateProfileCopyWith(Message_UpdateProfile value,
+          $Res Function(Message_UpdateProfile) _then) =
       _$Message_UpdateProfileCopyWithImpl;
   @useResult
   $Res call({UpdateProfileMessage field0});
 }
 
 /// @nodoc
-class _$Message_UpdateProfileCopyWithImpl<$Res> implements $Message_UpdateProfileCopyWith<$Res> {
+class _$Message_UpdateProfileCopyWithImpl<$Res>
+    implements $Message_UpdateProfileCopyWith<$Res> {
   _$Message_UpdateProfileCopyWithImpl(this._self, this._then);
 
   final Message_UpdateProfile _self;
@@ -4950,8 +5230,9 @@ class Message_UpdateProfileSharing extends Message {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $Message_UpdateProfileSharingCopyWith<Message_UpdateProfileSharing> get copyWith =>
-      _$Message_UpdateProfileSharingCopyWithImpl<Message_UpdateProfileSharing>(this, _$identity);
+  $Message_UpdateProfileSharingCopyWith<Message_UpdateProfileSharing>
+      get copyWith => _$Message_UpdateProfileSharingCopyWithImpl<
+          Message_UpdateProfileSharing>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -4971,16 +5252,19 @@ class Message_UpdateProfileSharing extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_UpdateProfileSharingCopyWith<$Res> implements $MessageCopyWith<$Res> {
+abstract mixin class $Message_UpdateProfileSharingCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
   factory $Message_UpdateProfileSharingCopyWith(
-          Message_UpdateProfileSharing value, $Res Function(Message_UpdateProfileSharing) _then) =
+          Message_UpdateProfileSharing value,
+          $Res Function(Message_UpdateProfileSharing) _then) =
       _$Message_UpdateProfileSharingCopyWithImpl;
   @useResult
   $Res call({UpdateProfileSharingMessage field0});
 }
 
 /// @nodoc
-class _$Message_UpdateProfileSharingCopyWithImpl<$Res> implements $Message_UpdateProfileSharingCopyWith<$Res> {
+class _$Message_UpdateProfileSharingCopyWithImpl<$Res>
+    implements $Message_UpdateProfileSharingCopyWith<$Res> {
   _$Message_UpdateProfileSharingCopyWithImpl(this._self, this._then);
 
   final Message_UpdateProfileSharing _self;
@@ -5013,7 +5297,8 @@ class Message_ShareProfile extends Message {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $Message_ShareProfileCopyWith<Message_ShareProfile> get copyWith =>
-      _$Message_ShareProfileCopyWithImpl<Message_ShareProfile>(this, _$identity);
+      _$Message_ShareProfileCopyWithImpl<Message_ShareProfile>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -5033,15 +5318,18 @@ class Message_ShareProfile extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_ShareProfileCopyWith<$Res> implements $MessageCopyWith<$Res> {
-  factory $Message_ShareProfileCopyWith(Message_ShareProfile value, $Res Function(Message_ShareProfile) _then) =
+abstract mixin class $Message_ShareProfileCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
+  factory $Message_ShareProfileCopyWith(Message_ShareProfile value,
+          $Res Function(Message_ShareProfile) _then) =
       _$Message_ShareProfileCopyWithImpl;
   @useResult
   $Res call({ShareProfileMessage field0});
 }
 
 /// @nodoc
-class _$Message_ShareProfileCopyWithImpl<$Res> implements $Message_ShareProfileCopyWith<$Res> {
+class _$Message_ShareProfileCopyWithImpl<$Res>
+    implements $Message_ShareProfileCopyWith<$Res> {
   _$Message_ShareProfileCopyWithImpl(this._self, this._then);
 
   final Message_ShareProfile _self;
@@ -5069,7 +5357,8 @@ class Message_NotifyAnyways extends Message {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is Message_NotifyAnyways);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is Message_NotifyAnyways);
   }
 
   @override
@@ -5092,8 +5381,9 @@ class Message_SetTranscriptBackground extends Message {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $Message_SetTranscriptBackgroundCopyWith<Message_SetTranscriptBackground> get copyWith =>
-      _$Message_SetTranscriptBackgroundCopyWithImpl<Message_SetTranscriptBackground>(this, _$identity);
+  $Message_SetTranscriptBackgroundCopyWith<Message_SetTranscriptBackground>
+      get copyWith => _$Message_SetTranscriptBackgroundCopyWithImpl<
+          Message_SetTranscriptBackground>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -5113,9 +5403,11 @@ class Message_SetTranscriptBackground extends Message {
 }
 
 /// @nodoc
-abstract mixin class $Message_SetTranscriptBackgroundCopyWith<$Res> implements $MessageCopyWith<$Res> {
+abstract mixin class $Message_SetTranscriptBackgroundCopyWith<$Res>
+    implements $MessageCopyWith<$Res> {
   factory $Message_SetTranscriptBackgroundCopyWith(
-          Message_SetTranscriptBackground value, $Res Function(Message_SetTranscriptBackground) _then) =
+          Message_SetTranscriptBackground value,
+          $Res Function(Message_SetTranscriptBackground) _then) =
       _$Message_SetTranscriptBackgroundCopyWithImpl;
   @useResult
   $Res call({SetTranscriptBackgroundMessage field0});
@@ -5124,7 +5416,8 @@ abstract mixin class $Message_SetTranscriptBackgroundCopyWith<$Res> implements $
 }
 
 /// @nodoc
-class _$Message_SetTranscriptBackgroundCopyWithImpl<$Res> implements $Message_SetTranscriptBackgroundCopyWith<$Res> {
+class _$Message_SetTranscriptBackgroundCopyWithImpl<$Res>
+    implements $Message_SetTranscriptBackgroundCopyWith<$Res> {
   _$Message_SetTranscriptBackgroundCopyWithImpl(this._self, this._then);
 
   final Message_SetTranscriptBackground _self;
@@ -5168,7 +5461,8 @@ mixin _$MessagePart {
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
+  int get hashCode =>
+      Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
 
   @override
   String toString() {
@@ -5423,8 +5717,10 @@ class MessagePart_Text extends MessagePart {
 }
 
 /// @nodoc
-abstract mixin class $MessagePart_TextCopyWith<$Res> implements $MessagePartCopyWith<$Res> {
-  factory $MessagePart_TextCopyWith(MessagePart_Text value, $Res Function(MessagePart_Text) _then) =
+abstract mixin class $MessagePart_TextCopyWith<$Res>
+    implements $MessagePartCopyWith<$Res> {
+  factory $MessagePart_TextCopyWith(
+          MessagePart_Text value, $Res Function(MessagePart_Text) _then) =
       _$MessagePart_TextCopyWithImpl;
   @useResult
   $Res call({String field0, TextFormat field1});
@@ -5433,7 +5729,8 @@ abstract mixin class $MessagePart_TextCopyWith<$Res> implements $MessagePartCopy
 }
 
 /// @nodoc
-class _$MessagePart_TextCopyWithImpl<$Res> implements $MessagePart_TextCopyWith<$Res> {
+class _$MessagePart_TextCopyWithImpl<$Res>
+    implements $MessagePart_TextCopyWith<$Res> {
   _$MessagePart_TextCopyWithImpl(this._self, this._then);
 
   final MessagePart_Text _self;
@@ -5482,7 +5779,8 @@ class MessagePart_Attachment extends MessagePart {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $MessagePart_AttachmentCopyWith<MessagePart_Attachment> get copyWith =>
-      _$MessagePart_AttachmentCopyWithImpl<MessagePart_Attachment>(this, _$identity);
+      _$MessagePart_AttachmentCopyWithImpl<MessagePart_Attachment>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -5502,15 +5800,18 @@ class MessagePart_Attachment extends MessagePart {
 }
 
 /// @nodoc
-abstract mixin class $MessagePart_AttachmentCopyWith<$Res> implements $MessagePartCopyWith<$Res> {
-  factory $MessagePart_AttachmentCopyWith(MessagePart_Attachment value, $Res Function(MessagePart_Attachment) _then) =
+abstract mixin class $MessagePart_AttachmentCopyWith<$Res>
+    implements $MessagePartCopyWith<$Res> {
+  factory $MessagePart_AttachmentCopyWith(MessagePart_Attachment value,
+          $Res Function(MessagePart_Attachment) _then) =
       _$MessagePart_AttachmentCopyWithImpl;
   @useResult
   $Res call({Attachment field0});
 }
 
 /// @nodoc
-class _$MessagePart_AttachmentCopyWithImpl<$Res> implements $MessagePart_AttachmentCopyWith<$Res> {
+class _$MessagePart_AttachmentCopyWithImpl<$Res>
+    implements $MessagePart_AttachmentCopyWith<$Res> {
   _$MessagePart_AttachmentCopyWithImpl(this._self, this._then);
 
   final MessagePart_Attachment _self;
@@ -5566,15 +5867,18 @@ class MessagePart_Mention extends MessagePart {
 }
 
 /// @nodoc
-abstract mixin class $MessagePart_MentionCopyWith<$Res> implements $MessagePartCopyWith<$Res> {
-  factory $MessagePart_MentionCopyWith(MessagePart_Mention value, $Res Function(MessagePart_Mention) _then) =
+abstract mixin class $MessagePart_MentionCopyWith<$Res>
+    implements $MessagePartCopyWith<$Res> {
+  factory $MessagePart_MentionCopyWith(
+          MessagePart_Mention value, $Res Function(MessagePart_Mention) _then) =
       _$MessagePart_MentionCopyWithImpl;
   @useResult
   $Res call({String field0, String field1});
 }
 
 /// @nodoc
-class _$MessagePart_MentionCopyWithImpl<$Res> implements $MessagePart_MentionCopyWith<$Res> {
+class _$MessagePart_MentionCopyWithImpl<$Res>
+    implements $MessagePart_MentionCopyWith<$Res> {
   _$MessagePart_MentionCopyWithImpl(this._self, this._then);
 
   final MessagePart_Mention _self;
@@ -5633,15 +5937,18 @@ class MessagePart_Object extends MessagePart {
 }
 
 /// @nodoc
-abstract mixin class $MessagePart_ObjectCopyWith<$Res> implements $MessagePartCopyWith<$Res> {
-  factory $MessagePart_ObjectCopyWith(MessagePart_Object value, $Res Function(MessagePart_Object) _then) =
+abstract mixin class $MessagePart_ObjectCopyWith<$Res>
+    implements $MessagePartCopyWith<$Res> {
+  factory $MessagePart_ObjectCopyWith(
+          MessagePart_Object value, $Res Function(MessagePart_Object) _then) =
       _$MessagePart_ObjectCopyWithImpl;
   @useResult
   $Res call({String field0});
 }
 
 /// @nodoc
-class _$MessagePart_ObjectCopyWithImpl<$Res> implements $MessagePart_ObjectCopyWith<$Res> {
+class _$MessagePart_ObjectCopyWithImpl<$Res>
+    implements $MessagePart_ObjectCopyWith<$Res> {
   _$MessagePart_ObjectCopyWithImpl(this._self, this._then);
 
   final MessagePart_Object _self;
@@ -5675,7 +5982,8 @@ mixin _$MessageTarget {
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
+  int get hashCode =>
+      Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
 
   @override
   String toString() {
@@ -5883,7 +6191,8 @@ class MessageTarget_Token extends MessageTarget {
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
+  int get hashCode =>
+      Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
 
   @override
   String toString() {
@@ -5892,15 +6201,18 @@ class MessageTarget_Token extends MessageTarget {
 }
 
 /// @nodoc
-abstract mixin class $MessageTarget_TokenCopyWith<$Res> implements $MessageTargetCopyWith<$Res> {
-  factory $MessageTarget_TokenCopyWith(MessageTarget_Token value, $Res Function(MessageTarget_Token) _then) =
+abstract mixin class $MessageTarget_TokenCopyWith<$Res>
+    implements $MessageTargetCopyWith<$Res> {
+  factory $MessageTarget_TokenCopyWith(
+          MessageTarget_Token value, $Res Function(MessageTarget_Token) _then) =
       _$MessageTarget_TokenCopyWithImpl;
   @useResult
   $Res call({Uint8List field0});
 }
 
 /// @nodoc
-class _$MessageTarget_TokenCopyWithImpl<$Res> implements $MessageTarget_TokenCopyWith<$Res> {
+class _$MessageTarget_TokenCopyWithImpl<$Res>
+    implements $MessageTarget_TokenCopyWith<$Res> {
   _$MessageTarget_TokenCopyWithImpl(this._self, this._then);
 
   final MessageTarget_Token _self;
@@ -5954,15 +6266,18 @@ class MessageTarget_Uuid extends MessageTarget {
 }
 
 /// @nodoc
-abstract mixin class $MessageTarget_UuidCopyWith<$Res> implements $MessageTargetCopyWith<$Res> {
-  factory $MessageTarget_UuidCopyWith(MessageTarget_Uuid value, $Res Function(MessageTarget_Uuid) _then) =
+abstract mixin class $MessageTarget_UuidCopyWith<$Res>
+    implements $MessageTargetCopyWith<$Res> {
+  factory $MessageTarget_UuidCopyWith(
+          MessageTarget_Uuid value, $Res Function(MessageTarget_Uuid) _then) =
       _$MessageTarget_UuidCopyWithImpl;
   @useResult
   $Res call({String field0});
 }
 
 /// @nodoc
-class _$MessageTarget_UuidCopyWithImpl<$Res> implements $MessageTarget_UuidCopyWith<$Res> {
+class _$MessageTarget_UuidCopyWithImpl<$Res>
+    implements $MessageTarget_UuidCopyWith<$Res> {
   _$MessageTarget_UuidCopyWithImpl(this._self, this._then);
 
   final MessageTarget_Uuid _self;
@@ -5987,7 +6302,8 @@ class _$MessageTarget_UuidCopyWithImpl<$Res> implements $MessageTarget_UuidCopyW
 mixin _$MessageType {
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is MessageType);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is MessageType);
   }
 
   @override
@@ -6135,7 +6451,9 @@ extension MessageTypePatterns on MessageType {
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
     required TResult Function() iMessage,
-    required TResult Function(bool isPhone, String usingNumber, String? fromHandle) sms,
+    required TResult Function(
+            bool isPhone, String usingNumber, String? fromHandle)
+        sms,
   }) {
     final _that = this;
     switch (_that) {
@@ -6161,7 +6479,8 @@ extension MessageTypePatterns on MessageType {
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function()? iMessage,
-    TResult? Function(bool isPhone, String usingNumber, String? fromHandle)? sms,
+    TResult? Function(bool isPhone, String usingNumber, String? fromHandle)?
+        sms,
   }) {
     final _that = this;
     switch (_that) {
@@ -6182,7 +6501,8 @@ class MessageType_IMessage extends MessageType {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is MessageType_IMessage);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is MessageType_IMessage);
   }
 
   @override
@@ -6197,7 +6517,9 @@ class MessageType_IMessage extends MessageType {
 /// @nodoc
 
 class MessageType_SMS extends MessageType {
-  const MessageType_SMS({required this.isPhone, required this.usingNumber, this.fromHandle}) : super._();
+  const MessageType_SMS(
+      {required this.isPhone, required this.usingNumber, this.fromHandle})
+      : super._();
 
   final bool isPhone;
   final String usingNumber;
@@ -6216,12 +6538,15 @@ class MessageType_SMS extends MessageType {
         (other.runtimeType == runtimeType &&
             other is MessageType_SMS &&
             (identical(other.isPhone, isPhone) || other.isPhone == isPhone) &&
-            (identical(other.usingNumber, usingNumber) || other.usingNumber == usingNumber) &&
-            (identical(other.fromHandle, fromHandle) || other.fromHandle == fromHandle));
+            (identical(other.usingNumber, usingNumber) ||
+                other.usingNumber == usingNumber) &&
+            (identical(other.fromHandle, fromHandle) ||
+                other.fromHandle == fromHandle));
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, isPhone, usingNumber, fromHandle);
+  int get hashCode =>
+      Object.hash(runtimeType, isPhone, usingNumber, fromHandle);
 
   @override
   String toString() {
@@ -6230,15 +6555,18 @@ class MessageType_SMS extends MessageType {
 }
 
 /// @nodoc
-abstract mixin class $MessageType_SMSCopyWith<$Res> implements $MessageTypeCopyWith<$Res> {
-  factory $MessageType_SMSCopyWith(MessageType_SMS value, $Res Function(MessageType_SMS) _then) =
+abstract mixin class $MessageType_SMSCopyWith<$Res>
+    implements $MessageTypeCopyWith<$Res> {
+  factory $MessageType_SMSCopyWith(
+          MessageType_SMS value, $Res Function(MessageType_SMS) _then) =
       _$MessageType_SMSCopyWithImpl;
   @useResult
   $Res call({bool isPhone, String usingNumber, String? fromHandle});
 }
 
 /// @nodoc
-class _$MessageType_SMSCopyWithImpl<$Res> implements $MessageType_SMSCopyWith<$Res> {
+class _$MessageType_SMSCopyWithImpl<$Res>
+    implements $MessageType_SMSCopyWith<$Res> {
   _$MessageType_SMSCopyWithImpl(this._self, this._then);
 
   final MessageType_SMS _self;
@@ -6282,7 +6610,8 @@ mixin _$NumOrString {
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
+  int get hashCode =>
+      Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
 
   @override
   String toString() {
@@ -6517,15 +6846,18 @@ class NumOrString_Num extends NumOrString {
 }
 
 /// @nodoc
-abstract mixin class $NumOrString_NumCopyWith<$Res> implements $NumOrStringCopyWith<$Res> {
-  factory $NumOrString_NumCopyWith(NumOrString_Num value, $Res Function(NumOrString_Num) _then) =
+abstract mixin class $NumOrString_NumCopyWith<$Res>
+    implements $NumOrStringCopyWith<$Res> {
+  factory $NumOrString_NumCopyWith(
+          NumOrString_Num value, $Res Function(NumOrString_Num) _then) =
       _$NumOrString_NumCopyWithImpl;
   @useResult
   $Res call({int field0});
 }
 
 /// @nodoc
-class _$NumOrString_NumCopyWithImpl<$Res> implements $NumOrString_NumCopyWith<$Res> {
+class _$NumOrString_NumCopyWithImpl<$Res>
+    implements $NumOrString_NumCopyWith<$Res> {
   _$NumOrString_NumCopyWithImpl(this._self, this._then);
 
   final NumOrString_Num _self;
@@ -6579,15 +6911,18 @@ class NumOrString_String extends NumOrString {
 }
 
 /// @nodoc
-abstract mixin class $NumOrString_StringCopyWith<$Res> implements $NumOrStringCopyWith<$Res> {
-  factory $NumOrString_StringCopyWith(NumOrString_String value, $Res Function(NumOrString_String) _then) =
+abstract mixin class $NumOrString_StringCopyWith<$Res>
+    implements $NumOrStringCopyWith<$Res> {
+  factory $NumOrString_StringCopyWith(
+          NumOrString_String value, $Res Function(NumOrString_String) _then) =
       _$NumOrString_StringCopyWithImpl;
   @useResult
   $Res call({String field0});
 }
 
 /// @nodoc
-class _$NumOrString_StringCopyWithImpl<$Res> implements $NumOrString_StringCopyWith<$Res> {
+class _$NumOrString_StringCopyWithImpl<$Res>
+    implements $NumOrString_StringCopyWith<$Res> {
   _$NumOrString_StringCopyWithImpl(this._self, this._then);
 
   final NumOrString_String _self;
@@ -6641,15 +6976,18 @@ class NumOrString_Bool extends NumOrString {
 }
 
 /// @nodoc
-abstract mixin class $NumOrString_BoolCopyWith<$Res> implements $NumOrStringCopyWith<$Res> {
-  factory $NumOrString_BoolCopyWith(NumOrString_Bool value, $Res Function(NumOrString_Bool) _then) =
+abstract mixin class $NumOrString_BoolCopyWith<$Res>
+    implements $NumOrStringCopyWith<$Res> {
+  factory $NumOrString_BoolCopyWith(
+          NumOrString_Bool value, $Res Function(NumOrString_Bool) _then) =
       _$NumOrString_BoolCopyWithImpl;
   @useResult
   $Res call({bool field0});
 }
 
 /// @nodoc
-class _$NumOrString_BoolCopyWithImpl<$Res> implements $NumOrString_BoolCopyWith<$Res> {
+class _$NumOrString_BoolCopyWithImpl<$Res>
+    implements $NumOrString_BoolCopyWith<$Res> {
   _$NumOrString_BoolCopyWithImpl(this._self, this._then);
 
   final NumOrString_Bool _self;
@@ -6691,31 +7029,51 @@ mixin _$PartExtension {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $PartExtensionCopyWith<PartExtension> get copyWith =>
-      _$PartExtensionCopyWithImpl<PartExtension>(this as PartExtension, _$identity);
+      _$PartExtensionCopyWithImpl<PartExtension>(
+          this as PartExtension, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is PartExtension &&
-            (identical(other.msgWidth, msgWidth) || other.msgWidth == msgWidth) &&
-            (identical(other.rotation, rotation) || other.rotation == rotation) &&
+            (identical(other.msgWidth, msgWidth) ||
+                other.msgWidth == msgWidth) &&
+            (identical(other.rotation, rotation) ||
+                other.rotation == rotation) &&
             (identical(other.sai, sai) || other.sai == sai) &&
             (identical(other.scale, scale) || other.scale == scale) &&
             (identical(other.update, update) || other.update == update) &&
             (identical(other.sli, sli) || other.sli == sli) &&
-            (identical(other.normalizedX, normalizedX) || other.normalizedX == normalizedX) &&
-            (identical(other.normalizedY, normalizedY) || other.normalizedY == normalizedY) &&
+            (identical(other.normalizedX, normalizedX) ||
+                other.normalizedX == normalizedX) &&
+            (identical(other.normalizedY, normalizedY) ||
+                other.normalizedY == normalizedY) &&
             (identical(other.version, version) || other.version == version) &&
             (identical(other.hash, hash) || other.hash == hash) &&
             (identical(other.safi, safi) || other.safi == safi) &&
-            (identical(other.effectType, effectType) || other.effectType == effectType) &&
-            (identical(other.stickerId, stickerId) || other.stickerId == stickerId));
+            (identical(other.effectType, effectType) ||
+                other.effectType == effectType) &&
+            (identical(other.stickerId, stickerId) ||
+                other.stickerId == stickerId));
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, msgWidth, rotation, sai, scale, update, sli, normalizedX, normalizedY,
-      version, hash, safi, effectType, stickerId);
+  int get hashCode => Object.hash(
+      runtimeType,
+      msgWidth,
+      rotation,
+      sai,
+      scale,
+      update,
+      sli,
+      normalizedX,
+      normalizedY,
+      version,
+      hash,
+      safi,
+      effectType,
+      stickerId);
 
   @override
   String toString() {
@@ -6725,7 +7083,9 @@ mixin _$PartExtension {
 
 /// @nodoc
 abstract mixin class $PartExtensionCopyWith<$Res> {
-  factory $PartExtensionCopyWith(PartExtension value, $Res Function(PartExtension) _then) = _$PartExtensionCopyWithImpl;
+  factory $PartExtensionCopyWith(
+          PartExtension value, $Res Function(PartExtension) _then) =
+      _$PartExtensionCopyWithImpl;
   @useResult
   $Res call(
       {double msgWidth,
@@ -6744,7 +7104,8 @@ abstract mixin class $PartExtensionCopyWith<$Res> {
 }
 
 /// @nodoc
-class _$PartExtensionCopyWithImpl<$Res> implements $PartExtensionCopyWith<$Res> {
+class _$PartExtensionCopyWithImpl<$Res>
+    implements $PartExtensionCopyWith<$Res> {
   _$PartExtensionCopyWithImpl(this._self, this._then);
 
   final PartExtension _self;
@@ -7112,31 +7473,51 @@ class PartExtension_Sticker extends PartExtension {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $PartExtension_StickerCopyWith<PartExtension_Sticker> get copyWith =>
-      _$PartExtension_StickerCopyWithImpl<PartExtension_Sticker>(this, _$identity);
+      _$PartExtension_StickerCopyWithImpl<PartExtension_Sticker>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is PartExtension_Sticker &&
-            (identical(other.msgWidth, msgWidth) || other.msgWidth == msgWidth) &&
-            (identical(other.rotation, rotation) || other.rotation == rotation) &&
+            (identical(other.msgWidth, msgWidth) ||
+                other.msgWidth == msgWidth) &&
+            (identical(other.rotation, rotation) ||
+                other.rotation == rotation) &&
             (identical(other.sai, sai) || other.sai == sai) &&
             (identical(other.scale, scale) || other.scale == scale) &&
             (identical(other.update, update) || other.update == update) &&
             (identical(other.sli, sli) || other.sli == sli) &&
-            (identical(other.normalizedX, normalizedX) || other.normalizedX == normalizedX) &&
-            (identical(other.normalizedY, normalizedY) || other.normalizedY == normalizedY) &&
+            (identical(other.normalizedX, normalizedX) ||
+                other.normalizedX == normalizedX) &&
+            (identical(other.normalizedY, normalizedY) ||
+                other.normalizedY == normalizedY) &&
             (identical(other.version, version) || other.version == version) &&
             (identical(other.hash, hash) || other.hash == hash) &&
             (identical(other.safi, safi) || other.safi == safi) &&
-            (identical(other.effectType, effectType) || other.effectType == effectType) &&
-            (identical(other.stickerId, stickerId) || other.stickerId == stickerId));
+            (identical(other.effectType, effectType) ||
+                other.effectType == effectType) &&
+            (identical(other.stickerId, stickerId) ||
+                other.stickerId == stickerId));
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, msgWidth, rotation, sai, scale, update, sli, normalizedX, normalizedY,
-      version, hash, safi, effectType, stickerId);
+  int get hashCode => Object.hash(
+      runtimeType,
+      msgWidth,
+      rotation,
+      sai,
+      scale,
+      update,
+      sli,
+      normalizedX,
+      normalizedY,
+      version,
+      hash,
+      safi,
+      effectType,
+      stickerId);
 
   @override
   String toString() {
@@ -7145,8 +7526,10 @@ class PartExtension_Sticker extends PartExtension {
 }
 
 /// @nodoc
-abstract mixin class $PartExtension_StickerCopyWith<$Res> implements $PartExtensionCopyWith<$Res> {
-  factory $PartExtension_StickerCopyWith(PartExtension_Sticker value, $Res Function(PartExtension_Sticker) _then) =
+abstract mixin class $PartExtension_StickerCopyWith<$Res>
+    implements $PartExtensionCopyWith<$Res> {
+  factory $PartExtension_StickerCopyWith(PartExtension_Sticker value,
+          $Res Function(PartExtension_Sticker) _then) =
       _$PartExtension_StickerCopyWithImpl;
   @override
   @useResult
@@ -7167,7 +7550,8 @@ abstract mixin class $PartExtension_StickerCopyWith<$Res> implements $PartExtens
 }
 
 /// @nodoc
-class _$PartExtension_StickerCopyWithImpl<$Res> implements $PartExtension_StickerCopyWith<$Res> {
+class _$PartExtension_StickerCopyWithImpl<$Res>
+    implements $PartExtension_StickerCopyWith<$Res> {
   _$PartExtension_StickerCopyWithImpl(this._self, this._then);
 
   final PartExtension_Sticker _self;
@@ -7253,7 +7637,8 @@ class _$PartExtension_StickerCopyWithImpl<$Res> implements $PartExtension_Sticke
 mixin _$PollResult {
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is PollResult);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is PollResult);
   }
 
   @override
@@ -7448,7 +7833,8 @@ class PollResult_Stop extends PollResult {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is PollResult_Stop);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is PollResult_Stop);
   }
 
   @override
@@ -7492,8 +7878,10 @@ class PollResult_Cont extends PollResult {
 }
 
 /// @nodoc
-abstract mixin class $PollResult_ContCopyWith<$Res> implements $PollResultCopyWith<$Res> {
-  factory $PollResult_ContCopyWith(PollResult_Cont value, $Res Function(PollResult_Cont) _then) =
+abstract mixin class $PollResult_ContCopyWith<$Res>
+    implements $PollResultCopyWith<$Res> {
+  factory $PollResult_ContCopyWith(
+          PollResult_Cont value, $Res Function(PollResult_Cont) _then) =
       _$PollResult_ContCopyWithImpl;
   @useResult
   $Res call({PushMessage? field0});
@@ -7502,7 +7890,8 @@ abstract mixin class $PollResult_ContCopyWith<$Res> implements $PollResultCopyWi
 }
 
 /// @nodoc
-class _$PollResult_ContCopyWithImpl<$Res> implements $PollResult_ContCopyWith<$Res> {
+class _$PollResult_ContCopyWithImpl<$Res>
+    implements $PollResult_ContCopyWith<$Res> {
   _$PollResult_ContCopyWithImpl(this._self, this._then);
 
   final PollResult_Cont _self;
@@ -7541,7 +7930,8 @@ class _$PollResult_ContCopyWithImpl<$Res> implements $PollResult_ContCopyWith<$R
 mixin _$PosterType {
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is PosterType);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is PosterType);
   }
 
   @override
@@ -7616,8 +8006,10 @@ extension PosterTypePatterns on PosterType {
     required TResult Function(PosterType_Photo value) photo,
     required TResult Function(PosterType_Monogram value) monogram,
     required TResult Function(PosterType_Memoji value) memoji,
-    required TResult Function(PosterType_TranscriptDynamic value) transcriptDynamic,
-    required TResult Function(PosterType_TranscriptGradient value) transcriptGradient,
+    required TResult Function(PosterType_TranscriptDynamic value)
+        transcriptDynamic,
+    required TResult Function(PosterType_TranscriptGradient value)
+        transcriptGradient,
   }) {
     final _that = this;
     switch (_that) {
@@ -7725,7 +8117,8 @@ extension PosterTypePatterns on PosterType {
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
     required TResult Function(List<PosterAsset> assets) photo,
-    required TResult Function(MonogramData data, PosterColor background) monogram,
+    required TResult Function(MonogramData data, PosterColor background)
+        monogram,
     required TResult Function(MemojiData data, PosterColor background) memoji,
     required TResult Function(TranscriptDynamicUserData data) transcriptDynamic,
     required TResult Function(List<PosterColor> colors) transcriptGradient,
@@ -7813,7 +8206,8 @@ class PosterType_Photo extends PosterType {
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, const DeepCollectionEquality().hash(_assets));
+  int get hashCode =>
+      Object.hash(runtimeType, const DeepCollectionEquality().hash(_assets));
 
   @override
   String toString() {
@@ -7822,15 +8216,18 @@ class PosterType_Photo extends PosterType {
 }
 
 /// @nodoc
-abstract mixin class $PosterType_PhotoCopyWith<$Res> implements $PosterTypeCopyWith<$Res> {
-  factory $PosterType_PhotoCopyWith(PosterType_Photo value, $Res Function(PosterType_Photo) _then) =
+abstract mixin class $PosterType_PhotoCopyWith<$Res>
+    implements $PosterTypeCopyWith<$Res> {
+  factory $PosterType_PhotoCopyWith(
+          PosterType_Photo value, $Res Function(PosterType_Photo) _then) =
       _$PosterType_PhotoCopyWithImpl;
   @useResult
   $Res call({List<PosterAsset> assets});
 }
 
 /// @nodoc
-class _$PosterType_PhotoCopyWithImpl<$Res> implements $PosterType_PhotoCopyWith<$Res> {
+class _$PosterType_PhotoCopyWithImpl<$Res>
+    implements $PosterType_PhotoCopyWith<$Res> {
   _$PosterType_PhotoCopyWithImpl(this._self, this._then);
 
   final PosterType_Photo _self;
@@ -7854,7 +8251,8 @@ class _$PosterType_PhotoCopyWithImpl<$Res> implements $PosterType_PhotoCopyWith<
 /// @nodoc
 
 class PosterType_Monogram extends PosterType {
-  const PosterType_Monogram({required this.data, required this.background}) : super._();
+  const PosterType_Monogram({required this.data, required this.background})
+      : super._();
 
   final MonogramData data;
   final PosterColor background;
@@ -7872,7 +8270,8 @@ class PosterType_Monogram extends PosterType {
         (other.runtimeType == runtimeType &&
             other is PosterType_Monogram &&
             (identical(other.data, data) || other.data == data) &&
-            (identical(other.background, background) || other.background == background));
+            (identical(other.background, background) ||
+                other.background == background));
   }
 
   @override
@@ -7885,15 +8284,18 @@ class PosterType_Monogram extends PosterType {
 }
 
 /// @nodoc
-abstract mixin class $PosterType_MonogramCopyWith<$Res> implements $PosterTypeCopyWith<$Res> {
-  factory $PosterType_MonogramCopyWith(PosterType_Monogram value, $Res Function(PosterType_Monogram) _then) =
+abstract mixin class $PosterType_MonogramCopyWith<$Res>
+    implements $PosterTypeCopyWith<$Res> {
+  factory $PosterType_MonogramCopyWith(
+          PosterType_Monogram value, $Res Function(PosterType_Monogram) _then) =
       _$PosterType_MonogramCopyWithImpl;
   @useResult
   $Res call({MonogramData data, PosterColor background});
 }
 
 /// @nodoc
-class _$PosterType_MonogramCopyWithImpl<$Res> implements $PosterType_MonogramCopyWith<$Res> {
+class _$PosterType_MonogramCopyWithImpl<$Res>
+    implements $PosterType_MonogramCopyWith<$Res> {
   _$PosterType_MonogramCopyWithImpl(this._self, this._then);
 
   final PosterType_Monogram _self;
@@ -7922,7 +8324,8 @@ class _$PosterType_MonogramCopyWithImpl<$Res> implements $PosterType_MonogramCop
 /// @nodoc
 
 class PosterType_Memoji extends PosterType {
-  const PosterType_Memoji({required this.data, required this.background}) : super._();
+  const PosterType_Memoji({required this.data, required this.background})
+      : super._();
 
   final MemojiData data;
   final PosterColor background;
@@ -7940,7 +8343,8 @@ class PosterType_Memoji extends PosterType {
         (other.runtimeType == runtimeType &&
             other is PosterType_Memoji &&
             (identical(other.data, data) || other.data == data) &&
-            (identical(other.background, background) || other.background == background));
+            (identical(other.background, background) ||
+                other.background == background));
   }
 
   @override
@@ -7953,15 +8357,18 @@ class PosterType_Memoji extends PosterType {
 }
 
 /// @nodoc
-abstract mixin class $PosterType_MemojiCopyWith<$Res> implements $PosterTypeCopyWith<$Res> {
-  factory $PosterType_MemojiCopyWith(PosterType_Memoji value, $Res Function(PosterType_Memoji) _then) =
+abstract mixin class $PosterType_MemojiCopyWith<$Res>
+    implements $PosterTypeCopyWith<$Res> {
+  factory $PosterType_MemojiCopyWith(
+          PosterType_Memoji value, $Res Function(PosterType_Memoji) _then) =
       _$PosterType_MemojiCopyWithImpl;
   @useResult
   $Res call({MemojiData data, PosterColor background});
 }
 
 /// @nodoc
-class _$PosterType_MemojiCopyWithImpl<$Res> implements $PosterType_MemojiCopyWith<$Res> {
+class _$PosterType_MemojiCopyWithImpl<$Res>
+    implements $PosterType_MemojiCopyWith<$Res> {
   _$PosterType_MemojiCopyWithImpl(this._self, this._then);
 
   final PosterType_Memoji _self;
@@ -7998,8 +8405,9 @@ class PosterType_TranscriptDynamic extends PosterType {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $PosterType_TranscriptDynamicCopyWith<PosterType_TranscriptDynamic> get copyWith =>
-      _$PosterType_TranscriptDynamicCopyWithImpl<PosterType_TranscriptDynamic>(this, _$identity);
+  $PosterType_TranscriptDynamicCopyWith<PosterType_TranscriptDynamic>
+      get copyWith => _$PosterType_TranscriptDynamicCopyWithImpl<
+          PosterType_TranscriptDynamic>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -8019,16 +8427,19 @@ class PosterType_TranscriptDynamic extends PosterType {
 }
 
 /// @nodoc
-abstract mixin class $PosterType_TranscriptDynamicCopyWith<$Res> implements $PosterTypeCopyWith<$Res> {
+abstract mixin class $PosterType_TranscriptDynamicCopyWith<$Res>
+    implements $PosterTypeCopyWith<$Res> {
   factory $PosterType_TranscriptDynamicCopyWith(
-          PosterType_TranscriptDynamic value, $Res Function(PosterType_TranscriptDynamic) _then) =
+          PosterType_TranscriptDynamic value,
+          $Res Function(PosterType_TranscriptDynamic) _then) =
       _$PosterType_TranscriptDynamicCopyWithImpl;
   @useResult
   $Res call({TranscriptDynamicUserData data});
 }
 
 /// @nodoc
-class _$PosterType_TranscriptDynamicCopyWithImpl<$Res> implements $PosterType_TranscriptDynamicCopyWith<$Res> {
+class _$PosterType_TranscriptDynamicCopyWithImpl<$Res>
+    implements $PosterType_TranscriptDynamicCopyWith<$Res> {
   _$PosterType_TranscriptDynamicCopyWithImpl(this._self, this._then);
 
   final PosterType_TranscriptDynamic _self;
@@ -8067,8 +8478,9 @@ class PosterType_TranscriptGradient extends PosterType {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $PosterType_TranscriptGradientCopyWith<PosterType_TranscriptGradient> get copyWith =>
-      _$PosterType_TranscriptGradientCopyWithImpl<PosterType_TranscriptGradient>(this, _$identity);
+  $PosterType_TranscriptGradientCopyWith<PosterType_TranscriptGradient>
+      get copyWith => _$PosterType_TranscriptGradientCopyWithImpl<
+          PosterType_TranscriptGradient>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -8079,7 +8491,8 @@ class PosterType_TranscriptGradient extends PosterType {
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, const DeepCollectionEquality().hash(_colors));
+  int get hashCode =>
+      Object.hash(runtimeType, const DeepCollectionEquality().hash(_colors));
 
   @override
   String toString() {
@@ -8088,16 +8501,19 @@ class PosterType_TranscriptGradient extends PosterType {
 }
 
 /// @nodoc
-abstract mixin class $PosterType_TranscriptGradientCopyWith<$Res> implements $PosterTypeCopyWith<$Res> {
+abstract mixin class $PosterType_TranscriptGradientCopyWith<$Res>
+    implements $PosterTypeCopyWith<$Res> {
   factory $PosterType_TranscriptGradientCopyWith(
-          PosterType_TranscriptGradient value, $Res Function(PosterType_TranscriptGradient) _then) =
+          PosterType_TranscriptGradient value,
+          $Res Function(PosterType_TranscriptGradient) _then) =
       _$PosterType_TranscriptGradientCopyWithImpl;
   @useResult
   $Res call({List<PosterColor> colors});
 }
 
 /// @nodoc
-class _$PosterType_TranscriptGradientCopyWithImpl<$Res> implements $PosterType_TranscriptGradientCopyWith<$Res> {
+class _$PosterType_TranscriptGradientCopyWithImpl<$Res>
+    implements $PosterType_TranscriptGradientCopyWith<$Res> {
   _$PosterType_TranscriptGradientCopyWithImpl(this._self, this._then);
 
   final PosterType_TranscriptGradient _self;
@@ -8122,7 +8538,9 @@ class _$PosterType_TranscriptGradientCopyWithImpl<$Res> implements $PosterType_T
 mixin _$PRPosterContentMaterialStyle {
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is PRPosterContentMaterialStyle);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is PRPosterContentMaterialStyle);
   }
 
   @override
@@ -8136,7 +8554,8 @@ mixin _$PRPosterContentMaterialStyle {
 
 /// @nodoc
 class $PRPosterContentMaterialStyleCopyWith<$Res> {
-  $PRPosterContentMaterialStyleCopyWith(PRPosterContentMaterialStyle _, $Res Function(PRPosterContentMaterialStyle) __);
+  $PRPosterContentMaterialStyleCopyWith(PRPosterContentMaterialStyle _,
+      $Res Function(PRPosterContentMaterialStyle) __);
 }
 
 /// Adds pattern-matching-related methods to [PRPosterContentMaterialStyle].
@@ -8155,11 +8574,17 @@ extension PRPosterContentMaterialStylePatterns on PRPosterContentMaterialStyle {
 
   @optionalTypeArgs
   TResult maybeMap<TResult extends Object?>({
-    TResult Function(PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle value)?
+    TResult Function(
+            PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle
+                value)?
         prPosterContentDiscreteColorsStyle,
-    TResult Function(PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle value)?
+    TResult Function(
+            PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle
+                value)?
         prPosterContentVibrantMaterialStyle,
-    TResult Function(PRPosterContentMaterialStyle_PRPosterContentGradientStyle value)? prPosterContentGradientStyle,
+    TResult Function(
+            PRPosterContentMaterialStyle_PRPosterContentGradientStyle value)?
+        prPosterContentGradientStyle,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -8170,7 +8595,8 @@ extension PRPosterContentMaterialStylePatterns on PRPosterContentMaterialStyle {
       case PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle()
           when prPosterContentVibrantMaterialStyle != null:
         return prPosterContentVibrantMaterialStyle(_that);
-      case PRPosterContentMaterialStyle_PRPosterContentGradientStyle() when prPosterContentGradientStyle != null:
+      case PRPosterContentMaterialStyle_PRPosterContentGradientStyle()
+          when prPosterContentGradientStyle != null:
         return prPosterContentGradientStyle(_that);
       case _:
         return orElse();
@@ -8192,11 +8618,16 @@ extension PRPosterContentMaterialStylePatterns on PRPosterContentMaterialStyle {
 
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
-    required TResult Function(PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle value)
+    required TResult Function(
+            PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle
+                value)
         prPosterContentDiscreteColorsStyle,
-    required TResult Function(PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle value)
+    required TResult Function(
+            PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle
+                value)
         prPosterContentVibrantMaterialStyle,
-    required TResult Function(PRPosterContentMaterialStyle_PRPosterContentGradientStyle value)
+    required TResult Function(
+            PRPosterContentMaterialStyle_PRPosterContentGradientStyle value)
         prPosterContentGradientStyle,
   }) {
     final _that = this;
@@ -8224,11 +8655,17 @@ extension PRPosterContentMaterialStylePatterns on PRPosterContentMaterialStyle {
 
   @optionalTypeArgs
   TResult? mapOrNull<TResult extends Object?>({
-    TResult? Function(PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle value)?
+    TResult? Function(
+            PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle
+                value)?
         prPosterContentDiscreteColorsStyle,
-    TResult? Function(PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle value)?
+    TResult? Function(
+            PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle
+                value)?
         prPosterContentVibrantMaterialStyle,
-    TResult? Function(PRPosterContentMaterialStyle_PRPosterContentGradientStyle value)? prPosterContentGradientStyle,
+    TResult? Function(
+            PRPosterContentMaterialStyle_PRPosterContentGradientStyle value)?
+        prPosterContentGradientStyle,
   }) {
     final _that = this;
     switch (_that) {
@@ -8238,7 +8675,8 @@ extension PRPosterContentMaterialStylePatterns on PRPosterContentMaterialStyle {
       case PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle()
           when prPosterContentVibrantMaterialStyle != null:
         return prPosterContentVibrantMaterialStyle(_that);
-      case PRPosterContentMaterialStyle_PRPosterContentGradientStyle() when prPosterContentGradientStyle != null:
+      case PRPosterContentMaterialStyle_PRPosterContentGradientStyle()
+          when prPosterContentGradientStyle != null:
         return prPosterContentGradientStyle(_that);
       case _:
         return null;
@@ -8259,11 +8697,12 @@ extension PRPosterContentMaterialStylePatterns on PRPosterContentMaterialStyle {
 
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
-    TResult Function(
-            double variation, List<UIColor> colors, bool vibrant, bool supportsVariation, bool needsToResolveVariation)?
+    TResult Function(double variation, List<UIColor> colors, bool vibrant,
+            bool supportsVariation, bool needsToResolveVariation)?
         prPosterContentDiscreteColorsStyle,
     TResult Function()? prPosterContentVibrantMaterialStyle,
-    TResult Function(int gradientType, List<UIColor> colors, String startPoint, Float64List locations, String endPoint)?
+    TResult Function(int gradientType, List<UIColor> colors, String startPoint,
+            Float64List locations, String endPoint)?
         prPosterContentGradientStyle,
     required TResult orElse(),
   }) {
@@ -8272,13 +8711,18 @@ extension PRPosterContentMaterialStylePatterns on PRPosterContentMaterialStyle {
       case PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle()
           when prPosterContentDiscreteColorsStyle != null:
         return prPosterContentDiscreteColorsStyle(
-            _that.variation, _that.colors, _that.vibrant, _that.supportsVariation, _that.needsToResolveVariation);
+            _that.variation,
+            _that.colors,
+            _that.vibrant,
+            _that.supportsVariation,
+            _that.needsToResolveVariation);
       case PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle()
           when prPosterContentVibrantMaterialStyle != null:
         return prPosterContentVibrantMaterialStyle();
-      case PRPosterContentMaterialStyle_PRPosterContentGradientStyle() when prPosterContentGradientStyle != null:
-        return prPosterContentGradientStyle(
-            _that.gradientType, _that.colors, _that.startPoint, _that.locations, _that.endPoint);
+      case PRPosterContentMaterialStyle_PRPosterContentGradientStyle()
+          when prPosterContentGradientStyle != null:
+        return prPosterContentGradientStyle(_that.gradientType, _that.colors,
+            _that.startPoint, _that.locations, _that.endPoint);
       case _:
         return orElse();
     }
@@ -8299,24 +8743,28 @@ extension PRPosterContentMaterialStylePatterns on PRPosterContentMaterialStyle {
 
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
-    required TResult Function(
-            double variation, List<UIColor> colors, bool vibrant, bool supportsVariation, bool needsToResolveVariation)
+    required TResult Function(double variation, List<UIColor> colors,
+            bool vibrant, bool supportsVariation, bool needsToResolveVariation)
         prPosterContentDiscreteColorsStyle,
     required TResult Function() prPosterContentVibrantMaterialStyle,
-    required TResult Function(
-            int gradientType, List<UIColor> colors, String startPoint, Float64List locations, String endPoint)
+    required TResult Function(int gradientType, List<UIColor> colors,
+            String startPoint, Float64List locations, String endPoint)
         prPosterContentGradientStyle,
   }) {
     final _that = this;
     switch (_that) {
       case PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle():
         return prPosterContentDiscreteColorsStyle(
-            _that.variation, _that.colors, _that.vibrant, _that.supportsVariation, _that.needsToResolveVariation);
+            _that.variation,
+            _that.colors,
+            _that.vibrant,
+            _that.supportsVariation,
+            _that.needsToResolveVariation);
       case PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle():
         return prPosterContentVibrantMaterialStyle();
       case PRPosterContentMaterialStyle_PRPosterContentGradientStyle():
-        return prPosterContentGradientStyle(
-            _that.gradientType, _that.colors, _that.startPoint, _that.locations, _that.endPoint);
+        return prPosterContentGradientStyle(_that.gradientType, _that.colors,
+            _that.startPoint, _that.locations, _that.endPoint);
     }
   }
 
@@ -8334,12 +8782,12 @@ extension PRPosterContentMaterialStylePatterns on PRPosterContentMaterialStyle {
 
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(
-            double variation, List<UIColor> colors, bool vibrant, bool supportsVariation, bool needsToResolveVariation)?
+    TResult? Function(double variation, List<UIColor> colors, bool vibrant,
+            bool supportsVariation, bool needsToResolveVariation)?
         prPosterContentDiscreteColorsStyle,
     TResult? Function()? prPosterContentVibrantMaterialStyle,
-    TResult? Function(
-            int gradientType, List<UIColor> colors, String startPoint, Float64List locations, String endPoint)?
+    TResult? Function(int gradientType, List<UIColor> colors, String startPoint,
+            Float64List locations, String endPoint)?
         prPosterContentGradientStyle,
   }) {
     final _that = this;
@@ -8347,13 +8795,18 @@ extension PRPosterContentMaterialStylePatterns on PRPosterContentMaterialStyle {
       case PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle()
           when prPosterContentDiscreteColorsStyle != null:
         return prPosterContentDiscreteColorsStyle(
-            _that.variation, _that.colors, _that.vibrant, _that.supportsVariation, _that.needsToResolveVariation);
+            _that.variation,
+            _that.colors,
+            _that.vibrant,
+            _that.supportsVariation,
+            _that.needsToResolveVariation);
       case PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle()
           when prPosterContentVibrantMaterialStyle != null:
         return prPosterContentVibrantMaterialStyle();
-      case PRPosterContentMaterialStyle_PRPosterContentGradientStyle() when prPosterContentGradientStyle != null:
-        return prPosterContentGradientStyle(
-            _that.gradientType, _that.colors, _that.startPoint, _that.locations, _that.endPoint);
+      case PRPosterContentMaterialStyle_PRPosterContentGradientStyle()
+          when prPosterContentGradientStyle != null:
+        return prPosterContentGradientStyle(_that.gradientType, _that.colors,
+            _that.startPoint, _that.locations, _that.endPoint);
       case _:
         return null;
     }
@@ -8362,7 +8815,8 @@ extension PRPosterContentMaterialStylePatterns on PRPosterContentMaterialStyle {
 
 /// @nodoc
 
-class PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle extends PRPosterContentMaterialStyle {
+class PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle
+    extends PRPosterContentMaterialStyle {
   const PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle(
       {required this.variation,
       required final List<UIColor> colors,
@@ -8390,25 +8844,36 @@ class PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle extends PR
   @pragma('vm:prefer-inline')
   $PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyleCopyWith<
           PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle>
-      get copyWith => _$PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyleCopyWithImpl<
-          PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle>(this, _$identity);
+      get copyWith =>
+          _$PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyleCopyWithImpl<
+                  PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle>(
+              this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
-            other is PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle &&
-            (identical(other.variation, variation) || other.variation == variation) &&
+            other
+                is PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle &&
+            (identical(other.variation, variation) ||
+                other.variation == variation) &&
             const DeepCollectionEquality().equals(other._colors, _colors) &&
             (identical(other.vibrant, vibrant) || other.vibrant == vibrant) &&
-            (identical(other.supportsVariation, supportsVariation) || other.supportsVariation == supportsVariation) &&
-            (identical(other.needsToResolveVariation, needsToResolveVariation) ||
+            (identical(other.supportsVariation, supportsVariation) ||
+                other.supportsVariation == supportsVariation) &&
+            (identical(
+                    other.needsToResolveVariation, needsToResolveVariation) ||
                 other.needsToResolveVariation == needsToResolveVariation));
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, variation, const DeepCollectionEquality().hash(_colors), vibrant,
-      supportsVariation, needsToResolveVariation);
+  int get hashCode => Object.hash(
+      runtimeType,
+      variation,
+      const DeepCollectionEquality().hash(_colors),
+      vibrant,
+      supportsVariation,
+      needsToResolveVariation);
 
   @override
   String toString() {
@@ -8417,24 +8882,35 @@ class PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle extends PR
 }
 
 /// @nodoc
-abstract mixin class $PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyleCopyWith<$Res>
-    implements $PRPosterContentMaterialStyleCopyWith<$Res> {
+abstract mixin class $PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyleCopyWith<
+    $Res> implements $PRPosterContentMaterialStyleCopyWith<$Res> {
   factory $PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyleCopyWith(
           PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle value,
-          $Res Function(PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle) _then) =
+          $Res Function(
+                  PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle)
+              _then) =
       _$PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyleCopyWithImpl;
   @useResult
   $Res call(
-      {double variation, List<UIColor> colors, bool vibrant, bool supportsVariation, bool needsToResolveVariation});
+      {double variation,
+      List<UIColor> colors,
+      bool vibrant,
+      bool supportsVariation,
+      bool needsToResolveVariation});
 }
 
 /// @nodoc
-class _$PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyleCopyWithImpl<$Res>
-    implements $PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyleCopyWith<$Res> {
-  _$PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyleCopyWithImpl(this._self, this._then);
+class _$PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyleCopyWithImpl<
+        $Res>
+    implements
+        $PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyleCopyWith<
+            $Res> {
+  _$PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyleCopyWithImpl(
+      this._self, this._then);
 
   final PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle _self;
-  final $Res Function(PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle) _then;
+  final $Res Function(
+      PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle) _then;
 
   /// Create a copy of PRPosterContentMaterialStyle
   /// with the given fields replaced by the non-null parameter values.
@@ -8446,7 +8922,8 @@ class _$PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyleCopyWithI
     Object? supportsVariation = null,
     Object? needsToResolveVariation = null,
   }) {
-    return _then(PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle(
+    return _then(
+        PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle(
       variation: null == variation
           ? _self.variation
           : variation // ignore: cast_nullable_to_non_nullable
@@ -8473,13 +8950,17 @@ class _$PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyleCopyWithI
 
 /// @nodoc
 
-class PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle extends PRPosterContentMaterialStyle {
-  const PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle() : super._();
+class PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle
+    extends PRPosterContentMaterialStyle {
+  const PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle()
+      : super._();
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
-        (other.runtimeType == runtimeType && other is PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle);
+        (other.runtimeType == runtimeType &&
+            other
+                is PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle);
   }
 
   @override
@@ -8493,7 +8974,8 @@ class PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle extends P
 
 /// @nodoc
 
-class PRPosterContentMaterialStyle_PRPosterContentGradientStyle extends PRPosterContentMaterialStyle {
+class PRPosterContentMaterialStyle_PRPosterContentGradientStyle
+    extends PRPosterContentMaterialStyle {
   const PRPosterContentMaterialStyle_PRPosterContentGradientStyle(
       {required this.gradientType,
       required final List<UIColor> colors,
@@ -8521,24 +9003,35 @@ class PRPosterContentMaterialStyle_PRPosterContentGradientStyle extends PRPoster
   @pragma('vm:prefer-inline')
   $PRPosterContentMaterialStyle_PRPosterContentGradientStyleCopyWith<
           PRPosterContentMaterialStyle_PRPosterContentGradientStyle>
-      get copyWith => _$PRPosterContentMaterialStyle_PRPosterContentGradientStyleCopyWithImpl<
-          PRPosterContentMaterialStyle_PRPosterContentGradientStyle>(this, _$identity);
+      get copyWith =>
+          _$PRPosterContentMaterialStyle_PRPosterContentGradientStyleCopyWithImpl<
+                  PRPosterContentMaterialStyle_PRPosterContentGradientStyle>(
+              this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
-            other is PRPosterContentMaterialStyle_PRPosterContentGradientStyle &&
-            (identical(other.gradientType, gradientType) || other.gradientType == gradientType) &&
+            other
+                is PRPosterContentMaterialStyle_PRPosterContentGradientStyle &&
+            (identical(other.gradientType, gradientType) ||
+                other.gradientType == gradientType) &&
             const DeepCollectionEquality().equals(other._colors, _colors) &&
-            (identical(other.startPoint, startPoint) || other.startPoint == startPoint) &&
+            (identical(other.startPoint, startPoint) ||
+                other.startPoint == startPoint) &&
             const DeepCollectionEquality().equals(other.locations, locations) &&
-            (identical(other.endPoint, endPoint) || other.endPoint == endPoint));
+            (identical(other.endPoint, endPoint) ||
+                other.endPoint == endPoint));
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, gradientType, const DeepCollectionEquality().hash(_colors), startPoint,
-      const DeepCollectionEquality().hash(locations), endPoint);
+  int get hashCode => Object.hash(
+      runtimeType,
+      gradientType,
+      const DeepCollectionEquality().hash(_colors),
+      startPoint,
+      const DeepCollectionEquality().hash(locations),
+      endPoint);
 
   @override
   String toString() {
@@ -8547,23 +9040,35 @@ class PRPosterContentMaterialStyle_PRPosterContentGradientStyle extends PRPoster
 }
 
 /// @nodoc
-abstract mixin class $PRPosterContentMaterialStyle_PRPosterContentGradientStyleCopyWith<$Res>
-    implements $PRPosterContentMaterialStyleCopyWith<$Res> {
+abstract mixin class $PRPosterContentMaterialStyle_PRPosterContentGradientStyleCopyWith<
+    $Res> implements $PRPosterContentMaterialStyleCopyWith<$Res> {
   factory $PRPosterContentMaterialStyle_PRPosterContentGradientStyleCopyWith(
           PRPosterContentMaterialStyle_PRPosterContentGradientStyle value,
-          $Res Function(PRPosterContentMaterialStyle_PRPosterContentGradientStyle) _then) =
+          $Res Function(
+                  PRPosterContentMaterialStyle_PRPosterContentGradientStyle)
+              _then) =
       _$PRPosterContentMaterialStyle_PRPosterContentGradientStyleCopyWithImpl;
   @useResult
-  $Res call({int gradientType, List<UIColor> colors, String startPoint, Float64List locations, String endPoint});
+  $Res call(
+      {int gradientType,
+      List<UIColor> colors,
+      String startPoint,
+      Float64List locations,
+      String endPoint});
 }
 
 /// @nodoc
-class _$PRPosterContentMaterialStyle_PRPosterContentGradientStyleCopyWithImpl<$Res>
-    implements $PRPosterContentMaterialStyle_PRPosterContentGradientStyleCopyWith<$Res> {
-  _$PRPosterContentMaterialStyle_PRPosterContentGradientStyleCopyWithImpl(this._self, this._then);
+class _$PRPosterContentMaterialStyle_PRPosterContentGradientStyleCopyWithImpl<
+        $Res>
+    implements
+        $PRPosterContentMaterialStyle_PRPosterContentGradientStyleCopyWith<
+            $Res> {
+  _$PRPosterContentMaterialStyle_PRPosterContentGradientStyleCopyWithImpl(
+      this._self, this._then);
 
   final PRPosterContentMaterialStyle_PRPosterContentGradientStyle _self;
-  final $Res Function(PRPosterContentMaterialStyle_PRPosterContentGradientStyle) _then;
+  final $Res Function(PRPosterContentMaterialStyle_PRPosterContentGradientStyle)
+      _then;
 
   /// Create a copy of PRPosterContentMaterialStyle
   /// with the given fields replaced by the non-null parameter values.
@@ -8604,7 +9109,8 @@ class _$PRPosterContentMaterialStyle_PRPosterContentGradientStyleCopyWithImpl<$R
 mixin _$PushMessage {
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is PushMessage);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is PushMessage);
   }
 
   @override
@@ -8693,13 +9199,15 @@ extension PushMessagePatterns on PushMessage {
   TResult map<TResult extends Object?>({
     required TResult Function(PushMessage_IMessage value) iMessage,
     required TResult Function(PushMessage_SendConfirm value) sendConfirm,
-    required TResult Function(PushMessage_RegistrationState value) registrationState,
+    required TResult Function(PushMessage_RegistrationState value)
+        registrationState,
     required TResult Function(PushMessage_NewPhotostream value) newPhotostream,
     required TResult Function(PushMessage_FaceTime value) faceTime,
     required TResult Function(PushMessage_StatusUpdate value) statusUpdate,
     required TResult Function(PushMessage_Idms value) idms,
     required TResult Function(PushMessage_TwoFaAuthEvent value) twoFaAuthEvent,
-    required TResult Function(PushMessage_CircleFinishEvent value) circleFinishEvent,
+    required TResult Function(PushMessage_CircleFinishEvent value)
+        circleFinishEvent,
     required TResult Function(PushMessage_BeaconShared value) beaconShared,
   }) {
     final _that = this;
@@ -8802,7 +9310,8 @@ extension PushMessagePatterns on PushMessage {
     TResult Function(IdmsMessage field0)? idms,
     TResult Function(bool field0)? twoFaAuthEvent,
     TResult Function()? circleFinishEvent,
-    TResult Function(String sender, String beacon, BeaconAttributes attributes)? beaconShared,
+    TResult Function(String sender, String beacon, BeaconAttributes attributes)?
+        beaconShared,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -8856,7 +9365,9 @@ extension PushMessagePatterns on PushMessage {
     required TResult Function(IdmsMessage field0) idms,
     required TResult Function(bool field0) twoFaAuthEvent,
     required TResult Function() circleFinishEvent,
-    required TResult Function(String sender, String beacon, BeaconAttributes attributes) beaconShared,
+    required TResult Function(
+            String sender, String beacon, BeaconAttributes attributes)
+        beaconShared,
   }) {
     final _that = this;
     switch (_that) {
@@ -8906,7 +9417,9 @@ extension PushMessagePatterns on PushMessage {
     TResult? Function(IdmsMessage field0)? idms,
     TResult? Function(bool field0)? twoFaAuthEvent,
     TResult? Function()? circleFinishEvent,
-    TResult? Function(String sender, String beacon, BeaconAttributes attributes)? beaconShared,
+    TResult? Function(
+            String sender, String beacon, BeaconAttributes attributes)?
+        beaconShared,
   }) {
     final _that = this;
     switch (_that) {
@@ -8948,7 +9461,8 @@ class PushMessage_IMessage extends PushMessage {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $PushMessage_IMessageCopyWith<PushMessage_IMessage> get copyWith =>
-      _$PushMessage_IMessageCopyWithImpl<PushMessage_IMessage>(this, _$identity);
+      _$PushMessage_IMessageCopyWithImpl<PushMessage_IMessage>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -8968,15 +9482,18 @@ class PushMessage_IMessage extends PushMessage {
 }
 
 /// @nodoc
-abstract mixin class $PushMessage_IMessageCopyWith<$Res> implements $PushMessageCopyWith<$Res> {
-  factory $PushMessage_IMessageCopyWith(PushMessage_IMessage value, $Res Function(PushMessage_IMessage) _then) =
+abstract mixin class $PushMessage_IMessageCopyWith<$Res>
+    implements $PushMessageCopyWith<$Res> {
+  factory $PushMessage_IMessageCopyWith(PushMessage_IMessage value,
+          $Res Function(PushMessage_IMessage) _then) =
       _$PushMessage_IMessageCopyWithImpl;
   @useResult
   $Res call({MessageInst field0});
 }
 
 /// @nodoc
-class _$PushMessage_IMessageCopyWithImpl<$Res> implements $PushMessage_IMessageCopyWith<$Res> {
+class _$PushMessage_IMessageCopyWithImpl<$Res>
+    implements $PushMessage_IMessageCopyWith<$Res> {
   _$PushMessage_IMessageCopyWithImpl(this._self, this._then);
 
   final PushMessage_IMessage _self;
@@ -9010,7 +9527,8 @@ class PushMessage_SendConfirm extends PushMessage {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $PushMessage_SendConfirmCopyWith<PushMessage_SendConfirm> get copyWith =>
-      _$PushMessage_SendConfirmCopyWithImpl<PushMessage_SendConfirm>(this, _$identity);
+      _$PushMessage_SendConfirmCopyWithImpl<PushMessage_SendConfirm>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -9031,16 +9549,18 @@ class PushMessage_SendConfirm extends PushMessage {
 }
 
 /// @nodoc
-abstract mixin class $PushMessage_SendConfirmCopyWith<$Res> implements $PushMessageCopyWith<$Res> {
-  factory $PushMessage_SendConfirmCopyWith(
-          PushMessage_SendConfirm value, $Res Function(PushMessage_SendConfirm) _then) =
+abstract mixin class $PushMessage_SendConfirmCopyWith<$Res>
+    implements $PushMessageCopyWith<$Res> {
+  factory $PushMessage_SendConfirmCopyWith(PushMessage_SendConfirm value,
+          $Res Function(PushMessage_SendConfirm) _then) =
       _$PushMessage_SendConfirmCopyWithImpl;
   @useResult
   $Res call({String uuid, String? error});
 }
 
 /// @nodoc
-class _$PushMessage_SendConfirmCopyWithImpl<$Res> implements $PushMessage_SendConfirmCopyWith<$Res> {
+class _$PushMessage_SendConfirmCopyWithImpl<$Res>
+    implements $PushMessage_SendConfirmCopyWith<$Res> {
   _$PushMessage_SendConfirmCopyWithImpl(this._self, this._then);
 
   final PushMessage_SendConfirm _self;
@@ -9077,8 +9597,9 @@ class PushMessage_RegistrationState extends PushMessage {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $PushMessage_RegistrationStateCopyWith<PushMessage_RegistrationState> get copyWith =>
-      _$PushMessage_RegistrationStateCopyWithImpl<PushMessage_RegistrationState>(this, _$identity);
+  $PushMessage_RegistrationStateCopyWith<PushMessage_RegistrationState>
+      get copyWith => _$PushMessage_RegistrationStateCopyWithImpl<
+          PushMessage_RegistrationState>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -9098,9 +9619,11 @@ class PushMessage_RegistrationState extends PushMessage {
 }
 
 /// @nodoc
-abstract mixin class $PushMessage_RegistrationStateCopyWith<$Res> implements $PushMessageCopyWith<$Res> {
+abstract mixin class $PushMessage_RegistrationStateCopyWith<$Res>
+    implements $PushMessageCopyWith<$Res> {
   factory $PushMessage_RegistrationStateCopyWith(
-          PushMessage_RegistrationState value, $Res Function(PushMessage_RegistrationState) _then) =
+          PushMessage_RegistrationState value,
+          $Res Function(PushMessage_RegistrationState) _then) =
       _$PushMessage_RegistrationStateCopyWithImpl;
   @useResult
   $Res call({RegisterState field0});
@@ -9109,7 +9632,8 @@ abstract mixin class $PushMessage_RegistrationStateCopyWith<$Res> implements $Pu
 }
 
 /// @nodoc
-class _$PushMessage_RegistrationStateCopyWithImpl<$Res> implements $PushMessage_RegistrationStateCopyWith<$Res> {
+class _$PushMessage_RegistrationStateCopyWithImpl<$Res>
+    implements $PushMessage_RegistrationStateCopyWith<$Res> {
   _$PushMessage_RegistrationStateCopyWithImpl(this._self, this._then);
 
   final PushMessage_RegistrationState _self;
@@ -9151,8 +9675,10 @@ class PushMessage_NewPhotostream extends PushMessage {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $PushMessage_NewPhotostreamCopyWith<PushMessage_NewPhotostream> get copyWith =>
-      _$PushMessage_NewPhotostreamCopyWithImpl<PushMessage_NewPhotostream>(this, _$identity);
+  $PushMessage_NewPhotostreamCopyWith<PushMessage_NewPhotostream>
+      get copyWith =>
+          _$PushMessage_NewPhotostreamCopyWithImpl<PushMessage_NewPhotostream>(
+              this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -9172,16 +9698,18 @@ class PushMessage_NewPhotostream extends PushMessage {
 }
 
 /// @nodoc
-abstract mixin class $PushMessage_NewPhotostreamCopyWith<$Res> implements $PushMessageCopyWith<$Res> {
-  factory $PushMessage_NewPhotostreamCopyWith(
-          PushMessage_NewPhotostream value, $Res Function(PushMessage_NewPhotostream) _then) =
+abstract mixin class $PushMessage_NewPhotostreamCopyWith<$Res>
+    implements $PushMessageCopyWith<$Res> {
+  factory $PushMessage_NewPhotostreamCopyWith(PushMessage_NewPhotostream value,
+          $Res Function(PushMessage_NewPhotostream) _then) =
       _$PushMessage_NewPhotostreamCopyWithImpl;
   @useResult
   $Res call({SharedAlbum field0});
 }
 
 /// @nodoc
-class _$PushMessage_NewPhotostreamCopyWithImpl<$Res> implements $PushMessage_NewPhotostreamCopyWith<$Res> {
+class _$PushMessage_NewPhotostreamCopyWithImpl<$Res>
+    implements $PushMessage_NewPhotostreamCopyWith<$Res> {
   _$PushMessage_NewPhotostreamCopyWithImpl(this._self, this._then);
 
   final PushMessage_NewPhotostream _self;
@@ -9214,7 +9742,8 @@ class PushMessage_FaceTime extends PushMessage {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $PushMessage_FaceTimeCopyWith<PushMessage_FaceTime> get copyWith =>
-      _$PushMessage_FaceTimeCopyWithImpl<PushMessage_FaceTime>(this, _$identity);
+      _$PushMessage_FaceTimeCopyWithImpl<PushMessage_FaceTime>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -9234,8 +9763,10 @@ class PushMessage_FaceTime extends PushMessage {
 }
 
 /// @nodoc
-abstract mixin class $PushMessage_FaceTimeCopyWith<$Res> implements $PushMessageCopyWith<$Res> {
-  factory $PushMessage_FaceTimeCopyWith(PushMessage_FaceTime value, $Res Function(PushMessage_FaceTime) _then) =
+abstract mixin class $PushMessage_FaceTimeCopyWith<$Res>
+    implements $PushMessageCopyWith<$Res> {
+  factory $PushMessage_FaceTimeCopyWith(PushMessage_FaceTime value,
+          $Res Function(PushMessage_FaceTime) _then) =
       _$PushMessage_FaceTimeCopyWithImpl;
   @useResult
   $Res call({FTMessage field0});
@@ -9244,7 +9775,8 @@ abstract mixin class $PushMessage_FaceTimeCopyWith<$Res> implements $PushMessage
 }
 
 /// @nodoc
-class _$PushMessage_FaceTimeCopyWithImpl<$Res> implements $PushMessage_FaceTimeCopyWith<$Res> {
+class _$PushMessage_FaceTimeCopyWithImpl<$Res>
+    implements $PushMessage_FaceTimeCopyWith<$Res> {
   _$PushMessage_FaceTimeCopyWithImpl(this._self, this._then);
 
   final PushMessage_FaceTime _self;
@@ -9287,7 +9819,8 @@ class PushMessage_StatusUpdate extends PushMessage {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $PushMessage_StatusUpdateCopyWith<PushMessage_StatusUpdate> get copyWith =>
-      _$PushMessage_StatusUpdateCopyWithImpl<PushMessage_StatusUpdate>(this, _$identity);
+      _$PushMessage_StatusUpdateCopyWithImpl<PushMessage_StatusUpdate>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -9307,9 +9840,10 @@ class PushMessage_StatusUpdate extends PushMessage {
 }
 
 /// @nodoc
-abstract mixin class $PushMessage_StatusUpdateCopyWith<$Res> implements $PushMessageCopyWith<$Res> {
-  factory $PushMessage_StatusUpdateCopyWith(
-          PushMessage_StatusUpdate value, $Res Function(PushMessage_StatusUpdate) _then) =
+abstract mixin class $PushMessage_StatusUpdateCopyWith<$Res>
+    implements $PushMessageCopyWith<$Res> {
+  factory $PushMessage_StatusUpdateCopyWith(PushMessage_StatusUpdate value,
+          $Res Function(PushMessage_StatusUpdate) _then) =
       _$PushMessage_StatusUpdateCopyWithImpl;
   @useResult
   $Res call({StatusKitMessage field0});
@@ -9318,7 +9852,8 @@ abstract mixin class $PushMessage_StatusUpdateCopyWith<$Res> implements $PushMes
 }
 
 /// @nodoc
-class _$PushMessage_StatusUpdateCopyWithImpl<$Res> implements $PushMessage_StatusUpdateCopyWith<$Res> {
+class _$PushMessage_StatusUpdateCopyWithImpl<$Res>
+    implements $PushMessage_StatusUpdateCopyWith<$Res> {
   _$PushMessage_StatusUpdateCopyWithImpl(this._self, this._then);
 
   final PushMessage_StatusUpdate _self;
@@ -9381,8 +9916,10 @@ class PushMessage_Idms extends PushMessage {
 }
 
 /// @nodoc
-abstract mixin class $PushMessage_IdmsCopyWith<$Res> implements $PushMessageCopyWith<$Res> {
-  factory $PushMessage_IdmsCopyWith(PushMessage_Idms value, $Res Function(PushMessage_Idms) _then) =
+abstract mixin class $PushMessage_IdmsCopyWith<$Res>
+    implements $PushMessageCopyWith<$Res> {
+  factory $PushMessage_IdmsCopyWith(
+          PushMessage_Idms value, $Res Function(PushMessage_Idms) _then) =
       _$PushMessage_IdmsCopyWithImpl;
   @useResult
   $Res call({IdmsMessage field0});
@@ -9391,7 +9928,8 @@ abstract mixin class $PushMessage_IdmsCopyWith<$Res> implements $PushMessageCopy
 }
 
 /// @nodoc
-class _$PushMessage_IdmsCopyWithImpl<$Res> implements $PushMessage_IdmsCopyWith<$Res> {
+class _$PushMessage_IdmsCopyWithImpl<$Res>
+    implements $PushMessage_IdmsCopyWith<$Res> {
   _$PushMessage_IdmsCopyWithImpl(this._self, this._then);
 
   final PushMessage_Idms _self;
@@ -9433,8 +9971,10 @@ class PushMessage_TwoFaAuthEvent extends PushMessage {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $PushMessage_TwoFaAuthEventCopyWith<PushMessage_TwoFaAuthEvent> get copyWith =>
-      _$PushMessage_TwoFaAuthEventCopyWithImpl<PushMessage_TwoFaAuthEvent>(this, _$identity);
+  $PushMessage_TwoFaAuthEventCopyWith<PushMessage_TwoFaAuthEvent>
+      get copyWith =>
+          _$PushMessage_TwoFaAuthEventCopyWithImpl<PushMessage_TwoFaAuthEvent>(
+              this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -9454,16 +9994,18 @@ class PushMessage_TwoFaAuthEvent extends PushMessage {
 }
 
 /// @nodoc
-abstract mixin class $PushMessage_TwoFaAuthEventCopyWith<$Res> implements $PushMessageCopyWith<$Res> {
-  factory $PushMessage_TwoFaAuthEventCopyWith(
-          PushMessage_TwoFaAuthEvent value, $Res Function(PushMessage_TwoFaAuthEvent) _then) =
+abstract mixin class $PushMessage_TwoFaAuthEventCopyWith<$Res>
+    implements $PushMessageCopyWith<$Res> {
+  factory $PushMessage_TwoFaAuthEventCopyWith(PushMessage_TwoFaAuthEvent value,
+          $Res Function(PushMessage_TwoFaAuthEvent) _then) =
       _$PushMessage_TwoFaAuthEventCopyWithImpl;
   @useResult
   $Res call({bool field0});
 }
 
 /// @nodoc
-class _$PushMessage_TwoFaAuthEventCopyWithImpl<$Res> implements $PushMessage_TwoFaAuthEventCopyWith<$Res> {
+class _$PushMessage_TwoFaAuthEventCopyWithImpl<$Res>
+    implements $PushMessage_TwoFaAuthEventCopyWith<$Res> {
   _$PushMessage_TwoFaAuthEventCopyWithImpl(this._self, this._then);
 
   final PushMessage_TwoFaAuthEvent _self;
@@ -9491,7 +10033,9 @@ class PushMessage_CircleFinishEvent extends PushMessage {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is PushMessage_CircleFinishEvent);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is PushMessage_CircleFinishEvent);
   }
 
   @override
@@ -9506,7 +10050,9 @@ class PushMessage_CircleFinishEvent extends PushMessage {
 /// @nodoc
 
 class PushMessage_BeaconShared extends PushMessage {
-  const PushMessage_BeaconShared({required this.sender, required this.beacon, required this.attributes}) : super._();
+  const PushMessage_BeaconShared(
+      {required this.sender, required this.beacon, required this.attributes})
+      : super._();
 
   final String sender;
   final String beacon;
@@ -9517,7 +10063,8 @@ class PushMessage_BeaconShared extends PushMessage {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $PushMessage_BeaconSharedCopyWith<PushMessage_BeaconShared> get copyWith =>
-      _$PushMessage_BeaconSharedCopyWithImpl<PushMessage_BeaconShared>(this, _$identity);
+      _$PushMessage_BeaconSharedCopyWithImpl<PushMessage_BeaconShared>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -9526,7 +10073,8 @@ class PushMessage_BeaconShared extends PushMessage {
             other is PushMessage_BeaconShared &&
             (identical(other.sender, sender) || other.sender == sender) &&
             (identical(other.beacon, beacon) || other.beacon == beacon) &&
-            (identical(other.attributes, attributes) || other.attributes == attributes));
+            (identical(other.attributes, attributes) ||
+                other.attributes == attributes));
   }
 
   @override
@@ -9539,16 +10087,18 @@ class PushMessage_BeaconShared extends PushMessage {
 }
 
 /// @nodoc
-abstract mixin class $PushMessage_BeaconSharedCopyWith<$Res> implements $PushMessageCopyWith<$Res> {
-  factory $PushMessage_BeaconSharedCopyWith(
-          PushMessage_BeaconShared value, $Res Function(PushMessage_BeaconShared) _then) =
+abstract mixin class $PushMessage_BeaconSharedCopyWith<$Res>
+    implements $PushMessageCopyWith<$Res> {
+  factory $PushMessage_BeaconSharedCopyWith(PushMessage_BeaconShared value,
+          $Res Function(PushMessage_BeaconShared) _then) =
       _$PushMessage_BeaconSharedCopyWithImpl;
   @useResult
   $Res call({String sender, String beacon, BeaconAttributes attributes});
 }
 
 /// @nodoc
-class _$PushMessage_BeaconSharedCopyWithImpl<$Res> implements $PushMessage_BeaconSharedCopyWith<$Res> {
+class _$PushMessage_BeaconSharedCopyWithImpl<$Res>
+    implements $PushMessage_BeaconSharedCopyWith<$Res> {
   _$PushMessage_BeaconSharedCopyWithImpl(this._self, this._then);
 
   final PushMessage_BeaconShared _self;
@@ -9583,7 +10133,8 @@ class _$PushMessage_BeaconSharedCopyWithImpl<$Res> implements $PushMessage_Beaco
 mixin _$ReactMessageType {
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is ReactMessageType);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is ReactMessageType);
   }
 
   @override
@@ -9597,7 +10148,8 @@ mixin _$ReactMessageType {
 
 /// @nodoc
 class $ReactMessageTypeCopyWith<$Res> {
-  $ReactMessageTypeCopyWith(ReactMessageType _, $Res Function(ReactMessageType) __);
+  $ReactMessageTypeCopyWith(
+      ReactMessageType _, $Res Function(ReactMessageType) __);
 }
 
 /// Adds pattern-matching-related methods to [ReactMessageType].
@@ -9701,7 +10253,8 @@ extension ReactMessageTypePatterns on ReactMessageType {
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(Reaction reaction, bool enable)? react,
-    TResult Function(ExtensionApp spec, MessageParts body, bool isMeta)? extension_,
+    TResult Function(ExtensionApp spec, MessageParts body, bool isMeta)?
+        extension_,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -9731,7 +10284,8 @@ extension ReactMessageTypePatterns on ReactMessageType {
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
     required TResult Function(Reaction reaction, bool enable) react,
-    required TResult Function(ExtensionApp spec, MessageParts body, bool isMeta) extension_,
+    required TResult Function(ExtensionApp spec, MessageParts body, bool isMeta)
+        extension_,
   }) {
     final _that = this;
     switch (_that) {
@@ -9757,7 +10311,8 @@ extension ReactMessageTypePatterns on ReactMessageType {
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(Reaction reaction, bool enable)? react,
-    TResult? Function(ExtensionApp spec, MessageParts body, bool isMeta)? extension_,
+    TResult? Function(ExtensionApp spec, MessageParts body, bool isMeta)?
+        extension_,
   }) {
     final _that = this;
     switch (_that) {
@@ -9774,7 +10329,8 @@ extension ReactMessageTypePatterns on ReactMessageType {
 /// @nodoc
 
 class ReactMessageType_React extends ReactMessageType {
-  const ReactMessageType_React({required this.reaction, required this.enable}) : super._();
+  const ReactMessageType_React({required this.reaction, required this.enable})
+      : super._();
 
   final Reaction reaction;
   final bool enable;
@@ -9784,14 +10340,16 @@ class ReactMessageType_React extends ReactMessageType {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $ReactMessageType_ReactCopyWith<ReactMessageType_React> get copyWith =>
-      _$ReactMessageType_ReactCopyWithImpl<ReactMessageType_React>(this, _$identity);
+      _$ReactMessageType_ReactCopyWithImpl<ReactMessageType_React>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is ReactMessageType_React &&
-            (identical(other.reaction, reaction) || other.reaction == reaction) &&
+            (identical(other.reaction, reaction) ||
+                other.reaction == reaction) &&
             (identical(other.enable, enable) || other.enable == enable));
   }
 
@@ -9805,8 +10363,10 @@ class ReactMessageType_React extends ReactMessageType {
 }
 
 /// @nodoc
-abstract mixin class $ReactMessageType_ReactCopyWith<$Res> implements $ReactMessageTypeCopyWith<$Res> {
-  factory $ReactMessageType_ReactCopyWith(ReactMessageType_React value, $Res Function(ReactMessageType_React) _then) =
+abstract mixin class $ReactMessageType_ReactCopyWith<$Res>
+    implements $ReactMessageTypeCopyWith<$Res> {
+  factory $ReactMessageType_ReactCopyWith(ReactMessageType_React value,
+          $Res Function(ReactMessageType_React) _then) =
       _$ReactMessageType_ReactCopyWithImpl;
   @useResult
   $Res call({Reaction reaction, bool enable});
@@ -9815,7 +10375,8 @@ abstract mixin class $ReactMessageType_ReactCopyWith<$Res> implements $ReactMess
 }
 
 /// @nodoc
-class _$ReactMessageType_ReactCopyWithImpl<$Res> implements $ReactMessageType_ReactCopyWith<$Res> {
+class _$ReactMessageType_ReactCopyWithImpl<$Res>
+    implements $ReactMessageType_ReactCopyWith<$Res> {
   _$ReactMessageType_ReactCopyWithImpl(this._self, this._then);
 
   final ReactMessageType_React _self;
@@ -9854,7 +10415,9 @@ class _$ReactMessageType_ReactCopyWithImpl<$Res> implements $ReactMessageType_Re
 /// @nodoc
 
 class ReactMessageType_Extension extends ReactMessageType {
-  const ReactMessageType_Extension({required this.spec, required this.body, required this.isMeta}) : super._();
+  const ReactMessageType_Extension(
+      {required this.spec, required this.body, required this.isMeta})
+      : super._();
 
   final ExtensionApp spec;
   final MessageParts body;
@@ -9864,8 +10427,10 @@ class ReactMessageType_Extension extends ReactMessageType {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $ReactMessageType_ExtensionCopyWith<ReactMessageType_Extension> get copyWith =>
-      _$ReactMessageType_ExtensionCopyWithImpl<ReactMessageType_Extension>(this, _$identity);
+  $ReactMessageType_ExtensionCopyWith<ReactMessageType_Extension>
+      get copyWith =>
+          _$ReactMessageType_ExtensionCopyWithImpl<ReactMessageType_Extension>(
+              this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -9887,16 +10452,18 @@ class ReactMessageType_Extension extends ReactMessageType {
 }
 
 /// @nodoc
-abstract mixin class $ReactMessageType_ExtensionCopyWith<$Res> implements $ReactMessageTypeCopyWith<$Res> {
-  factory $ReactMessageType_ExtensionCopyWith(
-          ReactMessageType_Extension value, $Res Function(ReactMessageType_Extension) _then) =
+abstract mixin class $ReactMessageType_ExtensionCopyWith<$Res>
+    implements $ReactMessageTypeCopyWith<$Res> {
+  factory $ReactMessageType_ExtensionCopyWith(ReactMessageType_Extension value,
+          $Res Function(ReactMessageType_Extension) _then) =
       _$ReactMessageType_ExtensionCopyWithImpl;
   @useResult
   $Res call({ExtensionApp spec, MessageParts body, bool isMeta});
 }
 
 /// @nodoc
-class _$ReactMessageType_ExtensionCopyWithImpl<$Res> implements $ReactMessageType_ExtensionCopyWith<$Res> {
+class _$ReactMessageType_ExtensionCopyWithImpl<$Res>
+    implements $ReactMessageType_ExtensionCopyWith<$Res> {
   _$ReactMessageType_ExtensionCopyWithImpl(this._self, this._then);
 
   final ReactMessageType_Extension _self;
@@ -9931,7 +10498,8 @@ class _$ReactMessageType_ExtensionCopyWithImpl<$Res> implements $ReactMessageTyp
 mixin _$Reaction {
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is Reaction);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is Reaction);
   }
 
   @override
@@ -10234,7 +10802,8 @@ class Reaction_Heart extends Reaction {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is Reaction_Heart);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is Reaction_Heart);
   }
 
   @override
@@ -10253,7 +10822,8 @@ class Reaction_Like extends Reaction {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is Reaction_Like);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is Reaction_Like);
   }
 
   @override
@@ -10272,7 +10842,8 @@ class Reaction_Dislike extends Reaction {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is Reaction_Dislike);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is Reaction_Dislike);
   }
 
   @override
@@ -10291,7 +10862,8 @@ class Reaction_Laugh extends Reaction {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is Reaction_Laugh);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is Reaction_Laugh);
   }
 
   @override
@@ -10310,7 +10882,8 @@ class Reaction_Emphasize extends Reaction {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is Reaction_Emphasize);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is Reaction_Emphasize);
   }
 
   @override
@@ -10329,7 +10902,8 @@ class Reaction_Question extends Reaction {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is Reaction_Question);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is Reaction_Question);
   }
 
   @override
@@ -10373,15 +10947,18 @@ class Reaction_Emoji extends Reaction {
 }
 
 /// @nodoc
-abstract mixin class $Reaction_EmojiCopyWith<$Res> implements $ReactionCopyWith<$Res> {
-  factory $Reaction_EmojiCopyWith(Reaction_Emoji value, $Res Function(Reaction_Emoji) _then) =
+abstract mixin class $Reaction_EmojiCopyWith<$Res>
+    implements $ReactionCopyWith<$Res> {
+  factory $Reaction_EmojiCopyWith(
+          Reaction_Emoji value, $Res Function(Reaction_Emoji) _then) =
       _$Reaction_EmojiCopyWithImpl;
   @useResult
   $Res call({String field0});
 }
 
 /// @nodoc
-class _$Reaction_EmojiCopyWithImpl<$Res> implements $Reaction_EmojiCopyWith<$Res> {
+class _$Reaction_EmojiCopyWithImpl<$Res>
+    implements $Reaction_EmojiCopyWith<$Res> {
   _$Reaction_EmojiCopyWithImpl(this._self, this._then);
 
   final Reaction_Emoji _self;
@@ -10436,15 +11013,18 @@ class Reaction_Sticker extends Reaction {
 }
 
 /// @nodoc
-abstract mixin class $Reaction_StickerCopyWith<$Res> implements $ReactionCopyWith<$Res> {
-  factory $Reaction_StickerCopyWith(Reaction_Sticker value, $Res Function(Reaction_Sticker) _then) =
+abstract mixin class $Reaction_StickerCopyWith<$Res>
+    implements $ReactionCopyWith<$Res> {
+  factory $Reaction_StickerCopyWith(
+          Reaction_Sticker value, $Res Function(Reaction_Sticker) _then) =
       _$Reaction_StickerCopyWithImpl;
   @useResult
   $Res call({ExtensionApp? spec, MessageParts body});
 }
 
 /// @nodoc
-class _$Reaction_StickerCopyWithImpl<$Res> implements $Reaction_StickerCopyWith<$Res> {
+class _$Reaction_StickerCopyWithImpl<$Res>
+    implements $Reaction_StickerCopyWith<$Res> {
   _$Reaction_StickerCopyWithImpl(this._self, this._then);
 
   final Reaction_Sticker _self;
@@ -10474,7 +11054,8 @@ class _$Reaction_StickerCopyWithImpl<$Res> implements $Reaction_StickerCopyWith<
 mixin _$RegisterState {
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is RegisterState);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is RegisterState);
   }
 
   @override
@@ -10692,7 +11273,8 @@ class RegisterState_Registered extends RegisterState {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $RegisterState_RegisteredCopyWith<RegisterState_Registered> get copyWith =>
-      _$RegisterState_RegisteredCopyWithImpl<RegisterState_Registered>(this, _$identity);
+      _$RegisterState_RegisteredCopyWithImpl<RegisterState_Registered>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -10712,16 +11294,18 @@ class RegisterState_Registered extends RegisterState {
 }
 
 /// @nodoc
-abstract mixin class $RegisterState_RegisteredCopyWith<$Res> implements $RegisterStateCopyWith<$Res> {
-  factory $RegisterState_RegisteredCopyWith(
-          RegisterState_Registered value, $Res Function(RegisterState_Registered) _then) =
+abstract mixin class $RegisterState_RegisteredCopyWith<$Res>
+    implements $RegisterStateCopyWith<$Res> {
+  factory $RegisterState_RegisteredCopyWith(RegisterState_Registered value,
+          $Res Function(RegisterState_Registered) _then) =
       _$RegisterState_RegisteredCopyWithImpl;
   @useResult
   $Res call({PlatformInt64 nextS});
 }
 
 /// @nodoc
-class _$RegisterState_RegisteredCopyWithImpl<$Res> implements $RegisterState_RegisteredCopyWith<$Res> {
+class _$RegisterState_RegisteredCopyWithImpl<$Res>
+    implements $RegisterState_RegisteredCopyWith<$Res> {
   _$RegisterState_RegisteredCopyWithImpl(this._self, this._then);
 
   final RegisterState_Registered _self;
@@ -10749,7 +11333,9 @@ class RegisterState_Registering extends RegisterState {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is RegisterState_Registering);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RegisterState_Registering);
   }
 
   @override
@@ -10774,14 +11360,16 @@ class RegisterState_Failed extends RegisterState {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $RegisterState_FailedCopyWith<RegisterState_Failed> get copyWith =>
-      _$RegisterState_FailedCopyWithImpl<RegisterState_Failed>(this, _$identity);
+      _$RegisterState_FailedCopyWithImpl<RegisterState_Failed>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is RegisterState_Failed &&
-            (identical(other.retryWait, retryWait) || other.retryWait == retryWait) &&
+            (identical(other.retryWait, retryWait) ||
+                other.retryWait == retryWait) &&
             (identical(other.error, error) || other.error == error));
   }
 
@@ -10795,15 +11383,18 @@ class RegisterState_Failed extends RegisterState {
 }
 
 /// @nodoc
-abstract mixin class $RegisterState_FailedCopyWith<$Res> implements $RegisterStateCopyWith<$Res> {
-  factory $RegisterState_FailedCopyWith(RegisterState_Failed value, $Res Function(RegisterState_Failed) _then) =
+abstract mixin class $RegisterState_FailedCopyWith<$Res>
+    implements $RegisterStateCopyWith<$Res> {
+  factory $RegisterState_FailedCopyWith(RegisterState_Failed value,
+          $Res Function(RegisterState_Failed) _then) =
       _$RegisterState_FailedCopyWithImpl;
   @useResult
   $Res call({BigInt? retryWait, String error});
 }
 
 /// @nodoc
-class _$RegisterState_FailedCopyWithImpl<$Res> implements $RegisterState_FailedCopyWith<$Res> {
+class _$RegisterState_FailedCopyWithImpl<$Res>
+    implements $RegisterState_FailedCopyWith<$Res> {
   _$RegisterState_FailedCopyWithImpl(this._self, this._then);
 
   final RegisterState_Failed _self;
@@ -10839,8 +11430,9 @@ mixin _$SetTranscriptBackgroundMessage {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $SetTranscriptBackgroundMessageCopyWith<SetTranscriptBackgroundMessage> get copyWith =>
-      _$SetTranscriptBackgroundMessageCopyWithImpl<SetTranscriptBackgroundMessage>(
+  $SetTranscriptBackgroundMessageCopyWith<SetTranscriptBackgroundMessage>
+      get copyWith => _$SetTranscriptBackgroundMessageCopyWithImpl<
+              SetTranscriptBackgroundMessage>(
           this as SetTranscriptBackgroundMessage, _$identity);
 
   @override
@@ -10865,14 +11457,16 @@ mixin _$SetTranscriptBackgroundMessage {
 /// @nodoc
 abstract mixin class $SetTranscriptBackgroundMessageCopyWith<$Res> {
   factory $SetTranscriptBackgroundMessageCopyWith(
-          SetTranscriptBackgroundMessage value, $Res Function(SetTranscriptBackgroundMessage) _then) =
+          SetTranscriptBackgroundMessage value,
+          $Res Function(SetTranscriptBackgroundMessage) _then) =
       _$SetTranscriptBackgroundMessageCopyWithImpl;
   @useResult
   $Res call({int aid, BigInt bid, String? chatId});
 }
 
 /// @nodoc
-class _$SetTranscriptBackgroundMessageCopyWithImpl<$Res> implements $SetTranscriptBackgroundMessageCopyWith<$Res> {
+class _$SetTranscriptBackgroundMessageCopyWithImpl<$Res>
+    implements $SetTranscriptBackgroundMessageCopyWith<$Res> {
   _$SetTranscriptBackgroundMessageCopyWithImpl(this._self, this._then);
 
   final SetTranscriptBackgroundMessage _self;
@@ -10905,7 +11499,8 @@ class _$SetTranscriptBackgroundMessageCopyWithImpl<$Res> implements $SetTranscri
 }
 
 /// Adds pattern-matching-related methods to [SetTranscriptBackgroundMessage].
-extension SetTranscriptBackgroundMessagePatterns on SetTranscriptBackgroundMessage {
+extension SetTranscriptBackgroundMessagePatterns
+    on SetTranscriptBackgroundMessage {
   /// A variant of `map` that fallback to returning `orElse`.
   ///
   /// It is equivalent to doing:
@@ -10950,7 +11545,8 @@ extension SetTranscriptBackgroundMessagePatterns on SetTranscriptBackgroundMessa
 
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
-    required TResult Function(SetTranscriptBackgroundMessage_Remove value) remove,
+    required TResult Function(SetTranscriptBackgroundMessage_Remove value)
+        remove,
     required TResult Function(SetTranscriptBackgroundMessage_Set value) set_,
   }) {
     final _that = this;
@@ -11005,8 +11601,17 @@ extension SetTranscriptBackgroundMessagePatterns on SetTranscriptBackgroundMessa
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(int aid, BigInt bid, String? chatId, bool remove)? remove,
-    TResult Function(int aid, BigInt bid, String? chatId, String objectId, int payloadVersion, String backgroundId,
-            String url, String signature, String key, BigInt fileSize)?
+    TResult Function(
+            int aid,
+            BigInt bid,
+            String? chatId,
+            String objectId,
+            int payloadVersion,
+            String backgroundId,
+            String url,
+            String signature,
+            String key,
+            BigInt fileSize)?
         set_,
     required TResult orElse(),
   }) {
@@ -11015,8 +11620,17 @@ extension SetTranscriptBackgroundMessagePatterns on SetTranscriptBackgroundMessa
       case SetTranscriptBackgroundMessage_Remove() when remove != null:
         return remove(_that.aid, _that.bid, _that.chatId, _that.remove);
       case SetTranscriptBackgroundMessage_Set() when set_ != null:
-        return set_(_that.aid, _that.bid, _that.chatId, _that.objectId, _that.payloadVersion, _that.backgroundId,
-            _that.url, _that.signature, _that.key, _that.fileSize);
+        return set_(
+            _that.aid,
+            _that.bid,
+            _that.chatId,
+            _that.objectId,
+            _that.payloadVersion,
+            _that.backgroundId,
+            _that.url,
+            _that.signature,
+            _that.key,
+            _that.fileSize);
       case _:
         return orElse();
     }
@@ -11037,9 +11651,19 @@ extension SetTranscriptBackgroundMessagePatterns on SetTranscriptBackgroundMessa
 
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
-    required TResult Function(int aid, BigInt bid, String? chatId, bool remove) remove,
-    required TResult Function(int aid, BigInt bid, String? chatId, String objectId, int payloadVersion,
-            String backgroundId, String url, String signature, String key, BigInt fileSize)
+    required TResult Function(int aid, BigInt bid, String? chatId, bool remove)
+        remove,
+    required TResult Function(
+            int aid,
+            BigInt bid,
+            String? chatId,
+            String objectId,
+            int payloadVersion,
+            String backgroundId,
+            String url,
+            String signature,
+            String key,
+            BigInt fileSize)
         set_,
   }) {
     final _that = this;
@@ -11047,8 +11671,17 @@ extension SetTranscriptBackgroundMessagePatterns on SetTranscriptBackgroundMessa
       case SetTranscriptBackgroundMessage_Remove():
         return remove(_that.aid, _that.bid, _that.chatId, _that.remove);
       case SetTranscriptBackgroundMessage_Set():
-        return set_(_that.aid, _that.bid, _that.chatId, _that.objectId, _that.payloadVersion, _that.backgroundId,
-            _that.url, _that.signature, _that.key, _that.fileSize);
+        return set_(
+            _that.aid,
+            _that.bid,
+            _that.chatId,
+            _that.objectId,
+            _that.payloadVersion,
+            _that.backgroundId,
+            _that.url,
+            _that.signature,
+            _that.key,
+            _that.fileSize);
     }
   }
 
@@ -11067,8 +11700,17 @@ extension SetTranscriptBackgroundMessagePatterns on SetTranscriptBackgroundMessa
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(int aid, BigInt bid, String? chatId, bool remove)? remove,
-    TResult? Function(int aid, BigInt bid, String? chatId, String objectId, int payloadVersion, String backgroundId,
-            String url, String signature, String key, BigInt fileSize)?
+    TResult? Function(
+            int aid,
+            BigInt bid,
+            String? chatId,
+            String objectId,
+            int payloadVersion,
+            String backgroundId,
+            String url,
+            String signature,
+            String key,
+            BigInt fileSize)?
         set_,
   }) {
     final _that = this;
@@ -11076,8 +11718,17 @@ extension SetTranscriptBackgroundMessagePatterns on SetTranscriptBackgroundMessa
       case SetTranscriptBackgroundMessage_Remove() when remove != null:
         return remove(_that.aid, _that.bid, _that.chatId, _that.remove);
       case SetTranscriptBackgroundMessage_Set() when set_ != null:
-        return set_(_that.aid, _that.bid, _that.chatId, _that.objectId, _that.payloadVersion, _that.backgroundId,
-            _that.url, _that.signature, _that.key, _that.fileSize);
+        return set_(
+            _that.aid,
+            _that.bid,
+            _that.chatId,
+            _that.objectId,
+            _that.payloadVersion,
+            _that.backgroundId,
+            _that.url,
+            _that.signature,
+            _that.key,
+            _that.fileSize);
       case _:
         return null;
     }
@@ -11086,8 +11737,10 @@ extension SetTranscriptBackgroundMessagePatterns on SetTranscriptBackgroundMessa
 
 /// @nodoc
 
-class SetTranscriptBackgroundMessage_Remove extends SetTranscriptBackgroundMessage {
-  const SetTranscriptBackgroundMessage_Remove({required this.aid, required this.bid, this.chatId, required this.remove})
+class SetTranscriptBackgroundMessage_Remove
+    extends SetTranscriptBackgroundMessage {
+  const SetTranscriptBackgroundMessage_Remove(
+      {required this.aid, required this.bid, this.chatId, required this.remove})
       : super._();
 
   @override
@@ -11103,8 +11756,10 @@ class SetTranscriptBackgroundMessage_Remove extends SetTranscriptBackgroundMessa
   @override
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $SetTranscriptBackgroundMessage_RemoveCopyWith<SetTranscriptBackgroundMessage_Remove> get copyWith =>
-      _$SetTranscriptBackgroundMessage_RemoveCopyWithImpl<SetTranscriptBackgroundMessage_Remove>(this, _$identity);
+  $SetTranscriptBackgroundMessage_RemoveCopyWith<
+          SetTranscriptBackgroundMessage_Remove>
+      get copyWith => _$SetTranscriptBackgroundMessage_RemoveCopyWithImpl<
+          SetTranscriptBackgroundMessage_Remove>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -11130,7 +11785,8 @@ class SetTranscriptBackgroundMessage_Remove extends SetTranscriptBackgroundMessa
 abstract mixin class $SetTranscriptBackgroundMessage_RemoveCopyWith<$Res>
     implements $SetTranscriptBackgroundMessageCopyWith<$Res> {
   factory $SetTranscriptBackgroundMessage_RemoveCopyWith(
-          SetTranscriptBackgroundMessage_Remove value, $Res Function(SetTranscriptBackgroundMessage_Remove) _then) =
+          SetTranscriptBackgroundMessage_Remove value,
+          $Res Function(SetTranscriptBackgroundMessage_Remove) _then) =
       _$SetTranscriptBackgroundMessage_RemoveCopyWithImpl;
   @override
   @useResult
@@ -11178,7 +11834,8 @@ class _$SetTranscriptBackgroundMessage_RemoveCopyWithImpl<$Res>
 
 /// @nodoc
 
-class SetTranscriptBackgroundMessage_Set extends SetTranscriptBackgroundMessage {
+class SetTranscriptBackgroundMessage_Set
+    extends SetTranscriptBackgroundMessage {
   const SetTranscriptBackgroundMessage_Set(
       {required this.aid,
       required this.bid,
@@ -11211,8 +11868,10 @@ class SetTranscriptBackgroundMessage_Set extends SetTranscriptBackgroundMessage 
   @override
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $SetTranscriptBackgroundMessage_SetCopyWith<SetTranscriptBackgroundMessage_Set> get copyWith =>
-      _$SetTranscriptBackgroundMessage_SetCopyWithImpl<SetTranscriptBackgroundMessage_Set>(this, _$identity);
+  $SetTranscriptBackgroundMessage_SetCopyWith<
+          SetTranscriptBackgroundMessage_Set>
+      get copyWith => _$SetTranscriptBackgroundMessage_SetCopyWithImpl<
+          SetTranscriptBackgroundMessage_Set>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -11222,18 +11881,23 @@ class SetTranscriptBackgroundMessage_Set extends SetTranscriptBackgroundMessage 
             (identical(other.aid, aid) || other.aid == aid) &&
             (identical(other.bid, bid) || other.bid == bid) &&
             (identical(other.chatId, chatId) || other.chatId == chatId) &&
-            (identical(other.objectId, objectId) || other.objectId == objectId) &&
-            (identical(other.payloadVersion, payloadVersion) || other.payloadVersion == payloadVersion) &&
-            (identical(other.backgroundId, backgroundId) || other.backgroundId == backgroundId) &&
+            (identical(other.objectId, objectId) ||
+                other.objectId == objectId) &&
+            (identical(other.payloadVersion, payloadVersion) ||
+                other.payloadVersion == payloadVersion) &&
+            (identical(other.backgroundId, backgroundId) ||
+                other.backgroundId == backgroundId) &&
             (identical(other.url, url) || other.url == url) &&
-            (identical(other.signature, signature) || other.signature == signature) &&
+            (identical(other.signature, signature) ||
+                other.signature == signature) &&
             (identical(other.key, key) || other.key == key) &&
-            (identical(other.fileSize, fileSize) || other.fileSize == fileSize));
+            (identical(other.fileSize, fileSize) ||
+                other.fileSize == fileSize));
   }
 
   @override
-  int get hashCode =>
-      Object.hash(runtimeType, aid, bid, chatId, objectId, payloadVersion, backgroundId, url, signature, key, fileSize);
+  int get hashCode => Object.hash(runtimeType, aid, bid, chatId, objectId,
+      payloadVersion, backgroundId, url, signature, key, fileSize);
 
   @override
   String toString() {
@@ -11245,7 +11909,8 @@ class SetTranscriptBackgroundMessage_Set extends SetTranscriptBackgroundMessage 
 abstract mixin class $SetTranscriptBackgroundMessage_SetCopyWith<$Res>
     implements $SetTranscriptBackgroundMessageCopyWith<$Res> {
   factory $SetTranscriptBackgroundMessage_SetCopyWith(
-          SetTranscriptBackgroundMessage_Set value, $Res Function(SetTranscriptBackgroundMessage_Set) _then) =
+          SetTranscriptBackgroundMessage_Set value,
+          $Res Function(SetTranscriptBackgroundMessage_Set) _then) =
       _$SetTranscriptBackgroundMessage_SetCopyWithImpl;
   @override
   @useResult
@@ -11342,7 +12007,8 @@ mixin _$StatusKitMessage {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $StatusKitMessageCopyWith<StatusKitMessage> get copyWith =>
-      _$StatusKitMessageCopyWithImpl<StatusKitMessage>(this as StatusKitMessage, _$identity);
+      _$StatusKitMessageCopyWithImpl<StatusKitMessage>(
+          this as StatusKitMessage, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -11365,14 +12031,16 @@ mixin _$StatusKitMessage {
 
 /// @nodoc
 abstract mixin class $StatusKitMessageCopyWith<$Res> {
-  factory $StatusKitMessageCopyWith(StatusKitMessage value, $Res Function(StatusKitMessage) _then) =
+  factory $StatusKitMessageCopyWith(
+          StatusKitMessage value, $Res Function(StatusKitMessage) _then) =
       _$StatusKitMessageCopyWithImpl;
   @useResult
   $Res call({String user, String? mode, bool allowed});
 }
 
 /// @nodoc
-class _$StatusKitMessageCopyWithImpl<$Res> implements $StatusKitMessageCopyWith<$Res> {
+class _$StatusKitMessageCopyWithImpl<$Res>
+    implements $StatusKitMessageCopyWith<$Res> {
   _$StatusKitMessageCopyWithImpl(this._self, this._then);
 
   final StatusKitMessage _self;
@@ -11447,7 +12115,8 @@ extension StatusKitMessagePatterns on StatusKitMessage {
 
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
-    required TResult Function(StatusKitMessage_StatusChanged value) statusChanged,
+    required TResult Function(StatusKitMessage_StatusChanged value)
+        statusChanged,
   }) {
     final _that = this;
     switch (_that) {
@@ -11522,7 +12191,8 @@ extension StatusKitMessagePatterns on StatusKitMessage {
 
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
-    required TResult Function(String user, String? mode, bool allowed) statusChanged,
+    required TResult Function(String user, String? mode, bool allowed)
+        statusChanged,
   }) {
     final _that = this;
     switch (_that) {
@@ -11560,7 +12230,9 @@ extension StatusKitMessagePatterns on StatusKitMessage {
 /// @nodoc
 
 class StatusKitMessage_StatusChanged extends StatusKitMessage {
-  const StatusKitMessage_StatusChanged({required this.user, this.mode, required this.allowed}) : super._();
+  const StatusKitMessage_StatusChanged(
+      {required this.user, this.mode, required this.allowed})
+      : super._();
 
   @override
   final String user;
@@ -11574,8 +12246,9 @@ class StatusKitMessage_StatusChanged extends StatusKitMessage {
   @override
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $StatusKitMessage_StatusChangedCopyWith<StatusKitMessage_StatusChanged> get copyWith =>
-      _$StatusKitMessage_StatusChangedCopyWithImpl<StatusKitMessage_StatusChanged>(this, _$identity);
+  $StatusKitMessage_StatusChangedCopyWith<StatusKitMessage_StatusChanged>
+      get copyWith => _$StatusKitMessage_StatusChangedCopyWithImpl<
+          StatusKitMessage_StatusChanged>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -11597,9 +12270,11 @@ class StatusKitMessage_StatusChanged extends StatusKitMessage {
 }
 
 /// @nodoc
-abstract mixin class $StatusKitMessage_StatusChangedCopyWith<$Res> implements $StatusKitMessageCopyWith<$Res> {
+abstract mixin class $StatusKitMessage_StatusChangedCopyWith<$Res>
+    implements $StatusKitMessageCopyWith<$Res> {
   factory $StatusKitMessage_StatusChangedCopyWith(
-          StatusKitMessage_StatusChanged value, $Res Function(StatusKitMessage_StatusChanged) _then) =
+          StatusKitMessage_StatusChanged value,
+          $Res Function(StatusKitMessage_StatusChanged) _then) =
       _$StatusKitMessage_StatusChangedCopyWithImpl;
   @override
   @useResult
@@ -11607,7 +12282,8 @@ abstract mixin class $StatusKitMessage_StatusChangedCopyWith<$Res> implements $S
 }
 
 /// @nodoc
-class _$StatusKitMessage_StatusChangedCopyWithImpl<$Res> implements $StatusKitMessage_StatusChangedCopyWith<$Res> {
+class _$StatusKitMessage_StatusChangedCopyWithImpl<$Res>
+    implements $StatusKitMessage_StatusChangedCopyWith<$Res> {
   _$StatusKitMessage_StatusChangedCopyWithImpl(this._self, this._then);
 
   final StatusKitMessage_StatusChanged _self;
@@ -11643,7 +12319,8 @@ class _$StatusKitMessage_StatusChangedCopyWithImpl<$Res> implements $StatusKitMe
 mixin _$SyncStatus {
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is SyncStatus);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is SyncStatus);
   }
 
   @override
@@ -11874,7 +12551,8 @@ class SyncStatus_Synced extends SyncStatus {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is SyncStatus_Synced);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is SyncStatus_Synced);
   }
 
   @override
@@ -11889,7 +12567,8 @@ class SyncStatus_Synced extends SyncStatus {
 /// @nodoc
 
 class SyncStatus_Downloading extends SyncStatus {
-  const SyncStatus_Downloading({required this.progress, required this.total}) : super._();
+  const SyncStatus_Downloading({required this.progress, required this.total})
+      : super._();
 
   final BigInt progress;
   final BigInt total;
@@ -11899,14 +12578,16 @@ class SyncStatus_Downloading extends SyncStatus {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $SyncStatus_DownloadingCopyWith<SyncStatus_Downloading> get copyWith =>
-      _$SyncStatus_DownloadingCopyWithImpl<SyncStatus_Downloading>(this, _$identity);
+      _$SyncStatus_DownloadingCopyWithImpl<SyncStatus_Downloading>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is SyncStatus_Downloading &&
-            (identical(other.progress, progress) || other.progress == progress) &&
+            (identical(other.progress, progress) ||
+                other.progress == progress) &&
             (identical(other.total, total) || other.total == total));
   }
 
@@ -11920,15 +12601,18 @@ class SyncStatus_Downloading extends SyncStatus {
 }
 
 /// @nodoc
-abstract mixin class $SyncStatus_DownloadingCopyWith<$Res> implements $SyncStatusCopyWith<$Res> {
-  factory $SyncStatus_DownloadingCopyWith(SyncStatus_Downloading value, $Res Function(SyncStatus_Downloading) _then) =
+abstract mixin class $SyncStatus_DownloadingCopyWith<$Res>
+    implements $SyncStatusCopyWith<$Res> {
+  factory $SyncStatus_DownloadingCopyWith(SyncStatus_Downloading value,
+          $Res Function(SyncStatus_Downloading) _then) =
       _$SyncStatus_DownloadingCopyWithImpl;
   @useResult
   $Res call({BigInt progress, BigInt total});
 }
 
 /// @nodoc
-class _$SyncStatus_DownloadingCopyWithImpl<$Res> implements $SyncStatus_DownloadingCopyWith<$Res> {
+class _$SyncStatus_DownloadingCopyWithImpl<$Res>
+    implements $SyncStatus_DownloadingCopyWith<$Res> {
   _$SyncStatus_DownloadingCopyWithImpl(this._self, this._then);
 
   final SyncStatus_Downloading _self;
@@ -11957,7 +12641,8 @@ class _$SyncStatus_DownloadingCopyWithImpl<$Res> implements $SyncStatus_Download
 /// @nodoc
 
 class SyncStatus_Uploading extends SyncStatus {
-  const SyncStatus_Uploading({required this.progress, required this.total}) : super._();
+  const SyncStatus_Uploading({required this.progress, required this.total})
+      : super._();
 
   final BigInt progress;
   final BigInt total;
@@ -11967,14 +12652,16 @@ class SyncStatus_Uploading extends SyncStatus {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $SyncStatus_UploadingCopyWith<SyncStatus_Uploading> get copyWith =>
-      _$SyncStatus_UploadingCopyWithImpl<SyncStatus_Uploading>(this, _$identity);
+      _$SyncStatus_UploadingCopyWithImpl<SyncStatus_Uploading>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is SyncStatus_Uploading &&
-            (identical(other.progress, progress) || other.progress == progress) &&
+            (identical(other.progress, progress) ||
+                other.progress == progress) &&
             (identical(other.total, total) || other.total == total));
   }
 
@@ -11988,15 +12675,18 @@ class SyncStatus_Uploading extends SyncStatus {
 }
 
 /// @nodoc
-abstract mixin class $SyncStatus_UploadingCopyWith<$Res> implements $SyncStatusCopyWith<$Res> {
-  factory $SyncStatus_UploadingCopyWith(SyncStatus_Uploading value, $Res Function(SyncStatus_Uploading) _then) =
+abstract mixin class $SyncStatus_UploadingCopyWith<$Res>
+    implements $SyncStatusCopyWith<$Res> {
+  factory $SyncStatus_UploadingCopyWith(SyncStatus_Uploading value,
+          $Res Function(SyncStatus_Uploading) _then) =
       _$SyncStatus_UploadingCopyWithImpl;
   @useResult
   $Res call({BigInt progress, BigInt total});
 }
 
 /// @nodoc
-class _$SyncStatus_UploadingCopyWithImpl<$Res> implements $SyncStatus_UploadingCopyWith<$Res> {
+class _$SyncStatus_UploadingCopyWithImpl<$Res>
+    implements $SyncStatus_UploadingCopyWith<$Res> {
   _$SyncStatus_UploadingCopyWithImpl(this._self, this._then);
 
   final SyncStatus_Uploading _self;
@@ -12029,7 +12719,8 @@ class SyncStatus_Syncing extends SyncStatus {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is SyncStatus_Syncing);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is SyncStatus_Syncing);
   }
 
   @override
@@ -12054,7 +12745,8 @@ mixin _$TextFormat {
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
+  int get hashCode =>
+      Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
 
   @override
   String toString() {
@@ -12271,15 +12963,18 @@ class TextFormat_Flags extends TextFormat {
 }
 
 /// @nodoc
-abstract mixin class $TextFormat_FlagsCopyWith<$Res> implements $TextFormatCopyWith<$Res> {
-  factory $TextFormat_FlagsCopyWith(TextFormat_Flags value, $Res Function(TextFormat_Flags) _then) =
+abstract mixin class $TextFormat_FlagsCopyWith<$Res>
+    implements $TextFormatCopyWith<$Res> {
+  factory $TextFormat_FlagsCopyWith(
+          TextFormat_Flags value, $Res Function(TextFormat_Flags) _then) =
       _$TextFormat_FlagsCopyWithImpl;
   @useResult
   $Res call({TextFlags field0});
 }
 
 /// @nodoc
-class _$TextFormat_FlagsCopyWithImpl<$Res> implements $TextFormat_FlagsCopyWith<$Res> {
+class _$TextFormat_FlagsCopyWithImpl<$Res>
+    implements $TextFormat_FlagsCopyWith<$Res> {
   _$TextFormat_FlagsCopyWithImpl(this._self, this._then);
 
   final TextFormat_Flags _self;
@@ -12333,15 +13028,18 @@ class TextFormat_Effect extends TextFormat {
 }
 
 /// @nodoc
-abstract mixin class $TextFormat_EffectCopyWith<$Res> implements $TextFormatCopyWith<$Res> {
-  factory $TextFormat_EffectCopyWith(TextFormat_Effect value, $Res Function(TextFormat_Effect) _then) =
+abstract mixin class $TextFormat_EffectCopyWith<$Res>
+    implements $TextFormatCopyWith<$Res> {
+  factory $TextFormat_EffectCopyWith(
+          TextFormat_Effect value, $Res Function(TextFormat_Effect) _then) =
       _$TextFormat_EffectCopyWithImpl;
   @useResult
   $Res call({TextEffect field0});
 }
 
 /// @nodoc
-class _$TextFormat_EffectCopyWithImpl<$Res> implements $TextFormat_EffectCopyWith<$Res> {
+class _$TextFormat_EffectCopyWithImpl<$Res>
+    implements $TextFormat_EffectCopyWith<$Res> {
   _$TextFormat_EffectCopyWithImpl(this._self, this._then);
 
   final TextFormat_Effect _self;
@@ -12373,21 +13071,25 @@ mixin _$UIColor {
   /// with the given fields replaced by the non-null parameter values.
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $UIColorCopyWith<UIColor> get copyWith => _$UIColorCopyWithImpl<UIColor>(this as UIColor, _$identity);
+  $UIColorCopyWith<UIColor> get copyWith =>
+      _$UIColorCopyWithImpl<UIColor>(this as UIColor, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is UIColor &&
-            (identical(other.colorComponents, colorComponents) || other.colorComponents == colorComponents) &&
+            (identical(other.colorComponents, colorComponents) ||
+                other.colorComponents == colorComponents) &&
             (identical(other.alpha, alpha) || other.alpha == alpha) &&
-            (identical(other.colorSpace, colorSpace) || other.colorSpace == colorSpace) &&
+            (identical(other.colorSpace, colorSpace) ||
+                other.colorSpace == colorSpace) &&
             (identical(other.class_, class_) || other.class_ == class_));
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, colorComponents, alpha, colorSpace, class_);
+  int get hashCode =>
+      Object.hash(runtimeType, colorComponents, alpha, colorSpace, class_);
 
   @override
   String toString() {
@@ -12397,7 +13099,8 @@ mixin _$UIColor {
 
 /// @nodoc
 abstract mixin class $UIColorCopyWith<$Res> {
-  factory $UIColorCopyWith(UIColor value, $Res Function(UIColor) _then) = _$UIColorCopyWithImpl;
+  factory $UIColorCopyWith(UIColor value, $Res Function(UIColor) _then) =
+      _$UIColorCopyWithImpl;
   @useResult
   $Res call({int colorComponents, double alpha, int colorSpace, String class_});
 }
@@ -12457,14 +13160,16 @@ extension UIColorPatterns on UIColor {
   @optionalTypeArgs
   TResult maybeMap<TResult extends Object?>({
     TResult Function(UIColor_RGBAColorSpace value)? rgbaColorSpace,
-    TResult Function(UIColor_GrayscaleAlphaColorSpace value)? grayscaleAlphaColorSpace,
+    TResult Function(UIColor_GrayscaleAlphaColorSpace value)?
+        grayscaleAlphaColorSpace,
     required TResult orElse(),
   }) {
     final _that = this;
     switch (_that) {
       case UIColor_RGBAColorSpace() when rgbaColorSpace != null:
         return rgbaColorSpace(_that);
-      case UIColor_GrayscaleAlphaColorSpace() when grayscaleAlphaColorSpace != null:
+      case UIColor_GrayscaleAlphaColorSpace()
+          when grayscaleAlphaColorSpace != null:
         return grayscaleAlphaColorSpace(_that);
       case _:
         return orElse();
@@ -12487,7 +13192,8 @@ extension UIColorPatterns on UIColor {
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
     required TResult Function(UIColor_RGBAColorSpace value) rgbaColorSpace,
-    required TResult Function(UIColor_GrayscaleAlphaColorSpace value) grayscaleAlphaColorSpace,
+    required TResult Function(UIColor_GrayscaleAlphaColorSpace value)
+        grayscaleAlphaColorSpace,
   }) {
     final _that = this;
     switch (_that) {
@@ -12513,13 +13219,15 @@ extension UIColorPatterns on UIColor {
   @optionalTypeArgs
   TResult? mapOrNull<TResult extends Object?>({
     TResult? Function(UIColor_RGBAColorSpace value)? rgbaColorSpace,
-    TResult? Function(UIColor_GrayscaleAlphaColorSpace value)? grayscaleAlphaColorSpace,
+    TResult? Function(UIColor_GrayscaleAlphaColorSpace value)?
+        grayscaleAlphaColorSpace,
   }) {
     final _that = this;
     switch (_that) {
       case UIColor_RGBAColorSpace() when rgbaColorSpace != null:
         return rgbaColorSpace(_that);
-      case UIColor_GrayscaleAlphaColorSpace() when grayscaleAlphaColorSpace != null:
+      case UIColor_GrayscaleAlphaColorSpace()
+          when grayscaleAlphaColorSpace != null:
         return grayscaleAlphaColorSpace(_that);
       case _:
         return null;
@@ -12540,21 +13248,45 @@ extension UIColorPatterns on UIColor {
 
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
-    TResult Function(int colorComponents, double green, double blue, double red, double? greenDbl, double? blueDbl,
-            double? redDbl, double? alphaDbl, double alpha, Uint8List rgb, int colorSpace, String class_)?
+    TResult Function(
+            int colorComponents,
+            double green,
+            double blue,
+            double red,
+            double? greenDbl,
+            double? blueDbl,
+            double? redDbl,
+            double? alphaDbl,
+            double alpha,
+            Uint8List rgb,
+            int colorSpace,
+            String class_)?
         rgbaColorSpace,
-    TResult Function(int colorComponents, double white, double alpha, Uint8List bin, int colorSpace, String class_)?
+    TResult Function(int colorComponents, double white, double alpha,
+            Uint8List bin, int colorSpace, String class_)?
         grayscaleAlphaColorSpace,
     required TResult orElse(),
   }) {
     final _that = this;
     switch (_that) {
       case UIColor_RGBAColorSpace() when rgbaColorSpace != null:
-        return rgbaColorSpace(_that.colorComponents, _that.green, _that.blue, _that.red, _that.greenDbl, _that.blueDbl,
-            _that.redDbl, _that.alphaDbl, _that.alpha, _that.rgb, _that.colorSpace, _that.class_);
-      case UIColor_GrayscaleAlphaColorSpace() when grayscaleAlphaColorSpace != null:
-        return grayscaleAlphaColorSpace(
-            _that.colorComponents, _that.white, _that.alpha, _that.bin, _that.colorSpace, _that.class_);
+        return rgbaColorSpace(
+            _that.colorComponents,
+            _that.green,
+            _that.blue,
+            _that.red,
+            _that.greenDbl,
+            _that.blueDbl,
+            _that.redDbl,
+            _that.alphaDbl,
+            _that.alpha,
+            _that.rgb,
+            _that.colorSpace,
+            _that.class_);
+      case UIColor_GrayscaleAlphaColorSpace()
+          when grayscaleAlphaColorSpace != null:
+        return grayscaleAlphaColorSpace(_that.colorComponents, _that.white,
+            _that.alpha, _that.bin, _that.colorSpace, _that.class_);
       case _:
         return orElse();
     }
@@ -12589,18 +13321,29 @@ extension UIColorPatterns on UIColor {
             int colorSpace,
             String class_)
         rgbaColorSpace,
-    required TResult Function(
-            int colorComponents, double white, double alpha, Uint8List bin, int colorSpace, String class_)
+    required TResult Function(int colorComponents, double white, double alpha,
+            Uint8List bin, int colorSpace, String class_)
         grayscaleAlphaColorSpace,
   }) {
     final _that = this;
     switch (_that) {
       case UIColor_RGBAColorSpace():
-        return rgbaColorSpace(_that.colorComponents, _that.green, _that.blue, _that.red, _that.greenDbl, _that.blueDbl,
-            _that.redDbl, _that.alphaDbl, _that.alpha, _that.rgb, _that.colorSpace, _that.class_);
+        return rgbaColorSpace(
+            _that.colorComponents,
+            _that.green,
+            _that.blue,
+            _that.red,
+            _that.greenDbl,
+            _that.blueDbl,
+            _that.redDbl,
+            _that.alphaDbl,
+            _that.alpha,
+            _that.rgb,
+            _that.colorSpace,
+            _that.class_);
       case UIColor_GrayscaleAlphaColorSpace():
-        return grayscaleAlphaColorSpace(
-            _that.colorComponents, _that.white, _that.alpha, _that.bin, _that.colorSpace, _that.class_);
+        return grayscaleAlphaColorSpace(_that.colorComponents, _that.white,
+            _that.alpha, _that.bin, _that.colorSpace, _that.class_);
     }
   }
 
@@ -12618,20 +13361,44 @@ extension UIColorPatterns on UIColor {
 
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
-    TResult? Function(int colorComponents, double green, double blue, double red, double? greenDbl, double? blueDbl,
-            double? redDbl, double? alphaDbl, double alpha, Uint8List rgb, int colorSpace, String class_)?
+    TResult? Function(
+            int colorComponents,
+            double green,
+            double blue,
+            double red,
+            double? greenDbl,
+            double? blueDbl,
+            double? redDbl,
+            double? alphaDbl,
+            double alpha,
+            Uint8List rgb,
+            int colorSpace,
+            String class_)?
         rgbaColorSpace,
-    TResult? Function(int colorComponents, double white, double alpha, Uint8List bin, int colorSpace, String class_)?
+    TResult? Function(int colorComponents, double white, double alpha,
+            Uint8List bin, int colorSpace, String class_)?
         grayscaleAlphaColorSpace,
   }) {
     final _that = this;
     switch (_that) {
       case UIColor_RGBAColorSpace() when rgbaColorSpace != null:
-        return rgbaColorSpace(_that.colorComponents, _that.green, _that.blue, _that.red, _that.greenDbl, _that.blueDbl,
-            _that.redDbl, _that.alphaDbl, _that.alpha, _that.rgb, _that.colorSpace, _that.class_);
-      case UIColor_GrayscaleAlphaColorSpace() when grayscaleAlphaColorSpace != null:
-        return grayscaleAlphaColorSpace(
-            _that.colorComponents, _that.white, _that.alpha, _that.bin, _that.colorSpace, _that.class_);
+        return rgbaColorSpace(
+            _that.colorComponents,
+            _that.green,
+            _that.blue,
+            _that.red,
+            _that.greenDbl,
+            _that.blueDbl,
+            _that.redDbl,
+            _that.alphaDbl,
+            _that.alpha,
+            _that.rgb,
+            _that.colorSpace,
+            _that.class_);
+      case UIColor_GrayscaleAlphaColorSpace()
+          when grayscaleAlphaColorSpace != null:
+        return grayscaleAlphaColorSpace(_that.colorComponents, _that.white,
+            _that.alpha, _that.bin, _that.colorSpace, _that.class_);
       case _:
         return null;
     }
@@ -12679,30 +13446,47 @@ class UIColor_RGBAColorSpace extends UIColor {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $UIColor_RGBAColorSpaceCopyWith<UIColor_RGBAColorSpace> get copyWith =>
-      _$UIColor_RGBAColorSpaceCopyWithImpl<UIColor_RGBAColorSpace>(this, _$identity);
+      _$UIColor_RGBAColorSpaceCopyWithImpl<UIColor_RGBAColorSpace>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is UIColor_RGBAColorSpace &&
-            (identical(other.colorComponents, colorComponents) || other.colorComponents == colorComponents) &&
+            (identical(other.colorComponents, colorComponents) ||
+                other.colorComponents == colorComponents) &&
             (identical(other.green, green) || other.green == green) &&
             (identical(other.blue, blue) || other.blue == blue) &&
             (identical(other.red, red) || other.red == red) &&
-            (identical(other.greenDbl, greenDbl) || other.greenDbl == greenDbl) &&
+            (identical(other.greenDbl, greenDbl) ||
+                other.greenDbl == greenDbl) &&
             (identical(other.blueDbl, blueDbl) || other.blueDbl == blueDbl) &&
             (identical(other.redDbl, redDbl) || other.redDbl == redDbl) &&
-            (identical(other.alphaDbl, alphaDbl) || other.alphaDbl == alphaDbl) &&
+            (identical(other.alphaDbl, alphaDbl) ||
+                other.alphaDbl == alphaDbl) &&
             (identical(other.alpha, alpha) || other.alpha == alpha) &&
             const DeepCollectionEquality().equals(other.rgb, rgb) &&
-            (identical(other.colorSpace, colorSpace) || other.colorSpace == colorSpace) &&
+            (identical(other.colorSpace, colorSpace) ||
+                other.colorSpace == colorSpace) &&
             (identical(other.class_, class_) || other.class_ == class_));
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, colorComponents, green, blue, red, greenDbl, blueDbl, redDbl, alphaDbl,
-      alpha, const DeepCollectionEquality().hash(rgb), colorSpace, class_);
+  int get hashCode => Object.hash(
+      runtimeType,
+      colorComponents,
+      green,
+      blue,
+      red,
+      greenDbl,
+      blueDbl,
+      redDbl,
+      alphaDbl,
+      alpha,
+      const DeepCollectionEquality().hash(rgb),
+      colorSpace,
+      class_);
 
   @override
   String toString() {
@@ -12711,8 +13495,10 @@ class UIColor_RGBAColorSpace extends UIColor {
 }
 
 /// @nodoc
-abstract mixin class $UIColor_RGBAColorSpaceCopyWith<$Res> implements $UIColorCopyWith<$Res> {
-  factory $UIColor_RGBAColorSpaceCopyWith(UIColor_RGBAColorSpace value, $Res Function(UIColor_RGBAColorSpace) _then) =
+abstract mixin class $UIColor_RGBAColorSpaceCopyWith<$Res>
+    implements $UIColorCopyWith<$Res> {
+  factory $UIColor_RGBAColorSpaceCopyWith(UIColor_RGBAColorSpace value,
+          $Res Function(UIColor_RGBAColorSpace) _then) =
       _$UIColor_RGBAColorSpaceCopyWithImpl;
   @override
   @useResult
@@ -12732,7 +13518,8 @@ abstract mixin class $UIColor_RGBAColorSpaceCopyWith<$Res> implements $UIColorCo
 }
 
 /// @nodoc
-class _$UIColor_RGBAColorSpaceCopyWithImpl<$Res> implements $UIColor_RGBAColorSpaceCopyWith<$Res> {
+class _$UIColor_RGBAColorSpaceCopyWithImpl<$Res>
+    implements $UIColor_RGBAColorSpaceCopyWith<$Res> {
   _$UIColor_RGBAColorSpaceCopyWithImpl(this._self, this._then);
 
   final UIColor_RGBAColorSpace _self;
@@ -12837,25 +13624,28 @@ class UIColor_GrayscaleAlphaColorSpace extends UIColor {
   @override
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
-  $UIColor_GrayscaleAlphaColorSpaceCopyWith<UIColor_GrayscaleAlphaColorSpace> get copyWith =>
-      _$UIColor_GrayscaleAlphaColorSpaceCopyWithImpl<UIColor_GrayscaleAlphaColorSpace>(this, _$identity);
+  $UIColor_GrayscaleAlphaColorSpaceCopyWith<UIColor_GrayscaleAlphaColorSpace>
+      get copyWith => _$UIColor_GrayscaleAlphaColorSpaceCopyWithImpl<
+          UIColor_GrayscaleAlphaColorSpace>(this, _$identity);
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is UIColor_GrayscaleAlphaColorSpace &&
-            (identical(other.colorComponents, colorComponents) || other.colorComponents == colorComponents) &&
+            (identical(other.colorComponents, colorComponents) ||
+                other.colorComponents == colorComponents) &&
             (identical(other.white, white) || other.white == white) &&
             (identical(other.alpha, alpha) || other.alpha == alpha) &&
             const DeepCollectionEquality().equals(other.bin, bin) &&
-            (identical(other.colorSpace, colorSpace) || other.colorSpace == colorSpace) &&
+            (identical(other.colorSpace, colorSpace) ||
+                other.colorSpace == colorSpace) &&
             (identical(other.class_, class_) || other.class_ == class_));
   }
 
   @override
-  int get hashCode => Object.hash(
-      runtimeType, colorComponents, white, alpha, const DeepCollectionEquality().hash(bin), colorSpace, class_);
+  int get hashCode => Object.hash(runtimeType, colorComponents, white, alpha,
+      const DeepCollectionEquality().hash(bin), colorSpace, class_);
 
   @override
   String toString() {
@@ -12864,17 +13654,26 @@ class UIColor_GrayscaleAlphaColorSpace extends UIColor {
 }
 
 /// @nodoc
-abstract mixin class $UIColor_GrayscaleAlphaColorSpaceCopyWith<$Res> implements $UIColorCopyWith<$Res> {
+abstract mixin class $UIColor_GrayscaleAlphaColorSpaceCopyWith<$Res>
+    implements $UIColorCopyWith<$Res> {
   factory $UIColor_GrayscaleAlphaColorSpaceCopyWith(
-          UIColor_GrayscaleAlphaColorSpace value, $Res Function(UIColor_GrayscaleAlphaColorSpace) _then) =
+          UIColor_GrayscaleAlphaColorSpace value,
+          $Res Function(UIColor_GrayscaleAlphaColorSpace) _then) =
       _$UIColor_GrayscaleAlphaColorSpaceCopyWithImpl;
   @override
   @useResult
-  $Res call({int colorComponents, double white, double alpha, Uint8List bin, int colorSpace, String class_});
+  $Res call(
+      {int colorComponents,
+      double white,
+      double alpha,
+      Uint8List bin,
+      int colorSpace,
+      String class_});
 }
 
 /// @nodoc
-class _$UIColor_GrayscaleAlphaColorSpaceCopyWithImpl<$Res> implements $UIColor_GrayscaleAlphaColorSpaceCopyWith<$Res> {
+class _$UIColor_GrayscaleAlphaColorSpaceCopyWithImpl<$Res>
+    implements $UIColor_GrayscaleAlphaColorSpaceCopyWith<$Res> {
   _$UIColor_GrayscaleAlphaColorSpaceCopyWithImpl(this._self, this._then);
 
   final UIColor_GrayscaleAlphaColorSpace _self;
@@ -12925,7 +13724,8 @@ class _$UIColor_GrayscaleAlphaColorSpaceCopyWithImpl<$Res> implements $UIColor_G
 mixin _$UpdateAccountFinish {
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is UpdateAccountFinish);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is UpdateAccountFinish);
   }
 
   @override
@@ -12939,7 +13739,8 @@ mixin _$UpdateAccountFinish {
 
 /// @nodoc
 class $UpdateAccountFinishCopyWith<$Res> {
-  $UpdateAccountFinishCopyWith(UpdateAccountFinish _, $Res Function(UpdateAccountFinish) __);
+  $UpdateAccountFinishCopyWith(
+      UpdateAccountFinish _, $Res Function(UpdateAccountFinish) __);
 }
 
 /// Adds pattern-matching-related methods to [UpdateAccountFinish].
@@ -13120,7 +13921,9 @@ class UpdateAccountFinish_MacOS extends UpdateAccountFinish {
 
   @override
   bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType && other is UpdateAccountFinish_MacOS);
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is UpdateAccountFinish_MacOS);
   }
 
   @override
@@ -13144,7 +13947,8 @@ class UpdateAccountFinish_IOS extends UpdateAccountFinish {
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $UpdateAccountFinish_IOSCopyWith<UpdateAccountFinish_IOS> get copyWith =>
-      _$UpdateAccountFinish_IOSCopyWithImpl<UpdateAccountFinish_IOS>(this, _$identity);
+      _$UpdateAccountFinish_IOSCopyWithImpl<UpdateAccountFinish_IOS>(
+          this, _$identity);
 
   @override
   bool operator ==(Object other) {
@@ -13164,16 +13968,18 @@ class UpdateAccountFinish_IOS extends UpdateAccountFinish {
 }
 
 /// @nodoc
-abstract mixin class $UpdateAccountFinish_IOSCopyWith<$Res> implements $UpdateAccountFinishCopyWith<$Res> {
-  factory $UpdateAccountFinish_IOSCopyWith(
-          UpdateAccountFinish_IOS value, $Res Function(UpdateAccountFinish_IOS) _then) =
+abstract mixin class $UpdateAccountFinish_IOSCopyWith<$Res>
+    implements $UpdateAccountFinishCopyWith<$Res> {
+  factory $UpdateAccountFinish_IOSCopyWith(UpdateAccountFinish_IOS value,
+          $Res Function(UpdateAccountFinish_IOS) _then) =
       _$UpdateAccountFinish_IOSCopyWithImpl;
   @useResult
   $Res call({String url});
 }
 
 /// @nodoc
-class _$UpdateAccountFinish_IOSCopyWithImpl<$Res> implements $UpdateAccountFinish_IOSCopyWith<$Res> {
+class _$UpdateAccountFinish_IOSCopyWithImpl<$Res>
+    implements $UpdateAccountFinish_IOSCopyWith<$Res> {
   _$UpdateAccountFinish_IOSCopyWithImpl(this._self, this._then);
 
   final UpdateAccountFinish_IOS _self;

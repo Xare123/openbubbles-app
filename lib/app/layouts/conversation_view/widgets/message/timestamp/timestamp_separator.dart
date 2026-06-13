@@ -119,12 +119,11 @@ class TimestampSeparator extends StatelessWidget {
                 scheduled.generateTempGuid();
                 scheduled.save();
                 await OutgoingMsgHandler.queue(
-                    OutgoingItem(
-                      type: QueueType.sendMessage,
-                      chat: scheduled.getChat()!,
-                      message: scheduled,
-                    ),
-                    prep: false);
+                  OutgoingMessage(
+                    chat: scheduled.getChat()!,
+                    message: scheduled,
+                  ),
+                );
               }
             },
           ),
@@ -138,12 +137,11 @@ class TimestampSeparator extends StatelessWidget {
                 scheduled.dateScheduled = date;
                 scheduled.save();
                 await OutgoingMsgHandler.queue(
-                    OutgoingItem(
-                      type: QueueType.sendMessage,
-                      chat: scheduled.getChat()!,
-                      message: scheduled,
-                    ),
-                    prep: false);
+                  OutgoingMessage(
+                    chat: scheduled.getChat()!,
+                    message: scheduled,
+                  ),
+                );
               }
             },
           ),

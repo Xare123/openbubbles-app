@@ -38,11 +38,79 @@ class AttachmentDownloadService extends GetxService {
   final RxList<String> downloaders = <String>[].obs;
   final Map<String, List<AttachmentDownloadController>> _downloaders = {};
 
-  AttachmentDownloadController? getController(String? guid) {
-    return _downloaders.values.flattened.firstWhereOrNull((element) => element.attachment.guid == guid);
+  bool _isActiveState(AttachmentDownloadState state) {
+    return state == AttachmentDownloadState.queued ||
+        state == AttachmentDownloadState.downloading ||
+        state == AttachmentDownloadState.processing;
   }
 
-  AttachmentDownloadController startDownload(Attachment a, {Function(PlatformFile)? onComplete, Function? onError}) {
+  void _removeGuidFromQueueMap(String guid) {
+    downloaders.remove(guid);
+    final emptyKeys = <String>[];
+    for (final entry in _downloaders.entries) {
+      entry.value.removeWhere((e) => e.attachment.guid == guid);
+      if (entry.value.isEmpty) {
+        emptyKeys.add(entry.key);
+      }
+    }
+
+    for (final key in emptyKeys) {
+      _downloaders.remove(key);
+    }
+  }
+
+  AttachmentDownloadController? getController(String? guid) {
+    if (guid == null) return null;
+
+    // Drop stale queued references first so callers only ever get live work.
+    _removeGuidFromQueueMap(guid);
+
+    final registered = Get.isRegistered<AttachmentDownloadController>(tag: guid)
+        ? Get.find<AttachmentDownloadController>(tag: guid)
+        : null;
+    if (registered == null || !_isActiveState(registered.state.value)) {
+      if (registered != null && Get.isRegistered<AttachmentDownloadController>(tag: guid)) {
+        Get.delete<AttachmentDownloadController>(tag: guid);
+      }
+      return null;
+    }
+
+    // Ensure queue map reflects the currently active controller instance.
+    final chatGuid = registered.attachment.message.target?.chat.target?.guid ?? "unknown";
+    _downloaders.putIfAbsent(chatGuid, () => []);
+    if (!_downloaders[chatGuid]!.contains(registered)) {
+      _downloaders[chatGuid]!.add(registered);
+    }
+    if (!downloaders.contains(guid)) {
+      downloaders.add(guid);
+    }
+
+    return registered;
+  }
+
+  void clearControllerForGuid(String guid, {bool deleteRegistered = true}) {
+    _removeGuidFromQueueMap(guid);
+    if (deleteRegistered && Get.isRegistered<AttachmentDownloadController>(tag: guid)) {
+      Get.delete<AttachmentDownloadController>(tag: guid);
+    }
+  }
+
+  AttachmentDownloadController startDownload(Attachment a,
+      {Function(PlatformFile)? onComplete, Function? onError, bool forceFresh = false}) {
+    final guid = a.guid;
+    if (guid != null && forceFresh) {
+      clearControllerForGuid(guid);
+    }
+
+    if (guid != null) {
+      final existing = getController(guid);
+      if (existing != null) {
+        if (onComplete != null) existing.completeFuncs.add(onComplete);
+        if (onError != null) existing.errorFuncs.add(onError);
+        return existing;
+      }
+    }
+
     return Get.put(
         AttachmentDownloadController(
           attachment: a,

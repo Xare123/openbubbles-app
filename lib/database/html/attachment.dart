@@ -21,6 +21,7 @@ class Attachment {
   Uint8List? bytes;
   String? webUrl;
   Map<String, dynamic>? metadata;
+  Map<String, dynamic>? exif;
   bool hasLivePhoto;
 
   final message = ToOne<Message>();
@@ -37,6 +38,7 @@ class Attachment {
     this.height,
     this.width,
     this.metadata,
+    this.exif,
     this.bytes,
     this.webUrl,
     this.hasLivePhoto = false,
@@ -56,6 +58,14 @@ class Attachment {
       } catch (_) {}
     }
 
+    // exif uses null = never loaded, {} = loaded with no EXIF data
+    var exif = json["exif"];
+    if (exif is String && exif.isNotEmpty) {
+      try {
+        exif = jsonDecode(exif);
+      } catch (_) {}
+    }
+
     return Attachment(
       id: json["ROWID"] ?? json["id"],
       originalROWID: json["originalROWID"],
@@ -68,6 +78,7 @@ class Attachment {
       height: json["height"] ?? 0,
       width: json["width"] ?? 0,
       metadata: metadata is String ? null : metadata,
+      exif: exif is String ? null : exif,
       hasLivePhoto: json["hasLivePhoto"] ?? false,
     );
   }
@@ -142,6 +153,7 @@ class Attachment {
     attachment1.uti ??= attachment2.uti;
     attachment1.webUrl ??= attachment2.webUrl;
     attachment1.metadata = mergeTopLevelDicts(attachment1.metadata, attachment2.metadata);
+    attachment1.exif = mergeTopLevelDicts(attachment1.exif, attachment2.exif);
     if (attachment2.hasLivePhoto) {
       attachment1.hasLivePhoto = attachment2.hasLivePhoto;
     }
@@ -160,6 +172,7 @@ class Attachment {
         "height": height,
         "width": width,
         "metadata": jsonEncode(metadata),
+        "exif": jsonEncode(exif),
         "hasLivePhoto": hasLivePhoto,
       };
 
@@ -167,6 +180,7 @@ class Attachment {
     if (metadata?['orientation'] == '1') return true;
     if (metadata?['orientation'] == 1) return true;
     if (metadata?['orientation'] == 'portrait') return true;
+    if (exif?['Image Orientation']?.contains("90") ?? false) return true;
     if (metadata?['Image Orientation']?.contains("90") ?? false) return true;
     return false;
   }

@@ -162,10 +162,8 @@ class ThemePreviewCard extends StatelessWidget {
   Widget _chatViewPane(BuildContext context, Skins skin) {
     final cs = context.theme.colorScheme;
     final bubbleColors = context.theme.extensions[BubbleColors] as BubbleColors?;
-    final sentColor = bubbleColors?.iMessageBubbleColor ?? cs.iMessageBubble;
-    final onSentColor = bubbleColors?.oniMessageBubbleColor ?? cs.oniMessageBubble;
+    final sentColor = cs.bubble(context, true);
     final receivedColor = bubbleColors?.receivedBubbleColor ?? cs.surfaceContainerHighest;
-    final onReceivedColor = bubbleColors?.onReceivedBubbleColor ?? cs.onSurfaceVariant;
 
     return Container(
       color: cs.surface,
@@ -178,8 +176,8 @@ class ThemePreviewCard extends StatelessWidget {
               color: cs.surface,
               padding: const EdgeInsets.fromLTRB(8, 6, 8, 10),
               child: skin == Skins.iOS
-                  ? _iOSMessageList(context, sentColor, onSentColor, receivedColor, onReceivedColor)
-                  : _groupedMessageList(context, sentColor, onSentColor, receivedColor, onReceivedColor),
+                  ? _iOSMessageList(context, sentColor, receivedColor)
+                  : _groupedMessageList(context, sentColor, receivedColor),
             ),
           ),
           IgnorePointer(child: _textField(context, skin)),
@@ -221,7 +219,7 @@ class ThemePreviewCard extends StatelessWidget {
                 CircleAvatar(
                     radius: 27,
                     backgroundColor: cs.primaryContainer,
-                    child: Text("B", style: TextStyle(fontSize: 20, color: cs.onPrimaryContainer))),
+                    child: Text("B", style: TextStyle(fontSize: 30, color: cs.onPrimaryContainer))),
                 const SizedBox(height: 2),
                 Text("BlueBubbles", style: context.theme.textTheme.bodyMedium?.copyWith(color: cs.onSurface)),
               ],
@@ -265,30 +263,29 @@ class ThemePreviewCard extends StatelessWidget {
 
   // ── iOS message list (independent bubbles with tail + avatar) ───────────────
 
-  Widget _iOSMessageList(
-      BuildContext context, Color sentColor, Color onSentColor, Color receivedColor, Color onReceivedColor) {
+  Widget _iOSMessageList(BuildContext context, Color sentColor, Color receivedColor) {
     return SingleChildScrollView(
       reverse: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _iOSBubbleRow(context, "Hey, whatsup!", false, receivedColor, onReceivedColor, showTail: true),
+          _iOSBubbleRow(context, "Hey, whatsup!", false, receivedColor, showTail: true),
           const SizedBox(height: 5),
-          _iOSBubbleRow(context, "Nothin much, you?", true, sentColor, onSentColor, showTail: true),
+          _iOSBubbleRow(context, "Nothin much, you?", true, sentColor, showTail: true),
           const SizedBox(height: 5),
-          _iOSBubbleRow(context, "Enjoying BlueBubbles!", false, receivedColor, onReceivedColor, showTail: true),
+          _iOSBubbleRow(context, "Enjoying BlueBubbles!", false, receivedColor, showTail: true),
         ],
       ),
     );
   }
 
-  Widget _iOSBubbleRow(BuildContext context, String text, bool isMe, Color bg, Color onBg, {required bool showTail}) {
+  Widget _iOSBubbleRow(BuildContext context, String text, bool isMe, Color bg, {required bool showTail}) {
     final cs = context.theme.colorScheme;
     if (isMe) {
       return Row(
         mainAxisAlignment: MainAxisAlignment.end,
         crossAxisAlignment: CrossAxisAlignment.end,
-        children: [_bubble(context, text, true, bg, onBg, showTail: showTail)],
+        children: [_bubble(context, text, true, bg, showTail: showTail)],
       );
     }
     return Row(
@@ -298,18 +295,17 @@ class ThemePreviewCard extends StatelessWidget {
             ? CircleAvatar(
                 radius: 15,
                 backgroundColor: cs.primaryContainer,
-                child: Text("B", style: TextStyle(fontSize: 11, color: cs.onPrimaryContainer)))
+                child: Text("B", style: TextStyle(fontSize: 15, color: cs.onPrimaryContainer)))
             : const SizedBox(width: 30),
         const SizedBox(width: 2),
-        _bubble(context, text, false, bg, onBg, showTail: showTail),
+        _bubble(context, text, false, bg, showTail: showTail),
       ],
     );
   }
 
   // ── Material/Samsung message list (connected bubble groups) ────────────────
 
-  Widget _groupedMessageList(
-      BuildContext context, Color sentColor, Color onSentColor, Color receivedColor, Color onReceivedColor) {
+  Widget _groupedMessageList(BuildContext context, Color sentColor, Color receivedColor) {
     return SingleChildScrollView(
       reverse: true,
       child: Column(
@@ -318,26 +314,26 @@ class ThemePreviewCard extends StatelessWidget {
           // Received group
           Align(
             alignment: Alignment.centerLeft,
-            child: _bubble(context, "Hey! How are you?", false, receivedColor, onReceivedColor,
+            child: _bubble(context, "Hey! How are you?", false, receivedColor,
                 showTail: false, connectLower: true, connectUpper: false),
           ),
           const SizedBox(height: 2),
           Align(
             alignment: Alignment.centerLeft,
-            child: _bubble(context, "Miss you! 😊", false, receivedColor, onReceivedColor,
+            child: _bubble(context, "Miss you! 😊", false, receivedColor,
                 showTail: true, connectLower: false, connectUpper: true),
           ),
           const SizedBox(height: 6),
           // Sent group
           Align(
             alignment: Alignment.centerRight,
-            child: _bubble(context, "Doing great!", true, sentColor, onSentColor,
+            child: _bubble(context, "Doing great!", true, sentColor,
                 showTail: false, connectLower: true, connectUpper: false),
           ),
           const SizedBox(height: 2),
           Align(
             alignment: Alignment.centerRight,
-            child: _bubble(context, "Coffee soon? ☕", true, sentColor, onSentColor,
+            child: _bubble(context, "Coffee soon? ☕", true, sentColor,
                 showTail: true, connectLower: false, connectUpper: true),
           ),
         ],
@@ -359,8 +355,13 @@ class ThemePreviewCard extends StatelessWidget {
 
   // ── Shared bubble widget (shape via TailClipper) ────────────────────────────
 
-  Widget _bubble(BuildContext context, String text, bool isMe, Color bg, Color onBg,
+  Widget _bubble(BuildContext context, String text, bool isMe, Color bg,
       {required bool showTail, bool connectLower = false, bool connectUpper = false}) {
+    final bubbleColors = context.theme.extensions[BubbleColors] as BubbleColors?;
+    final textStyle = (context.theme.extensions[BubbleText] as BubbleText).bubbleText.apply(
+        color: isMe
+            ? context.theme.colorScheme.onBubble(context, true)
+            : bubbleColors?.onReceivedBubbleColor ?? context.theme.colorScheme.onSurfaceVariant);
     return ClipPath(
       clipper: TailClipper(
         isFromMe: isMe,
@@ -373,9 +374,7 @@ class ThemePreviewCard extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10)
             .add(EdgeInsets.only(left: isMe ? 0 : 10, right: isMe ? 10 : 0)),
         color: bg,
-        child: Text(text,
-            style:
-                context.theme.textTheme.labelSmall?.copyWith(color: onBg, fontSize: _previewBubbleFontSize(context))),
+        child: Text(text, style: textStyle.copyWith(fontSize: _previewBubbleFontSize(context))),
       ),
     );
   }
@@ -421,7 +420,7 @@ class ThemePreviewCard extends StatelessWidget {
                 border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.25), width: 1),
                 borderRadius: BorderRadius.circular(20),
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 10),
+              padding: const EdgeInsets.only(left: 10, right: 5),
               child: Row(
                 children: [
                   Expanded(
@@ -430,10 +429,10 @@ class ThemePreviewCard extends StatelessWidget {
                             ?.copyWith(color: cs.outline, fontSize: _previewTextFieldFontSize(context))),
                   ),
                   Container(
-                    width: 20,
-                    height: 20,
+                    width: 24,
+                    height: 24,
                     decoration: BoxDecoration(color: cs.primary, shape: BoxShape.circle),
-                    child: Icon(Icons.arrow_upward_rounded, size: 12, color: cs.onPrimary),
+                    child: Icon(Icons.arrow_upward_rounded, size: 18, color: cs.onPrimary),
                   ),
                 ],
               ),

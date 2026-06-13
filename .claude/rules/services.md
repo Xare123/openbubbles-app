@@ -98,5 +98,5 @@ Use `NavigationSvc` — don't call `Navigator.of(context)` directly in feature c
 ## Contacts
 
 - V1 (legacy): `ContactsSvc` — returns `Contact` objects
-- V2 (current): `ContactsSvcV2` — returns `ContactV2` objects, reactive via `handleUpdateStatus`
+- V2 (current): `ContactsSvcV2` — returns `ContactV2` objects
 - Prefer V2 for any new feature work. Check `ContactsSvcV2.isHandleUpdated(handle.id)` in `ever()` listeners for reactive contact updates.

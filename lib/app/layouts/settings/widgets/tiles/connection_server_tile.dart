@@ -42,6 +42,9 @@ class ConnectionServerTile extends StatelessWidget {
         case SocketState.connecting:
           subtitle = "Connecting";
           break;
+        case SocketState.reconnecting:
+          subtitle = "Reconnecting";
+          break;
       }
 
       return SettingsTile(
@@ -91,7 +94,7 @@ class ConnectionServerTile extends StatelessWidget {
                       Positioned.fill(
                         child: Align(
                           alignment: Alignment.bottomRight,
-                          child: getIndicatorIcon(
+                          child: getSocketStateIndicatorIcon(
                             SocketSvc.state.value,
                             size: 12,
                             showAlpha: false,

@@ -1,4 +1,4 @@
-import 'dart:math';
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:bluebubbles/app/layouts/chat_creator/new_chat_creator.dart';
@@ -279,34 +279,87 @@ class FaceTimeBtnState extends State<FaceTimeBtn> {
   }
 }
 
-class ConnectionIndicator extends StatelessWidget {
+class ConnectionIndicator extends StatefulWidget {
   const ConnectionIndicator({super.key});
 
-  bool get noniOS => SettingsSvc.settings.skin.value != Skins.iOS;
+  @override
+  State<ConnectionIndicator> createState() => _ConnectionIndicatorState();
+}
+
+class _ConnectionIndicatorState extends State<ConnectionIndicator> {
+  bool _isVisible = false;
+  bool _hasHadConnectionFailure = false;
+  SocketState _displayState = SocketState.connected;
+  Timer? _hideTimer;
+  Worker? _worker;
+
+  @override
+  void initState() {
+    super.initState();
+    // Only pre-show if already mid-reconnect (e.g. widget remounted during retry cycle)
+    final initial = SocketSvc.state.value;
+    if (initial == SocketState.reconnecting || initial == SocketState.error) {
+      _isVisible = true;
+      _displayState = initial;
+      _hasHadConnectionFailure = true;
+    }
+    _worker = ever(SocketSvc.state, _onSocketStateChanged);
+  }
+
+  void _onSocketStateChanged(SocketState state) {
+    if (!mounted) return;
+    if (state == SocketState.reconnecting) {
+      _hasHadConnectionFailure = true;
+      _hideTimer?.cancel();
+      setState(() {
+        _displayState = SocketState.reconnecting;
+        _isVisible = true;
+      });
+    } else if (state == SocketState.error) {
+      _hasHadConnectionFailure = true;
+      _hideTimer?.cancel();
+      setState(() {
+        _displayState = SocketState.error;
+        _isVisible = true;
+      });
+    } else if (state == SocketState.connected && _hasHadConnectionFailure) {
+      _hideTimer?.cancel();
+      setState(() {
+        _displayState = SocketState.connected;
+        _isVisible = true;
+      });
+      _hideTimer = Timer(const Duration(milliseconds: 1500), () {
+        if (mounted) {
+          setState(() {
+            _isVisible = false;
+            _hasHadConnectionFailure = false;
+          });
+        }
+      });
+    }
+    // connecting and disconnected: no indicator change
+  }
+
+  @override
+  void dispose() {
+    _worker?.dispose();
+    _hideTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.topCenter,
-      child: Obx(() => AnimatedContainer(
-            duration: const Duration(milliseconds: 300),
-            height: 0,
-            decoration: BoxDecoration(
-              boxShadow: [
-                BoxShadow(
-                  color: getIndicatorColor(SocketSvc.state.value).withValues(alpha: 0.4),
-                  spreadRadius: SocketSvc.state.value != SocketState.connected && (LifecycleSvc.isAlive || kIsDesktop)
-                      ? max(MediaQuery.of(context).viewPadding.top, 40)
-                          .clamp(0, noniOS ? 30 : double.infinity)
-                          .toDouble()
-                      : 0,
-                  blurRadius: max(MediaQuery.of(context).viewPadding.top, 40)
-                      .clamp(0, noniOS ? 30 : double.infinity)
-                      .toDouble(),
-                ),
-              ],
-            ),
-          )),
+    final topPadding = MediaQuery.of(context).viewPadding.top;
+    return Positioned(
+      top: topPadding,
+      left: 0,
+      right: 0,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+        height: _isVisible ? 4.0 : 0.0,
+        color: getIndicatorColor(_displayState),
+      ),
     );
   }
 }

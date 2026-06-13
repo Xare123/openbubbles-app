@@ -6,14 +6,14 @@ import 'package:audio_waveforms/audio_waveforms.dart' as aw;
 import 'package:bluebubbles/app/layouts/conversation_view/mixins/messages_service_mixin.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/message_holder.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/messages_view_components.dart';
-import 'package:bluebubbles/database/database.dart';
-import 'package:bluebubbles/services/network/backend_service.dart';
-import 'package:bluebubbles/utils/logger/logger.dart';
-import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/app/wrappers/scrollbar_wrapper.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
+import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/helpers/helpers.dart';
+import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:collection/collection.dart';
 import 'package:defer_pointer/defer_pointer.dart';
 import 'package:flutter/cupertino.dart';
@@ -21,10 +21,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
-import 'package:google_ml_kit/google_ml_kit.dart' hide Message;
-import 'package:path/path.dart' hide context;
 import 'package:scroll_to_index/scroll_to_index.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart';
+
+import 'handlers/drop_zone_manager.dart';
+import 'handlers/message_animation_orchestrator.dart';
+import 'handlers/smart_replies_manager.dart';
 
 class MessagesView extends StatefulWidget {
   final MessagesService? customService;
@@ -51,29 +53,29 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
   // GlobalKey for SliverAnimatedList
   GlobalKey<SliverAnimatedListState> _listKey = GlobalKey<SliverAnimatedListState>();
 
-  // Track which messages are currently being animated (for individual additions only)
-  final Set<String> _animatingMessageGuids = {};
-
   // Notifier for list structure changes only (add/remove)
   final ValueNotifier<int> _listVersion = ValueNotifier<int>(0);
 
+  // Per-message GlobalKeys so that element state (e.g. UrlPreview) survives
+  // index shifts when a new message is inserted at the front of the list.
+  final Map<String, GlobalKey> _messageKeys = {};
+
   // Debounce setState calls to prevent rapid rebuilds
   Timer? _setStateDebouncer;
+  StreamSubscription? _eventSubscription;
 
-  RxList<Widget> smartReplies = <Widget>[].obs;
+  // Managers for different responsibilities
+  late final SmartRepliesManager smartRepliesManager;
+  late final DropZoneManager dropZoneManager;
+  late final MessageAnimationOrchestrator animationOrchestrator;
+
   RxMap<String, Widget> internalSmartReplies = <String, Widget>{}.obs;
-  final smartReply = GoogleMlKit.nlp.smartReply();
-  final RxBool dragging = false.obs;
-  final RxInt numFiles = 0.obs;
   final RxBool latestMessageDeliveredState = false.obs;
   final RxBool jumpingToOldestUnread = false.obs;
   final Map<String, FocusNode> messageFocusNodes = {};
 
   ConversationViewController get controller => widget.controller;
-
   AutoScrollController get scrollController => controller.scrollController;
-
-  bool get showSmartReplies => SettingsSvc.settings.smartReply.value && !kIsWeb && !kIsDesktop;
 
   Chat get chat => controller.chat;
 
@@ -139,9 +141,16 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
         controller.audioPlayersDesktop.containsKey(attachment.guid);
   }
 
+  bool get smartRepliesEnabled => !kIsWeb && !kIsDesktop && SettingsSvc.settings.smartReply.value;
+
+  bool get showSmartReplies => smartRepliesEnabled && smartRepliesManager.shouldShowSmartReplies(_messages.isEmpty);
+
   @override
   void initState() {
     super.initState();
+    smartRepliesManager = SmartRepliesManager();
+    dropZoneManager = DropZoneManager(controller: controller);
+    animationOrchestrator = MessageAnimationOrchestrator();
 
     // If a customService is provided that already has messages in its struct,
     // initialize synchronously to prevent GetX errors from accessing MessageStates before they exist
@@ -162,20 +171,25 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
       _messages.sort(Message.sort);
       _syncBottomMessageFocusNode();
       handlersInitialized = true;
-
-      // Notify SendAnimation that handlers + list key are ready so pendingSend
-      // fires after this frame rather than racing against loadChunk.
-      controller.markMessagesViewReady();
-
-      // Trigger a rebuild to display the messages
-      setState(() {});
     }
 
-    EventDispatcherSvc.stream.listen((e) async {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      // Fires after this frame rather than racing against loadChunk.
+      controller.markMessagesViewReady();
+
+      // Trigger a rebuild to display the messages.
+      setState(() {});
+    });
+
+    _eventSubscription = EventDispatcherSvc.stream.listen((e) async {
+      if (!mounted) return;
       if (e.type == "refresh-messagebloc" && e.data == chat.guid) {
         // Clear state items
         noMoreMessages = false;
         _messages = [];
+        _messageKeys.clear();
         // Reload the state after refreshing
         await reloadMessagesService(
           chat,
@@ -186,8 +200,10 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
           onJumpToMessage: jumpToMessage,
           messages: _messages,
         );
+        if (!mounted) return;
         setState(() {});
       } else if (e.type == "add-custom-smartreply") {
+        if (!mounted) return;
         if (e.data != null && internalSmartReplies['attach-recent'] == null) {
           internalSmartReplies['attach-recent'] = _buildReply("Attach recent photo", onTap: () async {
             controller.pickedAttachments.add(e.data);
@@ -251,6 +267,7 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
         // Recreate the list key to force SliverAnimatedList to rebuild with correct item count
         _listKey = GlobalKey<SliverAnimatedListState>();
         handlersInitialized = true;
+        if (!mounted) return;
         setState(() {});
 
         // Notify SendAnimation that handlers + list key are fully ready so that
@@ -268,6 +285,7 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
       }
       if (SettingsSvc.settings.scrollToLastUnread.value && chat.lastReadMessageGuid != null) {
         Future.delayed(const Duration(milliseconds: 100), () {
+          if (!mounted) return;
           if (messageService.getMessageStateIfExists(chat.lastReadMessageGuid!)?.built ?? false) return;
           internalSmartReplies['scroll-last-read'] = _buildReply("Jump to oldest unread", onTap: () async {
             if (jumpingToOldestUnread.value) return;
@@ -283,7 +301,7 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
 
   @override
   void dispose() {
-    if (!kIsWeb && !kIsDesktop) smartReply.close();
+    // Clean up managers
     if (_messages.isNotEmpty) {
       chat.lastReadMessageGuid = _messages.first.guid;
       chat.saveAsync(updateLastReadMessageGuid: true);
@@ -315,6 +333,7 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
 
     // Controllers are now disposed by MessagesService.onClose()
     _setStateDebouncer?.cancel();
+    _eventSubscription?.cancel();
     _listVersion.dispose();
     super.dispose();
   }
@@ -356,7 +375,8 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
     if (!BackendSvc.supportsFocusStates()) return;
     final recipient = chat.handles.firstOrNull;
     if (recipient != null) {
-      HttpSvc.handleFocusState(recipient.address).then((response) {
+      HttpSvc.handle.handleFocusState(recipient.address).then((response) {
+        if (!mounted) return;
         final status = response.data['data']['status'];
         controller.recipientNotifsSilenced.value = status != "none";
       }).catchError((error, stack) async {
@@ -392,7 +412,7 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
   }
 
   void updateReplies({bool updateConversation = true}) async {
-    if (!showSmartReplies || isNullOrEmpty(_messages) || kIsWeb || kIsDesktop || !mounted || !LifecycleSvc.isAlive) {
+    if (!smartRepliesEnabled || isNullOrEmpty(_messages) || !mounted || !LifecycleSvc.isAlive) {
       return;
     }
 
@@ -401,26 +421,16 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
           .where((e) => !isNullOrEmpty(e.fullText) && e.dateCreated != null)
           .skip(max(_messages.length - 5, 0))
           .forEach((message) {
-        _addMessageToSmartReply(message);
+        smartRepliesManager.addMessageToContext(message);
       });
     }
     Logger.info("Getting smart replies...");
-    SmartReplySuggestionResult results = await smartReply.suggestReplies();
-
-    if (results.status == SmartReplySuggestionResultStatus.success) {
-      Logger.info("Smart Replies found: ${results.suggestions.length}");
-      smartReplies.value = results.suggestions.map((e) => _buildReply(e)).toList();
-    } else {
-      smartReplies.clear();
-    }
-  }
-
-  void _addMessageToSmartReply(Message message) {
-    if (message.isFromMe ?? false) {
-      smartReply.addMessageToConversationFromLocalUser(message.fullText, message.dateCreated!.millisecondsSinceEpoch);
-    } else {
-      smartReply.addMessageToConversationFromRemoteUser(message.fullText, message.dateCreated!.millisecondsSinceEpoch,
-          message.handleRelation.target?.address ?? "participant");
+    await smartRepliesManager.generateSuggestions();
+    if (mounted) {
+      // Update observable if smart replies changed
+      if (smartRepliesManager.smartReplies.isNotEmpty) {
+        // Note: the RxList is already updated in the manager, just ensure UI knows
+      }
     }
   }
 
@@ -501,13 +511,10 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
     createStateForMessage(message, controller);
 
     // Mark this message for animation (all new messages)
-    if (message.guid != null) {
-      _animatingMessageGuids.add(message.guid!);
-    }
+    animationOrchestrator.markAnimating(message);
 
     // Use insertItem to animate the list sliding up to make space (all messages)
-    // I've found the sweet spot to be between 400 and 450ms
-    const duration = Duration(milliseconds: 400);
+    final duration = animationOrchestrator.getInsertionDuration();
     _listKey.currentState?.insertItem(
       insertIndex,
       duration: duration,
@@ -523,18 +530,14 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
     if (wasEmpty && mounted) setState(() {});
 
     // Clear animation flag after animation completes
-    if (message.guid != null) {
-      Future.delayed(duration, () {
-        if (mounted) {
-          _animatingMessageGuids.remove(message.guid);
-        }
-      });
-    }
+    Future.delayed(duration, () {
+      animationOrchestrator.clearAnimating(message, mounted: mounted);
+    });
 
-    if (insertIndex == 0 && showSmartReplies) {
-      _addMessageToSmartReply(message);
+    if (insertIndex == 0 && smartRepliesEnabled) {
+      smartRepliesManager.addMessageToContext(message);
       if (message.isFromMe!) {
-        smartReplies.clear();
+        smartRepliesManager.smartReplies.clear();
       } else {
         updateReplies(updateConversation: false);
       }
@@ -563,7 +566,7 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
     // Check if widget is still mounted before processing
     if (!mounted) return;
 
-    Logger.debug("handleUpdatedMessage: Updating message ${message.guid ?? oldGuid}");
+    Logger.debug("handleUpdatedMessage: Updating message ${oldGuid ?? message.guid}");
     final index = _messages.indexWhere((e) => e.guid == (oldGuid ?? message.guid));
     if (index != -1) {
       if (oldGuid != null && oldGuid != message.guid) {
@@ -577,7 +580,7 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
       _syncBottomMessageFocusNode();
       Logger.debug("handleUpdatedMessage: Updated message at index $index");
     } else {
-      Logger.warn("handleUpdatedMessage: Message ${message.guid ?? oldGuid} not found in list");
+      Logger.warn("handleUpdatedMessage: Message ${oldGuid ?? message.guid} not found in list");
     }
     if (message.wasDeliveredQuietly != latestMessageDeliveredState.value) {
       latestMessageDeliveredState.value = message.wasDeliveredQuietly;
@@ -594,6 +597,7 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
       _messages.removeAt(index);
       messageFocusNodes.remove(message.guid)?.dispose();
       _syncBottomMessageFocusNode();
+      _messageKeys.remove(message.guid);
       Logger.debug("handleDeletedMessage: Removed message at index $index");
       _listVersion.value++;
       _setStateDebouncer?.cancel();
@@ -605,48 +609,52 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
     }
   }
 
-  Widget _buildReply(String text, {Function()? onTap}) => Container(
-        margin: const EdgeInsets.all(5),
-        decoration: BoxDecoration(
-          border: Border.all(
-            width: 2,
-            style: BorderStyle.solid,
-            color: context.theme.colorScheme.surfaceContainerHighest,
-          ),
-          borderRadius: BorderRadius.circular(19),
-        ),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(19),
-          onTap: onTap ??
-              () {
-                OutgoingMsgHandler.queue(OutgoingItem(
-                  type: QueueType.sendMessage,
-                  chat: controller.chat,
-                  message: Message(
-                    text: text,
-                    dateCreated: DateTime.now(),
-                    hasAttachments: false,
-                    isFromMe: true,
-                    handleId: 0,
-                  ),
-                ));
-              },
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 1.5, left: 13.0, right: 13.0),
-              child: Obx(() => RichText(
-                    text: TextSpan(
-                      children: MessageHelper.buildEmojiText(
-                        jumpingToOldestUnread.value && text == "Jump to oldest unread"
-                            ? "Jumping to oldest unread..."
-                            : text,
-                        context.theme.extension<BubbleText>()!.bubbleText,
-                      ),
-                    ),
-                  )),
+  Widget _buildReply(String text, {Function()? onTap}) => Builder(
+        builder: (replyContext) {
+          final theme = Theme.of(replyContext);
+          return Container(
+            margin: const EdgeInsets.all(5),
+            decoration: BoxDecoration(
+              border: Border.all(
+                width: 2,
+                style: BorderStyle.solid,
+                color: theme.colorScheme.surfaceContainerHighest,
+              ),
+              borderRadius: BorderRadius.circular(19),
             ),
-          ),
-        ),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(19),
+              onTap: onTap ??
+                  () {
+                    OutgoingMsgHandler.queue(OutgoingMessage(
+                      chat: controller.chat,
+                      message: Message(
+                        text: text,
+                        dateCreated: DateTime.now(),
+                        hasAttachments: false,
+                        isFromMe: true,
+                        handleId: 0,
+                      ),
+                    ));
+                  },
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 1.5, left: 13.0, right: 13.0),
+                  child: Obx(() => RichText(
+                        text: TextSpan(
+                          children: MessageHelper.buildEmojiText(
+                            jumpingToOldestUnread.value && text == "Jump to oldest unread"
+                                ? "Jumping to oldest unread..."
+                                : text,
+                            theme.extension<BubbleText>()!.bubbleText,
+                          ),
+                        ),
+                      )),
+                ),
+              ),
+            ),
+          );
+        },
       );
 
   @override
@@ -654,58 +662,9 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
     return DropRegion(
       hitTestBehavior: HitTestBehavior.translucent,
       formats: Platform.isLinux ? Formats.standardFormats : Formats.standardFormats.whereType<FileFormat>().toList(),
-      onDropOver: (DropOverEvent event) {
-        if (!event.session.allowedOperations.contains(DropOperation.copy)) {
-          dragging.value = false;
-          return DropOperation.forbidden;
-        }
-        numFiles.value = event.session.items
-            .where((item) => Formats.standardFormats.whereType<FileFormat>().any((f) => item.canProvide(f)))
-            .length;
-        if (numFiles.value > 0) {
-          dragging.value = true;
-          return DropOperation.copy;
-        }
-
-        dragging.value = false;
-        return DropOperation.forbidden;
-      },
-      onDropLeave: (_) {
-        dragging.value = false;
-      },
-      onPerformDrop: (PerformDropEvent event) async {
-        for (DropItem item in event.session.items) {
-          final reader = item.dataReader!;
-          FileFormat? format = reader.getFormats(Formats.standardFormats).whereType<FileFormat>().firstOrNull;
-
-          if (format == null) return;
-
-          reader.getFile(format, (file) async {
-            Uint8List bytes = await file.readAll();
-            String filePath = file.fileName ?? "";
-            String fileName = file.fileName ?? "";
-            if (Platform.isLinux) {
-              filePath = String.fromCharCodes(bytes);
-              File _file = File(filePath);
-              bytes = await _file.readAsBytes();
-              fileName = basename(filePath);
-            }
-            if (filePath.isEmpty) {
-              filePath = "Dragged_File_${controller.pickedAttachments.length + 1}";
-            }
-            if (fileName.isEmpty) {
-              fileName = "Dragged_File_${controller.pickedAttachments.length + 1}";
-            }
-            controller.pickedAttachments.add(PlatformFile(
-              path: filePath,
-              name: fileName,
-              size: bytes.length,
-              bytes: bytes,
-            ));
-          });
-        }
-        dragging.value = false;
-      },
+      onDropOver: (DropOverEvent event) => dropZoneManager.onDropOver(event),
+      onDropLeave: (DropEvent event) => dropZoneManager.onDropLeave(event),
+      onPerformDrop: (PerformDropEvent event) async => await dropZoneManager.onPerformDrop(event, controller),
       child: GestureDetector(
           behavior: HitTestBehavior.deferToChild,
           onHorizontalDragUpdate: (details) {
@@ -727,7 +686,9 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
             children: [
               Obx(
                 () => AnimatedOpacity(
-                  opacity: _messages.isEmpty && widget.customService == null ? 0 : (dragging.value ? 0.3 : 1),
+                  opacity: _messages.isEmpty && widget.customService == null
+                      ? 0
+                      : (dropZoneManager.dragging.value ? 0.3 : 1),
                   duration: const Duration(milliseconds: 150),
                   curve: Curves.easeIn,
                   child: DeferredPointerHandler(
@@ -740,13 +701,13 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
                         reverse: true,
                         physics: ThemeSwitcher.getScrollPhysics(),
                         slivers: <Widget>[
-                          if (showSmartReplies || internalSmartReplies.isNotEmpty)
-                            SliverToBoxAdapter(
-                              child: SmartRepliesRow(
-                                smartReplies: smartReplies,
-                                internalSmartReplies: internalSmartReplies,
-                              ),
+                          SliverToBoxAdapter(
+                            child: SmartRepliesRow(
+                              controller: controller,
+                              smartReplies: smartRepliesManager.smartReplies,
+                              internalSmartReplies: internalSmartReplies,
                             ),
+                          ),
                           if (!chat.isGroup && chat.isIMessage)
                             SliverToBoxAdapter(
                               child: NotificationsSilencedBanner(
@@ -804,12 +765,13 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
                                     if (index == 0) {
                                       controller.bottomMessageFocusNode = messageFocusNode;
                                     }
+                                    final messageId = message.guid ?? 'unknown-$index';
                                     final messageWidget = RepaintBoundary(
+                                      key: _messageKeys.putIfAbsent(messageId, () => GlobalKey()),
                                       child: Padding(
-                                        key: ValueKey(message.guid ?? 'unknown-$index'),
                                         padding: const EdgeInsets.only(left: 5.0, right: 5.0),
                                         child: AutoScrollTag(
-                                          key: ValueKey("${message.guid ?? 'unknown-$index'}-scrolling"),
+                                          key: ValueKey("$messageId-scrolling"),
                                           index: index,
                                           controller: scrollController,
                                           highlightColor: context.theme.colorScheme.surface.withValues(alpha: 0.7),
@@ -859,58 +821,18 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
                                     final isFromMe = message.isFromMe ?? false;
                                     if (isFromMe &&
                                         message.isSending &&
-                                        message.guid != null &&
-                                        _animatingMessageGuids.contains(message.guid)) {
-                                      return SlideTransition(
-                                        position: animation.drive(
-                                          Tween<Offset>(
-                                            begin: const Offset(0.0, 1.0),
-                                            end: Offset.zero,
-                                          ).chain(CurveTween(curve: Curves.easeOut)),
-                                        ),
-                                        child: SizeTransition(
-                                          sizeFactor: animation.drive(
-                                            Tween<double>(begin: 0.3, end: 1.0).chain(
-                                              CurveTween(curve: Curves.easeOut),
-                                            ),
-                                          ),
-                                          axisAlignment: -1.0,
-                                          child: FadeTransition(
-                                            opacity: animation.drive(
-                                              Tween<double>(begin: 0.0, end: 1.0).chain(
-                                                CurveTween(
-                                                  curve: const Interval(
-                                                    0.9,
-                                                    1.0,
-                                                    curve: Curves.easeOut,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                            child: messageWidget,
-                                          ),
-                                        ),
+                                        animationOrchestrator.isMessageAnimating(message)) {
+                                      return animationOrchestrator.buildSentMessageAnimation(
+                                        child: messageWidget,
+                                        animation: animation,
                                       );
                                     }
 
                                     // Animate other messages with size + slide only (received or from other devices)
-                                    if (message.guid != null && _animatingMessageGuids.contains(message.guid)) {
-                                      return SlideTransition(
-                                        position: animation.drive(
-                                          Tween<Offset>(
-                                            begin: const Offset(0.0, 1.0),
-                                            end: Offset.zero,
-                                          ).chain(CurveTween(curve: Curves.easeOut)),
-                                        ),
-                                        child: SizeTransition(
-                                          sizeFactor: animation.drive(
-                                            Tween<double>(begin: 0.3, end: 1.0).chain(
-                                              CurveTween(curve: Curves.easeOut),
-                                            ),
-                                          ),
-                                          axisAlignment: -1.0,
-                                          child: messageWidget,
-                                        ),
+                                    if (animationOrchestrator.isMessageAnimating(message)) {
+                                      return animationOrchestrator.buildReceivedMessageAnimation(
+                                        child: messageWidget,
+                                        animation: animation,
                                       );
                                     }
 
@@ -940,8 +862,8 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
                 ),
               ),
               DragDropOverlay(
-                dragging: dragging,
-                numFiles: numFiles,
+                dragging: dropZoneManager.dragging,
+                numFiles: dropZoneManager.numFiles,
               ),
             ],
           )),

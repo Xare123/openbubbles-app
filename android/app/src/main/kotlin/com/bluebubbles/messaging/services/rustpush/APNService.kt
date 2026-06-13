@@ -100,7 +100,7 @@ class APNService : Service(), MsgReceiver {
                 // app is alive, deliver directly there
                 MethodCallHandler.invokeMethod("APNMsg", mapOf("pointer" to ptr.toString(), "retry" to retry.toString()))
                 return@post
-            }
+        }
             Log.i("ugh running", "backend $ptr $retry")
             CoroutineScope(Dispatchers.Main).launch {
                 DartWorker.callMethod(this@APNService, "APNMsg", mapOf("pointer" to ptr.toString(), "retry" to retry.toString()))

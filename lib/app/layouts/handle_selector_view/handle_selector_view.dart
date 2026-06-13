@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:bluebubbles/app/components/avatars/contact_avatar_widget.dart';
+import 'package:bluebubbles/app/wrappers/bb_app_bar.dart';
 import 'package:bluebubbles/app/wrappers/bb_scaffold.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
@@ -10,7 +11,6 @@ import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/utils/string_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:flutter/services.dart';
 import 'package:get/get.dart' hide Response;
 import 'package:slugify/slugify.dart';
 
@@ -107,23 +107,12 @@ class HandleSelectorViewState extends State<HandleSelectorView> with ThemeHelper
   @override
   Widget build(BuildContext context) {
     return BBScaffold(
-      appBar: PreferredSize(
-          preferredSize: Size(NavigationSvc.width(context), kIsDesktop ? 90 : 50),
-          child: AppBar(
-              systemOverlayStyle: context.theme.colorScheme.brightness == Brightness.dark
-                  ? SystemUiOverlayStyle.light
-                  : SystemUiOverlayStyle.dark,
-              toolbarHeight: kIsDesktop ? 90 : 50,
-              elevation: 0,
-              scrolledUnderElevation: 3,
-              surfaceTintColor: context.theme.colorScheme.primary,
-              leading: buildBackButton(context),
-              backgroundColor: Colors.transparent,
-              centerTitle: SettingsSvc.settings.skin.value == Skins.iOS,
-              title: Text(
-                "Select an Address",
-                style: context.theme.textTheme.titleLarge,
-              ))),
+      appBar: BBAppBar(
+        titleText: "Select an Address",
+        leading: buildBackButton(context),
+        backgroundColor: Colors.transparent,
+        toolbarHeight: kIsDesktop ? 90 : 50,
+      ),
       body: FocusScope(
         child: Column(
           children: [
@@ -197,7 +186,7 @@ class HandleSelectorViewState extends State<HandleSelectorView> with ThemeHelper
                                     child: InkWell(
                                         onTap: () {
                                           widget.onSelect(handle);
-                                          Navigator.of(context, rootNavigator: true).pop();
+                                          Navigator.of(context).pop();
                                         },
                                         child: ListTile(
                                             mouseCursor: MouseCursor.defer,

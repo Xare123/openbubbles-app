@@ -199,8 +199,8 @@ class _CupertinoScheduledMessagesPanelState extends State<CupertinoScheduledMess
 
   Widget _buildSection({
     required List<ScheduledMessage> items,
-    required IconData icon,
-    required Color iconColor,
+    required IconData Function(ScheduledMessage) iconBuilder,
+    required Color Function(ScheduledMessage) iconColorBuilder,
     required String Function(ScheduledMessage) subtitleBuilder,
     required bool isCompleted,
   }) {
@@ -221,8 +221,8 @@ class _CupertinoScheduledMessagesPanelState extends State<CupertinoScheduledMess
               return _buildMessageItem(
                 context: context,
                 item: item,
-                icon: icon,
-                iconColor: iconColor,
+                icon: iconBuilder(item),
+                iconColor: iconColorBuilder(item),
                 subtitle: subtitleBuilder(item),
                 isCompleted: isCompleted,
               );
@@ -317,8 +317,8 @@ class _CupertinoScheduledMessagesPanelState extends State<CupertinoScheduledMess
               if (oneTime.isNotEmpty)
                 _buildSection(
                   items: oneTime,
-                  icon: CupertinoIcons.calendar,
-                  iconColor: context.theme.colorScheme.primary,
+                  iconBuilder: (_) => CupertinoIcons.calendar,
+                  iconColorBuilder: (_) => context.theme.colorScheme.primary,
                   subtitleBuilder: (item) => buildFullDate(item.scheduledFor),
                   isCompleted: false,
                 ),
@@ -333,8 +333,8 @@ class _CupertinoScheduledMessagesPanelState extends State<CupertinoScheduledMess
               if (recurring.isNotEmpty)
                 _buildSection(
                   items: recurring,
-                  icon: CupertinoIcons.arrow_clockwise,
-                  iconColor: Colors.teal,
+                  iconBuilder: (_) => CupertinoIcons.arrow_clockwise,
+                  iconColorBuilder: (_) => Colors.teal,
                   subtitleBuilder: (item) =>
                       "Every ${item.schedule.interval} ${frequencyToText[item.schedule.intervalType]}(s) · ${buildFullDate(item.scheduledFor)}",
                   isCompleted: false,
@@ -350,12 +350,9 @@ class _CupertinoScheduledMessagesPanelState extends State<CupertinoScheduledMess
               if (oneTimeCompleted.isNotEmpty)
                 _buildSection(
                   items: oneTimeCompleted,
-                  icon: (oneTimeCompleted.any((e) => e.status == "error"))
-                      ? CupertinoIcons.exclamationmark_circle
-                      : CupertinoIcons.checkmark_circle,
-                  iconColor: (oneTimeCompleted.any((e) => e.status == "error"))
-                      ? context.theme.colorScheme.error
-                      : Colors.green,
+                  iconBuilder: (item) =>
+                      item.status == "error" ? CupertinoIcons.exclamationmark_circle : CupertinoIcons.checkmark_circle,
+                  iconColorBuilder: (item) => item.status == "error" ? context.theme.colorScheme.error : Colors.green,
                   subtitleBuilder: (item) {
                     if (item.status == "error") return item.error ?? "Failed to send";
                     return "Sent "

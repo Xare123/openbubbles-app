@@ -50,7 +50,7 @@ class CloudMessagingService {
       Logger.debug("Already authorized FCM device! Token: $token", tag: 'FCM-Auth');
       Logger.info('Registering device with server...', tag: 'FCM-Auth');
       String deviceName = await getDeviceName();
-      await HttpSvc.addFcmDevice(deviceName.trim(), token!.trim()).then((_) {
+      await HttpSvc.fcm.addDevice(deviceName.trim(), token!.trim()).then((_) {
         Logger.info('Device registration successful!', tag: 'FCM-Auth');
         completer?.complete();
       }).catchError((ex) {
@@ -81,7 +81,7 @@ class CloudMessagingService {
     try {
       // First, try to auth with FCM with the current data
       Logger.info('Authenticating with FCM', tag: 'FCM-Auth');
-      result = await MethodChannelSvc.invokeMethod('firebase-auth', SettingsSvc.fcmData.toMap());
+      result = await MethodChannelSvc.actions.firebaseAuth(fcmData: SettingsSvc.fcmData.toMap());
     } on PlatformException catch (ex, stack) {
       // Don't try to re-auth if device is de-Googled
       if (ex.toString().contains("Google Play Services is not available")) return;
@@ -89,7 +89,7 @@ class CloudMessagingService {
 
       // If the first try fails, let's try again with new FCM data from the server
       Logger.info('Fetching FCM data from the server...', tag: 'FCM-Auth');
-      final response = await HttpSvc.fcmClient().catchError((err) {
+      final response = await HttpSvc.fcm.getServiceAccount().catchError((err) {
         if (err is Response) {
           return err;
         } else {
@@ -106,7 +106,7 @@ class CloudMessagingService {
           // Parse and save new FCM data, then retry auth with FCM
           FCMData fcmData = FCMData.fromMap(fcmMeta);
           await SettingsSvc.saveFCMData(fcmData);
-          result = await MethodChannelSvc.invokeMethod('firebase-auth', fcmData.toMap());
+          result = await MethodChannelSvc.actions.firebaseAuth(fcmData: fcmData.toMap());
         } on PlatformException catch (e, stack) {
           // If we fail a second time, error out
           Logger.error("Failed to register with FCM", error: e, trace: stack, tag: 'FCM-Auth');
@@ -132,7 +132,7 @@ class CloudMessagingService {
     token = result;
     Logger.info('Registering device with server...', tag: 'FCM-Auth');
     String deviceName = await getDeviceName();
-    await HttpSvc.addFcmDevice(deviceName.trim(), token!.trim()).then((_) {
+    await HttpSvc.fcm.addDevice(deviceName.trim(), token!.trim()).then((_) {
       Logger.info('Device registration successful!', tag: 'FCM-Auth');
       completer?.complete();
     }).catchError((ex) {

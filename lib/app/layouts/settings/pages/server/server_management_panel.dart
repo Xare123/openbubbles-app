@@ -43,10 +43,10 @@ class ServerManagementPanelController extends StatefulController {
     hasCheckedStats.value = false;
     statsLoadError.value = false;
     int now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    await HttpSvc.ping();
+    await HttpSvc.server.ping();
     int later = DateTime.now().toUtc().millisecondsSinceEpoch;
     latency.value = later - now;
-    HttpSvc.serverInfo().then((response) {
+    HttpSvc.server.info().then((response) {
       final String macOSVersionStr = response.data['data']['os_version'] ?? '0.0';
       final String serverVersionStr = response.data['data']['server_version'] ?? '0.0.0';
       Version version = Version.parse(serverVersionStr);
@@ -66,10 +66,10 @@ class ServerManagementPanelController extends StatefulController {
 
       final subsequentRequests = <Future>[];
 
-      subsequentRequests.add(HttpSvc.serverStatTotals().then((response) {
+      subsequentRequests.add(HttpSvc.server.getTotalStats().then((response) {
         if (response.data['status'] == 200) {
           stats.addAll(response.data['data'] ?? {});
-          HttpSvc.serverStatMedia().then((response) {
+          HttpSvc.server.getMediaStats().then((response) {
             if (response.data['status'] == 200) {
               stats.addAll(response.data['data'] ?? {});
             }

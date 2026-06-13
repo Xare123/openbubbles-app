@@ -5,7 +5,6 @@ import 'package:bluebubbles/app/layouts/settings/widgets/search/settings_items_l
 import 'package:bluebubbles/app/layouts/settings/widgets/search/settings_search_bar.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/search/settings_search_empty_result.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/settings_widgets.dart';
-import 'package:bluebubbles/app/wrappers/bb_annotated_region.dart';
 import 'package:bluebubbles/app/wrappers/tablet_mode_wrapper.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
@@ -33,11 +32,9 @@ class _SettingsPageState extends State<SettingsPage> with ThemeHelpers {
   final RxnInt totalSize = RxnInt();
 
   String searchQuery = "";
-  List<Widget>? _cachedSettingsItemList;
 
-  // Lazy-load and cache the settings list
   List<Widget> _getSettingsItemList(BuildContext context) {
-    _cachedSettingsItemList ??= buildSettingItemList(
+    return buildSettingItemList(
       context: context,
       searchQuery: searchQuery,
       tileColor: tileColor,
@@ -51,8 +48,6 @@ class _SettingsPageState extends State<SettingsPage> with ThemeHelpers {
       totalSize: totalSize,
       uploadingContacts: uploadingContacts,
     );
-
-    return _cachedSettingsItemList!;
   }
 
   @override
@@ -82,191 +77,189 @@ class _SettingsPageState extends State<SettingsPage> with ThemeHelpers {
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onTap: () => FocusScope.of(context).unfocus(),
-      child: BBAnnotatedRegion(
-        child: Actions(
-            actions: {
-              GoBackIntent: GoBackAction(context),
-            },
-            child: Obx(() => Container(
-                  color: context.theme.colorScheme.surface.themeOpacity(context),
-                  child: TabletModeWrapper(
-                    initialRatio: 0.4,
-                    minRatio: kIsDesktop || kIsWeb ? 0.2 : 0.33,
-                    maxRatio: 0.5,
-                    allowResize: true,
-                    left: SettingsScaffold(
-                      title: "Settings",
-                      initialHeader: kIsWeb ? "Server & Message Management" : null,
-                      iosSubtitle: iosSubtitle,
-                      materialSubtitle: materialSubtitle,
-                      tileColor: tileColor,
-                      headerColor: headerColor,
-                      bodySlivers: [
-                        SliverList(
-                          delegate: SliverChildListDelegate([
-                            SettingsSearchBar(
-                              iOS: iOS,
-                              onChanged: (value) {
-                                setState(() {
-                                  searchQuery = value.trim().toLowerCase();
-                                });
-                              },
-                            ),
-                            ...(() {
-                              final lowerQuery = searchQuery;
-                              final settingsItemList = _getSettingsItemList(context);
+      child: Actions(
+          actions: {
+            GoBackIntent: GoBackAction(context),
+          },
+          child: Obx(() => Container(
+                color: context.theme.colorScheme.surface.themeOpacity(context),
+                child: TabletModeWrapper(
+                  initialRatio: 0.4,
+                  minRatio: kIsDesktop || kIsWeb ? 0.2 : 0.33,
+                  maxRatio: 0.5,
+                  allowResize: true,
+                  left: SettingsScaffold(
+                    title: "Settings",
+                    initialHeader: kIsWeb ? "Server & Message Management" : null,
+                    iosSubtitle: iosSubtitle,
+                    materialSubtitle: materialSubtitle,
+                    tileColor: tileColor,
+                    headerColor: headerColor,
+                    bodySlivers: [
+                      SliverList(
+                        delegate: SliverChildListDelegate([
+                          SettingsSearchBar(
+                            iOS: iOS,
+                            onChanged: (value) {
+                              setState(() {
+                                searchQuery = value.trim().toLowerCase();
+                              });
+                            },
+                          ),
+                          ...(() {
+                            final lowerQuery = searchQuery;
+                            final settingsItemList = _getSettingsItemList(context);
 
-                              // Build widgets list dynamically
-                              final List<Widget> widgets = [];
+                            // Build widgets list dynamically
+                            final List<Widget> widgets = [];
 
-                              for (int i = 0; i < settingsItemList.length; i++) {
-                                final item = settingsItemList[i];
-                                if (item is SearchableSettingItem) {
-                                  // Flat item (SearchableSettingItem)
-                                  final titleMatches = item.title.toLowerCase().contains(lowerQuery);
-                                  final tagMatches = item.searchTags.any(
-                                    (tag) => tag.toLowerCase().contains(lowerQuery),
-                                  );
+                            for (int i = 0; i < settingsItemList.length; i++) {
+                              final item = settingsItemList[i];
+                              if (item is SearchableSettingItem) {
+                                // Flat item (SearchableSettingItem)
+                                final titleMatches = item.title.toLowerCase().contains(lowerQuery);
+                                final tagMatches = item.searchTags.any(
+                                  (tag) => tag.toLowerCase().contains(lowerQuery),
+                                );
 
-                                  // Check if this is a header (contains SettingsHeader widget)
-                                  final isHeader = item.child.runtimeType.toString().contains('SettingsHeader');
+                                // Check if this is a header (contains SettingsHeader widget)
+                                final isHeader = item.child.runtimeType.toString().contains('SettingsHeader');
 
-                                  // If it's a header and we're searching, check if the next section has matches
-                                  bool shouldShowHeader = true;
-                                  if (isHeader && searchQuery.isNotEmpty && i + 1 < settingsItemList.length) {
-                                    final nextItem = settingsItemList[i + 1];
-                                    if (nextItem is SettingsSection && nextItem.searchableSettingsItems != null) {
-                                      // Only show header if the section has matching items
-                                      shouldShowHeader = nextItem.searchableSettingsItems!.any((childItem) {
-                                        final childTitleMatches = childItem.title.toLowerCase().contains(lowerQuery);
-                                        final childTagMatches = childItem.searchTags.any(
-                                          (tag) => tag.toLowerCase().contains(lowerQuery),
-                                        );
-                                        return childTitleMatches || childTagMatches;
-                                      });
+                                // If it's a header and we're searching, check if the next section has matches
+                                bool shouldShowHeader = true;
+                                if (isHeader && searchQuery.isNotEmpty && i + 1 < settingsItemList.length) {
+                                  final nextItem = settingsItemList[i + 1];
+                                  if (nextItem is SettingsSection && nextItem.searchableSettingsItems != null) {
+                                    // Only show header if the section has matching items
+                                    shouldShowHeader = nextItem.searchableSettingsItems!.any((childItem) {
+                                      final childTitleMatches = childItem.title.toLowerCase().contains(lowerQuery);
+                                      final childTagMatches = childItem.searchTags.any(
+                                        (tag) => tag.toLowerCase().contains(lowerQuery),
+                                      );
+                                      return childTitleMatches || childTagMatches;
+                                    });
+                                  }
+                                }
+
+                                if (searchQuery.isEmpty || (shouldShowHeader && (titleMatches || tagMatches))) {
+                                  widgets.add(item);
+
+                                  if (searchQuery.isNotEmpty) {
+                                    final matchingTags = item.searchTags.where(
+                                      (tag) => tag.toLowerCase().contains(lowerQuery),
+                                    );
+
+                                    for (final tag in matchingTags) {
+                                      widgets.add(SearchBreadcrumbTile(
+                                        origin: item.title,
+                                        destination: tag,
+                                        onTap: item.onTap,
+                                      ));
                                     }
                                   }
+                                }
+                              } else if (item is SettingsSection) {
+                                // Section → recurse into children
+                                final sectionWidgets = <Widget>[];
 
-                                  if (searchQuery.isEmpty || (shouldShowHeader && (titleMatches || tagMatches))) {
-                                    widgets.add(item);
+                                if (item.searchableSettingsItems != null) {
+                                  final matchingItems = item.searchableSettingsItems!.where((childItem) {
+                                    final titleMatches = childItem.title.toLowerCase().contains(lowerQuery);
+                                    final tagMatches = childItem.searchTags.any(
+                                      (tag) => tag.toLowerCase().contains(lowerQuery),
+                                    );
+                                    return titleMatches || tagMatches;
+                                  }).toList();
 
-                                    if (searchQuery.isNotEmpty) {
-                                      final matchingTags = item.searchTags.where(
+                                  if (searchQuery.isEmpty) {
+                                    // No search → show whole section
+                                    sectionWidgets.add(item);
+                                  } else if (matchingItems.isNotEmpty) {
+                                    // If any children match → rebuild section with only matching children
+                                    sectionWidgets.add(SettingsSection(
+                                      backgroundColor: item.backgroundColor,
+                                      searchableSettingsItems: matchingItems,
+                                      children: null, // Only show matching searchable children
+                                    ));
+
+                                    // Add breadcrumbs for matching child tags
+                                    for (final matchingItem in matchingItems) {
+                                      final matchingTags = matchingItem.searchTags.where(
                                         (tag) => tag.toLowerCase().contains(lowerQuery),
                                       );
 
                                       for (final tag in matchingTags) {
-                                        widgets.add(SearchBreadcrumbTile(
-                                          origin: item.title,
+                                        sectionWidgets.add(SearchBreadcrumbTile(
+                                          origin: matchingItem.title,
                                           destination: tag,
-                                          onTap: item.onTap,
+                                          onTap: matchingItem.onTap,
                                         ));
                                       }
                                     }
                                   }
-                                } else if (item is SettingsSection) {
-                                  // Section → recurse into children
-                                  final sectionWidgets = <Widget>[];
+                                } else if (item.children != null && searchQuery.isEmpty) {
+                                  // Section with non-searchable children → show if no search
+                                  sectionWidgets.add(item);
+                                }
 
-                                  if (item.searchableSettingsItems != null) {
-                                    final matchingItems = item.searchableSettingsItems!.where((childItem) {
-                                      final titleMatches = childItem.title.toLowerCase().contains(lowerQuery);
-                                      final tagMatches = childItem.searchTags.any(
-                                        (tag) => tag.toLowerCase().contains(lowerQuery),
-                                      );
-                                      return titleMatches || tagMatches;
-                                    }).toList();
-
-                                    if (searchQuery.isEmpty) {
-                                      // No search → show whole section
-                                      sectionWidgets.add(item);
-                                    } else if (matchingItems.isNotEmpty) {
-                                      // If any children match → rebuild section with only matching children
-                                      sectionWidgets.add(SettingsSection(
-                                        backgroundColor: item.backgroundColor,
-                                        searchableSettingsItems: matchingItems,
-                                        children: null, // Only show matching searchable children
-                                      ));
-
-                                      // Add breadcrumbs for matching child tags
-                                      for (final matchingItem in matchingItems) {
-                                        final matchingTags = matchingItem.searchTags.where(
-                                          (tag) => tag.toLowerCase().contains(lowerQuery),
-                                        );
-
-                                        for (final tag in matchingTags) {
-                                          sectionWidgets.add(SearchBreadcrumbTile(
-                                            origin: matchingItem.title,
-                                            destination: tag,
-                                            onTap: matchingItem.onTap,
-                                          ));
-                                        }
-                                      }
-                                    }
-                                  } else if (item.children != null && searchQuery.isEmpty) {
-                                    // Section with non-searchable children → show if no search
-                                    sectionWidgets.add(item);
-                                  }
-
-                                  // Add section content to main list
-                                  widgets.addAll(sectionWidgets);
-                                } else {
-                                  // Other Widget → show only if no search
-                                  if (searchQuery.isEmpty) {
-                                    widgets.add(item);
-                                  }
+                                // Add section content to main list
+                                widgets.addAll(sectionWidgets);
+                              } else {
+                                // Other Widget → show only if no search
+                                if (searchQuery.isEmpty) {
+                                  widgets.add(item);
                                 }
                               }
-
-                              // If searching and no results → show EmptySearchResult
-                              final visibleWidgetsCount = widgets.length;
-                              if (searchQuery.isNotEmpty && visibleWidgetsCount <= 1) {
-                                return [EmptySearchResult(searchQuery: searchQuery)];
-                              }
-
-                              return widgets;
-                            })(),
-                          ]),
-                        ),
-                      ],
-                    ),
-                    right: LayoutBuilder(builder: (context, constraints) {
-                      NavigationSvc.maxWidthSettings = constraints.maxWidth;
-                      return PopScope(
-                        canPop: false,
-                        onPopInvoked: (_) async {
-                          Get.until((route) {
-                            if (route.settings.name == "initial") {
-                              Get.back();
-                            } else {
-                              Get.back(id: 3);
                             }
-                            return true;
-                          }, id: 3);
-                        },
-                        child: Navigator(
-                          key: Get.nestedKey(3),
-                          onPopPage: (route, _) {
-                            route.didPop(false);
-                            return false;
-                          },
-                          pages: [
-                            CupertinoPage(
-                                name: "initial",
-                                child: Scaffold(
-                                    backgroundColor:
-                                        SettingsSvc.settings.skin.value != Skins.iOS ? tileColor : headerColor,
-                                    body: Center(
-                                      child: Text("Select a settings page from the list",
-                                          style: context.theme.textTheme.bodyLarge),
-                                    ))),
-                          ],
-                        ),
-                      );
-                    }),
+
+                            // If searching and no results → show EmptySearchResult
+                            final visibleWidgetsCount = widgets.length;
+                            if (searchQuery.isNotEmpty && visibleWidgetsCount <= 1) {
+                              return [EmptySearchResult(searchQuery: searchQuery)];
+                            }
+
+                            return widgets;
+                          })(),
+                        ]),
+                      ),
+                    ],
                   ),
-                ))),
-      ),
+                  right: LayoutBuilder(builder: (context, constraints) {
+                    NavigationSvc.maxWidthSettings = constraints.maxWidth;
+                    return PopScope(
+                      canPop: false,
+                      onPopInvokedWithResult: <T>(bool _, T? __) async {
+                        Get.until((route) {
+                          if (route.settings.name == "initial") {
+                            Get.back();
+                          } else {
+                            Get.back(id: 3);
+                          }
+                          return true;
+                        }, id: 3);
+                      },
+                      child: Navigator(
+                        key: Get.nestedKey(3),
+                        onPopPage: (route, _) {
+                          route.didPop(false);
+                          return false;
+                        },
+                        pages: [
+                          CupertinoPage(
+                              name: "initial",
+                              child: Scaffold(
+                                  backgroundColor:
+                                      SettingsSvc.settings.skin.value != Skins.iOS ? tileColor : headerColor,
+                                  body: Center(
+                                    child: Text("Select a settings page from the list",
+                                        style: context.theme.textTheme.bodyLarge),
+                                  ))),
+                        ],
+                      ),
+                    );
+                  }),
+                ),
+              ))),
     );
   }
 }

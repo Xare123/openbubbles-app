@@ -43,20 +43,6 @@ class _MyWidgetState extends CustomState<MyWidget, void, MyController> {
 - Always equality-check before assigning: `if (field.value != value) field.value = value;`.
 - Derived booleans (e.g., `hasError`, `isSent`) are kept in sync inside the same update method.
 
-## Reactive Listeners
-
-Use `ever()` in `initState()` for side-effects on observable changes:
-```dart
-ever(ContactsSvcV2.handleUpdateStatus, (_) {
-  if (ContactsSvcV2.isHandleUpdated(widget.handle!.id!)) {
-    _updateCachedValues();
-    if (mounted) setState(() {});
-  }
-});
-```
-
-Use `EventDispatcherSvc.stream.listen()` for named cross-widget events (see `services.md`).
-
 ## Caching Expensive Values
 
 - Cache computed values in `_cached*` instance fields (colors, initials, avatar paths).

@@ -28,6 +28,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   screen_retriever_windows
   secure_application
   share_plus
+  sqlite3_flutter_libs
   super_native_extensions
   system_tray
   tray_manager

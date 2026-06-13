@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:bluebubbles/database/database.dart';
@@ -12,7 +13,6 @@ import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_contacts/flutter_contacts.dart' as fc;
-import 'package:get/get.dart';
 import 'package:get_it/get_it.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:universal_io/io.dart';
@@ -27,15 +27,11 @@ ContactServiceV2 get ContactsSvcV2 => GetIt.I<ContactServiceV2>();
 class ContactServiceV2 {
   final tag = "ContactServiceV2";
 
-  /// Reactive map to track handle updates by Handle ID
-  /// When a handle's contact information changes, we update this map
-  /// with a timestamp. UI components can observe specific handle IDs.
-  final RxMap<int, int> handleUpdateStatus = RxMap<int, int>();
-
   /// Whether we have permission to access contacts
   bool _hasContactAccess = false;
 
-  void Function()? _contactChangeListener;
+  void Function(void)? _contactChangeListener;
+  StreamSubscription<void>? _contactChangeSubscription;
 
   bool get hasContactAccessSync {
     return _hasContactAccess;
@@ -89,8 +85,8 @@ class ContactServiceV2 {
 
       // Subscribe to device contact change events (mobile only)
       if (!kIsDesktop && !kIsWeb) {
-        _contactChangeListener = () => syncContactsToHandles(wait: false);
-        fc.FlutterContacts.addListener(_contactChangeListener!);
+        _contactChangeListener = (_) => syncContactsToHandles(wait: false);
+        _contactChangeSubscription = fc.FlutterContacts.onDatabaseChange.listen(_contactChangeListener!);
       }
     } else {
       Logger.info('[ContactServiceV2] Headless mode, skipping contact sync opeerations');
@@ -167,15 +163,9 @@ class ContactServiceV2 {
   }
 
   /// Notify the UI that certain handles have been updated.
-  /// Stamps the handleUpdateStatus map (backward-compat) and pushes fresh
-  /// DB data into the HandleState registry so reactive Obx() widgets rebuild.
+  /// Pushes fresh DB data into the HandleState registry so reactive Obx() widgets rebuild.
   void notifyHandlesUpdated(List<int> handleIds) {
     if (handleIds.isEmpty) return;
-
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    for (final id in handleIds) {
-      handleUpdateStatus[id] = timestamp;
-    }
 
     // Push refreshed Handle data into the HandleState registry
     if (!kIsWeb) {
@@ -185,7 +175,7 @@ class ContactServiceV2 {
 
     // Update chats that have these handles as participants
     // This ensures chat titles and headers reflect the new contact names
-    if (!kIsWeb && !kIsDesktop) {
+    if (!kIsWeb) {
       _updateChatsForHandles(handleIds);
     }
   }
@@ -208,33 +198,12 @@ class ContactServiceV2 {
 
         // Update each chat in the ChatsService to trigger UI updates
         for (final chat in chatsWithHandle) {
-          ChatsSvc.updateChat(chat);
+          ChatsSvc.updateChat(chat, override: true);
         }
       }
     } catch (e, stack) {
       Logger.error('[ContactServiceV2] Error updating chats for handles', error: e, trace: stack);
     }
-  }
-
-  /// Clear the update status for a specific handle
-  void clearHandleUpdateStatus(int handleId) {
-    handleUpdateStatus.remove(handleId);
-  }
-
-  /// Clear all update statuses
-  void clearAllUpdateStatuses() {
-    handleUpdateStatus.clear();
-  }
-
-  /// Get the timestamp of the last update for a specific handle
-  /// Returns null if the handle has never been updated
-  int? getLastUpdateTimestamp(int handleId) {
-    return handleUpdateStatus[handleId];
-  }
-
-  /// Check if a handle has been updated (exists in the update status map)
-  bool isHandleUpdated(int handleId) {
-    return handleUpdateStatus.containsKey(handleId);
   }
 
   /// Get a contact by address (email or phone number)
@@ -381,7 +350,7 @@ class ContactServiceV2 {
 
     logger?.call("Fetching contacts from server...");
     try {
-      final response = await HttpSvc.contacts(withAvatars: true);
+      final response = await HttpSvc.contact.fetchAll(withAvatars: true);
 
       if (response.statusCode == 200 && !isNullOrEmpty(response.data['data'])) {
         logger?.call("Found contacts!");
@@ -435,7 +404,7 @@ class ContactServiceV2 {
   /// Remove the contact change listener and release resources
   void dispose() {
     if (_contactChangeListener != null) {
-      fc.FlutterContacts.removeListener(_contactChangeListener!);
+      _contactChangeSubscription?.cancel();
       _contactChangeListener = null;
     }
   }

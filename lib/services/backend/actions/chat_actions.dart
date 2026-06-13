@@ -12,7 +12,7 @@ class ChatActions {
   static Future<void> clearNotificationForChat(dynamic data) async {
     final chatId = data['chatId'] as int;
 
-    await MethodChannelSvc.invokeMethod("delete-notification", {"notification_id": chatId, "tag": "new_message"});
+    await MethodChannelSvc.actions.deleteNotification(notificationId: chatId, tag: 'new_message');
   }
 
   static Future<void> markChatReadUnread(dynamic data) async {
@@ -30,9 +30,19 @@ class ChatActions {
     }
   }
 
+  static Future<void> startTyping(dynamic data) async {
+    final chatGuid = data['chatGuid'] as String;
+    await HttpSvc.chat.startTyping(chatGuid);
+  }
+
+  static Future<void> stopTyping(dynamic data) async {
+    final chatGuid = data['chatGuid'] as String;
+    await HttpSvc.chat.stopTyping(chatGuid);
+  }
+
   static Future<int?> saveChat(dynamic data) async {
     final guid = data['guid'] as String;
-    final updateFlags = data['updateFlags'] as Map<String, bool>;
+    final updateFlags = (data['updateFlags'] as Map).cast<String, bool>();
     final chatData = data['chatData'] as Map<String, dynamic>;
 
     // Reconstruct the chat object and format addresses outside transaction
@@ -154,6 +164,16 @@ class ChatActions {
       if (updateFlags['updateAttachmentGuid']!) {
         chat.photoAttachmentGuid = inputChat.photoAttachmentGuid;
       }
+      if (updateFlags['updateLatestMessage'] == true) {
+        final latestMessageId = chatData['dbLatestMessageId'] as int?;
+        final latestMessageDateMs = chatData['dbOnlyLatestMessageDate'] as int?;
+        if (latestMessageId != null && latestMessageId > 0) {
+          chat.dbLatestMessage.targetId = latestMessageId;
+        }
+        if (latestMessageDateMs != null) {
+          chat.dbOnlyLatestMessageDate = DateTime.fromMillisecondsSinceEpoch(latestMessageDateMs);
+        }
+      }
 
       try {
         chat.id = chatBox.put(chat);
@@ -225,6 +245,10 @@ class ChatActions {
 
   static Future<Map<String, dynamic>> addMessageToChat(dynamic data) async {
     final messageData = data['messageData'] as Map<String, dynamic>;
+    final attachmentsData = ((data['attachmentsData'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
     final chatData = data['chatData'] as Map<String, dynamic>;
     final latestMessageData = data['latestMessageData'] as Map<String, dynamic>;
     final checkForMessageText = data['checkForMessageText'] as bool;
@@ -237,6 +261,7 @@ class ChatActions {
 
       // Deserialize inputs
       final inputMessage = Message.fromMap(messageData);
+      final inputAttachments = attachmentsData.map(Attachment.fromMap).toList();
       final inputChat = Chat.fromMap(chatData);
       final inputLatest = Message.fromMap(latestMessageData);
 
@@ -322,6 +347,8 @@ class ChatActions {
         retryQuery.close();
         inputMessage.id = retryResult?.id;
         messageId = retryResult?.id;
+      } catch (e, s) {
+        Logger.error('[addMessageToChat] Failed to save message!', error: e, trace: s);
       }
 
       // Fetch the DB-connected message object once to set all relationships
@@ -337,10 +364,8 @@ class ChatActions {
           }
 
           // Process and link attachments if present
-          if (inputMessage.attachments.isNotEmpty) {
-            for (Attachment? attachment in inputMessage.attachments) {
-              if (attachment == null) continue;
-
+          if (inputAttachments.isNotEmpty) {
+            for (final attachment in inputAttachments) {
               // Find existing attachment
               final attachQuery = attachmentBox.query(Attachment_.guid.equals(attachment.guid ?? '')).build();
               attachQuery.limit = 1;
@@ -358,8 +383,16 @@ class ChatActions {
                 attachmentBox.put(attachment);
               } on UniqueViolationException catch (_) {
                 Logger.warn('[addMessageToChat] UniqueViolationException for attachment ${attachment.guid}');
+              } catch (e, s) {
+                Logger.error('[addMessageToChat] Failed to save attachment!', error: e, trace: s);
               }
             }
+
+            // Populate the ToMany relationship so getNotificationText() immediately
+            // sees the attachments without waiting for lazy-load
+            dbMessage.dbAttachments.addAll(inputAttachments.where((a) => a.id != null));
+            dbMessage.dbAttachments.applyToDb();
+            needsUpdate = true;
           }
 
           // Single final put if any relationships were modified
@@ -464,7 +497,7 @@ class ChatActions {
     bool didUpdate = false;
     bool checkMessageText = false;
 
-    int currentMs = chat.latestMessage.dateCreated!.millisecondsSinceEpoch;
+    int currentMs = chat.dbOnlyLatestMessageDate?.millisecondsSinceEpoch ?? 0;
     int lastMs = lastMessage.dateCreated!.millisecondsSinceEpoch;
     if (currentMs <= lastMs) {
       didUpdate = true;
@@ -476,14 +509,14 @@ class ChatActions {
 
     // If we plan to update the message, but the dates are the same,
     if (didUpdate && checkMessageText) {
-      if (chat.latestMessage.getNotificationText() == lastMessage.getNotificationText()) {
+      if ((chat.dbLatestMessage.target?.getNotificationText() ?? '') == lastMessage.getNotificationText()) {
         didUpdate = false;
       }
     }
 
     // If we still want to update the info, do so
     if (didUpdate) {
-      chat.latestMessage = lastMessage;
+      chat.setLatestMessage(lastMessage);
 
       // Mark the chat as unread if we updated the last message & it's not from us
       if (toggleUnread && !(lastMessage.isFromMe ?? false)) {
@@ -739,203 +772,6 @@ class ChatActions {
     });
   }
 
-  static Future<List<int>> bulkSyncMessages(dynamic data) async {
-    final chatData = data['chatData'] as Map<String, dynamic>;
-    final messagesData = (data['messagesData'] as List).cast<Map<String, dynamic>>();
-
-    return Database.runInTransaction(TxMode.write, () {
-      final inputChat = Chat.fromMap(chatData);
-      final inputMessages = messagesData.map((e) => Message.fromMap(e)).toList();
-
-      final chatQuery = Database.chats.query(Chat_.guid.equals(inputChat.guid)).build();
-      final dbChat = chatQuery.findFirst();
-      chatQuery.close();
-      if (dbChat == null) return <int>[];
-
-      // Gather handles from chat and cache them
-      Map<String, Handle> handlesCache = {};
-      for (var participant in dbChat.handles) {
-        String addr = participant.uniqueAddressAndService;
-        if (handlesCache.containsKey(addr)) continue;
-        handlesCache[addr] = participant;
-      }
-
-      // For each message, match the handles & replace the old reference
-      for (Message message in inputMessages) {
-        message.handleRelation.target ??=
-            handlesCache.values.firstWhereOrNull((e) => e.originalROWID == message.handleId);
-      }
-
-      // Extract & cache the attachments
-      Map<String, Attachment> attachmentCache = {};
-      for (var msg in inputMessages) {
-        if (msg.attachments.isEmpty) continue;
-        for (Attachment? attachment in msg.attachments) {
-          if (attachment == null) continue;
-          attachmentCache[attachment.guid!] = attachment;
-        }
-      }
-
-      // Sync the attachments & insert IDs into cache
-      final syncedAttachments = _syncAttachmentsInTransaction(attachmentCache.values.toList());
-      for (var attachment in syncedAttachments) {
-        if (!attachmentCache.containsKey(attachment.guid)) continue;
-        attachmentCache[attachment.guid!] = attachment;
-      }
-
-      // Sync the messages & insert synced attachments
-      final syncedMessages = _syncMessagesInTransaction(dbChat, inputMessages);
-      for (var message in syncedMessages) {
-        // Update related attachments with synced versions
-        for (var attachment in message.attachments) {
-          if (attachment == null) continue;
-          Attachment? cached = attachmentCache[attachment.guid];
-          if (cached == null) continue;
-          attachment = cached;
-        }
-
-        // Update the relational attachments
-        message.dbAttachments.addAll(message.attachments.where((element) => element != null).map((e) => e!).toList());
-      }
-
-      // Invoke a final put call to sync the relational data
-      for (Message m in syncedMessages) {
-        try {
-          // CRITICAL: Preserve dbAttachments ToMany relationship before put
-          final attachmentsToPreserve = List<Attachment>.from(m.dbAttachments);
-
-          Database.messages.put(m);
-
-          // Restore and apply attachments after put
-          if (attachmentsToPreserve.isNotEmpty) {
-            m.dbAttachments.clear();
-            m.dbAttachments.addAll(attachmentsToPreserve);
-            m.dbAttachments.applyToDb();
-          }
-        } catch (_) {}
-      }
-
-      // Return only message IDs
-      return syncedMessages.map((e) => e.id!).toList();
-    });
-  }
-
-  static List<Attachment> _syncAttachmentsInTransaction(List<Attachment> attachments) {
-    final attachmentBox = Database.attachments;
-    List<String> inputAttachmentGuids = attachments.map((element) => element.guid!).toList();
-
-    final query = attachmentBox.query(Attachment_.guid.oneOf(inputAttachmentGuids)).build();
-    List<Attachment> existingAttachments = query.find();
-    query.close();
-    List<String> existingAttachmentGuids = existingAttachments.map((e) => e.guid!).toList();
-
-    List<Attachment> newAttachments =
-        attachments.where((element) => !existingAttachmentGuids.contains(element.guid)).toList();
-    attachmentBox.putMany(newAttachments);
-
-    if (existingAttachments.isNotEmpty) {
-      int mods = 0;
-      for (var i = 0; i < existingAttachments.length; i++) {
-        Attachment? newAttachment = attachments.firstWhereOrNull((e) => e.guid == existingAttachments[i].guid);
-        if (newAttachment == null) continue;
-        existingAttachments[i] = Attachment.merge(newAttachment, existingAttachments[i]);
-        mods += 1;
-      }
-
-      if (mods > 0) {
-        attachmentBox.putMany(existingAttachments);
-      }
-    }
-
-    final query2 = attachmentBox.query(Attachment_.guid.oneOf(inputAttachmentGuids)).build();
-    List<Attachment> syncedAttachments = query2.find().toList();
-    query2.close();
-
-    for (var i = 0; i < attachments.length; i++) {
-      Attachment? synced = syncedAttachments.firstWhereOrNull((e) => e.guid == attachments[i].guid);
-      if (synced == null) continue;
-      attachments[i] = Attachment.merge(attachments[i], synced);
-    }
-
-    return attachments;
-  }
-
-  static List<Message> _syncMessagesInTransaction(Chat c, List<Message> messages) {
-    final messageBox = Database.messages;
-    List<String> inputMessageGuids = messages.map((element) => element.guid!).toList();
-
-    final query = messageBox.query(Message_.guid.oneOf(inputMessageGuids)).build();
-    List<Message> existingMessages = query.find();
-    query.close();
-    List<String> existingMessageGuids = existingMessages.map((e) => e.guid!).toList();
-
-    List<Message> newMessages = messages.where((element) => !existingMessageGuids.contains(element.guid)).toList();
-    messageBox.putMany(newMessages);
-
-    if (existingMessages.isNotEmpty) {
-      int mods = 0;
-      for (var i = 0; i < existingMessages.length; i++) {
-        Message? newMessage = messages.firstWhereOrNull((e) => e.guid == existingMessages[i].guid);
-        if (newMessage == null) continue;
-        existingMessages[i] = Message.merge(newMessage, existingMessages[i]);
-        mods += 1;
-      }
-
-      if (mods > 0) {
-        // CRITICAL: Preserve dbAttachments ToMany relationships before putMany
-        final attachmentPreservation = <String, List<Attachment>>{};
-        for (final msg in existingMessages) {
-          if (msg.dbAttachments.isNotEmpty) {
-            attachmentPreservation[msg.guid!] = List<Attachment>.from(msg.dbAttachments);
-          }
-        }
-
-        messageBox.putMany(existingMessages, mode: PutMode.update);
-
-        // Restore attachments after putMany
-        for (final msg in existingMessages) {
-          if (attachmentPreservation.containsKey(msg.guid)) {
-            msg.dbAttachments.clear();
-            msg.dbAttachments.addAll(attachmentPreservation[msg.guid]!);
-            msg.dbAttachments.applyToDb();
-          }
-        }
-      }
-    }
-
-    final query2 = messageBox.query(Message_.guid.oneOf(inputMessageGuids)).build();
-    List<Message> syncedMessages = query2.find().toList();
-    query2.close();
-
-    for (var i = 0; i < messages.length; i++) {
-      Message? synced = syncedMessages.firstWhereOrNull((e) => e.guid == messages[i].guid);
-      if (synced == null) continue;
-      messages[i] = Message.merge(messages[i], synced);
-      messages[i].chat.target = c;
-    }
-
-    // CRITICAL: Preserve dbAttachments ToMany relationships before putMany
-    final attachmentPreservation = <String, List<Attachment>>{};
-    for (final msg in messages) {
-      if (msg.dbAttachments.isNotEmpty) {
-        attachmentPreservation[msg.guid!] = List<Attachment>.from(msg.dbAttachments);
-      }
-    }
-
-    messageBox.putMany(messages, mode: PutMode.update);
-
-    // Restore attachments after putMany
-    for (final msg in messages) {
-      if (attachmentPreservation.containsKey(msg.guid)) {
-        msg.dbAttachments.clear();
-        msg.dbAttachments.addAll(attachmentPreservation[msg.guid]!);
-        msg.dbAttachments.applyToDb();
-      }
-    }
-
-    return messages;
-  }
-
   static Future<List<int>> getParticipantsAsync(dynamic data) async {
     final chatId = data['chatId'] as int;
 
@@ -980,15 +816,16 @@ class ChatActions {
       late final QueryBuilder<Chat> queryBuilder;
 
       // If IDs are provided, query by IDs. Otherwise, query non-deleted chats
+      // ordered by dbOnlyLatestMessageDate so chats arrive roughly pre-sorted,
+      // reducing binary-search work in _insertChatSorted (pins are reordered there).
       if (ids.isNotEmpty) {
         queryBuilder = chatBox.query(Chat_.id.oneOf(ids));
       } else {
-        queryBuilder = chatBox.query(Chat_.dateDeleted.isNull());
+        queryBuilder = chatBox.query(Chat_.dateDeleted.isNull())
+          ..order(Chat_.dbOnlyLatestMessageDate, flags: Order.descending);
       }
 
       // Build the query with limit and offset
-      // Note: No ordering at DB level - ChatService handles proper ordering
-      // including pinIndex which DB cannot efficiently order by
       final query = queryBuilder.build()
         ..limit = limit
         ..offset = offset;

@@ -78,7 +78,7 @@ class _ManualEntryDialogState extends State<ManualEntryDialog> {
     // Get the FCM Client and make sure we have a valid response
     // If so, save. Let the parent widget know we've connected as long as
     // we get 200 from the API.
-    HttpSvc.fcmClient().then((response) async {
+    HttpSvc.fcm.getServiceAccount().then((response) async {
       Map<String, dynamic>? data = response.data["data"];
       if (!isNullOrEmpty(data)) {
         FCMData newData = FCMData.fromMap(data!);

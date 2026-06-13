@@ -115,6 +115,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun onDestroy() {
         Log.d(Constants.logTag, "BlueBubbles MainActivity is being destroyed")
+        MethodCallHandler.clearNotificationListenerResult()
         setEngine(null)
         setEngineReady(false)
 
@@ -152,7 +153,7 @@ class MainActivity : FlutterFragmentActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == Constants.notificationListenerRequestCode) {
-            MethodCallHandler.getNotificationListenerResult?.success(resultCode == Activity.RESULT_OK)
+            MethodCallHandler.consumeNotificationListenerResult()?.success(resultCode == Activity.RESULT_OK)
         }
         if (requestCode == Constants.documentSaveRequestCode) {
             var result = CreateDocumentHandler.savedResult!!

@@ -207,7 +207,7 @@ class _ThemingPanelState extends CustomState<ThemingPanel, void, ThemingPanelCon
                             SettingsSvc.settings.windowEffectCustomOpacityDark.value =
                                 WindowEffects.defaultOpacity(dark: true);
                           }
-                          await PrefsSvc.i.setString('window-effect', effect.toString());
+                          await PrefsSvc.desktop.setWindowEffect(effect.toString());
                           await WindowEffects.setEffect(color: context.theme.colorScheme.surface);
                           await SettingsSvc.settings.saveManyAsync(
                               ['windowEffect', 'windowEffectCustomOpacityLight', 'windowEffectCustomOpacityDark']);
@@ -320,49 +320,39 @@ class _ThemingPanelState extends CustomState<ThemingPanel, void, ThemingPanelCon
                           )),
                     if (kIsDesktop) const SettingsDivider(padding: EdgeInsets.only(left: 16.0)),
                     if (!kIsWeb && !kIsDesktop && ThemeSvc.monetPalette != null)
-                      Obx(() {
-                        if (iOS) {
-                          return SettingsTile(
-                            title: "Material You",
-                            subtitle:
-                                "Use Android 12's Monet engine to provide wallpaper-based coloring to your theme. Tap for more info.",
-                            onTap: () {
-                              showMonetDialog(context);
-                            },
-                            isThreeLine: true,
-                          );
-                        } else {
-                          return const SizedBox.shrink();
-                        }
-                      }),
-                    if (!kIsWeb && !kIsDesktop && ThemeSvc.monetPalette != null)
                       GestureDetector(
                         onTap: () {
                           showMonetDialog(context);
                         },
-                        child: SettingsOptions<Monet>(
-                          initial: SettingsSvc.settings.monetTheming.value,
-                          onChanged: (val) async {
-                            // disable colors from music
-                            final currentTheme = ThemeStruct.getLightTheme();
-                            if (currentTheme.name == "Music Theme ☀" || currentTheme.name == "Music Theme 🌙") {
-                              SettingsSvc.settings.colorsFromMedia.value = false;
-                              await SettingsSvc.settings.saveOneAsync('colorsFromMedia');
-                              ThemeStruct previousDark = await ThemeSvc.revertToPreviousDarkTheme();
-                              ThemeStruct previousLight = await ThemeSvc.revertToPreviousLightTheme();
-                              await ThemeSvc.changeTheme(context, light: previousLight, dark: previousDark);
-                            }
-                            SettingsSvc.settings.monetTheming.value = val ?? Monet.none;
-                            await SettingsSvc.settings.saveOneAsync('monetTheming');
-                            await ThemeSvc.refreshMonet(context);
-                          },
-                          options: Monet.values,
-                          textProcessing: (val) => val.toString().split(".").last,
-                          title: "Material You",
-                          subtitle:
-                              "Use Android 12's Monet engine to provide wallpaper-based coloring to your theme. Tap for more info.",
-                          secondaryColor: headerColor,
-                        ),
+                        child: Obx(() => SettingsSwitch(
+                              initialVal: ThemeSvc.isAnyMaterialYouSelected,
+                              title: "Material You",
+                              backgroundColor: tileColor,
+                              subtitle: "Personalize BlueBubbles with dynamic colors pulled from your system theme.",
+                              onChanged: (enabled) async {
+                                final currentTheme = ThemeStruct.getLightTheme();
+                                if (currentTheme.name == "Music Theme ☀" || currentTheme.name == "Music Theme 🌙") {
+                                  SettingsSvc.settings.colorsFromMedia.value = false;
+                                  await SettingsSvc.settings.saveOneAsync('colorsFromMedia');
+                                  ThemeStruct previousDark = await ThemeSvc.revertToPreviousDarkTheme();
+                                  ThemeStruct previousLight = await ThemeSvc.revertToPreviousLightTheme();
+                                  if (!context.mounted) return;
+                                  await ThemeSvc.changeTheme(context, light: previousLight, dark: previousDark);
+                                }
+                                if (enabled) {
+                                  await PrefsSvc.theme.setSelectedThemes(
+                                    lightTheme: ThemesService.materialYouLightName,
+                                    darkTheme: ThemesService.materialYouDarkName,
+                                  );
+                                } else {
+                                  await PrefsSvc.theme.setSelectedThemes(
+                                    lightTheme: "Bright White",
+                                    darkTheme: "OLED Dark",
+                                  );
+                                }
+                                await ThemeSvc.refreshMonet(context);
+                              },
+                            )),
                       ),
                     if (!kIsWeb && !kIsDesktop && ThemeSvc.monetPalette != null)
                       const SettingsDivider(padding: EdgeInsets.only(left: 16.0)),
@@ -371,17 +361,16 @@ class _ThemingPanelState extends CustomState<ThemingPanel, void, ThemingPanelCon
                         () => SettingsSwitch(
                           onChanged: (bool val) async {
                             if (val) {
-                              await MethodChannelSvc.invokeMethod("request-notification-listener-permission");
+                              await MethodChannelSvc.actions.requestNotificationListenerPermission();
                               try {
-                                await MethodChannelSvc.invokeMethod("start-notification-listener");
-                                // disable monet theming if music theme enabled
-                                SettingsSvc.settings.monetTheming.value = Monet.none;
-                                await SettingsSvc.settings.saveOneAsync('monetTheming');
+                                await MethodChannelSvc.actions.startNotificationListener();
                                 var allThemes = ThemeStruct.getThemes();
                                 var currentLight = ThemeStruct.getLightTheme();
                                 var currentDark = ThemeStruct.getDarkTheme();
-                                await PrefsSvc.i.setString("previous-light", currentLight.name);
-                                await PrefsSvc.i.setString("previous-dark", currentDark.name);
+                                await PrefsSvc.theme.setPreviousThemes(
+                                  lightTheme: currentLight.name,
+                                  darkTheme: currentDark.name,
+                                );
                                 await ThemeSvc.changeTheme(context,
                                     light: allThemes.firstWhere((element) => element.name == "Music Theme ☀"),
                                     dark: allThemes.firstWhere((element) => element.name == "Music Theme 🌙"));
@@ -393,12 +382,12 @@ class _ThemingPanelState extends CustomState<ThemingPanel, void, ThemingPanelCon
                               }
                             } else {
                               var allThemes = ThemeStruct.getThemes();
-                              final lightName = PrefsSvc.i.getString("previous-light");
-                              final darkName = PrefsSvc.i.getString("previous-dark");
+                              final lightName = PrefsSvc.theme.getPreviousLightTheme();
+                              final darkName = PrefsSvc.theme.getPreviousDarkTheme();
                               var previousLight = allThemes.firstWhere((e) => e.name == lightName);
                               var previousDark = allThemes.firstWhere((e) => e.name == darkName);
-                              await PrefsSvc.i.remove("previous-light");
-                              await PrefsSvc.i.remove("previous-dark");
+                              await PrefsSvc.theme.clearPreviousLightTheme();
+                              await PrefsSvc.theme.clearPreviousDarkTheme();
                               await ThemeSvc.changeTheme(context, light: previousLight, dark: previousDark);
                               SettingsSvc.settings.colorsFromMedia.value = val;
                               await SettingsSvc.settings.saveOneAsync('colorsFromMedia');
@@ -518,8 +507,8 @@ class _ThemingPanelState extends CustomState<ThemingPanel, void, ThemingPanelCon
                           onTap: () async {
                             if (kIsWeb) {
                               try {
-                                final res = await FilePicker.platform
-                                    .pickFiles(withData: true, type: FileType.custom, allowedExtensions: ["ttf"]);
+                                final res = await FilePicker.pickFiles(
+                                    withData: true, type: FileType.custom, allowedExtensions: ["ttf"]);
                                 if (res == null || res.files.isEmpty || res.files.first.bytes == null) return;
 
                                 final txn = FilesystemSvc.webDb.transaction("BBStore", idbModeReadWrite);
@@ -651,8 +640,8 @@ class _ThemingPanelState extends CustomState<ThemingPanel, void, ThemingPanelCon
               title: Text("Monet Theming Info", style: context.theme.textTheme.titleLarge),
               backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
               content: Text(
-                "Harmonize - Overwrites primary color and blends remainder of colors with the current theme colors\r\n"
-                "Full - Overwrites primary, background, and accent colors, along with other minor colors.\r\n",
+                "Off - Uses your selected static preset/custom themes.\r\n"
+                "Full - Uses dynamic Material You preset themes that follow your system colors.\r\n",
                 style: context.theme.textTheme.bodyLarge,
               ),
               actions: [

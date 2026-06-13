@@ -161,17 +161,13 @@ class AttachmentsService extends GetxService {
     }
 
     final pathName = path ?? attachment.path;
+    final localFile = File(pathName);
+    final convertedFile = File(attachment.convertedPath);
+    final hasLocalFile = localFile.existsSync() || convertedFile.existsSync();
 
-    // Check for existing download controller
-    if (AttachmentDownloader.getController(attachment.guid) != null) {
-      final controller = AttachmentDownloader.getController(attachment.guid)!;
-      if (onComplete != null) controller.completeFuncs.add(onComplete);
-      return controller;
-    }
-
-    // Check if attachment is downloaded using the isDownloaded flag
-    // This prevents treating partial downloads as complete files
-    if (attachment.isDownloaded == true && File(pathName).existsSync()) {
+    // Prefer local file presence over the persisted flag because isDownloaded can
+    // drift out of sync with filesystem state (e.g. failed display / stale DB flag).
+    if ((attachment.isDownloaded == true && hasLocalFile) || hasLocalFile) {
       // For images, check if we need HEIC/TIFF conversion
       String? compatiblePath = pathName;
       if (attachment.mimeType?.contains('image/hei') ?? false) {
@@ -193,6 +189,9 @@ class AttachmentsService extends GetxService {
           // Will need conversion on first display
           compatiblePath = pathName;
         }
+      } else if (!localFile.existsSync() && convertedFile.existsSync()) {
+        // Fallback when original file is gone but converted file remains.
+        compatiblePath = attachment.convertedPath;
       }
 
       return PlatformFile(
@@ -200,6 +199,11 @@ class AttachmentsService extends GetxService {
         path: compatiblePath,
         size: attachment.totalBytes ?? 0,
       );
+      // Check for existing download controller
+    } else if (AttachmentDownloader.getController(attachment.guid) != null) {
+      final controller = AttachmentDownloader.getController(attachment.guid)!;
+      if (onComplete != null) controller.completeFuncs.add(onComplete);
+      return controller;
     } else if (autoDownload ?? SettingsSvc.settings.autoDownload.value) {
       return AttachmentDownloader.startDownload(attachment, onComplete: onComplete);
     } else {
@@ -260,7 +264,7 @@ class AttachmentsService extends GetxService {
         ..setAttribute("download", file.name)
         ..click();
     } else if (kIsDesktop) {
-      String? savePath = await FilePicker.platform.saveFile(
+      String? savePath = await FilePicker.saveFile(
         initialDirectory: await FilesystemSvc.downloadsDirectory,
         dialogTitle: 'Choose a location to save this file',
         fileName: file.name,
@@ -356,7 +360,7 @@ class AttachmentsService extends GetxService {
           return;
         }
         final bytes = file.bytes != null && file.bytes!.isNotEmpty ? file.bytes! : await File(file.path!).readAsBytes();
-        await FilePicker.platform.saveFile(
+        await FilePicker.saveFile(
           initialDirectory: SettingsSvc.settings.autoSaveDocsLocation.value,
           dialogTitle: 'Choose a location to save this file',
           lockParentWindow: true,
@@ -425,6 +429,13 @@ class AttachmentsService extends GetxService {
 
   Future<void> redownloadAttachment(Attachment attachment,
       {Function(PlatformFile)? onComplete, Function()? onError}) async {
+    if (attachment.guid == null || attachment.guid!.startsWith('temp')) {
+      return;
+    }
+
+    // Clear in-memory payload so stale bytes are not treated as a completed file.
+    attachment.bytes = null;
+
     if (!kIsWeb) {
       final file = File(attachment.path);
       final pngFile = File(attachment.convertedPath);
@@ -432,10 +443,10 @@ class AttachmentsService extends GetxService {
       final pngThumbnail = File("${attachment.convertedPath}.thumbnail");
 
       try {
-        await file.delete();
-        await pngFile.delete();
-        await thumbnail.delete();
-        await pngThumbnail.delete();
+        if (await file.exists()) await file.delete();
+        if (await pngFile.exists()) await pngFile.delete();
+        if (await thumbnail.exists()) await thumbnail.delete();
+        if (await pngThumbnail.exists()) await pngThumbnail.delete();
       } catch (_) {}
     }
 
@@ -445,9 +456,21 @@ class AttachmentsService extends GetxService {
       updateAttachment = true;
     }
 
-    // Clear metadata processing flag to force reprocessing
+    // Clear metadata processing flag and cached dimensions to force reprocessing
     if (attachment.metadata != null) {
       attachment.metadata!.remove('_dimensions_processed');
+      updateAttachment = true;
+    }
+
+    if (attachment.height != null || attachment.width != null) {
+      attachment.height = null;
+      attachment.width = null;
+      updateAttachment = true;
+    }
+
+    // Force EXIF reload on the next properties pass.
+    if (attachment.exif != null) {
+      attachment.exif = null;
       updateAttachment = true;
     }
 
@@ -455,10 +478,14 @@ class AttachmentsService extends GetxService {
       await attachment.saveAsync(null);
     }
 
-    Get.put(
-        AttachmentDownloadController(
-            attachment: attachment, onComplete: (file) => onComplete?.call(file), onError: onError),
-        tag: attachment.guid);
+    // Always clear any stale controller/queue entry so this redownload starts fresh.
+    AttachmentDownloader.clearControllerForGuid(attachment.guid!);
+    AttachmentDownloader.startDownload(
+      attachment,
+      onComplete: onComplete,
+      onError: onError,
+      forceFresh: true,
+    );
   }
 
   Future<Size> getImageSizing(String filePath, Attachment attachment) async {
@@ -598,7 +625,6 @@ class AttachmentsService extends GetxService {
     if (compatiblePath == null) return null;
 
     bool dimensionsLoaded = false;
-    bool metadataLoaded = false;
 
     // Try to get dimensions and metadata from EXIF first (runs in isolate to avoid UI lag)
     if (attachment.mimeType != "image/gif") {
@@ -632,7 +658,9 @@ class AttachmentsService extends GetxService {
               (orientationStr.contains('90') ||
                   orientationStr.contains('270') ||
                   orientationStr.toLowerCase().contains('rotated 90') ||
-                  orientationStr.toLowerCase().contains('rotated 270'));
+                  orientationStr.toLowerCase().contains('rotated 270') ||
+                  orientationStr.toLowerCase().contains('horizontal (normal)') ||
+                  orientationStr.toLowerCase().contains('mirrored horizontal'));
 
           if (exifWidth != null && exifHeight != null) {
             if (needsSwap) {
@@ -645,19 +673,20 @@ class AttachmentsService extends GetxService {
             dimensionsLoaded = true;
           }
 
-          // Store EXIF metadata
-          if (attachment.metadata == null) {
-            attachment.metadata = exif;
-            metadataLoaded = true;
-          }
-
-          if (dimensionsLoaded || metadataLoaded) {
-            await attachment.saveAsync(null);
-          }
+          attachment.exif = exif;
+          await attachment.saveAsync(null);
+        } else if (attachment.exif == null) {
+          // Null means EXIF has never been loaded. Empty map means we attempted to load it.
+          attachment.exif = {};
+          await attachment.saveAsync(null);
         }
       } catch (ex, stack) {
         Logger.error('Failed to read EXIF data!', error: ex, trace: stack);
       }
+    } else if (attachment.exif == null) {
+      // GIFs don't produce EXIF data, but mark as processed for loaded-vs-unloaded semantics.
+      attachment.exif = {};
+      await attachment.saveAsync(null);
     }
 
     // Fallback: Get dimensions using image size getter if not loaded from EXIF

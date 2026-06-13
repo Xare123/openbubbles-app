@@ -93,7 +93,7 @@ class ContactV2Actions {
       if (kIsDesktop) {
         // Step 1: Fetch contacts from server
         Logger.info('[ContactV2] Starting contact fetch from server...');
-        final response = await HttpSvc.contacts(withAvatars: true);
+        final response = await HttpSvc.contact.fetchAll(withAvatars: true);
 
         if (response.statusCode == 200 && !isNullOrEmpty(response.data['data'])) {
           for (Map<String, dynamic> map in response.data['data']) {
@@ -129,21 +129,21 @@ class ContactV2Actions {
       } else {
         // Step 1: Fetch contacts using flutter_contacts
         Logger.info('[ContactV2] Starting contact fetch from device (flutter_contacts)...');
-        deviceContacts = await fc.FlutterContacts.getContacts(withProperties: true);
+        deviceContacts = await fc.FlutterContacts.getAll(properties: fc.ContactProperties.allProperties);
         Logger.info('[ContactV2] Fetched ${deviceContacts.length} contacts from device');
 
         // Step 1.5: Pre-fetch and save all contact avatars (async operations must be done BEFORE transaction)
         for (final rawContact in deviceContacts) {
+          if (rawContact.id == null) continue;
           try {
-            final contactWithPhoto = await fc.FlutterContacts.getContact(
-              rawContact.id,
-              withPhoto: true,
-              withThumbnail: true,
+            final contactWithPhoto = await fc.FlutterContacts.get(
+              rawContact.id!,
+              properties: {fc.ContactProperty.photoFullRes, fc.ContactProperty.photoThumbnail},
             );
-            final avatarData = contactWithPhoto?.photo ?? contactWithPhoto?.thumbnail;
+            final avatarData = contactWithPhoto?.photo?.fullSize ?? contactWithPhoto?.photo?.thumbnail;
 
             if (avatarData != null && avatarData.isNotEmpty) {
-              avatarPaths[rawContact.id] = await _saveContactAvatar(rawContact.id, avatarData);
+              avatarPaths[rawContact.id!] = await _saveContactAvatar(rawContact.id!, avatarData);
             }
           } catch (e) {
             // Avatar fetch failed, continue without it
@@ -240,28 +240,35 @@ class ContactV2Actions {
           List<ContactEmail> contactEmails = [];
 
           if (rawContact is fc.Contact) {
-            contactId = rawContact.id;
-            displayName = rawContact.displayName;
+            if (rawContact.id == null || rawContact.displayName == null) {
+              // Skip contacts without ID or display name
+              continue;
+            }
+
+            contactId = rawContact.id!;
+            displayName = rawContact.displayName!;
 
             final name = rawContact.name;
-            firstName = name.first.isEmpty ? null : name.first;
-            lastName = name.last.isEmpty ? null : name.last;
-            middleName = name.middle.isEmpty ? null : name.middle;
-            namePrefix = name.prefix.isEmpty ? null : name.prefix;
-            nameSuffix = name.suffix.isEmpty ? null : name.suffix;
-            nickname = name.nickname.isEmpty ? null : name.nickname;
+            firstName = name?.first;
+            lastName = name?.last;
+            middleName = name?.middle;
+            namePrefix = name?.prefix;
+            nameSuffix = name?.suffix;
+            nickname = name?.nickname;
 
             if (rawContact.organizations.isNotEmpty) {
-              final orgCompany = rawContact.organizations.first.company;
-              if (orgCompany.isNotEmpty) company = orgCompany;
+              final orgCompany = rawContact.organizations.first.name;
+              if (orgCompany != null) company = orgCompany;
             }
 
             for (final phone in rawContact.phones) {
-              final label = phone.label == fc.PhoneLabel.custom ? phone.customLabel : phone.label.name;
+              final label =
+                  phone.label.label == fc.PhoneLabel.custom ? phone.label.customLabel ?? '' : phone.label.label.name;
               contactPhones.add(ContactPhone(number: phone.number, label: label));
             }
             for (final email in rawContact.emails) {
-              final label = email.label == fc.EmailLabel.custom ? email.customLabel : email.label.name;
+              final label =
+                  email.label == fc.EmailLabel.custom ? email.label.customLabel ?? '' : email.label.label.name;
               contactEmails.add(ContactEmail(address: email.address, label: label));
             }
           } else if (rawContact is ContactV2) {
@@ -423,7 +430,7 @@ class ContactV2Actions {
       Logger.info('[ContactV2] Checking for contact changes...');
 
       // Get current device contact IDs (only fetch minimal data)
-      final currentContacts = await fc.FlutterContacts.getContacts(); // IDs only by default
+      final currentContacts = await fc.FlutterContacts.getAll(); // IDs only by default
       final currentIds = currentContacts.map((c) => c.id).toSet();
 
       // Get stored contact IDs
@@ -607,12 +614,11 @@ class ContactV2Actions {
         Uint8List? avatar;
 
         try {
-          final contact = await fc.FlutterContacts.getContact(
+          final contact = await fc.FlutterContacts.get(
             nativeContactId,
-            withPhoto: true,
-            withThumbnail: true,
+            properties: {fc.ContactProperty.photoFullRes, fc.ContactProperty.photoThumbnail},
           );
-          avatar = contact?.photo ?? contact?.thumbnail;
+          avatar = contact?.photo?.fullSize ?? contact?.photo?.thumbnail;
         } catch (e) {
           Logger.warn('[ContactV2] Failed to get avatar for ID $nativeContactId: $e');
         }
@@ -637,7 +643,7 @@ class ContactV2Actions {
     final contacts = data['contacts'] as List<Map<String, dynamic>>;
 
     try {
-      await HttpSvc.createContact(contacts);
+      await HttpSvc.contact.create(contacts);
       Logger.info('[ContactV2] Successfully uploaded ${contacts.length} contacts to server');
     } catch (err, stack) {
       if (err is Response) {

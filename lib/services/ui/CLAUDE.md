@@ -12,8 +12,7 @@ All are GetX singletons. Shorthand getters live in `lib/services/services.dart`.
 
 ## Contacts
 - `contact_service.dart` — legacy V1; avoid for new code
-- `contact_service_v2.dart` (`ContactsSvcV2`) — V2 with reactive `handleUpdateStatus` observable; desktop sync (requires server v42+)
-  - Listen for handle changes: `ever(ContactsSvcV2.handleUpdateStatus, (_) { ... })`
+- `contact_service_v2.dart` (`ContactsSvcV2`) — desktop sync (requires server v42+)
 
 ## Other
 - `theme/themes_service.dart` (`ThemeSvc`) — theme switching, custom theme management, preset themes

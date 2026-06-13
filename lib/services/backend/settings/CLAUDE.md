@@ -32,8 +32,11 @@ Thin wrapper around Flutter's `SharedPreferences` for simple key-value storage t
 Used for: callback handle storage (background isolate registration), install timestamp, and any other primitive values that need to survive a cold start before the database is ready.
 
 ```dart
-PrefsSvc.i.getString("key");
-PrefsSvc.i.setString("key", "value");
+PrefsSvc.desktop.setWindowDimensions(width: 1280, height: 720);
+final themeName = PrefsSvc.theme.getSelectedDarkTheme();
+await PrefsSvc.messaging.clearLastOpenedChat();
 ```
+
+Use category helpers instead of `PrefsSvc.i` direct access. Keep raw `PrefsSvc.i` usage restricted to helper implementation internals.
 
 For app settings (everything in the `Settings` class), use `SettingsSvc` instead. `PrefsSvc` is only for low-level bootstrap values.

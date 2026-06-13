@@ -7,7 +7,7 @@ import 'package:android_play_install_referrer/android_play_install_referrer.dart
 import 'package:app_links/app_links.dart';
 import 'package:bluebubbles/app/layouts/setup/dialogs/failed_to_connect_dialog.dart';
 import 'package:bluebubbles/app/layouts/setup/pages/bluetooth/request_bluetooth.dart';
-import 'package:bluebubbles/app/layouts/setup/pages/contacts/request_contacts.dart';
+import 'package:bluebubbles/app/layouts/setup/pages/permissions/request_permissions.dart';
 import 'package:bluebubbles/app/layouts/setup/pages/rustpush/appleid_2fa.dart';
 import 'package:bluebubbles/app/layouts/setup/pages/rustpush/appleid_login.dart';
 import 'package:bluebubbles/app/layouts/setup/pages/rustpush/finalize.dart';
@@ -1042,7 +1042,7 @@ class _ErrorTextState extends CustomState<ErrorText, String, SetupViewController
                     ),
                     TextButton(
                       onPressed: () async {
-                        final res = await picker.FilePicker.platform.pickFiles(
+                        final res = await picker.FilePicker.pickFiles(
                             withData: true, type: picker.FileType.custom, allowedExtensions: ['png', 'jpg', 'jpeg']);
                         if (res == null || res.count == 0) return;
                         attachment = await File(res.files[0].path!).readAsBytes();
@@ -1159,18 +1159,6 @@ class SetupPages extends StatelessWidget {
           onPageChanged: (page) {
             if (!kIsWeb &&
                 !kIsDesktop &&
-                page == 1 &&
-                controller.currentPage == 1 &&
-                !SettingsSvc.settings.isDumb.value) {
-              Permission.contacts.status.then((status) {
-                if (status.isGranted) {
-                  controller.pageController
-                      .nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
-                }
-              });
-            }
-            if (!kIsWeb &&
-                !kIsDesktop &&
                 page == 2 &&
                 controller.currentPage == 2 &&
                 !SettingsSvc.settings.isDumb.value) {
@@ -1199,7 +1187,7 @@ class SetupPages extends StatelessWidget {
           controller: controller.pageController,
           children: <Widget>[
             if (!SettingsSvc.settings.isDumb.value) const WelcomePage(),
-            if (!kIsWeb && !kIsDesktop && !SettingsSvc.settings.isDumb.value) RequestContacts(),
+            if (!kIsWeb && !kIsDesktop && !SettingsSvc.settings.isDumb.value) const RequestPermissions(),
             if (!kIsWeb && !kIsDesktop && !SettingsSvc.settings.isDumb.value) const BatteryOptimizationCheck(),
             if (!kIsWeb && !kIsDesktop && !SettingsSvc.settings.isDumb.value) RequestBluetooth(),
             if (!usingRustPush) const MacSetupCheck(),

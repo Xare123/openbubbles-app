@@ -1,13 +1,15 @@
 import 'package:bluebubbles/helpers/helpers.dart';
+import 'package:bluebubbles/app/wrappers/bb_app_bar.dart';
 import 'package:bluebubbles/app/wrappers/bb_scaffold.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:crop_your_image/crop_your_image.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:image/image.dart' as img;
+import 'package:image_picker/image_picker.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:path/path.dart' as p;
 import 'package:universal_io/io.dart';
@@ -16,7 +18,13 @@ class AvatarCrop extends StatefulWidget {
   final int? index;
   final Chat? chat;
   final VoidCallback? cropped;
-  const AvatarCrop({super.key, this.index, this.chat, this.cropped});
+
+  const AvatarCrop({
+    super.key,
+    this.index,
+    this.chat,
+    this.cropped,
+  });
 
   @override
   State<AvatarCrop> createState() => _AvatarCropState();
@@ -26,6 +34,51 @@ class _AvatarCropState extends State<AvatarCrop> with ThemeHelpers {
   final _cropController = CropController();
   Uint8List? _imageData;
   bool _isLoading = true;
+
+  Future<void> _pickImageFromGallery() async {
+    if (kIsDesktop || kIsWeb) return _pickImageFromFiles();
+
+    final XFile? file = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (file == null) return;
+
+    final bytes = await file.readAsBytes();
+    await _handlePickedImage(bytes, fileName: file.name);
+  }
+
+  Future<void> _pickImageFromFiles() async {
+    final res = await FilePicker.pickFiles(
+      withData: true,
+      type: FileType.image,
+    );
+    if (res == null || res.files.isEmpty || res.files.first.bytes == null) return;
+
+    await _handlePickedImage(res.files.first.bytes!, fileName: res.files.first.name);
+  }
+
+  Future<void> _handlePickedImage(Uint8List bytes, {String? fileName}) async {
+    final lowerName = (fileName ?? '').toLowerCase();
+    if (lowerName.endsWith('.gif')) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text("Saving avatar...", style: context.theme.textTheme.titleLarge),
+          content: SizedBox(
+            height: 70,
+            child: Center(
+              child: buildProgressIndicator(context),
+            ),
+          ),
+          backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+        ),
+        barrierDismissible: false,
+      );
+      onCropped(CropSuccess(bytes));
+      return;
+    }
+
+    _imageData = bytes;
+    if (mounted) setState(() {});
+  }
 
   void onCropped(CropResult croppedResult) async {
     Uint8List croppedData;
@@ -67,31 +120,14 @@ class _AvatarCropState extends State<AvatarCrop> with ThemeHelpers {
       if (!(await file.exists())) {
         await file.create(recursive: true);
       }
-      if (widget.chat!.customAvatarPath != null) {
-        await File(widget.chat!.customAvatarPath!).delete();
-      }
       await file.writeAsBytes(croppedData);
-      widget.chat!.customAvatarPath = file.path;
-      await widget.chat!.saveAsync(updateCustomAvatarPath: true);
-      ChatsSvc.getChatState(widget.chat!.guid)?.updateCustomAvatarPathInternal(file.path);
+
       Navigator.of(context, rootNavigator: true).pop();
-      Navigator.of(context).pop(widget.chat!.customAvatarPath);
+      Navigator.of(context).pop(file.path);
       showSnackbar("Notice", "Custom chat avatar saved successfully");
     } else {
-      File file = File(p.join(FilesystemSvc.avatarsPath, FilesystemService.sanitizeGuid(widget.chat!.guid),
-          "avatar-${croppedData.length}.jpg"));
-      if (!(await file.exists())) {
-        await file.create(recursive: true);
-      }
-      if (widget.chat!.customAvatarPath != null) {
-        await File(widget.chat!.customAvatarPath!).delete();
-      }
-      await file.writeAsBytes(croppedData);
-      widget.chat!.customAvatarPath = file.path;
-      await widget.chat!.saveAsync(updateCustomAvatarPath: true);
       Navigator.of(context, rootNavigator: true).pop();
-      Navigator.of(context).pop(widget.chat!.customAvatarPath);
-      showSnackbar("Notice", "Custom chat avatar saved successfully");
+      Navigator.of(context).pop();
     }
     if (widget.cropped != null) {
       widget.cropped!();
@@ -101,39 +137,24 @@ class _AvatarCropState extends State<AvatarCrop> with ThemeHelpers {
   @override
   Widget build(BuildContext context) {
     return BBScaffold(
-      appBar: PreferredSize(
-        preferredSize: Size(NavigationSvc.width(context), kIsDesktop ? 80 : 50),
-        child: AppBar(
-          systemOverlayStyle: context.theme.colorScheme.brightness == Brightness.dark
-              ? SystemUiOverlayStyle.light
-              : SystemUiOverlayStyle.dark,
-          toolbarHeight: kIsDesktop ? 80 : 50,
-          elevation: 0,
-          scrolledUnderElevation: 3,
-          surfaceTintColor: context.theme.colorScheme.primary,
-          leading: buildBackButton(context),
-          backgroundColor: headerColor,
-          centerTitle: iOS,
-          title: Text(
-            "Select & Crop Avatar",
-            style: context.theme.textTheme.titleLarge,
+      appBar: BBAppBar(
+        titleText: "Select & Crop Avatar",
+        leading: buildBackButton(context),
+        actions: [
+          AbsorbPointer(
+            absorbing: _imageData == null || _isLoading,
+            child: TextButton(
+                child: Text("SAVE",
+                    style: context.theme.textTheme.bodyLarge!.apply(
+                        color: _imageData == null || _isLoading
+                            ? context.theme.colorScheme.outline
+                            : context.theme.colorScheme.primary)),
+                onPressed: () {
+                  showSavingAvatarDialog();
+                  _cropController.crop();
+                }),
           ),
-          actions: [
-            AbsorbPointer(
-              absorbing: _imageData == null || _isLoading,
-              child: TextButton(
-                  child: Text("SAVE",
-                      style: context.theme.textTheme.bodyLarge!.apply(
-                          color: _imageData == null || _isLoading
-                              ? context.theme.colorScheme.outline
-                              : context.theme.colorScheme.primary)),
-                  onPressed: () {
-                    showSavingAvatarDialog();
-                    _cropController.crop();
-                  }),
-            ),
-          ],
-        ),
+        ],
       ),
       body: SizedBox(
         width: double.infinity,
@@ -178,32 +199,7 @@ class _AvatarCropState extends State<AvatarCrop> with ThemeHelpers {
                       side: BorderSide(color: context.theme.colorScheme.onPrimaryContainer)),
                   backgroundColor: context.theme.colorScheme.primaryContainer,
                 ),
-                onPressed: () async {
-                  final res = await FilePicker.platform
-                      .pickFiles(withData: true, type: FileType.custom, allowedExtensions: ['png', 'jpg', 'jpeg']);
-                  if (res == null || res.files.isEmpty || res.files.first.bytes == null) return;
-
-                  if (res.files.first.name.endsWith("gif")) {
-                    showDialog(
-                      context: context,
-                      builder: (context) => AlertDialog(
-                        title: Text("Saving avatar...", style: context.theme.textTheme.titleLarge),
-                        content: SizedBox(
-                          height: 70,
-                          child: Center(
-                            child: buildProgressIndicator(context),
-                          ),
-                        ),
-                        backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                      ),
-                      barrierDismissible: false,
-                    );
-                    onCropped(CropSuccess(res.files.first.bytes!));
-                  } else {
-                    _imageData = res.files.first.bytes!;
-                    setState(() {});
-                  }
-                },
+                onPressed: _pickImageFromGallery,
                 child: Text(_imageData != null ? "Pick New Image" : "Pick Image",
                     style: context.theme.textTheme.bodyLarge!
                         .copyWith(color: context.theme.colorScheme.onPrimaryContainer)),

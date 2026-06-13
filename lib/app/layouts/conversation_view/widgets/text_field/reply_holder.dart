@@ -150,11 +150,17 @@ class _ReplyText extends StatelessWidget {
 
   String _getNotificationText() {
     if (reply is MessagePart) {
+      // Create a fake message and append the attachments.
+      // This does not add anything to the DB and is just
+      // in memory for the sake of displaying the correct text
+      // for a particular message part.
       final msg = Message(
         text: reply.text,
         subject: reply.subject,
-        attachments: reply.attachments,
-      ).mergeWith(message!);
+        hasAttachments: reply.attachments.isNotEmpty,
+      )
+        ..dbAttachments.addAll(reply.attachments)
+        ..mergeWith(message!);
       return msg.getNotificationText();
     }
     return message!.getNotificationText();
@@ -167,10 +173,11 @@ class _ReplyText extends StatelessWidget {
         if (isIOS && reply != null) const TextSpan(text: "Replying to "),
         if (reply != null)
           TextSpan(
-            text: message!.isFromMe! ? 'Yourself' : message!.handleRelation.target?.displayName ?? 'Unknown',
-            style: context.textTheme.bodyMedium!.copyWith(
-              fontWeight: isIOS ? FontWeight.bold : FontWeight.w400,
-            ),
+            children: MessageHelper.buildEmojiText(
+                message!.isFromMe! ? 'Yourself' : message!.handleRelation.target?.displayName ?? 'Unknown',
+                context.textTheme.bodyMedium!.copyWith(
+                  fontWeight: isIOS ? FontWeight.bold : FontWeight.w400,
+                )),
           ),
         if (date != null)
           TextSpan(
@@ -180,11 +187,12 @@ class _ReplyText extends StatelessWidget {
         if (!isIOS) const TextSpan(text: "\n"),
         if (reply != null)
           TextSpan(
-            text: "${isIOS ? " - " : ""}${_getNotificationText()}",
-            style: context.textTheme.bodyMedium!
+              children: MessageHelper.buildEmojiText(
+            "${isIOS ? " - " : ""}${_getNotificationText()}",
+            context.textTheme.bodyMedium!
                 .copyWith(fontStyle: isIOS ? FontStyle.italic : null)
                 .apply(fontSizeFactor: isIOS ? 1 : 1.15),
-          ),
+          )),
       ]),
       style: context.textTheme.labelLarge!.copyWith(
         color: context.theme.colorScheme.onSurfaceVariant,

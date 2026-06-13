@@ -1,12 +1,12 @@
 import 'dart:async';
 
+import 'package:bluebubbles/services/backend/interfaces/chat_interface.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/html/attachment.dart';
 import 'package:bluebubbles/database/html/handle.dart';
 import 'package:bluebubbles/database/html/message.dart';
 import 'package:bluebubbles/services/services.dart';
-import 'package:bluebubbles/utils/logger/logger.dart';
-import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 
@@ -64,18 +64,16 @@ class Chat {
   String? textFieldText;
   List<String> textFieldAttachments = [];
   Message? _latestMessage;
-  Message get latestMessage {
-    if (_latestMessage != null) return _latestMessage!;
-    _latestMessage = Chat.getMessages(this, limit: 1, getDetails: true).firstOrNull ??
-        Message(
-          dateCreated: DateTime.fromMillisecondsSinceEpoch(0),
-          guid: guid,
-        );
-    return _latestMessage!;
+
+  /// Non-relation backing for web (no ObjectBox). Mirrors the IO chat API.
+  Message? get dbLatestMessage => _latestMessage;
+  DateTime? dbOnlyLatestMessageDate;
+
+  void setLatestMessage(Message m) {
+    _latestMessage = m;
+    dbOnlyLatestMessageDate = m.dateCreated;
   }
 
-  set latestMessage(Message m) => _latestMessage = m;
-  DateTime? dbOnlyLatestMessageDate;
   DateTime? dateDeleted;
   int? style;
   bool lockChatName;
@@ -124,7 +122,7 @@ class Chat {
     pinIndex = pinnedIndex;
     if (textFieldAttachments.isEmpty) textFieldAttachments = [];
     this.participants = participants ?? [];
-    _latestMessage = latestMessage;
+    if (latestMessage != null) dbOnlyLatestMessageDate ??= latestMessage.dateCreated;
   }
 
   factory Chat.fromMap(Map<String, dynamic> json) {
@@ -279,9 +277,9 @@ class Chat {
           SettingsSvc.settings.enablePrivateAPI.value &&
           SettingsSvc.settings.privateMarkChatAsRead.value) {
         if (!hasUnread && autoSendReadReceipts!) {
-          HttpSvc.markChatRead(guid);
+          HttpSvc.chat.markRead(guid);
         } else if (hasUnread) {
-          HttpSvc.markChatUnread(guid);
+          HttpSvc.chat.markUnread(guid);
         }
       }
     } catch (_) {}
@@ -292,7 +290,7 @@ class Chat {
   Future<Chat> addMessage(Message message,
       {bool changeUnreadStatus = true, bool checkForMessageText = true, bool clearNotificationsIfFromMe = true}) async {
     // Save the message
-    Message? latest = latestMessage;
+    Message? latest = _latestMessage;
     Message? newMessage;
 
     try {
@@ -309,10 +307,10 @@ class Chat {
     // If the message was saved correctly, update this chat's latestMessage info,
     // but only if the incoming message's date is newer
     if ((newMessage?.id != null || kIsWeb) && checkForMessageText) {
-      isNewer = message.dateCreated!.isAfter(latest.dateCreated!) ||
-          (message.guid != latest.guid && message.dateCreated == latest.dateCreated);
+      isNewer = message.dateCreated!.isAfter(latest?.dateCreated ?? DateTime.fromMillisecondsSinceEpoch(0)) ||
+          (message.guid != latest?.guid && message.dateCreated == latest?.dateCreated);
       if (isNewer) {
-        _latestMessage = message;
+        setLatestMessage(message);
         dateDeleted = null;
         // ignore: argument_type_not_assignable, return_of_invalid_type, invalid_assignment, for_in_of_invalid_element_type
         await ChatsSvc.addChat(this);
@@ -441,7 +439,7 @@ class Chat {
     this.autoSendReadReceipts = autoSendReadReceipts;
     save(updateAutoSendReadReceipts: true);
     if (autoSendReadReceipts ?? SettingsSvc.settings.privateMarkChatAsRead.value) {
-      HttpSvc.markChatRead(guid);
+      HttpSvc.chat.markRead(guid);
     }
     return this;
   }
@@ -451,7 +449,7 @@ class Chat {
     this.autoSendTypingIndicators = autoSendTypingIndicators;
     save(updateAutoSendTypingIndicators: true);
     if (!(autoSendTypingIndicators ?? SettingsSvc.settings.privateSendTypingIndicators.value)) {
-      SocketSvc.sendMessage("stopped-typing", {"chatGuid": guid});
+      unawaited(ChatInterface.stopTyping(chatGuid: guid));
     }
     return this;
   }
@@ -518,7 +516,7 @@ class Chat {
     hasUnreadMessage ??= other.hasUnreadMessage;
     isArchived ??= other.isArchived;
     isPinned ??= other.isPinned;
-    _latestMessage ??= other.latestMessage;
+    if (_latestMessage == null && other._latestMessage != null) setLatestMessage(other._latestMessage!);
     muteArgs ??= other.muteArgs;
     title ??= other.title;
     dateDeleted ??= other.dateDeleted;
@@ -542,7 +540,8 @@ class Chat {
     if (a.isPinned! && !b.isPinned!) return -1;
 
     // Compare the last message dates (negate to sort newest first)
-    return -(a.latestMessage.dateCreated!.compareTo(b.latestMessage.dateCreated!));
+    return -((a.dbOnlyLatestMessageDate ?? DateTime.fromMillisecondsSinceEpoch(0))
+        .compareTo(b.dbOnlyLatestMessageDate ?? DateTime.fromMillisecondsSinceEpoch(0)));
   }
 
   static Future<void> getIcon(Chat c, {bool force = false}) async {}

@@ -354,18 +354,19 @@ class GoBackAction extends Action<GoBackIntent> {
 }
 
 void _sendReactionHelper(Chat c, Message selected, String t) {
-  OutgoingMsgHandler.queue(OutgoingItem(
-    type: QueueType.sendMessage,
-    chat: c,
-    message: Message(
-      associatedMessageGuid: selected.guid,
-      associatedMessageType: t,
-      dateCreated: DateTime.now(),
-      hasAttachments: false,
-      isFromMe: true,
-      handleId: 0,
+  OutgoingMsgHandler.queue(
+    OutgoingReaction(
+      chat: c,
+      message: Message(
+        associatedMessageGuid: selected.guid,
+        associatedMessageType: t,
+        dateCreated: DateTime.now(),
+        hasAttachments: false,
+        isFromMe: true,
+        handleId: 0,
+      ),
+      selectedMessage: selected,
+      reaction: t,
     ),
-    selected: selected,
-    reaction: t,
-  ));
+  );
 }

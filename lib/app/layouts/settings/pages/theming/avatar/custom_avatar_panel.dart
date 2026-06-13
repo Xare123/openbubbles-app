@@ -7,7 +7,6 @@ import 'package:bluebubbles/app/layouts/settings/pages/theming/avatar/avatar_cro
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:universal_io/io.dart';
 
 class CustomAvatarPanel extends StatefulWidget {
   const CustomAvatarPanel({super.key});
@@ -104,22 +103,22 @@ class _CustomAvatarPanelState extends State<CustomAvatarPanel> with ThemeHelpers
                                           style: context.theme.textTheme.bodyLarge!
                                               .copyWith(color: context.theme.colorScheme.primary)),
                                       onPressed: () async {
-                                        File file = File(chat.customAvatarPath!);
-                                        file.delete();
-                                        chat.customAvatarPath = null;
-                                        await chat.saveAsync(updateCustomAvatarPath: true);
+                                        await ChatsSvc.setChatCustomAvatarPath(chat, null);
                                         Navigator.of(context, rootNavigator: true).pop();
                                       }),
                                   TextButton(
                                       child: Text("Set New",
                                           style: context.theme.textTheme.bodyLarge!
                                               .copyWith(color: context.theme.colorScheme.primary)),
-                                      onPressed: () {
+                                      onPressed: () async {
                                         Navigator.of(context).pop();
-                                        NavigationSvc.pushSettings(
+                                        final result = await NavigationSvc.pushSettings(
                                           context,
                                           AvatarCrop(chat: chat),
                                         );
+                                        if (result is String) {
+                                          await ChatsSvc.setChatCustomAvatarPath(chat, result);
+                                        }
                                       }),
                                 ]);
                           },
@@ -128,7 +127,10 @@ class _CustomAvatarPanelState extends State<CustomAvatarPanel> with ThemeHelpers
                         NavigationSvc.pushSettings(
                           context,
                           AvatarCrop(chat: chat),
-                        );
+                        ).then((result) async {
+                          if (result is! String) return;
+                          await ChatsSvc.setChatCustomAvatarPath(chat, result);
+                        });
                       }
                     },
                   );

@@ -1,5 +1,4 @@
 import 'package:audio_waveforms/audio_waveforms.dart';
-import 'package:bluebubbles/app/components/custom_text_editing_controllers.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/effects/send_effect_picker.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/attachment/audio_player.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/text_field/send_button.dart';
@@ -263,8 +262,10 @@ class _RecordingButton extends StatelessWidget {
         return;
       }
       await recorderController!.record(
-        sampleRate: 44100,
-        bitRate: 320000,
+        recorderSettings: const RecorderSettings(
+          sampleRate: 44100,
+          bitRate: 320000,
+        ),
       );
       return;
     }

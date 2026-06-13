@@ -5,7 +5,7 @@ import 'dart:ui';
 import 'package:adaptive_theme/adaptive_theme.dart';
 import 'package:async_task/async_task_extension.dart';
 import 'package:bitsdojo_window/bitsdojo_window.dart';
-import 'package:bluebubbles/app/wrappers/bb_annotated_region.dart';
+import 'package:bluebubbles/app/wrappers/bb_scaffold.dart';
 import 'package:bluebubbles/app/components/custom/custom_error_box.dart';
 import 'package:bluebubbles/helpers/backend/startup_tasks.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
@@ -154,25 +154,23 @@ Future<Null> initApp(bool bubble, List<String> arguments) async {
           Display primary = await ScreenRetriever.instance.getPrimaryDisplay();
 
           Size size = await windowManager.getSize();
-          double width = PrefsSvc.i.getDouble("window-width") ?? size.width;
-          double height = PrefsSvc.i.getDouble("window-height") ?? size.height;
+          double width = PrefsSvc.desktop.getWindowWidth() ?? size.width;
+          double height = PrefsSvc.desktop.getWindowHeight() ?? size.height;
 
           width = width.clamp(300, max(300, primary.size.width));
           height = height.clamp(300, max(300, primary.size.height));
           await windowManager.setSize(Size(width, height));
-          await PrefsSvc.i.setDouble("window-width", width);
-          await PrefsSvc.i.setDouble("window-height", height);
+          await PrefsSvc.desktop.setWindowDimensions(width: width, height: height);
 
           await windowManager.setAlignment(Alignment.center);
           Offset offset = await windowManager.getPosition();
-          double? posX = PrefsSvc.i.getDouble("window-x") ?? offset.dx;
-          double? posY = PrefsSvc.i.getDouble("window-y") ?? offset.dy;
+          double? posX = PrefsSvc.desktop.getWindowX() ?? offset.dx;
+          double? posY = PrefsSvc.desktop.getWindowY() ?? offset.dy;
 
           posX = posX.clamp(0, max(0, primary.size.width - width));
           posY = posY.clamp(0, max(0, primary.size.height - height));
           await windowManager.setPosition(Offset(posX, posY), animate: true);
-          await PrefsSvc.i.setDouble("window-x", posX);
-          await PrefsSvc.i.setDouble("window-y", posY);
+          await PrefsSvc.desktop.setWindowOffsets(x: posX, y: posY);
 
           await windowManager.setTitle('OpenBubbles');
           if (arguments.firstOrNull != "minimized") {
@@ -245,15 +243,13 @@ class DesktopWindowListener extends WindowListener {
   @override
   void onWindowResized() async {
     Size size = await windowManager.getSize();
-    await PrefsSvc.i.setDouble("window-width", size.width);
-    await PrefsSvc.i.setDouble("window-height", size.height);
+    await PrefsSvc.desktop.setWindowDimensions(width: size.width, height: size.height);
   }
 
   @override
   void onWindowMoved() async {
     Offset offset = await windowManager.getPosition();
-    await PrefsSvc.i.setDouble("window-x", offset.dx);
-    await PrefsSvc.i.setDouble("window-y", offset.dy);
+    await PrefsSvc.desktop.setWindowOffsets(x: offset.dx, y: offset.dy);
   }
 
   @override
@@ -369,6 +365,7 @@ class Main extends StatelessWidget {
                             .then((result) {
                           isAuthing = false;
                           if (result) {
+                            if (!context.mounted) return;
                             SecureApplicationProvider.of(context, listen: false)!.authSuccess(unlock: true);
                             if (kIsDesktop) {
                               Future.delayed(Duration.zero, () {
@@ -480,7 +477,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver, TrayListener {
       };
       /* ----- SERVER VERSION CHECK ----- */
       if (kIsWeb && SettingsSvc.settings.finishedSetup.value) {
-        final serverDetails = await SettingsSvc.getServerDetails();
+        final serverDetails = SettingsSvc.getServerDetails();
         if (!serverDetails.minimumWebSupportedVersion) {
           setState(() {
             serverCompatible = false;
@@ -619,52 +616,41 @@ class _HomeState extends State<Home> with WidgetsBindingObserver, TrayListener {
   /// Render
   @override
   Widget build(BuildContext context) {
-    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
-      systemNavigationBarColor: SettingsSvc.settings.immersiveMode.value
-          ? Colors.transparent
-          : context.theme.colorScheme.surface, // navigation bar color
-      systemNavigationBarIconBrightness: context.theme.colorScheme.brightness.opposite,
-      statusBarColor: Colors.transparent, // status bar color
-      statusBarIconBrightness: context.theme.colorScheme.brightness.opposite,
-    ));
-
-    return BBAnnotatedRegion(
-      child: Actions(
-        actions: {
-          OpenSettingsIntent: OpenSettingsAction(context),
-          OpenNewChatCreatorIntent: OpenNewChatCreatorAction(context),
-          OpenSearchIntent: OpenSearchAction(context),
-          OpenNextChatIntent: OpenNextChatAction(context),
-          OpenPreviousChatIntent: OpenPreviousChatAction(context),
-          StartIncrementalSyncIntent: StartIncrementalSyncAction(),
-          GoBackIntent: GoBackAction(context),
-        },
-        child: Obx(() => Scaffold(
-              backgroundColor: context.theme.colorScheme.surface.themeOpacity(context),
-              body: Builder(
-                builder: (BuildContext context) {
-                  if (SettingsSvc.settings.finishedSetup.value) {
-                    if (!serverCompatible && kIsWeb) {
-                      return const FailureToStart(
-                        otherTitle: "Server version too low, please upgrade!",
-                        e: "Required Server Version: v0.2.0",
-                      );
-                    }
-                    return ConversationList(
-                      showArchivedChats: false,
-                      showUnknownSenders: false,
-                    );
-                  } else {
-                    return PopScope(
-                      canPop: false,
-                      child: TitleBarWrapper(
-                          child: kIsWeb || kIsDesktop ? const SetupView() : SplashScreen(shouldNavigate: fullyLoaded)),
+    return Actions(
+      actions: {
+        OpenSettingsIntent: OpenSettingsAction(context),
+        OpenNewChatCreatorIntent: OpenNewChatCreatorAction(context),
+        OpenSearchIntent: OpenSearchAction(context),
+        OpenNextChatIntent: OpenNextChatAction(context),
+        OpenPreviousChatIntent: OpenPreviousChatAction(context),
+        StartIncrementalSyncIntent: StartIncrementalSyncAction(),
+        GoBackIntent: GoBackAction(context),
+      },
+      child: Obx(() => BBScaffold(
+            backgroundColor: context.theme.colorScheme.surface.themeOpacity(context),
+            body: Builder(
+              builder: (BuildContext context) {
+                if (SettingsSvc.settings.finishedSetup.value) {
+                  if (!serverCompatible && kIsWeb) {
+                    return const FailureToStart(
+                      otherTitle: "Server version too low, please upgrade!",
+                      e: "Required Server Version: v0.2.0",
                     );
                   }
-                },
-              ),
-            )),
-      ),
+                  return ConversationList(
+                    showArchivedChats: false,
+                    showUnknownSenders: false,
+                  );
+                } else {
+                  return PopScope(
+                    canPop: false,
+                    child: TitleBarWrapper(
+                        child: kIsWeb || kIsDesktop ? const SetupView() : SplashScreen(shouldNavigate: fullyLoaded)),
+                  );
+                }
+              },
+            ),
+          )),
     );
   }
 }

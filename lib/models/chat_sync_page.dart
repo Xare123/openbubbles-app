@@ -1,5 +1,5 @@
-import 'package:flutter/foundation.dart';
 import 'package:bluebubbles/database/models.dart';
+import 'package:flutter/foundation.dart';
 
 @immutable
 class ChatSyncPage {
@@ -13,7 +13,7 @@ class ChatSyncPage {
 @immutable
 class MessageSyncPage {
   final double progress;
-  final List<Message> messages;
+  final List<Map<String, dynamic>> messages;
 
   const MessageSyncPage(this.progress, this.messages);
 }

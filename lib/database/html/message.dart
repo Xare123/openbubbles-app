@@ -263,10 +263,6 @@ class Message {
     return this;
   }
 
-  List<Attachment?>? fetchAttachments() {
-    return attachments;
-  }
-
   Chat? getChat() {
     return null;
   }

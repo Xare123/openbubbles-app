@@ -532,20 +532,22 @@ class CardDavClient {
   }
 
   Future<ContactV2> _myContactFromVCard(String vcard, Uri href) async {
-    final contact = fc.Contact.fromVCard(vcard);
+    final parsed = fc.FlutterContacts.vCard.import(vcard);
+    final contact = parsed.isNotEmpty ? parsed.first : const fc.Contact();
+    final existingPhoto = contact.photo?.fullSize ?? contact.photo?.thumbnail;
+
     final inlinePhoto = _extractInlinePhotoBytes(vcard);
     if (inlinePhoto != null && inlinePhoto.isNotEmpty) {
-      contact.photo = inlinePhoto;
-      return _toMyContact(contact);
+      return _toMyContact(contact, photo: inlinePhoto);
     }
     final photoUri = _extractPhotoUri(vcard, href);
-    if (photoUri != null && (contact.photo == null || contact.photo!.isEmpty)) {
+    if (photoUri != null && (existingPhoto == null || existingPhoto.isEmpty)) {
       final photoBytes = await _downloadPhoto(photoUri);
       if (photoBytes != null && photoBytes.isNotEmpty) {
-        contact.photo = photoBytes;
+        return _toMyContact(contact, photo: photoBytes);
       }
     }
-    return _toMyContact(contact);
+    return _toMyContact(contact, photo: existingPhoto);
   }
 
   Uint8List? _extractInlinePhotoBytes(String vcard) {
@@ -633,28 +635,28 @@ class CardDavClient {
     return results.whereType<T>().toList();
   }
 
-  ContactV2 _toMyContact(fc.Contact contact) {
+  ContactV2 _toMyContact(fc.Contact contact, {Uint8List? photo}) {
     final name = contact.name;
     final phones = contact.phones.map((p) => p.number.trim()).where((p) => p.isNotEmpty).toList();
     final emails = contact.emails.map((e) => e.address.trim()).where((e) => e.isNotEmpty).toList();
     final converted = ContactV2(
-      nativeContactId: contact.id,
-      displayName: contact.displayName,
+      nativeContactId: contact.id ?? '',
+      displayName: contact.displayName ?? '',
       addresses: [
         ...phones.map(ContactV2.normalizePhoneNumber),
         ...emails.map(ContactV2.normalizeEmail),
       ],
-      firstName: name.first,
-      lastName: name.last,
-      middleName: name.middle,
-      namePrefix: name.prefix,
-      nameSuffix: name.suffix,
-      nickname: name.nickname,
+      firstName: name?.first,
+      lastName: name?.last,
+      middleName: name?.middle,
+      namePrefix: name?.prefix,
+      nameSuffix: name?.suffix,
+      nickname: name?.nickname,
       isNative: false,
     );
     converted.phoneNumbers = phones.map((e) => ContactPhone(number: e, label: '')).toList();
     converted.emailAddresses = emails.map((e) => ContactEmail(address: e, label: '')).toList();
-    final avatar = contact.photoOrThumbnail;
+    final avatar = photo;
     if (avatar != null && avatar.isNotEmpty) {
       final avatarsDir = Directory(FilesystemSvc.contactAvatarsPath);
       if (!avatarsDir.existsSync()) avatarsDir.createSync(recursive: true);

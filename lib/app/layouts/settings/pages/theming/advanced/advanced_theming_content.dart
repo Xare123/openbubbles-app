@@ -32,7 +32,6 @@ class _AdvancedThemingContentState extends State<AdvancedThemingContent> with Th
   final RxDouble master = 1.0.obs;
   final Rxn<ThemeData> oldData = Rxn<ThemeData>();
   final _controller = ScrollController();
-  Worker? _monetWorker;
 
   @override
   void initState() {
@@ -43,10 +42,7 @@ class _AdvancedThemingContentState extends State<AdvancedThemingContent> with Th
       currentTheme = ThemeStruct.getLightTheme();
     }
     allThemes = ThemeStruct.getThemes();
-    editable.value = !currentTheme.isPreset && SettingsSvc.settings.monetTheming.value == Monet.none;
-    _monetWorker = ever(SettingsSvc.settings.monetTheming, (_) {
-      editable.value = !currentTheme.isPreset && SettingsSvc.settings.monetTheming.value == Monet.none;
-    });
+    editable.value = !currentTheme.isPreset;
 
     widget.controller.stream.listen((event) {
       BuildContext _context = context;
@@ -66,7 +62,6 @@ class _AdvancedThemingContentState extends State<AdvancedThemingContent> with Th
 
   @override
   void dispose() {
-    _monetWorker?.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -175,12 +170,9 @@ class _AdvancedThemingContentState extends State<AdvancedThemingContent> with Th
 
                   final List<String> toSave = [];
                   if (value.name == "Music Theme ☀" || value.name == "Music Theme 🌙") {
-                    // disable monet theming if music theme enabled
-                    SettingsSvc.settings.monetTheming.value = Monet.none;
-                    toSave.add('monetTheming');
-                    await MethodChannelSvc.invokeMethod("request-notification-listener-permission");
+                    await MethodChannelSvc.actions.requestNotificationListenerPermission();
                     try {
-                      await MethodChannelSvc.invokeMethod("start-notification-listener");
+                      await MethodChannelSvc.actions.startNotificationListener();
                       SettingsSvc.settings.colorsFromMedia.value = true;
                       toSave.add('colorsFromMedia');
                     } catch (e) {
@@ -201,8 +193,10 @@ class _AdvancedThemingContentState extends State<AdvancedThemingContent> with Th
                     var allThemes = ThemeStruct.getThemes();
                     var currentLight = ThemeStruct.getLightTheme();
                     var currentDark = ThemeStruct.getDarkTheme();
-                    await PrefsSvc.i.setString("previous-light", currentLight.name);
-                    await PrefsSvc.i.setString("previous-dark", currentDark.name);
+                    await PrefsSvc.theme.setPreviousThemes(
+                      lightTheme: currentLight.name,
+                      darkTheme: currentDark.name,
+                    );
                     await ThemeSvc.changeTheme(context,
                         light: allThemes.firstWhere((element) => element.name == "Music Theme ☀"),
                         dark: allThemes.firstWhere((element) => element.name == "Music Theme 🌙"));
@@ -220,7 +214,7 @@ class _AdvancedThemingContentState extends State<AdvancedThemingContent> with Th
                     await ThemeSvc.changeTheme(context, light: value);
                   }
                   currentTheme = value;
-                  editable.value = !currentTheme.isPreset && SettingsSvc.settings.monetTheming.value == Monet.none;
+                  editable.value = !currentTheme.isPreset;
 
                   EventDispatcherSvc.emit('theme-update', null);
                 },
@@ -259,7 +253,7 @@ class _AdvancedThemingContentState extends State<AdvancedThemingContent> with Th
                           subtitle: "Overwrite this theme by generating a color palette from an image",
                           backgroundColor: tileColor,
                           onTap: () async {
-                            final res = await FilePicker.platform.pickFiles(
+                            final res = await FilePicker.pickFiles(
                                 withData: true, type: FileType.custom, allowedExtensions: ['png', 'jpg', 'jpeg']);
                             if (res == null || res.files.isEmpty || res.files.first.bytes == null) return;
                             final image = MemoryImage(res.files.first.bytes!);
@@ -301,33 +295,32 @@ class _AdvancedThemingContentState extends State<AdvancedThemingContent> with Th
                     "Tap to edit the base color\nLong press to edit the color for elements displayed on top of the base color\nDouble tap to learn how the colors are used",
                 unlimitedSpace: true,
               ),
-              Obx(() =>
-                  SettingsSvc.settings.monetTheming.value != Monet.none || SettingsSvc.settings.useDesktopAccent.value
-                      ? Padding(
-                          padding: const EdgeInsets.only(left: 20.0, right: 20.0, bottom: 15.0),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Icon(
-                                iOS ? CupertinoIcons.info : Icons.info_outline,
-                                size: 20,
-                                color: context.theme.colorScheme.primary,
-                              ),
-                              const SizedBox(width: 20),
-                              Expanded(
-                                child: Text(
-                                  Platform.isWindows
-                                      ? "Some of these colors are generated from your Windows accent color. Disable using the Windows accent color to view the original theme colors."
-                                      : "You have Material You theming enabled, so some or all of these colors may be generated by Monet. Disable Material You to view the original theme colors.",
-                                  style: context.theme.textTheme.bodySmall!
-                                      .copyWith(color: context.theme.colorScheme.onSurfaceVariant),
-                                ),
-                              ),
-                            ],
+              Obx(() => ThemeSvc.isAnyMaterialYouSelected || SettingsSvc.settings.useDesktopAccent.value
+                  ? Padding(
+                      padding: const EdgeInsets.only(left: 20.0, right: 20.0, bottom: 15.0),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Icon(
+                            iOS ? CupertinoIcons.info : Icons.info_outline,
+                            size: 20,
+                            color: context.theme.colorScheme.primary,
                           ),
-                        )
-                      : const SizedBox.shrink()),
+                          const SizedBox(width: 20),
+                          Expanded(
+                            child: Text(
+                              Platform.isWindows
+                                  ? "Some of these colors are generated from your Windows accent color. Disable using the Windows accent color to view the original theme colors."
+                                  : "You have Material You theming enabled, so some or all of these colors may be generated by Monet. Disable Material You to view the original theme colors.",
+                              style: context.theme.textTheme.bodySmall!
+                                  .copyWith(color: context.theme.colorScheme.onSurfaceVariant),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : const SizedBox.shrink()),
             ]),
           ),
           SliverPadding(
@@ -383,9 +376,9 @@ class _AdvancedThemingContentState extends State<AdvancedThemingContent> with Th
                     map["data"]["textTheme"]["font"] = value;
                     currentTheme.data = ThemeStruct.fromMap(map).data;
                     currentTheme.save();
-                    if (currentTheme.name == PrefsSvc.i.getString("selected-dark")) {
+                    if (currentTheme.name == PrefsSvc.theme.getSelectedDarkTheme()) {
                       await ThemeSvc.changeTheme(context, dark: currentTheme);
-                    } else if (currentTheme.name == PrefsSvc.i.getString("selected-light")) {
+                    } else if (currentTheme.name == PrefsSvc.theme.getSelectedLightTheme()) {
                       await ThemeSvc.changeTheme(context, light: currentTheme);
                     }
                   },
@@ -424,9 +417,9 @@ class _AdvancedThemingContentState extends State<AdvancedThemingContent> with Th
                           }
                           currentTheme.data = ThemeStruct.fromMap(map).data;
                           currentTheme.save();
-                          if (currentTheme.name == PrefsSvc.i.getString("selected-dark")) {
+                          if (currentTheme.name == PrefsSvc.theme.getSelectedDarkTheme()) {
                             await ThemeSvc.changeTheme(context, dark: currentTheme);
-                          } else if (currentTheme.name == PrefsSvc.i.getString("selected-light")) {
+                          } else if (currentTheme.name == PrefsSvc.theme.getSelectedLightTheme()) {
                             await ThemeSvc.changeTheme(context, light: currentTheme);
                           }
                         },
@@ -455,9 +448,9 @@ class _AdvancedThemingContentState extends State<AdvancedThemingContent> with Th
                         ThemeStruct.defaultTextSizes.values.toList()[index] * val;
                     currentTheme.data = ThemeStruct.fromMap(map).data;
                     currentTheme.save();
-                    if (currentTheme.name == PrefsSvc.i.getString("selected-dark")) {
+                    if (currentTheme.name == PrefsSvc.theme.getSelectedDarkTheme()) {
                       await ThemeSvc.changeTheme(context, dark: currentTheme);
-                    } else if (currentTheme.name == PrefsSvc.i.getString("selected-light")) {
+                    } else if (currentTheme.name == PrefsSvc.theme.getSelectedLightTheme()) {
                       await ThemeSvc.changeTheme(context, light: currentTheme);
                     }
                   },

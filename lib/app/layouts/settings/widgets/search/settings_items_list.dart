@@ -1,8 +1,9 @@
+import 'package:bluebubbles/utils/logger/logger.dart';
+
 import '../../pages/misc/misc_panel.dart';
 import '../../pages/scheduling/message_reminders_panel.dart';
 import '../../pages/scheduling/scheduled_messages_panel.dart';
 import '../tiles/connection_server_tile.dart';
-import '../tiles/contact_upload_progress.dart';
 import '../tiles/private_api_tile.dart';
 import '../tiles/redacted_mode_tile.dart';
 import 'package:adaptive_theme/adaptive_theme.dart';
@@ -23,6 +24,7 @@ import 'package:bluebubbles/app/layouts/settings/pages/system/device_panel.dart'
 import 'package:bluebubbles/app/layouts/settings/pages/server/server_management_panel.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/system/notification_panel.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/theming/theming_panel.dart';
+import 'package:bluebubbles/app/layouts/settings/widgets/search/settings_items_actions.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/content/next_button.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/settings_widgets.dart';
 import 'package:bluebubbles/database/database.dart';
@@ -31,13 +33,10 @@ import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/main.dart';
 import 'package:bluebubbles/services/services.dart';
-import 'package:bluebubbles/utils/logger/logger.dart';
-import 'package:dio/dio.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart' hide Response;
-import 'package:in_app_review/in_app_review.dart';
 import 'package:universal_io/io.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'searchable_setting_item.dart';
@@ -51,7 +50,7 @@ List<Widget> buildSettingItemList({
   required bool material,
   required TextStyle iosSubtitle,
   required TextStyle materialSubtitle,
-  required dynamic ns,
+  required NavigatorService ns,
   required RxnDouble progress,
   required RxnInt totalSize,
   required RxBool uploadingContacts,
@@ -86,7 +85,7 @@ List<Widget> buildSettingItemList({
                 ns.pushAndRemoveSettingsUntil(
                   context,
                   const ProfilePanel(),
-                  (route) => route.isFirst,
+                  (Route route) => route.isFirst,
                 );
               },
               leading: const ContactAvatarWidget(
@@ -770,59 +769,12 @@ List<Widget> buildSettingItemList({
             title: "Export Contacts", // Title to search
             child: SettingsTile(
               backgroundColor: tileColor,
-              onTap: () async {
-                BuildContext? dialogCtx;
-
-                void closeDialog() {
-                  Get.closeAllSnackbars();
-                  if (dialogCtx != null) {
-                    Navigator.of(dialogCtx!).pop();
-                  }
-                  Future.delayed(const Duration(milliseconds: 400), () {
-                    progress.value = null;
-                    totalSize.value = null;
-                  });
-                }
-
-                showDialog(
-                  context: context,
-                  builder: (dialogContext) {
-                    dialogCtx = dialogContext;
-                    return ContactUploadProgress(
-                      progress: progress,
-                      totalSize: totalSize,
-                      uploadingContacts: uploadingContacts,
-                      onClose: closeDialog,
-                    );
-                  },
-                );
-
-                final contacts = <Map<String, dynamic>>[];
-                final allContacts = await ContactsSvcV2.getAllContacts();
-                for (ContactV2 c in allContacts) {
-                  var map = c.toMap();
-                  contacts.add(map);
-                }
-                HttpSvc.createContact(contacts, onSendProgress: (count, total) {
-                  uploadingContacts.value = true;
-                  progress.value = count / total;
-                  totalSize.value = total;
-                  if (progress.value == 1.0) {
-                    uploadingContacts.value = false;
-                    showSnackbar("Notice", "Successfully exported contacts to server");
-                  }
-                }).catchError((err, stack) {
-                  if (err is Response) {
-                    Logger.error(err.data["error"]["message"].toString(), error: err, trace: stack);
-                  } else {
-                    Logger.error("Failed to create contact!", error: err, trace: stack);
-                  }
-
-                  closeDialog.call();
-                  showSnackbar("Error", "Failed to export contacts to server");
-                  return Response(requestOptions: RequestOptions(path: ''));
-                });
-              },
+              onTap: () => SettingsItemsActions.exportContacts(
+                context: context,
+                progress: progress,
+                totalSize: totalSize,
+                uploadingContacts: uploadingContacts,
+              ),
               leading: const SettingsLeadingIcon(
                 iosIcon: CupertinoIcons.group_solid,
                 materialIcon: Icons.contacts,
@@ -847,10 +799,7 @@ List<Widget> buildSettingItemList({
             title: "Leave Us a Review",
             subtitle:
                 "Enjoying the app? Leave us a review on the ${Platform.isAndroid ? 'Google Play Store' : 'Microsoft Store'}!",
-            onTap: () async {
-              final InAppReview inAppReview = InAppReview.instance;
-              inAppReview.openStoreListing(microsoftStoreId: '9P3XF8KJ0LSM');
-            },
+            onTap: SettingsItemsActions.openStoreReview,
             leading: const SettingsLeadingIcon(
               iosIcon: CupertinoIcons.star_fill,
               materialIcon: Icons.star,
@@ -1208,16 +1157,18 @@ List<Widget> buildSettingItemList({
                             SettingsSvc.settings = Settings();
                             await SettingsSvc.settings.saveAsync();
 
-                            await PrefsSvc.i.clear();
-                            await PrefsSvc.i.setString("selected-dark", "OLED Dark");
-                            await PrefsSvc.i.setString("selected-light", "Bright White");
+                            await PrefsSvc.admin.clearAll();
+                            await PrefsSvc.theme.setSelectedThemes(
+                              darkTheme: "OLED Dark",
+                              lightTheme: "Bright White",
+                            );
                             Database.themes.putMany(ThemesService.defaultThemes);
 
                             await FCMData.deleteFcmData();
 
                             try {
                               if (FirebaseSvc.token != null) {
-                                await MethodChannelSvc.invokeMethod("firebase-delete-token");
+                                await MethodChannelSvc.actions.firebaseDeleteToken();
                               }
                             } catch (e, s) {
                               Logger.error("Failed to delete Firebase FCM token", error: e, trace: s);

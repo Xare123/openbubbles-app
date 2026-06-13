@@ -85,7 +85,7 @@ mixin CreateScheduledMixin<T extends StatefulWidget> on State<T> {
 
     Response response;
     if (existingMessage != null) {
-      response = await HttpSvc.updateScheduled(
+      response = await HttpSvc.message.updateScheduled(
         existingMessage!.id,
         selectedChat.value,
         messageController.text,
@@ -93,7 +93,7 @@ mixin CreateScheduledMixin<T extends StatefulWidget> on State<T> {
         scheduleMap,
       );
     } else {
-      response = await HttpSvc.createScheduled(
+      response = await HttpSvc.message.createScheduled(
         selectedChat.value,
         messageController.text,
         date.value.toUtc(),

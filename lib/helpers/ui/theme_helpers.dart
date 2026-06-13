@@ -23,11 +23,11 @@ class HexColor extends Color {
     if (other.runtimeType != runtimeType) {
       return false;
     }
-    return other is HexColor && other.toARGB32() == toARGB32();
+    return other is HexColor && other.value == value;
   }
 
   @override
-  int get hashCode => toARGB32().hashCode;
+  int get hashCode => value.hashCode;
 }
 
 @immutable
@@ -204,17 +204,13 @@ extension ColorSchemeHelpers on ColorScheme {
 
   Color get onSmsBubble => iMessageBubble == primary ? onPrimaryContainer : onPrimary;
 
-  Color bubble(BuildContext context, bool iMessage) => SettingsSvc.settings.monetTheming.value != Monet.none
-      ? (iMessage ? iMessageBubble : smsBubble)
-      : iMessage
-          ? (context.theme.extensions[BubbleColors] as BubbleColors?)?.iMessageBubbleColor ?? iMessageBubble
-          : (context.theme.extensions[BubbleColors] as BubbleColors?)?.smsBubbleColor ?? smsBubble;
+  Color bubble(BuildContext context, bool iMessage) => iMessage
+      ? (context.theme.extensions[BubbleColors] as BubbleColors?)?.iMessageBubbleColor ?? iMessageBubble
+      : (context.theme.extensions[BubbleColors] as BubbleColors?)?.smsBubbleColor ?? smsBubble;
 
-  Color onBubble(BuildContext context, bool iMessage) => SettingsSvc.settings.monetTheming.value != Monet.none
-      ? (iMessage ? oniMessageBubble : onSmsBubble)
-      : iMessage
-          ? (context.theme.extensions[BubbleColors] as BubbleColors?)?.oniMessageBubbleColor ?? oniMessageBubble
-          : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onSmsBubbleColor ?? onSmsBubble;
+  Color onBubble(BuildContext context, bool iMessage) => iMessage
+      ? (context.theme.extensions[BubbleColors] as BubbleColors?)?.oniMessageBubbleColor ?? oniMessageBubble
+      : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onSmsBubbleColor ?? onSmsBubble;
 }
 
 extension ColorHelpers on Color {
@@ -331,7 +327,7 @@ MaterialColor createMaterialColor(Color color) {
       1,
     );
   }
-  return MaterialColor(color.toARGB32(), swatch);
+  return MaterialColor(color.value, swatch);
 }
 
 List<Color> toColorGradient(String? str) {

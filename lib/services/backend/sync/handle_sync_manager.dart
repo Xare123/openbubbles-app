@@ -158,7 +158,7 @@ class HandleSyncManager extends SyncManager {
   }
 
   Future<int?> getHandleCount() async {
-    Response handleCountResponse = await HttpSvc.handleCount();
+    Response handleCountResponse = await HttpSvc.handle.handleCount();
     Map<String, dynamic> res = handleCountResponse.data;
     if (handleCountResponse.statusCode == 200) {
       return res["data"]["total"];
@@ -236,7 +236,7 @@ class HandleSyncManager extends SyncManager {
     for (int i = 0; i < batches; i++) {
       // Fetch the handles and throw an error if we don't get back a good response.
       // Throwing an error should cancel the sync
-      Response handlePage = await HttpSvc.handles(offset: i * countPerBatch, limit: countPerBatch);
+      Response handlePage = await HttpSvc.handle.handles(offset: i * countPerBatch, limit: countPerBatch);
       dynamic data = handlePage.data;
       if (handlePage.statusCode != 200) {
         throw HandleRequestException(

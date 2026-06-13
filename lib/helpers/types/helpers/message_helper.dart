@@ -1,53 +1,10 @@
-import 'dart:async';
-
 import 'package:bluebubbles/helpers/helpers.dart';
-import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
-import 'package:bluebubbles/services/backend/interfaces/message_interface.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 
 class MessageHelper {
-  static Future<List<Message>> bulkAddMessages(Chat? chat, List<dynamic> messages,
-      {bool checkForLatestMessageText = true, Function(int progress, int length)? onProgress}) async {
-    // Convert messages to map format for the interface
-    final messagesData = messages.map((item) => item as Map<String, dynamic>).toList();
-    final chatData = chat?.toMap();
-
-    // Track progress on the UI thread
-    int processedCount = 0;
-    final totalCount = messages.length;
-
-    // Report initial progress
-    if (onProgress != null) {
-      onProgress(processedCount, totalCount);
-    }
-
-    // Offload the heavy work to the isolate via the interface
-    // This processes messages in batches, handles DB operations, etc.
-    Logger.info('Starting bulk add of $totalCount messages via isolate', tag: "BulkIngest");
-
-    try {
-      final results = await MessageInterface.bulkAddMessages(
-        chatData: chatData,
-        messagesData: messagesData,
-        checkForLatestMessageText: checkForLatestMessageText,
-      );
-
-      // Report completion
-      if (onProgress != null) {
-        onProgress(totalCount, totalCount);
-      }
-
-      Logger.info('Completed bulk add of ${results.length} messages', tag: "BulkIngest");
-      return results;
-    } catch (ex, stacktrace) {
-      Logger.error('Failed to bulk add messages', error: ex, trace: stacktrace, tag: "BulkIngest");
-      rethrow;
-    }
-  }
-
   /// Removes duplicate associated message guids from a list of [associatedMessages]
   static List<Message> normalizedAssociatedMessages(List<Message> associatedMessages) {
     Set<String> guids = associatedMessages.map((e) => e.guid!).toSet();

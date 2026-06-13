@@ -1,13 +1,14 @@
 import 'dart:async';
 
-import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:universal_io/io.dart';
 import 'package:video_player/video_player.dart';
 
-/// Full-screen in-app camera screen backed by the CameraX API (Android) via
-/// the `camera` Flutter plugin. Supports both photo and video modes.
+/// Full-screen camera review screen. Launches the native system camera via
+/// [ImagePicker] immediately on push, then presents the captured photo/video
+/// for review with pinch-to-zoom, double-tap-to-zoom, and a Retake / Use bar.
 ///
 /// Returns the captured [XFile] via [Navigator.pop], or `null` if the user
 /// cancels. Only rendered on Android; callers should guard with
@@ -22,509 +23,141 @@ class CameraScreen extends StatefulWidget {
   State<CameraScreen> createState() => _CameraScreenState();
 }
 
-class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver {
-  List<CameraDescription> _cameras = [];
-  CameraController? _controller;
-  int _cameraIndex = 0;
-
-  late String _mode; // 'photo' or 'video'
-  bool _isRecording = false;
-  bool _isInitializing = true;
-  String? _initError;
-
-  FlashMode _flashMode = FlashMode.auto;
-
-  // Preview (after capture, before confirm)
+class _CameraScreenState extends State<CameraScreen> {
   XFile? _previewFile;
+  bool _isVideo = false;
 
-  // Video timer
-  Timer? _timer;
-  int _recordingSeconds = 0;
+  final TransformationController _previewTransformController = TransformationController();
+  Offset _previewDoubleTapPosition = Offset.zero;
 
   @override
   void initState() {
     super.initState();
-    _mode = widget.initialMode;
-    WidgetsBinding.instance.addObserver(this);
-    _initCamera();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _captureMedia());
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _timer?.cancel();
-    _controller?.dispose();
+    _previewTransformController.dispose();
     super.dispose();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) return;
-
-    if (state == AppLifecycleState.inactive) {
-      controller.dispose();
-    } else if (state == AppLifecycleState.resumed) {
-      _initControllerAt(_cameraIndex);
-    }
-  }
-
-  Future<void> _initCamera() async {
-    try {
-      _cameras = await availableCameras();
-      if (_cameras.isEmpty) {
-        setState(() {
-          _initError = 'No cameras found on this device.';
-          _isInitializing = false;
-        });
-        return;
-      }
-      // Prefer back camera as default
-      final backIndex = _cameras.indexWhere((c) => c.lensDirection == CameraLensDirection.back);
-      _cameraIndex = backIndex >= 0 ? backIndex : 0;
-      await _initControllerAt(_cameraIndex);
-    } catch (e) {
-      setState(() {
-        _initError = 'Failed to initialize camera: $e';
-        _isInitializing = false;
-      });
-    }
-  }
-
-  Future<void> _initControllerAt(int index) async {
-    final previous = _controller;
-    if (previous != null) {
-      await previous.dispose();
-    }
-
-    final controller = CameraController(
-      _cameras[index],
-      ResolutionPreset.max,
-      enableAudio: true,
-      imageFormatGroup: ImageFormatGroup.jpeg,
-    );
-
-    _controller = controller;
-
-    try {
-      await controller.initialize();
-      if (mounted) {
-        setState(() {
-          _isInitializing = false;
-          _initError = null;
-        });
-        // Apply current flash mode after initialization
-        await _applyFlashMode();
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _initError = 'Camera initialization failed: $e';
-          _isInitializing = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _applyFlashMode() async {
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) return;
-    try {
-      await controller.setFlashMode(_mode == 'video' && _flashMode == FlashMode.always ? FlashMode.torch : _flashMode);
-    } catch (_) {
-      // Not all devices support every flash mode — silently ignore.
-    }
-  }
-
-  Future<void> _flipCamera() async {
-    if (_cameras.length < 2) return;
-    if (_isRecording) return;
-    setState(() => _isInitializing = true);
-    _cameraIndex = (_cameraIndex + 1) % _cameras.length;
-    await _initControllerAt(_cameraIndex);
-  }
-
-  void _cycleFlash() {
-    if (_mode == 'video') {
-      // In video mode toggle torch on/off
-      setState(() {
-        _flashMode = _flashMode == FlashMode.torch ? FlashMode.off : FlashMode.torch;
-      });
+  Future<void> _captureMedia() async {
+    final picker = ImagePicker();
+    final XFile? file;
+    if (widget.initialMode == 'video') {
+      file = await picker.pickVideo(source: ImageSource.camera);
     } else {
-      final order = [FlashMode.auto, FlashMode.always, FlashMode.off];
-      final next = order[(order.indexOf(_flashMode) + 1) % order.length];
-      setState(() => _flashMode = next);
+      // imageQuality is intentionally omitted — any value, including 100,
+      // causes image_picker to re-encode the JPEG which loses native processing
+      // (HDR tone-mapping, computational photography, etc.).  Omitting it
+      // returns the file exactly as the camera app wrote it.
+      file = await picker.pickImage(source: ImageSource.camera);
     }
-    _applyFlashMode();
-  }
 
-  IconData get _flashIcon {
-    switch (_flashMode) {
-      case FlashMode.always:
-        return Icons.flash_on;
-      case FlashMode.off:
-        return Icons.flash_off;
-      case FlashMode.torch:
-        return Icons.flashlight_on;
-      case FlashMode.auto:
-        return Icons.flash_auto;
+    if (!mounted) return;
+
+    if (file == null) {
+      Navigator.of(context).pop(null);
+      return;
     }
+
+    setState(() {
+      _isVideo = widget.initialMode == 'video';
+      _previewFile = file;
+    });
   }
-
-  // ─── Capture ─────────────────────────────────────────────────────────────
-
-  Future<void> _takePhoto() async {
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) return;
-    if (controller.value.isTakingPicture) return;
-
-    try {
-      final file = await controller.takePicture();
-      if (mounted) setState(() => _previewFile = file);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to take photo: $e')),
-        );
-      }
-    }
-  }
-
-  Future<void> _startRecording() async {
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) return;
-    if (controller.value.isRecordingVideo) return;
-
-    try {
-      await controller.startVideoRecording();
-      setState(() {
-        _isRecording = true;
-        _recordingSeconds = 0;
-      });
-      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (mounted) setState(() => _recordingSeconds++);
-      });
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to start recording: $e')),
-        );
-      }
-    }
-  }
-
-  Future<void> _stopRecording() async {
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) return;
-    if (!controller.value.isRecordingVideo) return;
-
-    _timer?.cancel();
-
-    try {
-      final file = await controller.stopVideoRecording();
-      if (mounted) {
-        setState(() {
-          _isRecording = false;
-          _previewFile = file;
-        });
-      }
-    } catch (e) {
-      setState(() => _isRecording = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to stop recording: $e')),
-        );
-      }
-    }
-  }
-
-  void _onShutterTap() {
-    if (_mode == 'photo') {
-      _takePhoto();
-    } else {
-      if (_isRecording) {
-        _stopRecording();
-      } else {
-        _startRecording();
-      }
-    }
-  }
-
-  // ─── Timer display ────────────────────────────────────────────────────────
-
-  String get _timerLabel {
-    final m = (_recordingSeconds ~/ 60).toString().padLeft(2, '0');
-    final s = (_recordingSeconds % 60).toString().padLeft(2, '0');
-    return '$m:$s';
-  }
-
-  // ─── Build ────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
-    // Guard: only render on Android
     if (kIsWeb || !Platform.isAndroid) return const SizedBox.shrink();
 
     return Scaffold(
       backgroundColor: Colors.black,
-      body: SafeArea(
-        child: _isInitializing
-            ? const Center(child: CircularProgressIndicator(color: Colors.white))
-            : _initError != null
-                ? _buildError()
-                : _previewFile != null
-                    ? _buildPreview()
-                    : _buildCamera(),
-      ),
+      body: _previewFile != null ? _buildConfirmOverlay(_previewFile!) : const SizedBox.shrink(),
     );
   }
 
-  Widget _buildPreview() {
-    final file = _previewFile!;
-    final isVideo = _mode == 'video';
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        // Full-screen preview
-        Container(
-          color: Colors.black,
-          child: Center(
-            child: isVideo ? _VideoPreview(file: file) : Image.file(File(file.path), fit: BoxFit.contain),
-          ),
-        ),
-
-        // Close button
-        Positioned(
-          top: 8,
-          right: 0,
-          child: IconButton(
-            icon: const Icon(Icons.close, color: Colors.white, size: 28),
-            onPressed: () => Navigator.of(context).pop(null),
-          ),
-        ),
-
-        // Retake / Use bar
-        Positioned(
-          bottom: 0,
-          left: 0,
-          right: 0,
-          child: Container(
-            color: Colors.black54,
-            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 32),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                TextButton.icon(
-                  icon: const Icon(Icons.refresh, color: Colors.white),
-                  label: const Text('Retake', style: TextStyle(color: Colors.white, fontSize: 16)),
-                  onPressed: () => setState(() => _previewFile = null),
-                ),
-                TextButton.icon(
-                  icon: const Icon(Icons.check_circle_outline, color: Colors.white),
-                  label: const Text('Use', style: TextStyle(color: Colors.white, fontSize: 16)),
-                  onPressed: () => Navigator.of(context).pop(file),
-                ),
-              ],
+  Widget _buildConfirmOverlay(XFile file) {
+    return Container(
+      color: Colors.black,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Full-screen interactive preview (pinch-to-zoom + double-tap)
+          GestureDetector(
+            onDoubleTapDown: (d) => _previewDoubleTapPosition = d.localPosition,
+            onDoubleTap: () {
+              final isZoomedIn = _previewTransformController.value != Matrix4.identity();
+              if (isZoomedIn) {
+                _previewTransformController.value = Matrix4.identity();
+              } else {
+                final m = Matrix4.identity()
+                  ..translateByDouble(
+                    -_previewDoubleTapPosition.dx * (2.5 - 1),
+                    -_previewDoubleTapPosition.dy * (2.5 - 1),
+                    0,
+                    1,
+                  )
+                  ..scaleByDouble(2.5, 2.5, 1.0, 1.0);
+                _previewTransformController.value = m;
+              }
+            },
+            child: InteractiveViewer(
+              transformationController: _previewTransformController,
+              minScale: 1.0,
+              maxScale: 4.0,
+              boundaryMargin: EdgeInsets.zero,
+              child: Center(
+                child: _isVideo ? _VideoPreview(file: file) : Image.file(File(file.path), fit: BoxFit.contain),
+              ),
             ),
           ),
-        ),
-      ],
-    );
-  }
 
-  Widget _buildError() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.camera_alt, color: Colors.white54, size: 48),
-            const SizedBox(height: 16),
-            Text(_initError!, style: const TextStyle(color: Colors.white70), textAlign: TextAlign.center),
-            const SizedBox(height: 24),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(null),
-              child: const Text('Close', style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCamera() {
-    final controller = _controller!;
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        // Camera preview — fills the screen respecting aspect ratio
-        Center(
-          child: _isRecording ? _withRecordingBorder(CameraPreview(controller)) : CameraPreview(controller),
-        ),
-
-        // Top bar: flash + close
-        Positioned(
-          top: 8,
-          left: 0,
-          right: 0,
-          child: _buildTopBar(),
-        ),
-
-        // Bottom controls
-        Positioned(
-          bottom: 0,
-          left: 0,
-          right: 0,
-          child: _buildBottomControls(),
-        ),
-
-        // Recording timer
-        if (_isRecording)
+          // Close button
           Positioned(
-            top: 56,
+            top: 8,
+            right: 0,
+            child: SafeArea(
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                onPressed: () => Navigator.of(context).pop(null),
+              ),
+            ),
+          ),
+
+          // Retake / Use bar
+          Positioned(
+            bottom: 0,
             left: 0,
             right: 0,
-            child: Center(
+            child: SafeArea(
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                color: Colors.black54,
+                padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 32),
                 child: Row(
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Icon(Icons.circle, color: Colors.red, size: 10),
-                    const SizedBox(width: 6),
-                    Text(_timerLabel, style: const TextStyle(color: Colors.white, fontSize: 14)),
+                    TextButton.icon(
+                      icon: const Icon(Icons.refresh, color: Colors.white),
+                      label: const Text('Retake', style: TextStyle(color: Colors.white, fontSize: 16)),
+                      onPressed: () {
+                        _previewTransformController.value = Matrix4.identity();
+                        setState(() => _previewFile = null);
+                        _captureMedia();
+                      },
+                    ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.check_circle_outline, color: Colors.white),
+                      label: const Text('Use', style: TextStyle(color: Colors.white, fontSize: 16)),
+                      onPressed: () => Navigator.of(context).pop(file),
+                    ),
                   ],
                 ),
               ),
             ),
           ),
-      ],
-    );
-  }
-
-  Widget _withRecordingBorder(Widget child) {
-    return Container(
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.red, width: 3),
-      ),
-      child: child,
-    );
-  }
-
-  Widget _buildTopBar() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        // Flash toggle (hide during recording and on front camera)
-        if (_mode == 'photo' || (_mode == 'video' && _cameras[_cameraIndex].lensDirection == CameraLensDirection.back))
-          IconButton(
-            icon: Icon(_flashIcon, color: Colors.white, size: 28),
-            onPressed: _isRecording ? null : _cycleFlash,
-          )
-        else
-          const SizedBox(width: 48),
-
-        // Close button
-        IconButton(
-          icon: const Icon(Icons.close, color: Colors.white, size: 28),
-          onPressed: () async {
-            if (_isRecording) await _controller?.stopVideoRecording();
-            if (mounted) Navigator.of(context).pop(null);
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBottomControls() {
-    return Container(
-      color: Colors.black54,
-      padding: const EdgeInsets.only(top: 16, bottom: 24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Mode selector
-          _buildModeSelector(),
-          const SizedBox(height: 24),
-          // Shutter row
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              // Camera flip
-              IconButton(
-                icon: const Icon(Icons.flip_camera_android, color: Colors.white, size: 32),
-                onPressed: _isRecording ? null : _flipCamera,
-              ),
-              // Shutter / Record button
-              _buildShutterButton(),
-              // Placeholder for symmetry
-              const SizedBox(width: 48),
-            ],
-          ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildModeSelector() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        _ModeTab(
-            label: 'PHOTO',
-            selected: _mode == 'photo',
-            onTap: _isRecording
-                ? null
-                : () {
-                    setState(() => _mode = 'photo');
-                    _applyFlashMode();
-                  }),
-        const SizedBox(width: 32),
-        _ModeTab(
-            label: 'VIDEO',
-            selected: _mode == 'video',
-            onTap: _isRecording
-                ? null
-                : () {
-                    setState(() => _mode = 'video');
-                    _applyFlashMode();
-                  }),
-      ],
-    );
-  }
-
-  Widget _buildShutterButton() {
-    final isVideo = _mode == 'video';
-    final recording = _isRecording;
-
-    return GestureDetector(
-      onTap: _onShutterTap,
-      child: Container(
-        width: 72,
-        height: 72,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: Colors.transparent,
-          border: Border.all(color: Colors.white, width: 4),
-        ),
-        child: Center(
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            width: recording ? 28 : (isVideo ? 52 : 60),
-            height: recording ? 28 : (isVideo ? 52 : 60),
-            decoration: BoxDecoration(
-              color: isVideo ? Colors.red : Colors.white,
-              shape: recording ? BoxShape.rectangle : BoxShape.circle,
-              borderRadius: recording ? BorderRadius.circular(6) : null,
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -542,6 +175,11 @@ class _VideoPreview extends StatefulWidget {
 class _VideoPreviewState extends State<_VideoPreview> {
   late VideoPlayerController _videoController;
   bool _initialized = false;
+  bool _muted = false;
+
+  /// Whether the control bar is currently visible.
+  bool _controlsVisible = true;
+  Timer? _hideTimer;
 
   @override
   void initState() {
@@ -552,14 +190,69 @@ class _VideoPreviewState extends State<_VideoPreview> {
         setState(() => _initialized = true);
         _videoController.setLooping(true);
         _videoController.play();
+        _scheduleHide();
       }
     });
+    // Rebuild on every position tick so the seek bar updates smoothly.
+    _videoController.addListener(_onVideoTick);
   }
 
   @override
   void dispose() {
+    _hideTimer?.cancel();
+    _videoController.removeListener(_onVideoTick);
     _videoController.dispose();
     super.dispose();
+  }
+
+  void _onVideoTick() {
+    if (mounted) setState(() {});
+  }
+
+  // ── Controls visibility ────────────────────────────────────────────────
+
+  void _scheduleHide() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && _videoController.value.isPlaying) {
+        setState(() => _controlsVisible = false);
+      }
+    });
+  }
+
+  void _toggleControls() {
+    setState(() => _controlsVisible = !_controlsVisible);
+    if (_controlsVisible) _scheduleHide();
+  }
+
+  // ── Playback helpers ───────────────────────────────────────────────────
+
+  void _togglePlay() {
+    setState(() {
+      if (_videoController.value.isPlaying) {
+        _videoController.pause();
+        _hideTimer?.cancel(); // keep controls visible while paused
+      } else {
+        _videoController.play();
+        _scheduleHide();
+      }
+    });
+  }
+
+  void _toggleMute() {
+    setState(() {
+      _muted = !_muted;
+      _videoController.setVolume(_muted ? 0.0 : 1.0);
+    });
+    _scheduleHide();
+  }
+
+  // ── Formatting ─────────────────────────────────────────────────────────
+
+  String _formatDuration(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
 
   @override
@@ -567,49 +260,134 @@ class _VideoPreviewState extends State<_VideoPreview> {
     if (!_initialized) {
       return const CircularProgressIndicator(color: Colors.white);
     }
+
+    final value = _videoController.value;
+    final total = value.duration.inMilliseconds.toDouble();
+    final position = value.position.inMilliseconds.toDouble().clamp(0.0, total);
+
     return GestureDetector(
-      onTap: () {
-        setState(() {
-          if (_videoController.value.isPlaying) {
-            _videoController.pause();
-          } else {
-            _videoController.play();
-          }
-        });
-      },
+      behavior: HitTestBehavior.opaque,
+      onTap: _toggleControls,
       child: AspectRatio(
-        aspectRatio: _videoController.value.aspectRatio,
+        aspectRatio: value.aspectRatio,
         child: Stack(
           alignment: Alignment.center,
           children: [
             VideoPlayer(_videoController),
-            if (!_videoController.value.isPlaying)
-              const Icon(Icons.play_circle_outline, color: Colors.white70, size: 72),
+
+            // Tap-to-reveal scrim + controls
+            AnimatedOpacity(
+              opacity: _controlsVisible ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              child: IgnorePointer(
+                ignoring: !_controlsVisible,
+                child: Stack(
+                  children: [
+                    // Gradient scrim so controls are readable over any content
+                    Positioned(
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      child: Container(
+                        height: 100,
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.bottomCenter,
+                            end: Alignment.topCenter,
+                            colors: [Colors.black87, Colors.transparent],
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // Centre play/pause button
+                    Center(
+                      child: GestureDetector(
+                        onTap: _togglePlay,
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 150),
+                          child: Icon(
+                            value.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                            key: ValueKey(value.isPlaying),
+                            color: Colors.white,
+                            size: 68,
+                            shadows: const [Shadow(color: Colors.black54, blurRadius: 12)],
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // Bottom bar: seek + time + mute
+                    Positioned(
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Seek slider
+                            SliderTheme(
+                              data: const SliderThemeData(
+                                trackHeight: 2.5,
+                                thumbShape: RoundSliderThumbShape(enabledThumbRadius: 6),
+                                overlayShape: RoundSliderOverlayShape(overlayRadius: 14),
+                                activeTrackColor: Colors.white,
+                                inactiveTrackColor: Colors.white38,
+                                thumbColor: Colors.white,
+                                overlayColor: Colors.white24,
+                              ),
+                              child: Slider(
+                                value: total > 0 ? position / total : 0.0,
+                                onChangeStart: (_) => _hideTimer?.cancel(),
+                                onChanged: total > 0
+                                    ? (v) {
+                                        final target = Duration(milliseconds: (v * total).round());
+                                        _videoController.seekTo(target);
+                                      }
+                                    : null,
+                                onChangeEnd: (_) {
+                                  if (_videoController.value.isPlaying) _scheduleHide();
+                                },
+                              ),
+                            ),
+
+                            // Time labels + mute button
+                            Row(
+                              children: [
+                                Text(
+                                  _formatDuration(value.position),
+                                  style: const TextStyle(color: Colors.white70, fontSize: 11),
+                                ),
+                                const Text(
+                                  ' / ',
+                                  style: TextStyle(color: Colors.white38, fontSize: 11),
+                                ),
+                                Text(
+                                  _formatDuration(value.duration),
+                                  style: const TextStyle(color: Colors.white70, fontSize: 11),
+                                ),
+                                const Spacer(),
+                                GestureDetector(
+                                  onTap: _toggleMute,
+                                  child: Icon(
+                                    _muted ? Icons.volume_off : Icons.volume_up,
+                                    color: Colors.white70,
+                                    size: 20,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ModeTab extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final VoidCallback? onTap;
-
-  const _ModeTab({required this.label, required this.selected, this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Text(
-        label,
-        style: TextStyle(
-          color: selected ? Colors.yellow : Colors.white70,
-          fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-          fontSize: 14,
-          letterSpacing: 1.2,
         ),
       ),
     );

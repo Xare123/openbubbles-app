@@ -12,6 +12,7 @@ import 'package:get/get.dart';
 enum DetailsMenuAction {
   Reply,
   Save,
+  OpenInImageViewer,
   OpenInBrowser,
   OpenInNewTab,
   CopyText,
@@ -49,6 +50,7 @@ class PlatformSupport {
 const Map<DetailsMenuAction, PlatformSupport> _actionPlatformSupport = {
   DetailsMenuAction.Reply: PlatformSupport(true, true, true, true),
   DetailsMenuAction.Save: PlatformSupport(true, true, true, true),
+  DetailsMenuAction.OpenInImageViewer: PlatformSupport(false, true, true, false),
   DetailsMenuAction.OpenInBrowser: PlatformSupport(true, false, false, false),
   DetailsMenuAction.OpenInNewTab: PlatformSupport(false, false, false, true),
   DetailsMenuAction.CopyText: PlatformSupport(true, true, true, true),
@@ -77,6 +79,7 @@ const Map<DetailsMenuAction, PlatformSupport> _actionPlatformSupport = {
 const Map<DetailsMenuAction, (IconData, IconData)> _actionToIcon = {
   DetailsMenuAction.Reply: (CupertinoIcons.reply, Icons.reply),
   DetailsMenuAction.Save: (CupertinoIcons.cloud_download, Icons.file_download),
+  DetailsMenuAction.OpenInImageViewer: (CupertinoIcons.photo, Icons.image_outlined),
   DetailsMenuAction.OpenInBrowser: (CupertinoIcons.macwindow, Icons.open_in_browser),
   DetailsMenuAction.OpenInNewTab: (CupertinoIcons.macwindow, Icons.open_in_browser),
   DetailsMenuAction.CopyText: (CupertinoIcons.doc_on_clipboard, Icons.content_copy),
@@ -105,6 +108,7 @@ const Map<DetailsMenuAction, (IconData, IconData)> _actionToIcon = {
 const Map<DetailsMenuAction, String> _actionToText = {
   DetailsMenuAction.Reply: "Reply",
   DetailsMenuAction.Save: "Save",
+  DetailsMenuAction.OpenInImageViewer: "Open In Image Viewer",
   DetailsMenuAction.OpenInBrowser: "Open In Browser",
   DetailsMenuAction.OpenInNewTab: "Open In New Tab",
   DetailsMenuAction.CopyText: "Copy",

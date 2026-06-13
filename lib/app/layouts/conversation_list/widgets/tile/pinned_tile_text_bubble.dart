@@ -65,11 +65,11 @@ class PinnedTileTextBubbleState extends CustomState<PinnedTileTextBubble, void, 
   @override
   Widget build(BuildContext context) {
     return Obx(() {
-      final chatState = ChatsSvc.getChatState(controller.chat.guid);
-      final lastMessage = chatState?.latestMessage.value;
-      final subtitle = chatState?.subtitle.value ?? '';
+      final chatState = controller.chatState;
+      final lastMessage = chatState.latestMessage.value;
+      final subtitle = chatState.subtitle.value ?? '';
 
-      final unread = chatState?.hasUnreadMessage.value ?? false;
+      final unread = chatState.hasUnreadMessage.value;
       // Null-safe isFromMe: treat null as false (unknown sender → show the bubble)
       final isFromMe = lastMessage?.isFromMe == true;
       if (!unread || lastMessage?.associatedMessageGuid != null || isFromMe || isNullOrEmpty(subtitle)) {

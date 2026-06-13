@@ -415,7 +415,7 @@ class PosterEditState extends State<PosterEdit> with ThemeHelpers, SingleTickerP
   }
 
   void changePhoto() async {
-    final res = await fp.FilePicker.platform
+    final res = await fp.FilePicker
         .pickFiles(withData: true, type: fp.FileType.custom, allowedExtensions: ['png', 'jpg', 'jpeg']);
     if (res == null) return;
 

@@ -56,6 +56,7 @@ class FindMyController extends GetxController {
 
   StreamSubscription? locationSub;
   Timer? myTimer;
+  Timer? _refreshTimer;
   DateTime? beaconCacheDate;
   api.FindMyFriendsClientDefaultAnisetteProvider? fmfClient;
   api.FindMyPhoneClientDefaultAnisetteProvider? fmipClient;
@@ -71,9 +72,22 @@ class FindMyController extends GetxController {
     myTimer = Timer.periodic(const Duration(seconds: 5), (_) => getLocations());
 
     SocketSvc.socket?.on("new-findmy-location", _handleNewFindMyLocation);
+
+    _scheduleRefreshGate();
+  }
+
+  bool get _isAlive => !isClosed;
+
+  void _scheduleRefreshGate() {
+    _refreshTimer?.cancel();
+    _refreshTimer = Timer(const Duration(seconds: 30), () {
+      if (!_isAlive) return;
+      canRefresh.value = true;
+    });
   }
 
   void _handleNewFindMyLocation(dynamic data) {
+    if (!_isAlive) return;
     try {
       final friend = FindMyFriend.fromJson(data);
       Logger.info("Received new location for ${friend.handle?.address}");
@@ -99,15 +113,20 @@ class FindMyController extends GetxController {
   }
 
   Future<void> getLocations({bool refreshFriends = true, bool refreshDevices = true}) async {
+    if (!_isAlive) return;
+
     if (!(Platform.isLinux && !kIsWeb)) {
       LocationPermission granted = await Geolocator.checkPermission();
+      if (!_isAlive) return;
       if (granted == LocationPermission.denied) {
         granted = await Geolocator.requestPermission();
+        if (!_isAlive) return;
       }
 
       if (granted == LocationPermission.whileInUse || granted == LocationPermission.always) {
         Geolocator.getCurrentPosition(locationSettings: const LocationSettings(timeLimit: Duration(seconds: 30)))
             .then((loc) {
+          if (!_isAlive) return;
           location.value = loc;
           if (!hasMovedToCurrentLocation.value) {
             mapController.move(LatLng(loc.latitude, loc.longitude), 10);
@@ -119,6 +138,7 @@ class FindMyController extends GetxController {
 
           if (!kIsDesktop && locationSub == null) {
             locationSub = Geolocator.getPositionStream().listen((event) {
+              if (!_isAlive) return;
               location.value = event;
               SettingsSvc.settings.lastLocation.value = "${event.latitude},${event.longitude}";
               SettingsSvc.settings.saveOneAsync('lastLocation');
@@ -142,6 +162,7 @@ class FindMyController extends GetxController {
       anisette: PushSvc.state!.anisette,
       provider: PushSvc.state!.icloudServices!.tokenProvider,
     );
+    if (!_isAlive) return;
 
     try {
       if (refreshFriends && !isNewFriendsClient) {
@@ -216,6 +237,7 @@ class FindMyController extends GetxController {
       anisette: PushSvc.state!.anisette,
       provider: PushSvc.state!.icloudServices!.tokenProvider,
     );
+    if (!_isAlive) return;
 
     try {
       if (refreshDevices && !isNewDeviceClient) {
@@ -435,6 +457,11 @@ class FindMyController extends GetxController {
       refreshing.value = false;
       return;
     }
+
+    if (refreshFriends) {
+      canRefresh.value = false;
+      _scheduleRefreshGate();
+    }
   }
 
   void buildDeviceMarker(FindMyDevice e) {
@@ -563,6 +590,7 @@ class FindMyController extends GetxController {
   @override
   void onClose() {
     myTimer?.cancel();
+    _refreshTimer?.cancel();
     locationSub?.cancel();
     mapController.dispose();
     popupController.dispose();

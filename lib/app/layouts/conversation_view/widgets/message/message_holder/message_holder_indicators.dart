@@ -73,7 +73,7 @@ class ErrorIndicatorObserver extends StatelessWidget {
                   await service.deleteMessage(message);
                   // Get the "new" latest info
                   List<Message> latest = await Chat.getMessagesAsync(chat, limit: 1);
-                  chat.latestMessage = latest.first;
+                  ChatsSvc.setChatLatestMessage(chat, latest.first);
                   await chat.saveAsync();
                 },
               ),

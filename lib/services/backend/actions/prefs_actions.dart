@@ -8,25 +8,22 @@ class PrefsActions {
     final messageGuid = data['messageGuid'] as String?;
     final messagePart = data['messagePart'] as int?;
 
-    if (messageGuid != null && messagePart != null) {
-      await PrefsSvc.i.setString('replyToMessage_$chatGuid', messageGuid);
-      await PrefsSvc.i.setInt('replyToMessagePart_$chatGuid', messagePart);
-    } else {
-      await PrefsSvc.i.remove('replyToMessage_$chatGuid');
-      await PrefsSvc.i.remove('replyToMessagePart_$chatGuid');
-    }
+    await PrefsSvc.messaging.saveReplyToMessageState(
+      chatGuid: chatGuid,
+      messageGuid: messageGuid,
+      messagePart: messagePart,
+    );
   }
 
   static Future<Map<String, dynamic>?> loadReplyToMessageState(dynamic data) async {
     final chatGuid = data['chatGuid'] as String;
 
-    final messageGuid = PrefsSvc.i.getString('replyToMessage_$chatGuid');
-    final messagePart = PrefsSvc.i.getInt('replyToMessagePart_$chatGuid');
+    final state = PrefsSvc.messaging.loadReplyToMessageState(chatGuid);
 
-    if (messageGuid != null && messagePart != null) {
+    if (state != null) {
       return {
-        'messageGuid': messageGuid,
-        'messagePart': messagePart,
+        'messageGuid': state.messageGuid,
+        'messagePart': state.messagePart,
       };
     }
 

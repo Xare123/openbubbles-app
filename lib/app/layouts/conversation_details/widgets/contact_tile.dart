@@ -54,11 +54,13 @@ class ContactTile extends StatelessWidget {
         onTap: () async {
           final contactV2 = handle.contactsV2.firstOrNull;
           if (contactV2 == null || !contactV2.isNative) {
-            await MethodChannelSvc.invokeMethod("open-contact-form",
-                {'address': handle.address, 'address_type': handle.address.isEmail ? 'email' : 'phone'});
+            await MethodChannelSvc.actions.openContactForm(
+              address: handle.address,
+              isEmail: handle.address.isEmail,
+            );
           } else {
             try {
-              await MethodChannelSvc.invokeMethod("view-contact-form", {'id': contactV2.nativeContactId});
+              await MethodChannelSvc.actions.viewContactForm(nativeContactId: contactV2.nativeContactId);
             } catch (_) {
               showSnackbar("Error", "Failed to find contact on device!");
             }

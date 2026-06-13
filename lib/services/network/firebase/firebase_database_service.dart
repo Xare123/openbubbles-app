@@ -40,7 +40,7 @@ class FirebaseDatabaseService extends GetxService {
 
   Future<bool> fetchFirebaseConfig() async {
     try {
-      final response = await HttpSvc.fcmClient();
+      final response = await HttpSvc.fcm.getServiceAccount();
       Map<String, dynamic>? data = response.data["data"];
       if (!isNullOrEmpty(data)) {
         FCMData newData = FCMData.fromMap(data!);
@@ -104,8 +104,8 @@ class FirebaseDatabaseService extends GetxService {
       } else {
         // First, try to auth with FCM with the current data
         Logger.info('Authenticating with FCM', tag: 'FCM-Auth');
-        await MethodChannelSvc.invokeMethod('firebase-auth', SettingsSvc.fcmData.toMap());
-        url = sanitizeServerAddress(address: await MethodChannelSvc.invokeMethod("get-server-url"));
+        await MethodChannelSvc.actions.firebaseAuth(fcmData: SettingsSvc.fcmData.toMap());
+        url = sanitizeServerAddress(address: await MethodChannelSvc.actions.getServerUrl());
       }
 
       await saveNewServerUrl(url ?? SettingsSvc.settings.serverAddress.value, force: true);

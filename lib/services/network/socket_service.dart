@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:bluebubbles/helpers/backend/settings_helpers.dart';
 import 'package:bluebubbles/utils/crypto_utils.dart';
@@ -23,6 +24,7 @@ enum SocketState {
   disconnected,
   error,
   connecting,
+  reconnecting,
 }
 
 class SocketService {
@@ -31,6 +33,19 @@ class SocketService {
   RxString lastError = "".obs;
   Timer? _reconnectTimer;
   Socket? socket;
+  bool _isScheduledRestartInProgress = false;
+  DateTime? _lastSocketExceptionLogAt;
+  String? _lastSocketExceptionSignature;
+  int _suppressedSocketExceptionCount = 0;
+  int _scheduledRestartAttempt = 0;
+
+  static const Duration _socketExceptionLogThrottle = Duration(minutes: 1);
+  static const List<Duration> _scheduledRestartBackoff = [
+    Duration.zero,
+    Duration(seconds: 5),
+    Duration(seconds: 10),
+    Duration(seconds: 20),
+  ];
 
   InternetConnection? internetConnection;
   StreamSubscription<InternetStatus>? internetConnectionListener;
@@ -42,22 +57,30 @@ class SocketService {
   void init() {
     Logger.debug("Initializing socket service...");
     startSocket();
-
-    if (!kIsDesktop || !Platform.isWindows) {
-      _connectivitySubscription = Connectivity().onConnectivityChanged.listen((event) {
-        if (!event.contains(ConnectivityResult.wifi) &&
-            !event.contains(ConnectivityResult.ethernet) &&
-            HttpSvc.originOverride != null) {
-          Logger.info("Detected switch off wifi, removing localhost address...");
-          HttpSvc.originOverride = null;
-        }
-      });
-    }
-
+    _startConnectivitySubscription();
     Logger.debug("Initialized socket service");
   }
 
+  void _startConnectivitySubscription() {
+    if (kIsDesktop && Platform.isWindows) return;
+    _connectivitySubscription?.cancel();
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((event) {
+      if (!event.contains(ConnectivityResult.wifi) &&
+          !event.contains(ConnectivityResult.ethernet) &&
+          HttpSvc.originOverride != null) {
+        Logger.info("Detected switch off wifi, removing localhost address...");
+        HttpSvc.originOverride = null;
+      }
+    });
+  }
+
   void startSocket() {
+    if (socket != null) {
+      Logger.debug("Socket already exists, disposing previous instance before starting a new connection");
+      socket?.dispose();
+      socket = null;
+    }
+
     // Validate server address before attempting to connect
     if (isNullOrEmpty(serverAddress)) {
       Logger.warn("Cannot start socket: server address is empty");
@@ -81,9 +104,9 @@ class SocketService {
         .setQuery({"guid": password})
         .setTransports(['websocket', 'polling'])
         .setExtraHeaders(HttpSvc.headers)
-        // WebsocketAdapter allows socket io client
+        // Custom WebSocket connector allows socket io client
         // to trust user certificates on Android
-        .setHttpClientAdapter(WebsocketAdapter())
+        .setWebSocketConnector(websocketConnector)
         // Disable so that we can create the listeners first
         .disableAutoConnect()
         .enableReconnection()
@@ -98,7 +121,7 @@ class SocketService {
     socket?.onConnect((data) => handleStatusUpdate(SocketState.connected, data));
     socket?.onReconnect((data) => handleStatusUpdate(SocketState.connected, data));
 
-    socket?.onReconnectAttempt((data) => handleStatusUpdate(SocketState.connecting, data));
+    socket?.onReconnectAttempt((data) => handleStatusUpdate(SocketState.reconnecting, data));
 
     socket?.onDisconnect((data) => handleStatusUpdate(SocketState.disconnected, data));
 
@@ -136,6 +159,7 @@ class SocketService {
         customCheckOptions: [
           InternetCheckOption(
             uri: Uri.parse(serverAddress),
+            timeout: const Duration(seconds: 3),
             responseStatusFn: (_) => true,
           ),
         ],
@@ -144,11 +168,11 @@ class SocketService {
 
       internetConnectionListener = internetConnection!.onStatusChange.listen((InternetStatus status) {
         Logger.info("Internet status changed: $status");
-        switch (status) {
-          case InternetStatus.connected:
-            socket?.connect();
-          case InternetStatus.disconnected:
-            socket?.disconnect();
+        if (status == InternetStatus.disconnected) {
+          handleStatusUpdate(SocketState.error, null);
+        } else if (state.value == SocketState.error) {
+          Logger.info("Internet reconnected, restarting socket...");
+          restartSocket();
         }
       });
     }
@@ -156,7 +180,11 @@ class SocketService {
 
   void disconnect() {
     if (isNullOrEmpty(serverAddress)) return;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     socket?.disconnect();
+    _connectivitySubscription?.cancel();
+    _connectivitySubscription = null;
     state.value = SocketState.disconnected;
   }
 
@@ -164,6 +192,7 @@ class SocketService {
     if (state.value == SocketState.connected || isNullOrEmpty(serverAddress)) return;
     state.value = SocketState.connecting;
     socket?.connect();
+    _startConnectivitySubscription();
   }
 
   void closeSocket() {
@@ -179,6 +208,19 @@ class SocketService {
   void restartSocket() {
     closeSocket();
     startSocket();
+  }
+
+  void resetScheduledRestartBackoff({bool cancelPendingTimer = false}) {
+    if (_isScheduledRestartInProgress) {
+      Logger.info(tag: "SocketService", "Reset socket scheduled restart backoff on app resume");
+    }
+
+    _scheduledRestartAttempt = 0;
+    _isScheduledRestartInProgress = false;
+    if (cancelPendingTimer) {
+      _reconnectTimer?.cancel();
+      _reconnectTimer = null;
+    }
   }
 
   void forgetConnection() {
@@ -218,9 +260,17 @@ class SocketService {
           state.value = SocketState.connected;
           _reconnectTimer?.cancel();
           _reconnectTimer = null;
+          resetScheduledRestartBackoff();
+          _suppressedSocketExceptionCount = 0;
+          _lastSocketExceptionLogAt = null;
+          _lastSocketExceptionSignature = null;
           NetworkTasks.onConnect();
-          NotificationsSvc.clearSocketError();
           Logger.info("Socket connected successfully to $serverAddress");
+        }
+      case SocketState.reconnecting:
+        if (stateChanged) {
+          Logger.info("Reconnecting to socket at $serverAddress");
+          state.value = SocketState.reconnecting;
         }
       case SocketState.disconnected:
         if (stateChanged) {
@@ -235,17 +285,21 @@ class SocketService {
       case SocketState.error:
         // Parse and log the error details
         String errorDetails = "Unknown error";
+        bool shouldLogGenericError = true;
 
         if (data is SocketException) {
           handleSocketException(data);
           errorDetails = lastError.value;
+          shouldLogGenericError = false;
         } else if (data is Map) {
           errorDetails = data.toString();
         } else if (data != null) {
           errorDetails = data.toString();
         }
 
-        Logger.error("Socket error connecting to $serverAddress: $errorDetails");
+        if (shouldLogGenericError) {
+          Logger.error("Socket error connecting to $serverAddress: $errorDetails");
+        }
         lastError.value = errorDetails;
         state.value = SocketState.error;
     }
@@ -254,23 +308,33 @@ class SocketService {
   /// Called when socket.io exhausts all reconnect attempts. Schedules a
   /// restart after a short delay so we can refresh the server URL first.
   void _handleReconnectFailed(dynamic data) {
-    Logger.warn("Socket exhausted reconnect attempts — scheduling restart");
+    if ((_reconnectTimer?.isActive ?? false) || _isScheduledRestartInProgress) {
+      return;
+    }
+
+    final int index = min(_scheduledRestartAttempt, _scheduledRestartBackoff.length - 1);
+    final Duration delay = _scheduledRestartBackoff[index];
+    _scheduledRestartAttempt++;
+
+    Logger.warn("Socket exhausted reconnect attempts — scheduling restart in ${delay.inSeconds}s");
     handleStatusUpdate(SocketState.error, data);
 
-    if (_reconnectTimer != null && _reconnectTimer!.isActive) return;
-    _reconnectTimer = Timer(const Duration(seconds: 5), () async {
-      if (state.value == SocketState.connected) return;
-
-      Logger.info("Attempting to fetch new URL and restart socket...");
-      final String? newUrl = await fdb.fetchNewUrl();
-      if (newUrl != null && newUrl != serverAddress) {
-        Logger.info("Server URL changed from $serverAddress to $newUrl");
+    _reconnectTimer = Timer(delay, () async {
+      if (state.value == SocketState.connected) {
+        return;
       }
 
-      restartSocket();
+      _isScheduledRestartInProgress = true;
+      try {
+        Logger.info("Attempting to fetch new URL and restart socket...");
+        final String? newUrl = await fdb.fetchNewUrl();
+        if (newUrl != null && newUrl != serverAddress) {
+          Logger.info("Server URL changed from $serverAddress to $newUrl");
+        }
 
-      if (!SettingsSvc.settings.keepAppAlive.value) {
-        NotificationsSvc.createSocketError();
+        restartSocket();
+      } finally {
+        _isScheduledRestartInProgress = false;
       }
     });
   }
@@ -291,6 +355,26 @@ class SocketService {
       lastError.value = msg;
     }
 
-    Logger.error("Socket exception: ${lastError.value}", error: e);
+    final DateTime now = DateTime.now();
+    final String signature = '${e.address?.host ?? ''}|${e.osError?.errorCode ?? ''}|$msg';
+    final bool isSameError = signature == _lastSocketExceptionSignature;
+    final bool isWithinThrottle =
+        _lastSocketExceptionLogAt != null && now.difference(_lastSocketExceptionLogAt!) < _socketExceptionLogThrottle;
+
+    if (isSameError && isWithinThrottle) {
+      _suppressedSocketExceptionCount++;
+      return;
+    }
+
+    String summary = '';
+    if (isSameError && _suppressedSocketExceptionCount > 0) {
+      summary =
+          ' (suppressed $_suppressedSocketExceptionCount similar errors in the last ${_socketExceptionLogThrottle.inSeconds}s)';
+    }
+
+    Logger.error("Socket exception: ${lastError.value}$summary", error: e);
+    _suppressedSocketExceptionCount = 0;
+    _lastSocketExceptionSignature = signature;
+    _lastSocketExceptionLogAt = now;
   }
 }

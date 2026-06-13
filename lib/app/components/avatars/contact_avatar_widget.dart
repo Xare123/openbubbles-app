@@ -110,7 +110,7 @@ class _ContactAvatarWidgetState extends State<ContactAvatarWidget> with ThemeHel
     if (!isNullOrEmpty(gradient) && gradient[0] == color) {
       widget.handle!.color = null;
     } else {
-      widget.handle!.color = color.toARGB32().toRadixString(16);
+      widget.handle!.color = color.value.toRadixString(16);
     }
 
     await widget.handle!.saveAsync(updateColor: true);
@@ -140,7 +140,7 @@ class _ContactAvatarWidgetState extends State<ContactAvatarWidget> with ThemeHel
       final iOS = SettingsSvc.settings.skin.value == Skins.iOS;
       final colorfulAvatars = !iOS ||
           SettingsSvc.settings.colorfulAvatars.value ||
-          (SettingsSvc.settings.skin.value == Skins.Material && SettingsSvc.settings.monetTheming.value != Monet.none);
+          (SettingsSvc.settings.skin.value == Skins.Material && ThemeSvc.isAnyMaterialYouSelected);
       final userAvatarPath = SettingsSvc.settings.userAvatarPath.value;
 
       return MouseRegion(
@@ -152,12 +152,16 @@ class _ContactAvatarWidgetState extends State<ContactAvatarWidget> with ThemeHel
               ? null
               : () async {
                   if (contactV2 != null && contactV2!.isNative) {
-                    await MethodChannelSvc.invokeMethod("view-contact-form", {'id': contactV2!.nativeContactId});
+                    try {
+                      await MethodChannelSvc.actions.viewContactForm(nativeContactId: contactV2!.nativeContactId);
+                    } catch (_) {
+                      showSnackbar("Error", "Failed to find contact on device!");
+                    }
                   } else if (widget.handle != null) {
-                    await MethodChannelSvc.invokeMethod("open-contact-form", {
-                      'address': widget.handle!.address,
-                      'address_type': widget.handle!.address.isEmail ? 'email' : 'phone'
-                    });
+                    await MethodChannelSvc.actions.openContactForm(
+                      address: widget.handle!.address,
+                      isEmail: widget.handle!.address.isEmail,
+                    );
                   }
                 },
           onLongPress: !widget.editable || widget.handle == null ? null : onAvatarTap,

@@ -154,9 +154,9 @@ class _UnifiedPushPanelState extends CustomState<UnifiedPushPanel, void, Unified
     });
     SettingsSvc.settings.enableUnifiedPush.value = val;
     if (val) {
-      await MethodChannelSvc.invokeMethod("UnifiedPushHandler", {"operation": "register"});
+      await MethodChannelSvc.actions.updateUnifiedPushRegistration(enabled: true);
     } else {
-      await MethodChannelSvc.invokeMethod("UnifiedPushHandler", {"operation": "unregister"});
+      await MethodChannelSvc.actions.updateUnifiedPushRegistration(enabled: false);
       SettingsSvc.settings.endpointUnifiedPush.value = "";
     }
 

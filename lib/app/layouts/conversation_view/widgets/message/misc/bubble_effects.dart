@@ -9,8 +9,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:particles_flutter/particles_engine.dart';
-import 'package:particles_flutter/component/particle/particle.dart';
+import 'package:particles_flutter/engine.dart';
 import 'package:simple_animations/simple_animations.dart';
 import 'package:supercharged/supercharged.dart';
 
@@ -236,9 +235,9 @@ class _BubbleEffectsState extends State<BubbleEffects> with SingleTickerProvider
                             width: size.width,
                             particles: List.generate(
                                 size.height * size.width ~/ 25,
-                                (index) => Particle(
+                                (index) => CircularParticle(
                                       color: Colors.white.withAlpha(150),
-                                      size: Random().nextDouble() * (size.height / 75).clamp(0.5, 1),
+                                      radius: Random().nextDouble() * (size.height / 75).clamp(0.5, 1),
                                       velocity: Offset(Random().nextDouble() * 10, Random().nextDouble() * 10),
                                     )),
                           ),

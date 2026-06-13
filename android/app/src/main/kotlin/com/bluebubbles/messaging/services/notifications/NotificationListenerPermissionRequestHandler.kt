@@ -7,6 +7,7 @@ import android.util.Log
 import com.bluebubbles.messaging.Constants
 import com.bluebubbles.messaging.MainActivity
 import com.bluebubbles.messaging.models.MethodCallHandlerImpl
+import com.bluebubbles.messaging.services.backend_ui_interop.MethodCallHandler
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
@@ -27,6 +28,12 @@ class NotificationListenerPermissionRequestHandler: MethodCallHandlerImpl() {
             return result.success(true)
         }
         val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
-        (context as MainActivity).startActivityForResult(intent, Constants.notificationListenerRequestCode)
+        try {
+            MethodCallHandler.setNotificationListenerResult(result)
+            (context as MainActivity).startActivityForResult(intent, Constants.notificationListenerRequestCode)
+        } catch (e: Exception) {
+            MethodCallHandler.clearNotificationListenerResult()
+            result.error("500", "Failed to launch notification listener settings", e.localizedMessage)
+        }
     }
 }

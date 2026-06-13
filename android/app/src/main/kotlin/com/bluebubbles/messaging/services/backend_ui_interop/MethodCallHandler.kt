@@ -34,6 +34,7 @@ import com.bluebubbles.messaging.services.credentials.OpenAutofillProviderSettin
 import com.bluebubbles.messaging.services.system.OpenConversationNotificationSettingsHandler
 import com.bluebubbles.messaging.services.system.OpenExistingContactRequestHandler
 import com.bluebubbles.messaging.services.system.PushShareTargetsHandler
+import com.bluebubbles.messaging.services.system.SaveFileToDownloadsHandler
 import com.bluebubbles.messaging.services.system.StartGoogleDuoRequestHandler
 import com.bluebubbles.messaging.services.foreground.StartForegroundServiceHandler
 import com.bluebubbles.messaging.services.foreground.StopForegroundServiceHandler
@@ -63,9 +64,62 @@ import io.flutter.plugin.common.MethodChannel
 
 class MethodCallHandler {
     companion object {
-        var getNotificationListenerResult: MethodChannel.Result? = null
+        private val notificationResultLock = Any()
+        private var notificationListenerResult: MethodChannel.Result? = null
         var queueId = 0
         var queuedMessages = HashMap<Int, String>()
+        private val fireAndForgetResult = object : MethodChannel.Result {
+            override fun success(result: Any?) {
+                // Intentionally ignored. Fire-and-forget calls are acknowledged immediately.
+            }
+
+            override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+                Log.w(Constants.logTag, "Ignored late error reply for fire-and-forget method: $errorCode $errorMessage")
+            }
+
+            override fun notImplemented() {
+                Log.w(Constants.logTag, "Ignored late notImplemented reply for fire-and-forget method")
+            }
+        }
+
+        private val fireAndForgetTags = setOf(
+            UnifiedPushHandler.tag,
+            FirebaseDeleteTokenHandler.tag,
+            NotificationChannelHandler.tag,
+            UpdateNextRestartHandler.tag,
+            BrowserLaunchRequestHandler.tag,
+            PushShareTargetsHandler.tag,
+            NewContactFormRequestHandler.tag,
+            OpenExistingContactRequestHandler.tag,
+            OpenCalendarRequestHandler.tag,
+            StartGoogleDuoRequestHandler.tag,
+            OpenConversationNotificationSettingsHandler.tag,
+            CreateIncomingMessageNotification.tag,
+            CreateIncomingFaceTimeNotification.tag,
+            DeleteNotificationHandler.tag,
+            StartForegroundServiceHandler.tag,
+            StopForegroundServiceHandler.tag,
+        )
+
+        fun setNotificationListenerResult(result: MethodChannel.Result) {
+            synchronized(notificationResultLock) {
+                notificationListenerResult = result
+            }
+        }
+
+        fun consumeNotificationListenerResult(): MethodChannel.Result? {
+            synchronized(notificationResultLock) {
+                val result = notificationListenerResult
+                notificationListenerResult = null
+                return result
+            }
+        }
+
+        fun clearNotificationListenerResult() {
+            synchronized(notificationResultLock) {
+                notificationListenerResult = null
+            }
+        }
 
         /// Send a method call back to Dart (app must be launched, otherwise use the DartWorker!)
         fun invokeMethod(method: String, arguments: Map<String, Any>) {
@@ -83,8 +137,7 @@ class MethodCallHandler {
         }
     }
 
-    fun methodCallHandler(call: MethodCall, result: MethodChannel.Result, context: Context) {
-        Log.d(Constants.logTag, "Received new method call from Dart with method ${call.method}")
+    private fun dispatchHandler(call: MethodCall, result: MethodChannel.Result, context: Context) {
         when(call.method) {
             "ready" -> {
                 Log.d(Constants.logTag, "Dart engine is ready!")
@@ -104,11 +157,9 @@ class MethodCallHandler {
             OpenCalendarRequestHandler.tag -> OpenCalendarRequestHandler().handleMethodCall(call, result, context)
             OpenAutofillProviderSettingsHandler.tag -> OpenAutofillProviderSettingsHandler().handleMethodCall(call, result, context)
             StartGoogleDuoRequestHandler.tag -> StartGoogleDuoRequestHandler().handleMethodCall(call, result, context)
+            SaveFileToDownloadsHandler.tag -> SaveFileToDownloadsHandler().handleMethodCall(call, result, context)
             CheckChromeOsHandler.tag -> CheckChromeOsHandler().handleMethodCall(call, result, context)
-            NotificationListenerPermissionRequestHandler.tag -> {
-                getNotificationListenerResult = result
-                NotificationListenerPermissionRequestHandler().handleMethodCall(call, result, context)
-            }
+            NotificationListenerPermissionRequestHandler.tag -> NotificationListenerPermissionRequestHandler().handleMethodCall(call, result, context)
             StartNotificationListenerHandler.tag -> StartNotificationListenerHandler().handleMethodCall(call, result, context)
             OpenConversationNotificationSettingsHandler.tag -> OpenConversationNotificationSettingsHandler().handleMethodCall(call, result, context)
             GetContentUriPathHandler.tag -> GetContentUriPathHandler().handleMethodCall(call, result, context)
@@ -153,6 +204,27 @@ class MethodCallHandler {
                 Log.d(Constants.logTag, error)
                 result.error("500", error, null)
             }
+        }
+    }
+
+    fun methodCallHandler(call: MethodCall, result: MethodChannel.Result, context: Context) {
+        Log.d(Constants.logTag, "Received new method call from Dart with method ${call.method}")
+
+        if (fireAndForgetTags.contains(call.method)) {
+            result.success(null)
+            try {
+                dispatchHandler(call, fireAndForgetResult, context)
+            } catch (e: Exception) {
+                Log.e(Constants.logTag, "Fire-and-forget method handler failed for ${call.method}", e)
+            }
+            return
+        }
+
+        try {
+            dispatchHandler(call, result, context)
+        } catch (e: Exception) {
+            Log.e(Constants.logTag, "Method channel handler failed for ${call.method}", e)
+            result.error("500", "Method channel handler failed", e.localizedMessage)
         }
     }
 }

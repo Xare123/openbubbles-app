@@ -1,6 +1,8 @@
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/database.dart' as db;
+import 'package:bluebubbles/services/backend/java_dart_interop/method_channel_service.dart';
 import 'package:characters/characters.dart';
+import 'package:crypto/crypto.dart';
 import 'package:collection/collection.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
@@ -65,6 +67,25 @@ class FilesystemService {
   String get logsPath => join(appDocDir.path, 'logs');
   String get contactAvatarsPath => join(appDocDir.path, 'contact_avatars');
   String get customBackgroundsPath => join(appDocDir.path, 'custom_backgrounds');
+  String get urlPreviewsPath => join(appDocDir.path, 'url_previews');
+
+  /// Returns the path for a cached URL preview image identified by its MD5 hash.
+  String urlPreviewImagePath(String md5) => join(urlPreviewsPath, md5);
+
+  /// Downloads and caches a URL preview image. Computes an MD5 hash of the raw
+  /// bytes and uses it as the filename so that identical images across different
+  /// messages share a single file. Returns the hex MD5 string.
+  Future<String> saveUrlPreviewImage(Uint8List bytes) async {
+    if (kIsWeb) throw 'saveUrlPreviewImage is not supported on web';
+    final hash = md5.convert(bytes).toString();
+    final dir = Directory(urlPreviewsPath);
+    await dir.create(recursive: true);
+    final file = File(join(urlPreviewsPath, hash));
+    if (!file.existsSync()) {
+      await file.writeAsBytes(bytes, flush: true);
+    }
+    return hash;
+  }
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -189,13 +210,32 @@ class FilesystemService {
     return (ext != null && ext.isNotEmpty) ? '$filename.$ext' : filename;
   }
 
-  Future<String> saveToDownloads(File file) async {
+  Future<String> saveToDownloads(File file, {String mimeType = 'application/octet-stream'}) async {
     if (kIsWeb) throw "Cannot save file on web!";
 
     final String filename = basename(file.path);
-    final String downloadsDir = await downloadsDirectory;
-    final String newPath = join(downloadsDir, filename);
-    await file.copy(newPath);
-    return newPath;
+
+    if (kIsDesktop) {
+      // On desktop, path_provider resolves the real OS Downloads folder.
+      final String downloadsDir = await downloadsDirectory;
+      final String newPath = join(downloadsDir, filename);
+      await file.copy(newPath);
+      return newPath;
+    } else {
+      // On Android, use MediaStore.Downloads (API 29+) or direct file copy (older).
+      try {
+        await MethodChannelSvc.actions.saveFileToDownloads(
+          filePath: file.path,
+          fileName: filename,
+          mimeType: mimeType,
+        );
+        return filename;
+      } catch (_) {
+        // Fallback: direct file copy to the public Downloads directory.
+        final String newPath = join(androidDownloadsPath, filename);
+        await file.copy(newPath);
+        return newPath;
+      }
+    }
   }
 }

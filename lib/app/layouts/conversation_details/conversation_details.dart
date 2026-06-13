@@ -8,7 +8,6 @@ import 'package:bluebubbles/app/layouts/conversation_details/widgets/links_secti
 import 'package:bluebubbles/app/layouts/conversation_details/widgets/locations_section.dart';
 import 'package:bluebubbles/app/layouts/conversation_details/widgets/media_grid_section.dart';
 import 'package:bluebubbles/app/layouts/conversation_details/widgets/participants_list.dart';
-import 'package:bluebubbles/app/wrappers/bb_annotated_region.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/settings_widgets.dart';
 import 'package:bluebubbles/database/models.dart';
@@ -80,155 +79,153 @@ class _ConversationDetailsState extends State<ConversationDetails> with WidgetsB
   Widget build(BuildContext context) {
     return ChatStateScope(
       chatState: ChatsSvc.getOrCreateChatState(chat),
-      child: BBAnnotatedRegion(
-        child: Theme(
-            data: context.theme.copyWith(
-              // in case some components still use legacy theming
-              primaryColor: context.theme.colorScheme.bubble(context, chat.isIMessage),
-              colorScheme: context.theme.colorScheme.copyWith(
-                primary: context.theme.colorScheme.bubble(context, chat.isIMessage),
-                onPrimary: context.theme.colorScheme.onBubble(context, chat.isIMessage),
-                surface: SettingsSvc.settings.monetTheming.value == Monet.full
-                    ? null
-                    : (context.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
-                onSurface: SettingsSvc.settings.monetTheming.value == Monet.full
-                    ? null
-                    : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
-              ),
+      child: Theme(
+          data: context.theme.copyWith(
+            // in case some components still use legacy theming
+            primaryColor: context.theme.colorScheme.bubble(context, chat.isIMessage),
+            colorScheme: context.theme.colorScheme.copyWith(
+              primary: context.theme.colorScheme.bubble(context, chat.isIMessage),
+              onPrimary: context.theme.colorScheme.onBubble(context, chat.isIMessage),
+              surface: ThemeSvc.isMaterialYouActive(context)
+                  ? null
+                  : (context.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
+              onSurface: ThemeSvc.isMaterialYouActive(context)
+                  ? null
+                  : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
             ),
-            child: Obx(() {
-              final actions = [
-                Obx(() {
-                  if (selected.isNotEmpty) {
-                    return IconButton(
-                      icon: Icon(iOS ? CupertinoIcons.xmark : Icons.close, color: context.theme.colorScheme.onSurface),
-                      onPressed: () {
-                        selected.clear();
-                      },
-                    );
-                  } else {
-                    return const SizedBox.shrink();
-                  }
-                }),
-                Obx(() {
-                  if (selected.isNotEmpty) {
-                    return IconButton(
-                      icon: Icon(iOS ? CupertinoIcons.cloud_download : Icons.file_download,
-                          color: context.theme.colorScheme.onSurface),
-                      onPressed: () {
-                        final attachments = media.where((e) => selected.contains(e.guid!));
-                        for (Attachment a in attachments) {
-                          final file = AttachmentsSvc.getContent(a, autoDownload: false);
-                          if (file is PlatformFile) {
-                            AttachmentsSvc.saveToDisk(file);
-                          }
+          ),
+          child: Obx(() {
+            final actions = [
+              Obx(() {
+                if (selected.isNotEmpty) {
+                  return IconButton(
+                    icon: Icon(iOS ? CupertinoIcons.xmark : Icons.close, color: context.theme.colorScheme.onSurface),
+                    onPressed: () {
+                      selected.clear();
+                    },
+                  );
+                } else {
+                  return const SizedBox.shrink();
+                }
+              }),
+              Obx(() {
+                if (selected.isNotEmpty) {
+                  return IconButton(
+                    icon: Icon(iOS ? CupertinoIcons.cloud_download : Icons.file_download,
+                        color: context.theme.colorScheme.onSurface),
+                    onPressed: () {
+                      final attachments = media.where((e) => selected.contains(e.guid!));
+                      for (Attachment a in attachments) {
+                        final file = AttachmentsSvc.getContent(a, autoDownload: false);
+                        if (file is PlatformFile) {
+                          AttachmentsSvc.saveToDisk(file);
+                        }
+                      }
+                    },
+                  );
+                } else {
+                  return const SizedBox.shrink();
+                }
+              }),
+            ];
+            final slivers = [
+              if (chat.isGroup)
+                SliverToBoxAdapter(
+                  child: ChatInfo(chat: chat, ftSupportedParticipants: ftSupportedParticipants),
+                ),
+              ParticipantsList(chat: chat),
+              // Hidden widget that loads attachments in the background
+              SliverToBoxAdapter(
+                child: AttachmentsLoader(
+                  chat: chat,
+                  onAttachmentsLoaded: onAttachmentsLoaded,
+                ),
+              ),
+              if (chat.handles.length > 2 &&
+                  SettingsSvc.settings.enablePrivateAPI.value &&
+                  SettingsSvc.serverDetails.supportsGroupChatManagement)
+                SliverToBoxAdapter(
+                  child: Builder(builder: (context) {
+                    return ListTile(
+                      mouseCursor: MouseCursor.defer,
+                      title: Text("Leave ${iOS ? "Chat" : "chat"}",
+                          style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.error)),
+                      leading: Container(
+                        width: 40 * SettingsSvc.settings.avatarScale.value,
+                        height: 40 * SettingsSvc.settings.avatarScale.value,
+                        decoration: BoxDecoration(
+                            color: !iOS ? null : context.theme.colorScheme.surfaceContainerHighest,
+                            shape: BoxShape.circle,
+                            border: iOS ? null : Border.all(color: context.theme.colorScheme.error, width: 3)),
+                        child: Icon(Icons.error_outline, color: context.theme.colorScheme.error, size: 20),
+                      ),
+                      onTap: () async {
+                        showDialog(
+                            context: context,
+                            builder: (BuildContext context) {
+                              return AlertDialog(
+                                backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+                                title: Text(
+                                  "Leaving chat...",
+                                  style: context.theme.textTheme.titleLarge,
+                                ),
+                                content: SizedBox(
+                                  height: 70,
+                                  child: Center(
+                                    child: CircularProgressIndicator(
+                                      backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+                                      valueColor: AlwaysStoppedAnimation<Color>(context.theme.colorScheme.primary),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            });
+                        final response = await BackendSvc.leaveChat(chat);
+                        if (!context.mounted) return;
+                        if (response) {
+                          Navigator.of(context, rootNavigator: true).pop();
+                          showSnackbar("Notice", "Left chat successfully!");
+                        } else {
+                          Navigator.of(context, rootNavigator: true).pop();
+                          showSnackbar("Error", "Failed to leave chat!");
                         }
                       },
                     );
-                  } else {
-                    return const SizedBox.shrink();
-                  }
-                }),
-              ];
-              final slivers = [
-                if (chat.isGroup)
-                  SliverToBoxAdapter(
-                    child: ChatInfo(chat: chat, ftSupportedParticipants: ftSupportedParticipants),
-                  ),
-                ParticipantsList(chat: chat),
-                // Hidden widget that loads attachments in the background
-                SliverToBoxAdapter(
-                  child: AttachmentsLoader(
-                    chat: chat,
-                    onAttachmentsLoaded: onAttachmentsLoaded,
-                  ),
+                  }),
                 ),
-                if (chat.handles.length > 2 &&
-                    SettingsSvc.settings.enablePrivateAPI.value &&
-                    SettingsSvc.serverDetails.supportsGroupChatManagement)
-                  SliverToBoxAdapter(
-                    child: Builder(builder: (context) {
-                      return ListTile(
-                        mouseCursor: MouseCursor.defer,
-                        title: Text("Leave ${iOS ? "Chat" : "chat"}",
-                            style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.error)),
-                        leading: Container(
-                          width: 40 * SettingsSvc.settings.avatarScale.value,
-                          height: 40 * SettingsSvc.settings.avatarScale.value,
-                          decoration: BoxDecoration(
-                              color: !iOS ? null : context.theme.colorScheme.surfaceContainerHighest,
-                              shape: BoxShape.circle,
-                              border: iOS ? null : Border.all(color: context.theme.colorScheme.error, width: 3)),
-                          child: Icon(Icons.error_outline, color: context.theme.colorScheme.error, size: 20),
-                        ),
-                        onTap: () async {
-                          showDialog(
-                              context: context,
-                              builder: (BuildContext context) {
-                                return AlertDialog(
-                                  backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                                  title: Text(
-                                    "Leaving chat...",
-                                    style: context.theme.textTheme.titleLarge,
-                                  ),
-                                  content: SizedBox(
-                                    height: 70,
-                                    child: Center(
-                                      child: CircularProgressIndicator(
-                                        backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                                        valueColor: AlwaysStoppedAnimation<Color>(context.theme.colorScheme.primary),
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              });
-                          final response = await BackendSvc.leaveChat(chat);
-                          if (!context.mounted) return;
-                          if (response) {
-                            Navigator.of(context, rootNavigator: true).pop();
-                            showSnackbar("Notice", "Left chat successfully!");
-                          } else {
-                            Navigator.of(context, rootNavigator: true).pop();
-                            showSnackbar("Error", "Failed to leave chat!");
-                          }
-                        },
-                      );
-                    }),
-                  ),
-                const SliverPadding(
-                  padding: EdgeInsets.symmetric(vertical: 10),
-                ),
-                ChatOptions(chat: chat),
-                MediaGridSection(media: media, selected: selected, isLoading: isLoadingAttachments),
-                LinksSection(chat: chat),
-                LocationsSection(locations: locations, isLoading: isLoadingAttachments),
-                DocumentsSection(docs: docs, isLoading: isLoadingAttachments),
-                const SliverPadding(
-                  padding: EdgeInsets.only(top: 50),
-                ),
-              ];
-              // used for getX to be happy...
-              SettingsSvc.settings.alwaysShowAvatars.value;
-              if (!chat.isGroup && chat.handles.isNotEmpty) {
-                return ProfileScaffold(
-                  bodySlivers: slivers,
-                  handle: chat.handles.first,
-                  actions: actions,
-                  chatOptions: ChatInfo(chat: chat, ftSupportedParticipants: ftSupportedParticipants),
-                );
-              }
-              return SettingsScaffold(
-                headerColor: headerColor,
-                title: "Details",
-                tileColor: tileColor,
-                initialHeader: null,
-                iosSubtitle: iosSubtitle,
-                materialSubtitle: materialSubtitle,
-                actions: actions,
+              const SliverPadding(
+                padding: EdgeInsets.symmetric(vertical: 10),
+              ),
+              ChatOptions(chat: chat),
+              MediaGridSection(media: media, selected: selected, isLoading: isLoadingAttachments),
+              LinksSection(chat: chat),
+              LocationsSection(locations: locations, isLoading: isLoadingAttachments),
+              DocumentsSection(docs: docs, isLoading: isLoadingAttachments),
+              const SliverPadding(
+                padding: EdgeInsets.only(top: 50),
+              ),
+            ];
+            // used for getX to be happy...
+            SettingsSvc.settings.alwaysShowAvatars.value;
+            if (!chat.isGroup && chat.handles.isNotEmpty) {
+              return ProfileScaffold(
                 bodySlivers: slivers,
+                handle: chat.handles.first,
+                actions: actions,
+                chatOptions: ChatInfo(chat: chat, ftSupportedParticipants: ftSupportedParticipants),
               );
-            })),
-      ),
+            }
+            return SettingsScaffold(
+              headerColor: headerColor,
+              title: "Details",
+              tileColor: tileColor,
+              initialHeader: null,
+              iosSubtitle: iosSubtitle,
+              materialSubtitle: materialSubtitle,
+              actions: actions,
+              bodySlivers: slivers,
+            );
+          })),
     );
   }
 }

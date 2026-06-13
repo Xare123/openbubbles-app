@@ -1,13 +1,13 @@
 import 'dart:async';
 import 'dart:ui';
 
-import 'package:bluebubbles/app/wrappers/bb_annotated_region.dart';
+import 'package:bluebubbles/app/wrappers/bb_app_bar.dart';
+import 'package:bluebubbles/app/wrappers/bb_scaffold.dart';
 import 'package:bluebubbles/app/wrappers/scrollbar_wrapper.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart';
 import 'package:get/get.dart';
 
@@ -70,40 +70,19 @@ class _LiveLoggingPanel extends State<LiveLoggingPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final Rx<Color> _backgroundColor = (kIsDesktop && SettingsSvc.settings.windowEffect.value == WindowEffect.disabled
-            ? Colors.transparent
-            : context.theme.colorScheme.surface)
-        .obs;
-
-    if (kIsDesktop) {
-      SettingsSvc.settings.windowEffect.listen((WindowEffect effect) => _backgroundColor.value =
-          effect != WindowEffect.disabled ? Colors.transparent : context.theme.colorScheme.surface);
-    }
-    return BBAnnotatedRegion(
-        child: Obx(
-      () => Scaffold(
-        backgroundColor: _backgroundColor.value,
+    return Obx(
+      () => BBScaffold(
         appBar: PreferredSize(
-          preferredSize: Size(NavigationSvc.width(context), 80),
+          preferredSize: Size(NavigationSvc.width(context), kIsDesktop ? 80 : 50),
           child: ClipRRect(
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-              child: AppBar(
-                systemOverlayStyle:
-                    ThemeData.estimateBrightnessForColor(context.theme.colorScheme.surface) == Brightness.dark
-                        ? SystemUiOverlayStyle.light
-                        : SystemUiOverlayStyle.dark,
-                toolbarHeight: kIsDesktop ? 80 : 50,
-                elevation: 0,
-                scrolledUnderElevation: 3,
-                surfaceTintColor: context.theme.colorScheme.primary,
+              child: BBAppBar(
+                titleText: "Live Logging",
                 leading: buildBackButton(context),
-                backgroundColor: _backgroundColor.value,
-                centerTitle: SettingsSvc.settings.skin.value == Skins.iOS,
-                title: Text(
-                  "Live Logging",
-                  style: context.theme.textTheme.titleLarge,
-                ),
+                backgroundColor: SettingsSvc.settings.windowEffect.value != WindowEffect.disabled
+                    ? Colors.transparent
+                    : context.theme.colorScheme.surface,
                 actions: [
                   // Menu button with 2 options, Play/Pause and Clear
                   PopupMenuButton(
@@ -186,6 +165,6 @@ class _LiveLoggingPanel extends State<LiveLoggingPanel> {
               )),
         ),
       ),
-    ));
+    );
   }
 }

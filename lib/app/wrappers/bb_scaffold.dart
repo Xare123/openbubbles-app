@@ -53,29 +53,36 @@ class BBScaffold extends StatelessWidget {
   /// Whether the body should extend behind app bar
   final bool extendBodyBehindAppBar;
 
-  /// Whether the body should extend behind bottom navigation bar
-  final bool extendBody;
+  /// Whether the body should extend behind the bottom navigation bar / gesture pill.
+  ///
+  /// Defaults to true so the scaffold's background fills edge-to-edge on
+  /// modern Android edge-to-edge rendering.
+  final bool extendBodyBehindBottomPill;
 
   /// Resize to avoid bottom inset
   final bool? resizeToAvoidBottomInset;
-
-  /// Custom status bar icon brightness (defaults to theme-based)
-  final Brightness? statusBarIconBrightness;
-
-  /// Custom navigation bar icon brightness (defaults to theme-based)
-  final Brightness? systemNavigationBarIconBrightness;
-
-  /// Custom navigation bar color (defaults to theme background or transparent in immersive mode)
-  final Color? systemNavigationBarColor;
-
-  /// Custom status bar color (defaults to transparent)
-  final Color? statusBarColor;
 
   /// Persistent footer buttons
   final List<Widget>? persistentFooterButtons;
 
   /// Persistent footer alignment
   final AlignmentDirectional? persistentFooterAlignment;
+
+  /// Whether to apply top SafeArea padding to the body.
+  ///
+  /// Defaults to false because an AppBar typically handles the status bar inset.
+  final bool safeAreaTop;
+
+  /// Whether to apply bottom SafeArea padding to the body.
+  ///
+  /// Defaults to true to avoid content being obscured by system gesture areas on modern Android devices.
+  final bool safeAreaBottom;
+
+  /// Whether to apply left SafeArea padding to the body.
+  final bool safeAreaLeft;
+
+  /// Whether to apply right SafeArea padding to the body.
+  final bool safeAreaRight;
 
   const BBScaffold({
     super.key,
@@ -88,15 +95,15 @@ class BBScaffold extends StatelessWidget {
     this.drawer,
     this.endDrawer,
     this.bottomSheet,
-    this.extendBodyBehindAppBar = false,
-    this.extendBody = false,
+    this.extendBodyBehindAppBar = true,
+    this.extendBodyBehindBottomPill = true,
     this.resizeToAvoidBottomInset,
-    this.statusBarIconBrightness,
-    this.systemNavigationBarIconBrightness,
-    this.systemNavigationBarColor,
-    this.statusBarColor,
     this.persistentFooterButtons,
     this.persistentFooterAlignment,
+    this.safeAreaTop = false,
+    this.safeAreaBottom = true,
+    this.safeAreaLeft = true,
+    this.safeAreaRight = true,
   });
 
   @override
@@ -109,27 +116,39 @@ class BBScaffold extends StatelessWidget {
             ? Colors.transparent
             : Theme.of(context).colorScheme.surface);
 
-    return BBAnnotatedRegion(
-      statusBarIconBrightness: statusBarIconBrightness,
-      systemNavigationBarIconBrightness: systemNavigationBarIconBrightness,
-      systemNavigationBarColor: systemNavigationBarColor,
-      statusBarColor: statusBarColor,
-      child: Scaffold(
-        backgroundColor: effectiveBackgroundColor,
-        appBar: appBar,
-        body: body,
-        floatingActionButton: floatingActionButton,
-        floatingActionButtonLocation: floatingActionButtonLocation,
-        bottomNavigationBar: bottomNavigationBar,
-        drawer: drawer,
-        endDrawer: endDrawer,
-        bottomSheet: bottomSheet,
-        extendBodyBehindAppBar: extendBodyBehindAppBar,
-        extendBody: extendBody,
-        resizeToAvoidBottomInset: resizeToAvoidBottomInset,
-        persistentFooterButtons: persistentFooterButtons,
-        persistentFooterAlignment: persistentFooterAlignment ?? AlignmentDirectional.centerEnd,
-      ),
+    // SafeArea is applied to the body in all cases so content doesn't overlap
+    // system bars. The Scaffold itself is never wrapped in SafeArea — this
+    // ensures the Scaffold's backgroundColor fills edge-to-edge, including
+    // the bottom gesture pill area on modern Android edge-to-edge rendering.
+    // Wrapping the Scaffold in SafeArea would prevent it from filling the
+    // gesture area, making it appear black.
+    final effectiveBody = body == null
+        ? null
+        : SafeArea(
+            top: safeAreaTop,
+            bottom: safeAreaBottom,
+            left: safeAreaLeft,
+            right: safeAreaRight,
+            child: body!,
+          );
+
+    final scaffold = Scaffold(
+      backgroundColor: effectiveBackgroundColor,
+      appBar: appBar,
+      body: effectiveBody,
+      floatingActionButton: floatingActionButton,
+      floatingActionButtonLocation: floatingActionButtonLocation,
+      bottomNavigationBar: bottomNavigationBar,
+      drawer: drawer,
+      endDrawer: endDrawer,
+      bottomSheet: bottomSheet,
+      extendBodyBehindAppBar: extendBodyBehindAppBar,
+      extendBody: extendBodyBehindBottomPill,
+      resizeToAvoidBottomInset: resizeToAvoidBottomInset,
+      persistentFooterButtons: persistentFooterButtons,
+      persistentFooterAlignment: persistentFooterAlignment ?? AlignmentDirectional.centerEnd,
     );
+
+    return BBAnnotatedRegion(child: scaffold);
   }
 }

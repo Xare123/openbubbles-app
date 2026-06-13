@@ -1,9 +1,9 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:bluebubbles/app/components/custom/custom_bouncing_scroll_physics.dart';
 import 'package:bluebubbles/app/components/custom_text_editing_controllers.dart';
-import 'package:bluebubbles/app/layouts/camera/camera_screen.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/dialogs/custom_mention_dialog.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/media_picker/text_field_attachment_picker.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/text_field/picked_attachments_holder.dart';
@@ -12,23 +12,16 @@ import 'package:bluebubbles/app/layouts/conversation_view/widgets/text_field/tex
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/services.dart';
-import 'package:bluebubbles/utils/logger/logger.dart';
-import 'package:chunked_stream/chunked_stream.dart';
-import 'package:collection/collection.dart';
-import 'package:unicode_emojis/unicode_emojis.dart';
-import 'package:file_picker/file_picker.dart' as pf;
-import 'package:file_picker/file_picker.dart' hide PlatformFile;
-import 'package:flutter/cupertino.dart';
+import 'package:file_picker/file_picker.dart' as fp;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:pasteboard/pasteboard.dart';
-import 'package:path/path.dart' hide context;
-import 'package:permission_handler/permission_handler.dart';
-import 'package:supercharged/supercharged.dart';
 import 'package:universal_io/io.dart';
+import 'handlers/emoji_autocomplete_handler.dart';
+import 'handlers/mention_autocomplete_handler.dart';
+import 'handlers/keyboard_shortcut_handler.dart';
+import 'handlers/clipboard_paste_handler.dart';
 
 class TextFieldComponent extends StatefulWidget {
   const TextFieldComponent({
@@ -75,6 +68,10 @@ class TextFieldComponentState extends State<TextFieldComponent> {
   late final Future<void> Function({String? effect}) sendMessage;
 
   late final ValueNotifier<bool> isRecordingNotifier;
+  EmojiAutocompleteHandler? emojiHandler;
+  MentionAutocompleteHandler? mentionHandler;
+  KeyboardShortcutHandler? keyboardHandler;
+  ClipboardPasteHandler? clipboardHandler;
 
   TextFieldComponentState() : isRecordingNotifier = ValueNotifier<bool>(false);
 
@@ -94,6 +91,8 @@ class TextFieldComponentState extends State<TextFieldComponent> {
       isRecordingNotifier.value = recorderController?.isRecording ?? false;
     });
 
+    _configureHandlers();
+
     assert(!(subjectTextController == null &&
         !isChatCreator &&
         SettingsSvc.settings.enablePrivateAPI.value &&
@@ -109,11 +108,34 @@ class TextFieldComponentState extends State<TextFieldComponent> {
   }
 
   @override
-  void didUpdateWidget(TextFieldComponent old) {
-    super.didUpdateWidget(old);
-    if (widget.controller != old.controller) {
+  void didUpdateWidget(TextFieldComponent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.controller != oldWidget.controller) {
       controller = widget.controller;
+      _configureHandlers();
     }
+  }
+
+  void _configureHandlers() {
+    final ctrl = controller;
+    if (ctrl == null) {
+      emojiHandler = null;
+      mentionHandler = null;
+      keyboardHandler = null;
+      clipboardHandler = null;
+      return;
+    }
+
+    emojiHandler = EmojiAutocompleteHandler(controller: ctrl, textField: textController);
+    mentionHandler = MentionAutocompleteHandler(controller: ctrl, textField: textController, buildContext: context);
+    keyboardHandler = KeyboardShortcutHandler(
+      controller: ctrl,
+      sendMessage: sendMessage,
+      subjectTextController: subjectTextController ?? textController,
+      messageTextController: textController,
+      isChatCreator: focusNode != null,
+    );
+    clipboardHandler = ClipboardPasteHandler(controller: ctrl);
   }
 
   bool get iOS => SettingsSvc.settings.skin.value == Skins.iOS;
@@ -128,44 +150,6 @@ class TextFieldComponentState extends State<TextFieldComponent> {
 
   bool _showAttachmentPickerLocal = false;
 
-  Future<void> _openCamera({String type = 'camera'}) async {
-    bool granted = (await Permission.camera.request()).isGranted;
-    if (!granted) {
-      showSnackbar("Error", "Camera access was denied!");
-      return;
-    }
-
-    if (type == 'video') {
-      final micGranted = (await Permission.microphone.request()).isGranted;
-      if (!micGranted) {
-        showSnackbar("Error", "Microphone access was denied!");
-        return;
-      }
-    }
-
-    final XFile? file;
-    if (Platform.isAndroid && !kIsWeb) {
-      file = await Navigator.of(context).push<XFile?>(
-        MaterialPageRoute(
-          builder: (_) => CameraScreen(initialMode: type == 'video' ? 'video' : 'photo'),
-        ),
-      );
-    } else if (type == 'camera') {
-      file = await ImagePicker().pickImage(source: ImageSource.camera);
-    } else {
-      file = await ImagePicker().pickVideo(source: ImageSource.camera);
-    }
-
-    if (file != null) {
-      controller!.pickedAttachments.add(PlatformFile(
-        path: file.path,
-        name: file.path.split('/').last,
-        size: await file.length(),
-        bytes: await file.readAsBytes(),
-      ));
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final txtController = controller?.textController ?? textController;
@@ -176,118 +160,118 @@ class TextFieldComponentState extends State<TextFieldComponent> {
     final outerTheme = Theme.of(context);
     Widget textInput = Focus(
       onKeyEvent: (_, ev) => handleKey(_, ev, context, isChatCreator),
-      child: Padding(
-        padding: const EdgeInsets.only(right: 5.0),
-        child: ValueListenableBuilder<bool>(
-            valueListenable: isRecordingNotifier,
-            builder: (context, isRecording, child) {
-              return Container(
-                // Border is placed in the foregroundDecoration so it paints on top of
-                // child content (ReplyHolder, attachments, etc.) and remains visible
-                // at all corners instead of being covered by opaque children.
-                foregroundDecoration: iOS
-                    ? BoxDecoration(
-                        border: Border.fromBorderSide(BorderSide(
-                          color: (isRecording & iOS)
-                              ? context.theme.colorScheme.primary.withValues(alpha: 1.0)
-                              : context.theme.colorScheme.outlineVariant.withValues(alpha: 0.25),
-                          width: 1,
-                        )),
-                        borderRadius: BorderRadius.circular(20),
-                      )
-                    : null,
-                decoration: iOS
-                    ? const BoxDecoration(
-                        borderRadius: BorderRadius.all(Radius.circular(20)),
-                      )
-                    : BoxDecoration(
-                        color: context.theme.colorScheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(20),
+      child: ValueListenableBuilder<bool>(
+          valueListenable: isRecordingNotifier,
+          builder: (context, isRecording, child) {
+            return Container(
+              // Border is placed in the foregroundDecoration so it paints on top of
+              // child content (ReplyHolder, attachments, etc.) and remains visible
+              // at all corners instead of being covered by opaque children.
+              foregroundDecoration: iOS
+                  ? BoxDecoration(
+                      border: Border.fromBorderSide(BorderSide(
+                        color: (isRecording & iOS)
+                            ? context.theme.colorScheme.primary.withValues(alpha: 1.0)
+                            : context.theme.colorScheme.outlineVariant.withValues(alpha: 0.25),
+                        width: 1,
+                      )),
+                      borderRadius: BorderRadius.circular(20),
+                    )
+                  : null,
+              decoration: iOS
+                  ? const BoxDecoration(
+                      borderRadius: BorderRadius.all(Radius.circular(20)),
+                    )
+                  : BoxDecoration(
+                      color: context.theme.colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+              clipBehavior: Clip.antiAlias,
+              child: AnimatedSize(
+                duration: const Duration(milliseconds: 400),
+                alignment: Alignment.bottomCenter,
+                // easeOutBack overshoots its target size, which works fine in the full
+                // conversation view but causes a brief layout overflow in chat creator
+                // where the available vertical space is tighter (keyboard is open).
+                curve: isChatCreator ? Curves.easeOut : Curves.easeOutBack,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (widget.controller != null) ReplyHolder(controller: widget.controller!),
+                    if (initialAttachments.isNotEmpty || !isChatCreator || widget.controller != null)
+                      PickedAttachmentsHolder(
+                        controller: widget.controller,
+                        textController: txtController,
+                        initialAttachments: initialAttachments,
                       ),
-                clipBehavior: Clip.antiAlias,
-                child: AnimatedSize(
-                  duration: const Duration(milliseconds: 400),
-                  alignment: Alignment.bottomCenter,
-                  // easeOutBack overshoots its target size, which works fine in the full
-                  // conversation view but causes a brief layout overflow in chat creator
-                  // where the available vertical space is tighter (keyboard is open).
-                  curve: isChatCreator ? Curves.easeOut : Curves.easeOutBack,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (widget.controller != null) ReplyHolder(controller: widget.controller!),
-                      if (initialAttachments.isNotEmpty || !isChatCreator || widget.controller != null)
-                        PickedAttachmentsHolder(
-                          controller: widget.controller,
-                          textController: txtController,
-                          initialAttachments: initialAttachments,
-                        ),
-                      if (!isChatCreator)
-                        Obx(() {
-                          if (controller!.pickedAttachments.isNotEmpty && iOS) {
-                            return Divider(
-                              height: 1.5,
-                              thickness: 1.5,
-                              color: context.theme.colorScheme.surfaceContainerHighest,
-                            );
-                          }
-                          return const SizedBox.shrink();
-                        }),
-                      if (!isChatCreator &&
-                          SettingsSvc.settings.enablePrivateAPI.value &&
-                          SettingsSvc.settings.privateSubjectLine.value &&
-                          chat!.isIMessage)
-                        TextField(
-                          textCapitalization: TextCapitalization.sentences,
-                          focusNode: controller!.subjectFocusNode,
-                          autocorrect: true,
-                          controller: subjController,
-                          scrollPhysics: const CustomBouncingScrollPhysics(),
-                          style:
-                              context.theme.extension<BubbleText>()!.bubbleText.copyWith(fontWeight: FontWeight.bold),
-                          keyboardType: TextInputType.multiline,
-                          maxLines: 14,
-                          minLines: 1,
-                          enableIMEPersonalizedLearning: !SettingsSvc.settings.incognitoKeyboard.value,
-                          textInputAction: TextInputAction.next,
-                          cursorColor: context.theme.colorScheme.primary,
-                          cursorHeight: context.theme.extension<BubbleText>()!.bubbleText.fontSize! * 1.25,
-                          decoration: InputDecoration(
-                            contentPadding: EdgeInsets.all(iOS && !kIsDesktop && !kIsWeb ? 10 : 12.5),
-                            isDense: true,
-                            isCollapsed: true,
-                            hintText: "Subject",
-                            enabledBorder: InputBorder.none,
-                            border: InputBorder.none,
-                            focusedBorder: InputBorder.none,
-                            fillColor: Colors.transparent,
-                            hintStyle: context.theme
-                                .extension<BubbleText>()!
-                                .bubbleText
-                                .copyWith(color: context.theme.colorScheme.outline, fontWeight: FontWeight.bold),
-                            suffixIconConstraints: const BoxConstraints(minHeight: 0),
-                          ),
-                          onTap: () {
-                            HapticFeedback.selectionClick();
-                          },
-                          onSubmitted: (String value) {
-                            controller?.subjectFocusNode.requestFocus();
-                          },
-                          contentInsertionConfiguration:
-                              ContentInsertionConfiguration(onContentInserted: onContentCommit),
-                        ),
-                      if (!isChatCreator &&
-                          SettingsSvc.settings.enablePrivateAPI.value &&
-                          SettingsSvc.settings.privateSubjectLine.value &&
-                          chat!.isIMessage &&
-                          iOS)
-                        Divider(
-                          height: 1.5,
-                          thickness: 1.5,
-                          indent: 10,
-                          color: context.theme.colorScheme.surfaceContainerHighest,
-                        ),
+                    if (!isChatCreator)
+                      Obx(() {
+                        if (controller!.pickedAttachments.isNotEmpty && iOS) {
+                          return Divider(
+                            height: 1.5,
+                            thickness: 1.5,
+                            color: context.theme.colorScheme.surfaceContainerHighest,
+                          );
+                        }
+                        return const SizedBox.shrink();
+                      }),
+                    if (!isChatCreator &&
+                        SettingsSvc.settings.enablePrivateAPI.value &&
+                        SettingsSvc.settings.privateSubjectLine.value &&
+                        chat!.isIMessage)
                       TextField(
+                        textCapitalization: TextCapitalization.sentences,
+                        focusNode: controller!.subjectFocusNode,
+                        autocorrect: true,
+                        controller: subjController,
+                        scrollPhysics: const CustomBouncingScrollPhysics(),
+                        style: context.theme.extension<BubbleText>()!.bubbleText.copyWith(fontWeight: FontWeight.bold),
+                        keyboardType: TextInputType.multiline,
+                        maxLines: 14,
+                        minLines: 1,
+                        enableIMEPersonalizedLearning: !SettingsSvc.settings.incognitoKeyboard.value,
+                        textInputAction: TextInputAction.next,
+                        cursorColor: context.theme.colorScheme.primary,
+                        cursorHeight: context.theme.extension<BubbleText>()!.bubbleText.fontSize! * 1.25,
+                        decoration: InputDecoration(
+                          contentPadding: EdgeInsets.all(iOS && !kIsDesktop && !kIsWeb ? 10 : 12.5),
+                          isDense: true,
+                          isCollapsed: true,
+                          hintText: "Subject",
+                          enabledBorder: InputBorder.none,
+                          border: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          fillColor: Colors.transparent,
+                          hintStyle: context.theme
+                              .extension<BubbleText>()!
+                              .bubbleText
+                              .copyWith(color: context.theme.colorScheme.outline, fontWeight: FontWeight.bold),
+                          suffixIconConstraints: const BoxConstraints(minHeight: 0),
+                        ),
+                        onTap: () {
+                          HapticFeedback.selectionClick();
+                        },
+                        onSubmitted: (String value) {
+                          controller?.subjectFocusNode.requestFocus();
+                        },
+                        contentInsertionConfiguration:
+                            ContentInsertionConfiguration(onContentInserted: onContentCommit),
+                      ),
+                    if (!isChatCreator &&
+                        SettingsSvc.settings.enablePrivateAPI.value &&
+                        SettingsSvc.settings.privateSubjectLine.value &&
+                        chat!.isIMessage &&
+                        iOS)
+                      Divider(
+                        height: 1.5,
+                        thickness: 1.5,
+                        indent: 10,
+                        color: context.theme.colorScheme.surfaceContainerHighest,
+                      ),
+                    Obx(() {
+                      final chatTitle =
+                          chat == null ? null : (ChatsSvc.getChatState(chat!.guid)?.title.value ?? chat!.getTitle());
+                      return TextField(
                         textCapitalization: TextCapitalization.sentences,
                         focusNode: controller?.focusNode ?? focusNode,
                         autocorrect: true,
@@ -313,7 +297,7 @@ class TextFieldComponentState extends State<TextFieldComponent> {
                               : SettingsSvc.settings.recipientAsPlaceholder.value == true
                                   ? isRecording
                                       ? ""
-                                      : chat!.getTitle()
+                                      : chatTitle ?? ""
                                   : (chat!.isTextForwarding && !isRecording)
                                       ? "Text Forwarding"
                                       : (!isRecording) // Only show iMessage when not recording
@@ -376,65 +360,57 @@ class TextFieldComponentState extends State<TextFieldComponent> {
                         },
                         contentInsertionConfiguration:
                             ContentInsertionConfiguration(onContentInserted: onContentCommit),
-                      ),
-                    ],
-                  ),
+                      );
+                    }),
+                  ],
                 ),
-              );
-            }),
-      ),
+              ),
+            );
+          }),
     );
     if (!showIcons) return textInput;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          if (!kIsWeb && iOS && Platform.isAndroid)
-            GestureDetector(
-              onLongPress: () {
-                _openCamera(type: 'video');
-              },
-              child: IconButton(
-                padding: const EdgeInsets.only(left: 10),
-                icon: Icon(CupertinoIcons.camera_fill, color: context.theme.colorScheme.outline, size: 28),
-                visualDensity: VisualDensity.compact,
-                onPressed: () {
-                  _openCamera();
-                },
+          Padding(
+            padding: const EdgeInsets.only(right: 10),
+            child: IconButton(
+              style: IconButton.styleFrom(
+                backgroundColor: context.theme.colorScheme.outline.withValues(alpha: 0.2),
+                shape: const CircleBorder(),
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(36, 36),
+                fixedSize: const Size(36, 36),
               ),
-            ),
-          IconButton(
-            icon: Icon(
-              iOS
-                  ? CupertinoIcons.add_circled_solid
-                  : material
-                      ? Icons.add_circle_outline
-                      : Icons.add,
-              color: context.theme.colorScheme.outline,
-              size: 28,
-            ),
-            visualDensity: Platform.isAndroid ? VisualDensity.compact : null,
-            onPressed: () async {
-              if (kIsDesktop) {
-                final res = await FilePicker.platform.pickFiles(withReadStream: true, allowMultiple: true);
-                if (res == null || res.files.isEmpty || res.files.first.readStream == null) return;
-                for (pf.PlatformFile e in res.files) {
-                  if (e.size / 1024000 > 1000) {
-                    showSnackbar("Error", "This file is over 1 GB! Please compress it before sending.");
-                    continue;
+              icon: Icon(
+                Icons.add,
+                color: context.theme.colorScheme.outline,
+                size: 22,
+              ),
+              visualDensity: Platform.isAndroid ? VisualDensity.compact : null,
+              onPressed: () async {
+                if (kIsDesktop) {
+                  final res = await fp.FilePicker.pickFiles(withReadStream: true, allowMultiple: true);
+                  if (res == null || res.files.isEmpty || res.files.first.readStream == null) return;
+                  for (fp.PlatformFile e in res.files) {
+                    if (e.size / 1024000 > 1000) {
+                      showSnackbar("Error", "This file is over 1 GB! Please compress it before sending.");
+                      continue;
+                    }
+                    controller!.pickedAttachments.add(PlatformFile(
+                      path: e.path,
+                      name: e.name,
+                      size: e.size,
+                      bytes: await readByteStream(e.readStream!),
+                    ));
                   }
-                  controller!.pickedAttachments.add(PlatformFile(
-                    path: e.path,
-                    name: e.name,
-                    size: e.size,
-                    bytes: await readByteStream(e.readStream!),
-                  ));
+                } else {
+                  if (!_showAttachmentPickerLocal) FocusScope.of(context).unfocus();
+                  setState(() => _showAttachmentPickerLocal = !_showAttachmentPickerLocal);
                 }
-              } else {
-                if (!_showAttachmentPickerLocal) FocusScope.of(context).unfocus();
-                setState(() => _showAttachmentPickerLocal = !_showAttachmentPickerLocal);
-              }
-            },
+              },
+            ),
           ),
           Expanded(child: textInput),
         ]),
@@ -451,99 +427,26 @@ class TextFieldComponentState extends State<TextFieldComponent> {
   }
 
   void onContentCommit(KeyboardInsertedContent content) async {
-    // Add some debugging logs
-    Logger.info("[Content Commit] Keyboard received content");
-    Logger.info("  -> Content Type: ${content.mimeType}");
-    Logger.info("  -> URI: ${content.uri}");
-    Logger.info("  -> Content Length: ${content.hasData ? content.data!.length : "null"}");
-
-    // Parse the filename from the URI and read the data as a List<int>
-    String filename = FilesystemSvc.uriToFilename(content.uri, content.mimeType);
-
-    // Save the data to a location and add it to the file picker
-    if (content.hasData) {
-      widget.controller?.pickedAttachments.add(PlatformFile(
-        name: filename,
-        size: content.data!.length,
-        bytes: content.data,
-      ));
-    } else {
-      showSnackbar('Insertion Failed', 'Attachment has no data!');
-    }
+    // Delegate to clipboard handler
+    clipboardHandler?.handleKeyboardInsertedContent(content);
   }
 
   KeyEventResult handleKey(FocusNode _, KeyEvent ev, BuildContext context, bool isChatCreator) {
     if (ev is! KeyDownEvent) return KeyEventResult.ignored;
 
+    // Handle clipboard paste (Ctrl+V or Cmd+V)
     if ((kIsWeb || Platform.isWindows || Platform.isLinux) &&
         (ev.physicalKey == PhysicalKeyboardKey.keyV || ev.logicalKey == LogicalKeyboardKey.keyV) &&
         HardwareKeyboard.instance.isControlPressed) {
-      if (kIsDesktop) {
-        Pasteboard.files().then((files) {
-          if (files.isEmpty) {
-            Pasteboard.image.then((image) async {
-              if (image != null) {
-                controller!.pickedAttachments.add(PlatformFile(
-                  name: "image-${controller!.pickedAttachments.length + 1}.png",
-                  bytes: image,
-                  size: image.length,
-                ));
-              } else {
-                String? clipboardText = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
-                if (clipboardText == null) return;
-
-                TextSelection selection = controller!.lastFocusedTextController.selection;
-                String oldText = controller!.lastFocusedTextController.text;
-                String newText = oldText.replaceRange(selection.start, selection.end, clipboardText);
-                controller!.lastFocusedTextController.value = TextEditingValue(
-                  text: newText,
-                  selection: TextSelection.fromPosition(
-                    TextPosition(offset: selection.start + clipboardText.length),
-                  ),
-                );
-              }
-            });
-          } else {
-            for (final String path in files) {
-              final String name = basename(path);
-              final File file = File(path);
-              controller!.pickedAttachments.add(PlatformFile(
-                name: name,
-                path: path,
-                bytes: file.readAsBytesSync(),
-                size: file.lengthSync(),
-              ));
-            }
-          }
-        });
-      } else {
-        // This is just web
-        Pasteboard.image.then((image) async {
-          if (image != null) {
-            controller!.pickedAttachments.add(PlatformFile(
-              name: "image-${controller!.pickedAttachments.length + 1}.png",
-              bytes: image,
-              size: image.length,
-            ));
-          } else {
-            String? clipboardText = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
-            if (clipboardText == null) return;
-
-            TextSelection selection = controller!.lastFocusedTextController.selection;
-            String oldText = controller!.lastFocusedTextController.text;
-            String newText = oldText.replaceRange(selection.start, selection.end, clipboardText);
-            controller!.lastFocusedTextController.value = TextEditingValue(
-              text: newText,
-              selection: TextSelection.fromPosition(
-                TextPosition(offset: selection.start + clipboardText.length),
-              ),
-            );
-          }
-        });
+      final handler = clipboardHandler;
+      if (handler != null) {
+        unawaited(handler.handlePasteEvent());
+        return KeyEventResult.handled;
       }
-      return KeyEventResult.handled;
+      return KeyEventResult.ignored;
     }
 
+    // Early return if holding modifier keys (unless for special Ctrl+V case above)
     if (HardwareKeyboard.instance.isMetaPressed ||
         HardwareKeyboard.instance.isControlPressed ||
         HardwareKeyboard.instance.isAltPressed) {
@@ -558,6 +461,7 @@ class TextFieldComponentState extends State<TextFieldComponent> {
             ? subjectTextController!
             : textController);
 
+    // Cursor at start: move focus to the header back button / previous field
     if (ev.logicalKey == LogicalKeyboardKey.arrowLeft) {
       final selection = activeTextField.selection;
       final isCursorAtStart = selection.isValid && selection.isCollapsed && selection.extentOffset <= 0;
@@ -573,6 +477,7 @@ class TextFieldComponentState extends State<TextFieldComponent> {
       }
     }
 
+    // Cursor at end: move focus to the next field
     if (ev.logicalKey == LogicalKeyboardKey.arrowRight) {
       final selection = activeTextField.selection;
       final isCursorAtEnd =
@@ -591,34 +496,49 @@ class TextFieldComponentState extends State<TextFieldComponent> {
       return KeyEventResult.ignored;
     }
 
+    // Calculate movement indices for emoji/mention pickers
     int maxShown = context.height / 3 ~/ 40;
     int upMovementIndex = maxShown ~/ 3;
     int downMovementIndex = maxShown * 2 ~/ 3;
 
-    // Down arrow
-    if (ev.logicalKey == LogicalKeyboardKey.arrowDown) {
-      if (controller!.mentionSelectedIndex.value < controller!.mentionMatches.length - 1) {
-        controller!.mentionSelectedIndex.value++;
-        if (controller!.mentionSelectedIndex.value >= downMovementIndex &&
-            controller!.mentionSelectedIndex < controller!.mentionMatches.length - maxShown + downMovementIndex + 1) {
-          controller!.emojiScrollController.jumpTo(max(
-              (controller!.mentionSelectedIndex.value - downMovementIndex) * 40,
-              controller!.emojiScrollController.offset));
-        }
-        return KeyEventResult.handled;
-      }
-      if (controller!.emojiSelectedIndex.value < controller!.emojiMatches.length - 1) {
-        controller!.emojiSelectedIndex.value++;
-        if (controller!.emojiSelectedIndex.value >= downMovementIndex &&
-            controller!.emojiSelectedIndex < controller!.emojiMatches.length - maxShown + downMovementIndex + 1) {
-          controller!.emojiScrollController.jumpTo(max((controller!.emojiSelectedIndex.value - downMovementIndex) * 40,
-              controller!.emojiScrollController.offset));
-        }
-        return KeyEventResult.handled;
-      }
-    }
+    // Check which key was pressed
+    final isEscapeKey = ev.logicalKey == LogicalKeyboardKey.escape;
+    final isTabOrEnter = ev.logicalKey == LogicalKeyboardKey.tab || ev.logicalKey == LogicalKeyboardKey.enter;
+    final isDownArrow = ev.logicalKey == LogicalKeyboardKey.arrowDown;
+    final isUpArrow = ev.logicalKey == LogicalKeyboardKey.arrowUp;
 
-    // Up arrow
+    // Try emoji handler first (emoji matches have priority over mentions if both active)
+    bool handledByEmoji = emojiHandler?.handleKeyEvent(
+          logicalKey: ev.logicalKey,
+          isEscapeKey: isEscapeKey,
+          isTabOrEnter: isTabOrEnter,
+          isDownArrow: isDownArrow,
+          isUpArrow: isUpArrow,
+          maxShown: maxShown,
+          upMovementIndex: upMovementIndex,
+          downMovementIndex: downMovementIndex,
+        ) ??
+        false;
+    if (handledByEmoji) return KeyEventResult.handled;
+
+    // Try mention handler
+    bool handledByMention = mentionHandler?.handleKeyEvent(
+          logicalKey: ev.logicalKey,
+          isEscapeKey: isEscapeKey,
+          isTabOrEnter: isTabOrEnter,
+          isDownArrow: isDownArrow,
+          isUpArrow: isUpArrow,
+          maxShown: maxShown,
+          upMovementIndex: upMovementIndex,
+          downMovementIndex: downMovementIndex,
+        ) ??
+        false;
+    if (handledByMention) return KeyEventResult.handled;
+
+    // Up arrow: when the cursor is at the very start, hand focus to the most recent message
+    // (so the user can keyboard-navigate up into the conversation), otherwise edit the last
+    // sent message. Runs before the keyboard handler so editing reuses the mention-aware
+    // controller and preserves the message's annotations.
     if (ev.logicalKey == LogicalKeyboardKey.arrowUp) {
       final selection = activeTextField.selection;
       if (selection.isValid &&
@@ -629,6 +549,7 @@ class TextFieldComponentState extends State<TextFieldComponent> {
         return KeyEventResult.handled;
       }
       if (chat != null &&
+          controller != null &&
           controller!.lastFocusedTextController.text.isEmpty &&
           SettingsSvc.settings.editLastSentMessageOnUpArrow.value &&
           SettingsSvc.serverDetails.isMinVentura &&
@@ -639,7 +560,7 @@ class TextFieldComponentState extends State<TextFieldComponent> {
           final isSending = messageController.isSending.value;
           if (!isSending) {
             final parts = messageController.parts;
-            final part = parts.filter((p) => p.text?.isNotEmpty ?? false).lastOrNull;
+            final part = parts.where((p) => p.text?.isNotEmpty ?? false).lastOrNull;
             if (part != null) {
               final FocusNode? node = kIsDesktop || kIsWeb ? FocusNode() : null;
               controller!.editing.add(MessageEditEntry(
@@ -655,133 +576,40 @@ class TextFieldComponentState extends State<TextFieldComponent> {
           }
         }
       }
-      if (controller!.mentionSelectedIndex.value > 0) {
-        controller!.mentionSelectedIndex.value--;
-        if (controller!.mentionSelectedIndex.value >= upMovementIndex &&
-            controller!.mentionSelectedIndex < controller!.mentionMatches.length - maxShown + upMovementIndex + 1) {
-          controller!.emojiScrollController.jumpTo(min((controller!.mentionSelectedIndex.value - upMovementIndex) * 40,
-              controller!.emojiScrollController.offset));
-        }
+    }
+
+    // Try keyboard shortcut handler (escape, enter, etc.)
+    KeyEventResult shortcutResult = keyboardHandler?.handleKeyEvent(ev) ?? KeyEventResult.ignored;
+    if (shortcutResult == KeyEventResult.handled) return KeyEventResult.handled;
+
+    // Escape: clear picker state if not handled by handlers above
+    if (isEscapeKey) {
+      final ctrl = controller;
+      if (ctrl == null) return KeyEventResult.ignored;
+
+      if (ctrl.showEmojiPicker.value) {
+        ctrl.showEmojiPicker.value = false;
         return KeyEventResult.handled;
       }
-      if (controller!.emojiSelectedIndex.value > 0) {
-        controller!.emojiSelectedIndex.value--;
-        if (controller!.emojiSelectedIndex.value >= upMovementIndex &&
-            controller!.emojiSelectedIndex < controller!.emojiMatches.length - maxShown + upMovementIndex + 1) {
-          controller!.emojiScrollController.jumpTo(min(
-              (controller!.emojiSelectedIndex.value - upMovementIndex) * 40, controller!.emojiScrollController.offset));
-        }
+      if (ctrl.replyToMessage != null) {
+        ctrl.replyToMessage = null;
+        return KeyEventResult.handled;
+      }
+      if (ctrl.pickedAttachments.isNotEmpty) {
+        ctrl.pickedAttachments.clear();
         return KeyEventResult.handled;
       }
     }
 
-    // Tab or Enter
-    if (ev.logicalKey == LogicalKeyboardKey.tab || ev.logicalKey == LogicalKeyboardKey.enter) {
-      if (controller!.focusNode.hasPrimaryFocus &&
-          controller!.mentionMatches.length > controller!.mentionSelectedIndex.value) {
-        int index = controller!.mentionSelectedIndex.value;
-        TextEditingController textField = controller!.subjectFocusNode.hasPrimaryFocus
-            ? controller!.subjectTextController
-            : controller!.textController;
-        String text = textField.text;
-        RegExp regExp = RegExp(r"@(?:[^@ \n]+|$)(?=[ \n]|$)", multiLine: true);
-        Iterable<RegExpMatch> matches = regExp.allMatches(text);
-        if (matches.isNotEmpty && matches.any((m) => m.start < textField.selection.start)) {
-          RegExpMatch match = matches.lastWhere((m) => m.start < textField.selection.start);
-          controller!.textController
-              .addMention(text.substring(match.start, match.end), controller!.mentionMatches[index]);
-        } else {
-          // If the user moved the cursor before trying to insert a mention, reset the picker
-          controller!.emojiScrollController.jumpTo(0);
-        }
-        controller!.mentionSelectedIndex.value = 0;
-        controller!.mentionMatches.value = <Mentionable>[];
-
-        return KeyEventResult.handled;
-      }
-      if (controller!.emojiMatches.length > controller!.emojiSelectedIndex.value) {
-        int index = controller!.emojiSelectedIndex.value;
-        TextEditingController textField = controller!.subjectFocusNode.hasPrimaryFocus
-            ? controller!.subjectTextController
-            : controller!.textController;
-        String text = textField.text;
-        RegExp regExp = RegExp(r":[^: \n]{2,}(?=[ \n]|$)", multiLine: true);
-        Iterable<RegExpMatch> matches = regExp.allMatches(text);
-        if (matches.isNotEmpty && matches.any((m) => m.start < textField.selection.start)) {
-          RegExpMatch match = matches.lastWhere((m) => m.start < textField.selection.start);
-          String emoji = controller!.emojiMatches[index].emoji;
-          String _text = "${text.substring(0, match.start)}$emoji ${text.substring(match.end)}";
-          textField.value =
-              TextEditingValue(text: _text, selection: TextSelection.collapsed(offset: match.start + emoji.length + 1));
-        } else {
-          // If the user moved the cursor before trying to insert an emoji, reset the picker
-          controller!.emojiScrollController.jumpTo(0);
-        }
-        controller!.emojiSelectedIndex.value = 0;
-        controller!.emojiMatches.value = <Emoji>[];
-
-        return KeyEventResult.handled;
-      }
-      if (SettingsSvc.settings.privateSubjectLine.value) {
-        if (ev.logicalKey == LogicalKeyboardKey.tab) {
-          // Tab to switch between text fields
-          if (!HardwareKeyboard.instance.isShiftPressed && controller!.subjectFocusNode.hasPrimaryFocus) {
-            controller!.focusNode.requestFocus();
-            return KeyEventResult.handled;
-          }
-          if (HardwareKeyboard.instance.isShiftPressed && controller!.focusNode.hasPrimaryFocus) {
-            controller!.subjectFocusNode.requestFocus();
-            return KeyEventResult.handled;
-          }
-        }
-      }
-    }
-
-    // Escape
-    if (ev.logicalKey == LogicalKeyboardKey.escape) {
-      if (controller!.mentionMatches.isNotEmpty) {
-        controller!.mentionMatches.value = <Mentionable>[];
-        return KeyEventResult.handled;
-      }
-      if (controller!.emojiMatches.isNotEmpty) {
-        controller!.emojiMatches.value = <Emoji>[];
-        return KeyEventResult.handled;
-      }
-      if (controller!.showEmojiPicker.value) {
-        controller!.showEmojiPicker.value = false;
-        return KeyEventResult.handled;
-      }
-      if (controller!.replyToMessage != null) {
-        controller!.replyToMessage = null;
-        return KeyEventResult.handled;
-      }
-      if (controller!.pickedAttachments.isNotEmpty) {
-        controller!.pickedAttachments.clear();
-        return KeyEventResult.handled;
-      }
-    }
-
-    if ((kIsDesktop || kIsWeb) &&
-        ev.logicalKey == LogicalKeyboardKey.enter &&
-        !HardwareKeyboard.instance.isShiftPressed) {
-      sendMessage();
-      controller!.focusNode.requestFocus();
-      return KeyEventResult.handled;
-    }
-
-    if (kIsDesktop || kIsWeb) return KeyEventResult.ignored;
-    if (ev.physicalKey == PhysicalKeyboardKey.enter && SettingsSvc.settings.sendWithReturn.value) {
-      if (!isNullOrEmpty(textController.text) || !isNullOrEmpty(controller!.subjectTextController.text)) {
-        sendMessage();
-        controller!.focusNode.previousFocus(); // I genuinely don't know why this works
-        return KeyEventResult.handled;
-      } else {
-        controller!.subjectTextController.text = "";
-        textController.text = ""; // Stop pressing physical enter with enterIsSend from creating newlines
-        controller!.focusNode.previousFocus(); // I genuinely don't know why this works
-        return KeyEventResult.handled;
-      }
-    }
     return KeyEventResult.ignored;
+  }
+
+  /// Convert a file stream to bytes
+  Future<Uint8List> readByteStream(Stream<List<int>> stream) async {
+    final chunks = <Uint8List>[];
+    await for (final chunk in stream) {
+      chunks.add(Uint8List.fromList(chunk));
+    }
+    return Uint8List.fromList(chunks.expand((e) => e).toList());
   }
 }

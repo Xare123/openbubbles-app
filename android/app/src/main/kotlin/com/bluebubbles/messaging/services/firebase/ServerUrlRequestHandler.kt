@@ -9,6 +9,7 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.FirebaseFirestore
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -16,6 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 
 /// Fetches a new URL immediately from Firebase
 class ServerUrlRequestHandler: MethodCallHandlerImpl() {
@@ -41,15 +43,36 @@ class ServerUrlRequestHandler: MethodCallHandlerImpl() {
         Log.d(Constants.logTag, "Fetching server URL...")
         if (firebaseApp.options.databaseUrl == null) {
             CoroutineScope(Dispatchers.Main).launch {
-                val serverUrlTask: Task<DocumentSnapshot> = FirebaseFirestore.getInstance().collection("server").document("config").get()
-                val serverUrl: String? = serverUrlTask.await().data?.get("serverUrl") as String?
-                submitData(serverUrl, result)
+                try {
+                    val serverUrlTask: Task<DocumentSnapshot> = withContext(Dispatchers.IO) {
+                        FirebaseFirestore.getInstance().collection("server").document("config").get()
+                    }
+                    val serverUrl: String? = serverUrlTask.await().data?.get("serverUrl") as String?
+                    submitData(serverUrl, result)
+                } catch (e: FirebaseFirestoreException) {
+                    Log.e(
+                        Constants.logTag,
+                        "Failed to fetch Firestore server URL (${e.code}): ${e.message}",
+                        e,
+                    )
+                    result.error("403", "Missing or insufficient Firebase permissions", null)
+                } catch (e: Exception) {
+                    Log.e(Constants.logTag, "Failed to fetch Firestore server URL", e)
+                    result.error("500", "Failed to get server URL from Firestore", null)
+                }
             }
         } else {
             CoroutineScope(Dispatchers.Main).launch {
-                val serverUrlTask: Task<DataSnapshot> = FirebaseDatabase.getInstance().getReference("config").child("serverUrl").get()
-                val serverUrl: String? = serverUrlTask.await().getValue(String::class.java)
-                submitData(serverUrl, result)
+                try {
+                    val serverUrlTask: Task<DataSnapshot> = withContext(Dispatchers.IO) {
+                        FirebaseDatabase.getInstance().getReference("config").child("serverUrl").get()
+                    }
+                    val serverUrl: String? = serverUrlTask.await().getValue(String::class.java)
+                    submitData(serverUrl, result)
+                } catch (e: Exception) {
+                    Log.e(Constants.logTag, "Failed to fetch Realtime DB server URL", e)
+                    result.error("500", "Failed to get server URL from Realtime Database", null)
+                }
             }
         }
     }

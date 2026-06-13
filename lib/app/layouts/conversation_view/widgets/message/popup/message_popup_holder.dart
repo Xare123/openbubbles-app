@@ -73,10 +73,10 @@ class _MessagePopupHolderState extends State<MessagePopupHolder> with ThemeHelpe
                 colorScheme: ctx.theme.colorScheme.copyWith(
                   primary: ctx.theme.colorScheme.bubble(ctx, true),
                   onPrimary: ctx.theme.colorScheme.onBubble(ctx, true),
-                  surface: SettingsSvc.settings.monetTheming.value == Monet.full
+                  surface: ThemeSvc.isMaterialYouActive(context)
                       ? null
                       : (ctx.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
-                  onSurface: SettingsSvc.settings.monetTheming.value == Monet.full
+                  onSurface: ThemeSvc.isMaterialYouActive(context)
                       ? null
                       : (ctx.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
                 ),
@@ -138,13 +138,14 @@ class _MessagePopupHolderState extends State<MessagePopupHolder> with ThemeHelpe
     Logger.debug("[sendTapback] Creating temp reaction: type=$reaction, parent=${message.guid}",
         tag: "MessageReactivity");
 
-    OutgoingMsgHandler.queue(OutgoingItem(
-      type: QueueType.sendMessage,
-      chat: message.getChat() ?? ChatStateScope.chatOf(context),
-      message: tempMessage,
-      selected: message,
-      reaction: emoji != null ? (reaction.startsWith("-") ? "-$emoji" : emoji) : reaction,
-    ));
+    OutgoingMsgHandler.queue(
+      OutgoingReaction(
+        chat: message.chat.target ?? ChatStateScope.chatOf(context),
+        message: tempMessage,
+        selectedMessage: message,
+        reaction: emoji != null ? (reaction.startsWith("-") ? "-$emoji" : emoji) : reaction,
+      ),
+    );
   }
 
   @override

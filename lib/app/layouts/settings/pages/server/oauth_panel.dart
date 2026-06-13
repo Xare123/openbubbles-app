@@ -68,7 +68,7 @@ class _OauthPanelState extends State<OauthPanel> with ThemeHelpers {
     SettingsSvc.settings.guidAuthKey.value = password;
 
     dio.Response? serverResponse;
-    await HttpSvc.ping().then((response) {
+    await HttpSvc.server.ping().then((response) {
       serverResponse = response;
     }).catchError((err) {
       serverResponse = err;
@@ -338,7 +338,7 @@ class _OauthPanelState extends State<OauthPanel> with ThemeHelpers {
                       onPressed: () async {
                         token.value = await googleOAuth(context);
                         if (token.value != null) {
-                          final response = await HttpSvc.getGoogleInfo(token.value!);
+                          final response = await HttpSvc.firebase.getGoogleInfo(token.value!);
                           googleName.value = response.data['name'];
                           googlePicture.value = response.data['picture'];
                           fetchingFirebase.value = true;

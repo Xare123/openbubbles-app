@@ -223,7 +223,6 @@ class Message {
     this.handle,
     this.hasAttachments = false,
     this.hasReactions = false,
-    this.attachments = const [],
     this.associatedMessages = const [],
     this.dateDeleted,
     this.metadata,
@@ -254,7 +253,6 @@ class Message {
     if (dateDelivered != null) _dateDelivered.value = dateDelivered;
     if (dateEdited != null) _dateEdited.value = dateEdited;
     if (isDelievered != null) _isDelivered.value = isDelievered;
-    if (attachments.isEmpty) attachments = [];
     if (associatedMessages.isEmpty) associatedMessages = [];
     if (attributedBody.isEmpty) attributedBody = [];
     if (messageSummaryInfo.isEmpty) messageSummaryInfo = [];
@@ -457,9 +455,6 @@ class Message {
   }
 
   factory Message.fromMap(Map<String, dynamic> json) {
-    final attachments =
-        (json['attachments'] as List? ?? []).map((a) => Attachment.fromMap(a!.cast<String, Object>())).toList();
-
     List<AttributedBody> attributedBody = [];
     if (json["attributedBody"] != null) {
       if (json['attributedBody'] is Map) {
@@ -528,9 +523,7 @@ class Message {
       associatedMessageType: json["associatedMessageType"],
       expressiveSendStyleId: json["expressiveSendStyleId"],
       handle: json['handle'] != null ? Handle.fromMap(json['handle']!.cast<String, Object>()) : null,
-      hasAttachments: attachments.isNotEmpty || json['hasAttachments'] == true,
-      attachments:
-          (json['attachments'] as List? ?? []).map((a) => Attachment.fromMap(a!.cast<String, Object>())).toList(),
+      hasAttachments: (json['attachments'] as List? ?? []).isNotEmpty || json['hasAttachments'] == true,
       hasReactions: json['hasReactions'] == true,
       dateDeleted: parseDate(json["dateDeleted"]),
       metadata: metadata is String ? null : metadata,
@@ -875,18 +868,6 @@ class Message {
     return this;
   }
 
-  static Future<List<Message>> bulkSaveNewMessages(Chat chat, List<Message> messages) async {
-    if (kIsWeb) throw Exception("Web does not support saving messages!");
-    if (messages.isEmpty) return [];
-
-    return await MessageInterface.bulkSaveNewMessages(
-      data: {
-        'chatData': chat.toMap(),
-        'messagesData': messages.map((e) => e.toMap()).toList(),
-      },
-    );
-  }
-
   /// Replace a temp message with the message from the server
   static Future<Message> replaceMessage(String? oldGuid, Message newMessage) async {
     if (kIsWeb) throw Exception("Web does not support replacing messages!");
@@ -929,37 +910,12 @@ class Message {
     });
   }
 
-  Future<List<Attachment?>> fetchAttachmentsAsync() async {
-    if (kIsWeb || id == null) return [];
-    if (attachments.isNotEmpty) return attachments;
-
-    final result = await MessageInterface.fetchAttachmentsAsync(
-      messageId: id!,
-      messageGuid: guid!,
-    );
-
-    attachments = result.map((e) => Attachment.fromMap(e)).toList();
-    return attachments;
-  }
-
   /// Get the chat associated with the message
   Chat? getChat() {
     if (kIsWeb) return null;
     return Database.runInTransaction(TxMode.read, () {
       return chat.target;
     });
-  }
-
-  Future<Chat?> getChatAsync() async {
-    if (kIsWeb || id == null) return null;
-
-    final result = await MessageInterface.getChatAsync(
-      messageId: id!,
-      messageGuid: guid!,
-    );
-
-    if (result == null) return null;
-    return Chat.fromMap(result);
   }
 
   /// Fetch reactions
@@ -1030,13 +986,6 @@ class Message {
       query.limit = 1;
       final result = query.findFirst();
       query.close();
-      if (result != null) {
-        // Populate attachments field from dbAttachments for consistent behavior
-        if (result.hasAttachments) {
-          result.attachments = List<Attachment>.from(result.dbAttachments);
-        }
-      }
-
       return result;
     }
     return null;
@@ -1212,11 +1161,9 @@ class Message {
 
   bool get isBigEmoji => bigEmoji ?? MessageHelper.shouldShowBigEmoji(fullText);
 
-  List<Attachment> get realAttachments =>
-      attachments.where((e) => e != null && e.mimeType != null).cast<Attachment>().toList();
+  List<Attachment> get realAttachments => dbAttachments.where((e) => e.mimeType != null).toList();
 
-  List<Attachment> get previewAttachments =>
-      attachments.where((e) => e != null && e.mimeType == null).cast<Attachment>().toList();
+  List<Attachment> get previewAttachments => dbAttachments.where((e) => e.mimeType == null).toList();
 
   List<Message> get reactions => associatedMessages
       .where((item) => ReactionTypes.toList().contains(item.associatedMessageType?.replaceAll("-", "")))
@@ -1369,13 +1316,13 @@ class Message {
     // cache this value because the calculation can be expensive
     if (MessagesService.cachedBubbleSizes[guid!] != null) return MessagesService.cachedBubbleSizes[guid!]!;
     // if attachment, then grab width / height
-    if (fullText.isEmpty && (attachments).isNotEmpty) {
+    if (fullText.isEmpty && dbAttachments.isNotEmpty) {
       return Size(
-          attachments
-              .map((e) => e!.width)
+          dbAttachments
+              .map((e) => e.width)
               .fold(0, (p, e) => max(p, (e ?? NavigationSvc.width(context) / 2).toDouble()) + 28),
-          attachments
-              .map((e) => e!.height)
+          dbAttachments
+              .map((e) => e.height)
               .fold(0, (p, e) => max(p, (e ?? NavigationSvc.width(context) / 2).toDouble())));
     }
     // initialize constraints for text rendering
@@ -1543,14 +1490,6 @@ class Message {
     // Update attachments
     if (existing.dbAttachments.isEmpty && newMessage.dbAttachments.isNotEmpty) {
       existing.dbAttachments.addAll(newMessage.dbAttachments);
-    }
-
-    // IMPORTANT: Also update the attachments field for serialization/UI
-    if (existing.attachments.isEmpty && newMessage.attachments.isNotEmpty) {
-      existing.attachments = newMessage.attachments;
-    } else if (existing.attachments.isEmpty && existing.dbAttachments.isNotEmpty) {
-      // If attachments field is empty but dbAttachments has data, populate it
-      existing.attachments = List<Attachment>.from(existing.dbAttachments);
     }
 
     return existing;

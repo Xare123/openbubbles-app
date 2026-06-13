@@ -64,9 +64,7 @@ class _MaterialConversationTileState extends CustomState<MaterialConversationTil
                           : (ChatsSvc.getChatState(controller.chat.guid)?.hasUnreadMessage.value ?? false)
                               ? FontWeight.bold
                               : null,
-                      color: SettingsSvc.settings.monetTheming.value != Monet.none
-                          ? context.theme.colorScheme.onSurface
-                          : null,
+                      color: ThemeSvc.isAnyMaterialYouSelected ? context.theme.colorScheme.onSurface : null,
                     )
                     .apply(fontSizeFactor: 1.1),
               )),
@@ -78,7 +76,7 @@ class _MaterialConversationTileState extends CustomState<MaterialConversationTil
               : controller.subtitle ??
                   Obx(() {
                     final unread = ChatsSvc.getChatState(controller.chat.guid)?.hasUnreadMessage.value ?? false;
-                    final isMonet = SettingsSvc.settings.monetTheming.value != Monet.none;
+                    final isMonet = ThemeSvc.isAnyMaterialYouSelected;
                     return ChatSubtitle(
                       parentController: controller,
                       style: context.theme.textTheme.bodyMedium!
@@ -140,7 +138,7 @@ class _MaterialConversationTileState extends CustomState<MaterialConversationTil
     );
 
     return ChatStateScope(
-      chatState: controller.chatState ?? ChatsSvc.getOrCreateChatState(controller.chat),
+      chatState: controller.chatState,
       child: Obx(() {
         NavigationSvc.listener.value;
         return AnimatedContainer(
@@ -159,7 +157,7 @@ class _MaterialConversationTileState extends CustomState<MaterialConversationTil
                         ? context.theme.colorScheme.primaryContainer
                         : hoverHighlight
                             ? context.theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5)
-                            : SettingsSvc.settings.monetTheming.value == Monet.full
+                            : ThemeSvc.isMaterialYouActive(context)
                                 ? context.theme.colorScheme.surface
                                 : null,
           ),

@@ -6,6 +6,7 @@ import 'package:bluebubbles/app/layouts/chat_creator/widgets/service_type_picker
 import 'package:bluebubbles/app/layouts/conversation_view/pages/messages_view.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/text_field/text_field_component.dart';
 import 'package:bluebubbles/app/state/chat_state_scope.dart';
+import 'package:bluebubbles/app/wrappers/bb_app_bar.dart';
 import 'package:bluebubbles/app/wrappers/bb_scaffold.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
@@ -79,24 +80,12 @@ class _NewChatCreatorState extends State<NewChatCreator> with ThemeHelpers<NewCh
   @override
   Widget build(BuildContext context) {
     return BBScaffold(
-      appBar: PreferredSize(
-        preferredSize: Size(NavigationSvc.width(context), kIsDesktop ? 90 : 50),
-        child: AppBar(
-          systemOverlayStyle: context.theme.colorScheme.brightness == Brightness.dark
-              ? SystemUiOverlayStyle.light
-              : SystemUiOverlayStyle.dark,
-          toolbarHeight: kIsDesktop ? 90 : 50,
-          elevation: 0,
-          scrolledUnderElevation: 3,
-          surfaceTintColor: context.theme.colorScheme.primary,
-          leading: buildBackButton(context),
-          backgroundColor: Colors.transparent,
-          centerTitle: SettingsSvc.settings.skin.value == Skins.iOS,
-          title: Text(
-            'New Message',
-            style: context.theme.textTheme.titleLarge,
-          ),
-        ),
+      safeAreaTop: true,
+      appBar: BBAppBar(
+        titleText: 'New Message',
+        leading: buildBackButton(context),
+        // backgroundColor: Colors.transparent,
+        toolbarHeight: kIsDesktop ? 90 : 60,
       ),
       body: FocusScope(
         child: Column(
@@ -175,7 +164,6 @@ class _ContentArea extends StatelessWidget {
       } else {
         final isIMsg = activeCVC.chat.isIMessage;
         final colorScheme = context.theme.colorScheme;
-        final monetTheming = SettingsSvc.settings.monetTheming.value;
         final bubbleColorsExt = context.theme.extensions[BubbleColors] as BubbleColors?;
 
         child = Theme(
@@ -185,8 +173,8 @@ class _ContentArea extends StatelessWidget {
             colorScheme: colorScheme.copyWith(
               primary: colorScheme.bubble(context, isIMsg),
               onPrimary: colorScheme.onBubble(context, isIMsg),
-              surface: monetTheming == Monet.full ? null : bubbleColorsExt?.receivedBubbleColor,
-              onSurface: monetTheming == Monet.full ? null : bubbleColorsExt?.onReceivedBubbleColor,
+              surface: ThemeSvc.isMaterialYouActive(context) ? null : bubbleColorsExt?.receivedBubbleColor,
+              onSurface: ThemeSvc.isMaterialYouActive(context) ? null : bubbleColorsExt?.onReceivedBubbleColor,
             ),
           ),
           child: ChatStateScope(
@@ -227,21 +215,17 @@ class _TextFieldArea extends StatelessWidget {
       final sending = controller.isSending.value;
 
       return Padding(
-        padding: EdgeInsets.only(
-          left: 5.0,
-          top: 10.0,
-          bottom: 5.0 + MediaQuery.of(context).viewPadding.bottom,
-        ),
+        padding: const EdgeInsets.all(10.0),
         child: Theme(
           data: context.theme.copyWith(
             primaryColor: context.theme.colorScheme.bubble(context, isIMsg),
             colorScheme: context.theme.colorScheme.copyWith(
               primary: context.theme.colorScheme.bubble(context, isIMsg),
               onPrimary: context.theme.colorScheme.onBubble(context, isIMsg),
-              surface: SettingsSvc.settings.monetTheming.value == Monet.full
+              surface: ThemeSvc.isMaterialYouActive(context)
                   ? null
                   : (context.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
-              onSurface: SettingsSvc.settings.monetTheming.value == Monet.full
+              onSurface: ThemeSvc.isMaterialYouActive(context)
                   ? null
                   : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
             ),

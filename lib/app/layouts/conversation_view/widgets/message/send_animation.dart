@@ -34,8 +34,8 @@ class _SendAnimationState extends CustomState<SendAnimation, SendData, Conversat
   // the visual gap between the text field top edge and the bottom of the message list.
   static const double _textFieldVerticalPadding = 17.5;
 
-  // Fixed height of the TypingIndicatorRow when visible.
-  static const double _typingIndicatorHeight = 50.0;
+  // Fallback typing-indicator height when the row hasn't been laid out yet.
+  static const double _typingIndicatorFallbackHeight = 50.0;
 
   // Height of the text field component at its resting (empty, single-line) size,
   // measured from the RenderBox once after the first frame. We avoid using a
@@ -50,17 +50,31 @@ class _SendAnimationState extends CustomState<SendAnimation, SendData, Conversat
       (controller.focusInfoKey.currentContext?.findRenderObject() as RenderBox?)?.size.height ?? 0;
 
   // Extra vertical offset that differs between the iOS skin and Material/Samsung skins.
-  double get _platformVerticalOffset => iOS ? 1.0 : 18.5;
+  double get _platformVerticalOffset => iOS ? -4.0 : 14.5;
 
   // Offset for typing indicator when it is visible.
-  double get _typingIndicatorOffset => controller.showTypingIndicatorFor.isNotEmpty ? _typingIndicatorHeight : 0;
+  double get _typingIndicatorOffset {
+    final measured = (controller.typingInfoKey.currentContext?.findRenderObject() as RenderBox?)?.size.height;
+    if (measured != null && measured > 0) {
+      return measured;
+    }
+    return controller.showTypingIndicatorFor.isNotEmpty ? _typingIndicatorFallbackHeight : 0;
+  }
+
+  // Offset for smart reply row when it is visible.
+  double get _smartReplyOffset => controller.showSmartReplyRow.value ? controller.smartReplyRowHeight.value : 0;
 
   // Total bottom offset for the AnimatedPositioned — how far above the bottom
   // of the Stack the animation bubble should land at the end of its travel.
   // Uses the stored resting text field height (_textFieldSize) so the target
   // never changes during the animation, even while the field shrinks.
   double get _animationBottomOffset =>
-      _textFieldSize + focusInfoSize + _textFieldVerticalPadding + _typingIndicatorOffset + _platformVerticalOffset;
+      _textFieldSize +
+      focusInfoSize +
+      _textFieldVerticalPadding +
+      _typingIndicatorOffset +
+      _smartReplyOffset +
+      _platformVerticalOffset;
 
   @override
   void initState() {
@@ -112,7 +126,7 @@ class _SendAnimationState extends CustomState<SendAnimation, SendData, Conversat
   Future<void> send(SendData data) async {
     // do not add anything above this line, the attachments must be extracted first
     final attachments = List<PlatformFile>.from(data.attachments);
-    // text is mutable — reassigned during mention processing below
+    // text is mutable — reassigned during annotation processing below
     String text = data.text;
     final annotations = data.annotations;
     final schedule = data.schedule;
@@ -144,26 +158,24 @@ class _SendAnimationState extends CustomState<SendAnimation, SendData, Conversat
 
     for (int i = 0; i < attachments.length; i++) {
       final file = attachments[i];
+      final attachment = Attachment(
+        isOutgoing: true,
+        mimeType: mime(file.path) ?? mime(file.name),
+        uti: "public.jpg",
+        transferName: file.name,
+        totalBytes: file.size,
+        // Store the original source path in metadata so prepAttachment can copy it.
+        // For bytes-only files (clipboard/GIF keyboard), store bytes in the transient field
+        // so prepAttachment can write them to disk.
+        metadata: file.path != null ? {'source_path': file.path} : null,
+        bytes: file.path == null ? file.bytes : null,
+      );
 
       final message = Message(
         text: "",
         dateCreated: DateTime.now(),
         hasAttachments: true,
         balloonBundleId: file.balloonBundleId,
-        attachments: [
-          Attachment(
-            isOutgoing: true,
-            mimeType: mime(file.path) ?? mime(file.name),
-            uti: "public.jpg",
-            transferName: file.name,
-            totalBytes: file.size,
-            // Store the original source path in metadata so prepAttachment can copy it.
-            // For bytes-only files (clipboard/GIF keyboard), store bytes in the transient field
-            // so prepAttachment can write them to disk.
-            metadata: file.path != null ? {'source_path': file.path} : null,
-            bytes: file.path == null ? file.bytes : null,
-          ),
-        ],
         isFromMe: true,
         handleId: 0,
         threadOriginatorGuid: i == 0 ? data.replyGuid : null,
@@ -177,12 +189,15 @@ class _SendAnimationState extends CustomState<SendAnimation, SendData, Conversat
         message.stagingGuid = const Uuid().v4().toUpperCase();
       }
       message.generateTempGuid();
-      message.attachments.first!.guid = message.guid;
-      await OutgoingMsgHandler.queue(OutgoingItem(
-          type: QueueType.sendAttachment,
+      attachment.guid = message.guid;
+      await OutgoingMsgHandler.queue(
+        OutgoingAttachment(
           chat: controller.chat,
           message: message,
-          customArgs: {"audio": data.isAudioMessage}));
+          attachment: attachment,
+          isAudioMessage: data.isAudioMessage,
+        ),
+      );
     }
 
     if (attachments.isEmpty && data.payloadData != null) {
@@ -190,7 +205,6 @@ class _SendAnimationState extends CustomState<SendAnimation, SendData, Conversat
         text: "",
         dateCreated: DateTime.now(),
         hasAttachments: false,
-        attachments: [],
         isFromMe: true,
         handleId: 0,
         threadOriginatorGuid: data.replyGuid,
@@ -204,11 +218,9 @@ class _SendAnimationState extends CustomState<SendAnimation, SendData, Conversat
       message.stagingGuid = const Uuid().v4().toUpperCase();
       message.generateTempGuid();
       await OutgoingMsgHandler.queue(
-        OutgoingItem(
-          type: QueueType.sendMessage,
+        OutgoingMessage(
           chat: controller.chat,
           message: message,
-          customArgs: {"audio": data.isAudioMessage},
         ),
       );
     }
@@ -232,11 +244,12 @@ class _SendAnimationState extends CustomState<SendAnimation, SendData, Conversat
       );
       _message.dateScheduled = schedule;
       _message.generateTempGuid();
-      OutgoingMsgHandler.queue(OutgoingItem(
-        type: QueueType.sendMessage,
-        chat: controller.chat,
-        message: _message,
-      ));
+      OutgoingMsgHandler.queue(
+        OutgoingMessage(
+          chat: controller.chat,
+          message: _message,
+        ),
+      );
       setState(() {
         tween = Tween<double>(
           begin: 0.9,

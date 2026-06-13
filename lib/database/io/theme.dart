@@ -70,23 +70,23 @@ class ThemeStruct {
   }
 
   static ThemeStruct getLightTheme() {
-    final name = PrefsSvc.i.getString("selected-light");
+    final name = PrefsSvc.theme.getSelectedLightTheme();
     final query = Database.themes.query(ThemeStruct_.name.equals(name ?? "Bright White")).build();
     query.limit = 1;
     final result = query.findFirst();
     if (result == null) {
-      return ThemesService.defaultThemes[1];
+      return ThemesService.defaultThemes.firstWhere((t) => t.name == "Bright White");
     }
     return result;
   }
 
   static ThemeStruct getDarkTheme() {
-    final name = PrefsSvc.i.getString("selected-dark");
+    final name = PrefsSvc.theme.getSelectedDarkTheme();
     final query = Database.themes.query(ThemeStruct_.name.equals(name ?? "OLED Dark")).build();
     query.limit = 1;
     final result = query.findFirst();
     if (result == null) {
-      return ThemesService.defaultThemes[0];
+      return ThemesService.defaultThemes.firstWhere((t) => t.name == "OLED Dark");
     }
     return result;
   }

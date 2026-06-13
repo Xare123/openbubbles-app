@@ -24,3 +24,4 @@ A message renders as a composition of specialized sub-widgets.
 - Reactive state: `lib/app/state/message_state.dart`
 - DB model: `lib/database/io/message.dart`
 - Animations: `lib/app/animations/`
+- Popup action handlers: `popup/actions/` (menu behavior extracted from `popup/message_popup.dart`)

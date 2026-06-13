@@ -299,7 +299,7 @@ class _MaterialComposeFAB extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isMonet = SettingsSvc.settings.monetTheming.value != Monet.none;
+    final isMonet = ThemeSvc.isAnyMaterialYouSelected;
     final bgColor = isMonet ? context.theme.colorScheme.primaryContainer : context.theme.colorScheme.primary;
     final fgColor = isMonet ? context.theme.colorScheme.onPrimaryContainer : context.theme.colorScheme.onPrimary;
 

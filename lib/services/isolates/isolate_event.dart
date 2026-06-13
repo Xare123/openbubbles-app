@@ -28,6 +28,9 @@
 enum IsolateEvent {
   /// Socket message received from server
   socketMessage,
+
+  /// Attachment upload progress emitted from the isolate
+  attachmentUploadProgress,
 }
 
 /// A standard event message format for isolate-to-main communication

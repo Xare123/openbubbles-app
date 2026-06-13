@@ -107,10 +107,8 @@ class ContactV2Interface {
   /// Returns live flutter_contacts Contact objects so the chat creator can
   /// display contacts not yet linked to existing handles.
   static Future<List<fc.Contact>> getAddressBook() async {
-    return await fc.FlutterContacts.getContacts(
-      withProperties: true,
-      withThumbnail: true,
-    );
+    return await fc.FlutterContacts.getAll(
+        properties: {...fc.ContactProperties.allProperties, fc.ContactProperty.photoThumbnail});
   }
 
   /// Get avatar data for a contact

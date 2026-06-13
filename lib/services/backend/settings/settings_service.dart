@@ -50,10 +50,10 @@ class SettingsService {
     settings = Settings.getSettings();
     // Populate server details from prefs so sync getters are usable immediately.
     _serverDetails.value = ServerDetails(
-      macOSVersion: PrefsSvc.i.getInt("macos-version") ?? 11,
-      macOSMinorVersion: PrefsSvc.i.getInt("macos-minor-version") ?? 0,
-      serverVersion: PrefsSvc.i.getString("server-version") ?? "0.0.0",
-      serverVersionCode: PrefsSvc.i.getInt("server-version-code") ?? 0,
+      macOSVersion: PrefsSvc.server.getMacOSVersion() ?? 11,
+      macOSMinorVersion: PrefsSvc.server.getMacOSMinorVersion() ?? 0,
+      serverVersion: PrefsSvc.server.getServerVersion() ?? "0.0.0",
+      serverVersionCode: PrefsSvc.server.getServerVersionCode() ?? 0,
     );
 
     if (!headless && !kIsWeb && !kIsDesktop) {
@@ -159,7 +159,7 @@ class SettingsService {
   }
 
   Future<Map<String, dynamic>> getServerDetailsDict() async {
-    final response = await HttpSvc.serverInfo();
+    final response = await HttpSvc.server.info();
     if (response.statusCode == 200) {
       final List<String> toSave = [];
       if (settings.iCloudAccount.isEmpty && response.data['data']['detected_icloud'] is String) {
@@ -177,10 +177,12 @@ class SettingsService {
       final serverVersion = response.data['data']['server_version'];
       final code = Version.parse(serverVersion ?? "0.0.0");
       final versionCode = code.major * 100 + code.minor * 21 + code.patch;
-      if (version != null) await PrefsSvc.i.setInt("macos-version", version);
-      if (minorVersion != null) await PrefsSvc.i.setInt("macos-minor-version", minorVersion);
-      if (serverVersion != null) await PrefsSvc.i.setString("server-version", serverVersion);
-      await PrefsSvc.i.setInt("server-version-code", versionCode);
+      await PrefsSvc.server.setServerDetails(
+        macOSVersion: version,
+        macOSMinorVersion: minorVersion,
+        serverVersion: serverVersion,
+        serverVersionCode: versionCode,
+      );
 
       if (toSave.isNotEmpty) {
         await settings.saveManyAsync(toSave);
@@ -195,7 +197,7 @@ class SettingsService {
             settings.reachedConversationList.value &&
             !settings.enablePrivateAPI.value &&
             settings.serverPrivateAPI.value == true &&
-            PrefsSvc.i.getBool('private-api-enable-tip') != true,
+            !PrefsSvc.server.hasSeenPrivateApiEnableTip(),
       };
     }
 
@@ -238,12 +240,12 @@ class SettingsService {
       final details = await ServerInterface.getServerDetails();
       _serverDetails.value = details;
 
-      await Future.wait([
-        PrefsSvc.i.setInt("macos-version", details.macOSVersion),
-        PrefsSvc.i.setInt("macos-minor-version", details.macOSMinorVersion),
-        PrefsSvc.i.setString("server-version", details.serverVersion),
-        PrefsSvc.i.setInt("server-version-code", details.serverVersionCode),
-      ]);
+      await PrefsSvc.server.setServerDetails(
+        macOSVersion: details.macOSVersion,
+        macOSMinorVersion: details.macOSMinorVersion,
+        serverVersion: details.serverVersion,
+        serverVersionCode: details.serverVersionCode,
+      );
     } catch (e, s) {
       Logger.warn("Failed to refresh server details", error: e, trace: s, tag: 'SettingsService');
     }
@@ -310,7 +312,7 @@ class SettingsService {
                     alignment: Alignment.center,
                     child: ElevatedButton(
                       onPressed: () async {
-                        await PrefsSvc.i.setBool('private-api-enable-tip', true);
+                        await PrefsSvc.server.markPrivateApiEnableTipShown();
                         if (!context.mounted) return;
                         Navigator.of(context).pop();
                         NavigationSvc.closeSettings(context);
@@ -342,7 +344,7 @@ class SettingsService {
                     alignment: Alignment.center,
                     child: TextButton(
                       onPressed: () async {
-                        await PrefsSvc.i.setBool('private-api-enable-tip', true);
+                        await PrefsSvc.server.markPrivateApiEnableTipShown();
                         if (!context.mounted) return;
                         Navigator.of(context).pop();
                       },
@@ -376,7 +378,7 @@ class SettingsService {
   }
 
   Future<Map<String, dynamic>> getServerUpdateDict() async {
-    final response = await BackendSvc.getRemoteService()?.checkUpdate();
+    final response = await BackendSvc.getRemoteService()?.server.checkUpdate();
     if (response?.statusCode == 200) {
       bool available = response!.data['data']['available'] ?? false;
       Map<String, dynamic> metadata = response.data['data']['metadata'] ?? {};
@@ -414,7 +416,7 @@ class SettingsService {
     }
 
     if (!updateInfo.available ||
-        (updateInfo.version != null && PrefsSvc.i.getString("server-update-check") == updateInfo.version)) {
+        (updateInfo.version != null && PrefsSvc.server.getServerUpdateCheckVersion() == updateInfo.version)) {
       return;
     }
 
@@ -447,7 +449,7 @@ class SettingsService {
                 style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
             onPressed: () async {
               if (updateInfo.version != null) {
-                await PrefsSvc.i.setString("server-update-check", updateInfo.version!);
+                await PrefsSvc.server.setServerUpdateCheckVersion(updateInfo.version!);
               }
               Navigator.of(context).pop();
             },
@@ -457,9 +459,9 @@ class SettingsService {
                 style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
             onPressed: () async {
               if (updateInfo.version != null) {
-                await PrefsSvc.i.setString("server-update-check", updateInfo.version!);
+                await PrefsSvc.server.setServerUpdateCheckVersion(updateInfo.version!);
               }
-              HttpSvc.installUpdate();
+              HttpSvc.server.installUpdate();
               Navigator.of(context).pop();
             },
           ),
@@ -484,12 +486,30 @@ class SettingsService {
     final version = release.tagName!.split("+").first.replaceAll("v", "");
     final code = release.tagName!.split("+").last.split('-').first;
     final isDesktopRelease = release.tagName!.split('+').last.contains('desktop');
-    final buildNumber =
-        FilesystemSvc.packageInfo.buildNumber.lastChars(min(4, FilesystemSvc.packageInfo.buildNumber.length));
-    if (int.parse(code) <= int.parse(buildNumber) ||
-        PrefsSvc.i.getString("client-update-check") == code ||
-        (Platform.isAndroid && isDesktopRelease)) {
-      available = false;
+
+    String buildNumber = "";
+    if (Platform.isAndroid) {
+      buildNumber =
+          FilesystemSvc.packageInfo.buildNumber.lastChars(min(4, FilesystemSvc.packageInfo.buildNumber.length));
+      if (int.parse(code) <= int.parse(buildNumber) ||
+          PrefsSvc.server.getClientUpdateCheckCode() == code ||
+          (Platform.isAndroid && isDesktopRelease)) {
+        available = false;
+      }
+    } else {
+      final latestRelease = Version(
+        int.parse(version.split(".")[0]),
+        int.parse(version.split(".")[1]),
+        int.parse(version.split(".")[2]),
+      );
+      final current = Version(
+        int.parse(FilesystemSvc.packageInfo.version.split(".")[0]),
+        int.parse(FilesystemSvc.packageInfo.version.split(".")[1]),
+        int.parse(FilesystemSvc.packageInfo.version.split(".")[2]),
+      );
+      if (current.compareTo(latestRelease) < 0) {
+        available = true;
+      }
     }
 
     return {
@@ -559,7 +579,7 @@ class SettingsService {
             child: Text("OK",
                 style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
             onPressed: () async {
-              await PrefsSvc.i.setString("client-update-check", updateInfo.code);
+              await PrefsSvc.server.setClientUpdateCheckCode(updateInfo.code);
               Navigator.of(context).pop();
             },
           ),

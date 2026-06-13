@@ -36,7 +36,7 @@ class _MessageRemindersPanelState extends State<MessageRemindersPanel> with Them
     setState(() {
       scheduled.removeWhere((element) => element.id == item.id);
     });
-    NotificationsSvc.flnp.cancel(item.id);
+    NotificationsSvc.flnp.cancel(id: item.id);
   }
 
   @override

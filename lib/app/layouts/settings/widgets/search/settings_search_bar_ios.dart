@@ -24,8 +24,8 @@ class _SettingsSearchBariOSState extends State<SettingsSearchBariOS> {
       placeholder: "Search Settings",
       placeholderStyle: TextStyle(
           color: Theme.of(context).brightness == Brightness.dark
-              ? Colors.white.withOpacity(0.5)
-              : Colors.black.withOpacity(0.5),
+              ? Colors.white.withValues(alpha: 0.5)
+              : Colors.black.withValues(alpha: 0.5),
           fontSize: Theme.of(context).textTheme.bodyLarge?.fontSize),
       style: TextStyle(
           color: Theme.of(context).brightness == Brightness.dark

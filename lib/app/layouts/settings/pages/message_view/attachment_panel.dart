@@ -172,7 +172,7 @@ class _AttachmentPanelState extends State<AttachmentPanel> with ThemeHelpers {
                                 "Saving documents and videos to ${FilesystemSvc.toDisplayPath(SettingsSvc.settings.autoSaveDocsLocation.value)}",
                             backgroundColor: tileColor,
                             onTap: () async {
-                              final savePath = await FilePicker.platform.getDirectoryPath(
+                              final savePath = await FilePicker.getDirectoryPath(
                                 initialDirectory: SettingsSvc.settings.autoSaveDocsLocation.value,
                                 dialogTitle: 'Choose a location to auto-save documents',
                                 lockParentWindow: true,

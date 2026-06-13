@@ -44,13 +44,23 @@ class ThemeStruct {
   }
 
   static ThemeStruct getLightTheme() {
-    // ignore: argument_type_not_assignable, return_of_invalid_type, invalid_assignment, for_in_of_invalid_element_type
-    return ThemesService.defaultThemes[1];
+    final preset = ThemesService.defaultThemes.firstWhere((t) => t.name == "Bright White");
+    return ThemeStruct(
+      name: preset.name,
+      themeData: preset.data,
+      gradientBg: preset.gradientBg,
+      googleFont: preset.googleFont,
+    );
   }
 
   static ThemeStruct getDarkTheme() {
-    // ignore: argument_type_not_assignable, return_of_invalid_type, invalid_assignment, for_in_of_invalid_element_type
-    return ThemesService.defaultThemes[0];
+    final preset = ThemesService.defaultThemes.firstWhere((t) => t.name == "OLED Dark");
+    return ThemeStruct(
+      name: preset.name,
+      themeData: preset.data,
+      gradientBg: preset.gradientBg,
+      googleFont: preset.googleFont,
+    );
   }
 
   static ThemeStruct? findOne(String name) {
@@ -58,8 +68,14 @@ class ThemeStruct {
   }
 
   static List<ThemeStruct> getThemes() {
-    // ignore: argument_type_not_assignable, return_of_invalid_type, invalid_assignment, for_in_of_invalid_element_type
-    return ThemesService.defaultThemes;
+    return ThemesService.defaultThemes
+        .map((preset) => ThemeStruct(
+              name: preset.name,
+              themeData: preset.data,
+              gradientBg: preset.gradientBg,
+              googleFont: preset.googleFont,
+            ))
+        .toList();
   }
 
   Map<String, dynamic> toMap() => {

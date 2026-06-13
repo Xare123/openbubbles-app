@@ -48,7 +48,7 @@ class ThemeStudioController extends StatefulController {
 
   ThemeStruct get previewTheme => previewDark.value ? darkTheme : lightTheme;
 
-  bool get isEditable => !activeTheme.isPreset && SettingsSvc.settings.monetTheming.value == Monet.none;
+  bool get isEditable => !activeTheme.isPreset;
 
   void init(bool isDarkMode) {
     isDark.value = isDarkMode;
@@ -200,11 +200,11 @@ class ThemeStudioController extends StatefulController {
     final oldName = activeTheme.name;
     activeTheme.name = newName;
     activeTheme.save();
-    if (PrefsSvc.i.getString("selected-light") == oldName) {
-      await PrefsSvc.i.setString("selected-light", newName);
+    if (PrefsSvc.theme.getSelectedLightTheme() == oldName) {
+      await PrefsSvc.theme.setSelectedLightTheme(newName);
     }
-    if (PrefsSvc.i.getString("selected-dark") == oldName) {
-      await PrefsSvc.i.setString("selected-dark", newName);
+    if (PrefsSvc.theme.getSelectedDarkTheme() == oldName) {
+      await PrefsSvc.theme.setSelectedDarkTheme(newName);
     }
     // Keep applied name tracking in sync if the applied theme was renamed.
     if (appliedLightName == oldName) appliedLightName = newName;
@@ -224,8 +224,8 @@ class ThemeStudioController extends StatefulController {
 
   Future<void> generateFromImage(BuildContext context) async {
     if (!isEditable) return;
-    final res = await FilePicker.platform
-        .pickFiles(withData: true, type: FileType.custom, allowedExtensions: ['png', 'jpg', 'jpeg']);
+    final res =
+        await FilePicker.pickFiles(withData: true, type: FileType.custom, allowedExtensions: ['png', 'jpg', 'jpeg']);
     if (res == null || res.files.isEmpty || res.files.first.bytes == null) return;
     final image = MemoryImage(res.files.first.bytes!);
     final swatch = await ColorScheme.fromImageProvider(
@@ -306,7 +306,7 @@ class _ThemeStudioPanelState extends CustomState<ThemeStudioPanel, void, ThemeSt
   /// False until the first frame is committed. Colors / Typography / Manage
   /// sections are deferred behind this flag so the visible content (preview +
   /// theme selector) can appear without blocking on below-fold layout work.
-  bool _contentReady = false;
+  final ValueNotifier<bool> _contentReady = ValueNotifier<bool>(false);
 
   @override
   void initState() {
@@ -326,10 +326,16 @@ class _ThemeStudioPanelState extends CustomState<ThemeStudioPanel, void, ThemeSt
       // rasterize pass, keeping each frame small.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) setState(() => _contentReady = true);
+          if (mounted) _contentReady.value = true;
         });
       });
     }
+  }
+
+  @override
+  void dispose() {
+    _contentReady.dispose();
+    super.dispose();
   }
 
   /// Shows a dialog asking the user what to do with unsaved changes.
@@ -356,11 +362,11 @@ class _ThemeStudioPanelState extends CustomState<ThemeStudioPanel, void, ThemeSt
         ],
       ),
     );
-    if (result == _PendingAction.apply) {
+    if (result == _PendingAction.apply && context.mounted) {
       await controller.applyChanges(context);
       return true;
     }
-    if (result == _PendingAction.discard) {
+    if (result == _PendingAction.discard && context.mounted) {
       controller.discardChanges();
       return true;
     }
@@ -415,21 +421,12 @@ class _ThemeStudioPanelState extends CustomState<ThemeStudioPanel, void, ThemeSt
                 )
               : null,
           bodySlivers: [
-            // Light/dark preview toggle
+            // Global Light/Dark page toggle
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
-                child: Row(
-                  children: [
-                    Text(
-                      "Preview",
-                      style: context.theme.textTheme.titleSmall?.copyWith(
-                        color: context.theme.colorScheme.onSurface,
-                      ),
-                    ),
-                    const Spacer(),
-                    _PreviewToggle(controller: controller),
-                  ],
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
+                child: Center(
+                  child: _PreviewToggle(controller: controller),
                 ),
               ),
             ),
@@ -467,65 +464,23 @@ class _ThemeStudioPanelState extends CustomState<ThemeStudioPanel, void, ThemeSt
               child: Obx(() {
                 controller.themeListVersion.value;
                 controller.pendingChanges.value;
+                controller.previewDark.value;
                 return ThemeSelectorSection(controller: controller);
               }),
             ),
 
-            // Colors / Typography / Manage — deferred until after first frame
-            // so the visible sections (preview + theme selector) appear immediately.
-            if (_contentReady) ...[
-              // Colors
-              SliverToBoxAdapter(child: _sectionHeader(context, "Colors")),
-              SliverToBoxAdapter(
-                child: Obx(() {
-                  controller.themeDataVersion.value;
-                  if (!controller.isEditable) {
-                    return Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                      child: Row(
-                        children: [
-                          Icon(Icons.info_outline, size: 14, color: context.theme.colorScheme.onSurfaceVariant),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              "To customize the app colors, create a new theme.",
-                              style: context.theme.textTheme.bodySmall?.copyWith(
-                                color: context.theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  }
-                  return const SizedBox.shrink();
-                }),
+            SliverToBoxAdapter(
+              child: ValueListenableBuilder<bool>(
+                valueListenable: _contentReady,
+                builder: (context, ready, _) {
+                  if (!ready) return const SizedBox.shrink();
+                  return _DeferredThemeStudioSections(
+                    controller: controller,
+                    sectionHeaderBuilder: _sectionHeader,
+                  );
+                },
               ),
-              SliverToBoxAdapter(
-                child: Obx(() {
-                  controller.themeDataVersion.value;
-                  return _ColorEditorBody(controller: controller);
-                }),
-              ),
-
-              // Typography
-              SliverToBoxAdapter(child: _sectionHeader(context, "Typography")),
-              SliverToBoxAdapter(
-                child: Obx(() {
-                  controller.themeDataVersion.value;
-                  return TypographyEditor(controller: controller);
-                }),
-              ),
-
-              // Manage
-              SliverToBoxAdapter(child: _sectionHeader(context, "Manage Theme")),
-              SliverToBoxAdapter(
-                child: Obx(() {
-                  controller.themeListVersion.value;
-                  return ThemeManagementSection(controller: controller);
-                }),
-              ),
-            ],
+            ),
 
             const SliverToBoxAdapter(child: SizedBox(height: 48)),
           ],
@@ -549,6 +504,63 @@ class _ThemeStudioPanelState extends CustomState<ThemeStudioPanel, void, ThemeSt
   }
 }
 
+class _DeferredThemeStudioSections extends StatelessWidget {
+  const _DeferredThemeStudioSections({
+    required this.controller,
+    required this.sectionHeaderBuilder,
+  });
+
+  final ThemeStudioController controller;
+  final Widget Function(BuildContext context, String text) sectionHeaderBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        sectionHeaderBuilder(context, "Colors"),
+        Obx(() {
+          controller.themeDataVersion.value;
+          if (!controller.isEditable) {
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, size: 14, color: context.theme.colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      "To customize the app colors, create a new theme.",
+                      style: context.theme.textTheme.bodySmall?.copyWith(
+                        color: context.theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+          return const SizedBox.shrink();
+        }),
+        Obx(() {
+          controller.themeDataVersion.value;
+          return _ColorEditorBody(controller: controller);
+        }),
+        sectionHeaderBuilder(context, "Typography"),
+        Obx(() {
+          controller.themeDataVersion.value;
+          return TypographyEditor(controller: controller);
+        }),
+        sectionHeaderBuilder(context, "Manage Theme"),
+        Obx(() {
+          controller.themeListVersion.value;
+          return ThemeManagementSection(controller: controller);
+        }),
+      ],
+    );
+  }
+}
+
 // ─── Preview light/dark toggle ────────────────────────────────────────────────
 
 class _PreviewToggle extends StatelessWidget {
@@ -560,19 +572,21 @@ class _PreviewToggle extends StatelessWidget {
     return Obx(() {
       final isDark = controller.previewDark.value;
       return Container(
-        height: 28,
+        height: 40,
         decoration: BoxDecoration(
           color: context.theme.colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(20),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             _tab(context, label: "Light", icon: Icons.light_mode_outlined, selected: !isDark, onTap: () {
               controller.previewDark.value = false;
+              controller.isDark.value = false;
             }),
             _tab(context, label: "Dark", icon: Icons.dark_mode_outlined, selected: isDark, onTap: () {
               controller.previewDark.value = true;
+              controller.isDark.value = true;
             }),
           ],
         ),
@@ -588,21 +602,22 @@ class _PreviewToggle extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
         curve: Curves.easeInOut,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         decoration: BoxDecoration(
           color: selected ? cs.primary : Colors.transparent,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(20),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 13, color: selected ? cs.onPrimary : cs.onSurfaceVariant),
-            const SizedBox(width: 4),
+            Icon(icon, size: 16, color: selected ? cs.onPrimary : cs.onSurfaceVariant),
+            const SizedBox(width: 6),
             Text(
               label,
               style: context.theme.textTheme.labelSmall?.copyWith(
                 color: selected ? cs.onPrimary : cs.onSurfaceVariant,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                fontSize: 13,
               ),
             ),
           ],

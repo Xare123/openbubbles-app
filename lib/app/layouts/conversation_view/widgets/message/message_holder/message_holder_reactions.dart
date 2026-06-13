@@ -88,11 +88,13 @@ class ReactionSpacing extends StatelessWidget {
     required this.messageParts,
     required this.part,
     required this.reactionsForPart,
+    this.minHeightWhenNoReactions = 0,
   });
 
   final List<MessagePart> messageParts;
   final MessagePart part;
   final Iterable<Message> Function(int, List<Message>) reactionsForPart;
+  final double minHeightWhenNoReactions;
 
   @override
   Widget build(BuildContext context) {
@@ -107,6 +109,11 @@ class ReactionSpacing extends StatelessWidget {
       if ((messageParts.length == 1 && reactions.isNotEmpty) || reactionsForPart(part.part, reactions).isNotEmpty) {
         return const SizedBox(height: 12.5);
       }
+
+      if (minHeightWhenNoReactions > 0) {
+        return SizedBox(height: minHeightWhenNoReactions);
+      }
+
       return const SizedBox.shrink();
     });
   }

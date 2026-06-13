@@ -263,7 +263,7 @@ class _SharedStreamsPanelState extends State<SharedStreamsPanel> with ThemeHelpe
           if (val) {
             String? path;
             if (kIsDesktop) {
-              path = await FilePicker.platform.getDirectoryPath(dialogTitle: "Folder for ${album.name}");
+              path = await FilePicker.getDirectoryPath(dialogTitle: "Folder for ${album.name}");
             } else {
               final PermissionState ps = await PhotoManager.requestPermissionExtend();
               if (!ps.hasAccess) {

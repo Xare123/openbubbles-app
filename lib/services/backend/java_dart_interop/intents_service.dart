@@ -98,7 +98,7 @@ class IntentsService {
           if (data is List) {
             for (String? s in data) {
               if (s == null) continue;
-              final path = await MethodChannelSvc.invokeMethod("get-content-uri-path", {"uri": s});
+              final path = await MethodChannelSvc.actions.getContentUriPath(uri: s);
               final bytes = await File(path).length();
               files.add(PlatformFile(
                 path: path,
@@ -107,7 +107,7 @@ class IntentsService {
               ));
             }
           } else if (data != null) {
-            final path = await MethodChannelSvc.invokeMethod("get-content-uri-path", {"uri": data});
+            final path = await MethodChannelSvc.actions.getContentUriPath(uri: data.toString());
             final bytes = await File(path).length();
             files.add(PlatformFile(
               path: path,
@@ -173,7 +173,7 @@ class IntentsService {
 
     String? link;
     try {
-      final call = await HttpSvc.answerFaceTime(callUuid);
+      final call = await HttpSvc.faceTime.answer(callUuid);
       link = call.data?["data"]?["link"];
     } catch (_) {}
     if (Get.context != null) {
@@ -248,6 +248,8 @@ class IntentsService {
         return;
       }
 
+      await StartupTasks.waitForUI();
+
       bool chatIsOpen = ChatsSvc.activeChat?.chat.guid == guid;
       Logger.debug("Chat is active: $chatIsOpen", tag: "IntentsService");
 
@@ -268,7 +270,12 @@ class IntentsService {
         // active chat as read prematurely.
         pendingOpenChatGuid = guid;
         Logger.debug("Navigating to conversation view...", tag: "IntentsService");
-        await StartupTasks.waitForUI();
+
+        // Rather than waiting for paging to eventually reach this chat,
+        // proactively seed its ChatState now. getOrCreateChatState() inserts
+        // a fully valid ChatState immediately and is a no-op if the batch
+        // loader already added it.
+        ChatsSvc.getOrCreateChatState(chat);
 
         // Pre-populate text/attachments on the controller before navigating so
         // the ConversationView text field is pre-filled on first build.

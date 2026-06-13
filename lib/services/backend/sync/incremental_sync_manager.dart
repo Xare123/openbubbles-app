@@ -4,6 +4,7 @@ import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/backend/sync/sync_manager_impl.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/services/backend/interfaces/sync_interface.dart';
 import 'package:dio/dio.dart' as dio;
 
 class IncrementalSyncManager extends SyncManager {
@@ -136,7 +137,7 @@ class IncrementalSyncManager extends SyncManager {
     // Query the API for messages.
     // This endpoint will return the total messages that match the query in v1.6.0+
     addToOutput('Fetching messages...');
-    dio.Response<dynamic> messagesRes = await HttpSvc.messages(
+    dio.Response<dynamic> messagesRes = await HttpSvc.message.query(
       where: buildRowIdWhereArgs(startRowId!, endRowId),
       limit: batchSize,
       offset: 0,
@@ -163,7 +164,7 @@ class IncrementalSyncManager extends SyncManager {
     }
 
     // Hit API endpoint to check for updated messages
-    dio.Response<dynamic> uMessageCountRes = await HttpSvc.messageCount(
+    dio.Response<dynamic> uMessageCountRes = await HttpSvc.message.getCount(
       after: DateTime.fromMillisecondsSinceEpoch(startTimestamp!),
     );
 
@@ -185,7 +186,7 @@ class IncrementalSyncManager extends SyncManager {
     // the messages have a null text, we can still account for them when we fetch.
 
     // Hit API endpoint to check for updated messages
-    dio.Response<dynamic> uMessageCountRes = await HttpSvc.messageCount(
+    dio.Response<dynamic> uMessageCountRes = await HttpSvc.message.getCount(
       after: DateTime.fromMillisecondsSinceEpoch(startTimestamp!),
     );
 
@@ -217,13 +218,13 @@ class IncrementalSyncManager extends SyncManager {
 
       // Fetch the pages differently depending on the parameters.
       if (useRowId) {
-        messagesResponse = await HttpSvc.messages(
+        messagesResponse = await HttpSvc.message.query(
             where: buildRowIdWhereArgs(startRowId!, endRowId),
             offset: i * batchSize,
             limit: batchSize,
             withQuery: defaultWithQuery);
       } else {
-        messagesResponse = await HttpSvc.messages(
+        messagesResponse = await HttpSvc.message.query(
             after: startTimestamp,
             before: endTimestamp,
             offset: i * batchSize,
@@ -237,11 +238,6 @@ class IncrementalSyncManager extends SyncManager {
       if (messageCount == 0) break;
       await syncMessages(messagesResponse.data['data'], total);
     }
-
-    // If we've synced chats, we should also update the latest message
-    if (syncedChats.isNotEmpty) {
-      await Chat.syncLatestMessages(syncedChats.values.toList(), true);
-    }
   }
 
   Future<void> syncMessages(List<dynamic> messages, int total) async {
@@ -250,7 +246,7 @@ class IncrementalSyncManager extends SyncManager {
 
     // Enumerate the chats into cache
     Map<String, Chat> chatCache = {};
-    Map<String, List<Message>> messagesToSync = {};
+    Map<String, List<Map<String, dynamic>>> messagesToSync = {};
 
     // Tracks the latest group-name-change per chat, keyed by chat GUID.
     // We keep only the latest (highest dateCreated) so that if multiple name
@@ -267,9 +263,12 @@ class IncrementalSyncManager extends SyncManager {
           messagesToSync[chat['guid']] = [];
         }
 
+        // Create a Message object temporarily for local tracking and group event detection.
+        // The raw msgData map (not the Message object) is passed to the sync action so
+        // that attachment data from the server is preserved.
         Message msg = Message.fromMap(msgData);
         if (msg.error > 0) msg.errorMessage = serverErrorMessage(msg.error);
-        messagesToSync[chat['guid']]!.add(msg);
+        messagesToSync[chat['guid']]!.add(msgData as Map<String, dynamic>);
 
         // Save the last synced ROWID
         if (msg.originalROWID != null && (lastSyncedRowId == null || msg.originalROWID! > lastSyncedRowId!)) {
@@ -322,7 +321,7 @@ class IncrementalSyncManager extends SyncManager {
       addToOutput('Fetching participant data for ${chatsNeedingParticipants.length} chat(s)...', level: LogLevel.DEBUG);
       for (var chatGuid in chatsNeedingParticipants) {
         try {
-          final response = await HttpSvc.singleChat(chatGuid, withQuery: "participants");
+          final response = await HttpSvc.chat.fetchOne(chatGuid, withQuery: "participants");
           if (response.statusCode == 200 && response.data["data"] != null) {
             final chatData = response.data["data"];
             // Update the cache with the full chat data from the server
@@ -364,13 +363,16 @@ class IncrementalSyncManager extends SyncManager {
       Chat? theChat = chatCache[item.key];
       if (theChat == null || item.value.isEmpty) continue;
 
-      List<Message> s = await Chat.bulkSyncMessages(theChat, item.value);
-      messagesSynced += s.length;
+      final syncResult = await SyncInterface.bulkSyncData(
+        chatData: theChat.toMap(),
+        messagesData: item.value,
+      );
+      messagesSynced += syncResult.messages.length;
       setProgress(messagesSynced, total);
 
       // Track the latest message per chat (highest dateCreated with a valid DB id)
       // so the action layer can return message IDs instead of chat IDs.
-      final latest = s
+      final latest = syncResult.messages
           .where((m) => m.id != null && m.dateCreated != null)
           .fold<Message?>(null, (prev, m) => prev == null || m.dateCreated!.isAfter(prev.dateCreated!) ? m : prev);
       if (latest != null) {
@@ -423,7 +425,6 @@ class IncrementalSyncManager extends SyncManager {
 
     // Update the chat service with the latest chats
     for (var chat in syncedChats.values) {
-      chat.dbLatestMessage;
       ChatsSvc.updateChat(chat, override: true);
     }
 

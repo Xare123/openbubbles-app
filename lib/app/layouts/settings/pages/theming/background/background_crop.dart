@@ -1,4 +1,5 @@
 import 'package:bluebubbles/helpers/helpers.dart';
+import 'package:bluebubbles/app/wrappers/bb_app_bar.dart';
 import 'package:bluebubbles/app/wrappers/bb_scaffold.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
@@ -73,58 +74,43 @@ class _BackgroundCropState extends State<BackgroundCrop> with ThemeHelpers {
     final double screenAspectRatio = NavigationSvc.width(context) / context.height;
 
     return BBScaffold(
-      appBar: PreferredSize(
-        preferredSize: Size(NavigationSvc.width(context), kIsDesktop ? 80 : 50),
-        child: AppBar(
-          systemOverlayStyle: context.theme.colorScheme.brightness == Brightness.dark
-              ? SystemUiOverlayStyle.light
-              : SystemUiOverlayStyle.dark,
-          toolbarHeight: kIsDesktop ? 80 : 50,
-          elevation: 0,
-          scrolledUnderElevation: 3,
-          surfaceTintColor: context.theme.colorScheme.primary,
-          leading: buildBackButton(context),
-          backgroundColor: headerColor,
-          centerTitle: iOS,
-          title: Text(
-            "Set Custom Background",
-            style: context.theme.textTheme.titleLarge,
-          ),
-          actions: [
-            if (_imageData != null)
-              IconButton(
-                tooltip: _isLocked ? "Switch to free-form crop" : "Lock to screen ratio",
-                icon: Icon(
-                  _isLocked
-                      ? (iOS ? CupertinoIcons.lock : Icons.lock_outline)
-                      : (iOS ? CupertinoIcons.lock_open : Icons.lock_open_outlined),
-                ),
-                onPressed: () {
-                  setState(() {
-                    _isLocked = !_isLocked;
-                  });
-                  _cropController.aspectRatio = _isLocked ? screenAspectRatio : null;
-                },
+      appBar: BBAppBar(
+        titleText: "Set Custom Background",
+        leading: buildBackButton(context),
+        actions: [
+          if (_imageData != null)
+            IconButton(
+              tooltip: _isLocked ? "Switch to free-form crop" : "Lock to screen ratio",
+              icon: Icon(
+                _isLocked
+                    ? (iOS ? CupertinoIcons.lock : Icons.lock_outline)
+                    : (iOS ? CupertinoIcons.lock_open : Icons.lock_open_outlined),
               ),
-            AbsorbPointer(
-              absorbing: _imageData == null || _isLoading,
-              child: TextButton(
-                child: Text(
-                  "SAVE",
-                  style: context.theme.textTheme.bodyLarge!.apply(
-                    color: _imageData == null || _isLoading
-                        ? context.theme.colorScheme.outline
-                        : context.theme.colorScheme.primary,
-                  ),
-                ),
-                onPressed: () {
-                  _showSavingDialog();
-                  _cropController.crop();
-                },
-              ),
+              onPressed: () {
+                setState(() {
+                  _isLocked = !_isLocked;
+                });
+                _cropController.aspectRatio = _isLocked ? screenAspectRatio : null;
+              },
             ),
-          ],
-        ),
+          AbsorbPointer(
+            absorbing: _imageData == null || _isLoading,
+            child: TextButton(
+              child: Text(
+                "SAVE",
+                style: context.theme.textTheme.bodyLarge!.apply(
+                  color: _imageData == null || _isLoading
+                      ? context.theme.colorScheme.outline
+                      : context.theme.colorScheme.primary,
+                ),
+              ),
+              onPressed: () {
+                _showSavingDialog();
+                _cropController.crop();
+              },
+            ),
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -160,7 +146,7 @@ class _BackgroundCropState extends State<BackgroundCrop> with ThemeHelpers {
               backgroundColor: context.theme.colorScheme.primaryContainer,
             ),
             onPressed: () async {
-              final res = await FilePicker.platform.pickFiles(
+              final res = await FilePicker.pickFiles(
                 withData: true,
                 type: FileType.custom,
                 allowedExtensions: ['png', 'jpg', 'jpeg'],

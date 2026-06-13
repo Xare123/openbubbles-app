@@ -48,10 +48,14 @@ class ImageActions {
       // Read EXIF data
       final exifData = await readExifFromFile(file);
 
-      // Convert IfdTag values to strings for serialization
+      // Convert IfdTag values to strings for serialization.
       final result = <String, String>{};
       for (var entry in exifData.entries) {
-        result[entry.key] = entry.value.printable;
+        // Only save certain EXIF tags.
+        // There rae encoding issues when storing some into ObjectBox.
+        // This filter allows us to keep the most useful tags, that the app will actually use.
+        if (!entry.key.contains('Image') && !entry.key.contains('EXIF')) continue;
+        result[entry.key] = entry.value.printable.toString();
       }
 
       return result;

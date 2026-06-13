@@ -17,6 +17,7 @@ import 'package:collection/collection.dart';
 import 'package:bluebubbles/models/models.dart' show HandleLookupKey, MessageSaveResult;
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:get/get.dart' hide Response;
 import 'package:universal_io/io.dart';
 import 'package:bluebubbles/database/database.dart';
@@ -205,29 +206,28 @@ class ChatsService {
   void initDbWatchers() {
     if (headless) return;
     if (!kIsWeb) {
-      (() async {
-        final countQuery = (Database.chats.query(Chat_.dateDeleted
-                .isNull()
-                .and(Chat_.telephonyId.isNull())
-                .and(Chat_.isRoutingStub.equals(false).or(Chat_.isRoutingStub.isNull())))
-              ..order(Chat_.id, flags: Order.descending))
-            .watch(triggerImmediately: true);
-        countSub = countQuery.listen((event) async {
-          if (!SettingsSvc.settings.finishedSetup.value) return;
-          final newCount = event.count();
-          if (newCount > currentCount && currentCount != 0) {
-            final chat = event.findFirst();
-            if (chat == null) return;
-            if (chat.latestMessage.dateCreated!.millisecondsSinceEpoch == 0) {
-              await Future.delayed(const Duration(milliseconds: 500));
-              chat.dbLatestMessage;
-            }
-            await addChat(chat);
+      // watch for new chats
+      final countQuery = (Database.chats.query(Chat_.dateDeleted
+              .isNull()
+              .and(Chat_.telephonyId.isNull())
+              .and(Chat_.isRoutingStub.equals(false).or(Chat_.isRoutingStub.isNull())))
+            ..order(Chat_.id, flags: Order.descending))
+          .watch(triggerImmediately: true);
+      countSub = countQuery.listen((event) async {
+        if (!SettingsSvc.settings.finishedSetup.value) return;
+        final newCount = event.count();
+        if (newCount > currentCount && currentCount != 0) {
+          final chat = event.findFirst();
+          if (chat == null) return;
+          if (chat.dbOnlyLatestMessageDate == null || chat.dbOnlyLatestMessageDate!.millisecondsSinceEpoch == 0) {
+            // wait for the chat.addMessage to go through
+            await Future.delayed(const Duration(milliseconds: 500));
           }
-          currentCount = newCount;
-          _scheduleListVersionUpdate();
-        });
-      })();
+          await addChat(chat);
+        }
+        currentCount = newCount;
+        _scheduleListVersionUpdate();
+      });
     } else {
       countSub = WebListeners.newChat.listen((chat) async {
         if (!SettingsSvc.settings.finishedSetup.value) return;
@@ -245,7 +245,7 @@ class ChatsService {
 
     // Get current count from database or server
     currentCount = getChatCount() ??
-        (await BackendSvc.getRemoteService()?.chatCount().catchError((err) {
+        (await BackendSvc.getRemoteService()?.chat.getCount().catchError((err) {
           Logger.info("Error when fetching chat count!", tag: "ChatBloc");
           return Response(requestOptions: RequestOptions(path: ''));
         }))
@@ -458,6 +458,19 @@ class ChatsService {
     }
   }
 
+  /// Re-sort [_sortedChats] in-place and notify the chat list UI.
+  ///
+  /// Call this after bulk pin-index changes that were applied outside of the
+  /// normal [updateChat] / [_repositionChat] path (e.g. pinned-order panel).
+  /// The UI notification is deferred to the next frame so this is safe to call
+  /// from [State.dispose] (while the widget tree may still be locked).
+  void refreshSortOrder() {
+    _sortedChats.sort(Chat.sort);
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _scheduleListVersionUpdate(immediate: true);
+    });
+  }
+
   void close() {
     countSub?.cancel();
     _listVersionUpdateTimer?.cancel();
@@ -542,11 +555,13 @@ class ChatsService {
       final currentIsPinned = state.isPinned.value;
 
       // Check if sort-order-relevant fields have changed
-      final latestMessageChanged = updated.latestMessage.guid != currentLatestMessage?.guid ||
-          updated.latestMessage.dateCreated != currentLatestMessage?.dateCreated;
+      final latestMessageChanged = updated.dbLatestMessage.target?.guid != currentLatestMessage?.guid ||
+          updated.dbOnlyLatestMessageDate != currentLatestMessage?.dateCreated;
+      final latestMessageTimestampChanged = updated.dbOnlyLatestMessageDate != currentLatestMessage?.dateCreated;
       final pinIndexChanged = updated.pinIndex != currentPinIndex;
       final isPinnedChanged = (updated.isPinned ?? false) != currentIsPinned;
-      final sortOrderChanged = latestMessageChanged || pinIndexChanged || isPinnedChanged;
+      final sortOrderChanged =
+          latestMessageChanged || latestMessageTimestampChanged || pinIndexChanged || isPinnedChanged;
 
       if (updated != state.chat || override) {
         state.updateFromChat(updated);
@@ -597,8 +612,12 @@ class ChatsService {
     final _chats = Database.chats.query(Chat_.hasUnreadMessage.equals(true)).build().find();
     for (Chat c in _chats) {
       c.hasUnreadMessage = false;
-      MethodChannelSvc.invokeMethod(
-          "delete-notification", {"notification_id": c.id, "tag": NotificationsService.NEW_MESSAGE_TAG});
+      if (c.id != null) {
+        MethodChannelSvc.actions.deleteNotification(
+          notificationId: c.id!,
+          tag: NotificationsService.NEW_MESSAGE_TAG,
+        );
+      }
       BackendSvc.markRead(
           c, SettingsSvc.settings.enablePrivateAPI.value && SettingsSvc.settings.privateMarkChatAsRead.value);
 
@@ -662,11 +681,11 @@ class ChatsService {
         final chatList = getSortedChats();
         final chatSnapshot = chatList.where((e) => !isNullOrEmpty(e.displayName ?? e.chatIdentifier)).take(4).toList();
         for (Chat c in chatSnapshot) {
-          await MethodChannelSvc.invokeMethod("push-share-targets", {
-            "title": c.getTitle(),
-            "guid": c.guid,
-            "icon": await avatarAsBytes(chat: c, quality: 256),
-          });
+          await MethodChannelSvc.actions.pushShareTarget(
+            title: c.getTitle(),
+            guid: c.guid,
+            icon: await avatarAsBytes(chat: c, quality: 256),
+          );
         }
       });
     }
@@ -685,7 +704,7 @@ class ChatsService {
     if (withParticipants) withQuery.add("participants");
     if (withLastMessage) withQuery.add("lastmessage");
 
-    final response = await remote.singleChat(chatGuid, withQuery: withQuery.join(",")).catchError((err, stack) {
+    final response = await remote.chat.fetchOne(chatGuid, withQuery: withQuery.join(",")).catchError((err, stack) {
       Logger.error("Failed to fetch chat metadata!", error: err, trace: stack, tag: "Fetch-Chat");
       return Response(requestOptions: RequestOptions(path: ''));
     });
@@ -710,8 +729,8 @@ class ChatsService {
     if (withParticipants) withQuery.add("participants");
     if (withLastMessage) withQuery.add("lastmessage");
 
-    final response = await HttpSvc.chats(
-            withQuery: withQuery, offset: offset, limit: limit, sort: withLastMessage ? "lastmessage" : null)
+    final response = await HttpSvc.chat
+        .query(withQuery: withQuery, offset: offset, limit: limit, sort: withLastMessage ? "lastmessage" : null)
         .catchError((err, stack) {
       Logger.error("Failed to fetch chats!", error: err, trace: stack, tag: "Fetch-Chat");
       return Response(requestOptions: RequestOptions(path: ''));
@@ -745,7 +764,8 @@ class ChatsService {
     if (withHandle) withQuery.add("handle");
 
     BackendSvc.getRemoteService()
-            ?.chatMessages(guid,
+            ?.chat
+            .getMessages(guid,
                 withQuery: withQuery.join(","), offset: offset, limit: limit, sort: sort, after: after, before: before)
             .then((response) {
           if (!completer.isCompleted) completer.complete(response.data["data"]);
@@ -787,20 +807,20 @@ class ChatsService {
 
     if (save) {
       EventDispatcherSvc.emit("update-highlight", null);
-      Future(() async => await PrefsSvc.i.remove('lastOpenedChat'));
+      unawaited(PrefsSvc.messaging.clearLastOpenedChat());
     }
   }
 
   /// Set all chats to inactive asynchronously
   Future<void> setAllInactive() async {
     Logger.debug('Setting all chats to inactive');
-    await PrefsSvc.i.remove('lastOpenedChat');
+    await PrefsSvc.messaging.clearLastOpenedChat();
     setAllInactiveSync(save: false);
   }
 
   /// Set a chat as the active chat
   Future<void> setActiveChat(Chat chat, {bool clearNotifications = true}) async {
-    await PrefsSvc.i.setString('lastOpenedChat', chat.guid);
+    await PrefsSvc.messaging.setLastOpenedChat(chat.guid);
     setActiveChatSync(chat, clearNotifications: clearNotifications, save: false);
   }
 
@@ -847,7 +867,7 @@ class ChatsService {
       }
 
       if (save) {
-        Future(() async => await PrefsSvc.i.setString('lastOpenedChat', chat.guid));
+        unawaited(PrefsSvc.messaging.setLastOpenedChat(chat.guid));
       }
     }
   }
@@ -933,6 +953,10 @@ class ChatsService {
     // Perform the actual DB soft delete
     await ChatInterface.softDeleteChat(chatData: chat.toMap());
     chat.clearTranscript();
+
+    // Propagate dateDeleted to ChatState before removing it so any live
+    // listeners (e.g. ConversationTileController) can react reactively.
+    getChatState(chat.guid)?.updateDateDeletedInternal(DateTime.now().toUtc());
 
     // Remove from service state
     removeChat(chat);
@@ -1205,16 +1229,25 @@ class ChatsService {
   /// Set chat custom avatar path
   Future<void> setChatCustomAvatarPath(Chat chat, String? value) async {
     final state = getChatState(chat.guid);
-
-    if (state != null && state.customAvatarPath.value == value) return;
-
-    // Update Chat model (use state.chat if available, otherwise use passed in chat)
     final chatToUpdate = state?.chat ?? chat;
+    final oldPath = chatToUpdate.customAvatarPath;
+
+    if (oldPath == value) return;
+
     chatToUpdate.customAvatarPath = value;
     await chatToUpdate.saveAsync(updateCustomAvatarPath: true);
 
     // Update state if available
     state?.updateCustomAvatarPathInternal(value);
+
+    if (!kIsWeb && oldPath != null && oldPath != value) {
+      try {
+        final file = File(oldPath);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {}
+    }
   }
 
   /// Set chat custom background path
@@ -1233,21 +1266,20 @@ class ChatsService {
   }
 
   /// Set chat latest message
-  Future<void> setChatLatestMessage(Chat chat, Message? value) async {
+  Future<void> setChatLatestMessage(Chat chat, Message value) async {
     final state = getChatState(chat.guid);
-
-    if (state != null && state.latestMessage.value?.guid == value?.guid) return;
+    if (state == null) return;
 
     // Update Chat model (use state.chat if available, otherwise use passed in chat)
-    final chatToUpdate = state?.chat ?? chat;
-    chatToUpdate.latestMessage = value ??
-        Message(
-          dateCreated: DateTime.fromMillisecondsSinceEpoch(0),
-          guid: chatToUpdate.guid,
-        );
+    final chatToUpdate = state.chat;
+
+    // Only save in the DB if it's not already the same latest message.
+    if (state.latestMessage.value?.guid != value.guid) {
+      chatToUpdate.setLatestMessage(value);
+    }
 
     // Update state if available
-    state?.updateLatestMessageInternal(value);
+    state.updateLatestMessageInternal(value);
   }
 
   /// Update chat latest message and subtitle in response to a new or updated message.
@@ -1263,7 +1295,7 @@ class ChatsService {
     final hideMessageContent = redacted && SettingsSvc.settings.hideMessageContent.value;
     state.updateSubtitleInternal(
         message.getNotificationText(hideContactInfo: hideContactInfo, hideMessageContent: hideMessageContent));
-    state.chat.latestMessage = message;
+    state.chat.setLatestMessage(message);
     _repositionChat(state.chat, immediate: true);
   }
 

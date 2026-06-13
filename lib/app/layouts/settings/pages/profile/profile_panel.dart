@@ -135,7 +135,9 @@ class _ProfilePanelState extends State<ProfilePanel> with WidgetsBindingObserver
           poster = await api.fromPosterSave(poster: data);
         }
 
-        await restorePoster(poster?.poster, SettingsSvc.settings.userPosterPath.value!);
+        if (SettingsSvc.settings.userPosterPath.value != null) {
+          await restorePoster(poster?.poster, SettingsSvc.settings.userPosterPath.value!);
+        }
 
         try {
           final message = await api.setProfile(
@@ -635,8 +637,7 @@ class _ProfilePanelState extends State<ProfilePanel> with WidgetsBindingObserver
                     children: [
                       Obx(() {
                         bool redact = SettingsSvc.settings.redactedMode.value;
-                        return Container(
-                            child: Padding(
+                        return Padding(
                           padding: const EdgeInsets.only(bottom: 8.0, left: 15, top: 8.0, right: 15),
                           child: AnimatedOpacity(
                             duration: const Duration(milliseconds: 300),
@@ -702,7 +703,7 @@ class _ProfilePanelState extends State<ProfilePanel> with WidgetsBindingObserver
                               },
                             ),
                           ),
-                        ));
+                        );
                       }),
                       if (accountInfo['login_status_message']?.startsWith("Deregistered") ?? false)
                         Container(

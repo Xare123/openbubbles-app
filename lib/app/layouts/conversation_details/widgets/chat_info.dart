@@ -78,18 +78,20 @@ class _ChatInfoState extends State<ChatInfo> with ThemeHelpers {
       papi = await showMethodDialog("Group Icon Update Method");
     }
     if (papi == null) return;
+    final usePrivateApi = papi;
     final String? result = await Navigator.of(context).push(
       ThemeSwitcher.buildPageRoute(
         builder: (context) => AvatarCrop(chat: chat),
       ),
     );
-    if (result != null) {
-      chat.customAvatarPath = result;
+    if (result == null) return;
+
+    if (!usePrivateApi) {
+      await ChatsSvc.setChatCustomAvatarPath(chat, result);
+      return;
     }
-    if (papi &&
-        SettingsSvc.settings.enablePrivateAPI.value &&
-        result != null &&
-        await BackendSvc.canUploadGroupPhotos()) {
+
+    if (usePrivateApi && SettingsSvc.settings.enablePrivateAPI.value && await BackendSvc.canUploadGroupPhotos()) {
       showDialog(
           context: context,
           builder: (BuildContext context) {
@@ -110,14 +112,23 @@ class _ChatInfoState extends State<ChatInfo> with ThemeHelpers {
               ),
             );
           });
-      final response = await BackendSvc.setChatIcon(chat, chat.customAvatarPath!);
+      final response = await BackendSvc.setChatIcon(chat, result);
       if (response) {
+        await ChatsSvc.setChatCustomAvatarPath(chat, result);
         Navigator.of(context, rootNavigator: true).pop();
         showSnackbar("Notice", "Updated group photo successfully!");
       } else {
+        try {
+          await File(result).delete();
+        } catch (_) {}
         Navigator.of(context, rootNavigator: true).pop();
         showSnackbar("Error", "Failed to update group photo!");
       }
+    } else if (usePrivateApi) {
+      try {
+        await File(result).delete();
+      } catch (_) {}
+      showSnackbar("Error", "Failed to update group photo!");
     }
   }
 
@@ -127,16 +138,20 @@ class _ChatInfoState extends State<ChatInfo> with ThemeHelpers {
       papi = await showMethodDialog("Group Icon Deletion Method");
     }
     if (papi == null) return;
-    chat.removeProfilePhoto();
-    await chat.saveAsync(updateCustomAvatarPath: true);
-    if (papi && SettingsSvc.settings.enablePrivateAPI.value && await BackendSvc.canUploadGroupPhotos()) {
+    final usePrivateApi = papi;
+
+    if (usePrivateApi && SettingsSvc.settings.enablePrivateAPI.value && await BackendSvc.canUploadGroupPhotos()) {
       final response = await BackendSvc.deleteChatIcon(chat);
       if (response) {
+        await ChatsSvc.setChatCustomAvatarPath(chat, null);
         showSnackbar("Notice", "Deleted group photo successfully!");
       } else {
         showSnackbar("Error", "Failed to delete group photo!");
       }
+      return;
     }
+
+    await ChatsSvc.setChatCustomAvatarPath(chat, null);
   }
 
   @override
@@ -450,7 +465,7 @@ class InfoButton extends StatelessWidget {
               await MethodChannelSvc.invokeMethod("open-contact-form", parameters);
             } else {
               try {
-                await MethodChannelSvc.invokeMethod("view-contact-form", {'id': contact.nativeContactId});
+                await MethodChannelSvc.actions.viewContactForm(nativeContactId: contact.nativeContactId);
               } catch (_) {
                 showSnackbar("Error", "Failed to find contact on device!");
               }

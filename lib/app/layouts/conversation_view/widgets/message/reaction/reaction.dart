@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/widgets/reaction_details.dart';
 import 'package:bluebubbles/app/state/message_state.dart';
 import 'package:bluebubbles/app/state/chat_state_scope.dart';
 import 'package:bluebubbles/app/state/message_state_scope.dart';
-import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/message_popup.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/reaction/reaction_clipper.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/shared/message_error_helper.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
@@ -204,10 +204,10 @@ class ReactionWidgetState extends State<ReactionWidget> with ThemeHelpers {
                             colorScheme: context.theme.colorScheme.copyWith(
                               primary: context.theme.colorScheme.bubble(context, true),
                               onPrimary: context.theme.colorScheme.onBubble(context, true),
-                              surface: SettingsSvc.settings.monetTheming.value == Monet.full
+                              surface: ThemeSvc.isMaterialYouActive(context)
                                   ? null
                                   : (context.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
-                              onSurface: SettingsSvc.settings.monetTheming.value == Monet.full
+                              onSurface: ThemeSvc.isMaterialYouActive(context)
                                   ? null
                                   : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
                             ),

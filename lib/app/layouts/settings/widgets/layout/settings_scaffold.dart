@@ -1,11 +1,11 @@
 import 'package:bluebubbles/helpers/helpers.dart';
-import 'package:bluebubbles/app/wrappers/bb_annotated_region.dart';
+import 'package:bluebubbles/app/wrappers/bb_app_bar.dart';
+import 'package:bluebubbles/app/wrappers/bb_scaffold.dart';
 import 'package:bluebubbles/app/wrappers/scrollbar_wrapper.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
 class SettingsScaffold extends StatelessWidget {
@@ -43,55 +43,47 @@ class SettingsScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BBAnnotatedRegion(
-      child: Scaffold(
-        backgroundColor: SettingsSvc.settings.skin.value == Skins.Material ? tileColor : headerColor,
-        appBar: SettingsSvc.settings.skin.value == Skins.Samsung
-            ? null
-            : PreferredSize(
-                preferredSize: Size(NavigationSvc.width(context), extend ? 80 : 50),
-                child: AppBar(
-                  systemOverlayStyle: context.theme.colorScheme.brightness == Brightness.dark
-                      ? SystemUiOverlayStyle.light
-                      : SystemUiOverlayStyle.dark,
-                  toolbarHeight: extend ? 80 : 50,
-                  elevation: 0,
-                  scrolledUnderElevation: 3,
-                  surfaceTintColor: context.theme.colorScheme.primary,
-                  leading: leading ?? buildBackButton(context),
-                  backgroundColor: headerColor,
-                  centerTitle: SettingsSvc.settings.skin.value == Skins.iOS,
-                  title: Text(
-                    title,
-                    style: context.theme.textTheme.titleLarge,
-                  ),
-                  actions: actions,
-                ),
-              ),
-        floatingActionButton: fab,
-        body: NotificationListener<ScrollEndNotification>(
-          onNotification: (_) {
-            if (SettingsSvc.settings.skin.value != Skins.Samsung || kIsWeb || kIsDesktop) return false;
-            final scrollDistance = context.height / 3 - 57;
-            if (controller.offset > 0 &&
-                controller.offset < scrollDistance &&
-                controller.offset != controller.position.maxScrollExtent) {
-              final double snapOffset = controller.offset / scrollDistance > 0.5 ? scrollDistance : 0;
+    final scaffoldSw = Stopwatch()..start();
+    WidgetsBinding.instance.addPostFrameCallback((_) {});
 
-              Future.microtask(() =>
-                  controller.animateTo(snapOffset, duration: const Duration(milliseconds: 200), curve: Curves.linear));
-            }
-            return false;
-          },
-          child: ScrollbarWrapper(
-            showScrollbar: kIsDesktop || kIsWeb,
-            controller: controller,
-            child: Column(
-              children: [
-                stickyPrefix ?? const SizedBox.shrink(),
-                Expanded(
-                  child: Obx(
-                    () => CustomScrollView(
+    final widgetTree = BBScaffold(
+      backgroundColor: SettingsSvc.settings.skin.value == Skins.Material ? tileColor : headerColor,
+      appBar: SettingsSvc.settings.skin.value == Skins.Samsung
+          ? null
+          : BBAppBar(
+              titleText: title,
+              leading: leading ?? buildBackButton(context),
+              backgroundColor: headerColor,
+              toolbarHeight: extend ? 80 : 50,
+              actions: actions,
+            ),
+      floatingActionButton: fab,
+      extendBodyBehindAppBar: false,
+      body: NotificationListener<ScrollEndNotification>(
+        onNotification: (_) {
+          if (SettingsSvc.settings.skin.value != Skins.Samsung || kIsWeb || kIsDesktop) return false;
+          final scrollDistance = context.height / 3 - 57;
+          if (controller.offset > 0 &&
+              controller.offset < scrollDistance &&
+              controller.offset != controller.position.maxScrollExtent) {
+            final double snapOffset = controller.offset / scrollDistance > 0.5 ? scrollDistance : 0;
+
+            Future.microtask(() =>
+                controller.animateTo(snapOffset, duration: const Duration(milliseconds: 200), curve: Curves.linear));
+          }
+          return false;
+        },
+        child: ScrollbarWrapper(
+          showScrollbar: kIsDesktop || kIsWeb,
+          controller: controller,
+          child: Column(
+            children: [
+              stickyPrefix ?? const SizedBox.shrink(),
+              Expanded(
+                child: Obx(
+                  () {
+                    final listSw = Stopwatch()..start();
+                    final view = CustomScrollView(
                       controller: controller,
                       shrinkWrap: true,
                       physics: ThemeSwitcher.getScrollPhysics(),
@@ -213,15 +205,19 @@ class SettingsScaffold extends StatelessWidget {
                           ),
                         ),
                       ],
-                    ),
-                  ),
+                    );
+                    listSw.stop();
+                    return view;
+                  },
                 ),
-                stickySuffix ?? const SizedBox.shrink(),
-              ],
-            ),
+              ),
+              stickySuffix ?? const SizedBox.shrink(),
+            ],
           ),
         ),
       ),
     );
+    scaffoldSw.stop();
+    return widgetTree;
   }
 }

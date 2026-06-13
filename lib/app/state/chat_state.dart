@@ -33,6 +33,7 @@ class ChatState {
   final RxBool lockChatName;
   final RxBool lockChatIcon;
   final RxnString lastReadMessageGuid;
+  final Rxn<DateTime> dateDeleted;
 
   /// The delivery/read status of the latest outgoing message.  Updated any
   /// time [updateLatestMessageInternal] is called, even when the GUID has not
@@ -72,10 +73,12 @@ class ChatState {
         chatCreatorSubtitle = RxnString(chat.isGroup
             ? chat.getChatCreatorSubtitle()
             : (chat.handles.isNotEmpty ? (chat.handles.first.formattedAddress ?? chat.handles.first.address) : null)),
-        subtitle = RxnString(chat.latestMessage.getNotificationText()),
-        latestMessage = Rxn<Message>(chat.latestMessage),
+        subtitle = RxnString(chat.dbLatestMessage.target?.getNotificationText()),
+        latestMessage = Rxn<Message>(chat.dbLatestMessage.target),
         latestMessageStatus = Rx<MessageStatusIndicator>(
-          chat.latestMessage.isFromMe != true ? MessageStatusIndicator.NONE : chat.latestMessage.indicatorToShow,
+          chat.dbLatestMessage.target?.isFromMe != true
+              ? MessageStatusIndicator.NONE
+              : (chat.dbLatestMessage.target?.indicatorToShow ?? MessageStatusIndicator.NONE),
         ),
         textFieldText = RxnString(chat.textFieldText),
         textFieldAttachments = chat.textFieldAttachments.obs,
@@ -84,6 +87,7 @@ class ChatState {
         lockChatName = chat.lockChatName.obs,
         lockChatIcon = chat.lockChatIcon.obs,
         lastReadMessageGuid = RxnString(chat.lastReadMessageGuid),
+        dateDeleted = Rxn<DateTime>(chat.dateDeleted),
         isActive = false.obs,
         isAlive = false.obs,
         shouldHideAttachments =
@@ -160,6 +164,12 @@ class ChatState {
     }
   }
 
+  void updateDateDeletedInternal(DateTime? value) {
+    if (dateDeleted.value != value) {
+      dateDeleted.value = value;
+    }
+  }
+
   void updateLockChatIconInternal(bool value) {
     if (lockChatIcon.value != value) {
       lockChatIcon.value = value;
@@ -169,7 +179,6 @@ class ChatState {
   void updateDisplayNameInternal(String? value) {
     if (displayName.value != value) {
       displayName.value = value;
-      updateTitleInternal(_computeTitle());
     }
   }
 
@@ -205,7 +214,6 @@ class ChatState {
   void updateChatCreatorSubtitleInternal(String? value) {
     if (chatCreatorSubtitle.value != value) {
       chatCreatorSubtitle.value = value;
-      updateTitleInternal(_computeTitle());
     }
   }
 
@@ -290,9 +298,8 @@ class ChatState {
   }
 
   void updateLatestMessageInternal(Message? value) {
-    if (latestMessage.value?.guid != value?.guid) {
-      latestMessage.value = value;
-    }
+    // Don't GUID-guard
+    latestMessage.value = value;
     // Always update status even when the GUID is unchanged — a delivery or
     // read receipt arrives for the same message object, and the indicator
     // must reflect the new state without a full GUID change.
@@ -329,11 +336,11 @@ class ChatState {
     // Rebuild participants from the fresh DB handles on the incoming chat object so
     // we never read the stale cached ToMany on the original ChatState.chat.
     _updateParticipantsInternal(updatedChat.handles.toList());
-    updateLatestMessageInternal(updatedChat.latestMessage);
-    // Refresh the subtitle so it reflects any updated handle display names
+    updateLatestMessageInternal(updatedChat.dbLatestMessage.target);
+    // Refresh the title & subtitle so it reflects any updated handle display names
     // (e.g. a group-event whose sender handle was just added to the DB).
-    updateSubtitleInternal(_computeSubtitle(updatedChat.latestMessage));
     updateTitleInternal(_computeTitle());
+    updateSubtitleInternal(_computeSubtitle(updatedChat.dbLatestMessage.target));
 
     // NOTE: textFieldText and textFieldAttachments are intentionally NOT synced here.
     // They are purely client-side fields managed exclusively by setChatTextFieldText /
@@ -367,8 +374,6 @@ class ChatState {
     chat.isArchived = updatedChat.isArchived;
     chat.displayName = updatedChat.displayName;
     chat.customAvatarPath = updatedChat.customAvatarPath;
-    chat.latestMessage = updatedChat.latestMessage;
-    // NOTE: textFieldText and textFieldAttachments omitted intentionally — see comment above.
     chat.autoSendReadReceipts = updatedChat.autoSendReadReceipts;
     chat.autoSendTypingIndicators = updatedChat.autoSendTypingIndicators;
     chat.lockChatName = updatedChat.lockChatName;

@@ -5,6 +5,7 @@ import 'package:bluebubbles/app/components/avatars/contact_avatar_widget.dart';
 import 'package:bluebubbles/app/layouts/chat_creator/chat_creator.dart';
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/app/wrappers/bb_app_bar.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/pages/conversation_list.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/widgets/tile/conversation_tile.dart';
@@ -15,7 +16,6 @@ import 'package:bluebubbles/app/wrappers/scrollbar_wrapper.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart';
 import 'package:get/get.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
@@ -81,21 +81,15 @@ class CupertinoConversationListState extends State<CupertinoConversationList> wi
               ? ConversationListFAB(parentController: controller)
               : const SizedBox.shrink()),
       appBar: showArchived || showUnknown || showDeleted
-          ? AppBar(
+          ? BBAppBar(
+              titleText: showDeleted
+                  ? "Recently Deleted"
+                  : showArchived
+                      ? "Archive"
+                      : "Unknown Senders",
               leading: buildBackButton(context),
-              elevation: 0,
-              systemOverlayStyle:
-                  brightness == Brightness.dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
               centerTitle: true,
               backgroundColor: Colors.transparent,
-              title: Text(
-                showDeleted
-                    ? "Recently Deleted"
-                    : showArchived
-                        ? "Archive"
-                        : "Unknown Senders",
-                style: context.theme.textTheme.titleLarge,
-              ),
             )
           : null,
       body: Stack(

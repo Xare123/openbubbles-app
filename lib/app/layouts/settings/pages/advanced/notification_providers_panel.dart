@@ -119,7 +119,7 @@ class _NotificationProvidersState extends State<NotificationProvidersPanel> with
                           // We don't need to start the service here because it will be started
                           // when the app is inactive.
                           if (!val) {
-                            await MethodChannelSvc.invokeMethod("stop-foreground-service");
+                            await MethodChannelSvc.actions.stopForegroundService();
                           }
                         },
                         initialVal: SettingsSvc.settings.keepAppAlive.value,

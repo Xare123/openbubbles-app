@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:bluebubbles/app/wrappers/bb_app_bar.dart';
 import 'package:bluebubbles/app/wrappers/bb_scaffold.dart';
 import 'package:bluebubbles/app/layouts/settings/dialogs/old_themes_dialog.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/theming/advanced/advanced_theming_content.dart';
@@ -8,7 +9,6 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
 class AdvancedThemingPanel extends StatefulWidget {
@@ -48,38 +48,24 @@ class _AdvancedThemingPanelState extends State<AdvancedThemingPanel> with Single
   Widget build(BuildContext context) {
     return BBScaffold(
       backgroundColor: material ? tileColor : headerColor,
-      appBar: PreferredSize(
-        preferredSize: Size(NavigationSvc.width(context), 50),
-        child: AppBar(
-            systemOverlayStyle: context.theme.colorScheme.brightness == Brightness.dark
-                ? SystemUiOverlayStyle.light
-                : SystemUiOverlayStyle.dark,
-            toolbarHeight: 50,
-            elevation: 0,
-            scrolledUnderElevation: 3,
-            surfaceTintColor: context.theme.colorScheme.primary,
-            leading: buildBackButton(context),
-            backgroundColor: headerColor,
-            centerTitle: iOS,
-            title: Text(
-              "Advanced Theming",
-              style: context.theme.textTheme.titleLarge,
+      appBar: BBAppBar(
+        titleText: "Advanced Theming",
+        leading: buildBackButton(context),
+        actions: [
+          if (oldThemes.isNotEmpty)
+            TextButton(
+              child: Text("View Old",
+                  style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
+              onPressed: () {
+                showDialog(
+                    context: context,
+                    builder: (context) => OldThemesDialog(
+                          oldThemes,
+                          clearOld,
+                        ));
+              },
             ),
-            actions: [
-              if (oldThemes.isNotEmpty)
-                TextButton(
-                  child: Text("View Old",
-                      style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-                  onPressed: () {
-                    showDialog(
-                        context: context,
-                        builder: (context) => OldThemesDialog(
-                              oldThemes,
-                              clearOld,
-                            ));
-                  },
-                ),
-            ]),
+        ],
       ),
       body: TabBarView(
         controller: controller,

@@ -72,8 +72,8 @@ class _SettingsSearchBarState extends State<SettingsSearchBar> {
               hintStyle: MaterialStateProperty.all(
                 TextStyle(
                   color: Theme.of(context).brightness == Brightness.dark
-                      ? Colors.white.withOpacity(0.5)
-                      : Colors.black.withOpacity(0.5),
+                      ? Colors.white.withValues(alpha: 0.5)
+                      : Colors.black.withValues(alpha: 0.5),
                 ),
               ),
               padding: const WidgetStatePropertyAll<EdgeInsets>(

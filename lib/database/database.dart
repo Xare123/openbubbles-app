@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/database/migrations/chat_latest_message_migration.dart';
 import 'package:bluebubbles/database/migrations/message_handle_relationship_migration.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
@@ -12,11 +13,11 @@ import 'package:io/io.dart';
 import 'package:path/path.dart';
 
 class Database {
-  static int version = 7;
+  static int version = 9;
 
   /// Bump this whenever preset theme definitions change (colors, font sizes,
   /// etc.) to force existing installs to re-seed preset themes on next launch.
-  static int themesVersion = 3;
+  static int themesVersion = 6;
 
   static late final Store store;
   static late final Box<Attachment> attachments;
@@ -77,7 +78,7 @@ class Database {
 
     try {
       await _performDatabaseMigrations();
-      await PrefsSvc.i.setInt('dbVersion', version);
+      await PrefsSvc.database.setDbVersion(version);
     } catch (e, s) {
       Logger.error("Failed to perform database migrations!", error: e, trace: s);
     }
@@ -119,14 +120,14 @@ class Database {
 
     try {
       objectBoxDirectory.createSync(recursive: true);
-      if (PrefsSvc.i.getBool('use-custom-path') == true && PrefsSvc.i.getString('custom-path') != null) {
-        Directory oldCustom = Directory(join(PrefsSvc.i.getString('custom-path')!, 'objectbox'));
+      final customPath = PrefsSvc.database.getCustomPath();
+      if (PrefsSvc.database.shouldUseCustomPath() && customPath != null) {
+        Directory oldCustom = Directory(join(customPath, 'objectbox'));
         if (oldCustom.existsSync()) {
           Logger.info("Detected prior use of custom path option. Migrating...");
           await copyPath(oldCustom.path, objectBoxDirectory.path);
         }
-        await PrefsSvc.i.remove('use-custom-path');
-        await PrefsSvc.i.remove('custom-path');
+        await PrefsSvc.database.clearCustomPathConfig();
       }
 
       Logger.info("Opening ObjectBox store from path: ${objectBoxDirectory.path}");
@@ -146,7 +147,7 @@ class Database {
 
   static Future<void> _performDatabaseMigrations({int? versionOverride}) async {
     int version = versionOverride ??
-        PrefsSvc.i.getInt('dbVersion') ??
+        PrefsSvc.database.getDbVersion() ??
         (SettingsSvc.settings.finishedSetup.value ? 1 : Database.version);
     if (version >= Database.version) return;
 
@@ -232,11 +233,31 @@ class Database {
         // We removed the code, so it's unused, but it'll remain in the database.
         case 7:
           break;
+
+        // Version 8: Backfill Chat.dbLatestMessage (ToOne<Message>) and
+        // dbOnlyLatestMessageDate from each chat's most recent message.
+        case 8:
+          Logger.info("Executing chat latest message backfill...", tag: "DB-Migration");
+          ChatLatestMessageMigration.migrate();
+          break;
+
+        // Version 9: move legacy Monet overlay users to the new Material You
+        // presets so selected theme becomes the single source of truth.
+        case 9:
+          final monetModeRaw = PrefsSvc.admin.get('monetTheming') as int?;
+          if (monetModeRaw == 1 || monetModeRaw == 2) {
+            await PrefsSvc.theme.setSelectedThemes(
+              lightTheme: ThemesService.materialYouLightName,
+              darkTheme: ThemesService.materialYouDarkName,
+            );
+          }
+          await PrefsSvc.admin.remove('monetTheming');
+          break;
       }
 
       // Update the current version and save it
       currentVersion = nextVersion;
-      await PrefsSvc.i.setInt('dbVersion', currentVersion);
+      await PrefsSvc.database.setDbVersion(currentVersion);
       Logger.info("Successfully migrated to version $currentVersion", tag: "DB-Migration");
     }
 
@@ -247,11 +268,13 @@ class Database {
   static Future<void> seedThemes() async {
     try {
       final isFirstRun = Database.themes.isEmpty();
-      final storedThemesVersion = PrefsSvc.i.getInt('themesVersion') ?? 0;
+      final storedThemesVersion = PrefsSvc.database.getThemesVersion();
       final needsReseed = isFirstRun || storedThemesVersion < Database.themesVersion;
       if (isFirstRun) {
-        await PrefsSvc.i.setString("selected-dark", "OLED Dark");
-        await PrefsSvc.i.setString("selected-light", "Bright White");
+        await PrefsSvc.theme.setSelectedThemes(
+          darkTheme: "OLED Dark",
+          lightTheme: "Bright White",
+        );
       }
       if (needsReseed) {
         for (final preset in ThemesService.defaultThemes) {
@@ -259,7 +282,7 @@ class Database {
           if (existing != null) preset.id = existing.id;
           Database.themes.put(preset);
         }
-        await PrefsSvc.i.setInt('themesVersion', Database.themesVersion);
+        await PrefsSvc.database.setThemesVersion(Database.themesVersion);
       }
     } catch (e, s) {
       Logger.error("Failed to seed themes!", error: e, trace: s);

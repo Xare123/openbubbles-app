@@ -9,7 +9,7 @@ import 'package:bluebubbles/services/isolates/isolate_actions.dart';
 class IncrementalSyncIsolate extends GlobalIsolate {
   IncrementalSyncIsolate({
     super.taskTimeout = const Duration(minutes: 5),
-    super.startupTimeout = const Duration(seconds: 15),
+    super.startupTimeout = const Duration(seconds: 30),
     super.idleTimeout = Duration.zero,
   });
 

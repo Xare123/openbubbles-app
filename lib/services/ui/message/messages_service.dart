@@ -4,11 +4,11 @@ import 'dart:io';
 import 'package:bluebubbles/app/state/attachment_state.dart';
 import 'package:bluebubbles/app/state/message_state.dart';
 import 'package:bluebubbles/helpers/types/extensions/extensions.dart';
-import 'package:bluebubbles/helpers/types/helpers/message_helper.dart';
 import 'package:bluebubbles/helpers/types/constants.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/services/backend/interfaces/sync_interface.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:collection/collection.dart';
 import 'package:dio/dio.dart';
@@ -569,7 +569,7 @@ class MessagesService extends GetxController {
   /// download.  Called when the user taps a failed (error-state) attachment.
   void retryAttachmentDownload(String messageGuid, Attachment attachment) {
     if (attachment.guid != null) {
-      Get.delete<AttachmentDownloadController>(tag: attachment.guid);
+      AttachmentDownloader.clearControllerForGuid(attachment.guid!);
     }
     // Clear stale active-download reference before restarting.
     messageStates[messageGuid]?.getAttachmentState(attachment.guid!)?.updateActiveDownloadInternal(null);
@@ -587,6 +587,9 @@ class MessagesService extends GetxController {
     final attGuid = attachment.guid;
     if (attGuid == null) return;
 
+    // Hard reset any stale queued/completed controller before state wiring.
+    AttachmentDownloader.clearControllerForGuid(attGuid);
+
     // 1. Reset the AttachmentState so the UI drops the resolved file
     //    immediately and shows the downloading widget instead.
     final attState = messageStates[messageGuid]?.getAttachmentState(attGuid);
@@ -598,13 +601,20 @@ class MessagesService extends GetxController {
     }
 
     // 2. Delete local files, reset DB flag, and register a new controller.
-    await AttachmentsSvc.redownloadAttachment(attachment);
+    try {
+      await AttachmentsSvc.redownloadAttachment(attachment);
+    } catch (e, s) {
+      Logger.error('redownloadAttachment failed for $attGuid', error: e, trace: s, tag: 'MessagesService');
+    }
 
     // 3. Wire the freshly created controller into the state machine so the
     //    Obx in AttachmentHolder rebuilds with DownloadingContent.
     final ctrl = AttachmentDownloader.getController(attGuid);
     if (ctrl != null) {
       notifyAttachmentDownloadStarted(messageGuid, attGuid, ctrl);
+    } else {
+      // Defensive fallback: ensure the re-download always starts.
+      _startAttachmentDownload(messageGuid, attachment);
     }
   }
 
@@ -715,15 +725,6 @@ class MessagesService extends GetxController {
   }
 
   Future<void> _handleNewMessage(Message message) async {
-    if (message.hasAttachments && !kIsWeb) {
-      message.attachments = List<Attachment>.from(message.dbAttachments);
-      // we may need an artificial delay in some cases since the attachment
-      // relation is initialized after message itself is saved
-      if (message.attachments.isEmpty) {
-        await Future.delayed(const Duration(milliseconds: 250));
-        message.attachments = List<Attachment>.from(message.dbAttachments);
-      }
-    }
     if (message.amkSessionId != null) {
       message.fetchAssociatedMessages();
     }
@@ -818,7 +819,7 @@ class MessagesService extends GetxController {
     updated.error = incomingError;
     updated.errorMessage = incomingErrorMessage;
     struct.removeMessage(oldGuid ?? updated.guid!);
-    struct.removeAttachments(toUpdate.attachments.map((e) => e!.guid!));
+    struct.removeAttachments(toUpdate.dbAttachments.map((e) => e.guid!));
     struct.addMessages([updated]);
 
     // Update MessageState - try oldGuid first, then fallback to updated.guid
@@ -873,7 +874,7 @@ class MessagesService extends GetxController {
 
   void removeMessage(Message toRemove) {
     struct.removeMessage(toRemove.guid!);
-    struct.removeAttachments(toRemove.attachments.map((e) => e!.guid!));
+    struct.removeAttachments(toRemove.dbAttachments.map((e) => e.guid!));
     messageUpdateTrigger.remove(toRemove.guid!);
 
     // Dispose attachment states and remove MessageState
@@ -1181,19 +1182,25 @@ class MessagesService extends GetxController {
       }
     }
 
-    // Refresh the flat attachments list so prepAttachment.m.attachments.first
-    // returns the updated Attachment object with new GUID and bytes.
-    message.attachments = List<Attachment>.from(message.dbAttachments);
-
     // Queue for sending (message already in UI, just updated)
     if (message.dbAttachments.isNotEmpty) {
-      OutgoingMsgHandler.queue(OutgoingItem(type: QueueType.sendAttachment, chat: chat, message: message, customArgs: {
-        'isRetry': true,
-      }));
+      OutgoingMsgHandler.queue(
+        OutgoingAttachment(
+          chat: chat,
+          message: message,
+          attachment: message.dbAttachments.first,
+          isAudioMessage: message.itemType == 5,
+          isRetry: true,
+        ),
+      );
     } else {
-      OutgoingMsgHandler.queue(OutgoingItem(type: QueueType.sendMessage, chat: chat, message: message, customArgs: {
-        'isRetry': true,
-      }));
+      OutgoingMsgHandler.queue(
+        OutgoingMessage(
+          chat: chat,
+          message: message,
+          isRetry: true,
+        ),
+      );
     }
   }
 
@@ -1429,21 +1436,23 @@ class MessagesService extends GetxController {
       if (_messages.isEmpty) {
         // get from server and save
         final fromServer = await ChatsSvc.getMessages(chat.guid, offset: offset, limit: limit);
-        final temp = await MessageHelper.bulkAddMessages(chat, fromServer, checkForLatestMessageText: false);
+        final rawMessages = fromServer.cast<Map<String, dynamic>>();
+        final syncResult = await SyncInterface.bulkSyncData(
+          chatData: chat.toMap(),
+          messagesData: rawMessages,
+        );
         if (!kIsWeb) {
           // Prefer the bulk-loaded list (already hydrated via getMany on the main thread)
           // over a second link-query, which can return 0 for newly-created chats whose
           // chat.targetId index hasn't yet been flushed to the read snapshot.
           // If temp is empty (bulk add found nothing new) fall back to the link query.
-          if (temp.isNotEmpty) {
-            _messages = temp;
+          if (syncResult.messages.isNotEmpty) {
+            _messages = syncResult.messages;
           } else {
             _messages = await Chat.getMessagesAsync(chat, offset: offset, limit: limit);
           }
 
-          // Sync the chat's latestMessage into ChatState after the server fetch,
-          // since bulkAddMessages was called with checkForLatestMessageText=false.
-          //
+          // Sync the chat's latestMessage into ChatState after the server fetch.
           // Guards:
           // 1. offset == 0: only the first (newest) page should affect latestMessage.
           //    Loading older pages must never overwrite a newer latest.
@@ -1452,26 +1461,30 @@ class MessagesService extends GetxController {
           //    dbLatestMessage when _latestMessage is null, which queries the DB — and at
           //    this point the DB now contains the just-bulk-added old messages, so that
           //    query returns a stale old date and defeats the freshness check entirely.
-          if (offset == 0 && _messages.isNotEmpty) {
-            final latest =
-                (_messages.where((m) => m.associatedMessageGuid == null).toList()..sort(Message.sort)).firstOrNull;
-            final state = ChatsSvc.getChatState(chat.guid);
-            // epoch(0) is the sentinel returned when no messages exist yet — treat it as no current latest.
-            final currentDate = state?.latestMessage.value?.dateCreated;
-            final hasRealCurrent = currentDate != null && currentDate.millisecondsSinceEpoch > 0;
-            final latestDate = latest?.dateCreated;
-            if (latest != null && (!hasRealCurrent || (latestDate != null && latestDate.isAfter(currentDate)))) {
-              ChatsSvc.updateChatLatestMessage(chat.guid, latest);
+          if (offset == 0) {
+            for (final updatedChat in syncResult.chats) {
+              final state = ChatsSvc.getChatState(updatedChat.guid);
+              if (state != null && updatedChat.dbLatestMessage.target?.dateCreated != null) {
+                final currentDate = state.latestMessage.value?.dateCreated;
+                final hasRealCurrent = currentDate != null && currentDate.millisecondsSinceEpoch > 0;
+                final latestMsg = updatedChat.dbLatestMessage.target;
+                if (latestMsg != null &&
+                    (!hasRealCurrent ||
+                        (latestMsg.dateCreated != null && latestMsg.dateCreated!.isAfter(currentDate) == true))) {
+                  ChatsSvc.updateChatLatestMessage(updatedChat.guid, latestMsg);
+                }
+              }
             }
           }
         } else {
-          final reactions = temp.where((e) => e.associatedMessageGuid != null);
+          final reactions = syncResult.messages.where((e) => e.associatedMessageGuid != null);
           for (Message m in reactions) {
-            final associatedMessage = temp.firstWhereOrNull((element) => element.guid == m.associatedMessageGuid);
+            final associatedMessage =
+                syncResult.messages.firstWhereOrNull((element) => element.guid == m.associatedMessageGuid);
             associatedMessage?.hasReactions = true;
             associatedMessage?.associatedMessages.add(m);
           }
-          _messages = temp;
+          _messages = syncResult.messages;
         }
       }
     } catch (e, s) {
@@ -1567,7 +1580,8 @@ class MessagesService extends GetxController {
     if (withChatParticipants) withQuery.add("chat.participants");
     withQuery.add("attachment.metadata");
 
-    HttpSvc.messages(
+    HttpSvc.message
+        .query(
             withQuery: withQuery,
             where: where,
             sort: sort,

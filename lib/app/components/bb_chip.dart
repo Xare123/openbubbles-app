@@ -32,7 +32,7 @@ class BBChip extends StatelessWidget {
     return RawChip(
       tapEnabled: tapEnabled,
       deleteIcon: onDeleted != null ? const Icon(Icons.close, size: 16) : null,
-      side: BorderSide(color: context.theme.colorScheme.outline.withOpacity(0.1)),
+      side: BorderSide(color: context.theme.colorScheme.outline.withValues(alpha: 0.1)),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       avatar: avatar,
       label: label,

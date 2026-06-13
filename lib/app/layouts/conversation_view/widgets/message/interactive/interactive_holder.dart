@@ -182,119 +182,115 @@ class _InteractiveHolderState extends State<InteractiveHolder> with AutomaticKee
                   ),
                   child: Padding(
                     padding: EdgeInsets.only(left: message.isFromMe! ? 0 : 10, right: message.isFromMe! ? 10 : 0),
-                    child: AnimatedSize(
-                      duration: const Duration(milliseconds: 150),
-                      child: Center(
-                        heightFactor: 1,
-                        widthFactor: 1,
-                        child: _ms.shouldHideAttachments.value
-                            ? const Padding(padding: EdgeInsets.all(15), child: Text("Interactive Message"))
-                            : Obx(() {
-                                final isTempMessage = controller.isSending.value;
-                                return Opacity(
-                                  opacity: isTempMessage ? 0.5 : 1,
-                                  child: Stack(
-                                    children: [
-                                      Builder(builder: (context) {
-                                        if (payloadData == null && !(message.isLegacyUrlPreview)) {
-                                          switch (message.interactiveText) {
-                                            case "Handwritten Message":
-                                            case "Handwriten Message":
-                                            case "Digital Touch Message":
-                                              if (SettingsSvc.settings.enablePrivateAPI.value &&
-                                                  SettingsSvc.serverDetails.isMinBigSur &&
-                                                  SettingsSvc.serverDetails.supportsGroupChatManagement) {
-                                                return const EmbeddedMedia();
-                                              } else {
-                                                return UnsupportedInteractive(
-                                                  payloadData: null,
-                                                  content: content,
-                                                  balloonBundleId: message.balloonBundleId,
-                                                );
-                                              }
-                                            default:
+                    child: Center(
+                      heightFactor: 1,
+                      widthFactor: 1,
+                      child: _ms.shouldHideAttachments.value
+                          ? const Padding(padding: EdgeInsets.all(15), child: Text("Interactive Message"))
+                          : Obx(() {
+                              final isTempMessage = controller.isSending.value;
+                              return Opacity(
+                                opacity: isTempMessage ? 0.5 : 1,
+                                child: Stack(
+                                  children: [
+                                    Builder(builder: (context) {
+                                      if (payloadData == null && !(message.isLegacyUrlPreview)) {
+                                        switch (message.interactiveText) {
+                                          case "Handwritten Message":
+                                          case "Handwriten Message":
+                                          case "Digital Touch Message":
+                                            if (SettingsSvc.settings.enablePrivateAPI.value &&
+                                                SettingsSvc.serverDetails.isMinBigSur &&
+                                                SettingsSvc.serverDetails.supportsGroupChatManagement) {
+                                              return const EmbeddedMedia();
+                                            } else {
                                               return UnsupportedInteractive(
                                                 payloadData: null,
                                                 content: content,
                                                 balloonBundleId: message.balloonBundleId,
                                               );
-                                          }
-                                        } else if (payloadData?.type == PayloadType.url || message.isLegacyUrlPreview) {
-                                          if (payloadData == null) {
-                                            return UrlPreview(
-                                              data: UrlPreviewData(
-                                                url: message.url,
-                                                originalUrl: message.url,
-                                              ),
+                                            }
+                                          default:
+                                            return UnsupportedInteractive(
+                                              payloadData: null,
+                                              content: content,
+                                              balloonBundleId: message.balloonBundleId,
                                             );
-                                          }
-                                          final urlData = payloadData!.urlData!.first;
-                                          return UrlPreview(data: urlData);
-                                        } else {
-                                          final data = payloadData!.appData!.first;
-                                          switch (message.interactiveText) {
-                                            case "Polls":
-                                              return Polls(
-                                                data: data,
-                                                messageState: controller,
-                                              );
-                                            case "Apple Pay":
-                                              return ApplePay(
-                                                data: data,
-                                              );
-                                            case "Live Location":
-                                              return FindMy(
-                                                data: data,
-                                                message: message,
-                                                isPopup: PopupScope.maybeOf(
-                                                      context,
-                                                    ) !=
-                                                    null,
-                                              );
-                                            case "com.openbubbles.passwords":
-                                              return SharedPasswords(
-                                                data: data,
-                                                message: message,
-                                              );
-                                            default:
-                                              if (data.appId != null && ExtensionSvc.isAppSupported(data.appId!)) {
-                                                return SupportedInteractive(
-                                                  data: data,
-                                                  content: content,
-                                                  guid: message.stagingGuid ?? message.guid,
-                                                );
-                                              }
-                                              return UnsupportedInteractive(
-                                                payloadData: data,
-                                                content: content,
-                                                balloonBundleId: message.balloonBundleId,
-                                              );
-                                          }
                                         }
-                                      }),
-                                      if (appIcon != null &&
-                                          (hasImage ||
-                                              ((payloadData?.appData?.first.isLive ?? false) &&
-                                                  (payloadData?.appData?.first.appId != null &&
-                                                      ExtensionSvc.isAppSupported(
-                                                          payloadData!.appData!.first.appId!)))))
-                                        Positioned(
-                                          left: 12,
-                                          top: 12,
-                                          child: ClipRRect(
-                                            borderRadius: BorderRadius.circular(100),
-                                            child: Image.memory(
-                                              appIcon!,
-                                              width: 28,
-                                              height: 28,
+                                      } else if (payloadData?.type == PayloadType.url || message.isLegacyUrlPreview) {
+                                        if (payloadData == null) {
+                                          return UrlPreview(
+                                            data: UrlPreviewData(
+                                              url: message.url,
+                                              originalUrl: message.url,
                                             ),
+                                          );
+                                        }
+                                        final urlData = payloadData!.urlData!.first;
+                                        return UrlPreview(data: urlData);
+                                      } else {
+                                        final data = payloadData!.appData!.first;
+                                        switch (message.interactiveText) {
+                                          case "Polls":
+                                            return Polls(
+                                              data: data,
+                                              messageState: controller,
+                                            );
+                                          case "Apple Pay":
+                                            return ApplePay(
+                                              data: data,
+                                            );
+                                          case "Live Location":
+                                            return FindMy(
+                                              data: data,
+                                              message: message,
+                                              isPopup: PopupScope.maybeOf(
+                                                    context,
+                                                  ) !=
+                                                  null,
+                                            );
+                                          case "com.openbubbles.passwords":
+                                            return SharedPasswords(
+                                              data: data,
+                                              message: message,
+                                            );
+                                          default:
+                                            if (data.appId != null && ExtensionSvc.isAppSupported(data.appId!)) {
+                                              return SupportedInteractive(
+                                                data: data,
+                                                content: content,
+                                                guid: message.stagingGuid ?? message.guid,
+                                              );
+                                            }
+                                            return UnsupportedInteractive(
+                                              payloadData: data,
+                                              content: content,
+                                              balloonBundleId: message.balloonBundleId,
+                                            );
+                                        }
+                                      }
+                                    }),
+                                    if (appIcon != null &&
+                                        (hasImage ||
+                                            ((payloadData?.appData?.first.isLive ?? false) &&
+                                                (payloadData?.appData?.first.appId != null &&
+                                                    ExtensionSvc.isAppSupported(payloadData!.appData!.first.appId!)))))
+                                      Positioned(
+                                        left: 12,
+                                        top: 12,
+                                        child: ClipRRect(
+                                          borderRadius: BorderRadius.circular(100),
+                                          child: Image.memory(
+                                            appIcon!,
+                                            width: 28,
+                                            height: 28,
                                           ),
                                         ),
-                                    ],
-                                  ),
-                                );
-                              }),
-                      ),
+                                      ),
+                                  ],
+                                ),
+                              );
+                            }),
                     ),
                   ),
                 ),

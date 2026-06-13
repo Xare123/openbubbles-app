@@ -13,8 +13,7 @@ HandleService get HandleSvc => GetIt.I<HandleService>();
 ///
 /// ## Responsibilities
 /// - Creates and caches [HandleState] per handle ID
-/// - Pushes contact-sync updates into existing states (replacing the
-///   [ContactServiceV2.handleUpdateStatus] broadcast pattern)
+/// - Pushes contact-sync updates into existing states
 /// - Listens to redacted-mode settings and propagates redact/unredact across
 ///   all live states
 ///

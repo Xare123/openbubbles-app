@@ -1,23 +1,26 @@
-import 'dart:async';
-import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
+import 'dart:async';
+import 'dart:convert';
 
-import 'package:bluebubbles/app/components/custom_text_editing_controllers.dart';
-import 'package:bluebubbles/app/layouts/chat_creator/chat_creator.dart';
-import 'package:bluebubbles/app/layouts/chat_creator/new_chat_creator.dart';
-import 'package:bluebubbles/app/layouts/conversation_details/dialogs/timeframe_picker.dart';
+import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/actions/media_actions.dart'
+    as popup_media_actions;
+import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/actions/message_actions.dart'
+    as popup_message_actions;
+import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/actions/navigation_actions.dart'
+    as popup_navigation_actions;
+import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/actions/text_actions.dart'
+    as popup_text_actions;
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/details_menu_action.dart';
+import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/message_popup_action_context.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/reaction_picker_clipper.dart';
-import 'package:bluebubbles/app/components/avatars/contact_avatar_widget.dart';
+import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/widgets/reaction_details.dart';
 import 'package:bluebubbles/app/components/custom/custom_cupertino_alert_dialog.dart';
 import 'package:bluebubbles/app/layouts/findmy/findmy_pin_clipper.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/reaction/reaction_clipper.dart';
-import 'package:bluebubbles/app/wrappers/bb_annotated_region.dart';
-import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
+import 'package:bluebubbles/app/wrappers/bb_app_bar.dart';
+import 'package:bluebubbles/app/wrappers/bb_scaffold.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
-import 'package:bluebubbles/app/layouts/conversation_view/pages/conversation_view.dart';
-import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/reply/reply_thread_popup.dart';
 import 'package:bluebubbles/app/wrappers/titlebar_wrapper.dart';
 import 'package:bluebubbles/app/state/message_state.dart';
 import 'package:bluebubbles/app/state/message_state_scope.dart';
@@ -26,7 +29,6 @@ import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/utils/logger/logger.dart';
-import 'package:bluebubbles/utils/share.dart';
 import 'package:collection/collection.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:file_picker/file_picker.dart' as picker;
@@ -37,25 +39,13 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart';
-import 'package:flutter_svg/svg.dart';
 import 'package:get/get.dart' hide Response, FormData, MultipartFile;
-import 'package:intl/intl.dart';
-import 'package:pasteboard/pasteboard.dart';
-import 'package:path/path.dart' hide context;
-import 'package:permission_handler/permission_handler.dart';
 import 'package:sprung/sprung.dart';
 import 'package:dio/dio.dart';
-import 'package:bluebubbles/models/models.dart' show MessageReplyContext;
-import 'package:url_launcher/url_launcher_string.dart';
 import 'package:universal_io/io.dart';
 
-class MessagePopupServerDetails {
-  final bool minSierra;
-  final bool minBigSur;
-  final bool supportsOriginalDownload;
-  const MessagePopupServerDetails(
-      {required this.minSierra, required this.minBigSur, required this.supportsOriginalDownload});
-}
+export 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/message_popup_action_context.dart'
+    show MessagePopupServerDetails;
 
 class MessagePopup extends StatefulWidget {
   final Offset childPosition;
@@ -128,6 +118,9 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
           part.attachments.isNotEmpty &&
           part.attachments.where((element) => AttachmentsSvc.getContent(element) is PlatformFile).isNotEmpty) ||
       isEmbeddedMedia;
+
+  bool get canOpenInImageViewer =>
+      kIsDesktop && !kIsWeb && part.attachments.length == 1 && part.attachments.first.mimeStart == "image";
 
   late bool isEmbeddedMedia = (message.balloonBundleId == "com.apple.Handwriting.HandwritingProvider" ||
           message.balloonBundleId == "com.apple.DigitalTouchBalloonProvider") &&
@@ -230,6 +223,7 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
   }
 
   void popDetails({bool returnVal = true}) {
+    Navigator.popUntil(context, (route) => route is! DialogRoute);
     Navigator.of(context).pop(returnVal);
   }
 
@@ -238,896 +232,464 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
     double narrowWidth = message.isFromMe! || !SettingsSvc.settings.alwaysShowAvatars.value ? 330 : 360;
     bool narrowScreen = NavigationSvc.width(widthContext) < narrowWidth;
 
-    return BBAnnotatedRegion(
-      child: Theme(
-        data: context.theme.copyWith(
-          // in case some components still use legacy theming
-          primaryColor: context.theme.colorScheme.bubble(context, chat.isIMessage),
-          colorScheme: context.theme.colorScheme.copyWith(
-            primary: context.theme.colorScheme.bubble(context, chat.isIMessage),
-            onPrimary: context.theme.colorScheme.onBubble(context, chat.isIMessage),
-            surface: SettingsSvc.settings.monetTheming.value == Monet.full
-                ? null
-                : (context.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
-            onSurface: SettingsSvc.settings.monetTheming.value == Monet.full
-                ? null
-                : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
-          ),
+    return Theme(
+      data: context.theme.copyWith(
+        // in case some components still use legacy theming
+        primaryColor: context.theme.colorScheme.bubble(context, chat.isIMessage),
+        colorScheme: context.theme.colorScheme.copyWith(
+          primary: context.theme.colorScheme.bubble(context, chat.isIMessage),
+          onPrimary: context.theme.colorScheme.onBubble(context, chat.isIMessage),
+          surface: ThemeSvc.isMaterialYouActive(context)
+              ? null
+              : (context.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
+          onSurface: ThemeSvc.isMaterialYouActive(context)
+              ? null
+              : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
         ),
-        child: TitleBarWrapper(
-            child: Scaffold(
-                extendBodyBehindAppBar: true,
-                backgroundColor: kIsDesktop && iOS && SettingsSvc.settings.windowEffect.value != WindowEffect.disabled
-                    ? context.theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.6)
-                    : Colors.transparent,
-                appBar: iOS
-                    ? null
-                    : AppBar(
-                        backgroundColor: context.theme.colorScheme.surface.oppositeLightenOrDarken(5),
-                        systemOverlayStyle: context.theme.colorScheme.brightness == Brightness.dark
-                            ? SystemUiOverlayStyle.light
-                            : SystemUiOverlayStyle.dark,
-                        automaticallyImplyLeading: false,
-                        leadingWidth: 40,
-                        toolbarHeight: kIsDesktop ? 80 : null,
-                        leading: Padding(
-                          padding: EdgeInsets.only(top: kIsDesktop ? 20 : 0, left: 10.0),
-                          child: BackButton(
-                            color: context.theme.colorScheme.onSurface,
-                            onPressed: () {
-                              popDetails();
-                              return true;
-                            },
-                          ),
-                        ),
-                        actions: buildMaterialDetailsMenu(context),
-                      ),
-                body: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    GestureDetector(
-                      onTap: popDetails,
-                      child: iOS
-                          ? (SettingsSvc.settings.highPerfMode.value
-                              ? Container(color: context.theme.colorScheme.surface.withValues(alpha: 0.5))
-                              : BackdropFilter(
-                                  filter: ImageFilter.blur(
-                                      sigmaX:
-                                          kIsDesktop && SettingsSvc.settings.windowEffect.value != WindowEffect.disabled
-                                              ? 10
-                                              : 30,
-                                      sigmaY:
-                                          kIsDesktop && SettingsSvc.settings.windowEffect.value != WindowEffect.disabled
-                                              ? 10
-                                              : 30),
-                                  child: Container(
-                                    color: context.theme.colorScheme.surface.withValues(alpha: 0.5).darkenAmount(0.2),
-                                  ),
-                                ))
-                          : null,
-                    ),
-                    if (iOS)
-                      AnimatedPositioned(
-                        duration: const Duration(milliseconds: 250),
-                        curve: Curves.easeOutBack,
-                        left: widget.childPosition.dx,
-                        bottom: messageOffset,
-                        child: TweenAnimationBuilder<double>(
-                          tween: Tween<double>(begin: 0.8, end: 1),
-                          curve: Curves.easeOutBack,
-                          duration: const Duration(milliseconds: 500),
-                          child: ConstrainedBox(
-                              constraints: BoxConstraints(maxWidth: widget.size.width),
-                              child: MessageStateScope(
-                                messageState: widget.controller,
-                                child: widget.child,
-                              )),
-                          builder: (context, size, child) {
-                            return Transform.scale(
-                              scale: size.clamp(1, double.infinity),
-                              alignment: message.isFromMe! ? Alignment.centerRight : Alignment.centerLeft,
-                              child: child,
-                            );
+      ),
+      child: TitleBarWrapper(
+          child: BBScaffold(
+              extendBodyBehindAppBar: true,
+              safeAreaLeft: false,
+              safeAreaRight: false,
+              backgroundColor: kIsDesktop && iOS && SettingsSvc.settings.windowEffect.value != WindowEffect.disabled
+                  ? context.theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.6)
+                  : Colors.transparent,
+              appBar: iOS
+                  ? null
+                  : BBAppBar(
+                      backgroundColor: context.theme.colorScheme.surface.oppositeLightenOrDarken(5),
+                      automaticallyImplyLeading: false,
+                      leadingWidth: 40,
+                      toolbarHeight: kIsDesktop ? 80 : 50,
+                      leading: Padding(
+                        padding: EdgeInsets.only(top: kIsDesktop ? 20 : 0, left: 10.0),
+                        child: BackButton(
+                          color: context.theme.colorScheme.onSurface,
+                          onPressed: () {
+                            popDetails();
+                            return true;
                           },
                         ),
                       ),
-                    if (iOS)
-                      Positioned(
-                        top: 40,
-                        left: 15,
-                        right: 15,
-                        child: AnimatedSize(
-                          duration: const Duration(milliseconds: 500),
-                          curve: Sprung.underDamped,
-                          alignment: Alignment.center,
-                          child: reactions.isNotEmpty ? ReactionDetails(reactions: reactions) : const SizedBox.shrink(),
-                        ),
+                      actions: buildMaterialDetailsMenu(context),
+                    ),
+              body: Stack(
+                fit: StackFit.expand,
+                children: [
+                  GestureDetector(
+                    onTap: popDetails,
+                    child: iOS
+                        ? (SettingsSvc.settings.highPerfMode.value
+                            ? Container(color: context.theme.colorScheme.surface.withValues(alpha: 0.5))
+                            : BackdropFilter(
+                                filter: ImageFilter.blur(
+                                    sigmaX:
+                                        kIsDesktop && SettingsSvc.settings.windowEffect.value != WindowEffect.disabled
+                                            ? 10
+                                            : 30,
+                                    sigmaY:
+                                        kIsDesktop && SettingsSvc.settings.windowEffect.value != WindowEffect.disabled
+                                            ? 10
+                                            : 30),
+                                child: Container(
+                                  color: context.theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.2),
+                                ),
+                              ))
+                        : null,
+                  ),
+                  if (iOS)
+                    AnimatedPositioned(
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeOutBack,
+                      left: widget.childPosition.dx,
+                      bottom: messageOffset,
+                      child: TweenAnimationBuilder<double>(
+                        tween: Tween<double>(begin: 0.8, end: 1),
+                        curve: Curves.easeOutBack,
+                        duration: const Duration(milliseconds: 500),
+                        child: ConstrainedBox(
+                            constraints: BoxConstraints(maxWidth: widget.size.width),
+                            child: MessageStateScope(
+                              messageState: widget.controller,
+                              child: widget.child,
+                            )),
+                        builder: (context, size, child) {
+                          return Transform.scale(
+                            scale: size.clamp(1, double.infinity),
+                            alignment: message.isFromMe! ? Alignment.centerRight : Alignment.centerLeft,
+                            child: child,
+                          );
+                        },
                       ),
-                    if (SettingsSvc.settings.enablePrivateAPI.value && isSent && minSierra && chat.isIMessage)
-                      Positioned(
-                        bottom: (iOS
-                                ? itemHeight * numberToShow + 35 + widget.size.height
-                                : context.height - materialOffset)
-                            .clamp(0, context.height - (narrowScreen ? 200 : 125)),
-                        right: message.isFromMe! ? max(15, widget.size.width - emojiPickerSize + 65) : null,
-                        left: !message.isFromMe!
-                            ? max(widget.childPosition.dx + 10,
-                                widget.childPosition.dx + widget.size.width - emojiPickerSize + 65)
-                            : null,
-                        child: AnimatedSize(
-                          curve: Curves.easeInOut,
-                          alignment: message.isFromMe! ? Alignment.centerRight : Alignment.centerLeft,
-                          duration: const Duration(milliseconds: 250),
-                          child: currentlySelectedReaction == "init"
-                              ? const SizedBox(height: 80)
-                              : ClipShadowPath(
-                                  shadow: iOS
-                                      ? BoxShadow(
-                                          color: context.theme.colorScheme.surfaceContainerHighest
-                                              .withAlpha(iOS ? 150 : 255)
-                                              .lightenOrDarken(iOS ? 0 : 10))
-                                      : BoxShadow(
-                                          color: context.theme.colorScheme.shadow,
-                                          blurRadius: 2,
-                                        ),
-                                  clipper: ReactionPickerClipper(
-                                    messageSize: widget.size,
-                                    isFromMe: message.isFromMe!,
-                                  ),
-                                  child: BackdropFilter(
-                                    filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                                    child: Container(
-                                      padding: const EdgeInsets.all(5).add(const EdgeInsets.only(bottom: 15)),
-                                      color: context.theme.colorScheme.surfaceContainerHighest
-                                          .withAlpha(iOS ? 150 : 255)
-                                          .lightenOrDarken(iOS ? 0 : 10),
-                                      width: emojiPickerSize.toDouble(),
-                                      child: ShaderMask(
-                                        shaderCallback: (Rect rect) {
-                                          return LinearGradient(
-                                            begin: Alignment.centerLeft,
-                                            end: Alignment.centerRight,
-                                            colors: [
-                                              Colors.transparent,
-                                              emojiMode == 2 ? Colors.purple : Colors.transparent
-                                            ],
-                                            stops: const [0.9, 1.0],
-                                          ).createShader(rect);
-                                        },
-                                        blendMode: BlendMode.dstOut,
-                                        child: SingleChildScrollView(
-                                          scrollDirection: Axis.horizontal,
-                                          padding: emojiMode == 2 ? const EdgeInsets.only(right: 25) : EdgeInsets.zero,
-                                          child: Row(
-                                            children: reactOptions.map((e) {
-                                              final isBuiltInReaction = ReactionTypes.toList().contains(e);
-                                              return Padding(
-                                                padding: iOS
-                                                    ? const EdgeInsets.all(5.0)
-                                                    : const EdgeInsets.symmetric(horizontal: 5),
-                                                child: Material(
-                                                  color: currentlySelectedReaction == e
-                                                      ? context.theme.colorScheme.primary
-                                                      : Colors.transparent,
-                                                  borderRadius: BorderRadius.circular(20),
-                                                  child: SizedBox(
-                                                    width: iOS ? 35 : null,
-                                                    height: iOS ? 35 : null,
-                                                    child: InkWell(
-                                                      borderRadius: BorderRadius.circular(20),
-                                                      onTap: () {
-                                                        currentlySelectedReaction =
-                                                            currentlySelectedReaction == e ? null : e;
-                                                        setState(() {});
-                                                        if (isBuiltInReaction) {
-                                                          HapticFeedback.lightImpact();
-                                                          widget.sendTapback(
-                                                              selfReaction == e ? "-$e" : e, null, part.part);
-                                                          popDetails();
-                                                          return;
-                                                        }
-                                                        if (selfReaction != e) {
-                                                          unawaited(() async {
-                                                            Emoji? emoji = emojiMap[e];
-                                                            if (emoji == null) {
-                                                              outerLoop:
-                                                              for (final category in defaultEmojiSet) {
-                                                                for (final candidate in category.emoji) {
-                                                                  if (candidate.emoji == e) {
-                                                                    emojiMap[e] = candidate;
-                                                                    emoji = candidate;
-                                                                    break outerLoop;
-                                                                  }
+                    ),
+                  if (iOS)
+                    Positioned(
+                      top: 40,
+                      left: 15,
+                      right: 15,
+                      child: AnimatedSize(
+                        duration: const Duration(milliseconds: 500),
+                        curve: Sprung.underDamped,
+                        alignment: Alignment.center,
+                        child: reactions.isNotEmpty ? ReactionDetails(reactions: reactions) : const SizedBox.shrink(),
+                      ),
+                    ),
+                  if (SettingsSvc.settings.enablePrivateAPI.value && isSent && minSierra && chat.isIMessage)
+                    Positioned(
+                      bottom:
+                          (iOS ? itemHeight * numberToShow + 35 + widget.size.height : context.height - materialOffset)
+                              .clamp(0, context.height - (narrowScreen ? 200 : 125)),
+                      right: message.isFromMe! ? max(15, widget.size.width - emojiPickerSize + 65) : null,
+                      left: !message.isFromMe!
+                          ? max(widget.childPosition.dx + 10,
+                              widget.childPosition.dx + widget.size.width - emojiPickerSize + 65)
+                          : null,
+                      child: AnimatedSize(
+                        curve: Curves.easeInOut,
+                        alignment: message.isFromMe! ? Alignment.centerRight : Alignment.centerLeft,
+                        duration: const Duration(milliseconds: 250),
+                        child: currentlySelectedReaction == "init"
+                            ? const SizedBox(height: 80)
+                            : ClipShadowPath(
+                                shadow: iOS
+                                    ? BoxShadow(
+                                        color: context.theme.colorScheme.surfaceContainerHighest
+                                            .withAlpha(iOS ? 150 : 255)
+                                            .lightenOrDarken(iOS ? 0 : 10))
+                                    : BoxShadow(
+                                        color: context.theme.colorScheme.shadow,
+                                        blurRadius: 2,
+                                      ),
+                                clipper: ReactionPickerClipper(
+                                  messageSize: widget.size,
+                                  isFromMe: message.isFromMe!,
+                                ),
+                                child: BackdropFilter(
+                                  filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                                  child: Container(
+                                    padding: const EdgeInsets.all(5).add(const EdgeInsets.only(bottom: 15)),
+                                    color: context.theme.colorScheme.surfaceContainerHighest
+                                        .withAlpha(iOS ? 150 : 255)
+                                        .lightenOrDarken(iOS ? 0 : 10),
+                                    width: emojiPickerSize.toDouble(),
+                                    child: ShaderMask(
+                                      shaderCallback: (Rect rect) {
+                                        return LinearGradient(
+                                          begin: Alignment.centerLeft,
+                                          end: Alignment.centerRight,
+                                          colors: [
+                                            Colors.transparent,
+                                            emojiMode == 2 ? Colors.purple : Colors.transparent
+                                          ],
+                                          stops: const [0.9, 1.0],
+                                        ).createShader(rect);
+                                      },
+                                      blendMode: BlendMode.dstOut,
+                                      child: SingleChildScrollView(
+                                        scrollDirection: Axis.horizontal,
+                                        padding: emojiMode == 2 ? const EdgeInsets.only(right: 25) : EdgeInsets.zero,
+                                        child: Row(
+                                          children: reactOptions.map((e) {
+                                            final isBuiltInReaction = ReactionTypes.toList().contains(e);
+                                            return Padding(
+                                              padding: iOS
+                                                  ? const EdgeInsets.all(5.0)
+                                                  : const EdgeInsets.symmetric(horizontal: 5),
+                                              child: Material(
+                                                color: currentlySelectedReaction == e
+                                                    ? context.theme.colorScheme.primary
+                                                    : Colors.transparent,
+                                                borderRadius: BorderRadius.circular(20),
+                                                child: SizedBox(
+                                                  width: iOS ? 35 : null,
+                                                  height: iOS ? 35 : null,
+                                                  child: InkWell(
+                                                    borderRadius: BorderRadius.circular(20),
+                                                    onTap: () {
+                                                      currentlySelectedReaction =
+                                                          currentlySelectedReaction == e ? null : e;
+                                                      setState(() {});
+                                                      if (isBuiltInReaction) {
+                                                        HapticFeedback.lightImpact();
+                                                        widget.sendTapback(
+                                                            selfReaction == e ? "-$e" : e, null, part.part);
+                                                        popDetails();
+                                                        return;
+                                                      }
+                                                      if (selfReaction != e) {
+                                                        unawaited(() async {
+                                                          Emoji? emoji = emojiMap[e];
+                                                          if (emoji == null) {
+                                                            outerLoop:
+                                                            for (final category in defaultEmojiSet) {
+                                                              for (final candidate in category.emoji) {
+                                                                if (candidate.emoji == e) {
+                                                                  emojiMap[e] = candidate;
+                                                                  emoji = candidate;
+                                                                  break outerLoop;
                                                                 }
                                                               }
                                                             }
-                                                            if (emoji != null) {
-                                                              await EmojiPickerUtils().addEmojiToRecentlyUsed(
-                                                                  key: GlobalKey(), emoji: emoji!);
-                                                            }
-                                                          }());
-                                                        }
-                                                        reactEmoji(e);
-                                                      },
-                                                      child: Padding(
-                                                        padding: EdgeInsets.symmetric(
-                                                                horizontal: 6.5, vertical: iOS ? 4.5 : 6.5)
-                                                            .add(EdgeInsets.only(right: e == "emphasize" ? 2.5 : 0)),
-                                                        child: Center(
-                                                          child: Builder(builder: (context) {
-                                                            final text = Text(
-                                                              ReactionTypes.reactionToEmoji[e] ?? e,
-                                                              style: const TextStyle(
-                                                                  fontSize: 18, fontFamily: 'Apple Color Emoji'),
-                                                              textAlign: TextAlign.center,
+                                                          }
+                                                          if (emoji != null) {
+                                                            await EmojiPickerUtils()
+                                                                .addEmojiToRecentlyUsed(key: GlobalKey(), emoji: emoji);
+                                                          }
+                                                        }());
+                                                      }
+                                                      reactEmoji(e);
+                                                    },
+                                                    child: Padding(
+                                                      padding: EdgeInsets.symmetric(
+                                                              horizontal: 6.5, vertical: iOS ? 4.5 : 6.5)
+                                                          .add(EdgeInsets.only(right: e == "emphasize" ? 2.5 : 0)),
+                                                      child: Center(
+                                                        child: Builder(builder: (context) {
+                                                          final text = Text(
+                                                            ReactionTypes.reactionToEmoji[e] ?? e,
+                                                            style: const TextStyle(
+                                                                fontSize: 18, fontFamily: 'Apple Color Emoji'),
+                                                            textAlign: TextAlign.center,
+                                                          );
+                                                          if (e == "dislike") {
+                                                            return Transform(
+                                                              transform: Matrix4.identity()..rotateY(pi),
+                                                              alignment: FractionalOffset.center,
+                                                              child: text,
                                                             );
-                                                            if (e == "dislike") {
-                                                              return Transform(
-                                                                transform: Matrix4.identity()..rotateY(pi),
-                                                                alignment: FractionalOffset.center,
-                                                                child: text,
-                                                              );
-                                                            }
-                                                            return text;
-                                                          }),
-                                                        ),
+                                                          }
+                                                          return text;
+                                                        }),
                                                       ),
                                                     ),
                                                   ),
                                                 ),
-                                              );
-                                            }).toList(),
-                                          ),
+                                              ),
+                                            );
+                                          }).toList(),
                                         ),
                                       ),
                                     ),
                                   ),
                                 ),
-                        ),
+                              ),
                       ),
-                    if (SettingsSvc.settings.enablePrivateAPI.value && isSent && minSierra && chat.isIMessage)
-                      Positioned(
-                        bottom: (iOS
-                                ? itemHeight * numberToShow + 5 + widget.size.height
-                                : context.height - materialOffset - 30)
-                            .clamp(0, context.height - (narrowScreen ? 200 : 125)),
-                        right: message.isFromMe! ? widget.size.width + 10 + (iOS ? 0 : 60) : null,
-                        left: !message.isFromMe!
-                            ? widget.childPosition.dx + widget.size.width + 10 + (iOS ? 0 : 60)
-                            : null,
-                        child: AnimatedSize(
-                          curve: Curves.easeInOut,
-                          alignment: message.isFromMe! ? Alignment.centerRight : Alignment.centerLeft,
-                          duration: const Duration(milliseconds: 100),
-                          child: currentlySelectedReaction == "init"
-                              ? const SizedBox(height: 80)
-                              : ClipPath(
-                                  clipper: ReactionClipper(
-                                    tailDirection:
-                                        message.isFromMe! ? ReactionTailDirection.left : ReactionTailDirection.right,
-                                  ),
-                                  child: Material(
-                                    color: context.theme.colorScheme.surfaceContainerHighest,
-                                    child: Container(
-                                      width: iosSize,
-                                      height: iosSize,
-                                      alignment: message.isFromMe! ? Alignment.topRight : Alignment.topLeft,
-                                      child: InkWell(
-                                        borderRadius: BorderRadius.circular(20),
-                                        onTap: () {
-                                          final content = SizedBox(
-                                            width: 512,
-                                            child: Theme(
-                                              data: context.theme.copyWith(canvasColor: Colors.transparent),
-                                              child: EmojiPicker(
-                                                scrollController: ScrollController(),
-                                                config: Config(
-                                                  height: 512,
-                                                  checkPlatformCompatibility: true,
-                                                  emojiViewConfig: EmojiViewConfig(
-                                                    emojiSizeMax: 28,
-                                                    backgroundColor: Colors.transparent,
-                                                    columns: min(NavigationSvc.width(context), 512) ~/ 56,
-                                                    noRecents: Text(
-                                                      "No Recents",
-                                                      style: context.textTheme.headlineMedium!
-                                                          .copyWith(color: context.theme.colorScheme.outline),
-                                                    ),
-                                                  ),
-                                                  skinToneConfig: const SkinToneConfig(enabled: false),
-                                                  categoryViewConfig: const CategoryViewConfig(
-                                                    backgroundColor: Colors.transparent,
-                                                    dividerColor: Colors.transparent,
-                                                  ),
-                                                  bottomActionBarConfig: BottomActionBarConfig(
-                                                    customBottomActionBar: (Config config, EmojiViewState state,
-                                                        VoidCallback showSearchView) {
-                                                      return Container(
-                                                        margin: const EdgeInsets.only(top: 10),
-                                                        child: Row(
-                                                          mainAxisSize: MainAxisSize.min,
-                                                          children: [
-                                                            const SizedBox(width: 8),
-                                                            Expanded(
-                                                              child: Material(
-                                                                child: InkWell(
-                                                                  onTap: showSearchView,
-                                                                  child: Padding(
-                                                                    padding: const EdgeInsets.all(12),
-                                                                    child: Row(children: [
-                                                                      Icon(
-                                                                        iOS
-                                                                            ? cupertino.CupertinoIcons.search
-                                                                            : Icons.search,
-                                                                        color: context.theme.colorScheme.outline,
-                                                                      ),
-                                                                      const SizedBox(width: 8),
-                                                                      Expanded(
-                                                                        child: Text(
-                                                                          "Search...",
-                                                                          style: context.theme.textTheme.bodyLarge!
-                                                                              .copyWith(
-                                                                            color: context.theme.colorScheme.outline,
-                                                                          ),
-                                                                        ),
-                                                                      ),
-                                                                    ]),
-                                                                  ),
-                                                                ),
-                                                              ),
-                                                            ),
-                                                            Padding(
-                                                              padding: const EdgeInsets.all(12),
-                                                              child: IconButton(
-                                                                icon: Icon(
-                                                                  iOS ? cupertino.CupertinoIcons.xmark : Icons.close,
-                                                                  color: context.theme.colorScheme.outline,
-                                                                ),
-                                                                onPressed: () {
-                                                                  Navigator.of(context, rootNavigator: true).pop();
-                                                                },
-                                                              ),
-                                                            ),
-                                                            const SizedBox(width: 8),
-                                                          ],
-                                                        ),
-                                                      );
-                                                    },
-                                                  ),
-                                                  searchViewConfig: SearchViewConfig(
-                                                    backgroundColor: Colors.transparent,
-                                                    buttonIconColor: context.theme.colorScheme.outline,
+                    ),
+                  if (SettingsSvc.settings.enablePrivateAPI.value && isSent && minSierra && chat.isIMessage)
+                    Positioned(
+                      bottom: (iOS
+                              ? itemHeight * numberToShow + 5 + widget.size.height
+                              : context.height - materialOffset - 30)
+                          .clamp(0, context.height - (narrowScreen ? 200 : 125)),
+                      right: message.isFromMe! ? widget.size.width + 10 + (iOS ? 0 : 60) : null,
+                      left:
+                          !message.isFromMe! ? widget.childPosition.dx + widget.size.width + 10 + (iOS ? 0 : 60) : null,
+                      child: AnimatedSize(
+                        curve: Curves.easeInOut,
+                        alignment: message.isFromMe! ? Alignment.centerRight : Alignment.centerLeft,
+                        duration: const Duration(milliseconds: 100),
+                        child: currentlySelectedReaction == "init"
+                            ? const SizedBox(height: 80)
+                            : ClipPath(
+                                clipper: ReactionClipper(
+                                  tailDirection:
+                                      message.isFromMe! ? ReactionTailDirection.left : ReactionTailDirection.right,
+                                ),
+                                child: Material(
+                                  color: context.theme.colorScheme.surfaceContainerHighest,
+                                  child: Container(
+                                    width: iosSize,
+                                    height: iosSize,
+                                    alignment: message.isFromMe! ? Alignment.topRight : Alignment.topLeft,
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(20),
+                                      onTap: () {
+                                        final content = SizedBox(
+                                          width: 512,
+                                          child: Theme(
+                                            data: context.theme.copyWith(canvasColor: Colors.transparent),
+                                            child: EmojiPicker(
+                                              scrollController: ScrollController(),
+                                              config: Config(
+                                                height: 512,
+                                                checkPlatformCompatibility: true,
+                                                emojiViewConfig: EmojiViewConfig(
+                                                  emojiSizeMax: 28,
+                                                  backgroundColor: Colors.transparent,
+                                                  columns: min(NavigationSvc.width(context), 512) ~/ 56,
+                                                  noRecents: Text(
+                                                    "No Recents",
+                                                    style: context.textTheme.headlineMedium!
+                                                        .copyWith(color: context.theme.colorScheme.outline),
                                                   ),
                                                 ),
-                                                onEmojiSelected: (cat, emoji) {
-                                                  Navigator.of(context, rootNavigator: true).pop();
-                                                  reactEmoji(emoji.emoji);
-                                                },
+                                                skinToneConfig: const SkinToneConfig(enabled: false),
+                                                categoryViewConfig: const CategoryViewConfig(
+                                                  backgroundColor: Colors.transparent,
+                                                  dividerColor: Colors.transparent,
+                                                ),
+                                                bottomActionBarConfig: BottomActionBarConfig(
+                                                  customBottomActionBar: (Config config, EmojiViewState state,
+                                                      VoidCallback showSearchView) {
+                                                    return Container(
+                                                      margin: const EdgeInsets.only(top: 10),
+                                                      child: Row(
+                                                        mainAxisSize: MainAxisSize.min,
+                                                        children: [
+                                                          const SizedBox(width: 8),
+                                                          Expanded(
+                                                            child: Material(
+                                                              child: InkWell(
+                                                                onTap: showSearchView,
+                                                                child: Padding(
+                                                                  padding: const EdgeInsets.all(12),
+                                                                  child: Row(children: [
+                                                                    Icon(
+                                                                      iOS
+                                                                          ? cupertino.CupertinoIcons.search
+                                                                          : Icons.search,
+                                                                      color: context.theme.colorScheme.outline,
+                                                                    ),
+                                                                    const SizedBox(width: 8),
+                                                                    Expanded(
+                                                                      child: Text(
+                                                                        "Search...",
+                                                                        style:
+                                                                            context.theme.textTheme.bodyLarge!.copyWith(
+                                                                          color: context.theme.colorScheme.outline,
+                                                                        ),
+                                                                      ),
+                                                                    ),
+                                                                  ]),
+                                                                ),
+                                                              ),
+                                                            ),
+                                                          ),
+                                                          Padding(
+                                                            padding: const EdgeInsets.all(12),
+                                                            child: IconButton(
+                                                              icon: Icon(
+                                                                iOS ? cupertino.CupertinoIcons.xmark : Icons.close,
+                                                                color: context.theme.colorScheme.outline,
+                                                              ),
+                                                              onPressed: () {
+                                                                Navigator.of(context, rootNavigator: true).pop();
+                                                              },
+                                                            ),
+                                                          ),
+                                                          const SizedBox(width: 8),
+                                                        ],
+                                                      ),
+                                                    );
+                                                  },
+                                                ),
+                                                searchViewConfig: SearchViewConfig(
+                                                  backgroundColor: Colors.transparent,
+                                                  buttonIconColor: context.theme.colorScheme.outline,
+                                                ),
                                               ),
+                                              onEmojiSelected: (cat, emoji) {
+                                                Navigator.of(context, rootNavigator: true).pop();
+                                                reactEmoji(emoji.emoji);
+                                              },
                                             ),
-                                          );
-                                          Get.dialog(
-                                            AlertDialog(
-                                              backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                                              content: content,
-                                            ),
-                                            name: 'Popup Menu',
-                                          );
-                                        },
-                                        child: const SizedBox(
-                                          width: iosSize * 0.8,
-                                          height: iosSize * 0.8,
-                                          child: Icon(
-                                            cupertino.CupertinoIcons.smiley,
-                                            size: 20,
                                           ),
+                                        );
+                                        Get.dialog(
+                                          AlertDialog(
+                                            backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+                                            content: content,
+                                          ),
+                                          name: 'Popup Menu',
+                                        );
+                                      },
+                                      child: const SizedBox(
+                                        width: iosSize * 0.8,
+                                        height: iosSize * 0.8,
+                                        child: Icon(
+                                          cupertino.CupertinoIcons.smiley,
+                                          size: 20,
                                         ),
                                       ),
                                     ),
                                   ),
                                 ),
-                        ),
+                              ),
                       ),
-                    if (iOS)
-                      Positioned(
-                        right: message.isFromMe! ? 15 : null,
-                        left: !message.isFromMe! ? widget.childPosition.dx + 10 : null,
-                        bottom: 30,
-                        child: TweenAnimationBuilder<double>(
-                          tween: Tween<double>(begin: 0.8, end: 1),
-                          curve: Curves.easeOutBack,
-                          duration: const Duration(milliseconds: 400),
-                          child: FadeTransition(
-                            opacity: CurvedAnimation(
-                              parent: controller,
-                              curve: const Interval(0.0, .9, curve: Curves.ease),
-                              reverseCurve: Curves.easeInCubic,
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const SizedBox(height: 5),
-                                buildDetailsMenu(context),
-                              ],
-                            ),
+                    ),
+                  if (iOS)
+                    Positioned(
+                      right: message.isFromMe! ? 15 : null,
+                      left: !message.isFromMe! ? widget.childPosition.dx + 10 : null,
+                      bottom: 30,
+                      child: TweenAnimationBuilder<double>(
+                        tween: Tween<double>(begin: 0.8, end: 1),
+                        curve: Curves.easeOutBack,
+                        duration: const Duration(milliseconds: 400),
+                        child: FadeTransition(
+                          opacity: CurvedAnimation(
+                            parent: controller,
+                            curve: const Interval(0.0, .9, curve: Curves.ease),
+                            reverseCurve: Curves.easeInCubic,
                           ),
-                          builder: (context, size, child) {
-                            return Transform.scale(
-                              scale: size,
-                              child: child,
-                            );
-                          },
-                        ),
-                      ),
-                    if (!iOS && SettingsSvc.settings.enablePrivateAPI.value && minBigSur && chat.isIMessage && isSent)
-                      Positioned(
-                        left: !message.isFromMe!
-                            ? widget.childPosition.dx + widget.size.width + (reactions.isNotEmpty ? 20 : 5)
-                            : widget.childPosition.dx - 55,
-                        top: materialOffset,
-                        child: Material(
-                          color: context.theme.colorScheme.primary,
-                          borderRadius: BorderRadius.circular(20),
-                          child: SizedBox(
-                            width: 35,
-                            height: 35,
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(20),
-                              onTap: reply,
-                              child: const Center(child: Icon(Icons.reply, size: 20)),
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 5),
+                              buildDetailsMenu(context),
+                            ],
                           ),
                         ),
+                        builder: (context, size, child) {
+                          return Transform.scale(
+                            scale: size,
+                            child: child,
+                          );
+                        },
                       ),
-                  ],
-                ))),
-      ),
+                    ),
+                  if (!iOS && SettingsSvc.settings.enablePrivateAPI.value && minBigSur && chat.isIMessage && isSent)
+                    Positioned(
+                      left: !message.isFromMe!
+                          ? widget.childPosition.dx + widget.size.width + (reactions.isNotEmpty ? 20 : 5)
+                          : widget.childPosition.dx - 55,
+                      top: materialOffset,
+                      child: Material(
+                        color: context.theme.colorScheme.primary,
+                        borderRadius: BorderRadius.circular(20),
+                        child: SizedBox(
+                          width: 35,
+                          height: 35,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(20),
+                            onTap: () => popup_navigation_actions.reply(_buildActionContext(DetailsMenuAction.Reply)),
+                            child: const Center(child: Icon(Icons.reply, size: 20)),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ))),
     );
   }
 
-  void reply() {
-    popDetails();
-    cvController.replyToMessage = MessageReplyContext(message, part.part);
-  }
-
-  Future<void> download() async {
-    try {
-      dynamic content;
-      if (isEmbeddedMedia) {
-        content = PlatformFile(
-          name: basename(message.interactiveMediaPath!),
-          path: message.interactiveMediaPath,
-          size: 0,
-        );
-      } else {
-        content = AttachmentsSvc.getContent(part.attachments.first);
-      }
-      if (content is PlatformFile) {
-        popDetails();
-        await AttachmentsSvc.saveToDisk(content,
-            isDocument: part.attachments.first.mimeStart != "image" && part.attachments.first.mimeStart != "video");
-      }
-    } catch (ex, trace) {
-      Logger.error("Error downloading attachment: ${ex.toString()}", error: ex, trace: trace);
-      showSnackbar("Save Error", ex.toString());
-    }
-  }
-
-  void openLink() {
-    String? url = part.url;
-    MethodChannelSvc.invokeMethod("open-browser", {"link": url ?? part.text});
-    popDetails();
-  }
-
-  Future<void> openAttachmentWeb() async {
-    await launchUrlString("${part.attachments.first.webUrl!}?guid=${SettingsSvc.settings.guidAuthKey}");
-    popDetails();
-  }
-
-  void copyText() {
-    Clipboard.setData(ClipboardData(text: part.fullText));
-    popDetails();
-    if (!Platform.isAndroid || (FilesystemSvc.androidInfo?.version.sdkInt ?? 0) < 33) {
-      showSnackbar("Copied", "Copied to clipboard!");
-    }
-  }
-
-  void copyAttachment() {
-    if (part.attachments.length == 1 && part.attachments.first.mimeStart == "image") {
-      Uint8List bytes = File(part.attachments.first.path).readAsBytesSync();
-      Pasteboard.writeImage(bytes).then((_) {
-        popDetails();
-      }).catchError((e) {
-        Logger.error("Failed to copy image!", error: e);
-        showSnackbar("Copy Error", "Failed to copy image!");
-      });
-      return;
-    }
-    Pasteboard.writeFiles(part.attachments.map((element) => element.path).toList()).then((_) {
-      popDetails();
-    }).catchError((e) {
-      Logger.error("Failed to copy attachment(s)!", error: e);
-      showSnackbar("Copy Error", "Failed to copy attachment(s)!");
-    });
-  }
-
-  void copySelection() {
-    showDialog(
+  MessagePopupActionContext _buildActionContext(DetailsMenuAction action) {
+    return MessagePopupActionContext(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-        title: Text("Copy Selection", style: context.theme.textTheme.titleLarge),
-        content: SelectableText(part.fullText, style: context.theme.extension<BubbleText>()!.bubbleText),
-      ),
-    );
-  }
-
-  Future<void> downloadOriginal() async {
-    final RxBool downloadingAttachments = true.obs;
-    final RxnDouble progress = RxnDouble();
-    final Rxn<Attachment> attachmentObs = Rxn<Attachment>();
-    final toDownload = part.attachments.where((element) =>
-        (element.uti?.contains("heic") ?? false) ||
-        (element.uti?.contains("heif") ?? false) ||
-        (element.uti?.contains("quicktime") ?? false) ||
-        (element.uti?.contains("coreaudio") ?? false) ||
-        (element.uti?.contains("tiff") ?? false));
-    final length = toDownload.length;
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-        title: Text("Downloading attachment${length > 1 ? "s" : ""}...", style: context.theme.textTheme.titleLarge),
-        content: Column(mainAxisAlignment: MainAxisAlignment.center, mainAxisSize: MainAxisSize.min, children: <Widget>[
-          Obx(
-            () => Text(
-                '${progress.value != null && attachmentObs.value != null ? (progress.value! * attachmentObs.value!.totalBytes!).getFriendlySize() : ""} / ${(attachmentObs.value!.totalBytes!.toDouble()).getFriendlySize()} (${((progress.value ?? 0) * 100).floor()}%)',
-                style: context.theme.textTheme.bodyLarge),
-          ),
-          const SizedBox(height: 10.0),
-          Obx(
-            () => ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: LinearProgressIndicator(
-                backgroundColor: context.theme.colorScheme.outline,
-                valueColor: AlwaysStoppedAnimation<Color>(Get.context!.theme.colorScheme.primary),
-                value: progress.value,
-                minHeight: 5,
-              ),
-            ),
-          ),
-          const SizedBox(
-            height: 15.0,
-          ),
-          Obx(() => Text(
-                progress.value == 1
-                    ? "Download Complete!"
-                    : "You can close this dialog. The attachment(s) will continue to download in the background.",
-                maxLines: 2,
-                textAlign: TextAlign.center,
-                style: context.theme.textTheme.bodyLarge,
-              )),
-        ]),
-        actions: [
-          Obx(
-            () => downloadingAttachments.value
-                ? const SizedBox(height: 0, width: 0)
-                : TextButton(
-                    child: Text("Close",
-                        style:
-                            context.theme.textTheme.bodyLarge!.copyWith(color: Get.context!.theme.colorScheme.primary)),
-                    onPressed: () async {
-                      Get.closeAllSnackbars();
-                      Navigator.of(context, rootNavigator: true).pop();
-                      popDetails();
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-    try {
-      for (Attachment? element in toDownload) {
-        attachmentObs.value = element;
-        final file = await BackendSvc.downloadAttachment(element!,
-            original: true,
-            onReceiveProgress: (count, total) =>
-                progress.value = kIsWeb ? (count / total) : (count / element.totalBytes!));
-
-        await AttachmentsSvc.saveToDisk(file, isDocument: element.mimeStart != "image" && element.mimeStart != "video");
-      }
-      progress.value = 1;
-      downloadingAttachments.value = false;
-    } catch (ex, trace) {
-      Logger.error("Failed to download original attachment!", error: ex, trace: trace);
-      showSnackbar("Download Error", ex.toString());
-    }
-  }
-
-  Future<void> downloadLivePhoto() async {
-    final RxBool downloadingAttachments = true.obs;
-    final RxnInt progress = RxnInt();
-    final Rxn<Attachment> attachmentObs = Rxn<Attachment>();
-    final toDownload = part.attachments.where((element) => element.hasLivePhoto);
-    final length = toDownload.length;
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-        title: Text("Downloading live photo${length > 1 ? "s" : ""}...", style: context.theme.textTheme.titleLarge),
-        content: Column(mainAxisAlignment: MainAxisAlignment.center, mainAxisSize: MainAxisSize.min, children: <Widget>[
-          Obx(
-            () => Text(
-              progress.value?.toDouble().getFriendlySize() ?? "",
-              style: context.theme.textTheme.bodyLarge,
-            ),
-          ),
-          const SizedBox(height: 10.0),
-          Obx(
-            () => ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: LinearProgressIndicator(
-                backgroundColor: context.theme.colorScheme.outline,
-                valueColor: AlwaysStoppedAnimation<Color>(Get.context!.theme.colorScheme.primary),
-                value: downloadingAttachments.value ? null : 1,
-                minHeight: 5,
-              ),
-            ),
-          ),
-          const SizedBox(
-            height: 15.0,
-          ),
-          Obx(() => Text(
-                !downloadingAttachments.value
-                    ? "Download Complete!"
-                    : "You can close this dialog. The live photo(s) will continue to download in the background.",
-                maxLines: 2,
-                textAlign: TextAlign.center,
-                style: context.theme.textTheme.bodyLarge,
-              )),
-        ]),
-        actions: [
-          Obx(
-            () => downloadingAttachments.value
-                ? const SizedBox(height: 0, width: 0)
-                : TextButton(
-                    child: Text("Close",
-                        style:
-                            context.theme.textTheme.bodyLarge!.copyWith(color: Get.context!.theme.colorScheme.primary)),
-                    onPressed: () async {
-                      Get.closeAllSnackbars();
-                      Navigator.of(context, rootNavigator: true).pop();
-                      popDetails();
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-    try {
-      for (Attachment? element in toDownload) {
-        attachmentObs.value = element;
-        final nameSplit = element!.transferName!.split(".");
-        await BackendSvc.downloadLivePhoto(
-          element,
-          "${nameSplit.take(nameSplit.length - 1).join(".")}.mov",
-          onReceiveProgress: (count, total) => progress.value = count,
-        );
-      }
-      downloadingAttachments.value = false;
-    } catch (ex, trace) {
-      Logger.error("Failed to download live photo!", error: ex, trace: trace);
-      showSnackbar("Download Error", ex.toString());
-    }
-  }
-
-  void openDm() {
-    popDetails();
-    Navigator.pushReplacement(
-      context,
-      cupertino.CupertinoPageRoute(
-        builder: (BuildContext context) {
-          return ConversationView(
-            chat: dmChat!,
-          );
-        },
-      ),
-    );
-  }
-
-  void createContact() async {
-    popDetails();
-    await MethodChannelSvc.invokeMethod("open-contact-form", {
-      'address': message.handleRelation.target!.address,
-      'address_type': message.handleRelation.target!.address.isEmail ? 'email' : 'phone'
-    });
-  }
-
-  void showThread() {
-    popDetails();
-    if (message.threadOriginatorGuid != null) {
-      final mwc = service.getMessageStateIfExists(message.threadOriginatorGuid!);
-      if (mwc == null) return showSnackbar("Error", "Failed to find thread!");
-      showReplyThread(context, mwc.message, mwc.parts[message.normalizedThreadPart], service, cvController);
-    } else {
-      showReplyThread(context, message, part, service, cvController);
-    }
-  }
-
-  void newConvo() {
-    Handle? handle = message.handleRelation.target;
-    if (handle == null) return;
-    popDetails();
-    NavigationSvc.pushAndRemoveUntil(
-      context,
-      NewChatCreator(initialSelected: [SelectedContact(displayName: handle.displayName, address: handle.address)]),
-      (route) => route.isFirst,
-    );
-  }
-
-  void forward() async {
-    popDetails();
-    List<PlatformFile> attachments = [];
-    final _attachments = message.dbAttachments
-        .where((e) => AttachmentsSvc.getContent(e, autoDownload: false) is PlatformFile)
-        .map((e) => AttachmentsSvc.getContent(e, autoDownload: false) as PlatformFile);
-    for (PlatformFile a in _attachments) {
-      Uint8List? bytes = a.bytes;
-      bytes ??= await File(a.path!).readAsBytes();
-      attachments.add(PlatformFile(
-        name: a.name,
-        path: a.path,
-        size: bytes.length,
-        bytes: bytes,
-      ));
-    }
-    if (attachments.isNotEmpty || !isNullOrEmpty(message.text)) {
-      NavigationSvc.pushAndRemoveUntil(
-        context,
-        NewChatCreator(
-          initialText: message.text,
-          initialAttachments: attachments,
-        ),
-        (route) => route.isFirst,
-      );
-    }
-  }
-
-  void redownload() {
-    if (isEmbeddedMedia) {
-      popDetails();
-      service.getMessageStateIfExists(message.guid!)?.embeddedMediaRefreshKey.value++;
-    } else {
-      final msgGuid = message.guid;
-      if (msgGuid != null) {
-        for (Attachment? element in part.attachments) {
-          if (element != null) {
-            unawaited(service.redownloadAttachment(msgGuid, element));
-          }
-        }
-      }
-      popDetails();
-    }
-  }
-
-  void share() {
-    if (part.attachments.isNotEmpty && !message.isLegacyUrlPreview && !kIsWeb && !kIsDesktop) {
-      Share.files(part.attachments.map((a) => a.path).nonNulls.toList());
-    } else if (part.text!.isNotEmpty) {
-      Share.text(part.text!);
-    }
-    popDetails();
-  }
-
-  Future<void> remindLater() async {
-    if (Platform.isAndroid) {
-      bool denied = await Permission.scheduleExactAlarm.isDenied;
-      bool permanentlyDenied = await Permission.scheduleExactAlarm.isPermanentlyDenied;
-      if (denied && !permanentlyDenied) {
-        await Permission.scheduleExactAlarm.request();
-      } else if (permanentlyDenied) {
-        showSnackbar("Error", "You must enable the manage alarm permission to use this feature");
-        return;
-      }
-    }
-
-    final finalDate = await showTimeframePicker("Select Reminder Time", context,
-        presetsAhead: true, additionalTimeframes: {"3 Hours": 3, "6 Hours": 6}, useTodayYesterday: true);
-    if (finalDate != null) {
-      if (!finalDate.isAfter(DateTime.now().toLocal())) {
-        showSnackbar("Error", "Select a date in the future");
-        return;
-      }
-      await NotificationsSvc.createReminder(chat, message, finalDate);
-      popDetails();
-      showSnackbar("Notice", "Scheduled reminder for ${buildDate(finalDate)}");
-    }
-  }
-
-  void unsend() async {
-    popDetails();
-    await MessagesSvc(chat.guid).unsendMessage(message, part);
-  }
-
-  void edit() {
-    popDetails();
-    final FocusNode? node = kIsDesktop || kIsWeb ? FocusNode() : null;
-    final controller = MentionTextEditingController(text: "", focusNode: node);
-    controller.importMessagePart(part);
-    cvController.editing.add(MessageEditEntry(message: message, part: part, controller: controller));
-  }
-
-  void delete() {
-    service.removeMessage(message);
-    Message.softDelete(message.guid!);
-    popDetails();
-  }
-
-  void selectMultiple() {
-    cvController.inSelectMode.toggle();
-    if (iOS) {
-      cvController.selected.add(message);
-    }
-    popDetails(returnVal: false);
-  }
-
-  void toggleBookmark() {
-    // Toggle bookmark through service to update both DB and MessageState
-    MessagesSvc(cvController.chat.guid).toggleBookmark(message);
-    popDetails();
-  }
-
-  void messageInfo() {
-    const encoder = JsonEncoder.withIndent("     ");
-    Map map = message.toMap();
-    if (map["dateCreated"] is int) {
-      map["dateCreated"] =
-          DateFormat("MMMM d, yyyy h:mm:ss a").format(DateTime.fromMillisecondsSinceEpoch(map["dateCreated"]));
-    }
-    if (map["dateDelivered"] is int) {
-      map["dateDelivered"] =
-          DateFormat("MMMM d, yyyy h:mm:ss a").format(DateTime.fromMillisecondsSinceEpoch(map["dateDelivered"]));
-    }
-    if (map["dateRead"] is int) {
-      map["dateRead"] =
-          DateFormat("MMMM d, yyyy h:mm:ss a").format(DateTime.fromMillisecondsSinceEpoch(map["dateRead"]));
-    }
-    if (map["dateEdited"] is int) {
-      map["dateEdited"] =
-          DateFormat("MMMM d, yyyy h:mm:ss a").format(DateTime.fromMillisecondsSinceEpoch(map["dateEdited"]));
-    }
-    String str = encoder.convert(map);
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          "Message Info",
-          style: context.theme.textTheme.titleLarge,
-        ),
-        backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-        content: SizedBox(
-          width: NavigationSvc.width(widthContext) * 3 / 5,
-          height: context.height * 1 / 4,
-          child: Container(
-            padding: const EdgeInsets.all(10.0),
-            decoration: BoxDecoration(
-                color: context.theme.colorScheme.surface, borderRadius: const BorderRadius.all(Radius.circular(10))),
-            child: SingleChildScrollView(
-              child: SelectableText(
-                str,
-                style: context.theme.textTheme.bodyLarge,
-              ),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            child: Text("Close",
-                style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-            onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
-          ),
-        ],
-      ),
+      widthContext: widthContext,
+      cvController: cvController,
+      messageState: widget.controller,
+      message: message,
+      part: part,
+      chat: chat,
+      service: service,
+      serverDetails: widget.serverDetails,
+      action: action,
+      popDetails: ({bool returnVal = true}) => popDetails(returnVal: returnVal),
+      showSnack: showSnackbar,
+      dmChat: dmChat,
+      isEmbeddedMedia: isEmbeddedMedia,
     );
   }
 
@@ -1152,7 +714,7 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
               child: Text("Screenshot",
                   style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
               onPressed: () async {
-                final res = await picker.FilePicker.platform.pickFiles(
+                final res = await picker.FilePicker.pickFiles(
                   withData: true,
                   type: picker.FileType.custom,
                   allowedExtensions: ['png', 'jpg', 'jpeg'],
@@ -1263,39 +825,44 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
     );
   }
 
-  get _allActions {
+  List<DetailsMenuActionWidget> get _allActions {
     final canEdit = (message.dateCreated?.toUtc().isWithin(DateTime.now().toUtc(), minutes: 15) ?? false) ||
         (message.dateCreated?.toUtc().isAfter(DateTime.now().toUtc()) ?? false);
     final canUnsend = (message.dateCreated?.toUtc().isWithin(DateTime.now().toUtc(), minutes: 2) ?? false);
     return [
       if (SettingsSvc.settings.enablePrivateAPI.value && minBigSur && chat.isIMessage && isSent)
         DetailsMenuActionWidget(
-          onTap: reply,
+          onTap: () => popup_navigation_actions.reply(_buildActionContext(DetailsMenuAction.Reply)),
           action: DetailsMenuAction.Reply,
         ),
       if (showDownload)
         DetailsMenuActionWidget(
-          onTap: download,
+          onTap: () => popup_media_actions.downloadAttachment(_buildActionContext(DetailsMenuAction.Save)),
           action: DetailsMenuAction.Save,
+        ),
+      if (canOpenInImageViewer)
+        DetailsMenuActionWidget(
+          onTap: () => popup_media_actions.openInImageViewer(_buildActionContext(DetailsMenuAction.OpenInImageViewer)),
+          action: DetailsMenuAction.OpenInImageViewer,
         ),
       if ((part.text?.hasUrl ?? false) && !kIsWeb && !kIsDesktop && !LifecycleSvc.isBubble)
         DetailsMenuActionWidget(
-          onTap: openLink,
+          onTap: () => popup_text_actions.openLink(_buildActionContext(DetailsMenuAction.OpenInBrowser)),
           action: DetailsMenuAction.OpenInBrowser,
         ),
       if (showDownload && kIsWeb && part.attachments.firstOrNull?.webUrl != null)
         DetailsMenuActionWidget(
-          onTap: openAttachmentWeb,
+          onTap: () => popup_media_actions.openAttachmentWeb(_buildActionContext(DetailsMenuAction.OpenInNewTab)),
           action: DetailsMenuAction.OpenInNewTab,
         ),
       if (!isNullOrEmptyString(part.fullText))
         DetailsMenuActionWidget(
-          onTap: copyText,
+          onTap: () => popup_text_actions.copyText(_buildActionContext(DetailsMenuAction.CopyText)),
           action: DetailsMenuAction.CopyText,
         ),
       if (showDownload && kIsDesktop)
         DetailsMenuActionWidget(
-          onTap: copyAttachment,
+          onTap: () => popup_media_actions.copyAttachment(_buildActionContext(DetailsMenuAction.CopyAttachment)),
           action: DetailsMenuAction.CopyAttachment,
         ),
       if (showDownload &&
@@ -1309,39 +876,40 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
                   (element.uti?.contains("tiff") ?? false))
               .isNotEmpty)
         DetailsMenuActionWidget(
-          onTap: downloadOriginal,
+          onTap: () =>
+              popup_media_actions.downloadOriginalAttachments(_buildActionContext(DetailsMenuAction.SaveOriginal)),
           action: DetailsMenuAction.SaveOriginal,
         ),
       if (showDownload && part.attachments.where((e) => e.hasLivePhoto).isNotEmpty)
         DetailsMenuActionWidget(
-          onTap: downloadLivePhoto,
+          onTap: () => popup_media_actions.downloadLivePhoto(_buildActionContext(DetailsMenuAction.SaveLivePhoto)),
           action: DetailsMenuAction.SaveLivePhoto,
         ),
       if (chat.isGroup && !message.isFromMe! && dmChat != null && !LifecycleSvc.isBubble)
         DetailsMenuActionWidget(
-          onTap: openDm,
+          onTap: () => popup_navigation_actions.openDm(_buildActionContext(DetailsMenuAction.OpenDirectMessage)),
           action: DetailsMenuAction.OpenDirectMessage,
         ),
       if (message.threadOriginatorGuid != null ||
           service.struct.threads(message.guid!, part.part, returnOriginator: false).isNotEmpty)
         DetailsMenuActionWidget(
-          onTap: showThread,
+          onTap: () => popup_navigation_actions.showThread(_buildActionContext(DetailsMenuAction.ViewThread)),
           action: DetailsMenuAction.ViewThread,
         ),
       if ((part.attachments.isNotEmpty && !kIsWeb && !(kIsDesktop && Platform.isLinux)) ||
           (!kIsWeb && !(kIsDesktop && Platform.isLinux) && !isNullOrEmpty(part.text)))
         DetailsMenuActionWidget(
-          onTap: share,
+          onTap: () => popup_media_actions.sharePart(_buildActionContext(DetailsMenuAction.Share)),
           action: DetailsMenuAction.Share,
         ),
       if (showDownload)
         DetailsMenuActionWidget(
-          onTap: redownload,
+          onTap: () => popup_media_actions.redownload(_buildActionContext(DetailsMenuAction.ReDownloadFromServer)),
           action: DetailsMenuAction.ReDownloadFromServer,
         ),
       if (!kIsWeb && !kIsDesktop)
         DetailsMenuActionWidget(
-          onTap: remindLater,
+          onTap: () => popup_message_actions.remindLater(_buildActionContext(DetailsMenuAction.RemindLater)),
           action: DetailsMenuAction.RemindLater,
         ),
       if (!kIsWeb && !kIsDesktop)
@@ -1360,7 +928,7 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
           message.handleRelation.target != null &&
           message.handleRelation.target!.contactsV2.isEmpty)
         DetailsMenuActionWidget(
-          onTap: createContact,
+          onTap: () => popup_message_actions.createContact(_buildActionContext(DetailsMenuAction.CreateContact)),
           action: DetailsMenuAction.CreateContact,
         ),
       if (BackendSvc.canEditUnsend() &&
@@ -1368,7 +936,7 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
           !widget.controller.isSending.value &&
           message.dateScheduled == null)
         DetailsMenuActionWidget(
-          onTap: unsend,
+          onTap: () => popup_message_actions.unsend(_buildActionContext(DetailsMenuAction.UndoSend)),
           customTitle: canUnsend ? 'Undo Send' : 'Undo Send (too old)',
           shouldDisableBtn: !canUnsend,
           action: DetailsMenuAction.UndoSend,
@@ -1379,41 +947,41 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
           message.dateScheduled == null &&
           (part.text?.isNotEmpty ?? false))
         DetailsMenuActionWidget(
-          onTap: edit,
+          onTap: () => popup_message_actions.edit(_buildActionContext(DetailsMenuAction.Edit)),
           customTitle: canEdit ? 'Edit' : 'Edit (too old)',
           shouldDisableBtn: !canEdit,
           action: DetailsMenuAction.Edit,
         ),
       if (!LifecycleSvc.isBubble && !message.isInteractive)
         DetailsMenuActionWidget(
-          onTap: forward,
+          onTap: () => popup_navigation_actions.forward(_buildActionContext(DetailsMenuAction.Forward)),
           action: DetailsMenuAction.Forward,
         ),
       if (chat.isGroup && !message.isFromMe! && dmChat == null && !LifecycleSvc.isBubble)
         DetailsMenuActionWidget(
-          onTap: newConvo,
+          onTap: () => popup_navigation_actions.newConvo(_buildActionContext(DetailsMenuAction.StartConversation)),
           action: DetailsMenuAction.StartConversation,
         ),
       if (!isNullOrEmptyString(part.fullText) && (kIsDesktop || kIsWeb))
         DetailsMenuActionWidget(
-          onTap: copySelection,
+          onTap: () => popup_text_actions.copySelection(_buildActionContext(DetailsMenuAction.CopySelection)),
           action: DetailsMenuAction.CopySelection,
         ),
       DetailsMenuActionWidget(
-        onTap: delete,
+        onTap: () => popup_message_actions.delete(_buildActionContext(DetailsMenuAction.Delete)),
         action: DetailsMenuAction.Delete,
       ),
       DetailsMenuActionWidget(
-        onTap: toggleBookmark,
+        onTap: () => popup_message_actions.toggleBookmark(_buildActionContext(DetailsMenuAction.Bookmark)),
         action: DetailsMenuAction.Bookmark,
         customTitle: message.isBookmarked ? "Remove Bookmark" : "Add Bookmark",
       ),
       DetailsMenuActionWidget(
-        onTap: selectMultiple,
+        onTap: () => popup_message_actions.selectMultiple(_buildActionContext(DetailsMenuAction.SelectMultiple)),
         action: DetailsMenuAction.SelectMultiple,
       ),
       DetailsMenuActionWidget(
-        onTap: messageInfo,
+        onTap: () => popup_message_actions.messageInfo(_buildActionContext(DetailsMenuAction.MessageInfo)),
         action: DetailsMenuAction.MessageInfo,
       ),
     ].sorted((a, b) => SettingsSvc.settings.detailsMenuActions
@@ -1446,18 +1014,19 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: allActions.sublist(numberToShow - 1),
                     );
-                    Get.dialog(
-                        SettingsSvc.settings.skin.value == Skins.iOS
-                            ? CupertinoAlertDialog(
-                                backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                                content: content,
-                              )
-                            : AlertDialog(
-                                backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                                content: content,
-                              ),
-                        navigatorKey: NavigationSvc.key,
-                        name: 'Popup Menu');
+                    showDialog(
+                      useRootNavigator: false,
+                      context: context,
+                      builder: (context) => SettingsSvc.settings.skin.value == Skins.iOS
+                          ? CupertinoAlertDialog(
+                              backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+                              content: content,
+                            )
+                          : AlertDialog(
+                              backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+                              content: content,
+                            ),
+                    );
                   },
                   title: 'More...',
                   iosIcon: cupertino.CupertinoIcons.ellipsis,
@@ -1515,135 +1084,5 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
                 }).toList();
               }))
     ];
-  }
-}
-
-class ReactionDetails extends StatelessWidget {
-  const ReactionDetails({
-    super.key,
-    required this.reactions,
-  });
-
-  final List<Message> reactions;
-
-  @override
-  Widget build(BuildContext context) {
-    return Obx(() => Material(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(20),
-          clipBehavior: Clip.antiAlias,
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-            child: Container(
-              alignment: Alignment.center,
-              height: 120,
-              color: context.theme.colorScheme.surfaceContainerHighest
-                  .withAlpha(SettingsSvc.settings.skin.value == Skins.iOS ? 150 : 255),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10.0),
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  physics: ThemeSwitcher.getScrollPhysics(),
-                  scrollDirection: Axis.horizontal,
-                  findChildIndexCallback: (key) => findChildIndexByKey(reactions, key, (item) => item.guid),
-                  separatorBuilder: (context, index) => const SizedBox(width: 10),
-                  itemBuilder: (context, index) {
-                    final message = reactions[index];
-                    final handle = message.handleRelation.target;
-                    String? reactionName;
-                    if (!SettingsSvc.settings.hideNamesForReactions.value) {
-                      if (message.isFromMe!) {
-                        reactionName = SettingsSvc.settings.userName.value;
-                      } else if (handle != null) {
-                        reactionName = HandleSvc.getOrCreateHandleState(handle).reactionDisplayName.value;
-                      }
-                    }
-                    return Column(
-                      key: ValueKey(message.guid!),
-                      mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 25.0, vertical: 10),
-                          child: ContactAvatarWidget(
-                            handle: handle,
-                            borderThickness: 0.1,
-                            editable: false,
-                            fontSize: 22,
-                          ),
-                        ),
-                        if (reactionName != null && reactionName.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 8.0),
-                            child: Text(
-                              reactionName,
-                              style: context.theme.textTheme.bodySmall!
-                                  .copyWith(color: context.theme.colorScheme.onSurfaceVariant),
-                            ),
-                          )
-                        else
-                          const SizedBox(height: 8),
-                        Container(
-                          height: 28,
-                          width: 28,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(100),
-                            color: message.isFromMe!
-                                ? context.theme.colorScheme.primary
-                                : context.theme.colorScheme.surfaceContainerHighest,
-                            boxShadow: [
-                              BoxShadow(
-                                blurRadius: 1.0,
-                                color: context.theme.colorScheme.outline,
-                              )
-                            ],
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(5),
-                            child: Center(
-                              child: Builder(builder: (context) {
-                                if (message.associatedMessageType == ReactionTypes.STICKERBACK) {
-                                  final image = cvc(message.chat.target!)
-                                      .stickerData[message.guid]?[message.attachments[0]?.guid]
-                                      ?.$1;
-                                  return image != null
-                                      ? Padding(
-                                          padding: const EdgeInsets.all(5),
-                                          child: Image.memory(
-                                            image,
-                                            gaplessPlayback: true,
-                                            cacheHeight: 200,
-                                            filterQuality: FilterQuality.none,
-                                          ),
-                                        )
-                                      : const SizedBox.shrink();
-                                }
-                                final text = Text(
-                                  ReactionTypes.reactionToEmoji[message.associatedMessageType] ??
-                                      message.associatedMessageEmoji ??
-                                      "X",
-                                  style: const TextStyle(fontSize: 18, fontFamily: 'Apple Color Emoji'),
-                                  textAlign: TextAlign.center,
-                                );
-                                if (message.associatedMessageType == "dislike") {
-                                  return Transform(
-                                    transform: Matrix4.identity()..rotateY(pi),
-                                    alignment: FractionalOffset.center,
-                                    child: text,
-                                  );
-                                }
-                                return text;
-                              }),
-                            ),
-                          ),
-                        )
-                      ],
-                    );
-                  },
-                  itemCount: reactions.length,
-                ),
-              ),
-            ),
-          ),
-        )); // end Obx
   }
 }

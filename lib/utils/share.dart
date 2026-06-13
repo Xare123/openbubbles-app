@@ -23,11 +23,12 @@ class Share {
   }
 
   /// Share files with other apps.
-  static void files(List<String> filepaths) async {
+  static void files(List<String> filepaths, {String? mimeType}) async {
     if (kIsDesktop) {
       showSnackbar("Unsupported", "Can't share files on desktop yet!");
     } else {
-      await SharePlus.instance.share(ShareParams(files: filepaths.map((String path) => XFile(path)).toList()));
+      await SharePlus.instance
+          .share(ShareParams(files: filepaths.map((String path) => XFile(path, mimeType: mimeType)).toList()));
     }
   }
 
@@ -224,25 +225,26 @@ class Share {
       text: "",
       dateCreated: DateTime.now(),
       hasAttachments: true,
-      attachments: [
-        Attachment(
-          guid: _attachmentGuid,
-          mimeType: "text/x-vlocation",
-          isOutgoing: true,
-          uti: "public.vlocation",
-          bytes: bytes,
-          transferName: fileName,
-          totalBytes: bytes!.length,
-        ),
-      ],
       isFromMe: true,
       handleId: 0,
     );
 
-    OutgoingMsgHandler.queue(OutgoingItem(
-      type: QueueType.sendAttachment,
-      chat: chat,
-      message: message,
-    ));
+    final attachment = Attachment(
+      guid: _attachmentGuid,
+      mimeType: "text/x-vlocation",
+      isOutgoing: true,
+      uti: "public.vlocation",
+      bytes: bytes,
+      transferName: fileName,
+      totalBytes: bytes!.length,
+    );
+
+    OutgoingMsgHandler.queue(
+      OutgoingAttachment(
+        chat: chat,
+        message: message,
+        attachment: attachment,
+      ),
+    );
   }
 }

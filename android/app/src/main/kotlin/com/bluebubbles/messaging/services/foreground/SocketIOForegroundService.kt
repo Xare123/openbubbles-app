@@ -9,7 +9,9 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.bluebubbles.messaging.Constants
@@ -49,6 +51,22 @@ class SocketIOForegroundService : Service() {
 
     @Volatile
     private var hasStarted: Boolean = false
+
+    // A single-shot Handler used for scheduled reconnect attempts. Using a Handler
+    // + named Runnable allows us to (a) prevent multiple concurrent reconnect
+    // threads from accumulating and (b) cancel any pending reconnect when the
+    // service is destroyed.
+    private val reconnectHandler = Handler(Looper.getMainLooper())
+    private val reconnectRunnable = Runnable {
+        reconnectScheduled = false
+        if (!isBeingDestroyed && mSocket != null && !mSocket!!.connected()) {
+            Log.e(Constants.logTag, "Attempting reconnection now...")
+            mSocket!!.connect()
+        }
+    }
+
+    @Volatile
+    private var reconnectScheduled: Boolean = false
 
     private val eventBlacklist: Array<String> = arrayOf(
         "typing-indicator",
@@ -191,18 +209,16 @@ class SocketIOForegroundService : Service() {
     }
 
     private fun tryReconnect() {
+        // Guard: if a reconnect is already pending, don't schedule another one.
+        if (reconnectScheduled) {
+            Log.d(Constants.logTag, "Reconnect already scheduled, skipping.")
+            return
+        }
         val socket = mSocket
         if (socket != null && !socket.connected()) {
+            reconnectScheduled = true
             Log.e(Constants.logTag, "Scheduling reconnection in 30 seconds...")
-
-            // Schedule reconnection asynchronously to avoid blocking
-            Thread {
-                Thread.sleep(30000)
-                // Double-check socket still exists and isn't destroyed
-                if (!isBeingDestroyed && mSocket != null && !mSocket!!.connected()) {
-                    mSocket!!.connect()
-                }
-            }.start()
+            reconnectHandler.postDelayed(reconnectRunnable, 30_000L)
         }
     }
 
@@ -269,6 +285,8 @@ class SocketIOForegroundService : Service() {
     override fun onDestroy() {
         isBeingDestroyed = true
         hasStarted = false
+        reconnectScheduled = false
+        reconnectHandler.removeCallbacks(reconnectRunnable)
         Log.d(Constants.logTag, "BlueBubbles Service is being destroyed!")
 
         super.onDestroy()

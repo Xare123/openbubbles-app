@@ -19,6 +19,7 @@ class SyncSettings extends StatelessWidget {
       title: "Sync Messages",
       subtitle: "",
       customSubtitle: NumberOfMessagesText(parentController: controller),
+      belowSubtitle: const SizedBox(height: 10),
       customMiddle: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(25),
@@ -27,7 +28,7 @@ class SyncSettings extends StatelessWidget {
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 25, horizontal: 8),
+              padding: const EdgeInsets.only(top: 15, bottom: 5, left: 8, right: 8),
               child: Text(
                 "Sync Options",
                 style: context.theme.textTheme.titleLarge!.copyWith(color: context.theme.colorScheme.onSurfaceVariant),
@@ -91,14 +92,13 @@ class SyncSettings extends StatelessWidget {
                     style: context.theme.textTheme.bodySmall!.copyWith(
                       color: context.theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
                     ),
-                  ),
-                  const SizedBox(height: 10),
+                  )
                 ],
               ),
             ),
             if (!kIsWeb)
               Padding(
-                padding: const EdgeInsets.only(left: 40.0, right: 40.0, bottom: 20),
+                padding: const EdgeInsets.only(left: 40.0, right: 40.0, bottom: 10),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   mainAxisSize: MainAxisSize.max,
@@ -123,6 +123,12 @@ class SyncSettings extends StatelessWidget {
           ],
         ),
       ),
+      buttonWrapper: (btn) {
+        return Padding(
+          padding: const EdgeInsets.only(top: 15),
+          child: btn,
+        );
+      },
       customButton: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(25),
@@ -213,21 +219,7 @@ class _NumberOfMessagesTextState extends CustomState<NumberOfMessagesText, int, 
                   .copyWith(height: 1),
             ),
           ),
-        ),
-        Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              "Note: If the syncing gets stuck, try reducing the number of messages to sync to 1.",
-              style: context.theme.textTheme.bodyLarge!
-                  .apply(
-                    color: context.theme.colorScheme.outline,
-                  )
-                  .copyWith(height: 1),
-            ),
-          ),
-        ),
+        )
       ],
     );
   }

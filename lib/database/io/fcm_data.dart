@@ -45,36 +45,14 @@ class FCMData {
     id = !Database.fcmData.isEmpty() ? data.first.id : null;
     Database.fcmData.put(this);
     final future = Future(() async {
-      if (projectID != null) {
-        await PrefsSvc.i.setString('projectID', projectID!);
-      } else {
-        await PrefsSvc.i.remove('projectID');
-      }
-      if (storageBucket != null) {
-        await PrefsSvc.i.setString('storageBucket', storageBucket!);
-      } else {
-        await PrefsSvc.i.remove('storageBucket');
-      }
-      if (apiKey != null) {
-        await PrefsSvc.i.setString('apiKey', apiKey!);
-      } else {
-        await PrefsSvc.i.remove('apiKey');
-      }
-      if (firebaseURL != null) {
-        await PrefsSvc.i.setString('firebaseURL', firebaseURL!);
-      } else {
-        await PrefsSvc.i.remove('firebaseURL');
-      }
-      if (clientID != null) {
-        await PrefsSvc.i.setString('clientID', clientID!);
-      } else {
-        await PrefsSvc.i.remove('clientID');
-      }
-      if (applicationID != null) {
-        await PrefsSvc.i.setString('applicationID', applicationID!);
-      } else {
-        await PrefsSvc.i.remove('applicationID');
-      }
+      await PrefsSvc.firebase.saveConfig(
+        projectID: projectID,
+        storageBucket: storageBucket,
+        apiKey: apiKey,
+        firebaseURL: firebaseURL,
+        clientID: clientID,
+        applicationID: applicationID,
+      );
     });
 
     if (wait) {
@@ -87,12 +65,7 @@ class FCMData {
 
   static Future<void> deleteFcmData() async {
     Database.fcmData.removeAll();
-    await PrefsSvc.i.remove('projectID');
-    await PrefsSvc.i.remove('storageBucket');
-    await PrefsSvc.i.remove('apiKey');
-    await PrefsSvc.i.remove('firebaseURL');
-    await PrefsSvc.i.remove('clientID');
-    await PrefsSvc.i.remove('applicationID');
+    await PrefsSvc.firebase.clearConfig();
     SettingsSvc.fcmData = FCMData();
   }
 
@@ -100,12 +73,12 @@ class FCMData {
     final result = Database.fcmData.getAll();
     if (result.isEmpty) {
       return FCMData(
-        projectID: PrefsSvc.i.getString('projectID'),
-        storageBucket: PrefsSvc.i.getString('storageBucket'),
-        apiKey: PrefsSvc.i.getString('apiKey'),
-        firebaseURL: PrefsSvc.i.getString('firebaseURL'),
-        clientID: PrefsSvc.i.getString('clientID'),
-        applicationID: PrefsSvc.i.getString('applicationID'),
+        projectID: PrefsSvc.firebase.getProjectID(),
+        storageBucket: PrefsSvc.firebase.getStorageBucket(),
+        apiKey: PrefsSvc.firebase.getApiKey(),
+        firebaseURL: PrefsSvc.firebase.getFirebaseURL(),
+        clientID: PrefsSvc.firebase.getClientID(),
+        applicationID: PrefsSvc.firebase.getApplicationID(),
       );
     }
     return result.first;

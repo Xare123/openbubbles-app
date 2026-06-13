@@ -109,8 +109,8 @@ class _DeliveredIndicatorState extends State<DeliveredIndicator> with ThemeHelpe
         controller.dateRead.value;
         return shouldShow && getText().isNotEmpty
             ? Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 15).add(
-                    EdgeInsets.only(top: 3, left: showAvatar || SettingsSvc.settings.alwaysShowAvatars.value ? 35 : 0)),
+                padding: const EdgeInsets.symmetric(horizontal: 15).add(EdgeInsets.only(
+                    top: 2, bottom: 2, left: showAvatar || SettingsSvc.settings.alwaysShowAvatars.value ? 35 : 0)),
                 child: Text.rich(TextSpan(
                   children: getText(),
                 )),

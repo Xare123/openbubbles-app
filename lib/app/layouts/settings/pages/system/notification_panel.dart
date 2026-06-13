@@ -1,5 +1,6 @@
 import 'package:bluebubbles/helpers/helpers.dart';
-import 'package:bluebubbles/app/wrappers/bb_annotated_region.dart';
+import 'package:bluebubbles/app/wrappers/bb_app_bar.dart';
+import 'package:bluebubbles/app/wrappers/bb_scaffold.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/pages/conversation_list.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/widgets/tile/conversation_tile.dart';
 import 'package:bluebubbles/app/layouts/settings/dialogs/notification_settings_dialog.dart';
@@ -13,7 +14,6 @@ import 'package:animated_size_and_fade/animated_size_and_fade.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:universal_html/html.dart' as uh;
 
@@ -201,171 +201,157 @@ class _NotificationPanelState extends State<NotificationPanel> with SingleTicker
       )
     ];
 
-    return BBAnnotatedRegion(
-        child: Obx(() => Scaffold(
-              backgroundColor: material ? tileColor : headerColor,
-              appBar: samsung && index.value == 0
-                  ? null
-                  : PreferredSize(
-                      preferredSize: Size(NavigationSvc.width(context), 50),
-                      child: AppBar(
-                        systemOverlayStyle: context.theme.colorScheme.brightness == Brightness.dark
-                            ? SystemUiOverlayStyle.light
-                            : SystemUiOverlayStyle.dark,
-                        toolbarHeight: 50,
-                        elevation: 0,
-                        scrolledUnderElevation: 3,
-                        surfaceTintColor: context.theme.colorScheme.primary,
-                        leading: buildBackButton(context),
-                        backgroundColor: headerColor,
-                        centerTitle: iOS,
-                        title: Text(
-                          "Notifications",
-                          style: context.theme.textTheme.titleLarge,
-                        ),
-                      ),
-                    ),
-              body: TabBarView(
-                physics: ThemeSwitcher.getScrollPhysics(),
-                controller: tabController,
-                children: <Widget>[
-                  NotificationListener<ScrollEndNotification>(
-                    onNotification: (_) {
-                      if (SettingsSvc.settings.skin.value != Skins.Samsung || kIsWeb || kIsDesktop) return false;
-                      final scrollDistance = context.height / 3 - 57;
+    return Obx(() => BBScaffold(
+          backgroundColor: material ? tileColor : headerColor,
+          extendBodyBehindAppBar: false,
+          appBar: samsung && index.value == 0
+              ? null
+              : BBAppBar(
+                  titleText: "Notifications",
+                  leading: buildBackButton(context),
+                  toolbarHeight: 50,
+                ),
+          body: TabBarView(
+            physics: ThemeSwitcher.getScrollPhysics(),
+            controller: tabController,
+            children: <Widget>[
+              NotificationListener<ScrollEndNotification>(
+                onNotification: (_) {
+                  if (SettingsSvc.settings.skin.value != Skins.Samsung || kIsWeb || kIsDesktop) return false;
+                  final scrollDistance = context.height / 3 - 57;
 
-                      if (controller1.offset > 0 && controller1.offset < scrollDistance) {
-                        final double snapOffset = controller1.offset / scrollDistance > 0.5 ? scrollDistance : 0;
+                  if (controller1.offset > 0 && controller1.offset < scrollDistance) {
+                    final double snapOffset = controller1.offset / scrollDistance > 0.5 ? scrollDistance : 0;
 
-                        Future.microtask(() => controller1.animateTo(snapOffset,
-                            duration: const Duration(milliseconds: 200), curve: Curves.linear));
-                      }
-                      return false;
-                    },
-                    child: ScrollbarWrapper(
+                    Future.microtask(() => controller1.animateTo(snapOffset,
+                        duration: const Duration(milliseconds: 200), curve: Curves.linear));
+                  }
+                  return false;
+                },
+                child: ScrollbarWrapper(
+                  controller: controller1,
+                  child: Obx(
+                    () => CustomScrollView(
                       controller: controller1,
-                      child: Obx(
-                        () => CustomScrollView(
-                          controller: controller1,
-                          physics: (kIsDesktop || kIsWeb)
-                              ? const NeverScrollableScrollPhysics()
-                              : ThemeSwitcher.getScrollPhysics(),
-                          slivers: <Widget>[
-                            if (samsung)
-                              SliverAppBar(
-                                backgroundColor: headerColor,
-                                pinned: true,
-                                stretch: true,
-                                expandedHeight: context.height / 3,
-                                elevation: 0,
-                                automaticallyImplyLeading: false,
-                                flexibleSpace: LayoutBuilder(
-                                  builder: (context, constraints) {
-                                    var expandRatio = (constraints.maxHeight - 100) / (context.height / 3 - 50);
+                      physics: (kIsDesktop || kIsWeb)
+                          ? const NeverScrollableScrollPhysics()
+                          : ThemeSwitcher.getScrollPhysics(),
+                      slivers: <Widget>[
+                        if (samsung)
+                          SliverAppBar(
+                            backgroundColor: headerColor,
+                            pinned: true,
+                            stretch: true,
+                            expandedHeight: context.height / 3,
+                            elevation: 0,
+                            automaticallyImplyLeading: false,
+                            flexibleSpace: LayoutBuilder(
+                              builder: (context, constraints) {
+                                var expandRatio = (constraints.maxHeight - 100) / (context.height / 3 - 50);
 
-                                    if (expandRatio > 1.0) expandRatio = 1.0;
-                                    if (expandRatio < 0.0) expandRatio = 0.0;
-                                    final animation = AlwaysStoppedAnimation<double>(expandRatio);
+                                if (expandRatio > 1.0) expandRatio = 1.0;
+                                if (expandRatio < 0.0) expandRatio = 0.0;
+                                final animation = AlwaysStoppedAnimation<double>(expandRatio);
 
-                                    return Stack(
-                                      fit: StackFit.expand,
-                                      children: [
-                                        FadeTransition(
-                                          opacity: Tween(begin: 0.0, end: 1.0).animate(CurvedAnimation(
-                                            parent: animation,
-                                            curve: const Interval(0.3, 1.0, curve: Curves.easeIn),
-                                          )),
-                                          child: Center(
-                                              child: Text("Notifications",
-                                                  style: context.theme.textTheme.displaySmall!
-                                                      .copyWith(color: context.theme.colorScheme.onSurface),
-                                                  textAlign: TextAlign.center)),
-                                        ),
-                                        FadeTransition(
-                                          opacity: Tween(begin: 1.0, end: 0.0).animate(CurvedAnimation(
-                                            parent: animation,
-                                            curve: const Interval(0.0, 0.7, curve: Curves.easeOut),
-                                          )),
+                                return Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    FadeTransition(
+                                      opacity: Tween(begin: 0.0, end: 1.0).animate(CurvedAnimation(
+                                        parent: animation,
+                                        curve: const Interval(0.3, 1.0, curve: Curves.easeIn),
+                                      )),
+                                      child: Center(
+                                          child: Text("Notifications",
+                                              style: context.theme.textTheme.displaySmall!
+                                                  .copyWith(color: context.theme.colorScheme.onSurface),
+                                              textAlign: TextAlign.center)),
+                                    ),
+                                    FadeTransition(
+                                      opacity: Tween(begin: 1.0, end: 0.0).animate(CurvedAnimation(
+                                        parent: animation,
+                                        curve: const Interval(0.0, 0.7, curve: Curves.easeOut),
+                                      )),
+                                      child: Align(
+                                        alignment: Alignment.bottomLeft,
+                                        child: Container(
+                                          padding: const EdgeInsets.only(left: 40),
+                                          height: 50,
                                           child: Align(
-                                            alignment: Alignment.bottomLeft,
-                                            child: Container(
-                                              padding: const EdgeInsets.only(left: 40),
-                                              height: 50,
-                                              child: Align(
-                                                alignment: Alignment.centerLeft,
-                                                child: Text(
-                                                  "Notifications",
-                                                  style: context.theme.textTheme.titleLarge,
-                                                ),
-                                              ),
+                                            alignment: Alignment.centerLeft,
+                                            child: Text(
+                                              "Notifications",
+                                              style: context.theme.textTheme.titleLarge,
                                             ),
                                           ),
                                         ),
-                                        Padding(
-                                          padding: const EdgeInsets.only(left: 8.0),
+                                      ),
+                                    ),
+                                    Padding(
+                                      padding: const EdgeInsets.only(left: 8.0),
+                                      child: Align(
+                                        alignment: Alignment.bottomLeft,
+                                        child: SizedBox(
+                                          height: 50,
                                           child: Align(
-                                            alignment: Alignment.bottomLeft,
-                                            child: SizedBox(
-                                              height: 50,
-                                              child: Align(
-                                                alignment: Alignment.centerLeft,
-                                                child: buildBackButton(context),
-                                              ),
-                                            ),
+                                            alignment: Alignment.centerLeft,
+                                            child: buildBackButton(context),
                                           ),
                                         ),
-                                      ],
-                                    );
-                                  },
-                                ),
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ),
+                        if (SettingsSvc.settings.skin.value != Skins.Samsung) ...bodySlivers,
+                        if (SettingsSvc.settings.skin.value == Skins.Samsung)
+                          SliverToBoxAdapter(
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                  minHeight: context.height -
+                                      50 -
+                                      context.mediaQueryPadding.top -
+                                      context.mediaQueryViewPadding.top),
+                              child: CustomScrollView(
+                                physics: const NeverScrollableScrollPhysics(),
+                                shrinkWrap: true,
+                                slivers: bodySlivers,
                               ),
-                            if (SettingsSvc.settings.skin.value != Skins.Samsung) ...bodySlivers,
-                            if (SettingsSvc.settings.skin.value == Skins.Samsung)
-                              SliverToBoxAdapter(
-                                child: ConstrainedBox(
-                                  constraints: BoxConstraints(
-                                      minHeight: context.height -
-                                          50 -
-                                          context.mediaQueryPadding.top -
-                                          context.mediaQueryViewPadding.top),
-                                  child: CustomScrollView(
-                                    physics: const NeverScrollableScrollPhysics(),
-                                    shrinkWrap: true,
-                                    slivers: bodySlivers,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-                  if (!kIsWeb) const ChatList(),
-                ],
+                ),
               ),
-              bottomNavigationBar: kIsWeb
-                  ? null
-                  : NavigationBar(
-                      selectedIndex: index.value,
-                      backgroundColor: headerColor,
-                      destinations: [
-                        NavigationDestination(
-                          icon: Icon(iOS ? CupertinoIcons.globe : Icons.public),
-                          label: "GLOBAL OPTIONS",
-                        ),
-                        NavigationDestination(
-                          icon: Icon(
-                            iOS ? CupertinoIcons.conversation_bubble : Icons.chat_bubble_outline,
-                          ),
-                          label: "CHAT OPTIONS",
-                        ),
-                      ],
-                      onDestinationSelected: (page) {
-                        index.value = page;
-                        tabController.animateTo(page);
-                      },
+              if (!kIsWeb) const ChatList(),
+            ],
+          ),
+          bottomNavigationBar: kIsWeb
+              ? null
+              : NavigationBar(
+                  selectedIndex: index.value,
+                  backgroundColor: headerColor,
+                  destinations: [
+                    NavigationDestination(
+                      icon: Icon(iOS ? CupertinoIcons.globe : Icons.public),
+                      label: "GLOBAL OPTIONS",
                     ),
-            )));
+                    NavigationDestination(
+                      icon: Icon(
+                        iOS ? CupertinoIcons.conversation_bubble : Icons.chat_bubble_outline,
+                      ),
+                      label: "CHAT OPTIONS",
+                    ),
+                  ],
+                  onDestinationSelected: (page) {
+                    index.value = page;
+                    tabController.animateTo(page);
+                  },
+                ),
+        ));
   }
 }
 

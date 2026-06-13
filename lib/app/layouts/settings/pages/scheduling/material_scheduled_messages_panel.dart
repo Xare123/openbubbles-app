@@ -207,8 +207,8 @@ class _MaterialScheduledMessagesPanelState extends State<MaterialScheduledMessag
 
   Widget _buildSection({
     required List<ScheduledMessage> items,
-    required IconData icon,
-    required Color iconColor,
+    required IconData Function(ScheduledMessage) iconBuilder,
+    required Color Function(ScheduledMessage) iconColorBuilder,
     required String Function(ScheduledMessage) subtitleBuilder,
     required bool isCompleted,
   }) {
@@ -229,8 +229,8 @@ class _MaterialScheduledMessagesPanelState extends State<MaterialScheduledMessag
               return _buildMessageItem(
                 context: context,
                 item: item,
-                icon: icon,
-                iconColor: iconColor,
+                icon: iconBuilder(item),
+                iconColor: iconColorBuilder(item),
                 subtitle: subtitleBuilder(item),
                 isCompleted: isCompleted,
               );
@@ -241,13 +241,13 @@ class _MaterialScheduledMessagesPanelState extends State<MaterialScheduledMessag
     );
   }
 
-  Color _iconColorForList(List<ScheduledMessage> items, BuildContext context, Color defaultColor) {
-    if (items.any((e) => e.status == "error")) return context.theme.colorScheme.error;
+  Color _iconColorForList(ScheduledMessage item, BuildContext context, Color defaultColor) {
+    if (item.status == "error") return context.theme.colorScheme.error;
     return defaultColor;
   }
 
-  IconData _iconForList(List<ScheduledMessage> items) {
-    if (items.any((e) => e.status == "error")) return Icons.error_outline;
+  IconData _iconForList(ScheduledMessage item) {
+    if (item.status == "error") return Icons.error_outline;
     return Icons.check_circle_outline;
   }
 
@@ -337,8 +337,8 @@ class _MaterialScheduledMessagesPanelState extends State<MaterialScheduledMessag
               if (oneTime.isNotEmpty)
                 _buildSection(
                   items: oneTime,
-                  icon: Icons.schedule,
-                  iconColor: context.theme.colorScheme.primary,
+                  iconBuilder: (_) => Icons.schedule,
+                  iconColorBuilder: (_) => context.theme.colorScheme.primary,
                   subtitleBuilder: (item) => buildFullDate(item.scheduledFor),
                   isCompleted: false,
                 ),
@@ -353,8 +353,8 @@ class _MaterialScheduledMessagesPanelState extends State<MaterialScheduledMessag
               if (recurring.isNotEmpty)
                 _buildSection(
                   items: recurring,
-                  icon: Icons.repeat,
-                  iconColor: Colors.teal,
+                  iconBuilder: (_) => Icons.repeat,
+                  iconColorBuilder: (_) => Colors.teal,
                   subtitleBuilder: (item) =>
                       "Every ${item.schedule.interval} ${frequencyToText[item.schedule.intervalType]}(s) · ${buildFullDate(item.scheduledFor)}",
                   isCompleted: false,
@@ -370,8 +370,8 @@ class _MaterialScheduledMessagesPanelState extends State<MaterialScheduledMessag
               if (oneTimeCompleted.isNotEmpty)
                 _buildSection(
                   items: oneTimeCompleted,
-                  icon: _iconForList(oneTimeCompleted),
-                  iconColor: _iconColorForList(oneTimeCompleted, context, Colors.green),
+                  iconBuilder: _iconForList,
+                  iconColorBuilder: (item) => _iconColorForList(item, context, Colors.green),
                   subtitleBuilder: (item) {
                     if (item.status == "error") return item.error ?? "Failed to send";
                     return "Sent "

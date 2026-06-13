@@ -51,14 +51,22 @@ message.generateTempGuid();  // sets guid = "temp-XXXXXXXX" (8 random chars)
 
 The tempGuid format is always `temp-` followed by 8 random alphanumeric characters (e.g. `temp-a7d3k9m2`). This prefix is how the app detects "sending" state: `message.isSending == guid.startsWith("temp")`.
 
-Each message is then wrapped in an `OutgoingItem` and pushed to `OutgoingMessageHandler`:
+Each message is then wrapped in a typed outgoing queue item and pushed to `OutgoingMessageHandler`:
 ```dart
-OutgoingMsgHandler.queue(OutgoingItem(
-  type: QueueType.sendMessage,   // or sendMultipart, sendAttachment
+OutgoingMsgHandler.queue(OutgoingMessage(
   chat: controller.chat,
   message: message,              // has tempGuid at this point
 ));
 ```
+
+Queue item types are now explicit and compile-time safe:
+
+- `OutgoingMessage` for plain text send
+- `OutgoingReaction` for tapbacks/reactions (with required `selected` + `reaction`)
+- `OutgoingAttachment` for file/audio sends (with required `attachment` + `isAudioMessage`)
+- `OutgoingMultipartMessage` for attributed/multipart sends
+
+This replaced the previous `OutgoingItem` + `customArgs` map pattern.
 
 **Key file:** `lib/app/layouts/conversation_view/widgets/message/send_animation.dart`
 
@@ -76,7 +84,7 @@ For attachments, `prepAttachment()` additionally copies the file from its source
 
 ### Step 4 — OutgoingMessageHandler: Send (`outgoing_message_handler.dart`)
 
-`OutgoingMessageHandler._processNext()` dequeues items one at a time and calls `_dispatchItem()`, which routes to `sendMessage()`, `sendMultipart()`, or `sendAttachment()`.
+`OutgoingMessageHandler._processNext()` dequeues items one at a time and calls `_dispatchItem()`, which routes to `sendMessage()`, `sendMultipart()`, or `sendAttachment()` based on the concrete queue item type (`OutgoingMessage`, `OutgoingReaction`, `OutgoingMultipartMessage`, `OutgoingAttachment`).
 
 Each send method uses `_sendWithRace()`, which does two things:
 

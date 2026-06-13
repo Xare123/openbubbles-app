@@ -1,5 +1,4 @@
 import 'package:bluebubbles/database/models.dart';
-import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:faker/faker.dart';
 import 'package:flutter/foundation.dart';
@@ -68,9 +67,9 @@ class HandleState {
   final String fakeName;
 
   HandleState(this.handle)
-      : displayName = RxnString(_computeDisplayName(handle)),
-        reactionDisplayName = RxnString(_computeReactionDisplayName(handle)),
-        initials = RxnString(_computeInitials(handle)),
+      : displayName = RxnString(handle.displayName),
+        reactionDisplayName = RxnString(handle.reactionDisplayName),
+        initials = RxnString(handle.initials),
         avatarPath = RxnString(_resolveAvatarPath(handle)),
         color = RxnString(handle.color),
         defaultEmail = RxnString(handle.defaultEmail),
@@ -85,47 +84,6 @@ class HandleState {
 
   // ========== Pure Compute Helpers ==========
   // These operate on raw handle data only — no redaction logic.
-
-  static String _computeDisplayName(Handle h) {
-    if (h.address.startsWith("urn:biz")) return "Business";
-    if (!kIsWeb && h.contactsV2.isNotEmpty) {
-      final firstNative = h.contactsV2.where((c) => c.isNative).firstOrNull;
-      return firstNative?.nickname ?? firstNative?.displayName ?? h.contactsV2.first.displayName;
-    }
-
-    // Formatted address should be filled out by the bulk sync chats process. However, if somehow
-    // it isn't, we can format it on-demand here for display purposes.
-    return h.address.contains("@") ? h.address : (h.formattedAddress ?? formatPhoneNumber(h.address));
-  }
-
-  static String _computeReactionDisplayName(Handle h) {
-    if (h.address.startsWith("urn:biz")) return "Business";
-    if (!kIsWeb && h.contactsV2.isNotEmpty) {
-      final firstNative = h.contactsV2.where((c) => c.isNative).firstOrNull;
-      return firstNative?.nickname ??
-          firstNative?.firstName ??
-          firstNative?.computedDisplayName ??
-          h.contactsV2.first.computedDisplayName;
-    }
-    return h.address.contains("@") ? h.address : (h.formattedAddress ?? h.address);
-  }
-
-  static String? _computeInitials(Handle h) {
-    if (h.address.startsWith("urn:biz")) return null;
-    if (!kIsWeb) {
-      // If there is no linked contact, don't derive initials from a phone
-      // number or raw address — leave the avatar initial empty instead.
-      if (h.contactsV2.isEmpty) return null;
-      final v2Initials = h.contactsV2.first.initials;
-      if (v2Initials != null) return v2Initials;
-    }
-    final name = _computeDisplayName(h);
-    final parts = name.trim().split(RegExp(r'[ \-_]'));
-    if (parts.length == 1) return parts[0].isEmpty ? null : parts[0].substring(0, 1).toUpperCase();
-    final first = parts.first.isEmpty ? '' : parts.first.substring(0, 1).toUpperCase();
-    final last = parts.last.isEmpty ? '' : parts.last.substring(0, 1).toUpperCase();
-    return (first + last).isEmpty ? null : first + last;
-  }
 
   static String? _resolveAvatarPath(Handle h) {
     if (kIsWeb) return null;
@@ -149,9 +107,9 @@ class HandleState {
     // freshly-fetched handle whose contactsV2 ToMany lazily re-queries the DB.
     handle = refreshed;
 
-    updateDisplayNameInternal(_computeDisplayName(handle));
+    updateDisplayNameInternal(handle.displayName);
     _recomputeReactionDisplayName();
-    updateInitialsInternal(_computeInitials(handle));
+    updateInitialsInternal(handle.initials);
     updateAvatarPathInternal(_resolveAvatarPath(handle));
     updateColorInternal(handle.color);
     updateDefaultEmailInternal(handle.defaultEmail);
@@ -230,9 +188,9 @@ class HandleState {
 
   /// Restore contact info to real values.
   void unredactContactInfo() {
-    updateDisplayNameInternal(_computeDisplayName(handle));
+    updateDisplayNameInternal(handle.displayName);
     _recomputeReactionDisplayName();
-    updateInitialsInternal(_computeInitials(handle));
+    updateInitialsInternal(handle.initials);
   }
 
   /// Redact avatar: clears avatarPath so the widget falls back to a placeholder.
@@ -261,7 +219,7 @@ class HandleState {
     } else if (SettingsSvc.settings.redactedMode.value && SettingsSvc.settings.hideContactInfo.value) {
       updateReactionDisplayNameInternal("");
     } else {
-      updateReactionDisplayNameInternal(_computeReactionDisplayName(handle));
+      updateReactionDisplayNameInternal(handle.reactionDisplayName);
     }
   }
 

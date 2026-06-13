@@ -22,6 +22,13 @@ class MetadataHelper {
     return data?.title != null || data?.description != null || data?.image != null;
   }
 
+  /// Returns true when a metadata-fetch attempt has already completed without
+  /// a network error (even if no image was found). Use this to avoid repeated
+  /// fetches when the URL simply has no preview image.
+  static bool hasAttemptedFetch(Map<String, dynamic>? metadata) {
+    return metadata?['previewImageFetched'] == true;
+  }
+
   static final Map<String, Completer<Metadata?>> _metaCache = {};
 
   static Future<Metadata?> fetchMetadata(Message message) async {
@@ -42,6 +49,18 @@ class MetadataHelper {
     }
     try {
       data = await MetadataFetch.extract(url);
+    } on SocketException catch (ex, stack) {
+      Logger.warn('Network unavailable while fetching URL preview metadata; retryable',
+          error: ex, trace: stack, tag: 'MetadataHelper');
+      completer.completeError(ex, stack);
+      _metaCache.remove(message.guid);
+      rethrow;
+    } on TimeoutException catch (ex, stack) {
+      Logger.warn('Timeout while fetching URL preview metadata; retryable',
+          error: ex, trace: stack, tag: 'MetadataHelper');
+      completer.completeError(ex, stack);
+      _metaCache.remove(message.guid);
+      rethrow;
     } catch (ex, stack) {
       Logger.error('An error occurred while fetching URL Preview Metadata!', error: ex, trace: stack);
     }

@@ -252,7 +252,7 @@ class _MiscPanelState extends State<MiscPanel> with ThemeHelpers {
                         onChangeEnd: (double val) async {
                           await SettingsSvc.settings.saveOneAsync('apiTimeout');
                           HttpSvc.dio = Dio(BaseOptions(
-                            connectTimeout: const Duration(milliseconds: 15000),
+                            connectTimeout: Duration(milliseconds: SettingsSvc.settings.apiTimeout.value),
                             receiveTimeout: Duration(milliseconds: SettingsSvc.settings.apiTimeout.value),
                             sendTimeout: Duration(milliseconds: SettingsSvc.settings.apiTimeout.value),
                           ));

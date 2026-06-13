@@ -1,33 +1,47 @@
 # popup/ — Long-Press Context Menu
 
-Handles the action sheet / context menu that appears when the user long-presses (or right-clicks on desktop) a message bubble.
+Handles the action sheet / context menu shown when the user long-presses (or right-clicks on desktop) a message bubble.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `message_popup_holder.dart` | `GestureDetector` wrapper placed inside every bubble Stack; triggers the popup |
-| `message_popup.dart` | The full popup: action list (copy, react, reply, delete, unsend, etc.) |
+| `message_popup_holder.dart` | `GestureDetector` wrapper inside message bubbles; triggers popup presentation |
+| `message_popup.dart` | Core popup layout/composition and action availability rules |
+| `message_popup_action_context.dart` | Shared typed context passed to extracted action functions |
 | `details_menu_action.dart` | Individual menu action row widget |
-| `reaction_picker_clipper.dart` | `CustomClipper` for the tapback emoji picker pill shape |
+| `reaction_picker_clipper.dart` | `CustomClipper` for tapback picker shape |
+| `actions/media_actions.dart` | Attachment/media actions (save/open/share/copy/redownload) |
+| `actions/text_actions.dart` | Text/link actions (copy text, copy selection, open link) |
+| `actions/navigation_actions.dart` | Navigation actions (reply/thread/DM/forward/new conversation) |
+| `actions/message_actions.dart` | Message lifecycle actions (edit/unsend/delete/bookmark/remind/info/etc.) |
+| `widgets/reaction_details.dart` | Reactions preview widget rendered at top of popup |
+
+## MessagePopupActionContext Contract
+
+`MessagePopupActionContext` carries the data/dependencies needed by reusable action handlers:
+- UI context: `context`, `widthContext`, `popDetails`, `showSnack`
+- Message scope: `messageState`, `message`, `part`, `chat`, `service`
+- Controller scope: `cvController`
+- Capability flags: `serverDetails`, `isEmbeddedMedia`
+- Related entities: `dmChat`
+- Action metadata: `action`
 
 ## How It Works
 
-1. `MessagePopupHolder` is placed inside the bubble `Stack` in `MessageHolder`.
-2. Long-press (or right-click) calls `showMessagePopup(context, message, ...)`.
-3. `MessagePopup` builds its action list dynamically:
-   - `"Unsend"` only if `message.isFromMe` and Private API enabled
-   - `"Add Reaction"` only if Private API enabled
-   - `"Delete"` always available
-   - `"Edit"` only if `message.isFromMe` and editable (recent enough)
-   - `"Copy"` only if the message has text
-
-## Desktop Behavior
-
-On desktop, right-click opens the popup instead of long-press. `MessagePopupHolder` checks `kIsDesktop` to register the correct gesture detector.
+1. `MessagePopupHolder` triggers `showMessagePopup(...)` from a message bubble.
+2. `MessagePopup` computes action availability and ordering in `_allActions`.
+3. Each menu action callback builds a `MessagePopupActionContext` and dispatches into `actions/*.dart`.
+4. Action functions own behavior; `message_popup.dart` owns visibility conditions and layout.
 
 ## Adding a New Popup Action
 
-1. Add the action label and icon to the builder in `message_popup.dart`.
-2. Guard with the appropriate condition (Private API check, ownership check, etc.).
-3. The action callback should call the relevant interface method (e.g., `MessageInterface.deleteMessage()`).
+1. Add/confirm enum + icon entry in `details_menu_action.dart`.
+2. Add a reusable function in the appropriate `actions/*.dart` file (or add a new category file if needed).
+3. Wire the callback in `message_popup.dart` using `_buildActionContext(...)`.
+4. Add action visibility condition in `_allActions` and ensure ordering via `SettingsSvc.settings.detailsMenuActions`.
+5. Verify desktop and mobile behavior (availability + navigation/pop semantics).
+
+## Desktop Behavior
+
+On desktop, right-click opens this popup (instead of long-press). `MessagePopupHolder` handles gesture differences for desktop vs mobile.

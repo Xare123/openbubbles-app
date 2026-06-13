@@ -79,7 +79,8 @@ class _FullscreenVideoState extends State<FullscreenVideo> with AutomaticKeepAli
       await videoController.player.setVolume(muted.value ? 0 : 100);
     } else {
       // Create new controller
-      videoController = VideoController(Player());
+      final player = Player();
+      videoController = VideoController(player);
 
       late final Media media;
       if (widget.file.path == null) {
@@ -92,6 +93,7 @@ class _FullscreenVideoState extends State<FullscreenVideo> with AutomaticKeepAli
 
       await videoController.player.setPlaylistMode(PlaylistMode.none);
       await videoController.player.open(media, play: false);
+      await _configureAndroidVideoColorPipeline(videoController.player);
       await videoController.player.setVolume(muted.value ? 0 : 100);
     }
 
@@ -110,6 +112,26 @@ class _FullscreenVideoState extends State<FullscreenVideo> with AutomaticKeepAli
     }
 
     setState(() {});
+  }
+
+  Future<void> _configureAndroidVideoColorPipeline(Player player) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    final platform = player.platform;
+    if (platform is! NativePlayer) return;
+
+    try {
+      // Force conservative HDR->SDR conversion for iPhone HDR clips, which can
+      // otherwise appear over-bright on some Android GPU + mpv combinations.
+      await platform.setProperty('target-colorspace-hint', 'yes');
+      await platform.setProperty('target-prim', 'bt.709');
+      await platform.setProperty('target-trc', 'srgb');
+      await platform.setProperty('tone-mapping', 'hable');
+      await platform.setProperty('target-peak', '203');
+      await platform.setProperty('hdr-compute-peak', 'no');
+    } catch (e, s) {
+      debugPrint('FullscreenVideo: Failed to apply Android video color pipeline: $e');
+      debugPrint(s.toString());
+    }
   }
 
   void createListener(VideoController controller) {
@@ -233,209 +255,205 @@ class _FullscreenVideoState extends State<FullscreenVideo> with AutomaticKeepAli
         () => MouseRegion(
           onEnter: (event) => showPlayPauseOverlay.value = true,
           onExit: (event) => showPlayPauseOverlay.value = !videoController.player.state.playing,
-          child: SafeArea(
-            child: Center(
-              child: Theme(
-                data: context.theme.copyWith(
-                    platform: iOS ? TargetPlatform.iOS : TargetPlatform.android,
-                    dialogBackgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                    iconTheme: context.theme.iconTheme.copyWith(color: context.theme.textTheme.bodyMedium?.color)),
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: <Widget>[
-                    Listener(
-                      behavior: HitTestBehavior.translucent,
-                      onPointerDown: (event) {
-                        _pointerDownPosition = event.position;
-                      },
-                      onPointerUp: (event) {
-                        if (_pointerDownPosition != null) {
-                          final distance = (_pointerDownPosition! - event.position).distance;
-                          if (distance < 20) _handleTap();
-                          _pointerDownPosition = null;
-                        }
-                      },
-                      child: Video(
-                          controller: videoController,
-                          controls: (state) => Padding(
-                                padding: EdgeInsets.all(!kIsWeb && !kIsDesktop ? 0 : 20).copyWith(
-                                    bottom: !kIsWeb && !kIsDesktop ? (iOS && widget.showInteractions ? 70 : 10) : 0),
-                                child: kIsDesktop
-                                    ? media_kit_video_controls.MaterialDesktopVideoControls(state)
-                                    : media_kit_video_controls.MaterialVideoControls(state),
-                              ),
-                          filterQuality: FilterQuality.medium),
-                    ),
-                    if (kIsWeb || kIsDesktop)
-                      Obx(() {
-                        return MouseRegion(
-                          onEnter: (event) => _hover.value = true,
-                          onExit: (event) => _hover.value = false,
-                          child: AbsorbPointer(
-                            absorbing: !showPlayPauseOverlay.value && !_hover.value,
-                            child: AnimatedOpacity(
-                              opacity: _hover.value
-                                  ? 1
-                                  : showPlayPauseOverlay.value
-                                      ? 0.5
-                                      : 0,
-                              duration: const Duration(milliseconds: 100),
-                              child: Material(
-                                color: Colors.transparent,
-                                child: InkWell(
-                                  borderRadius: BorderRadius.circular(40),
-                                  onTap: () async {
-                                    if (videoController.player.state.playing) {
-                                      await videoController.player.pause();
-                                      showPlayPauseOverlay.value = true;
-                                    } else {
-                                      await videoController.player.play();
-                                      showPlayPauseOverlay.value = false;
-                                    }
-                                  },
-                                  child: Container(
-                                    height: 75,
-                                    width: 75,
-                                    decoration: BoxDecoration(
-                                      color: context.theme.colorScheme.surface.withValues(alpha: 0.5),
-                                      borderRadius: BorderRadius.circular(40),
-                                    ),
-                                    clipBehavior: Clip.antiAlias,
-                                    child: Padding(
-                                      padding: EdgeInsets.only(
-                                        left: SettingsSvc.settings.skin.value == Skins.iOS &&
-                                                !videoController.player.state.playing
-                                            ? 17
-                                            : 10,
-                                        top: SettingsSvc.settings.skin.value == Skins.iOS ? 13 : 10,
-                                        right: 10,
-                                        bottom: 10,
-                                      ),
-                                      child: Obx(
-                                        () => videoController.player.state.playing
-                                            ? Icon(
-                                                SettingsSvc.settings.skin.value == Skins.iOS
-                                                    ? CupertinoIcons.pause
-                                                    : Icons.pause,
-                                                color: context.iconColor,
-                                                size: 45,
-                                              )
-                                            : Icon(
-                                                SettingsSvc.settings.skin.value == Skins.iOS
-                                                    ? CupertinoIcons.play
-                                                    : Icons.play_arrow,
-                                                color: context.iconColor,
-                                                size: 45,
-                                              ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
+          child: Theme(
+            data: context.theme.copyWith(
+                platform: iOS ? TargetPlatform.iOS : TargetPlatform.android,
+                dialogBackgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+                iconTheme: context.theme.iconTheme.copyWith(color: context.theme.textTheme.bodyMedium?.color)),
+            child: Stack(
+              alignment: Alignment.center,
+              children: <Widget>[
+                Listener(
+                  behavior: HitTestBehavior.translucent,
+                  onPointerDown: (event) {
+                    _pointerDownPosition = event.position;
+                  },
+                  onPointerUp: (event) {
+                    if (_pointerDownPosition != null) {
+                      final distance = (_pointerDownPosition! - event.position).distance;
+                      if (distance < 20) _handleTap();
+                      _pointerDownPosition = null;
+                    }
+                  },
+                  child: Video(
+                      controller: videoController,
+                      controls: (state) => Padding(
+                            padding: EdgeInsets.all(!kIsWeb && !kIsDesktop ? 0 : 20).copyWith(
+                                bottom: !kIsWeb && !kIsDesktop ? (iOS && widget.showInteractions ? 100 : 10) : 0),
+                            child: kIsDesktop
+                                ? media_kit_video_controls.MaterialDesktopVideoControls(state)
+                                : media_kit_video_controls.MaterialVideoControls(state),
                           ),
-                        );
-                      }),
-                    if (!iOS && (kIsWeb || kIsDesktop))
-                      Positioned(
-                        top: 10,
-                        left: 10,
-                        child: Obx(() {
-                          return MouseRegion(
-                            onEnter: (event) => _hover.value = true,
-                            onExit: (event) => _hover.value = false,
-                            child: AbsorbPointer(
-                              absorbing: !showPlayPauseOverlay.value && !_hover.value,
-                              child: AnimatedOpacity(
-                                opacity: _hover.value
-                                    ? 1
-                                    : showPlayPauseOverlay.value
-                                        ? 1
-                                        : 0,
-                                duration: const Duration(milliseconds: 100),
-                                child: Material(
-                                  color: Colors.transparent,
-                                  child: InkWell(
-                                    borderRadius: BorderRadius.circular(40),
-                                    onTap: () async {
-                                      Navigator.of(context).pop();
-                                    },
-                                    child: const Padding(
-                                      padding: EdgeInsets.all(8.0),
-                                      child: Icon(
-                                        Icons.arrow_back,
-                                        color: Colors.white,
-                                        size: 25,
-                                      ),
-                                    ),
+                      filterQuality: FilterQuality.medium),
+                ),
+                if (kIsWeb || kIsDesktop)
+                  Obx(() {
+                    return MouseRegion(
+                      onEnter: (event) => _hover.value = true,
+                      onExit: (event) => _hover.value = false,
+                      child: AbsorbPointer(
+                        absorbing: !showPlayPauseOverlay.value && !_hover.value,
+                        child: AnimatedOpacity(
+                          opacity: _hover.value
+                              ? 1
+                              : showPlayPauseOverlay.value
+                                  ? 0.5
+                                  : 0,
+                          duration: const Duration(milliseconds: 100),
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(40),
+                              onTap: () async {
+                                if (videoController.player.state.playing) {
+                                  await videoController.player.pause();
+                                  showPlayPauseOverlay.value = true;
+                                } else {
+                                  await videoController.player.play();
+                                  showPlayPauseOverlay.value = false;
+                                }
+                              },
+                              child: Container(
+                                height: 75,
+                                width: 75,
+                                decoration: BoxDecoration(
+                                  color: context.theme.colorScheme.surface.withValues(alpha: 0.5),
+                                  borderRadius: BorderRadius.circular(40),
+                                ),
+                                clipBehavior: Clip.antiAlias,
+                                child: Padding(
+                                  padding: EdgeInsets.only(
+                                    left: SettingsSvc.settings.skin.value == Skins.iOS &&
+                                            !videoController.player.state.playing
+                                        ? 17
+                                        : 10,
+                                    top: SettingsSvc.settings.skin.value == Skins.iOS ? 13 : 10,
+                                    right: 10,
+                                    bottom: 10,
+                                  ),
+                                  child: Obx(
+                                    () => videoController.player.state.playing
+                                        ? Icon(
+                                            SettingsSvc.settings.skin.value == Skins.iOS
+                                                ? CupertinoIcons.pause
+                                                : Icons.pause,
+                                            color: context.iconColor,
+                                            size: 45,
+                                          )
+                                        : Icon(
+                                            SettingsSvc.settings.skin.value == Skins.iOS
+                                                ? CupertinoIcons.play
+                                                : Icons.play_arrow,
+                                            color: context.iconColor,
+                                            size: 45,
+                                          ),
                                   ),
                                 ),
-                              ),
-                            ),
-                          );
-                        }),
-                      ),
-                    // Bottom action bar for iOS
-                    if (iOS && widget.showInteractions)
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        child: AnimatedOpacity(
-                          opacity: showPlayPauseOverlay.value ? 1.0 : 0.0,
-                          duration: const Duration(milliseconds: 200),
-                          child: SafeArea(
-                            top: false,
-                            child: Container(
-                              height: 60,
-                              decoration: BoxDecoration(
-                                color: samsung
-                                    ? Colors.black
-                                    : context.theme.colorScheme.surfaceContainerHighest.withOpacity(0.9),
-                              ),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                                children: [
-                                  IconButton(
-                                    icon: Icon(
-                                      CupertinoIcons.cloud_download,
-                                      color: samsung ? Colors.white : context.theme.colorScheme.primary,
-                                    ),
-                                    onPressed: () => AttachmentsSvc.saveToDisk(widget.file),
-                                  ),
-                                  IconButton(
-                                    icon: Icon(
-                                      CupertinoIcons.info,
-                                      color: samsung ? Colors.white : context.theme.colorScheme.primary,
-                                    ),
-                                    onPressed: () => showMetadataDialog(widget.attachment, context),
-                                  ),
-                                  IconButton(
-                                    icon: Icon(
-                                      CupertinoIcons.refresh,
-                                      color: samsung ? Colors.white : context.theme.colorScheme.primary,
-                                    ),
-                                    onPressed: () => refreshAttachment(),
-                                  ),
-                                  IconButton(
-                                    icon: Icon(
-                                      muted.value ? CupertinoIcons.volume_mute : CupertinoIcons.volume_up,
-                                      color: samsung ? Colors.white : context.theme.colorScheme.primary,
-                                    ),
-                                    onPressed: () async {
-                                      muted.toggle();
-                                      await videoController.player.setVolume(muted.value ? 0.0 : 100.0);
-                                    },
-                                  ),
-                                ],
                               ),
                             ),
                           ),
                         ),
                       ),
-                  ],
-                ),
-              ),
+                    );
+                  }),
+                if (!iOS && (kIsWeb || kIsDesktop))
+                  Positioned(
+                    top: 10,
+                    left: 10,
+                    child: Obx(() {
+                      return MouseRegion(
+                        onEnter: (event) => _hover.value = true,
+                        onExit: (event) => _hover.value = false,
+                        child: AbsorbPointer(
+                          absorbing: !showPlayPauseOverlay.value && !_hover.value,
+                          child: AnimatedOpacity(
+                            opacity: _hover.value
+                                ? 1
+                                : showPlayPauseOverlay.value
+                                    ? 1
+                                    : 0,
+                            duration: const Duration(milliseconds: 100),
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(40),
+                                onTap: () async {
+                                  Navigator.of(context).pop();
+                                },
+                                child: const Padding(
+                                  padding: EdgeInsets.all(8.0),
+                                  child: Icon(
+                                    Icons.arrow_back,
+                                    color: Colors.white,
+                                    size: 25,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                // Bottom action bar for iOS
+                if (iOS && widget.showInteractions)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: AnimatedOpacity(
+                      opacity: showPlayPauseOverlay.value ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 200),
+                      child: SafeArea(
+                        top: false,
+                        child: Container(
+                          height: 60,
+                          decoration: BoxDecoration(
+                            color: samsung
+                                ? Colors.black
+                                : context.theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.9),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              IconButton(
+                                icon: Icon(
+                                  CupertinoIcons.cloud_download,
+                                  color: samsung ? Colors.white : context.theme.colorScheme.primary,
+                                ),
+                                onPressed: () => AttachmentsSvc.saveToDisk(widget.file),
+                              ),
+                              IconButton(
+                                icon: Icon(
+                                  CupertinoIcons.info,
+                                  color: samsung ? Colors.white : context.theme.colorScheme.primary,
+                                ),
+                                onPressed: () => showMetadataDialog(widget.attachment, context),
+                              ),
+                              IconButton(
+                                icon: Icon(
+                                  CupertinoIcons.refresh,
+                                  color: samsung ? Colors.white : context.theme.colorScheme.primary,
+                                ),
+                                onPressed: () => refreshAttachment(),
+                              ),
+                              IconButton(
+                                icon: Icon(
+                                  muted.value ? CupertinoIcons.volume_mute : CupertinoIcons.volume_up,
+                                  color: samsung ? Colors.white : context.theme.colorScheme.primary,
+                                ),
+                                onPressed: () async {
+                                  muted.toggle();
+                                  await videoController.player.setVolume(muted.value ? 0.0 : 100.0);
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ),

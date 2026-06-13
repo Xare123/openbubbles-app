@@ -92,9 +92,7 @@ class ColorEditorTile extends StatelessWidget {
             ],
           ] else ...[
             Tooltip(
-              message: SettingsSvc.settings.monetTheming.value != Monet.none
-                  ? "Material You is active"
-                  : "Select a custom theme to edit",
+              message: ThemeSvc.isAnyMaterialYouSelected ? "Material You is active" : "Select a custom theme to edit",
               child: Icon(
                 Icons.lock_outline,
                 size: 18,

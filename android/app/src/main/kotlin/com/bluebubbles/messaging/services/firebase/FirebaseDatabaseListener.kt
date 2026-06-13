@@ -28,6 +28,15 @@ class RealtimeDatabaseListener: ValueEventListener {
 
 class FirestoreDatabaseListener: EventListener<DocumentSnapshot> {
     override fun onEvent(value: DocumentSnapshot?, error: FirebaseFirestoreException?) {
+        if (error != null) {
+            Log.e(
+                Constants.logTag,
+                "Firestore Database listener error (${error.code}): ${error.message}",
+                error,
+            )
+            return
+        }
+
         if (value != null) {
             Log.d(Constants.logTag, "Firestore Database updated with new URL. Fetching...")
             val serverUrl: String? = value.get("serverUrl", String::class.java)

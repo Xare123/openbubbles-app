@@ -143,7 +143,7 @@ class _ImageViewerState extends State<ImageViewer> with AutomaticKeepAliveClient
                 return Container(
                   width: displayWidth,
                   height: displayHeight,
-                  color: context.theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+                  color: context.theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
                   child: Center(
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
@@ -204,10 +204,9 @@ class _ImageViewerState extends State<ImageViewer> with AutomaticKeepAliveClient
                 ));
       }
     } else {
-      // Non-web with file path - use file image (much more efficient)
-      // Note: For HEIC/TIFF, the path might point to unconverted file initially.
-      // Image.file will handle it on iOS/macOS (native support), or fail gracefully
-      // and trigger errorBuilder where we can attempt conversion.
+      // Calculate the proper height/width for the attachment to use only for the
+      // containers and placeholders, not the actual image. The Image widget should respect
+      // the EXIF data and display the image properly.
       final displayWidth = min((attachment.displayWidth?.toDouble() ?? NavigationSvc.width(context) * 0.5),
           NavigationSvc.width(context) * 0.5);
       final displayHeight = min(
@@ -221,8 +220,6 @@ class _ImageViewerState extends State<ImageViewer> with AutomaticKeepAliveClient
         File(file.path!),
         gaplessPlayback: true,
         filterQuality: FilterQuality.none,
-        cacheWidth: calculatedWidth,
-        cacheHeight: calculatedHeight,
         fit: BoxFit.contain,
         frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
           if (wasSynchronouslyLoaded) return child;
@@ -231,7 +228,7 @@ class _ImageViewerState extends State<ImageViewer> with AutomaticKeepAliveClient
             return Container(
               width: displayWidth,
               height: displayHeight,
-              color: context.theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+              color: context.theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
               child: Center(
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
@@ -273,7 +270,7 @@ class _ImageViewerState extends State<ImageViewer> with AutomaticKeepAliveClient
                     return Container(
                       width: displayWidth,
                       height: displayHeight,
-                      color: context.theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+                      color: context.theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
                       child: Center(
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
@@ -326,7 +323,7 @@ class _ImageViewerState extends State<ImageViewer> with AutomaticKeepAliveClient
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                           decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.6),
+                            color: Colors.black.withValues(alpha: 0.6),
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Row(

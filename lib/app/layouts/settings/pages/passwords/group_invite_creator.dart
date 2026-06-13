@@ -398,10 +398,10 @@ class GroupInviteCreatorState extends State<GroupInviteCreator> with ThemeHelper
                     colorScheme: context.theme.colorScheme.copyWith(
                       primary: context.theme.colorScheme.bubble(context, iMessage),
                       onPrimary: context.theme.colorScheme.onBubble(context, iMessage),
-                      surface: SettingsSvc.settings.monetTheming.value == Monet.full
+                      surface: ThemeSvc.isMaterialYouActive(context)
                           ? null
                           : (context.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
-                      onSurface: SettingsSvc.settings.monetTheming.value == Monet.full
+                      onSurface: ThemeSvc.isMaterialYouActive(context)
                           ? null
                           : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
                     ),
