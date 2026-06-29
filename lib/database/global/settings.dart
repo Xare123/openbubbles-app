@@ -93,6 +93,9 @@ class Settings {
   final RxnString userPosterPath = RxnString();
   final RxBool hideNamesForReactions = false.obs;
   final RxBool replaceEmoticonsWithEmoji = true.obs;
+  final RxBool deleteMessagesAfterDays = false.obs;
+  final RxInt deleteMessagesAfterDaysCount = 30.obs;
+  final RxInt lastMessageRetentionCleanup = 0.obs;
   final RxnString lastLocation = RxnString();
 
   final RxBool nameAndPhotoSharing = false.obs;
@@ -468,6 +471,9 @@ class Settings {
       'logLevel': logLevel.value.index,
       'hideNamesForReactions': hideNamesForReactions.value,
       'replaceEmoticonsWithEmoji': replaceEmoticonsWithEmoji.value,
+      'deleteMessagesAfterDays': deleteMessagesAfterDays.value,
+      'deleteMessagesAfterDaysCount': deleteMessagesAfterDaysCount.value,
+      'lastMessageRetentionCleanup': lastMessageRetentionCleanup.value,
       'lastReviewRequestTimestamp': lastReviewRequestTimestamp.value,
       'serverPrivateAPI': serverPrivateAPI.value,
     };
@@ -749,6 +755,9 @@ class Settings {
         map['hideNamesForReactions'] ?? SettingsSvc.settings.hideNamesForReactions.value;
     SettingsSvc.settings.replaceEmoticonsWithEmoji.value =
         map['replaceEmoticonsWithEmoji'] ?? SettingsSvc.settings.replaceEmoticonsWithEmoji.value;
+    SettingsSvc.settings.deleteMessagesAfterDays.value = map['deleteMessagesAfterDays'] ?? SettingsSvc.settings.deleteMessagesAfterDays.value;
+    SettingsSvc.settings.deleteMessagesAfterDaysCount.value = map['deleteMessagesAfterDaysCount'] ??  SettingsSvc.settings.deleteMessagesAfterDaysCount.value;
+    SettingsSvc.settings.lastMessageRetentionCleanup.value = map['lastMessageRetentionCleanup'] ??  SettingsSvc.settings.lastMessageRetentionCleanup.value;
     SettingsSvc.settings.lastReviewRequestTimestamp.value =
         map['lastReviewRequestTimestamp'] ?? SettingsSvc.settings.lastReviewRequestTimestamp.value;
     SettingsSvc.settings.defaultHandle.value = map['defaultHandle'] ?? SettingsSvc.settings.defaultHandle.value;
@@ -974,6 +983,9 @@ class Settings {
     s.logLevel.value = map['logLevel'] != null ? Level.values[map['logLevel']] : Level.info;
     s.hideNamesForReactions.value = map['hideNamesForReactions'] ?? false;
     s.replaceEmoticonsWithEmoji.value = map['replaceEmoticonsWithEmoji'] ?? true;
+    s.deleteMessagesAfterDays.value = map['deleteMessagesAfterDays'] ?? false;
+    s.deleteMessagesAfterDaysCount.value = map['deleteMessagesAfterDaysCount'] ?? 30;
+    s.lastMessageRetentionCleanup.value = map['lastMessageRetentionCleanup'] ?? 0;
     s.lastReviewRequestTimestamp.value = map['lastReviewRequestTimestamp'] ?? 0;
     s.defaultHandle.value = map['defaultHandle'] ?? "";
     s.cardDavServer.value = map['cardDavServer'] ?? "";

@@ -5,6 +5,7 @@ import 'dart:ui' show AppLifecycleState;
 
 import 'package:bitsdojo_window/bitsdojo_window.dart';
 import 'package:bluebubbles/env.dart';
+import 'package:bluebubbles/helpers/backend/message_retention_task.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/services/isolates/global_isolate.dart';
@@ -293,6 +294,8 @@ class StartupTasks {
     Logger.info("Database initialized");
     globalInteropReady.complete();
 
+    await MessageRetentionTask.run();
+
     await _initContactHandleChats(headless: true);
     await _initHttpService();
     await _waitForInterop(methodChannel: true);
@@ -403,6 +406,8 @@ class StartupTasks {
       Logger.info("Setup not finished, skipping onStartup tasks");
       return;
     }
+
+    MessageRetentionTask.start();
 
     if (!kIsDesktop) {
       Logger.info("Initializing ChatsService and SocketService...");

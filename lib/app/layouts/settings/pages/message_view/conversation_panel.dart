@@ -3,6 +3,7 @@ import 'package:audio_waveforms/audio_waveforms.dart' as aw;
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/reaction/reaction.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/message_view/message_options_order_panel.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/content/next_button.dart';
+import 'package:bluebubbles/helpers/backend/message_retention_task.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/settings_widgets.dart';
 import 'package:bluebubbles/database/models.dart' hide PlatformFile;
@@ -26,6 +27,7 @@ class ConversationPanel extends StatefulWidget {
 }
 
 class _ConversationPanelState extends State<ConversationPanel> with ThemeHelpers {
+  static const List<int> _deleteAfterDaysOptions = [1, 3, 7, 14, 30, 60, 90, 180, 365];
   final RxnBool gettingIcons = RxnBool(null);
   final RxBool playingSendSound = false.obs;
   final RxBool playingReceiveSound = false.obs;
@@ -146,8 +148,45 @@ class _ConversationPanelState extends State<ConversationPanel> with ThemeHelpers
                       },
                       trailing: const NextButton(),
                     ),
-                  if (!kIsWeb) const SettingsDivider(padding: EdgeInsets.only(left: 16.0)),
                   if (!kIsWeb)
+                    const SettingsDivider(padding: EdgeInsets.only(left: 16.0)),
+                  if (!kIsWeb)
+                    Obx(() => SettingsSwitch(
+                          onChanged: (bool val) async {
+                            SettingsSvc.settings.deleteMessagesAfterDays.value = val;
+                            await SettingsSvc.settings.saveOneAsync("deleteMessagesAfterDays");
+                            if (val) await MessageRetentionTask.run(force: true);
+                          },
+                          initialVal: SettingsSvc.settings.deleteMessagesAfterDays.value,
+                          title: "Delete Old Messages",
+                          subtitle: "Automatically deletes local messages older than the selected number of days",
+                          backgroundColor: tileColor,
+                          isThreeLine: true,
+                        )),
+                  if (!kIsWeb)
+                    Obx(() => SettingsSvc.settings.deleteMessagesAfterDays.value
+                        ? SettingsOptions<int>(
+                            title: "Delete After",
+                            initial: _deleteAfterDaysOptions.contains(SettingsSvc.settings.deleteMessagesAfterDaysCount.value)
+                                ? SettingsSvc.settings.deleteMessagesAfterDaysCount.value
+                                : 30,
+                            clampWidth: false,
+                            options: _deleteAfterDaysOptions,
+                            secondaryColor: headerColor,
+                            useCupertino: false,
+                            capitalize: false,
+                            textProcessing: (value) => "$value day${value == 1 ? "" : "s"}",
+                            onChanged: (value) async {
+                              if (value == null) return;
+                              SettingsSvc.settings.deleteMessagesAfterDaysCount.value = value;
+                            await SettingsSvc.settings.saveOneAsync("deleteMessagesAfterDaysCount");
+                              await MessageRetentionTask.run(force: true);
+                            },
+                          )
+                        : const SizedBox.shrink()),
+                  if (!kIsWeb && BackendSvc.getRemoteService() != null)
+                    const SettingsDivider(padding: EdgeInsets.only(left: 16.0)),
+                  if (!kIsWeb && BackendSvc.getRemoteService() != null)
                     SettingsTile(
                       title: "Sync Group Chat Icons",
                       trailing: Obx(() => gettingIcons.value == null

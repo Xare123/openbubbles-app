@@ -49,6 +49,7 @@ class IsolateActons {
     IsolateRequestType.getMessages: (_) => MessageActions.getMessages(),
     IsolateRequestType.replaceMessage: MessageActions.replaceMessage,
     IsolateRequestType.deleteMessage: MessageActions.deleteMessage,
+    IsolateRequestType.deleteOldMessages: MessageActions.deleteOldMessages,
     IsolateRequestType.softDeleteMessage: MessageActions.softDeleteMessage,
     IsolateRequestType.fetchAssociatedMessagesAsync: MessageActions.fetchAssociatedMessagesAsync,
     IsolateRequestType.saveMessageAsync: MessageActions.saveMessageAsync,

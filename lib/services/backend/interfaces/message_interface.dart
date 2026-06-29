@@ -58,6 +58,35 @@ class MessageInterface {
     }
   }
 
+  /// Deletes every message older than [cutoffMs] (and any chat left empty as a
+  /// result) on the background isolate. [preservedChatGuid] is never deleted even
+  /// if it empties out — pass the currently-viewed chat's GUID.
+  ///
+  /// Returns the number of messages deleted and the GUIDs of the chats that were
+  /// removed, so the caller can clean up their service state on the main thread.
+  static Future<({int deletedCount, List<String> deletedChatGuids})> deleteOldMessages({
+    required int cutoffMs,
+    String? preservedChatGuid,
+  }) async {
+    final data = {
+      'cutoffMs': cutoffMs,
+      'preservedChatGuid': preservedChatGuid,
+    };
+
+    late Map<String, dynamic> result;
+    if (isIsolate) {
+      result = await MessageActions.deleteOldMessages(data);
+    } else {
+      result = await GetIt.I<GlobalIsolate>()
+          .send<Map<String, dynamic>>(IsolateRequestType.deleteOldMessages, input: data);
+    }
+
+    return (
+      deletedCount: result['deletedCount'] as int? ?? 0,
+      deletedChatGuids: ((result['deletedChatGuids'] as List?) ?? const []).cast<String>(),
+    );
+  }
+
   static Future<void> softDeleteMessage({
     required String guid,
   }) async {

@@ -112,6 +112,81 @@ class MessageActions {
     });
   }
 
+  /// Bulk-deletes every message older than [data]'s `cutoffMs` across all chats,
+  /// then removes any chat left empty and refreshes the latest-message date on the
+  /// chats that remain. Runs inside the background isolate so the heavy query and
+  /// write transaction never block the UI thread.
+  ///
+  /// The chat whose GUID matches `preservedChatGuid` (the one the user is currently
+  /// viewing) is never deleted, even if it ends up empty.
+  ///
+  /// Returns `{ 'deletedCount': int, 'deletedChatGuids': List<String> }` so the
+  /// caller can tear down the corresponding service state on the main thread.
+  static Future<Map<String, dynamic>> deleteOldMessages(dynamic data) async {
+    final cutoffMs = data['cutoffMs'] as int;
+    final preservedChatGuid = data['preservedChatGuid'] as String?;
+    final cutoff = DateTime.fromMillisecondsSinceEpoch(cutoffMs);
+
+    return Database.runInTransaction(TxMode.write, () {
+      final messageBox = Database.messages;
+      final chatBox = Database.chats;
+
+      // Delete every message older than the cutoff.
+      final oldMessageQuery = messageBox
+          .query(Message_.dateCreated.notNull().and(Message_.dateCreated.lessThanDate(cutoff)))
+          .build();
+      final oldMessageIds = oldMessageQuery.findIds();
+      oldMessageQuery.close();
+      if (oldMessageIds.isNotEmpty) {
+        messageBox.removeMany(oldMessageIds);
+      }
+
+      // Recompute latest-message dates and collect chats that are now empty.
+      final chatsToUpdate = <Chat>[];
+      final chatIdsToDelete = <int>[];
+      final chatGuidsToDelete = <String>[];
+
+      for (final chat in chatBox.getAll()) {
+        if (chat.id == null) continue;
+
+        final anyMessageQuery = (messageBox.query()..link(Message_.chat, Chat_.id.equals(chat.id!))).build();
+        anyMessageQuery.limit = 1;
+        final hasMessages = anyMessageQuery.findFirst() != null;
+        anyMessageQuery.close();
+
+        if (!hasMessages && chat.guid != preservedChatGuid) {
+          chatIdsToDelete.add(chat.id!);
+          chatGuidsToDelete.add(chat.guid);
+          continue;
+        }
+
+        final latestMessageQuery = (messageBox.query(
+          Message_.dateDeleted.isNull().and(Message_.dateCreated.notNull()),
+        )
+              ..link(Message_.chat, Chat_.id.equals(chat.id!))
+              ..order(Message_.dateCreated, flags: Order.descending))
+            .build();
+        latestMessageQuery.limit = 1;
+        final latestMessage = latestMessageQuery.findFirst();
+        latestMessageQuery.close();
+
+        final newDate = latestMessage?.dateCreated ?? DateTime.fromMillisecondsSinceEpoch(0);
+        if (chat.dbOnlyLatestMessageDate != newDate) {
+          chat.dbOnlyLatestMessageDate = newDate;
+          chatsToUpdate.add(chat);
+        }
+      }
+
+      if (chatsToUpdate.isNotEmpty) chatBox.putMany(chatsToUpdate);
+      if (chatIdsToDelete.isNotEmpty) chatBox.removeMany(chatIdsToDelete);
+
+      return {
+        'deletedCount': oldMessageIds.length,
+        'deletedChatGuids': chatGuidsToDelete,
+      };
+    });
+  }
+
   static Future<Map<String, dynamic>> fetchAssociatedMessagesAsync(dynamic data) async {
     final messageGuid = data['messageGuid'] as String;
     final threadOriginatorGuid = data['threadOriginatorGuid'] as String?;

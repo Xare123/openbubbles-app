@@ -664,6 +664,7 @@ enum IsolateRequestType {
   // Message actions
   replaceMessage,
   deleteMessage,
+  deleteOldMessages,
   softDeleteMessage,
   fetchAssociatedMessagesAsync,
   saveMessageAsync,
