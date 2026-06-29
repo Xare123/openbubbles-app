@@ -162,17 +162,20 @@ class _ChatListPanelState extends State<ChatListPanel> with ThemeHelpers {
                                 ),
                               ),
                               Flexible(
-                                child: SettingsOptions<int>(
-                                  onChanged: (int? val) async {
-                                    if (val == null) return;
-                                    SettingsSvc.settings.pinRowsPortrait.value = val.toInt();
-                                    await SettingsSvc.settings.saveOneAsync('pinRowsPortrait');
-                                  },
-                                  options: List.generate(4, (index) => index + 1),
-                                  initial: SettingsSvc.settings.pinRowsPortrait.value,
-                                  title: '',
-                                  secondaryColor: context.theme.colorScheme.secondary,
-                                  textProcessing: (val) => val.toString(),
+                                child: ExcludeFocus(
+                                  excluding: SettingsSvc.settings.isDumb.value,
+                                  child: SettingsOptions<int>(
+                                    onChanged: (int? val) async {
+                                      if (val == null) return;
+                                      SettingsSvc.settings.pinRowsPortrait.value = val.toInt();
+                                      await SettingsSvc.settings.saveOneAsync('pinRowsPortrait');
+                                    },
+                                    options: List.generate(4, (index) => index + 1),
+                                    initial: SettingsSvc.settings.pinRowsPortrait.value,
+                                    title: '',
+                                    secondaryColor: context.theme.colorScheme.secondary,
+                                    textProcessing: (val) => val.toString(),
+                                  ),
                                 ),
                               ),
                               const SizedBox(width: 20),
@@ -195,17 +198,20 @@ class _ChatListPanelState extends State<ChatListPanel> with ThemeHelpers {
                                 ),
                               ),
                               Flexible(
-                                child: SettingsOptions<int>(
-                                  onChanged: (int? val) async {
-                                    if (val == null) return;
-                                    SettingsSvc.settings.pinRowsLandscape.value = val.toInt();
-                                    await SettingsSvc.settings.saveOneAsync('pinRowsLandscape');
-                                  },
-                                  options: List.generate(4, (index) => index + 1),
-                                  initial: SettingsSvc.settings.pinRowsLandscape.value,
-                                  title: '',
-                                  secondaryColor: context.theme.colorScheme.secondary,
-                                  textProcessing: (val) => val.toString(),
+                                child: ExcludeFocus(
+                                  excluding: SettingsSvc.settings.isDumb.value,
+                                  child: SettingsOptions<int>(
+                                    onChanged: (int? val) async {
+                                      if (val == null) return;
+                                      SettingsSvc.settings.pinRowsLandscape.value = val.toInt();
+                                      await SettingsSvc.settings.saveOneAsync('pinRowsLandscape');
+                                    },
+                                    options: List.generate(4, (index) => index + 1),
+                                    initial: SettingsSvc.settings.pinRowsLandscape.value,
+                                    title: '',
+                                    secondaryColor: context.theme.colorScheme.secondary,
+                                    textProcessing: (val) => val.toString(),
+                                  ),
                                 ),
                               ),
                               const SizedBox(width: 20),
@@ -228,17 +234,20 @@ class _ChatListPanelState extends State<ChatListPanel> with ThemeHelpers {
                                 ),
                               ),
                               Flexible(
-                                child: SettingsOptions<int>(
-                                  onChanged: (int? val) async {
-                                    if (val == null) return;
-                                    SettingsSvc.settings.pinColumnsPortrait.value = val.toInt();
-                                    await SettingsSvc.settings.saveOneAsync('pinColumnsPortrait');
-                                  },
-                                  options: List.generate(4, (index) => index + 1),
-                                  initial: SettingsSvc.settings.pinColumnsPortrait.value,
-                                  title: '',
-                                  secondaryColor: context.theme.colorScheme.secondary,
-                                  textProcessing: (val) => val.toString(),
+                                child: ExcludeFocus(
+                                  excluding: SettingsSvc.settings.isDumb.value,
+                                  child: SettingsOptions<int>(
+                                    onChanged: (int? val) async {
+                                      if (val == null) return;
+                                      SettingsSvc.settings.pinColumnsPortrait.value = val.toInt();
+                                      await SettingsSvc.settings.saveOneAsync('pinColumnsPortrait');
+                                    },
+                                    options: List.generate(4, (index) => index + 1),
+                                    initial: SettingsSvc.settings.pinColumnsPortrait.value,
+                                    title: '',
+                                    secondaryColor: context.theme.colorScheme.secondary,
+                                    textProcessing: (val) => val.toString(),
+                                  ),
                                 ),
                               ),
                               const SizedBox(width: 20),

@@ -279,7 +279,7 @@ class _UnreadIconState extends CustomState<UnreadIcon, void, ConversationTileCon
     return Padding(
         padding: const EdgeInsets.only(left: 8.0, right: 6.0),
         child: Obx(
-          () => (ChatsSvc.getChatState(controller.chat.guid)?.hasUnreadMessage.value ?? false)
+          () => (controller.hasUnreadReactive)
               ? Container(
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(35),

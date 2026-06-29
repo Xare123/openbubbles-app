@@ -115,8 +115,11 @@ pub fn recover_keychain() {
     }
 }
 
-pub fn supports_import(keystore: &NativeKeystoreHolder) -> Result<bool, KeystoreError> {
+pub fn supports_import(keystore: &NativeKeystoreHolder, dir: &PathBuf) -> Result<bool, KeystoreError> {
     if !keystore.keystore.supports_import().map_err(|e| <NativeKeystoreError as Into<KeystoreError>>::into(e))? {
+        return Ok(false)
+    }
+    if dir.join("dumb").exists() {
         return Ok(false)
     }
 
@@ -166,7 +169,7 @@ pub fn setup_keystore(dir: String, keystore: Arc<dyn NativeKeystore>) {
     } else if soft_keystore.exists() {
         false
     } else {
-        let software = supports_import(&keystore);
+        let software = supports_import(&keystore, &dir);
         info!("Hardware check {software:?}");
         matches!(software, Ok(true))
     };

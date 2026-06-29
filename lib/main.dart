@@ -208,11 +208,23 @@ Future<Null> initApp(bool bubble, List<String> arguments) async {
 
       runApp(Obx(() => DpadNavigator(
             enabled: SettingsSvc.settings.isDumb.value,
-            child: MaterialApp(
-                home: Main(
-              lightTheme: light,
-              darkTheme: dark,
-            )),
+            child: Shortcuts(
+              shortcuts: <ShortcutActivator, Intent>{
+                // The D-pad center / OK button reports as `select` (game controllers as
+                // `gameButtonA`); map them to ActivateIntent so focused standard controls
+                // (buttons, dropdowns, tiles) activate. includeRepeats: false so holding the
+                // key (e.g. to open the message popup) doesn't immediately re-activate
+                // whatever gets focused next.
+                const SingleActivator(LogicalKeyboardKey.select, includeRepeats: false): const ActivateIntent(),
+                const SingleActivator(LogicalKeyboardKey.gameButtonA, includeRepeats: false):
+                    const ActivateIntent(),
+              },
+              child: MaterialApp(
+                  home: Main(
+                lightTheme: light,
+                darkTheme: dark,
+              )),
+            ),
           )));
     } else {
       runApp(FailureToStart(e: exception, s: stacktrace));
@@ -335,7 +347,8 @@ class Main extends StatelessWidget {
           LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyI): const OpenChatDetailsIntent(),
           LogicalKeySet(LogicalKeyboardKey.escape): const GoBackIntent(),
         },
-        builder: (context, child) => SafeArea(
+        builder: (context, child) => _ImmersiveBottomInset(
+          child: SafeArea(
           top: false,
           bottom: false,
           child: SecureApplication(
@@ -430,9 +443,35 @@ class Main extends StatelessWidget {
             ),
           ),
         ),
+        ),
         defaultTransition: Transition.cupertino,
       ),
     );
+  }
+}
+
+/// Removes the bottom system inset (navigation bar) when immersive mode is enabled, so SafeArea/
+/// MediaQuery-based layouts extend edge-to-edge behind the transparent navigation bar. This is the
+/// only effective lever on Android 15+, where the OS forces edge-to-edge and ignores nav bar color
+/// and manual UI mode. Reactive via Obx so toggling the setting updates immediately.
+class _ImmersiveBottomInset extends StatelessWidget {
+  const _ImmersiveBottomInset({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Obx(() {
+      if (!SettingsSvc.settings.immersiveMode.value) return child;
+      final mq = MediaQuery.of(context);
+      return MediaQuery(
+        data: mq.copyWith(
+          padding: mq.padding.copyWith(bottom: 0),
+          viewPadding: mq.viewPadding.copyWith(bottom: 0),
+        ),
+        child: child,
+      );
+    });
   }
 }
 

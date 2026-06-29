@@ -210,6 +210,7 @@ class _RecordingButton extends StatelessWidget {
           const SingleActivator(LogicalKeyboardKey.space): () => _toggleRecording(context),
         },
         child: TextButton(
+          focusNode: controller?.recordButtonFocusNode,
           style: TextButton.styleFrom(
             backgroundColor: !isIOS || (isIOS && !isChatCreator && !showRecording)
                 ? null
@@ -247,10 +248,37 @@ class _RecordingButton extends StatelessWidget {
 
   Future<void> _toggleRecording(BuildContext context) async {
     if (controller == null) return;
+    // Dumb (D-pad) devices use the desktop recording path (the `record` package) instead of
+    // audio_waveforms, which has been unreliable on mobile since the 2.x upgrade.
+    final useRecordPackage = isDesktop || SettingsSvc.settings.isDumb.value;
     controller!.showRecording.toggle();
 
     if (controller!.showRecording.value) {
-      if (isDesktop) {
+      if (useRecordPackage) {
+        // Pre-check without prompting so we know whether the system mic dialog will appear.
+        final alreadyGranted = await audioRecorder.hasPermission(request: false);
+        if (!alreadyGranted) {
+          // The prompt will appear and steal window focus; a same-frame requestFocus won't stick.
+          // Re-focus the record button only once the app regains focus (the dialog has closed),
+          // and tell the lifecycle service not to yank focus back to the text field on that resume.
+          controller!.suppressResumeRefocus = true;
+          var refocused = false;
+          AppLifecycleListener? lifecycle;
+          lifecycle = AppLifecycleListener(onResume: () {
+            if (refocused) return;
+            refocused = true;
+            controller?.recordButtonFocusNode.requestFocus();
+            lifecycle?.dispose();
+          });
+          if (!await audioRecorder.hasPermission()) {
+            controller!.showRecording.value = false; // revert the toggle — we're not recording
+            showSnackbar("Error", "Microphone access was denied!");
+            return; // onResume still fires after the dialog closes and disposes the listener
+          }
+        } else {
+          // Already granted — no prompt, so just keep focus on the button on the next frame.
+          WidgetsBinding.instance.addPostFrameCallback((_) => controller?.recordButtonFocusNode.requestFocus());
+        }
         final temp = File(join(
           FilesystemSvc.appDocDir.path,
           "temp",
@@ -258,7 +286,7 @@ class _RecordingButton extends StatelessWidget {
           "${controller!.chat.guid.characters.where((c) => c.isAlphabetOnly || c.isNumericOnly).join()}.m4a",
         ));
         temp.createSync(recursive: true);
-        audioRecorder.start(const RecordConfig(bitRate: 320000), path: temp.path);
+        await audioRecorder.start(const RecordConfig(bitRate: 320000), path: temp.path);
         return;
       }
       await recorderController!.record(
@@ -276,7 +304,7 @@ class _RecordingButton extends StatelessWidget {
     final discardFocusNode = FocusNode();
     final sendFocusNode = FocusNode();
 
-    if (isDesktop) {
+    if (useRecordPackage) {
       path = await audioRecorder.stop();
       if (path == null) return;
       final _file = File(path);
@@ -298,16 +326,18 @@ class _RecordingButton extends StatelessWidget {
       );
     }
 
+    // Autofocus the play/pause button once the dialog is on screen. Down/right from it moves to
+    // the Discard/Send buttons via the AudioPlayer's nextFocusNode wiring, so focus isn't trapped.
+    WidgetsBinding.instance.addPostFrameCallback((_) => previewFocusNode.requestFocus());
+
+    // While this dialog is up, mark an overlay so the lifecycle service doesn't pull focus back to
+    // the text field when the window regains focus (e.g. after the system volume overlay appears).
+    controller!.showingOverlays = true;
     try {
       await showDialog(
         context: context,
         barrierDismissible: false,
         builder: (BuildContext context) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (previewFocusNode.canRequestFocus) {
-              previewFocusNode.requestFocus();
-            }
-          });
           final focusedBackground = context.theme.colorScheme.outline.withValues(alpha: 0.2);
           return AlertDialog(
             backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
@@ -326,6 +356,8 @@ class _RecordingButton extends StatelessWidget {
                     key: Key("AudioMessage-$path"),
                     file: file,
                     attachment: null,
+                    playButtonFocusNode: previewFocusNode,
+                    nextFocusNode: discardFocusNode,
                   ),
                 )
               ],
@@ -434,9 +466,12 @@ class _RecordingButton extends StatelessWidget {
         },
       );
     } finally {
+      controller?.showingOverlays = false;
       previewFocusNode.dispose();
       discardFocusNode.dispose();
       sendFocusNode.dispose();
+      // Return focus to the message input once the dialog is gone (sent, discarded, or dismissed).
+      WidgetsBinding.instance.addPostFrameCallback((_) => controller?.focusNode.requestFocus());
     }
   }
 }

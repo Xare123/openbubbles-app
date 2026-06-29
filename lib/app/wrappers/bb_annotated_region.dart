@@ -1,4 +1,5 @@
 import 'package:bluebubbles/helpers/ui/theme_helpers.dart';
+import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -37,7 +38,10 @@ class BBAnnotatedRegion extends StatelessWidget {
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle(
-        systemNavigationBarColor: systemNavigationBarColor ?? Colors.transparent,
+        // Default: transparent only in immersive mode, otherwise the theme background. The hard
+        // -coded transparent default made immersive mode have no visible effect on app pages.
+        systemNavigationBarColor: systemNavigationBarColor ??
+            (SettingsSvc.settings.immersiveMode.value ? Colors.transparent : colorScheme.background),
         systemNavigationBarIconBrightness: systemNavigationBarIconBrightness ?? brightness.opposite,
         statusBarColor: statusBarColor ?? Colors.transparent,
         statusBarIconBrightness: statusBarIconBrightness ?? brightness.opposite,

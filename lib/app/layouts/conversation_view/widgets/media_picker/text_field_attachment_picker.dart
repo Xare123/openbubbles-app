@@ -49,6 +49,7 @@ class AttachmentPickerState extends State<AttachmentPicker> with ThemeHelpers {
   bool _permissionDenied = false;
   List<App> extensionApps = [];
   App? currentApp;
+  final FocusNode _photoFocusNode = FocusNode();
 
   ConversationViewController get controller => widget.controller;
 
@@ -57,6 +58,19 @@ class AttachmentPickerState extends State<AttachmentPicker> with ThemeHelpers {
     super.initState();
     generateIcons();
     getAttachments();
+    // D-pad mode: focus the Photo quick action when the picker opens. Done explicitly
+    // (not via InkWell autofocus) because the (+) button still holds focus on open.
+    if (SettingsSvc.settings.isDumb.value) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _photoFocusNode.requestFocus();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _photoFocusNode.dispose();
+    super.dispose();
   }
 
   void generateIcons() {
@@ -270,9 +284,11 @@ class AttachmentPickerState extends State<AttachmentPicker> with ThemeHelpers {
 
   @override
   Widget build(BuildContext context) {
+    // Dumb (D-pad) devices have less vertical room, so shrink the keyboard/image picker.
+    final pickerHeight = SettingsSvc.settings.isDumb.value ? 340 * 0.7 : 340.0;
     if (currentApp != null) {
       return SizedBox(
-        height: 340,
+        height: pickerHeight,
         child: AndroidView(
           viewType: "extension-keyboard",
           layoutDirection: TextDirection.ltr,
@@ -286,7 +302,7 @@ class AttachmentPickerState extends State<AttachmentPicker> with ThemeHelpers {
     }
 
     return SizedBox(
-      height: 340,
+      height: pickerHeight,
       child: RefreshIndicator(
         onRefresh: () async {
           await getAttachments();
@@ -300,7 +316,7 @@ class AttachmentPickerState extends State<AttachmentPicker> with ThemeHelpers {
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
             child: SizedBox(
-              height: 340,
+              height: pickerHeight,
               child: Padding(
                 padding: const EdgeInsets.all(10.0),
                 child: CustomScrollView(
@@ -351,6 +367,7 @@ class AttachmentPickerState extends State<AttachmentPicker> with ThemeHelpers {
                 icon: Icons.camera_alt_rounded,
                 label: 'Photo',
                 color: const Color(0xFF34C759),
+                focusNode: _photoFocusNode,
                 onTap: () => openFullCamera(type: 'camera'),
               ),
               _QuickActionItem(
@@ -682,6 +699,7 @@ class AttachmentPickerState extends State<AttachmentPicker> with ThemeHelpers {
             key: Key("AttachmentPickerFile-${element.id}"),
             data: element,
             controller: controller,
+            isTopRow: index.isEven, // horizontal 2-row grid: top row is the even indices
             onTap: () async {
               final file = await element.file;
               if (file == null) return;
@@ -718,6 +736,7 @@ class _QuickActionItem extends StatelessWidget {
     required this.label,
     required this.color,
     required this.onTap,
+    this.focusNode,
   });
 
   final IconData? icon;
@@ -725,6 +744,7 @@ class _QuickActionItem extends StatelessWidget {
   final String label;
   final Color color;
   final VoidCallback onTap;
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -732,6 +752,7 @@ class _QuickActionItem extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: InkWell(
+        focusNode: focusNode,
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         child: Container(

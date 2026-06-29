@@ -177,6 +177,10 @@ class IncomingMessageHandler {
   /// Number of payloads that are currently executing (occupying a slot).
   int _activeSlots = 0;
 
+  /// Whether any incoming payloads are queued or in flight.  Used by
+  /// [LifecycleService] to keep the background engine alive while receiving.
+  bool get isProcessing => _activeSlots > 0 || _incomingQueue.isNotEmpty;
+
   /// Observable queue depth — useful for debug UIs or diagnostic logging.
   final RxInt queueDepth = 0.obs;
 
@@ -214,6 +218,8 @@ class IncomingMessageHandler {
       _incomingQueue.addLast(entry);
     }
     queueDepth.value = _incomingQueue.length;
+    // New work arrived — keep the background engine alive while we process it.
+    if (GetIt.I.isRegistered<LifecycleService>()) LifecycleSvc.cancelEngineClose();
     _drain();
     return entry.completer.future;
   }
@@ -264,6 +270,10 @@ class IncomingMessageHandler {
       _activeSlots--;
       activeConcurrency.value = _activeSlots;
       _drain();
+      // Once the queue fully drains, allow the background engine to tear down.
+      if (_activeSlots == 0 && _incomingQueue.isEmpty && GetIt.I.isRegistered<LifecycleService>()) {
+        LifecycleSvc.scheduleEngineCloseIfIdle();
+      }
     });
   }
 

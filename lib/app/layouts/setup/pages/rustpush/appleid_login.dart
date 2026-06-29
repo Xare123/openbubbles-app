@@ -31,6 +31,7 @@ class _AppleIdLoginState extends State<AppleIdLogin> with ThemeHelpers {
   final FocusNode pwFocusNode = FocusNode();
   final FocusNode backFocusNode = FocusNode();
   final FocusNode signInFocusNode = FocusNode();
+  final FocusNode obscureFocusNode = FocusNode();
   bool loading = false;
 
   bool obscureText = true;
@@ -224,7 +225,8 @@ class _AppleIdLoginState extends State<AppleIdLogin> with ThemeHelpers {
                         bindings: {
                           const SingleActivator(LogicalKeyboardKey.arrowUp): () => focusNode.requestFocus(),
                           const SingleActivator(LogicalKeyboardKey.arrowDown): focusPrimaryButton,
-                          const SingleActivator(LogicalKeyboardKey.arrowRight): focusPrimaryButton,
+                          // Right selects the show/hide password button.
+                          const SingleActivator(LogicalKeyboardKey.arrowRight): () => obscureFocusNode.requestFocus(),
                           const SingleActivator(LogicalKeyboardKey.arrowLeft): () => backFocusNode.requestFocus(),
                         },
                         child: TextField(
@@ -244,14 +246,21 @@ class _AppleIdLoginState extends State<AppleIdLogin> with ThemeHelpers {
                                 borderRadius: BorderRadius.circular(20)),
                             labelText: "Password",
                             contentPadding: const EdgeInsets.fromLTRB(12, 24, 40, 16),
-                            suffixIcon: IconButton(
-                              icon: Icon(obscureText ? Icons.visibility_off : Icons.visibility),
-                              color: context.theme.colorScheme.outline,
-                              onPressed: () {
-                                setState(() {
-                                  obscureText = !obscureText;
-                                });
+                            suffixIcon: CallbackShortcuts(
+                              // Left returns focus to the password field.
+                              bindings: {
+                                const SingleActivator(LogicalKeyboardKey.arrowLeft): () => pwFocusNode.requestFocus(),
                               },
+                              child: IconButton(
+                                focusNode: obscureFocusNode,
+                                icon: Icon(obscureText ? Icons.visibility_off : Icons.visibility),
+                                color: context.theme.colorScheme.outline,
+                                onPressed: () {
+                                  setState(() {
+                                    obscureText = !obscureText;
+                                  });
+                                },
+                              ),
                             ),
                           ),
                           obscureText: obscureText,
@@ -598,6 +607,7 @@ class _AppleIdLoginState extends State<AppleIdLogin> with ThemeHelpers {
       // }
 
       SettingsSvc.settings.iCloudAccount.value = appleId;
+      await SettingsSvc.settings.saveOneAsync('iCloudAccount');
       if (result is api.LoginState_Needs2FAVerification || result is api.LoginState_NeedsSMS2FAVerification) {
         // we need 2fa
         controller.goingTo2fa = true;

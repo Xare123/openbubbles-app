@@ -81,6 +81,8 @@ class Chat {
   /// Persists both fields to the DB asynchronously (fire-and-forget).
   void setLatestMessage(Message m) {
     dbLatestMessage.target = m;
+    // Workaround because save doesn't do this, so, then when you set this it won't get the targetId when serializing it.
+    dbLatestMessage.attach(Database.store);
     dbOnlyLatestMessageDate = m.dateCreated;
     unawaited(saveAsync(updateLatestMessage: true));
   }

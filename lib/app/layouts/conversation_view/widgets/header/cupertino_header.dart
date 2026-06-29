@@ -107,6 +107,11 @@ class CupertinoHeader extends StatelessWidget implements PreferredSizeWidget {
                                     const SingleActivator(LogicalKeyboardKey.enter): goBack,
                                     const SingleActivator(LogicalKeyboardKey.select): goBack,
                                     const SingleActivator(LogicalKeyboardKey.space): goBack,
+                                    // Left or down from the back button moves focus to the attachment (+) button.
+                                    const SingleActivator(LogicalKeyboardKey.arrowLeft):
+                                        controller.attachmentPickerFocusNode.requestFocus,
+                                    const SingleActivator(LogicalKeyboardKey.arrowDown):
+                                        controller.attachmentPickerFocusNode.requestFocus,
                                   },
                                   child: InkWell(
                                     focusNode: controller.headerBackFocusNode,

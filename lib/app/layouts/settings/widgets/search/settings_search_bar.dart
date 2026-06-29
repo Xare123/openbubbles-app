@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:bluebubbles/app/layouts/settings/widgets/search/settings_search_bar_ios.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class SettingsSearchBar extends StatefulWidget {
   final ValueChanged<String>? onChanged;
@@ -57,7 +58,24 @@ class _SettingsSearchBarState extends State<SettingsSearchBar> {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.all(20),
-      child: widget.iOS
+      child: Focus(
+        canRequestFocus: false,
+        // Single-line search field doesn't need up/down for the caret, so use them to move
+        // focus out of the field: down into the settings/results below, up back out above.
+        onKeyEvent: (node, event) {
+          if (event is KeyDownEvent) {
+            if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+              FocusScope.of(context).focusInDirection(TraversalDirection.down);
+              return KeyEventResult.handled;
+            }
+            if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+              FocusScope.of(context).focusInDirection(TraversalDirection.up);
+              return KeyEventResult.handled;
+            }
+          }
+          return KeyEventResult.ignored;
+        },
+        child: widget.iOS
           ? SettingsSearchBariOS(
               // use cupertino search bar if iOS style
               controller: _controller,
@@ -101,6 +119,7 @@ class _SettingsSearchBarState extends State<SettingsSearchBar> {
                   ),
               ],
             ),
+      ),
     );
   }
 }

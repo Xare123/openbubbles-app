@@ -73,6 +73,13 @@ class _NewChatCreatorState extends State<NewChatCreator> with ThemeHelpers<NewCh
 
   @override
   void dispose() {
+    // Leaving the new message page in D-pad mode: focus the first chat (if any) once the
+    // Messages list is back on top. Deferred so it runs after this route is torn down.
+    if (SettingsSvc.settings.isDumb.value && !ChatsSvc.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        EventDispatcherSvc.emit('focus-first-chat', null);
+      });
+    }
     Get.delete<ChatCreatorController>(tag: _tag);
     super.dispose();
   }
@@ -237,6 +244,15 @@ class _TextFieldArea extends StatelessWidget {
                   event.logicalKey == LogicalKeyboardKey.tab) {
                 controller.addressNode.requestFocus();
                 return KeyEventResult.handled;
+              }
+              if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.arrowUp) {
+                // Up from the message field returns to the last suggestion (only when the
+                // suggestion list is shown; otherwise let the caret move up normally).
+                final rows = controller.suggestionsListNode.traversalDescendants.toList();
+                if (rows.isNotEmpty) {
+                  rows.last.requestFocus();
+                  return KeyEventResult.handled;
+                }
               }
               return KeyEventResult.ignored;
             },

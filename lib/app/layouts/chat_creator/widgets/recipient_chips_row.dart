@@ -96,6 +96,11 @@ class _RecipientChipsRowState extends State<RecipientChipsRow> {
                                   event.logicalKey == LogicalKeyboardKey.tab) {
                                 controller.messageNode.requestFocus();
                                 return KeyEventResult.handled;
+                              } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                                // Single-line field doesn't need the down arrow for the
+                                // caret, so use it to move into the suggestion list.
+                                FocusScope.of(context).focusInDirection(TraversalDirection.down);
+                                return KeyEventResult.handled;
                               }
                             }
                             return KeyEventResult.ignored;

@@ -50,37 +50,43 @@ class ErrorIndicatorObserver extends StatelessWidget {
         final errorCode = message.error;
         final errorText = ErrorHelper.getErrorText(message);
 
+        void openErrorDialog(BuildContext ctx) {
+          showDialog(
+            context: ctx,
+            builder: (BuildContext context) => MessageErrorDialog(
+              errorCode: errorCode,
+              errorText: errorText,
+              chatId: chat.id!,
+              onRetry: () => retryMessage(
+                message: message,
+                chat: chat,
+                service: service,
+                controller: ms,
+              ),
+              onRemove: () async {
+                // Delete the message from DB and remove from service
+                await service.deleteMessage(message);
+                // Get the "new" latest info
+                List<Message> latest = await Chat.getMessagesAsync(chat, limit: 1);
+                ChatsSvc.setChatLatestMessage(chat, latest.first);
+                await chat.saveAsync();
+              },
+            ),
+          );
+        }
+
+        // Register so a focused errored message can open the error dialog via D-pad/Enter.
+        if (message.guid != null) cvc(chat).errorOpeners[message.guid!] = openErrorDialog;
+
         return IconButton(
           icon: Icon(
             SettingsSvc.settings.skin.value == Skins.iOS ? CupertinoIcons.exclamationmark_circle : Icons.error_outline,
             color: context.theme.colorScheme.error,
           ),
-          onPressed: () {
-            showDialog(
-              context: context,
-              builder: (BuildContext context) => MessageErrorDialog(
-                errorCode: errorCode,
-                errorText: errorText,
-                chatId: chat.id!,
-                onRetry: () => retryMessage(
-                  message: message,
-                  chat: chat,
-                  service: service,
-                  controller: ms,
-                ),
-                onRemove: () async {
-                  // Delete the message from DB and remove from service
-                  await service.deleteMessage(message);
-                  // Get the "new" latest info
-                  List<Message> latest = await Chat.getMessagesAsync(chat, limit: 1);
-                  ChatsSvc.setChatLatestMessage(chat, latest.first);
-                  await chat.saveAsync();
-                },
-              ),
-            );
-          },
+          onPressed: () => openErrorDialog(context),
         );
       }
+      if (message.guid != null) cvc(chat).errorOpeners.remove(message.guid);
       return const SizedBox.shrink();
     });
   }

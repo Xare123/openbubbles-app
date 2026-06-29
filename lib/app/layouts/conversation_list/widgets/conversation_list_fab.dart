@@ -112,14 +112,17 @@ class _ConversationListFABState extends CustomState<ConversationListFAB, void, C
                       : () => controller.openCamera(context),
                   child: CallbackShortcuts(
                     bindings: _newMessageShortcuts,
-                    child: FloatingActionButton(
+                    child: _FabFocusRing(
                       focusNode: controller.newMessageFocusNode,
-                      backgroundColor: context.theme.colorScheme.primary,
-                      onPressed: () => controller.openNewChatCreator(context),
-                      child: Icon(
-                        isIOS ? CupertinoIcons.pencil : Icons.message,
-                        color: context.theme.colorScheme.onPrimary,
-                        size: 25,
+                      child: FloatingActionButton(
+                        focusNode: controller.newMessageFocusNode,
+                        backgroundColor: context.theme.colorScheme.primary,
+                        onPressed: () => controller.openNewChatCreator(context),
+                        child: Icon(
+                          isIOS ? CupertinoIcons.pencil : Icons.message,
+                          color: context.theme.colorScheme.onPrimary,
+                          size: 25,
+                        ),
                       ),
                     ),
                   ),
@@ -166,14 +169,17 @@ class _ConversationListFABState extends CustomState<ConversationListFAB, void, C
                       : () => controller.openCamera(context),
                   child: CallbackShortcuts(
                     bindings: _newMessageShortcuts,
-                    child: FloatingActionButton(
+                    child: _FabFocusRing(
                       focusNode: controller.newMessageFocusNode,
-                      backgroundColor: context.theme.colorScheme.primary,
-                      onPressed: () => controller.openNewChatCreator(context),
-                      child: Icon(
-                        isIOS ? CupertinoIcons.pencil : Icons.message,
-                        color: context.theme.colorScheme.onPrimary,
-                        size: 25,
+                      child: FloatingActionButton(
+                        focusNode: controller.newMessageFocusNode,
+                        backgroundColor: context.theme.colorScheme.primary,
+                        onPressed: () => controller.openNewChatCreator(context),
+                        child: Icon(
+                          isIOS ? CupertinoIcons.pencil : Icons.message,
+                          color: context.theme.colorScheme.onPrimary,
+                          size: 25,
+                        ),
                       ),
                     ),
                   ),
@@ -353,6 +359,34 @@ class _MaterialComposeFAB extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Draws a prominent outline over the compose FAB while it holds D-pad/keyboard focus,
+/// so the selected state is obvious instead of relying on the FAB's subtle default
+/// highlight. Uses a foreground [DecoratedBox] so it paints over the button without
+/// changing its size or position, and repaints via the focus node (no setState).
+class _FabFocusRing extends StatelessWidget {
+  const _FabFocusRing({required this.focusNode, required this.child});
+
+  final FocusNode focusNode;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: focusNode,
+      child: child,
+      builder: (context, child) {
+        return AnimatedScale(
+          duration: const Duration(milliseconds: 150),
+          // Scaling is a visual transform, so the button grows without shifting layout.
+          scale: focusNode.hasFocus ? 1.2 : 1.0,
+          alignment: Alignment.bottomRight,
+          child: child,
+        );
+      },
     );
   }
 }

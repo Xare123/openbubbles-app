@@ -41,12 +41,13 @@ class Attachment {
   Uint8List? bytes;
   String? webUrl;
   bool hasLivePhoto;
-  bool isDownloaded;
 
   @Transient()
   String? sourcePath;
 
   String? ckRecordId;
+
+  bool isDownloaded;
 
   final message = ToOne<Message>();
 

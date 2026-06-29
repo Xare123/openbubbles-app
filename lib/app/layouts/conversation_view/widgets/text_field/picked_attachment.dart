@@ -8,6 +8,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:mime_type/mime_type.dart';
 import 'package:universal_io/io.dart';
@@ -34,11 +35,68 @@ class _PickedAttachmentState extends State<PickedAttachment> with AutomaticKeepA
   String? imagePath;
   bool isLoading = true;
   bool isEmpty = false;
+  final FocusNode _deleteFocusNode = FocusNode();
 
   @override
   void initState() {
     super.initState();
     load();
+  }
+
+  @override
+  void dispose() {
+    _deleteFocusNode.dispose();
+    super.dispose();
+  }
+
+  void _removeAttachment() {
+    if (widget.controller != null) {
+      widget.controller!.pickedAttachments.removeAt(widget.pickedAttachmentIndex);
+      final remaining =
+          widget.controller!.pickedAttachments.where((e) => e.path != null).map((e) => e.path!).toList();
+      unawaited(ChatsSvc.setChatTextFieldAttachments(widget.controller!.chat, remaining));
+      // Don't request focus if attachment picker is open
+      if (!widget.controller!.showAttachmentPicker) {
+        widget.controller!.lastFocusedNode.requestFocus();
+      }
+    } else {
+      widget.onRemove.call(widget.data);
+    }
+  }
+
+  /// Wraps the delete button for D-pad use: left/right move between delete buttons, down
+  /// returns to the text field, and the button is rebuilt with the focused state so it can
+  /// recolor. The inner button keeps [_deleteFocusNode] so the select key activates it.
+  Widget _focusableDelete(Widget Function(bool focused) builder) {
+    return Focus(
+      canRequestFocus: false,
+      onKeyEvent: (node, event) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+          widget.controller?.lastFocusedNode.requestFocus();
+          return KeyEventResult.handled;
+        }
+        // Move between delete buttons by their order under the shared parent node — more
+        // reliable than directional geometry, which missed left moves.
+        if (event.logicalKey == LogicalKeyboardKey.arrowLeft ||
+            event.logicalKey == LogicalKeyboardKey.arrowRight) {
+          final nodes = widget.controller?.pickedAttachmentsListNode.traversalDescendants.toList() ?? <FocusNode>[];
+          final idx = nodes.indexOf(_deleteFocusNode);
+          if (idx != -1) {
+            final target = event.logicalKey == LogicalKeyboardKey.arrowLeft ? idx - 1 : idx + 1;
+            if (target >= 0 && target < nodes.length) {
+              nodes[target].requestFocus();
+              return KeyEventResult.handled;
+            }
+          }
+        }
+        return KeyEventResult.ignored;
+      },
+      child: AnimatedBuilder(
+        animation: _deleteFocusNode,
+        builder: (context, _) => builder(_deleteFocusNode.hasFocus),
+      ),
+    );
   }
 
   Future<void> load() async {
@@ -134,6 +192,8 @@ class _PickedAttachmentState extends State<PickedAttachment> with AutomaticKeepA
                 },
                 closedBuilder: (_, openContainer) {
                   return InkWell(
+                    // Don't take D-pad focus — only the delete button should be focusable.
+                    canRequestFocus: false,
                     onTap: mime(widget.data.name)?.startsWith("image") ?? false ? openContainer : null,
                     child: Stack(
                       clipBehavior: Clip.none,
@@ -159,36 +219,24 @@ class _PickedAttachmentState extends State<PickedAttachment> with AutomaticKeepA
                           Positioned(
                             top: 5,
                             right: 5,
-                            child: TextButton(
-                              style: TextButton.styleFrom(
-                                backgroundColor: context.theme.colorScheme.outline,
-                                shape: const CircleBorder(),
-                                padding: const EdgeInsets.all(0),
-                                maximumSize: const Size(32, 32),
-                                minimumSize: const Size(32, 32),
-                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            child: _focusableDelete(
+                              (focused) => TextButton(
+                                focusNode: _deleteFocusNode,
+                                style: TextButton.styleFrom(
+                                  backgroundColor: focused ? Colors.black : context.theme.colorScheme.outline,
+                                  shape: const CircleBorder(),
+                                  padding: const EdgeInsets.all(0),
+                                  maximumSize: const Size(32, 32),
+                                  minimumSize: const Size(32, 32),
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                ),
+                                child: const Icon(
+                                  CupertinoIcons.xmark,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
+                                onPressed: _removeAttachment,
                               ),
-                              child: const Icon(
-                                CupertinoIcons.xmark,
-                                color: Colors.white,
-                                size: 18,
-                              ),
-                              onPressed: () {
-                                if (widget.controller != null) {
-                                  widget.controller!.pickedAttachments.removeAt(widget.pickedAttachmentIndex);
-                                  final remaining = widget.controller!.pickedAttachments
-                                      .where((e) => e.path != null)
-                                      .map((e) => e.path!)
-                                      .toList();
-                                  unawaited(ChatsSvc.setChatTextFieldAttachments(widget.controller!.chat, remaining));
-                                  // Don't request focus if attachment picker is open
-                                  if (!widget.controller!.showAttachmentPicker) {
-                                    widget.controller!.lastFocusedNode.requestFocus();
-                                  }
-                                } else {
-                                  widget.onRemove.call(widget.data);
-                                }
-                              },
                             ),
                           ),
                       ],
@@ -200,34 +248,24 @@ class _PickedAttachmentState extends State<PickedAttachment> with AutomaticKeepA
             Positioned(
               top: -7,
               right: -7,
-              child: TextButton(
-                style: TextButton.styleFrom(
-                  backgroundColor: context.theme.colorScheme.secondary,
-                  shape: CircleBorder(side: BorderSide(color: context.theme.colorScheme.surfaceContainerHighest)),
-                  padding: const EdgeInsets.all(0),
-                  maximumSize: const Size(25, 25),
-                  minimumSize: const Size(25, 25),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              child: _focusableDelete(
+                (focused) => TextButton(
+                  focusNode: _deleteFocusNode,
+                  style: TextButton.styleFrom(
+                    backgroundColor: focused ? Colors.black : context.theme.colorScheme.secondary,
+                    shape: CircleBorder(side: BorderSide(color: context.theme.colorScheme.surfaceContainerHighest)),
+                    padding: const EdgeInsets.all(0),
+                    maximumSize: const Size(25, 25),
+                    minimumSize: const Size(25, 25),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: Icon(
+                    Icons.close,
+                    color: context.theme.colorScheme.surface,
+                    size: 18,
+                  ),
+                  onPressed: _removeAttachment,
                 ),
-                child: Icon(
-                  Icons.close,
-                  color: context.theme.colorScheme.surface,
-                  size: 18,
-                ),
-                onPressed: () {
-                  if (widget.controller != null) {
-                    widget.controller!.pickedAttachments.removeAt(widget.pickedAttachmentIndex);
-                    final remaining =
-                        widget.controller!.pickedAttachments.where((e) => e.path != null).map((e) => e.path!).toList();
-                    unawaited(ChatsSvc.setChatTextFieldAttachments(widget.controller!.chat, remaining));
-                    // Don't request focus if attachment picker is open
-                    if (!widget.controller!.showAttachmentPicker) {
-                      widget.controller!.lastFocusedNode.requestFocus();
-                    }
-                  } else {
-                    widget.onRemove.call(widget.data);
-                  }
-                },
               ),
             ),
         ],

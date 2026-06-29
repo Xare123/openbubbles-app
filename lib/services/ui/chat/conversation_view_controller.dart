@@ -90,7 +90,28 @@ class ConversationViewController extends StatefulController with GetSingleTicker
   final focusNode = FocusNode();
   final subjectFocusNode = FocusNode();
   final headerBackFocusNode = FocusNode();
+  final attachmentPickerFocusNode = FocusNode();
+  final recordButtonFocusNode = FocusNode();
+
+  /// When set, the next app-resume will NOT pull focus back to the text field. Used by the
+  /// voice-memo flow so focus can return to the record button after the mic permission prompt.
+  /// Consumed (reset) on the next resume by [AppLifecycleService.open].
+  bool suppressResumeRefocus = false;
   FocusNode? bottomMessageFocusNode;
+  // Per-message callbacks (keyed by message GUID) that open the long-press options modal,
+  // registered by each MessagePopupHolder. Lets a focused message open its modal via a
+  // held D-pad/Enter key.
+  final Map<String, VoidCallback> messagePopupOpeners = {};
+  // Per-message (keyed by GUID) "do what a tap does" action for attachments: download the
+  // photo if not downloaded, or open it if downloaded. Lets a focused message trigger it
+  // with a D-pad/Enter press. Registered by the attachment widgets based on current state.
+  final Map<String, VoidCallback> attachmentTapActions = {};
+  // Opens the error dialog for a failed message; keyed by message GUID. Registered by
+  // ErrorIndicatorObserver so a focused errored message can open its error via D-pad/Enter.
+  final Map<String, void Function(BuildContext)> errorOpeners = {};
+  // Parent focus node of the staged-attachment delete buttons; lets the text field jump up
+  // to the first delete button via traversalDescendants.
+  final FocusNode pickedAttachmentsListNode = FocusNode(canRequestFocus: false, skipTraversal: true);
   late final textController = MentionTextEditingController(focusNode: focusNode, supportsFormatting: chat.isIMessage);
   late final subjectTextController = SpellCheckTextEditingController(focusNode: subjectFocusNode);
   final Rx<(PlatformFile?, PayloadData)?> pickedApp = Rx<(PlatformFile?, PayloadData)?>(null);
@@ -237,7 +258,7 @@ class ConversationViewController extends StatefulController with GetSingleTicker
 
     final sharedContact = handle.contactsV2.firstWhereOrNull((h) => h.isSharedSuggestion);
 
-    if (sharedContact != null) {
+    if (sharedContact != null && !SettingsSvc.settings.isDumb.value) {
       suggestedContact.value = sharedContact;
     }
 
@@ -245,7 +266,7 @@ class ConversationViewController extends StatefulController with GetSingleTicker
         !SettingsSvc.settings.sharedContacts.contains(chat.handles.first.address) &&
         !SettingsSvc.settings.dismissedContacts.contains(chat.handles.first.address) &&
         SettingsSvc.settings.nameAndPhotoSharing.value &&
-        chat.isIMessage;
+        chat.isIMessage && !SettingsSvc.settings.isDumb.value;
   }
 
   void updatePoster() async {
@@ -275,6 +296,9 @@ class ConversationViewController extends StatefulController with GetSingleTicker
     }
     scrollController.dispose();
     headerBackFocusNode.dispose();
+    attachmentPickerFocusNode.dispose();
+    recordButtonFocusNode.dispose();
+    pickedAttachmentsListNode.dispose();
     shareSubscription?.cancel();
     _debounceTyping?.cancel();
     super.onClose();

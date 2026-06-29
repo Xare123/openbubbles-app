@@ -3977,6 +3977,11 @@ class RustPushService {
           source: MessageSource.apiResponse,
           chat: chat,
           message: reflected,
+          // The refactored IncomingMessageHandler persists attachments from the
+          // payload, not from message.dbAttachments — pass the reflected
+          // message's attachments through (mirrors the server-payload path in
+          // action_handler.handleEvent).
+          attachments: reflected.attachments.whereType<Attachment>().toList(),
         ),
         front: true,
       );
@@ -4217,7 +4222,7 @@ class RustPushService {
               ),
             ],
             title: Text("Enter the ${bottle.numericLength > 0 ? "passcode" : "password"} for “${bottle.deviceName}”",
-                style: context.theme.textTheme.titleLarge),
+                style: context.theme.textTheme.titleLarge?.apply(fontSizeFactor: SettingsSvc.settings.isDumb.value ? 0.5 : 1)),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -4252,7 +4257,7 @@ class RustPushService {
                                             child: Center(
                                               child: Text(text,
                                                   style: context.theme.textTheme.titleLarge
-                                                      ?.copyWith(fontSize: 40, fontWeight: FontWeight.bold)),
+                                                      ?.copyWith(fontSize: 40, fontWeight: FontWeight.bold).apply(fontSizeFactor: SettingsSvc.settings.isDumb.value ? 0.5 : 1)),
                                             )));
                                   }),
                                 ),
@@ -4325,7 +4330,7 @@ class RustPushService {
                 },
               ),
             ],
-            title: Text("Choose a device", style: context.theme.textTheme.titleLarge),
+            title: Text("Choose a device", style: context.theme.textTheme.titleLarge?.apply(fontSizeFactor: SettingsSvc.settings.isDumb.value ? 0.5 : 1)),
             content: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -4404,7 +4409,7 @@ class RustPushService {
                               },
                             ),
                           ],
-                          title: Text("Encrypted data reset", style: Get.context!.theme.textTheme.titleLarge),
+                          title: Text("Encrypted data reset", style: Get.context!.theme.textTheme.titleLarge?.apply(fontSizeFactor: SettingsSvc.settings.isDumb.value ? 0.5 : 1)),
                           content: Text.rich(
                             TextSpan(
                               text: "This device's iCloud Keychain code is ",
@@ -4433,7 +4438,7 @@ class RustPushService {
                 },
               ),
             ],
-            title: Text("Reset data?", style: context.theme.textTheme.titleLarge),
+            title: Text("Reset data?", style: context.theme.textTheme.titleLarge?.apply(fontSizeFactor: SettingsSvc.settings.isDumb.value ? 0.5 : 1)),
             content: Text(
                 mandatory
                     ? "Your encrypted data needs to be reset."

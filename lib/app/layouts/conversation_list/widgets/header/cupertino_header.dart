@@ -19,11 +19,13 @@ class CupertinoHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double topMargin = context.orientation == Orientation.landscape && context.isPhone
+    double topMargin = context.orientation == Orientation.landscape && context.isPhone
         ? 20
         : kIsDesktop || kIsWeb
             ? 40
             : kToolbarHeight + 30;
+    // Dumb (D-pad) devices have less vertical room — halve the space above the title.
+    if (SettingsSvc.settings.isDumb.value) topMargin /= 2;
 
     return SliverToBoxAdapter(
       child: FadeOnScroll(
@@ -38,7 +40,34 @@ class CupertinoHeader extends StatelessWidget {
           ),
           child: Obx(() {
             NavigationSvc.listener.value;
-            return Row(
+            return Focus(
+              canRequestFocus: false,
+              onFocusChange: (hasFocus) {
+                // When a header icon gains focus (navigating up), scroll the list fully to
+                // the top so the large title is revealed.
+                if (hasFocus &&
+                    SettingsSvc.settings.isDumb.value &&
+                    controller.iosScrollController.hasClients &&
+                    controller.iosScrollController.offset > 0) {
+                  controller.iosScrollController.animateTo(
+                    0,
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOut,
+                  );
+                }
+              },
+              onKeyEvent: (node, event) {
+                // With no chats there's nothing below the header to move to, so send
+                // focus down to the compose FAB.
+                if (event is KeyDownEvent &&
+                    event.logicalKey == LogicalKeyboardKey.arrowDown &&
+                    ChatsSvc.isEmpty) {
+                  controller.newMessageFocusNode.requestFocus();
+                  return KeyEventResult.handled;
+                }
+                return KeyEventResult.ignored;
+              },
+              child: Row(
               mainAxisAlignment:
                   NavigationSvc.isAvatarOnly(context) ? MainAxisAlignment.center : MainAxisAlignment.spaceBetween,
               children: <Widget>[
@@ -60,7 +89,9 @@ class CupertinoHeader extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
                       const SyncIndicator(size: 16),
+                      if (!SettingsSvc.settings.isDumb.value)
                       const SizedBox(width: 10.0),
+                      if (!SettingsSvc.settings.isDumb.value)
                       ClipOval(
                         child: Material(
                           color: context.theme.colorScheme.surfaceContainerHighest,
@@ -144,6 +175,7 @@ class CupertinoHeader extends StatelessWidget {
                     ],
                   ),
               ],
+              ),
             );
           }),
         ),

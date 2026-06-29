@@ -468,7 +468,13 @@ class TextFieldComponentState extends State<TextFieldComponent> {
 
       if (isCursorAtStart) {
         if (controller != null) {
-          controller!.headerBackFocusNode.requestFocus();
+          // Move to the attachment (+) button immediately left of the field; fall back to
+          // the header back button when the icon bar isn't present (e.g. chat creator).
+          if (controller!.attachmentPickerFocusNode.context != null) {
+            controller!.attachmentPickerFocusNode.requestFocus();
+          } else {
+            controller!.headerBackFocusNode.requestFocus();
+          }
           return KeyEventResult.handled;
         }
         if (FocusScope.of(context).focusInDirection(TraversalDirection.left)) {
@@ -541,10 +547,16 @@ class TextFieldComponentState extends State<TextFieldComponent> {
     // controller and preserves the message's annotations.
     if (ev.logicalKey == LogicalKeyboardKey.arrowUp) {
       final selection = activeTextField.selection;
-      if (selection.isValid &&
-          selection.isCollapsed &&
-          selection.extentOffset == 0 &&
-          controller?.bottomMessageFocusNode != null) {
+      final atStart = selection.isValid && selection.isCollapsed && selection.extentOffset == 0;
+      // At the start of the field, go up to the staged attachment delete buttons first.
+      if (atStart && (controller?.pickedAttachments.isNotEmpty ?? false)) {
+        final deletes = controller!.pickedAttachmentsListNode.traversalDescendants;
+        if (deletes.isNotEmpty) {
+          deletes.first.requestFocus();
+          return KeyEventResult.handled;
+        }
+      }
+      if (atStart && controller?.bottomMessageFocusNode != null) {
         controller!.bottomMessageFocusNode!.requestFocus();
         return KeyEventResult.handled;
       }

@@ -73,6 +73,12 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
   final RxBool latestMessageDeliveredState = false.obs;
   final RxBool jumpingToOldestUnread = false.obs;
   final Map<String, FocusNode> messageFocusNodes = {};
+  // Guards against a held enter/select key opening the options modal more than once.
+  bool _holdHandled = false;
+  // True only between a KeyDown and KeyUp that BOTH reached a focused message. Prevents a stray
+  // KeyUp — e.g. the release of the Enter press that dismissed the error dialog, whose KeyDown
+  // went to the dialog — from re-triggering the tap action on the message underneath.
+  bool _sawActivateDown = false;
 
   ConversationViewController get controller => widget.controller;
   AutoScrollController get scrollController => controller.scrollController;
@@ -104,12 +110,28 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
     unawaited(scrollController.scrollToIndex(index, preferPosition: AutoScrollPosition.middle));
   }
 
-  Future<bool> _toggleAudioMessage(Message message) async {
-    final attachment = message.attachments
+  /// Finds the registered audio-player key for [message]. Players register under the *rendered*
+  /// attachment's GUID, which for local (unsynced) attachments is synthesized as
+  /// "${messageGuid}_${partIndex}" rather than the raw (often null) attachment GUID. So match on
+  /// the audio attachment's own GUID when present, then on any key belonging to this message.
+  String? _audioPlayerKeyForMessage(Message message) {
+    final mguid = message.guid;
+    final att = message.attachments
         .firstWhereOrNull((e) => e != null && (e.mimeStart == "audio" || e.uti == "com.apple.coreaudio-format"));
-    if (attachment == null || attachment.guid == null) return false;
+    final ag = att?.guid;
+    for (final k in [...controller.audioPlayersDesktop.keys, ...controller.audioPlayers.keys]) {
+      if ((ag != null && k == ag) || (mguid != null && (k == mguid || k.startsWith('${mguid}_')))) {
+        return k;
+      }
+    }
+    return null;
+  }
 
-    final mobilePlayer = controller.audioPlayers[attachment.guid];
+  Future<bool> _toggleAudioMessage(Message message) async {
+    final key = _audioPlayerKeyForMessage(message);
+    if (key == null) return false;
+
+    final mobilePlayer = controller.audioPlayers[key];
     if (mobilePlayer != null) {
       if (mobilePlayer.playerState == aw.PlayerState.playing) {
         await mobilePlayer.pausePlayer();
@@ -120,7 +142,7 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
       return true;
     }
 
-    final desktopPlayer = controller.audioPlayersDesktop[attachment.guid];
+    final desktopPlayer = controller.audioPlayersDesktop[key];
     if (desktopPlayer != null) {
       if (desktopPlayer.state.playing) {
         await desktopPlayer.pause();
@@ -133,13 +155,7 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
     return false;
   }
 
-  bool _canToggleAudioMessage(Message message) {
-    final attachment = message.attachments
-        .firstWhereOrNull((e) => e != null && (e.mimeStart == "audio" || e.uti == "com.apple.coreaudio-format"));
-    if (attachment?.guid == null) return false;
-    return controller.audioPlayers.containsKey(attachment!.guid) ||
-        controller.audioPlayersDesktop.containsKey(attachment.guid);
-  }
+  bool _canToggleAudioMessage(Message message) => _audioPlayerKeyForMessage(message) != null;
 
   bool get smartRepliesEnabled => !kIsWeb && !kIsDesktop && SettingsSvc.settings.smartReply.value;
 
@@ -778,6 +794,52 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
                                           child: Focus(
                                             focusNode: messageFocusNode,
                                             onKeyEvent: (node, ev) {
+                                              final isActivate = ev.logicalKey == LogicalKeyboardKey.enter ||
+                                                  ev.logicalKey == LogicalKeyboardKey.select ||
+                                                  ev.logicalKey == LogicalKeyboardKey.space;
+                                              final noModifiers = !HardwareKeyboard.instance.isAltPressed &&
+                                                  !HardwareKeyboard.instance.isControlPressed &&
+                                                  !HardwareKeyboard.instance.isMetaPressed;
+                                              // A fresh press (received here) resets the hold guard and marks that the
+                                              // matching key-up belongs to this message.
+                                              if (ev is KeyDownEvent && isActivate) {
+                                                _holdHandled = false;
+                                                _sawActivateDown = true;
+                                              }
+                                              // Pressing and holding enter/select opens the options modal,
+                                              // mirroring a finger long-press.
+                                              if (ev is KeyRepeatEvent && isActivate && noModifiers && !_holdHandled) {
+                                                final opener = controller.messagePopupOpeners[message.guid];
+                                                if (opener != null) {
+                                                  _holdHandled = true;
+                                                  opener();
+                                                  return KeyEventResult.handled;
+                                                }
+                                              }
+                                              // Errored message: a quick tap (key-up without a hold) opens its error
+                                              // dialog. Doing this on key-up preserves hold-to-open-options above — i.e.
+                                              // hold to focus/peek the message, tap to open the error. Require that the
+                                              // matching key-down landed here too (_sawActivateDown), so the release of
+                                              // the press that dismissed the dialog doesn't immediately reopen it.
+                                              if (ev is KeyUpEvent && isActivate) {
+                                                final wasPress = _sawActivateDown;
+                                                _sawActivateDown = false;
+                                                if (wasPress && noModifiers && !_holdHandled) {
+                                                  final errorOpener = controller.errorOpeners[message.guid];
+                                                  if (errorOpener != null) {
+                                                    errorOpener(context);
+                                                    return KeyEventResult.handled;
+                                                  }
+                                                  // Photo/attachment: a quick tap opens it (download if not downloaded,
+                                                  // open/preview if downloaded). Done on key-up so that HOLDING instead
+                                                  // triggers the options/reaction popup above, rather than the preview.
+                                                  final tap = controller.attachmentTapActions[message.guid];
+                                                  if (tap != null) {
+                                                    tap();
+                                                    return KeyEventResult.handled;
+                                                  }
+                                                }
+                                              }
                                               if (ev is! KeyDownEvent) return KeyEventResult.ignored;
                                               if (ev.logicalKey == LogicalKeyboardKey.arrowUp) {
                                                 _focusMessageAt(index + 1);

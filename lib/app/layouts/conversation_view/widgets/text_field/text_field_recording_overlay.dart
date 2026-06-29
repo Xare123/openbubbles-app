@@ -32,7 +32,9 @@ class TextFieldRecordingOverlay extends StatelessWidget {
                   final box = controller.textFieldKey.currentContext?.findRenderObject() as RenderBox?;
                   final textFieldSize = box?.size ?? const Size(250, 35);
                   final start = DateTime.now();
-                  return kIsDesktop
+                  // Dumb (D-pad) devices record via the `record` package (like desktop), so
+                  // show the simple timer overlay instead of the audio_waveforms recorder.
+                  return kIsDesktop || SettingsSvc.settings.isDumb.value
                       ? StreamBuilder(
                           stream: Stream.periodic(const Duration(milliseconds: 100)),
                           builder: (context, snapshot) {

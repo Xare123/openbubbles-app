@@ -163,6 +163,10 @@ class OutgoingMessageHandler {
   final Queue<_OutgoingEntry> _queue = Queue();
   bool _isProcessing = false;
 
+  /// Whether the outgoing queue currently has work in flight.  Used by
+  /// [LifecycleService] to decide when the background engine can be torn down.
+  bool get isProcessing => _isProcessing || _queue.isNotEmpty;
+
   /// Enqueues [item] for sending.  Preparation (DB write / file copy) is
   /// performed synchronously before the item enters the queue, so the
   /// outgoing bubble appears in the UI immediately.  The actual HTTP call
@@ -237,6 +241,7 @@ class OutgoingMessageHandler {
   Future<void> _processNext() async {
     if (_isProcessing) return;
     _isProcessing = true;
+    if (GetIt.I.isRegistered<LifecycleService>()) LifecycleSvc.cancelEngineClose();
 
     while (_queue.isNotEmpty) {
       final entry = _queue.removeFirst();
@@ -265,6 +270,7 @@ class OutgoingMessageHandler {
     }
 
     _isProcessing = false;
+    if (GetIt.I.isRegistered<LifecycleService>()) LifecycleSvc.scheduleEngineCloseIfIdle();
   }
 
   /// Wraps a send [process] with the send-progress animation:
@@ -342,9 +348,6 @@ class OutgoingMessageHandler {
 
   Future<void> _dispatchItem(OutgoingQueueItem item) {
     switch (item.type) {
-      case QueueType.newMessage:
-      case QueueType.updatedMessage:
-        return Future.value();
       case QueueType.sendMessage:
         final typed = item as OutgoingMessage;
         return sendMessage(typed.chat, typed.message, null, null);
@@ -356,7 +359,7 @@ class OutgoingMessageHandler {
         return sendMultipart(typed.chat, typed.message, null, null);
       case QueueType.sendAttachment:
         final typed = item as OutgoingAttachment;
-        return sendAttachment(typed.chat, typed.message, typed.isAudioMessage);
+        return sendAttachment(typed.chat, typed.message, typed.isAudioMessage, typed.attachment);
     }
   }
 
@@ -373,9 +376,6 @@ class OutgoingMessageHandler {
   /// `null` to indicate the item itself should be enqueued without splitting.
   Future<dynamic> _prepItem(OutgoingQueueItem item) async {
     switch (item.type) {
-      case QueueType.newMessage:
-      case QueueType.updatedMessage:
-        return null;
       case QueueType.sendReaction:
         final typed = item as OutgoingReaction;
         return prepMessage(
@@ -407,8 +407,8 @@ class OutgoingMessageHandler {
           isRetry: typed.isRetry,
         );
       case QueueType.sendAttachment:
-        final typed = item as OutgoingAttachment;
-        await prepAttachment(typed.chat, typed.message);
+        final typedAttachment = item as OutgoingAttachment;
+        await prepAttachment(typedAttachment.chat, typedAttachment.message, typedAttachment.attachment);
         return null;
     }
   }
@@ -505,8 +505,10 @@ class OutgoingMessageHandler {
   /// Attachment metadata carries the original source path so the file can be
   /// copied without loading it into memory (except GIFs, which need
   /// optimisation).
-  Future<void> prepAttachment(Chat c, Message m) async {
-    final attachment = m.attachments.first!;
+  Future<void> prepAttachment(Chat c, Message m, Attachment? attachment) async {
+    if (attachment == null) {
+      throw StateError('Missing attachment for sendAttachment prep on message ${m.guid}');
+    }
 
     final progress = AttachmentUploadProgress(attachment.guid!, 0.0.obs);
     attachmentProgress.add(progress);
@@ -683,9 +685,10 @@ class OutgoingMessageHandler {
   }
 
   /// Sends an attachment message.
-  Future<void> sendAttachment(Chat c, Message m, bool isAudioMessage) async {
-    if (m.attachments.isEmpty) return;
-    final attachment = m.attachments.first!;
+  Future<void> sendAttachment(Chat c, Message m, bool isAudioMessage, Attachment? attachment) async {
+    if (attachment == null) {
+      throw StateError('Missing attachment for sendAttachment on message ${m.guid}');
+    }
 
     // Save both GUIDs before any mutation — attachment.guid == m.guid by design
     // (set in send_animation.dart: attachment.guid = message.guid).
@@ -699,11 +702,16 @@ class OutgoingMessageHandler {
       ChatsSvc.updateChatLatestMessage(c.guid, m);
     }
 
+    // On web the isolate path is not supported (web is deprecated).
+    if (kIsWeb) return;
+
+    // Fail fast if the file was not staged correctly during prepAttachment.
+    if (!File(attachment.path).existsSync()) {
+      Logger.error('Attachment file not found at ${attachment.path}', tag: _tag);
+      return;
+    }
+
     final progress = attachmentProgress.firstWhere((e) => e.guid == attachment.guid);
-    latestCancelToken = CancelToken();
-    // Capture token so the closure below uses the one created for THIS send,
-    // not a later one overwritten by a concurrent (post-queue) sendAttachment.
-    final cancelToken = latestCancelToken!;
     var apnsSuccess = false;
 
     return _sendWithRace(
@@ -721,7 +729,6 @@ class OutgoingMessageHandler {
             MessagesSvc(c.guid).notifyAttachmentUploadProgress(tempGuid, attachment.guid!, uploadFraction);
           }
         },
-        cancelToken: cancelToken,
       ),
       onSuccess: (newMessage) async {
         latestCancelToken = null;

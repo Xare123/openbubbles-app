@@ -61,7 +61,7 @@ class _MaterialConversationTileState extends CustomState<MaterialConversationTil
                     .copyWith(
                       fontWeight: controller.shouldHighlight.value
                           ? FontWeight.w500
-                          : (ChatsSvc.getChatState(controller.chat.guid)?.hasUnreadMessage.value ?? false)
+                          : (controller.hasUnreadReactive)
                               ? FontWeight.bold
                               : null,
                       color: ThemeSvc.isAnyMaterialYouSelected ? context.theme.colorScheme.onSurface : null,
@@ -75,7 +75,7 @@ class _MaterialConversationTileState extends CustomState<MaterialConversationTil
                 })
               : controller.subtitle ??
                   Obx(() {
-                    final unread = ChatsSvc.getChatState(controller.chat.guid)?.hasUnreadMessage.value ?? false;
+                    final unread = controller.hasUnreadReactive;
                     final isMonet = ThemeSvc.isAnyMaterialYouSelected;
                     return ChatSubtitle(
                       parentController: controller,
@@ -295,7 +295,7 @@ class _UnreadIconState extends CustomState<UnreadIcon, void, ConversationTileCon
   Widget build(BuildContext context) {
     return Obx(() => Padding(
           padding: const EdgeInsets.only(left: 5.0, right: 5.0),
-          child: (ChatsSvc.getChatState(controller.chat.guid)?.hasUnreadMessage.value ?? false)
+          child: (controller.hasUnreadReactive)
               ? Container(
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(35),

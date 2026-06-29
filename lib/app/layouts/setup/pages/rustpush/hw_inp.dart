@@ -778,7 +778,7 @@ class HwInpState extends State<HwInp> with ThemeHelpers {
                                             child: Text("Cancel",
                                                 style: Get.context!.theme.textTheme.bodyLarge!
                                                     .copyWith(color: Get.context!.theme.colorScheme.primary)),
-                                            onPressed: () => Get.back(),
+                                            onPressed: () => Navigator.of(Get.context!, rootNavigator: true).pop(),
                                           ),
                                           TextButton(
                                             child: Text("OK",
@@ -787,7 +787,7 @@ class HwInpState extends State<HwInp> with ThemeHelpers {
                                             onPressed: () async {
                                               relayHost = server.text;
                                               lastCheckedCode = "";
-                                              Get.back();
+                                              Navigator.of(Get.context!, rootNavigator: true).pop();
                                               checkCode(codeController.text);
                                             },
                                           ),

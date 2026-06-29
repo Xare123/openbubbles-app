@@ -207,12 +207,37 @@ class _ConversationListState extends CustomState<ConversationList, void, Convers
     super.dispose();
   }
 
+  /// If focus leaks onto the chat list while a conversation is open in the foreground (phone
+  /// layout), send focus back to the conversation's text field. In tablet/split-view the list is
+  /// legitimately focusable alongside the conversation, so this is a no-op there.
+  void _refocusConversationIfForeground(BuildContext context) {
+    if (NavigationSvc.isTabletMode(context)) return;
+    final active = ChatsSvc.activeChat;
+    if (active == null || !active.isChatActive || active.controller == null) return;
+    // Defer to avoid re-entrant focus changes, then re-check the conditions still hold.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final a = ChatsSvc.activeChat;
+      if (a != null && a == active && a.isChatActive && a.controller != null) {
+        a.controller!.focusNode.requestFocus();
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    final child = ThemeSwitcher(
-      iOSSkin: CupertinoConversationList(parentController: controller),
-      materialSkin: MaterialConversationList(parentController: controller),
-      samsungSkin: SamsungConversationList(parentController: controller),
+    final child = Focus(
+      // Observe-only (not a focus stop): watch for focus leaking onto the chat list.
+      canRequestFocus: false,
+      skipTraversal: true,
+      onFocusChange: (focused) {
+        if (focused) _refocusConversationIfForeground(context);
+      },
+      child: ThemeSwitcher(
+        iOSSkin: CupertinoConversationList(parentController: controller),
+        materialSkin: MaterialConversationList(parentController: controller),
+        samsungSkin: SamsungConversationList(parentController: controller),
+      ),
     );
 
     if (controller.showArchivedChats || controller.showUnknownSenders || controller.showDeletedMessages) return child;

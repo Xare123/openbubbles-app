@@ -961,9 +961,9 @@ class ChatsService {
     // Remove from service state
     removeChat(chat);
 
-    // if (markDeleted) {
-    //   await BackendSvc.moveToRecycleBin(chat, null);
-    // }
+    if (markDeleted) {
+      await BackendSvc.moveToRecycleBin(chat, null);
+    }
   }
 
   /// Undelete a chat

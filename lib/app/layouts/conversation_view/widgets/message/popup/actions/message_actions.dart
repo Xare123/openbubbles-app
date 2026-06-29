@@ -108,6 +108,7 @@ void messageInfo(MessagePopupActionContext ctx) {
     map["dateEdited"] =
         DateFormat("MMMM d, yyyy h:mm:ss a").format(DateTime.fromMillisecondsSinceEpoch(map["dateEdited"]));
   }
+  map["chat"] = ctx.chat.toMap();
   final String str = encoder.convert(map);
   showDialog(
     context: ctx.context,

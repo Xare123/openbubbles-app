@@ -33,7 +33,9 @@ class AudioPlayer extends StatefulWidget {
   State<StatefulWidget> createState() => _createState();
 
   State<StatefulWidget> _createState() {
-    if (kIsDesktop) return _DesktopAudioPlayerState();
+    // Dumb (D-pad) devices use the desktop player (just_audio) instead of audio_waveforms,
+    // which has been unreliable on mobile since the 2.x upgrade — mirrors the recording path.
+    if (kIsDesktop || SettingsSvc.settings.isDumb.value) return _DesktopAudioPlayerState();
     return _AudioPlayerState();
   }
 }
@@ -241,16 +243,19 @@ class _DesktopAudioPlayerState extends State<AudioPlayer>
         ..stream.playing.listen((playing) => isPlaying.value = playing)
         ..stream.completed.listen((bool completed) async {
           if (completed) {
+            // Pause before seeking so the player doesn't auto-replay — on Android seeking to zero
+            // while still "playing" restarts it, looping forever. Reset to the start so the next
+            // tap/Enter plays from the beginning.
+            await controller!.pause();
             await controller!.seek(Duration.zero);
-            if (Platform.isLinux) {
-              await controller!.pause();
-            }
             animController.reverse();
           }
         });
+      // Register the player immediately (before the async open) so a focused message can
+      // play/pause it via Enter as soon as it mounts — _canToggleAudioMessage checks this map.
+      if (attachment != null) cvController?.audioPlayersDesktop[attachment!.guid!] = controller!;
       await controller!.setPlaylistMode(PlaylistMode.none);
       await controller!.open(Media(file.path!), play: false);
-      if (attachment != null) cvController?.audioPlayersDesktop[attachment!.guid!] = controller!;
     }
     isPlaying.value = controller?.state.playing ?? false;
     position.value = controller?.state.position ?? Duration.zero;

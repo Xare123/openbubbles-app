@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:bluebubbles/helpers/ui/theme_helpers.dart';
 import 'package:bluebubbles/app/layouts/setup/setup_view.dart';
+import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:shimmer/shimmer.dart';
@@ -109,6 +110,8 @@ class PageContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Dumb (D-pad) devices have less room — use smaller title/subtitle text.
+    final isDumb = SettingsSvc.settings.isDumb.value;
     final titleW = customTitle ??
         Padding(
           padding: const EdgeInsets.all(8.0),
@@ -117,7 +120,7 @@ class PageContent extends StatelessWidget {
             child: SizedBox(
               width: context.width * 3 / 4,
               child: Text(title,
-                  style: context.theme.textTheme.displayMedium!
+                  style: (isDumb ? context.theme.textTheme.headlineSmall! : context.theme.textTheme.displayMedium!)
                       .apply(
                         fontWeightDelta: 2,
                       )
@@ -131,12 +134,12 @@ class PageContent extends StatelessWidget {
           child: Align(
             alignment: Alignment.centerLeft,
             child: Text(subtitle,
-                style: context.theme.textTheme.bodyLarge!
+                style: (isDumb ? context.theme.textTheme.bodyMedium! : context.theme.textTheme.bodyLarge!)
                     .apply(
-                      fontSizeDelta: 1.5,
+                      fontSizeDelta: isDumb ? 0 : 1.5,
                       color: context.theme.colorScheme.outline,
                     )
-                    .copyWith(height: 2)),
+                    .copyWith(height: isDumb ? 1.4 : 2)),
           ),
         );
     final content = Column(

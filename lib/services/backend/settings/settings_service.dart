@@ -68,9 +68,13 @@ class SettingsService {
           }),
         ]);
       } catch (_) {}
-      // system appearance
+      // system appearance — apply both branches so the mode matches the setting at startup
+      // (mirrors the toggle in the theming panel), not just when immersive mode is enabled.
       if (settings.immersiveMode.value) {
         SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      } else {
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
+            overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom]);
       }
       SystemChrome.setPreferredOrientations([
         DeviceOrientation.landscapeRight,

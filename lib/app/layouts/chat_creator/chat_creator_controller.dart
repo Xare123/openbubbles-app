@@ -44,6 +44,9 @@ class ChatCreatorController extends StatefulController {
   late final MentionTextEditingController textController;
   final messageNode = FocusNode();
   final addressNode = FocusNode();
+  // Parent focus node of the suggestion rows; used to reach the first/last suggestion
+  // for D-pad navigation between the To: field, the list, and the message field.
+  final suggestionsListNode = FocusNode(canRequestFocus: false, skipTraversal: true, debugLabel: 'suggestionsList');
   final TextEditingController addressController = TextEditingController();
 
   // ---- Cached full lists ----
@@ -785,6 +788,7 @@ class ChatCreatorController extends StatefulController {
     addressController.dispose();
     messageNode.dispose();
     addressNode.dispose();
+    suggestionsListNode.dispose();
     textController.dispose();
     super.onClose();
   }

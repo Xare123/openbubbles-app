@@ -84,8 +84,13 @@ class ContactV2Actions {
 
     final startTime = DateTime.now().millisecondsSinceEpoch;
     final affectedHandleIds = <int>[];
+    var addedCount = 0;
+    var updatedCount = 0;
+    var startingDbCount = 0;
 
     try {
+      startingDbCount = Database.contactsV2.count();
+      Logger.info('[ContactV2] Sync starting — $startingDbCount contacts currently in DB');
       List<fc.Contact> deviceContacts = [];
       List<ContactV2> networkContacts = [];
       final avatarPaths = <String, String?>{};
@@ -294,6 +299,7 @@ class ContactV2Actions {
           if (existingContact != null) {
             // Update existing contact
             contact = existingContact;
+            updatedCount++;
             final oldComputedName = contact.computedDisplayName;
             contact.displayName = displayName;
             contact.addresses = normalizedAddresses.toList();
@@ -317,6 +323,8 @@ class ContactV2Actions {
             }
           } else {
             // Create new contact
+            addedCount++;
+            Logger.info('[ContactV2] + Adding new contact "$displayName" ($contactId)');
             contact = ContactV2(
               displayName: displayName,
               nativeContactId: contactId,
@@ -407,8 +415,27 @@ class ContactV2Actions {
         }
       });
 
+      // Surface contacts that exist in the DB but are no longer present in the device/server
+      // source. The sync does not currently delete these — log them so removals are visible.
+      final sourceIds = <String>{
+        ...deviceContacts.map((c) => c.id).whereType<String>(),
+        ...networkContacts.map((c) => c.nativeContactId),
+      };
+      if (sourceIds.isNotEmpty) {
+        final staleContacts =
+            Database.contactsV2.getAll().where((c) => !sourceIds.contains(c.nativeContactId)).toList();
+        if (staleContacts.isNotEmpty) {
+          Logger.info('[ContactV2] - ${staleContacts.length} contact(s) in DB no longer in source (not removed): '
+              '${staleContacts.take(20).map((c) => '"${c.displayName}"').join(', ')}'
+              '${staleContacts.length > 20 ? ', …' : ''}');
+        }
+      }
+
       final endTime = DateTime.now().millisecondsSinceEpoch;
+      final endingDbCount = Database.contactsV2.count();
       Logger.info('[ContactV2] Contact fetch and match completed in ${endTime - startTime}ms');
+      Logger.info('[ContactV2] Sync complete — added $addedCount, updated $updatedCount; '
+          '$endingDbCount contacts now in DB (was $startingDbCount)');
       Logger.info('[ContactV2] Affected ${affectedHandleIds.length} handles');
 
       // Complete the completer with the result
@@ -441,9 +468,12 @@ class ContactV2Actions {
       });
 
       // Check for differences
-      final hasChanges = currentIds.length != storedIds.length ||
-          !currentIds.containsAll(storedIds) ||
-          !storedIds.containsAll(currentIds);
+      final added = currentIds.difference(storedIds);
+      final removed = storedIds.difference(currentIds);
+      final hasChanges = added.isNotEmpty || removed.isNotEmpty;
+
+      Logger.info('[ContactV2] Change check — ${currentIds.length} on device, ${storedIds.length} in DB '
+          '(${added.length} new, ${removed.length} removed)');
 
       if (hasChanges) {
         Logger.info('[ContactV2] Contact changes detected, triggering refresh');

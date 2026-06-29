@@ -56,6 +56,9 @@ class MaterialHeader extends StatelessWidget implements PreferredSizeWidget {
               child: CallbackShortcuts(
                 bindings: {
                   const SingleActivator(LogicalKeyboardKey.enter): controller.headerBackFocusNode.requestFocus,
+                  // Left or down from the back button moves focus to the attachment (+) button.
+                  const SingleActivator(LogicalKeyboardKey.arrowLeft): controller.attachmentPickerFocusNode.requestFocus,
+                  const SingleActivator(LogicalKeyboardKey.arrowDown): controller.attachmentPickerFocusNode.requestFocus,
                 },
                 child: Focus(
                   focusNode: controller.headerBackFocusNode,

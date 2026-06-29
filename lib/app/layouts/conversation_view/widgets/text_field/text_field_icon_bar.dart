@@ -12,6 +12,7 @@ import 'package:file_picker/file_picker.dart' hide PlatformFile;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:get/get.dart';
 import 'package:tenor_flutter/tenor_flutter.dart';
@@ -46,9 +47,16 @@ class TextFieldIconBar extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        Padding(
+        CallbackShortcuts(
+          // Left or up from the (+) button moves focus to the header back button.
+          bindings: {
+            const SingleActivator(LogicalKeyboardKey.arrowLeft): controller.headerBackFocusNode.requestFocus,
+            const SingleActivator(LogicalKeyboardKey.arrowUp): controller.headerBackFocusNode.requestFocus,
+          },
+          child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 0),
           child: IconButton(
+            focusNode: controller.attachmentPickerFocusNode,
             icon: Icon(
               _iOS ? CupertinoIcons.add_circled_solid : Icons.add_circle_outline,
               color: context.theme.colorScheme.outline,
@@ -119,6 +127,7 @@ class TextFieldIconBar extends StatelessWidget {
               }
             },
           ),
+        ),
         ),
         if (!kIsWeb && !Platform.isAndroid)
           IconButton(

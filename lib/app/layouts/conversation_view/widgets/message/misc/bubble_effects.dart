@@ -10,6 +10,7 @@ import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:particles_flutter/engine.dart';
+import 'package:particles_flutter/interactions.dart';
 import 'package:simple_animations/simple_animations.dart';
 import 'package:supercharged/supercharged.dart';
 
@@ -233,6 +234,7 @@ class _BubbleEffectsState extends State<BubbleEffects> with SingleTickerProvider
                             key: UniqueKey(),
                             height: size.height,
                             width: size.width,
+                            interaction: ParticleInteraction.none(),
                             particles: List.generate(
                                 size.height * size.width ~/ 25,
                                 (index) => CircularParticle(

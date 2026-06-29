@@ -213,26 +213,28 @@ class APNService : Service(), MsgReceiver {
             }
 
             override fun handleWifiNetworks(networks: Map<String, String>, userApprove: Boolean) {
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
 
                 if (userApprove) {
                     addWifiNetworks(networks)
                     return
                 }
 
-                val manager = getSystemService(WIFI_SERVICE) as WifiManager
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    val manager = getSystemService(WIFI_SERVICE) as WifiManager
 
-                val listener = object : WifiManager.SuggestionUserApprovalStatusListener {
-                    override fun onUserApprovalStatusChange(status: Int) {
-                        Log.i("NETWORK", "User approval status retrived: $status")
-                        if (status == WifiManager.STATUS_SUGGESTION_APPROVAL_APPROVED_BY_USER) {
-                            addWifiNetworks(networks)
+                    val listener = object : WifiManager.SuggestionUserApprovalStatusListener {
+                        override fun onUserApprovalStatusChange(status: Int) {
+                            Log.i("NETWORK", "User approval status retrived: $status")
+                            if (status == WifiManager.STATUS_SUGGESTION_APPROVAL_APPROVED_BY_USER) {
+                                addWifiNetworks(networks)
+                            }
+                            manager.removeSuggestionUserApprovalStatusListener(this)
                         }
-                        manager.removeSuggestionUserApprovalStatusListener(this)
                     }
-                }
 
-                manager.addSuggestionUserApprovalStatusListener(mainExecutor, listener)
+                    manager.addSuggestionUserApprovalStatusListener(mainExecutor, listener)
+                }
             }
         })
         setupKeystore(applicationContext.filesDir.path, keystore)
@@ -273,7 +275,9 @@ class APNService : Service(), MsgReceiver {
             .build()
 
         // Notification ID cannot be 0.
+        Log.i("launching agent", "start foreground")
         startForeground(3884785, notification)
+        Log.i("launching agent", "post foreground")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

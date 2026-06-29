@@ -6,6 +6,7 @@ import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
 /// The scrollable list of search results shown when no chat is resolved.
@@ -50,15 +51,57 @@ class SearchResultsList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Obx(() {
-      final chats = controller.filteredChats.toList();
-      final contacts = controller.filteredContacts.toList();
+      var chats = controller.filteredChats.toList();
+      var contacts = controller.filteredContacts.toList();
+      // On dumb (D-pad) devices keep the suggestion list short (5 total) so it's quick to
+      // navigate; chats are shown first, then contacts fill any remaining slots.
+      if (SettingsSvc.settings.isDumb.value) {
+        chats = chats.take(5).toList();
+        contacts = contacts.take(5 - chats.length).toList();
+      }
       final chatsLoaded = ChatsSvc.loadedAllChats.isCompleted;
       final query = controller.currentQuery.value.trim();
       final selected = controller.selectedContacts.toList();
       final showFallback = _shouldShowFallback(query, contacts, selected);
       final isEmpty = chatsLoaded && chats.isEmpty && contacts.isEmpty && !showFallback;
 
-      return CustomScrollView(
+      return Focus(
+        focusNode: controller.suggestionsListNode,
+        onKeyEvent: (node, event) {
+          if (event is! KeyDownEvent) return KeyEventResult.ignored;
+          final isUp = event.logicalKey == LogicalKeyboardKey.arrowUp;
+          final isDown = event.logicalKey == LogicalKeyboardKey.arrowDown;
+          if (!isUp && !isDown) return KeyEventResult.ignored;
+
+          // Each suggestion row contributes more than one focus node, so we can't rely on
+          // index/equality. Instead use geometry: only hop out of the list when there is no
+          // focusable row above (for up) / below (for down) the currently focused row. When
+          // there IS another row in that direction, return ignored and let directional
+          // navigation move between rows. The 1px tolerance ignores sibling nodes on the same
+          // row (identical vertical center). At the top, up *always* goes to the To: field —
+          // it can never fall through to the service toggle.
+          final rows = node.traversalDescendants.toList();
+          final focusedDy = FocusManager.instance.primaryFocus?.rect.center.dy;
+
+          if (isUp) {
+            final hasRowAbove =
+                focusedDy != null && rows.any((r) => r.rect.center.dy < focusedDy - 1);
+            if (!hasRowAbove) {
+              controller.addressNode.requestFocus();
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored; // let directional nav move to the row above
+          }
+          // isDown
+          final hasRowBelow =
+              focusedDy != null && rows.any((r) => r.rect.center.dy > focusedDy + 1);
+          if (!hasRowBelow) {
+            controller.messageNode.requestFocus();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored; // let directional nav move to the row below
+        },
+        child: CustomScrollView(
         physics: ThemeSwitcher.getScrollPhysics(),
         slivers: [
           // ----------------------------------------------------------------
@@ -239,6 +282,7 @@ class SearchResultsList extends StatelessWidget {
               ),
             ),
         ],
+        ),
       );
     });
   }

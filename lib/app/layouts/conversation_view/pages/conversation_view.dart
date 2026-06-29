@@ -179,6 +179,16 @@ class ConversationViewState extends State<ConversationView> with ThemeHelpers<Co
   void dispose() {
     routeObserver.unsubscribe(this);
     controller.saveReplyToMessageState(); // P8bda
+    // Returning to the chat list in D-pad mode: return focus to the chat we just left (the tile
+    // that was focused), once the list is back on top. Deferred so it runs after this route tears
+    // down. The tile for this guid re-grabs focus; if it's scrolled out of view, focus simply
+    // isn't moved (no first-chat fallback, per design).
+    if (SettingsSvc.settings.isDumb.value && !ChatsSvc.isEmpty) {
+      final guid = chat.guid;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        EventDispatcherSvc.emit('focus-chat', guid);
+      });
+    }
     super.dispose();
   }
 

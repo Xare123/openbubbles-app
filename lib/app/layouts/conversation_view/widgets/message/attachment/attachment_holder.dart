@@ -258,6 +258,20 @@ class _AttachmentHolderState extends State<AttachmentHolder> with ThemeHelpers {
         // ignore: unused_local_variable
         final ____ = state.hasError.value;
 
+        final onTap = _buildOnTap(state);
+        // Register the download action so a focused message can trigger it with a D-pad/Enter
+        // press. When resolved (onTap == null) clear it here; ResolvedFileContent re-registers
+        // the open action for images right after (it builds as our child).
+        final cvCtrl = controller.cvController;
+        final guid = message.guid;
+        if (cvCtrl != null && guid != null) {
+          if (onTap != null) {
+            cvCtrl.attachmentTapActions[guid] = onTap;
+          } else {
+            cvCtrl.attachmentTapActions.remove(guid);
+          }
+        }
+
         return ColorFiltered(
           colorFilter: ColorFilter.mode(
             context.theme.colorScheme.tertiaryContainer.withValues(alpha: 0.5),
@@ -266,7 +280,7 @@ class _AttachmentHolderState extends State<AttachmentHolder> with ThemeHelpers {
           child: Material(
             color: Colors.transparent,
             child: InkWell(
-              onTap: _buildOnTap(state),
+              onTap: onTap,
               child: Ink(
                 color: context.theme.colorScheme.surfaceContainerHighest,
                 child: ConstrainedBox(

@@ -36,6 +36,23 @@ class _MessagePopupHolderState extends State<MessagePopupHolder> with ThemeHelpe
 
   Message get message => widget.controller.message;
 
+  @override
+  void initState() {
+    super.initState();
+    // Register so a focused message can open this popup via a held D-pad/Enter key.
+    final guid = message.guid;
+    if (guid != null) widget.cvController.messagePopupOpeners[guid] = openPopup;
+  }
+
+  @override
+  void dispose() {
+    final guid = message.guid;
+    if (guid != null && widget.cvController.messagePopupOpeners[guid] == openPopup) {
+      widget.cvController.messagePopupOpeners.remove(guid);
+    }
+    super.dispose();
+  }
+
   void openPopup() async {
     widget.cvController.focusNode.unfocus();
     widget.cvController.subjectFocusNode.unfocus();

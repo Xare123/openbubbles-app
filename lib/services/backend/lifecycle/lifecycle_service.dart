@@ -4,7 +4,6 @@ import 'dart:ui' hide window;
 
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/helpers/backend/startup_tasks.dart';
-import 'package:bluebubbles/services/backend/queue/outgoing_queue.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
@@ -110,11 +109,40 @@ class LifecycleService with WidgetsBindingObserver {
 
     if (state == AppLifecycleState.detached && !(kIsDesktop || kIsWeb)) {
       isDead = true;
-      if (!outq.isProcessing.value) {
+      if (!_anyQueueProcessing) {
         Logger.info("Engine exit");
         await MethodChannelSvc.invokeMethod("engine-done");
       }
     }
+  }
+
+  /// True while either message-handler queue still has work in flight.
+  bool get _anyQueueProcessing {
+    final outgoing = GetIt.I.isRegistered<OutgoingMessageHandler>() && OutgoingMsgHandler.isProcessing;
+    final incoming = GetIt.I.isRegistered<IncomingMessageHandler>() && IncomingMsgHandler.isProcessing;
+    return outgoing || incoming;
+  }
+
+  /// Cancels a pending background-engine teardown.  Called by the message
+  /// handlers when they pick up new work so the engine isn't closed mid-send.
+  void cancelEngineClose() {
+    closeTimer?.cancel();
+    closeTimer = null;
+  }
+
+  /// Called by the outgoing/incoming message handlers whenever a queue drains.
+  /// When the app is detached/headless and both queues are idle, tears down the
+  /// background engine after a short straggler delay (replaces the old
+  /// `queue_impl` drain trigger).
+  void scheduleEngineCloseIfIdle() {
+    if (kIsDesktop || kIsWeb) return;
+    closeTimer?.cancel();
+    closeTimer = null;
+    if (!isDead || _anyQueueProcessing) return;
+    Logger.info("Queues drained — closing background engine after stragglers");
+    closeTimer = Timer(const Duration(seconds: 5), () {
+      MethodChannelSvc.invokeMethod("engine-done");
+    });
   }
 
   Future<void> handleForegroundService(AppLifecycleState state) async {
@@ -157,7 +185,11 @@ class LifecycleService with WidgetsBindingObserver {
       activeChat.chat.toggleHasUnread(false);
       activeChat.chat.fixZenModeShared();
       final cvcController = cvc(activeChat.chat);
-      if (!cvcController.showingOverlays && cvcController.editing.isEmpty) {
+      if (cvcController.suppressResumeRefocus) {
+        // The voice-memo flow owns focus this resume (returning it to the record button after
+        // the mic permission prompt), so don't steal it back to the text field. One-shot.
+        cvcController.suppressResumeRefocus = false;
+      } else if (!cvcController.showingOverlays && cvcController.editing.isEmpty) {
         cvcController.lastFocusedNode.requestFocus();
       }
     }

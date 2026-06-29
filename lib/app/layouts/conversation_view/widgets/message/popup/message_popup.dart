@@ -140,10 +140,22 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
   int emojiMode = 1;
   int emojiPickerSize = 325;
 
+  // While false, activate-key (select/enter/space) events are swallowed so the held key that
+  // opened this popup (D-pad hold-to-open) doesn't immediately click the autofocused reaction.
+  // Armed immediately when no activate key is held at open (e.g. touch/right-click).
+  bool _activateArmed = true;
+
+  bool _isActivateKey(LogicalKeyboardKey key) =>
+      key == LogicalKeyboardKey.select ||
+      key == LogicalKeyboardKey.enter ||
+      key == LogicalKeyboardKey.space ||
+      key == LogicalKeyboardKey.gameButtonA;
+
   @override
   void initState() {
     super.initState();
     controller.forward();
+    _activateArmed = !HardwareKeyboard.instance.logicalKeysPressed.any(_isActivateKey);
     if (iOS) {
       final remainingHeight = max(Get.height - Get.statusBarHeight - 135 - widget.size.height, itemHeight);
       numberToShow = min(remainingHeight ~/ itemHeight, 5);
@@ -232,7 +244,16 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
     double narrowWidth = message.isFromMe! || !SettingsSvc.settings.alwaysShowAvatars.value ? 330 : 360;
     bool narrowScreen = NavigationSvc.width(widthContext) < narrowWidth;
 
-    return Theme(
+    return Focus(
+      canRequestFocus: false,
+      onKeyEvent: (node, event) {
+        if (!_isActivateKey(event.logicalKey)) return KeyEventResult.ignored;
+        if (_activateArmed) return KeyEventResult.ignored;
+        // Still holding the key that opened the popup — swallow it; arm on release.
+        if (event is KeyUpEvent) _activateArmed = true;
+        return KeyEventResult.handled;
+      },
+      child: Theme(
       data: context.theme.copyWith(
         // in case some components still use legacy theming
         primaryColor: context.theme.colorScheme.bubble(context, chat.isIMessage),
@@ -405,6 +426,9 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
                                                   width: iOS ? 35 : null,
                                                   height: iOS ? 35 : null,
                                                   child: InkWell(
+                                                    // Focus the first reaction (thumbs up) when
+                                                    // the popup opens via a held D-pad press.
+                                                    autofocus: reactOptions.isNotEmpty && e == reactOptions.first,
                                                     borderRadius: BorderRadius.circular(20),
                                                     onTap: () {
                                                       currentlySelectedReaction =
@@ -671,7 +695,7 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
                     ),
                 ],
               ))),
-    );
+    ));
   }
 
   MessagePopupActionContext _buildActionContext(DetailsMenuAction action) {

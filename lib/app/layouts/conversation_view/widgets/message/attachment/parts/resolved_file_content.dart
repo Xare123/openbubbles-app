@@ -9,6 +9,7 @@ import 'package:bluebubbles/app/state/attachment_state_scope.dart';
 import 'package:bluebubbles/app/state/chat_state_scope.dart';
 import 'package:bluebubbles/app/state/message_state_scope.dart';
 import 'package:bluebubbles/app/layouts/fullscreen_media/fullscreen_holder.dart';
+import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/services.dart';
@@ -45,6 +46,26 @@ class ResolvedFileContent extends StatelessWidget {
       left: message.isFromMe! ? 0 : 10,
       right: message.isFromMe! ? 10 : 0,
     );
+    // In high performance mode, images/videos aren't inlined and fall through to OtherFile below.
+    // Register a tap action so a focused one still opens fullscreen on Enter (matching OtherFile's tap).
+    if (SettingsSvc.settings.highPerfMode.value &&
+        (attachment.mimeStart == "image" || (attachment.mimeStart == "video" && !isSnap))) {
+      final guid = message.guid;
+      final regCtrl = cvController ?? (currentChat != null ? cvc(currentChat) : null);
+      if (guid != null && regCtrl != null) {
+        regCtrl.attachmentTapActions[guid] = () {
+          Navigator.of(Get.context!).push(
+            ThemeSwitcher.buildPageRoute(
+              builder: (context) => FullscreenMediaHolder(
+                currentChat: currentChat,
+                attachment: attachment,
+                showInteractions: true,
+              ),
+            ),
+          );
+        };
+      }
+    }
     if (attachment.mimeStart == "image" && !SettingsSvc.settings.highPerfMode.value) {
       return OpenContainer(
         tappable: false,
@@ -66,24 +87,33 @@ class ResolvedFileContent extends StatelessWidget {
           attachment: attachment,
           showInteractions: true,
         ),
-        closedBuilder: (context, openContainer) => GestureDetector(
-          onTap: () {
+        closedBuilder: (context, openContainer) {
+          void openImage() {
             final ctrl = cvController ?? cvc(currentChat!);
             ctrl.focusNode.unfocus();
             ctrl.subjectFocusNode.unfocus();
             openContainer();
-          },
-          child: Container(
-            color: context.theme.colorScheme.surfaceContainerHighest,
-            child: ImageViewer(
-              file: file,
-              attachment: attachment,
-              isFromMe: message.isFromMe!,
-              isInReply: isInReply,
-              controller: cvController,
+          }
+
+          // Register so a focused message can open the downloaded photo via a D-pad/Enter press.
+          final guid = message.guid;
+          final regCtrl = cvController ?? (currentChat != null ? cvc(currentChat) : null);
+          if (guid != null && regCtrl != null) regCtrl.attachmentTapActions[guid] = openImage;
+
+          return GestureDetector(
+            onTap: openImage,
+            child: Container(
+              color: context.theme.colorScheme.surfaceContainerHighest,
+              child: ImageViewer(
+                file: file,
+                attachment: attachment,
+                isFromMe: message.isFromMe!,
+                isInReply: isInReply,
+                controller: cvController,
+              ),
             ),
-          ),
-        ),
+          );
+        },
       );
     }
 
@@ -97,13 +127,20 @@ class ResolvedFileContent extends StatelessWidget {
     }
 
     if (attachment.mimeStart == "audio" || attachment.uti == "com.apple.coreaudio-format") {
+      // Resolve the SAME ConversationViewController instance MessagesView holds so the player
+      // registers itself in audioPlayers(Desktop) — that registration is what lets a focused
+      // audio message play/pause on Enter (_canToggleAudioMessage checks those maps). Fall back
+      // through the inherited chat scope and finally the active chat so it's never null here.
+      final audioCtrl = cvController ??
+          (currentChat != null ? cvc(currentChat) : null) ??
+          (ChatsSvc.activeChat != null ? cvc(ChatsSvc.activeChat!.chat) : null);
       return Padding(
         padding: showTail ? tailPadding : EdgeInsets.zero,
         child: AudioPlayer(
           transcript: audioTranscript,
           attachment: attachment,
           file: file,
-          controller: cvController,
+          controller: audioCtrl,
         ),
       );
     }

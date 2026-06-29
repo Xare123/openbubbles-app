@@ -63,8 +63,13 @@ class _FullscreenImageState extends State<FullscreenImage>
   void _setFullscreen(bool fullscreen) {
     if (fullscreen) {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
-    } else {
+    } else if (SettingsSvc.settings.immersiveMode.value) {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    } else {
+      // Restore the non-immersive (manual) mode the app uses when Immersive Mode is off, rather
+      // than forcing edgeToEdge — otherwise exiting the viewer leaves the app in the wrong UI mode.
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
+          overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom]);
     }
   }
 

@@ -37,6 +37,21 @@ class ConversationTileController extends StatefulController {
 
   bool get isSelected => listController.selectedChats.firstWhereOrNull((e) => e.guid == chat.guid) != null;
 
+  /// Unread state for the tile, read in an `Obx`-safe way.
+  ///
+  /// For an active chat we read the live [ChatState] tracked by [ChatsSvc] so the
+  /// tile stays reactive. For a chat no longer tracked — e.g. a soft-deleted chat
+  /// shown in Recently Deleted — [ChatsSvc.getChatState] returns null; we still
+  /// touch an observable so the enclosing [Obx] registers a dependency (otherwise
+  /// GetX throws "improper use of GetX" and the leading fails to build), but always
+  /// report false since a deleted chat can't be unread.
+  bool get hasUnreadReactive {
+    final live = ChatsSvc.getChatState(chat.guid);
+    if (live != null) return live.hasUnreadMessage.value;
+    chatState.hasUnreadMessage.value; // touch an observable to satisfy Obx
+    return false;
+  }
+
   ConversationTileController({
     Key? key,
     required this.chatState,
@@ -228,6 +243,13 @@ class _ConversationTileState extends CustomState<ConversationTile, void, Convers
     with AutomaticKeepAliveClientMixin {
   ConversationListController get listController => controller.listController;
 
+  // Bumped to re-create the DpadFocusable (re-running its autofocus) when asked to
+  // re-focus the first chat, e.g. on returning from the new message page.
+  int _refocusGen = 0;
+  // One-shot: forces THIS tile to autofocus when asked to focus a specific chat (e.g. returning
+  // to the list from that chat), even though it isn't the first/autofocus tile.
+  bool _forceFocus = false;
+
   @override
   bool get wantKeepAlive => true;
 
@@ -251,6 +273,20 @@ class _ConversationTileState extends CustomState<ConversationTile, void, Convers
           controller.shouldHighlight.value = false;
         }
       }
+      // Re-focus the first chat (autofocus tile) on request, e.g. returning from the
+      // new message page in D-pad mode.
+      if (event.type == 'focus-first-chat' && mounted && widget.autofocus) {
+        setState(() => _refocusGen++);
+      }
+      // Return focus to a specific chat (the one just exited) on request, in D-pad mode.
+      if (event.type == 'focus-chat' && mounted && event.data == controller.chat.guid) {
+        setState(() {
+          _forceFocus = true;
+          _refocusGen++;
+        });
+        // Clear the one-shot after the DpadFocusable has re-created and grabbed focus.
+        WidgetsBinding.instance.addPostFrameCallback((_) => _forceFocus = false);
+      }
     });
   }
 
@@ -266,6 +302,18 @@ class _ConversationTileState extends CustomState<ConversationTile, void, Convers
             !listController.showUnknownSenders &&
             !listController.showDeletedMessages) {
           listController.newMessageFocusNode.requestFocus();
+          return KeyEventResult.handled;
+        }
+        if (event is KeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.arrowDown &&
+            !listController.showArchivedChats &&
+            !listController.showUnknownSenders &&
+            !listController.showDeletedMessages) {
+          // Move to the next tile if there is one; from the last tile (nothing focusable
+          // below), jump to the compose FAB.
+          if (!FocusScope.of(context).focusInDirection(TraversalDirection.down)) {
+            listController.newMessageFocusNode.requestFocus();
+          }
           return KeyEventResult.handled;
         }
         if (event is KeyDownEvent &&
@@ -288,8 +336,9 @@ class _ConversationTileState extends CustomState<ConversationTile, void, Convers
         return KeyEventResult.ignored;
       },
       child: DpadFocusable(
+        key: ValueKey('dpad_${controller.chat.guid}_$_refocusGen'),
         onSelect: () => controller.onTap(context, widget.deletedMode),
-        autofocus: widget.autofocus && SettingsSvc.settings.isDumb.value,
+        autofocus: (widget.autofocus || _forceFocus) && SettingsSvc.settings.isDumb.value,
         child: MouseRegion(
           onEnter: (event) => controller.hoverHighlight.value = true,
           onExit: (event) => controller.hoverHighlight.value = false,

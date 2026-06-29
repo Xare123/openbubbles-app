@@ -46,9 +46,21 @@ pub fn init_logger(path: &Path) {
         .build().unwrap();
     
     let _ = multi_log::MultiLogger::init(vec![Box::new(system), logger], log::Level::Trace);
+
+    // Rust's default panic hook writes to stderr, which is discarded on Android.
+    // Route panics through `log` so they reach logcat (and the file logger above).
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        // `info` Display includes "panicked at <file>:<line>:<col>:\n<message>".
+        log::error!("RUST PANIC: {info}\n{backtrace}");
+        default_hook(info);
+    }));
 }
 
 mod native;
 pub mod api;
+#[cfg(any(target_os = "android"))]
+mod facetime;
 mod keystore;
 mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */

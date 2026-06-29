@@ -285,6 +285,14 @@ class ConversationTextFieldState extends CustomState<ConversationTextField, void
           break;
       }
     }
+    // Always return focus to the message field after sending. The send button (touch InkWell
+    // or D-pad DpadFocusable) pulls focus to itself when activated, so re-request focus on the
+    // next frame — after that steal settles — so it reliably lands back on the text field
+    // regardless of timing. Scheduling before the async send keeps the keyboard from dropping.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) controller.focusNode.requestFocus();
+    });
+
     await controller.send(SendData(
       attachments: controller.pickedApp.value?.$1 != null
           ? [controller.pickedApp.value!.$1!]

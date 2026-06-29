@@ -39,6 +39,10 @@ class SendButtonState extends State<SendButton> with SingleTickerProviderStateMi
 
   Color get baseColor => iOS ? _iosBaseColor : _materialBaseColor;
 
+  // Non-focusable node so tapping the button never pulls focus off the message field (which
+  // would dismiss the keyboard). D-pad focus is handled by the outer DpadFocusable instead.
+  final FocusNode _buttonFocusNode = FocusNode(canRequestFocus: false, skipTraversal: true, debugLabel: 'sendButton');
+
   @override
   void initState() {
     super.initState();
@@ -48,6 +52,12 @@ class SendButtonState extends State<SendButton> with SingleTickerProviderStateMi
         widget.sendMessage.call();
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _buttonFocusNode.dispose();
+    super.dispose();
   }
 
   @override
@@ -84,6 +94,7 @@ class SendButtonState extends State<SendButton> with SingleTickerProviderStateMi
               }
             },
             child: TextButton(
+              focusNode: _buttonFocusNode,
               style: TextButton.styleFrom(
                 backgroundColor: iOS ? _iosBaseColor : null,
                 shape: const CircleBorder(),

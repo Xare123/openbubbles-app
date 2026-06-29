@@ -6,6 +6,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:mime_type/mime_type.dart';
 import 'package:photo_manager/photo_manager.dart';
@@ -18,11 +19,14 @@ class AttachmentPickerFile extends StatefulWidget {
     required this.onTap,
     required this.data,
     required this.controller,
+    this.isTopRow = false,
   });
 
   final AssetEntity data;
   final Function() onTap;
   final ConversationViewController controller;
+  // Tiles in the grid's top row: pressing up moves focus to the message text field.
+  final bool isTopRow;
 
   @override
   State<AttachmentPickerFile> createState() => _AttachmentPickerFileState();
@@ -33,6 +37,7 @@ class _AttachmentPickerFileState extends State<AttachmentPickerFile> with ThemeH
   Uint8List? thumbnailBytes; // Only for videos and special formats
   bool isLoading = true;
   bool hasError = false;
+  final FocusNode _focusNode = FocusNode();
 
   @override
   void initState() {
@@ -97,7 +102,7 @@ class _AttachmentPickerFileState extends State<AttachmentPickerFile> with ThemeH
       final hideAttachments = SettingsSvc.settings.redactedMode.value && SettingsSvc.settings.hideAttachments.value;
       bool containsThis = widget.controller.pickedAttachments.firstWhereOrNull((e) => e.path == filePath) != null;
 
-      return AnimatedContainer(
+      final Widget tile = AnimatedContainer(
         duration: const Duration(milliseconds: 250),
         margin: EdgeInsets.all(containsThis ? 10 : 0),
         decoration: BoxDecoration(
@@ -105,6 +110,7 @@ class _AttachmentPickerFileState extends State<AttachmentPickerFile> with ThemeH
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
+          focusNode: _focusNode,
           borderRadius: BorderRadius.circular(10),
           onTap: widget.onTap,
           child: Stack(
@@ -118,9 +124,47 @@ class _AttachmentPickerFileState extends State<AttachmentPickerFile> with ThemeH
 
               // Show selection indicator or video icon
               if (containsThis || widget.data.type == AssetType.video) _buildOverlayIcon(context, containsThis),
+
+              // Outline the D-pad/keyboard-focused tile. Driven by the focus node's own
+              // notifications (no setState, so focus traversal isn't disrupted) and drawn
+              // as an overlay, so it doesn't change the tile's dimensions.
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: AnimatedBuilder(
+                    animation: _focusNode,
+                    builder: (context, _) => DecoratedBox(
+                      decoration: _focusNode.hasFocus
+                          ? BoxDecoration(
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: context.theme.colorScheme.primary,
+                                width: 3,
+                              ),
+                            )
+                          : const BoxDecoration(),
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
+      );
+
+      if (!widget.isTopRow) return tile;
+      // Top row: catch arrow-up (bubbling from the focused tile) and send focus to the message
+      // text field. canRequestFocus:false so this wrapper isn't itself a focus stop.
+      return Focus(
+        canRequestFocus: false,
+        skipTraversal: true,
+        onKeyEvent: (node, event) {
+          if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.arrowUp) {
+            widget.controller.focusNode.requestFocus();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: tile,
       );
     });
   }
@@ -212,6 +256,7 @@ class _AttachmentPickerFileState extends State<AttachmentPickerFile> with ThemeH
   void dispose() {
     // Clear any loaded thumbnail bytes
     thumbnailBytes = null;
+    _focusNode.dispose();
     super.dispose();
   }
 }

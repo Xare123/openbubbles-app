@@ -6,7 +6,6 @@ import 'dart:math';
 import 'package:android_play_install_referrer/android_play_install_referrer.dart';
 import 'package:app_links/app_links.dart';
 import 'package:bluebubbles/app/layouts/setup/dialogs/failed_to_connect_dialog.dart';
-import 'package:bluebubbles/app/layouts/setup/pages/bluetooth/request_bluetooth.dart';
 import 'package:bluebubbles/app/layouts/setup/pages/permissions/request_permissions.dart';
 import 'package:bluebubbles/app/layouts/setup/pages/rustpush/appleid_2fa.dart';
 import 'package:bluebubbles/app/layouts/setup/pages/rustpush/appleid_login.dart';
@@ -404,6 +403,7 @@ class SetupViewController extends StatefulController {
     if (ret is api.LoginState_LoggedIn) {
       await MethodChannelSvc.invokeMethod("circle-proximity-session", {'sid': null});
       SettingsSvc.settings.userName.value = await api.getUserName(state: currentAppleAccount!);
+      await SettingsSvc.settings.saveOneAsync('userName');
       await doRegister();
     }
     return ret;
@@ -416,6 +416,7 @@ class SetupViewController extends StatefulController {
       currentAppleUser = await api.doLogin(
           path: PushSvc.statePath, account: currentAppleAccount!, osConfig: config!, finish: updateFinish);
       SettingsSvc.settings.userName.value = await api.getUserName(state: currentAppleAccount!);
+      await SettingsSvc.settings.saveOneAsync('userName');
       await doRegister();
     } catch (e) {
       if (e is AnyhowException) updateConnectError(e.message);
@@ -685,7 +686,7 @@ class SetupViewController extends StatefulController {
     }
 
     final keychain = PushSvc.state?.icloudServices?.keychain;
-    if (keychain != null && circleSession != null) {
+    if (keychain != null && circleSession != null && !SettingsSvc.settings.isDumb.value) {
       final defaultPassword = Random.secure().nextInt(1000000).toString().padLeft(6, '0');
       SettingsSvc.settings.keychainDefaultPassword.value = defaultPassword;
       await SettingsSvc.settings.saveOneAsync('keychainDefaultPassword');
@@ -1169,18 +1170,6 @@ class SetupPages extends StatelessWidget {
                 }
               });
             }
-            if (!kIsWeb &&
-                !kIsDesktop &&
-                page == 3 &&
-                controller.currentPage == 3 &&
-                !SettingsSvc.settings.isDumb.value) {
-              MethodChannelSvc.invokeMethod("enable-bt").then((isEnabled) {
-                if (isEnabled ?? false) {
-                  controller.pageController
-                      .nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
-                }
-              });
-            }
             controller.updatePage(page + 1);
           },
           physics: const NeverScrollableScrollPhysics(),
@@ -1189,7 +1178,6 @@ class SetupPages extends StatelessWidget {
             if (!SettingsSvc.settings.isDumb.value) const WelcomePage(),
             if (!kIsWeb && !kIsDesktop && !SettingsSvc.settings.isDumb.value) const RequestPermissions(),
             if (!kIsWeb && !kIsDesktop && !SettingsSvc.settings.isDumb.value) const BatteryOptimizationCheck(),
-            if (!kIsWeb && !kIsDesktop && !SettingsSvc.settings.isDumb.value) RequestBluetooth(),
             if (!usingRustPush) const MacSetupCheck(),
             if (!usingRustPush) const ServerCredentials(),
             if (!kIsWeb && !usingRustPush) SyncSettings(),

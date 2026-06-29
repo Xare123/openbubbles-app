@@ -196,7 +196,7 @@ class _UnreadIconState extends CustomState<UnreadIcon, void, ConversationTileCon
   @override
   Widget build(BuildContext context) {
     return Obx(() {
-      final unread = ChatsSvc.getChatState(controller.chat.guid)?.hasUnreadMessage.value ?? false;
+      final unread = controller.hasUnreadReactive;
       return unread
           ? Positioned(
               left: sqrt(widget.width) - widget.width * 0.05 * sqrt(2),
@@ -239,7 +239,7 @@ class _MuteIconState extends CustomState<MuteIcon, void, ConversationTileControl
   Widget build(BuildContext context) {
     return Obx(() {
       final muteType = controller.chat.muteType;
-      final unread = ChatsSvc.getChatState(controller.chat.guid)?.hasUnreadMessage.value ?? false;
+      final unread = controller.hasUnreadReactive;
 
       return muteType == "mute"
           ? Positioned(
@@ -438,7 +438,7 @@ class _ReactionIconState extends CustomState<ReactionIcon, void, ConversationTil
   @override
   Widget build(BuildContext context) {
     return Obx(() {
-      final unread = ChatsSvc.getChatState(controller.chat.guid)?.hasUnreadMessage.value ?? false;
+      final unread = controller.hasUnreadReactive;
       final latestMsg = controller.chat.dbLatestMessage.target;
       final isReaction = !isNullOrEmpty(latestMsg?.associatedMessageGuid);
       // Null-safe isFromMe: treat null as "from me" so we don't show the icon

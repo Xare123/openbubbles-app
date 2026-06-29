@@ -388,7 +388,7 @@ class CupertinoConversationListState extends State<CupertinoConversationList> wi
                 )),
           ),
           if (!showArchived && !showUnknown && !showDeleted) CupertinoMiniHeader(controller: controller),
-          Obx(() {
+          if (!showArchived && !showUnknown && !showDeleted) Obx(() {
             final _ = ChatsSvc.chatListVersion.value;
             if (!(ChatsSvc.isEmpty && ChatsSvc.loadedFirstChatBatch.value && !SettingsSvc.settings.isDumb.value))
               return SizedBox.shrink();

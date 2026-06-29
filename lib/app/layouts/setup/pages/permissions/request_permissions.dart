@@ -1,6 +1,7 @@
 import 'package:bluebubbles/app/layouts/setup/pages/page_template.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -16,8 +17,11 @@ class RequestPermissions extends StatefulWidget {
 class _RequestPermissionsState extends State<RequestPermissions> with WidgetsBindingObserver {
   PermissionStatus _contactsStatus = PermissionStatus.denied;
   PermissionStatus _notifStatus = PermissionStatus.denied;
+  PermissionStatus _nearbyStatus = PermissionStatus.denied;
   bool _contactsRequested = false;
   bool _notifRequested = false;
+  bool _nearbyRequested = false;
+
 
   @override
   void initState() {
@@ -41,11 +45,13 @@ class _RequestPermissionsState extends State<RequestPermissions> with WidgetsBin
     final results = await Future.wait([
       Permission.contacts.status,
       Permission.notification.status,
+      Permission.bluetoothAdvertise.status,
     ]);
     if (!mounted) return;
     setState(() {
       _contactsStatus = results[0];
       _notifStatus = results[1];
+      _nearbyStatus = results[2];
     });
   }
 
@@ -74,6 +80,19 @@ class _RequestPermissionsState extends State<RequestPermissions> with WidgetsBin
     }
   }
 
+  Future<void> _requestNearby() async {
+    final statuses = await [
+      Permission.bluetoothAdvertise,
+      Permission.bluetoothConnect,
+    ].request();
+    if (mounted) {
+      setState(() {
+        _nearbyStatus = statuses[Permission.bluetoothAdvertise]!;
+        _nearbyRequested = true;
+      });
+    }
+  }
+
   bool get _notifRequired {
     // Default to 33 when androidInfo hasn't loaded yet so we never falsely
     // treat the notification permission as not-required on the first build.
@@ -81,7 +100,7 @@ class _RequestPermissionsState extends State<RequestPermissions> with WidgetsBin
     return Platform.isIOS || (Platform.isAndroid && sdkInt >= 33);
   }
 
-  bool get _allGranted => _contactsStatus.isGranted && (_notifStatus.isGranted || !_notifRequired);
+  bool get _allGranted => _contactsStatus.isGranted && (_notifStatus.isGranted || !_notifRequired) && _nearbyStatus.isGranted;
 
   @override
   Widget build(BuildContext context) {
@@ -111,15 +130,34 @@ class _RequestPermissionsState extends State<RequestPermissions> with WidgetsBin
                 hasRequested: _notifRequested,
                 onRequest: _requestNotifications,
               ),
+            const SizedBox(height: 12),
+            _PermissionCard(
+              icon: Icons.bluetooth,
+              label: "Nearby Devices",
+              description: "Use proximity detection to securely transfer data during login.",
+              status: _nearbyStatus,
+              hasRequested: _nearbyRequested,
+              onRequest: _requestNearby,
+            ),
           ],
         ),
       ),
       onNextPressed: () async {
+        if (_nearbyStatus.isGranted) {
+          try {
+            await MethodChannelSvc.invokeMethod("enable-bt", {"request": true});
+          } catch (e, s) {
+            Logger.error("Failed to enable bt", error: e, trace: s);
+            return false;
+          }
+        }
+
         if (_allGranted) return true;
 
         final missing = <String>[];
         if (!_contactsStatus.isGranted) missing.add("Contacts");
         if (!_notifStatus.isGranted && _notifRequired) missing.add("Notifications");
+        if (!_nearbyStatus.isGranted) missing.add("Nearby");
 
         return await showDialog<bool>(
               context: context,

@@ -76,7 +76,12 @@ class _PickedAttachmentsHolderState extends State<PickedAttachmentsHolder> with 
             ),
             child: Padding(
               padding: _isIOS ? EdgeInsets.zero : const EdgeInsets.only(left: 7.5, right: 7.5),
-              child: CustomScrollView(
+              // Parent focus node so the text field can jump up to the first delete button.
+              child: Focus(
+                focusNode: widget.controller?.pickedAttachmentsListNode,
+                canRequestFocus: false,
+                skipTraversal: true,
+                child: CustomScrollView(
                 physics: ThemeSwitcher.getScrollPhysics(),
                 scrollDirection: Axis.horizontal,
                 slivers: [
@@ -100,6 +105,7 @@ class _PickedAttachmentsHolderState extends State<PickedAttachmentsHolder> with 
                     ),
                   )
                 ],
+              ),
               ),
             ),
           );
