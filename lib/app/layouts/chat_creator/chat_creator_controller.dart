@@ -243,6 +243,12 @@ class ChatCreatorController extends StatefulController {
     try {
       final available = await BackendSvc.handleiMessageState(contact.address);
       contact.serviceType.value = available ? ChatServiceType.iMessage : ChatServiceType.sms;
+      // The status lookup is async, so findExistingChat() may have already run with a
+      // null serviceType and left the chat on iMessage. Re-evaluate now that we know
+      // whether this is an SMS-only contact so the service can switch to SMS.
+      if (selectedContacts.contains(contact)) {
+        await findExistingChat();
+      }
     } catch (_) {}
   }
 

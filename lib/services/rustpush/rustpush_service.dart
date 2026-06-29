@@ -3550,7 +3550,12 @@ class RustPushService {
             SettingsSvc.settings.smsForwardingTargets.remove(myMsg.sender!);
           }
         }
-        await SettingsSvc.settings.saveOneAsync('smsForwardingTargets');
+        // NOTE: the `smsForwardingTargets` field is persisted under the prefs key
+        // 'smsIncomingTargets' (see Settings.toMap/fromMap). The key
+        // 'smsForwardingTargets' belongs to the unrelated `smsRoutingTargets` field,
+        // so saving that key here would persist the wrong setting and silently drop
+        // these forwarding targets on restart.
+        await SettingsSvc.settings.saveOneAsync('smsIncomingTargets');
       } catch (e) {
         showSnackbar("Error", "Error activating SMS forwarding");
         rethrow;

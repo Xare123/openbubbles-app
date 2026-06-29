@@ -419,7 +419,6 @@ class Chat {
           updateDateNotifiedAnyways ? dateNotifiedAnyways : existing?.dateNotifiedAnyways ?? dateNotifiedAnyways;
       zenModeIsShared = updateZenModeIsShared ? zenModeIsShared : existing?.zenModeIsShared ?? zenModeIsShared;
       senderIsKnown = updateSenderIsKnown ? senderIsKnown : existing?.senderIsKnown ?? senderIsKnown;
-      isRoutingStub = existing?.isRoutingStub ?? isRoutingStub;
       transcriptPosterPath =
           updateTranscriptPosterPath ? transcriptPosterPath : existing?.transcriptPosterPath ?? transcriptPosterPath;
       transcriptBackgroundVersion = updateTranscriptBackgroundVersion
@@ -1546,7 +1545,7 @@ class Chat {
 
     final name = data.cvName;
 
-    var cond = Chat_.isRoutingStub.equals(routingStub);
+    var cond = Chat_.isRoutingStub.equals(routingStub).and(Chat_.isRpSms.equals(service == "SMS"));
     if (name != null) {
       cond = cond.and(Chat_.apnTitle.equals(name));
     }
@@ -1737,9 +1736,9 @@ class Chat {
   }
 
   /// The messaging service this chat belongs to, derived from the GUID prefix.
-  ChatServiceType get service => ChatServiceType.fromGuid(guid);
+  ChatServiceType get service => isRpSms ? ChatServiceType.sms : ChatServiceType.iMessage;
 
-  bool get isTextForwarding => guid.startsWith("SMS") || isRpSms;
+  bool get isTextForwarding => service == ChatServiceType.sms;
 
   bool get isSMS => service == ChatServiceType.sms;
 

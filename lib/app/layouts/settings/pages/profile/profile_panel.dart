@@ -91,7 +91,7 @@ class _ProfilePanelState extends State<ProfilePanel> with WidgetsBindingObserver
       final pendingTargets = SettingsSvc.settings.isSmsRouter.value
           ? await api.getSmsTargets(state: PushSvc.state!.client, handle: myHandles.first, refresh: true)
           : <api.PrivateDeviceInfo>[];
-      await SettingsSvc.settings.saveOneAsync('smsRoutingTargets');
+      await SettingsSvc.settings.saveOneAsync('smsForwardingTargets'); // prefs key for the smsRoutingTargets field
       forwardingTargets.value = pendingTargets;
     }
     setState(() {});
@@ -987,6 +987,7 @@ class _ProfilePanelState extends State<ProfilePanel> with WidgetsBindingObserver
                               }
                               final myHandles = await api.getMyPhoneHandles(state: PushSvc.state!.client);
                               SettingsSvc.settings.isSmsRouter.value = val;
+                              await SettingsSvc.settings.saveOneAsync('isSmsRouter');
                               final pendingTargets = val
                                   ? await api.getSmsTargets(
                                       state: PushSvc.state!.client, handle: myHandles.first, refresh: true)
@@ -997,7 +998,7 @@ class _ProfilePanelState extends State<ProfilePanel> with WidgetsBindingObserver
                               }
                               SettingsSvc.settings.smsRoutingTargets
                                   .retainWhere((element) => pendingTargets.any((e) => e.uuid == element));
-                              await SettingsSvc.settings.saveOneAsync('smsRoutingTargets');
+                              await SettingsSvc.settings.saveOneAsync('smsForwardingTargets'); // prefs key for the smsRoutingTargets field
                               setState(() {
                                 forwardingTargets.value = pendingTargets;
                               });
@@ -1032,7 +1033,7 @@ class _ProfilePanelState extends State<ProfilePanel> with WidgetsBindingObserver
                                         await (BackendSvc as RustPushBackend)
                                             .broadcastSmsForwardingState(true, [target.uuid!]);
                                       }
-                                      await SettingsSvc.settings.saveOneAsync('smsRoutingTargets');
+                                      await SettingsSvc.settings.saveOneAsync('smsForwardingTargets'); // prefs key for the smsRoutingTargets field
                                     },
                                     initialVal: SettingsSvc.settings.smsRoutingTargets.contains(target.uuid),
                                     title: target.deviceName!,
