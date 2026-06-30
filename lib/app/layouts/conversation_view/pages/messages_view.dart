@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:flutter/rendering.dart';
 import 'package:audio_waveforms/audio_waveforms.dart' as aw;
 import 'package:bluebubbles/app/layouts/conversation_view/mixins/messages_service_mixin.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/message_holder.dart';
@@ -107,6 +108,64 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
     }
     _messageFocusNode(_messages[index]).requestFocus();
     unawaited(scrollController.scrollToIndex(index, preferPosition: AutoScrollPosition.middle));
+  }
+
+  /// When the focused message is taller than the viewport, scroll within it a page at a time
+  /// instead of jumping to the adjacent message. Returns true if it consumed the key by scrolling;
+  /// false when the message fits on screen or its top/bottom edge is already reached (the caller
+  /// then moves focus). [up] = toward the top of the screen (reveal content above the message).
+  bool _scrollWithinLargeMessage(int index, {required bool up}) {
+    if (index < 0 || index >= _messages.length || !scrollController.hasClients) return false;
+    final messageId = _messages[index].guid ?? 'unknown-$index';
+    final messageBox = _messageKeys[messageId]?.currentContext?.findRenderObject() as RenderBox?;
+    if (messageBox == null) return false;
+
+    final position = scrollController.position;
+    final viewportHeight = position.viewportDimension;
+    final messageHeight = messageBox.size.height;
+    final isFirst = index == _messages.length - 1;
+
+    // A message that fits the viewport normally needs no internal scrolling. The exception is the
+    // first (oldest) message scrolling up: the viewport extends behind the blurred header, so even
+    // a fitting first message can have its top tucked behind the header, and there's nothing above
+    // it to move focus to — so let it scroll up into the top padding to bring its top out.
+    if (messageHeight <= viewportHeight && !(up && isFirst)) return false;
+
+    final viewport = RenderAbstractViewport.maybeOf(messageBox);
+    if (viewport == null) return false;
+
+    // Scroll offsets that put the message's bottom at the viewport bottom / top at the viewport
+    // top. Works for any list direction. Clamped to the scrollable range so the message's edge
+    // being unreachable (e.g. the first/last message against the list boundary) doesn't get stuck.
+    final showBottom = viewport.getOffsetToReveal(messageBox, 0.0).offset.clamp(
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        );
+    final showTop = viewport.getOffsetToReveal(messageBox, 1.0).offset.clamp(
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        );
+    final loEdge = min(showTop, showBottom);
+    final hiEdge = max(showTop, showBottom);
+
+    const tolerance = 4.0;
+    final page = viewportHeight * 0.85;
+    final pixels = position.pixels;
+    double target;
+    if (up) {
+      // For the first (oldest) message, scroll all the way up (into the top padding) so its top
+      // clears the header. Other messages stop at their revealed top and hand focus to the older
+      // message above.
+      final upLimit = isFirst ? position.maxScrollExtent : hiEdge;
+      if (pixels >= upLimit - tolerance) return false; // top reached → move to previous message
+      target = min(pixels + page, upLimit);
+    } else {
+      if (pixels <= loEdge + tolerance) return false; // bottom reached → move to next message
+      target = max(pixels - page, loEdge);
+    }
+    if ((target - pixels).abs() < 1.0) return false; // can't actually move → move to adjacent
+    unawaited(scrollController.animateTo(target, duration: const Duration(milliseconds: 150), curve: Curves.easeOut));
+    return true;
   }
 
   /// Finds the registered audio-player key for [message]. Players register under the *rendered*
@@ -848,11 +907,17 @@ class MessagesViewState extends State<MessagesView> with MessagesServiceMixin, T
                                               }
                                               if (ev is! KeyDownEvent) return KeyEventResult.ignored;
                                               if (ev.logicalKey == LogicalKeyboardKey.arrowUp) {
-                                                _focusMessageAt(index + 1);
+                                                // Scroll within a too-tall message first; only move
+                                                // to the previous message once its top is reached.
+                                                if (!_scrollWithinLargeMessage(index, up: true)) {
+                                                  _focusMessageAt(index + 1);
+                                                }
                                                 return KeyEventResult.handled;
                                               }
                                               if (ev.logicalKey == LogicalKeyboardKey.arrowDown) {
-                                                _focusMessageAt(index - 1);
+                                                if (!_scrollWithinLargeMessage(index, up: false)) {
+                                                  _focusMessageAt(index - 1);
+                                                }
                                                 return KeyEventResult.handled;
                                               }
                                               if ((ev.logicalKey == LogicalKeyboardKey.enter ||
