@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:bluebubbles/app/state/message_state.dart';
 import 'package:bluebubbles/app/state/message_state_scope.dart';
 import 'package:bluebubbles/app/state/chat_state_scope.dart';
@@ -25,18 +27,45 @@ class _DeliveredIndicatorState extends State<DeliveredIndicator> with ThemeHelpe
   Message get message => controller.message;
   bool get showAvatar => _isGroup;
 
+  // Debounced shadow of isSending. Goes true immediately when sending starts,
+  // but stays true for at least _sendingMinDisplayMs after sending ends so the
+  // "Sending..." label outlives the send animation (~650 ms total).
+  bool _isSendingDisplayed = false;
+  Timer? _sendingTimer;
+  Worker? _isSendingWorker;
+  static const int _sendingMinDisplayMs = 700;
+
   @override
   void initState() {
     super.initState();
     controller = MessageStateScope.readStateOnce(context);
     final fallbackChat = ChatStateScope.maybeReadChatOnce(context);
     _isGroup = controller.cvController?.chat.isGroup ?? fallbackChat?.isGroup ?? false;
+    _isSendingDisplayed = controller.isSending.value;
+    _isSendingWorker = ever(controller.isSending, _onIsSendingChange);
+  }
+
+  void _onIsSendingChange(bool newVal) {
+    if (newVal) {
+      _sendingTimer?.cancel();
+      if (mounted) setState(() => _isSendingDisplayed = true);
+    } else if (_isSendingDisplayed) {
+      _sendingTimer = Timer(const Duration(milliseconds: _sendingMinDisplayMs), () {
+        if (mounted) setState(() => _isSendingDisplayed = false);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _isSendingWorker?.dispose();
+    _sendingTimer?.cancel();
+    super.dispose();
   }
 
   bool get shouldShow {
     if (controller.audioWasKept.value != null) return true;
-    final isTempMessage = controller.isSending.value;
-    if (widget.forceShow || isTempMessage) return true;
+    if (widget.forceShow || _isSendingDisplayed) return true;
     if ((!message.isFromMe! && iOS) || (controller.parts.lastOrNull?.isUnsent ?? false)) return false;
 
     // Visibility for "last delivered/read/sent" is computed by
@@ -81,7 +110,7 @@ class _DeliveredIndicatorState extends State<DeliveredIndicator> with ThemeHelpe
               : null);
     } else if (message.isDelivered) {
       return buildTwoPiece("Delivered", null);
-    } else if (controller.isSending.value && !(controller.cvController?.chat.isGroup ?? _isGroup) && !iOS) {
+    } else if (_isSendingDisplayed && !(controller.cvController?.chat.isGroup ?? _isGroup) && !iOS) {
       return buildTwoPiece("Sending...", "");
     } else if (widget.forceShow) {
       if (message.dateScheduled != null) {
@@ -101,10 +130,11 @@ class _DeliveredIndicatorState extends State<DeliveredIndicator> with ThemeHelpe
       duration: const Duration(milliseconds: 250),
       child: Obx(() {
         // Observe the fields that affect both shouldShow and getText.
+        // isSending is handled via the debounced _isSendingDisplayed + setState,
+        // not subscribed here, so the "Sending..." label outlives the animation.
         controller.showReadIndicator.value;
         controller.showDeliveredIndicator.value;
         controller.audioWasKept.value;
-        controller.isSending.value;
         controller.dateDelivered.value;
         controller.dateRead.value;
         return shouldShow && getText().isNotEmpty

@@ -49,7 +49,7 @@ mixin MessagesServiceMixin<T extends StatefulWidget> on State<T> {
     List<Message>? messagesRef,
   }) {
     // Use custom service or get/create singleton
-    _messageService = customService ?? MessagesSvc(chat.guid);
+    _messageService = customService != null ? registerMessagesSvc(customService) : ensureMessagesSvc(chat.guid);
 
     // Only initialize handlers if this is NOT a customService
     // CustomService is already initialized by the caller, don't reinitialize

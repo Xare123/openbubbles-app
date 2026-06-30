@@ -39,44 +39,142 @@ class ContactTile extends StatelessWidget {
     required this.facetimeSupported,
   });
 
+  void _removeParticipant(BuildContext context) {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+          title: Text(
+            "Removing participant...",
+            style: context.theme.textTheme.titleLarge,
+          ),
+          content: SizedBox(
+            height: 70,
+            child: Center(child: buildProgressIndicator(context)),
+          ),
+        );
+      },
+    );
+
+    BackendSvc.chatParticipant(ParticipantOp.Remove, chat, handle.address).then((response) async {
+      navigator.pop();
+      Logger.info("Removed participant ${handle.address}");
+      showSnackbar("Notice", "Removed participant from chat!");
+    }).catchError((err, stack) {
+      Logger.error("Failed to remove participant ${handle.address}", error: err, trace: stack);
+      late final String error;
+      if (err is Response) {
+        error = err.data["error"]["message"].toString();
+      } else {
+        error = err.toString();
+      }
+      showSnackbar("Error", "Failed to remove participant: $error");
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    final handleState = HandleSvc.getOrCreateHandleState(handle);
     return Obx(() {
-      final bool hideInfo = SettingsSvc.settings.redactedMode.value && SettingsSvc.settings.hideContactInfo.value;
+      final String displayName = handleState.displayName.value ?? handle.address;
+      final String address = handleState.formattedAddress.value ?? handle.address;
       final bool isEmail = handle.address.isEmail;
       final child = InkWell(
+        mouseCursor: MouseCursor.defer,
         onLongPress: () {
           Clipboard.setData(ClipboardData(text: handle.address));
           if (!Platform.isAndroid || (FilesystemSvc.androidInfo?.version.sdkInt ?? 0) < 33) {
-            showSnackbar("Copied", "Address copied to clipboard!");
+            showToast("Address copied to clipboard");
           }
         },
-        onTap: () async {
-          final contactV2 = handle.contactsV2.firstOrNull;
-          if (contactV2 == null || !contactV2.isNative) {
-            await MethodChannelSvc.actions.openContactForm(
-              address: handle.address,
-              isEmail: handle.address.isEmail,
-            );
-          } else {
-            try {
-              await MethodChannelSvc.actions.viewContactForm(nativeContactId: contactV2.nativeContactId);
-            } catch (_) {
-              showSnackbar("Error", "Failed to find contact on device!");
-            }
-          }
+        onTap: kIsDesktop
+            ? null
+            : () async {
+                final contactV2 = handle.contactsV2.firstOrNull;
+                if (contactV2 == null || !contactV2.isNative) {
+                  await MethodChannelSvc.actions.openContactForm(
+                    address: handle.address,
+                    isEmail: handle.address.isEmail,
+                  );
+                } else {
+                  try {
+                    await MethodChannelSvc.actions.viewContactForm(nativeContactId: contactV2.nativeContactId);
+                  } catch (_) {
+                    showSnackbar("Error", "Failed to find contact on device!");
+                  }
+                }
+              },
+        onSecondaryTap: () {
+          showModalBottomSheet(
+            context: context,
+            backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+            ),
+            builder: (ctx) {
+              return SafeArea(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.person_outlined, size: 18),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              displayName,
+                              style: context.theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Divider(height: 8),
+                    ListTile(
+                      mouseCursor: MouseCursor.defer,
+                      leading: const Icon(Icons.copy_outlined),
+                      title: const Text("Copy address"),
+                      onTap: () {
+                        Navigator.of(ctx).pop();
+                        Clipboard.setData(ClipboardData(text: handle.address));
+                        showToast("Address copied to clipboard");
+                      },
+                    ),
+                    if (canBeRemoved)
+                      ListTile(
+                        mouseCursor: MouseCursor.defer,
+                        leading: Icon(Icons.person_remove_outlined, color: context.theme.colorScheme.error),
+                        title: Text("Remove from chat", style: TextStyle(color: context.theme.colorScheme.error)),
+                        onTap: () {
+                          Navigator.of(ctx).pop();
+                          _removeParticipant(context);
+                        },
+                      ),
+                    const SizedBox(height: 8),
+                  ],
+                ),
+              );
+            },
+          );
         },
         child: ListTile(
-          mouseCursor: MouseCursor.defer,
           title: RichText(
             text: TextSpan(
-              children: MessageHelper.buildEmojiText(handle.displayName, context.theme.textTheme.bodyLarge!),
+              children: MessageHelper.buildEmojiText(
+                displayName,
+                context.theme.textTheme.bodyLarge!,
+              ),
             ),
           ),
-          subtitle: handle.contactsV2.isEmpty || hideInfo
+          subtitle: handle.contactsV2.isEmpty
               ? null
               : Text(
-                  handle.formattedAddress ?? handle.address,
+                  address,
                   style: context.theme.textTheme.bodyMedium!.copyWith(color: context.theme.colorScheme.outline),
                 ),
           leading: ContactAvatarWidget(
@@ -162,7 +260,7 @@ class ContactTile extends StatelessWidget {
         ),
       );
 
-      return canBeRemoved
+      return canBeRemoved && !kIsDesktop
           ? Slidable(
               endActionPane: ActionPane(
                 motion: const StretchMotion(),
@@ -172,42 +270,7 @@ class ContactTile extends StatelessWidget {
                     label: 'Remove',
                     backgroundColor: Colors.red,
                     icon: SettingsSvc.settings.skin.value == Skins.iOS ? CupertinoIcons.trash : Icons.delete_outlined,
-                    onPressed: (_) async {
-                      // Capture navigator before any async gap — the tile may
-                      // be removed from the tree once the participant list
-                      // updates, making context.findAncestorStateOfType unsafe.
-                      final navigator = Navigator.of(context, rootNavigator: true);
-                      showDialog(
-                          context: context,
-                          builder: (BuildContext context) {
-                            return AlertDialog(
-                              backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                              title: Text(
-                                "Removing participant...",
-                                style: context.theme.textTheme.titleLarge,
-                              ),
-                              content: SizedBox(
-                                height: 70,
-                                child: Center(child: buildProgressIndicator(context)),
-                              ),
-                            );
-                          });
-
-                      BackendSvc.chatParticipant(ParticipantOp.Remove, chat, handle.address).then((response) async {
-                        navigator.pop();
-                        Logger.info("Removed participant ${handle.address}");
-                        showSnackbar("Notice", "Removed participant from chat!");
-                      }).catchError((err, stack) {
-                        Logger.error("Failed to remove participant ${handle.address}", error: err, trace: stack);
-                        late final String error;
-                        if (err is Response) {
-                          error = err.data["error"]["message"].toString();
-                        } else {
-                          error = err.toString();
-                        }
-                        showSnackbar("Error", "Failed to remove participant: $error");
-                      });
-                    },
+                    onPressed: (_) => _removeParticipant(context),
                   ),
                 ],
               ),

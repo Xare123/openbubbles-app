@@ -59,7 +59,7 @@ class ReactionWidgetState extends State<ReactionWidget> with ThemeHelpers {
     //  3. ChatsSvc.activeChat – last-resort fallback
     final chatGuid = widget.chatGuid ?? _parentMessage?.chat.target?.guid ?? ChatsSvc.activeChat?.chat.guid;
     final parentController =
-        chatGuid != null ? MessagesSvc(chatGuid).getMessageStateIfExists(_parentMessage?.guid ?? '') : null;
+        chatGuid != null ? maybeFindMessagesSvc(chatGuid)?.getMessageStateIfExists(_parentMessage?.guid ?? '') : null;
     if (parentController != null) {
       // Find our reaction in the observable associatedMessages list
       final found = parentController.associatedMessages.firstWhereOrNull((m) =>
@@ -91,7 +91,7 @@ class ReactionWidgetState extends State<ReactionWidget> with ThemeHelpers {
     // Use same resolution order as reaction getter
     final chatGuid = widget.chatGuid ?? _parentMessage?.chat.target?.guid ?? ChatsSvc.activeChat?.chat.guid;
     if (chatGuid == null || reaction.guid == null) return null;
-    return MessagesSvc(chatGuid).getMessageStateIfExists(reaction.guid!);
+    return maybeFindMessagesSvc(chatGuid)?.getMessageStateIfExists(reaction.guid!);
   }
 
   ConversationViewController? get controller {
@@ -187,29 +187,31 @@ class ReactionWidgetState extends State<ReactionWidget> with ThemeHelpers {
             child: GestureDetector(
               onTap: () {
                 if (reactions == null) return;
+                // Capture the conversation's theme before pushing \u2014 if adaptive
+                // theming is active, context.theme is already the per-chat theme.
+                final capturedTheme = context.theme;
+                final capturedIsM3 = ThemeSvc.isMaterialYouActive(context);
+                final capturedBubbleExt = capturedTheme.extensions[BubbleColors] as BubbleColors?;
                 Navigator.push(
                   context,
                   PageRouteBuilder(
                     transitionDuration: const Duration(milliseconds: 500),
-                    pageBuilder: (context, animation, secondaryAnimation) {
+                    pageBuilder: (routeCtx, animation, secondaryAnimation) {
                       return SlideTransition(
                         position: Tween<Offset>(
                           begin: const Offset(0.0, 1.0),
                           end: Offset.zero,
                         ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut)),
                         child: Theme(
-                          data: context.theme.copyWith(
+                          data: capturedTheme.copyWith(
                             // in case some components still use legacy theming
-                            primaryColor: context.theme.colorScheme.bubble(context, true),
-                            colorScheme: context.theme.colorScheme.copyWith(
-                              primary: context.theme.colorScheme.bubble(context, true),
-                              onPrimary: context.theme.colorScheme.onBubble(context, true),
-                              surface: ThemeSvc.isMaterialYouActive(context)
-                                  ? null
-                                  : (context.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
-                              onSurface: ThemeSvc.isMaterialYouActive(context)
-                                  ? null
-                                  : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
+                            primaryColor: capturedBubbleExt?.iMessageBubbleColor ?? capturedTheme.colorScheme.primary,
+                            colorScheme: capturedTheme.colorScheme.copyWith(
+                              primary: capturedBubbleExt?.iMessageBubbleColor ?? capturedTheme.colorScheme.primary,
+                              onPrimary:
+                                  capturedBubbleExt?.oniMessageBubbleColor ?? capturedTheme.colorScheme.onPrimary,
+                              surface: capturedIsM3 ? null : capturedBubbleExt?.receivedBubbleColor,
+                              onSurface: capturedIsM3 ? null : capturedBubbleExt?.onReceivedBubbleColor,
                             ),
                           ),
                           child: Stack(
@@ -217,7 +219,7 @@ class ReactionWidgetState extends State<ReactionWidget> with ThemeHelpers {
                             children: [
                               GestureDetector(
                                 onTap: () {
-                                  Navigator.of(context).pop();
+                                  Navigator.of(routeCtx).pop();
                                 },
                               ),
                               Positioned(
@@ -355,8 +357,11 @@ class ReactionWidgetState extends State<ReactionWidget> with ThemeHelpers {
                       final chat = ChatStateScope.maybeChatOf(context) ??
                           ChatsSvc.getChatState(widget.chatGuid ?? _parentMessage?.chat.target?.guid ?? '')?.chat ??
                           ChatsSvc.activeChat!.chat;
-                      final selected =
-                          MessagesSvc(chat.guid).getMessageStateIfExists(reaction.associatedMessageGuid!)!.message;
+                      final selected = maybeFindMessagesSvc(chat.guid)
+                              ?.getMessageStateIfExists(reaction.associatedMessageGuid!)
+                              ?.message ??
+                          _parentMessage;
+                      if (selected == null) return;
 
                       showDialog(
                         context: context,

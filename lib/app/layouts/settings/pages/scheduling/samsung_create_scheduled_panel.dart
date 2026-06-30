@@ -1,10 +1,12 @@
 import 'package:animated_size_and_fade/animated_size_and_fade.dart';
 import 'package:bluebubbles/app/components/avatars/contact_avatar_group_widget.dart';
+import 'package:bluebubbles/app/layouts/chat_selector_view/chat_selector_view.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/scheduling/create_scheduled_mixin.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/settings_widgets.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -136,34 +138,53 @@ class _SamsungCreateScheduledMessageState extends State<SamsungCreateScheduledMe
               SettingsSection(
                 backgroundColor: tileColor,
                 children: [
-                  SettingsOptions<Chat>(
-                    initial: ChatsSvc.findChatByGuid(selectedChat.value)!,
-                    options: ChatsSvc.allChats,
-                    onChanged: (Chat? val) {
-                      if (val == null) return;
-                      selectedChat.value = val.guid;
-                    },
-                    title: "Select Chat",
-                    secondaryColor: headerColor,
-                    textProcessing: (val) => val.toString(),
-                    useCupertino: false,
-                    clampWidth: false,
-                    materialCustomWidgets: (chat) => Row(
-                      children: [
-                        ContactAvatarGroupWidget(chat: chat, size: 35, editable: false),
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.only(left: 15.0),
-                            child: Text(
-                              chat.getTitle(),
-                              style: context.theme.textTheme.bodyLarge,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ),
-                      ],
+                  SettingsTile(
+                    title: "Chat",
+                    leading: SettingsLeadingIcon(
+                      iosIcon: CupertinoIcons.chat_bubble_2_fill,
+                      materialIcon: CupertinoIcons.chat_bubble_2_fill,
+                      containerColor: context.theme.colorScheme.primary,
                     ),
+                    trailing: Obx(() {
+                      final chat = selectedChat.value.isEmpty ? null : ChatsSvc.findChatByGuid(selectedChat.value);
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (chat != null) ...[
+                            ContactAvatarGroupWidget(chat: chat, size: 28, editable: false),
+                            const SizedBox(width: 8),
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 120),
+                              child: Text(
+                                chat.getTitle(),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: context.theme.textTheme.bodyMedium?.copyWith(
+                                  color: context.theme.colorScheme.outline,
+                                ),
+                              ),
+                            ),
+                          ] else
+                            Text(
+                              "Select a chat",
+                              style: context.theme.textTheme.bodyMedium?.copyWith(
+                                color: context.theme.colorScheme.error,
+                              ),
+                            ),
+                          Icon(CupertinoIcons.chevron_right, size: 14, color: context.theme.colorScheme.outline),
+                        ],
+                      );
+                    }),
+                    onTap: () {
+                      NavigationSvc.push(
+                        context,
+                        ChatSelectorView(
+                          onSelect: (chat) {
+                            selectedChat.value = chat.guid;
+                          },
+                        ),
+                      );
+                    },
                   ),
                   Padding(
                     padding: const EdgeInsets.all(15.0),
@@ -288,22 +309,22 @@ class _SamsungCreateScheduledMessageState extends State<SamsungCreateScheduledMe
               SettingsSection(
                 backgroundColor: tileColor,
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.all(15),
-                    child: ValueListenableBuilder(
-                      valueListenable: messageController,
-                      builder: (context, _, __) {
-                        if (error != null) return Text(error, style: const TextStyle(color: Colors.red));
-                        final chat = ChatsSvc.findChatByGuid(selectedChat.value);
-                        return Text(
-                          "Scheduling \"${messageController.text}\" to ${chat?.getTitle() ?? selectedChat.value}.\n"
-                          "Sending ${schedule.value == "recurring" ? "every ${repeatInterval.value} ${frequencyToText[frequency.value]}(s) starting" : "once"} on "
-                          "${buildSeparatorDateSamsung(date.value)} at ${buildTime(date.value)}.",
-                          style: context.theme.textTheme.bodyMedium,
-                        );
-                      },
-                    ),
-                  ),
+                  Obx(() => Padding(
+                        padding: const EdgeInsets.all(15),
+                        child: ValueListenableBuilder(
+                          valueListenable: messageController,
+                          builder: (context, _, __) {
+                            if (error != null) return Text(error, style: const TextStyle(color: Colors.red));
+                            final chat = ChatsSvc.findChatByGuid(selectedChat.value);
+                            return Text(
+                              "Scheduling \"${messageController.text}\" to ${chat?.getTitle() ?? selectedChat.value}.\n"
+                              "Sending ${schedule.value == "recurring" ? "every ${repeatInterval.value} ${frequencyToText[frequency.value]}(s) starting" : "once"} on "
+                              "${buildSeparatorDateSamsung(date.value)} at ${buildTime(date.value)}.",
+                              style: context.theme.textTheme.bodyMedium,
+                            );
+                          },
+                        ),
+                      )),
                 ],
               ),
             ]),

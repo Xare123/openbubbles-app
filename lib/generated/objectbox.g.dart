@@ -152,7 +152,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(3, 9017250848141753702),
     name: 'Chat',
-    lastPropertyId: const obx_int.IdUid(51, 8581907327600861164),
+    lastPropertyId: const obx_int.IdUid(53, 3383140454393138192),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -420,6 +420,18 @@ final _entities = <obx_int.ModelEntity>[
       obx_int.ModelProperty(
         id: const obx_int.IdUid(51, 8581907327600861164),
         name: 'title',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(52, 5932892745140157306),
+        name: 'customThemeLight',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(53, 3383140454393138192),
+        name: 'customThemeDark',
         type: 9,
         flags: 0,
       ),
@@ -1618,7 +1630,13 @@ obx_int.ModelDefinition getObjectBoxModel() {
         final titleOffset = object.title == null
             ? null
             : fbb.writeString(object.title!);
-        fbb.startTable(52);
+        final customThemeLightOffset = object.customThemeLight == null
+            ? null
+            : fbb.writeString(object.customThemeLight!);
+        final customThemeDarkOffset = object.customThemeDark == null
+            ? null
+            : fbb.writeString(object.customThemeDark!);
+        fbb.startTable(54);
         fbb.addInt64(0, object.id ?? 0);
         fbb.addOffset(2, guidOffset);
         fbb.addOffset(4, chatIdentifierOffset);
@@ -1666,6 +1684,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
         fbb.addInt64(48, object.dbLatestMessage.targetId);
         fbb.addOffset(49, customBackgroundPathOffset);
         fbb.addOffset(50, titleOffset);
+        fbb.addOffset(51, customThemeLightOffset);
+        fbb.addOffset(52, customThemeDarkOffset);
         fbb.finish(fbb.endTable());
         return object.id ?? 0;
       },
@@ -1809,6 +1829,12 @@ obx_int.ModelDefinition getObjectBoxModel() {
         ).vTableGetNullable(buffer, rootOffset, 86);
         final transcriptBackgroundVersionParam = const fb.Int64Reader()
             .vTableGet(buffer, rootOffset, 88, 0);
+        final customThemeLightParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 106);
+        final customThemeDarkParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 108);
         final object =
             Chat(
                 id: idParam,
@@ -1843,6 +1869,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
                 isRoutingStub: isRoutingStubParam,
                 transcriptPosterPath: transcriptPosterPathParam,
                 transcriptBackgroundVersion: transcriptBackgroundVersionParam,
+                customThemeLight: customThemeLightParam,
+                customThemeDark: customThemeDarkParam,
               )
               ..dbOnlyLatestMessageDate = dbOnlyLatestMessageDateValue == null
                   ? null
@@ -3244,6 +3272,16 @@ class Chat_ {
   /// See [Chat.title].
   static final title = obx.QueryStringProperty<Chat>(
     _entities[1].properties[43],
+  );
+
+  /// See [Chat.customThemeLight].
+  static final customThemeLight = obx.QueryStringProperty<Chat>(
+    _entities[1].properties[44],
+  );
+
+  /// See [Chat.customThemeDark].
+  static final customThemeDark = obx.QueryStringProperty<Chat>(
+    _entities[1].properties[45],
   );
 
   /// see [Chat.handles]

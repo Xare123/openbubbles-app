@@ -26,6 +26,21 @@ class ChatInterface {
     }
   }
 
+  static Future<void> markAllChatsRead({
+    required List<int> chatIds,
+    required bool shouldMarkOnServer,
+  }) async {
+    final data = {
+      'chatIds': chatIds,
+      'shouldMarkOnServer': shouldMarkOnServer,
+    };
+    if (isIsolate) {
+      return await ChatActions.markAllChatsRead(data);
+    } else {
+      return await GetIt.I<GlobalIsolate>().send<void>(IsolateRequestType.markAllChatsRead, input: data);
+    }
+  }
+
   static Future<void> markChatReadUnread({
     required String chatGuid,
     required bool markAsRead,

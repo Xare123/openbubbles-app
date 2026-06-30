@@ -32,5 +32,6 @@ export 'ui/theme/themes_service.dart';
 export 'ui/attachments_service.dart';
 export 'ui/contact_service_v2.dart';
 export 'ui/extension_service.dart';
+export 'ui/typing_indicator_service.dart';
 export 'ui/unifiedpush.dart';
 export 'isolates/isolate_event.dart';

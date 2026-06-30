@@ -1,3 +1,4 @@
+import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:desktop_webview_auth/desktop_webview_auth.dart';
@@ -9,64 +10,192 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:universal_io/io.dart';
 import 'package:window_manager/window_manager.dart';
 
-Future<String?> googleOAuth(BuildContext context) async {
-  String? token;
+typedef GoogleOAuthStageCallback = void Function(String status);
 
-  final defaultScopes = [
+class GoogleOAuthException implements Exception {
+  final String userMessage;
+  final String technicalMessage;
+
+  const GoogleOAuthException({
+    required this.userMessage,
+    required this.technicalMessage,
+  });
+
+  @override
+  String toString() => technicalMessage;
+}
+
+class GoogleOAuthFlowController {
+  final Rxn<String> token = Rxn<String>();
+  final Rxn<String> googlePicture = Rxn<String>();
+  final Rxn<String> googleName = Rxn<String>();
+  final RxList<Map> usableProjects = <Map>[].obs;
+  final RxList<RxBool> triedConnecting = <RxBool>[].obs;
+  final RxList<RxBool> reachable = <RxBool>[].obs;
+  final RxBool fetchingFirebase = false.obs;
+  final RxBool googleSignInInFlight = false.obs;
+  final RxString googleSignInStatus = "".obs;
+  final RxBool forceGoogleAccountPicker = false.obs;
+
+  Future<void> handleGoogleSignIn(
+    BuildContext context, {
+    void Function(String message)? onError,
+  }) async {
+    if (googleSignInInFlight.value) return;
+
+    onError?.call("");
+    googleSignInInFlight.value = true;
+    googleSignInStatus.value = "Preparing Google sign-in...";
+    try {
+      final signInToken = await googleOAuth(
+        context,
+        onStageChanged: (status) => googleSignInStatus.value = status,
+        forceAccountPicker: forceGoogleAccountPicker.value,
+      );
+      forceGoogleAccountPicker.value = false;
+      token.value = signInToken;
+      if (signInToken == null) return;
+
+      googleSignInStatus.value = "Loading account details...";
+      try {
+        final response = await HttpSvc.firebase.getGoogleInfo(signInToken);
+        googleName.value = response.data['name'];
+        googlePicture.value = response.data['picture'];
+      } catch (e, stack) {
+        Logger.error("Failed to load Google account details", error: e, trace: stack);
+        throw const GoogleOAuthException(
+          userMessage: "Signed in, but we couldn't load your Google account details. Please try again.",
+          technicalMessage: "Failed to load Google account details after sign-in.",
+        );
+      }
+
+      fetchingFirebase.value = true;
+      googleSignInStatus.value = "Loading Firebase projects...";
+      final projects = await fetchFirebaseProjects(signInToken);
+      usableProjects.value = projects;
+      triedConnecting.value = List.generate(usableProjects.length, (_) => false.obs);
+      reachable.value = List.generate(usableProjects.length, (_) => false.obs);
+      fetchingFirebase.value = false;
+    } on GoogleOAuthException catch (e) {
+      clearSessionData();
+      onError?.call(e.userMessage);
+    } catch (e, stack) {
+      Logger.error("Failed to complete Google sign-in flow", error: e, trace: stack);
+      clearSessionData();
+      onError?.call("Google sign-in failed. Please try again.");
+    } finally {
+      googleSignInInFlight.value = false;
+      googleSignInStatus.value = "";
+    }
+  }
+
+  Future<void> chooseDifferentAccount() async {
+    forceGoogleAccountPicker.value = true;
+    await forgetGoogleOAuthSession();
+    clearSessionData();
+  }
+
+  void clearSessionData() {
+    token.value = null;
+    googleName.value = null;
+    googlePicture.value = null;
+    usableProjects.clear();
+    triedConnecting.clear();
+    reachable.clear();
+    fetchingFirebase.value = false;
+  }
+
+  void retryConnections() {
+    for (final state in triedConnecting) {
+      state.value = false;
+    }
+  }
+}
+
+Future<String?> googleOAuth(
+  BuildContext context, {
+  GoogleOAuthStageCallback? onStageChanged,
+  bool forceAccountPicker = false,
+}) async {
+  String? token;
+  final stopwatch = Stopwatch()..start();
+
+  const defaultScopes = [
     'https://www.googleapis.com/auth/cloudplatformprojects',
     'https://www.googleapis.com/auth/firebase',
     'https://www.googleapis.com/auth/datastore'
   ];
 
+  void reportStage(String status) {
+    onStageChanged?.call(status);
+    Logger.info('$status (${stopwatch.elapsedMilliseconds} ms)', tag: 'Google OAuth');
+  }
+
   // android / web implementation
   if (Platform.isAndroid || kIsWeb) {
     // on web, show a dialog to make sure users allow scopes
     if (kIsWeb) {
-      await showDialog(
+      await showBBDialog(
         context: context,
         barrierDismissible: false,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-            title: Text("Important Notice", style: context.theme.textTheme.titleLarge),
-            content: Text(
-              'Please make sure to allow BlueBubbles to see, edit, configure, and delete your Google Cloud data after signing in. BlueBubbles will only use this ability to find your server URL.',
-              style: context.theme.textTheme.bodyLarge,
-            ),
-            actions: <Widget>[
-              TextButton(
-                child: Text("OK",
-                    style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-                onPressed: () {
-                  Navigator.of(context).pop();
-                },
-              ),
-            ],
-          );
-        },
+        title: "Important Notice",
+        body:
+            'Please make sure to allow BlueBubbles to see, edit, configure, and delete your Google Cloud data after signing in. BlueBubbles will only use this ability to find your server URL.',
+        actions: [
+          BBDialogAction(
+            text: "OK",
+            isDefault: true,
+            onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+          ),
+        ],
       );
     }
 
     // initialize gsi
     final gsi = GoogleSignIn.instance;
-    await gsi.initialize(clientId: fdb.getClientId());
-    GoogleSignInAccount? account = await gsi.attemptLightweightAuthentication();
+    reportStage("Initializing Google Sign-In");
+    await gsi.initialize(
+      clientId: kIsWeb ? fdb.getClientId() : null,
+      serverClientId: !kIsWeb && Platform.isAndroid ? fdb.getServerClientId() : null,
+    );
+    GoogleSignInAccount? account;
+    if (!forceAccountPicker) {
+      reportStage("Checking for an existing Google session");
+      account = await gsi.attemptLightweightAuthentication();
+    }
     if (account == null) {
       try {
-        // sign out then sign in
+        // Reset the cached SDK session before interactive auth so the account
+        // chooser can appear when the user explicitly requests a different account.
+        reportStage(forceAccountPicker ? "Resetting Google session" : "Preparing Google account chooser");
         await gsi.signOut();
+        reportStage("Opening Google sign-in popup");
         account = await gsi.authenticate(scopeHint: defaultScopes);
-        // get access token
-        final auth = account.authentication;
-        token = auth.idToken;
-        // error if token is not present
-        if (token == null) {
-          throw Exception("No access token!");
-        }
       } catch (e, stack) {
         Logger.error("Failed to sign in with Google (Android/Web)", error: e, trace: stack);
-        return null;
+        throw const GoogleOAuthException(
+          userMessage: "Google sign-in was canceled or could not be started. Please try again.",
+          technicalMessage: "Failed to start interactive Google sign-in.",
+        );
       }
+    }
+
+    try {
+      reportStage("Authorizing Google API scopes");
+      GoogleSignInClientAuthorization? authorization =
+          await account.authorizationClient.authorizationForScopes(defaultScopes);
+      authorization ??= await account.authorizationClient.authorizeScopes(defaultScopes);
+
+      token = authorization.accessToken;
+      if (token.isEmpty) {
+        throw Exception("No access token!");
+      }
+    } catch (e, stack) {
+      Logger.error("Failed to authorize Google API access (Android/Web)", error: e, trace: stack);
+      throw const GoogleOAuthException(
+        userMessage: "Google sign-in succeeded, but required Google permissions were not granted.",
+        technicalMessage: "Failed to authorize Google API scopes after sign-in.",
+      );
     }
     // desktop implementation
   } else {
@@ -78,6 +207,7 @@ Future<String?> googleOAuth(BuildContext context) async {
     try {
       final width = PrefsSvc.desktop.getWindowWidth()?.toInt();
       final height = PrefsSvc.desktop.getWindowHeight()?.toInt();
+      reportStage("Opening Google sign-in window");
       final result = await DesktopWebviewAuth.signIn(
         args,
         width: width != null ? (width * 0.9).ceil() : null,
@@ -91,10 +221,29 @@ Future<String?> googleOAuth(BuildContext context) async {
       }
     } catch (e, stack) {
       Logger.error("Failed to sign in with Google (Desktop)", error: e, trace: stack);
-      return null;
+      throw const GoogleOAuthException(
+        userMessage: "Google sign-in could not be completed. Please try again.",
+        technicalMessage: "Desktop Google sign-in failed.",
+      );
     }
   }
+  Logger.info('Google sign-in completed in ${stopwatch.elapsedMilliseconds} ms', tag: 'Google OAuth');
   return token;
+}
+
+Future<void> forgetGoogleOAuthSession() async {
+  if (Platform.isAndroid || kIsWeb) {
+    try {
+      final gsi = GoogleSignIn.instance;
+      await gsi.initialize(
+        clientId: kIsWeb ? fdb.getClientId() : null,
+        serverClientId: !kIsWeb && Platform.isAndroid ? fdb.getServerClientId() : null,
+      );
+      await gsi.signOut();
+    } catch (e, stack) {
+      Logger.error("Failed to forget Google session", error: e, trace: stack);
+    }
+  }
 }
 
 Future<List<Map>> fetchFirebaseProjects(String token) async {
@@ -136,8 +285,15 @@ Future<List<Map>> fetchFirebaseProjects(String token) async {
       return usableProjects;
     }
     return [];
-  } catch (e) {
-    return [];
+  } on GoogleOAuthException {
+    rethrow;
+  } catch (e, stack) {
+    Logger.error("Failed to fetch Firebase projects", error: e, trace: stack);
+    throw const GoogleOAuthException(
+      userMessage:
+          "We couldn't load your Firebase projects. Please verify your Google account has access and try again.",
+      technicalMessage: "Failed to fetch Firebase projects from Google APIs.",
+    );
   }
 }
 

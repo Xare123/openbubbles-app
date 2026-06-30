@@ -134,8 +134,8 @@ class AttachmentDownloadService extends GetxService {
   void _removeFromQueue(AttachmentDownloadController downloader) {
     downloaders.remove(downloader.attachment.guid!);
     final chatGuid = downloader.attachment.message.target?.chat.target?.guid ?? "unknown";
-    _downloaders[chatGuid]!.removeWhere((e) => e.attachment.guid == downloader.attachment.guid);
-    if (_downloaders[chatGuid]!.isEmpty) _downloaders.remove(chatGuid);
+    _downloaders[chatGuid]?.removeWhere((e) => e.attachment.guid == downloader.attachment.guid);
+    if (_downloaders[chatGuid]?.isEmpty ?? false) _downloaders.remove(chatGuid);
     Get.delete<AttachmentDownloadController>(tag: downloader.attachment.guid!);
     _fetchNext();
   }

@@ -1,5 +1,6 @@
 import 'package:bluebubbles/services/backend/actions/app_actions.dart';
 import 'package:bluebubbles/services/backend/actions/attachment_actions.dart';
+import 'package:bluebubbles/services/backend/actions/log_actions.dart';
 import 'package:bluebubbles/services/backend/actions/send_message_actions.dart';
 import 'package:bluebubbles/services/backend/actions/chat_actions.dart';
 import 'package:bluebubbles/services/backend/actions/contact_v2_actions.dart';
@@ -58,6 +59,7 @@ class IsolateActons {
 
     // Chat
     IsolateRequestType.clearNotificationForChat: ChatActions.clearNotificationForChat,
+    IsolateRequestType.markAllChatsRead: ChatActions.markAllChatsRead,
     IsolateRequestType.markChatReadUnread: ChatActions.markChatReadUnread,
     IsolateRequestType.startTyping: ChatActions.startTyping,
     IsolateRequestType.stopTyping: ChatActions.stopTyping,
@@ -106,6 +108,9 @@ class IsolateActons {
     // Sync
     IsolateRequestType.performIncrementalSync: SyncActions.performIncrementalSync,
     IsolateRequestType.bulkSyncData: SyncActions.bulkSyncData,
+
+    // Log actions
+    IsolateRequestType.getLogs: (data) => LogActions.getLogs(data as Map<String, dynamic>),
 
     // Send message (routed through isolate so sends survive backgrounding)
     IsolateRequestType.sendTextMessage: SendMessageActions.sendTextMessage,

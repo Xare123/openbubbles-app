@@ -143,7 +143,7 @@ class _MaterialScheduledMessagesPanelState extends State<MaterialScheduledMessag
 
     return ListTile(
       key: ValueKey(item.id.toString()),
-      mouseCursor: SystemMouseCursors.click,
+      mouseCursor: MouseCursor.defer,
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       leading: SettingsLeadingIcon(
         iosIcon: icon,

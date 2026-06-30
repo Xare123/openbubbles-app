@@ -118,6 +118,31 @@ class AttachmentActions {
       // Note: cm and cvc services are NOT called here since they're only available on UI thread
       // This should be handled by the caller on the main thread before/after calling this
 
+      // Guard against a race: another async path may have already inserted newAttachment.guid
+      // between the caller's findOneAsync check and this transaction. If so, merge the new
+      // fields into the conflicting record (preserving its ID so existing UI references stay
+      // valid), then remove the stale temp-guid record.
+      final conflicting = AttachmentActions.findOne(newAttachment.guid!);
+      if (conflicting != null && conflicting.id != existing.id) {
+        conflicting.originalROWID = newAttachment.originalROWID;
+        conflicting.uti = newAttachment.uti;
+        conflicting.mimeType = newAttachment.mimeType ?? conflicting.mimeType;
+        conflicting.isOutgoing = newAttachment.isOutgoing;
+        conflicting.transferName = newAttachment.transferName;
+        conflicting.totalBytes = newAttachment.totalBytes;
+        conflicting.bytes = newAttachment.bytes;
+        conflicting.webUrl = newAttachment.webUrl;
+        conflicting.hasLivePhoto = newAttachment.hasLivePhoto;
+        Database.attachments.put(conflicting);
+        Database.attachments.remove(existing.id!);
+
+        newAttachment.id = conflicting.id;
+        newAttachment.width = conflicting.width;
+        newAttachment.height = conflicting.height;
+        newAttachment.metadata = conflicting.metadata;
+        return newAttachment.id!;
+      }
+
       // update values and save
       existing.guid = newAttachment.guid;
       existing.originalROWID = newAttachment.originalROWID;

@@ -21,8 +21,6 @@ class _MaterialConversationTileState extends CustomState<MaterialConversationTil
 
   bool get shouldHighlight => controller.shouldHighlight.value;
 
-  bool get hoverHighlight => controller.hoverHighlight.value;
-
   @override
   void initState() {
     super.initState();
@@ -155,11 +153,9 @@ class _MaterialConversationTileState extends CustomState<MaterialConversationTil
                     ? context.theme.colorScheme.surfaceContainerHighest
                     : shouldHighlight
                         ? context.theme.colorScheme.primaryContainer
-                        : hoverHighlight
-                            ? context.theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5)
-                            : ThemeSvc.isMaterialYouActive(context)
-                                ? context.theme.colorScheme.surface
-                                : null,
+                        : ThemeSvc.isMaterialYouActive(context)
+                            ? context.theme.colorScheme.surface
+                            : null,
           ),
           duration: const Duration(milliseconds: 100),
           child: NavigationSvc.isAvatarOnly(context)

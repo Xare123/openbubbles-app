@@ -21,7 +21,6 @@ Tag: `chat.guid`. Set `permanent: kIsDesktop || kIsWeb`.
 Key reactive properties:
 - `shouldHighlight` — true when this chat is actively open on desktop (split view)
 - `shouldPartialHighlight` — tablet hover state
-- `hoverHighlight` — desktop mouse hover state
 
 Sub-widgets `ChatTitle`, `ChatSubtitle`, and `ChatLeading` manage their own state independently for reusability — they are not built inline in the tile.
 

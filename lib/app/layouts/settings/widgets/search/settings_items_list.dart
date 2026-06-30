@@ -690,7 +690,6 @@ List<Widget> buildSettingItemList({
             "Open App Data Location",
             "Disable Battery Optimizations",
             "Clear Last Opened Chat",
-            "Sync Handles & Contacts",
             "Sync Chat Info"
           ], // Tags to search
           onTap: () async {
@@ -1028,43 +1027,27 @@ List<Widget> buildSettingItemList({
             child: SettingsTile(
               backgroundColor: tileColor,
               onTap: () {
-                showDialog(
+                showBBDialog(
                   barrierDismissible: true,
                   context: context,
-                  builder: (BuildContext context) {
-                    return AlertDialog(
-                      title: Text(
-                        "Are you sure?",
-                        style: context.theme.textTheme.titleLarge,
-                      ),
-                      content: Text(
-                        "This will remove all attachments from this app. Recent attachments will be automatically re-downloaded when you enter a chat. This will not delete attachments from your server.",
-                        style: context.theme.textTheme.bodyLarge,
-                      ),
-                      backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                      actions: <Widget>[
-                        TextButton(
-                          child: Text("No",
-                              style: context.theme.textTheme.bodyLarge!
-                                  .copyWith(color: context.theme.colorScheme.primary)),
-                          onPressed: () {
-                            Navigator.of(context, rootNavigator: true).pop();
-                          },
-                        ),
-                        TextButton(
-                          child: Text("Yes",
-                              style: context.theme.textTheme.bodyLarge!
-                                  .copyWith(color: context.theme.colorScheme.primary)),
-                          onPressed: () async {
-                            Navigator.of(context, rootNavigator: true).pop();
-                            final dir = Directory(FilesystemSvc.attachmentsPath);
-                            await dir.delete(recursive: true);
-                            showSnackbar("Success", "Deleted cached attachments");
-                          },
-                        ),
-                      ],
-                    );
-                  },
+                  title: "Are you sure?",
+                  body:
+                      "This will remove all attachments from this app. Recent attachments will be automatically re-downloaded when you enter a chat. This will not delete attachments from your server.",
+                  actions: [
+                    BBDialogAction(
+                      text: "No",
+                      onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+                    ),
+                    BBDialogAction(
+                      text: "Yes",
+                      isDefault: true,
+                      onPressed: () async {
+                        final dir = Directory(FilesystemSvc.attachmentsPath);
+                        await dir.delete(recursive: true);
+                        showSnackbar("Success", "Deleted cached attachments");
+                      },
+                    ),
+                  ],
                 );
               },
               leading: SettingsLeadingIcon(
@@ -1081,105 +1064,90 @@ List<Widget> buildSettingItemList({
             child: SettingsTile(
               backgroundColor: tileColor,
               onTap: () {
-                showDialog(
+                showBBDialog(
                   barrierDismissible: false,
                   context: context,
-                  builder: (BuildContext context) {
-                    return AlertDialog(
-                      title: Text(
-                        "Are you sure?",
-                        style: context.theme.textTheme.titleLarge,
+                  title: "Are you sure?",
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        "This will delete all app data, including your settings, messages, attachments, and more. This action cannot be undone. It is recommended that you take a backup of your settings before proceeding. This will also close the app once the process is complete.",
+                        style: context.theme.textTheme.bodyLarge,
                       ),
-                      content: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            "This will delete all app data, including your settings, messages, attachments, and more. This action cannot be undone. It is recommended that you take a backup of your settings before proceeding. This will also close the app once the process is complete.",
-                            style: context.theme.textTheme.bodyLarge,
-                          ),
-                          const SizedBox(height: 10),
-                          if (SettingsSvc.settings.keychainDefaultPassword.value != null)
-                            Text(
-                              "This device's iCloud Keychain code is ${SettingsSvc.settings.keychainDefaultPassword.value}. This code will not be available after confirming, and you may need it to access your encrypted data in iCloud. It can be changed in Settings -> Device.",
-                              style: context.theme.textTheme.bodyLarge?.apply(fontWeightDelta: 2),
-                            ),
-                        ],
-                      ),
-                      backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                      actions: <Widget>[
-                        TextButton(
-                          child: Text("No",
-                              style: context.theme.textTheme.bodyLarge!
-                                  .copyWith(color: context.theme.colorScheme.primary)),
-                          onPressed: () {
-                            Navigator.of(context, rootNavigator: true).pop();
-                          },
+                      const SizedBox(height: 10),
+                      if (SettingsSvc.settings.keychainDefaultPassword.value != null)
+                        Text(
+                          "This device's iCloud Keychain code is ${SettingsSvc.settings.keychainDefaultPassword.value}. This code will not be available after confirming, and you may need it to access your encrypted data in iCloud. It can be changed in Settings -> Device.",
+                          style: context.theme.textTheme.bodyLarge?.apply(fontWeightDelta: 2),
                         ),
-                        TextButton(
-                          child: Text("Keep hardware",
-                              style: context.theme.textTheme.bodyLarge!
-                                  .copyWith(color: context.theme.colorScheme.primary)),
-                          onPressed: () async {
-                            Navigator.of(context, rootNavigator: true).pop();
-                            FilesystemSvc.deleteDB();
-                            SocketSvc.forgetConnection();
-                            await PushSvc.markFailedToLogin(hw: false, logout: true, ui: true);
-                            SettingsSvc.settings = Settings();
-                            await SettingsSvc.settings.saveAsync();
+                    ],
+                  ),
+                  actions: [
+                    BBDialogAction(
+                      text: "No",
+                      onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+                    ),
+                    BBDialogAction(
+                      text: "Keep hardware",
+                      onPressed: () async {
+                        FilesystemSvc.deleteDB();
+                        SocketSvc.forgetConnection();
+                        await PushSvc.markFailedToLogin(hw: false, logout: true, ui: true);
+                        SettingsSvc.settings = Settings();
+                        await SettingsSvc.settings.saveAsync();
 
-                            await PrefsSvc.i.clear();
-                            await PrefsSvc.i.setString("selected-dark", "OLED Dark");
-                            await PrefsSvc.i.setString("selected-light", "Bright White");
-                            Database.themes.putMany(ThemesService.defaultThemes);
+                        await PrefsSvc.admin.clearAll();
+                        await PrefsSvc.theme.setSelectedThemes(
+                          darkTheme: "OLED Dark",
+                          lightTheme: "Bright White",
+                        );
+                        Database.themes.putMany(ThemesService.defaultThemes);
 
-                            await FCMData.deleteFcmData();
+                        await FCMData.deleteFcmData();
 
-                            try {
-                              if (FirebaseSvc.token != null) {
-                                await MethodChannelSvc.invokeMethod("firebase-delete-token");
-                              }
-                            } catch (e, s) {
-                              Logger.error("Failed to delete Firebase FCM token", error: e, trace: s);
-                            }
+                        try {
+                          if (FirebaseSvc.token != null) {
+                            await MethodChannelSvc.actions.firebaseDeleteToken();
+                          }
+                        } catch (e, s) {
+                          Logger.error("Failed to delete Firebase FCM token", error: e, trace: s);
+                        }
 
-                            exit(0);
-                          },
-                        ),
-                        TextButton(
-                          child: Text("Yes",
-                              style: context.theme.textTheme.bodyLarge!
-                                  .copyWith(color: context.theme.colorScheme.primary)),
-                          onPressed: () async {
-                            Navigator.of(context, rootNavigator: true).pop();
-                            FilesystemSvc.deleteDB();
-                            SocketSvc.forgetConnection();
-                            await PushSvc.markFailedToLogin(hw: true, logout: true, ui: true);
-                            SettingsSvc.settings = Settings();
-                            await SettingsSvc.settings.saveAsync();
+                        exit(0);
+                      },
+                    ),
+                    BBDialogAction(
+                      text: "Yes",
+                      isDefault: true,
+                      onPressed: () async {
+                        FilesystemSvc.deleteDB();
+                        SocketSvc.forgetConnection();
+                        await PushSvc.markFailedToLogin(hw: true, logout: true, ui: true);
+                        SettingsSvc.settings = Settings();
+                        await SettingsSvc.settings.saveAsync();
 
-                            await PrefsSvc.admin.clearAll();
-                            await PrefsSvc.theme.setSelectedThemes(
-                              darkTheme: "OLED Dark",
-                              lightTheme: "Bright White",
-                            );
-                            Database.themes.putMany(ThemesService.defaultThemes);
+                        await PrefsSvc.admin.clearAll();
+                        await PrefsSvc.theme.setSelectedThemes(
+                          darkTheme: "OLED Dark",
+                          lightTheme: "Bright White",
+                        );
+                        Database.themes.putMany(ThemesService.defaultThemes);
 
-                            await FCMData.deleteFcmData();
+                        await FCMData.deleteFcmData();
 
-                            try {
-                              if (FirebaseSvc.token != null) {
-                                await MethodChannelSvc.actions.firebaseDeleteToken();
-                              }
-                            } catch (e, s) {
-                              Logger.error("Failed to delete Firebase FCM token", error: e, trace: s);
-                            }
+                        try {
+                          if (FirebaseSvc.token != null) {
+                            await MethodChannelSvc.actions.firebaseDeleteToken();
+                          }
+                        } catch (e, s) {
+                          Logger.error("Failed to delete Firebase FCM token", error: e, trace: s);
+                        }
 
-                            exit(0);
-                          },
-                        ),
-                      ],
-                    );
-                  },
+                        exit(0);
+                      },
+                    ),
+                  ],
                 );
               },
               leading: SettingsLeadingIcon(

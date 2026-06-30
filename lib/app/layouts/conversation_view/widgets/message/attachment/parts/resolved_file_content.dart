@@ -28,6 +28,8 @@ class ResolvedFileContent extends StatelessWidget {
     required this.isiOS,
     required this.cvController,
     this.isInReply = false,
+    this.forceAllCornersRounded = false,
+    this.galleryAttachments,
   });
 
   final PlatformFile file;
@@ -36,6 +38,8 @@ class ResolvedFileContent extends StatelessWidget {
   final bool isiOS;
   final ConversationViewController? cvController;
   final bool isInReply;
+  final bool forceAllCornersRounded;
+  final List<Attachment>? galleryAttachments;
 
   @override
   Widget build(BuildContext context) {
@@ -76,8 +80,12 @@ class ResolvedFileContent extends StatelessWidget {
                 borderRadius: BorderRadius.only(
                   topLeft: const Radius.circular(20.0),
                   topRight: const Radius.circular(20.0),
-                  bottomLeft: message.isFromMe! ? const Radius.circular(20.0) : Radius.zero,
-                  bottomRight: !message.isFromMe! ? const Radius.circular(20.0) : Radius.zero,
+                  bottomLeft: forceAllCornersRounded
+                      ? const Radius.circular(20.0)
+                      : (message.isFromMe! ? const Radius.circular(20.0) : Radius.zero),
+                  bottomRight: forceAllCornersRounded
+                      ? const Radius.circular(20.0)
+                      : (!message.isFromMe! ? const Radius.circular(20.0) : Radius.zero),
                 ),
               )
             : const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(5.0))),
@@ -86,6 +94,7 @@ class ResolvedFileContent extends StatelessWidget {
           currentChat: currentChat,
           attachment: attachment,
           showInteractions: true,
+          galleryAttachments: galleryAttachments,
         ),
         closedBuilder: (context, openContainer) {
           void openImage() {
@@ -123,6 +132,7 @@ class ResolvedFileContent extends StatelessWidget {
         file: file,
         controller: cvController,
         isFromMe: message.isFromMe!,
+        galleryAttachments: galleryAttachments,
       );
     }
 

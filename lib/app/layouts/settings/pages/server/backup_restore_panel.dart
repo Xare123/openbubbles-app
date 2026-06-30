@@ -130,7 +130,7 @@ class _BackupRestorePanelState extends State<BackupRestorePanel> with ThemeHelpe
                                 return ListTile(
                                   key: ValueKey(item["name"]),
                                   contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
-                                  mouseCursor: SystemMouseCursors.click,
+                                  mouseCursor: MouseCursor.defer,
                                   title: RichText(
                                     text: TextSpan(
                                       style: context.textTheme.titleMedium,
@@ -164,7 +164,7 @@ class _BackupRestorePanelState extends State<BackupRestorePanel> with ThemeHelpe
                                               json["description"] = item["description"];
                                               json["timestamp"] = DateTime.now().millisecondsSinceEpoch;
                                               Response response = await HttpSvc.backup.setSettings(item["name"], json);
-                                              Navigator.of(context).pop();
+                                              Navigator.of(context, rootNavigator: true).pop();
                                               if (response.statusCode != 200) {
                                                 showSnackbar(
                                                   "Error",
@@ -193,7 +193,7 @@ class _BackupRestorePanelState extends State<BackupRestorePanel> with ThemeHelpe
                                                 const Text("Are you sure you want to delete this settings backup?"),
                                             onYes: () {
                                               deleteSettings(item["name"]);
-                                              Navigator.of(context).pop();
+                                              Navigator.of(context, rootNavigator: true).pop();
                                             },
                                           );
                                         })
@@ -206,7 +206,7 @@ class _BackupRestorePanelState extends State<BackupRestorePanel> with ThemeHelpe
                                         "Are you sure you want to restore this backup, overwriting your current Settings?",
                                       ),
                                       onYes: () {
-                                        Navigator.of(context).pop();
+                                        Navigator.of(context, rootNavigator: true).pop();
                                         try {
                                           Settings.updateFromMap(item);
                                           showSnackbar("Success", "Settings restored successfully");
@@ -236,7 +236,7 @@ class _BackupRestorePanelState extends State<BackupRestorePanel> with ThemeHelpe
                         Material(
                           color: Colors.transparent,
                           child: ListTile(
-                            mouseCursor: SystemMouseCursors.click,
+                            mouseCursor: MouseCursor.defer,
                             title: Text("Create New",
                                 style: context.theme.textTheme.bodyLarge!
                                     .copyWith(color: context.theme.colorScheme.primary)),
@@ -358,106 +358,92 @@ class _BackupRestorePanelState extends State<BackupRestorePanel> with ThemeHelpe
                                 getBackups();
                               }
 
-                              showDialog(
-                                  context: context,
-                                  builder: (context) {
-                                    return AlertDialog(
-                                      title: Text(
-                                        "Settings Backup Creation",
-                                        style: context.theme.textTheme.titleLarge,
-                                      ),
-                                      backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                                      content: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Focus(
-                                            onKeyEvent: (node, event) {
-                                              if (event is KeyDownEvent &&
-                                                  !HardwareKeyboard.instance.isShiftPressed &&
-                                                  event.logicalKey == LogicalKeyboardKey.tab) {
-                                                node.nextFocus();
-                                                return KeyEventResult.handled;
-                                              }
-                                              return KeyEventResult.ignored;
-                                            },
-                                            child: TextField(
-                                              cursorColor: context.theme.colorScheme.primary,
-                                              autocorrect: true,
-                                              autofocus: true,
-                                              controller: nameController,
-                                              textInputAction: TextInputAction.next,
-                                              decoration: InputDecoration(
-                                                enabledBorder: OutlineInputBorder(
-                                                    borderSide: BorderSide(color: context.theme.colorScheme.outline),
-                                                    borderRadius: BorderRadius.circular(20)),
-                                                focusedBorder: OutlineInputBorder(
-                                                    borderSide: BorderSide(color: context.theme.colorScheme.primary),
-                                                    borderRadius: BorderRadius.circular(20)),
-                                                labelText: "Name",
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(height: 10),
-                                          Focus(
-                                            onKeyEvent: (node, event) {
-                                              if (event is KeyDownEvent &&
-                                                  HardwareKeyboard.instance.isShiftPressed &&
-                                                  event.logicalKey == LogicalKeyboardKey.tab) {
-                                                node.previousFocus();
-                                                node.previousFocus(); // This is intentional. Should probably figure out why it's needed
-                                                return KeyEventResult.handled;
-                                              }
-                                              return KeyEventResult.ignored;
-                                            },
-                                            child: TextField(
-                                              cursorColor: context.theme.colorScheme.primary,
-                                              autocorrect: true,
-                                              autofocus: false,
-                                              controller: descController,
-                                              textInputAction: TextInputAction.next,
-                                              onSubmitted: (_) {
-                                                onDone.call(context);
-                                              },
-                                              decoration: InputDecoration(
-                                                enabledBorder: OutlineInputBorder(
-                                                    borderSide: BorderSide(color: context.theme.colorScheme.outline),
-                                                    borderRadius: BorderRadius.circular(20)),
-                                                focusedBorder: OutlineInputBorder(
-                                                    borderSide: BorderSide(color: context.theme.colorScheme.primary),
-                                                    borderRadius: BorderRadius.circular(20)),
-                                                labelText: "Description (Optional)",
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      actions: [
-                                        TextButton(
-                                          child: Text("Cancel",
-                                              style: context.theme.textTheme.bodyLarge!
-                                                  .copyWith(color: context.theme.colorScheme.primary)),
-                                          onPressed: () {
-                                            Navigator.of(context).pop();
-                                          },
+                              showBBDialog(
+                                context: context,
+                                title: "Settings Backup Creation",
+                                content: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Focus(
+                                      onKeyEvent: (node, event) {
+                                        if (event is KeyDownEvent &&
+                                            !HardwareKeyboard.instance.isShiftPressed &&
+                                            event.logicalKey == LogicalKeyboardKey.tab) {
+                                          node.nextFocus();
+                                          return KeyEventResult.handled;
+                                        }
+                                        return KeyEventResult.ignored;
+                                      },
+                                      child: TextField(
+                                        cursorColor: context.theme.colorScheme.primary,
+                                        autocorrect: true,
+                                        autofocus: true,
+                                        controller: nameController,
+                                        textInputAction: TextInputAction.next,
+                                        decoration: InputDecoration(
+                                          enabledBorder: OutlineInputBorder(
+                                              borderSide: BorderSide(color: context.theme.colorScheme.outline),
+                                              borderRadius: BorderRadius.circular(20)),
+                                          focusedBorder: OutlineInputBorder(
+                                              borderSide: BorderSide(color: context.theme.colorScheme.primary),
+                                              borderRadius: BorderRadius.circular(20)),
+                                          labelText: "Name",
                                         ),
-                                        TextButton(
-                                          child: Text("OK",
-                                              style: context.theme.textTheme.bodyLarge!
-                                                  .copyWith(color: context.theme.colorScheme.primary)),
-                                          onPressed: () {
-                                            onDone.call(context);
-                                          },
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Focus(
+                                      onKeyEvent: (node, event) {
+                                        if (event is KeyDownEvent &&
+                                            HardwareKeyboard.instance.isShiftPressed &&
+                                            event.logicalKey == LogicalKeyboardKey.tab) {
+                                          node.previousFocus();
+                                          node.previousFocus(); // This is intentional. Should probably figure out why it's needed
+                                          return KeyEventResult.handled;
+                                        }
+                                        return KeyEventResult.ignored;
+                                      },
+                                      child: TextField(
+                                        cursorColor: context.theme.colorScheme.primary,
+                                        autocorrect: true,
+                                        autofocus: false,
+                                        controller: descController,
+                                        textInputAction: TextInputAction.next,
+                                        onSubmitted: (_) {
+                                          onDone.call(context);
+                                        },
+                                        decoration: InputDecoration(
+                                          enabledBorder: OutlineInputBorder(
+                                              borderSide: BorderSide(color: context.theme.colorScheme.outline),
+                                              borderRadius: BorderRadius.circular(20)),
+                                          focusedBorder: OutlineInputBorder(
+                                              borderSide: BorderSide(color: context.theme.colorScheme.primary),
+                                              borderRadius: BorderRadius.circular(20)),
+                                          labelText: "Description (Optional)",
                                         ),
-                                      ],
-                                    );
-                                  });
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                actions: [
+                                  BBDialogAction(
+                                    text: "Cancel",
+                                    onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+                                  ),
+                                  BBDialogAction(
+                                    text: "OK",
+                                    isDefault: true,
+                                    onPressed: () => onDone.call(context),
+                                  ),
+                                ],
+                              );
                             },
                           ),
                         ),
                         Material(
                           color: Colors.transparent,
                           child: ListTile(
-                            mouseCursor: SystemMouseCursors.click,
+                            mouseCursor: MouseCursor.defer,
                             title: Text("Restore Local",
                                 style: context.theme.textTheme.bodyLarge!
                                     .copyWith(color: context.theme.colorScheme.primary)),
@@ -486,7 +472,7 @@ class _BackupRestorePanelState extends State<BackupRestorePanel> with ThemeHelpe
                                   "Are you sure you want to restore this backup, overwriting your current Settings?",
                                 ),
                                 onYes: () {
-                                  Navigator.of(context).pop();
+                                  Navigator.of(context, rootNavigator: true).pop();
                                   try {
                                     String jsonString = const Utf8Decoder().convert(res.files.first.bytes!);
                                     Map<String, dynamic> json = jsonDecode(jsonString);
@@ -809,7 +795,7 @@ class _BackupRestorePanelState extends State<BackupRestorePanel> with ThemeHelpe
                                 final data = item["data"];
                                 return ListTile(
                                   key: ValueKey(item["name"]),
-                                  mouseCursor: SystemMouseCursors.click,
+                                  mouseCursor: MouseCursor.defer,
                                   title: Text(item["name"]),
                                   subtitle: !item.containsKey('data')
                                       ? Text("Incompatible backup!",
@@ -888,7 +874,7 @@ class _BackupRestorePanelState extends State<BackupRestorePanel> with ThemeHelpe
                                         content: const Text("Are you sure you want to delete this theme backup?"),
                                         onYes: () {
                                           deleteTheme(item["name"]);
-                                          Navigator.of(context).pop();
+                                          Navigator.of(context, rootNavigator: true).pop();
                                         },
                                       );
                                     },
@@ -905,7 +891,7 @@ class _BackupRestorePanelState extends State<BackupRestorePanel> with ThemeHelpe
                                         "Are you sure you want to restore this backup, overwriting your current theme?",
                                       ),
                                       onYes: () {
-                                        Navigator.of(context).pop();
+                                        Navigator.of(context, rootNavigator: true).pop();
                                         try {
                                           ThemeStruct object = ThemeStruct.fromMap(item);
                                           object.id = null;
@@ -936,7 +922,7 @@ class _BackupRestorePanelState extends State<BackupRestorePanel> with ThemeHelpe
                         Material(
                           color: Colors.transparent,
                           child: ListTile(
-                            mouseCursor: SystemMouseCursors.click,
+                            mouseCursor: MouseCursor.defer,
                             title: Text("Create New",
                                 style: context.theme.textTheme.bodyLarge!
                                     .copyWith(color: context.theme.colorScheme.primary)),
@@ -1051,7 +1037,7 @@ class _BackupRestorePanelState extends State<BackupRestorePanel> with ThemeHelpe
                         Material(
                           color: Colors.transparent,
                           child: ListTile(
-                            mouseCursor: SystemMouseCursors.click,
+                            mouseCursor: MouseCursor.defer,
                             title: Text("Restore Local",
                                 style: context.theme.textTheme.bodyLarge!
                                     .copyWith(color: context.theme.colorScheme.primary)),
@@ -1081,7 +1067,7 @@ class _BackupRestorePanelState extends State<BackupRestorePanel> with ThemeHelpe
                                   "Are you sure you want to restore this backup, overwriting your current theme?",
                                 ),
                                 onYes: () {
-                                  Navigator.of(context).pop();
+                                  Navigator.of(context, rootNavigator: true).pop();
                                   try {
                                     String jsonString = const Utf8Decoder().convert(res.files.first.bytes!);
                                     List<dynamic> json = jsonDecode(jsonString);

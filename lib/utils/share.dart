@@ -44,39 +44,28 @@ class Share {
 
     _serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!_serviceEnabled) {
-      await showDialog(
+      await showBBDialog(
           context: Get.context!,
-          builder: (context) => AlertDialog(
-                backgroundColor: Get.theme.colorScheme.surfaceContainerHighest,
-                title: Text(
-                  "Location Services",
-                  style: Get.textTheme.titleLarge,
-                ),
-                content: Text(
-                  "Location Services must be enabled to send Locations",
-                  style: Get.textTheme.bodyLarge,
-                ),
-                actions: [
-                  if (!kIsDesktop || !Platform.isLinux)
-                    TextButton(
-                        onPressed: () => Navigator.of(Get.context!, rootNavigator: true).pop(),
-                        child: Text("Cancel",
-                            style:
-                                context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary))),
-                  if (!kIsDesktop || !Platform.isLinux)
-                    TextButton(
-                        onPressed: () async => await Geolocator.openLocationSettings(),
-                        child: Text("Open Settings",
-                            style:
-                                context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary))),
-                  if (kIsDesktop && Platform.isLinux)
-                    TextButton(
-                        onPressed: () => Navigator.of(Get.context!, rootNavigator: true).pop(),
-                        child: Text("OK",
-                            style:
-                                context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary))),
-                ],
-              ));
+          title: "Location Services",
+          body: "Location Services must be enabled to send Locations",
+          actions: [
+            if (!kIsDesktop || !Platform.isLinux)
+              BBDialogAction(
+                text: "Cancel",
+                onPressed: () => Navigator.of(Get.context!, rootNavigator: true).pop(),
+              ),
+            if (!kIsDesktop || !Platform.isLinux)
+              BBDialogAction(
+                text: "Open Settings",
+                isDefault: true,
+                onPressed: () async => await Geolocator.openLocationSettings(),
+              ),
+            if (kIsDesktop && Platform.isLinux)
+              BBDialogAction(
+                text: "OK",
+                onPressed: () => Navigator.of(Get.context!, rootNavigator: true).pop(),
+              ),
+          ]);
       if (!_serviceEnabled) {
         return;
       }
@@ -88,26 +77,21 @@ class Share {
         _permissionGranted = await Geolocator.requestPermission();
       }
       if (_permissionGranted == LocationPermission.denied || _permissionGranted == LocationPermission.deniedForever) {
-        await showDialog(
+        await showBBDialog(
             context: Get.context!,
-            builder: (context) => AlertDialog(
-                  backgroundColor: Get.theme.colorScheme.surfaceContainerHighest,
-                  title: Text("Location Permission", style: Get.textTheme.titleLarge),
-                  content: Text(
-                    "BlueBubbles needs the Location permission to send Locations",
-                    style: Get.textTheme.bodyLarge,
-                  ),
-                  actions: [
-                    TextButton(
-                        onPressed: () => Navigator.of(Get.context!, rootNavigator: true).pop(),
-                        child: Text("Cancel",
-                            style: Get.textTheme.bodyLarge!.copyWith(color: Get.theme.colorScheme.primary))),
-                    TextButton(
-                        onPressed: () async => await Geolocator.openLocationSettings(),
-                        child: Text("Open Settings",
-                            style: Get.textTheme.bodyLarge!.copyWith(color: Get.theme.colorScheme.primary)))
-                  ],
-                ));
+            title: "Location Permission",
+            body: "BlueBubbles needs the Location permission to send Locations",
+            actions: [
+              BBDialogAction(
+                text: "Cancel",
+                onPressed: () => Navigator.of(Get.context!, rootNavigator: true).pop(),
+              ),
+              BBDialogAction(
+                text: "Open Settings",
+                isDefault: true,
+                onPressed: () async => await Geolocator.openLocationSettings(),
+              ),
+            ]);
         if (_permissionGranted == LocationPermission.denied || _permissionGranted == LocationPermission.deniedForever) {
           return;
         }

@@ -124,11 +124,7 @@ class ListItem extends StatelessWidget {
 
           if (action == MaterialSwipeAction.pin) {
             final chatState = ChatsSvc.getChatState(chat.guid);
-            if (chatState != null) {
-              ChatsSvc.setChatPinned(chatState.chat, !chat.isPinned!);
-            } else {
-              ChatsSvc.toggleChatPin(chat, !chat.isPinned!);
-            }
+            ChatsSvc.setChatPinned(chatState?.chat ?? chat, !chat.isPinned!);
           } else if (action == MaterialSwipeAction.alerts) {
             final chatState = ChatsSvc.getChatState(chat.guid);
             if (chatState != null) {
@@ -148,11 +144,7 @@ class ListItem extends StatelessWidget {
             }
           } else if (action == MaterialSwipeAction.archive) {
             final chatState = ChatsSvc.getChatState(chat.guid);
-            if (chatState != null) {
-              ChatsSvc.setChatArchived(chatState.chat, !chat.isArchived!);
-            } else {
-              ChatsSvc.toggleChatArchive(chat, !chat.isArchived!);
-            }
+            ChatsSvc.setChatArchived(chatState?.chat ?? chat, !chat.isArchived!);
           }
           update.call();
         },

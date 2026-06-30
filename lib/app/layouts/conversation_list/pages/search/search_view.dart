@@ -413,7 +413,7 @@ class SearchViewState extends State<SearchView> with ThemeHelpers {
                                 : null,
                           ),
                           child: ListTile(
-                            mouseCursor: SystemMouseCursors.click,
+                            mouseCursor: MouseCursor.defer,
                             title: RichText(
                               text: TextSpan(
                                 children: MessageHelper.buildEmojiText(
@@ -446,7 +446,7 @@ class SearchViewState extends State<SearchView> with ThemeHelpers {
                               overflow: TextOverflow.clip,
                             ),
                             onTap: () {
-                              final service = MessagesSvc(chat.guid);
+                              final service = maybeFindMessagesSvc(chat.guid) ?? MessagesService(chat.guid);
                               service.method = local.value ? SearchMode.local.name : SearchMode.network.name;
                               service.struct.addMessages([message]);
                               NavigationSvc.pushAndRemoveUntil(

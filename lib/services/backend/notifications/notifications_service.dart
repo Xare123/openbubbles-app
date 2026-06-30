@@ -74,7 +74,7 @@ class NotificationsService {
   static Map<String, Timer> debounceTimers = {};
   static Map<String, List<PendingToastItem>> pendingMessages = {};
   static final Lock _lock = Lock();
-  static final Player desktopNotificationPlayer = Player();
+  static Player? _desktopNotificationPlayer;
 
   static const int maxLines = 4;
   static const int charsPerLineEst = 40;
@@ -596,11 +596,18 @@ class NotificationsService {
 
   Future<void> playDesktopNotificationSound() async {
     if (SettingsSvc.settings.desktopNotificationSoundPath.value != null) {
-      if (desktopNotificationPlayer.state.playing) {
-        await desktopNotificationPlayer.stop();
-      }
-      await desktopNotificationPlayer.setVolume(SettingsSvc.settings.desktopNotificationSoundVolume.value.toDouble());
-      await desktopNotificationPlayer.open(Media(SettingsSvc.settings.desktopNotificationSoundPath.value!));
+      _desktopNotificationPlayer?.dispose();
+      final player = Player();
+      _desktopNotificationPlayer = player;
+      await player.setVolume(SettingsSvc.settings.desktopNotificationSoundVolume.value.toDouble());
+      await player.open(Media(SettingsSvc.settings.desktopNotificationSoundPath.value!));
+      player.stream.completed.firstWhere((completed) => completed).then((_) async {
+        await Future.delayed(const Duration(milliseconds: 450));
+        if (_desktopNotificationPlayer == player) {
+          await player.dispose();
+          _desktopNotificationPlayer = null;
+        }
+      });
     }
   }
 

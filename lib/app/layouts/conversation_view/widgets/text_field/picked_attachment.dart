@@ -56,7 +56,7 @@ class _PickedAttachmentState extends State<PickedAttachment> with AutomaticKeepA
           widget.controller!.pickedAttachments.where((e) => e.path != null).map((e) => e.path!).toList();
       unawaited(ChatsSvc.setChatTextFieldAttachments(widget.controller!.chat, remaining));
       // Don't request focus if attachment picker is open
-      if (!widget.controller!.showAttachmentPicker) {
+      if (!widget.controller!.showAttachmentPicker.value) {
         widget.controller!.lastFocusedNode.requestFocus();
       }
     } else {

@@ -1,3 +1,4 @@
+import 'dart:io' as io;
 import 'package:bluebubbles/helpers/backend/settings_helpers.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
@@ -35,6 +36,13 @@ class FirebaseDatabaseService extends GetxService {
     }
     if (kIsWeb) return '500464701389-8trcdkcj7ni5l4dn6n7l795rhb1asnh3.apps.googleusercontent.com';
     if (kIsDesktop) return '500464701389-18rfq995s6dqo3e5d3n2e7i3ljr0uc9i.apps.googleusercontent.com';
+    return null;
+  }
+
+  String? getServerClientId() {
+    if (!kIsWeb && io.Platform.isAndroid) {
+      return '500464701389-8trcdkcj7ni5l4dn6n7l795rhb1asnh3.apps.googleusercontent.com';
+    }
     return null;
   }
 

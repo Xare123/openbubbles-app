@@ -27,10 +27,22 @@ class _ReplyHolderState extends State<ReplyHolder> with ThemeHelpers {
     return Obx(() {
       final message = widget.controller.replyToMessage?.message;
       final part = widget.controller.replyToMessage?.partIndex ?? 0;
+      final attachmentGuid = widget.controller.replyToMessage?.attachmentGuid;
       final chatGuid = message?.chat.target?.guid ?? ChatStateScope.maybeChatOf(context)?.guid;
-      final reply = message?.guid == null || chatGuid == null
+      final resolvedReply = message?.guid == null || chatGuid == null
           ? message
-          : (MessagesSvc(chatGuid).getMessageStateIfExists(message!.guid!)?.parts[part] ?? message);
+          : (maybeFindMessagesSvc(chatGuid)?.getMessageStateIfExists(message!.guid!)?.parts[part] ?? message);
+      final reply = resolvedReply is MessagePart && attachmentGuid != null
+          ? MessagePart(
+              part: resolvedReply.part,
+              text: resolvedReply.text,
+              subject: resolvedReply.subject,
+              attachments: resolvedReply.attachments.where((a) => a.guid == attachmentGuid).toList(),
+              edits: resolvedReply.edits,
+              isUnsent: resolvedReply.isUnsent,
+              shouldRedact: resolvedReply.shouldRedact,
+            )
+          : resolvedReply;
       final date = widget.controller.scheduledDate.value;
 
       if (reply == null && date == null) {

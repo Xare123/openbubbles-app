@@ -26,64 +26,66 @@ class FindMyFriendListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final displayLocation = SettingsSvc.settings.redactedMode.value
-        ? "Location"
-        : withLocation
-            ? ("${item.shortAddress ?? "No location found"}${item.lastUpdated == null || item.status == LocationStatus.live ? "" : "\nLast updated ${buildDate(item.lastUpdated)}"}")
-            : (item.longAddress ?? "No location found");
+    return Obx(() {
+      final displayLocation = SettingsSvc.settings.redactedMode.value
+          ? "Location"
+          : withLocation
+              ? ("${item.shortAddress ?? "No location found"}${item.lastUpdated == null || item.status == LocationStatus.live ? "" : "\nLast updated ${buildDate(item.lastUpdated)}"}")
+              : (item.longAddress ?? "No location found");
 
-    return ListTile(
-      mouseCursor: withLocation ? SystemMouseCursors.click : MouseCursor.defer,
-      leading: ContactAvatarWidget(handle: item.handle),
-      title: Text(item.handle?.displayName ?? item.title ?? "Unknown Friend"),
-      subtitle: Text(displayLocation),
-      trailing: withLocation && item.latitude != null && item.longitude != null
-          ? Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (item.status == LocationStatus.live) const Icon(CupertinoIcons.largecircle_fill_circle),
-                if (item.locatingInProgress) buildProgressIndicator(context),
-                ButtonTheme(
-                  minWidth: 1,
-                  child: TextButton(
-                    style: TextButton.styleFrom(
-                      shape: const CircleBorder(),
-                      backgroundColor: context.theme.colorScheme.primaryContainer,
+      return ListTile(
+        mouseCursor: MouseCursor.defer,
+        leading: ContactAvatarWidget(handle: item.handle),
+        title: Text(item.handle?.displayName ?? item.title ?? "Unknown Friend"),
+        subtitle: Text(displayLocation),
+        trailing: withLocation && item.latitude != null && item.longitude != null
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (item.status == LocationStatus.live) const Icon(CupertinoIcons.largecircle_fill_circle),
+                  if (item.locatingInProgress) buildProgressIndicator(context),
+                  ButtonTheme(
+                    minWidth: 1,
+                    child: TextButton(
+                      style: TextButton.styleFrom(
+                        shape: const CircleBorder(),
+                        backgroundColor: context.theme.colorScheme.primaryContainer,
+                      ),
+                      onPressed: () async {
+                        await MapsLauncher.launchCoordinates(item.latitude!, item.longitude!);
+                      },
+                      child: const Icon(Icons.directions, size: 20),
                     ),
-                    onPressed: () async {
-                      await MapsLauncher.launchCoordinates(item.latitude!, item.longitude!);
-                    },
-                    child: const Icon(Icons.directions, size: 20),
                   ),
-                ),
-              ],
-            )
-          : null,
-      onTap: withLocation
-          ? () async {
-              if (controller.fmfClient != null && item.id != null) {
-                await api.selectFriend(
-                  config: PushSvc.state!.osConfig,
-                  client: controller.fmfClient!,
-                  friend: item.id,
-                );
+                ],
+              )
+            : null,
+        onTap: withLocation
+            ? () async {
+                if (controller.fmfClient != null && item.id != null) {
+                  await api.selectFriend(
+                    config: PushSvc.state!.osConfig,
+                    client: controller.fmfClient!,
+                    friend: item.id,
+                  );
+                }
+                if (context.isPhone) {
+                  await controller.panelController.close();
+                }
+                await controller.completer.future;
+                final marker = controller.markers[item.stableId];
+                if (marker == null) return;
+                controller.popupController.showPopupsOnlyFor([marker]);
+                controller.mapController.move(LatLng(item.latitude!, item.longitude!), 10);
               }
-              if (context.isPhone) {
-                await controller.panelController.close();
-              }
-              await controller.completer.future;
-              final marker = controller.markers.values
-                  .firstWhere((e) => e.point.latitude == item.latitude && e.point.longitude == item.longitude);
-              controller.popupController.showPopupsOnlyFor([marker]);
-              controller.mapController.move(LatLng(item.latitude!, item.longitude!), 10);
-            }
-          : null,
-      onLongPress: () async {
-        showDialog(
-          context: context,
-          builder: (context) => FindMyRawDataDialog(item: item),
-        );
-      },
-    );
+            : null,
+        onLongPress: () async {
+          showDialog(
+            context: context,
+            builder: (context) => FindMyRawDataDialog(item: item),
+          );
+        },
+      );
+    });
   }
 }

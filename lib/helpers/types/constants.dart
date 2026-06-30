@@ -118,6 +118,7 @@ enum ClientMessageError {
   notFound, // 10005 — HTTP 404
   editFailed, // 10006 — message edit rejected or failed
   unsendFailed, // 10007 — message unsend rejected or failed
+  userCanceled, // 10008 — manually canceled by the user from conversation details
 }
 
 enum Skins {
@@ -130,6 +131,8 @@ enum SwipeDirection {
   LEFT,
   RIGHT,
 }
+
+enum BBTitleBarStyle { native, custom, hidden }
 
 enum MaterialSwipeAction {
   pin,

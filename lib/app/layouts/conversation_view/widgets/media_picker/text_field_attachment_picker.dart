@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:bluebubbles/app/layouts/conversation_details/dialogs/timeframe_picker.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/interactive/polls.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/utils/share.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/media_picker/attachment_picker_file.dart';
@@ -238,7 +239,8 @@ class AttachmentPickerState extends State<AttachmentPicker> with ThemeHelpers {
           }
         }
       }
-    } catch (e) {
+    } catch (e, s) {
+      Logger.error("Failed to load attachments", error: e, trace: s);
       showSnackbar("Error", "Failed to load attachments: $e");
     } finally {
       if (mounted) {
@@ -301,41 +303,44 @@ class AttachmentPickerState extends State<AttachmentPicker> with ThemeHelpers {
       );
     }
 
-    return SizedBox(
-      height: pickerHeight,
-      child: RefreshIndicator(
-        onRefresh: () async {
-          await getAttachments();
-        },
-        child: NotificationListener<OverscrollIndicatorNotification>(
-          onNotification: (OverscrollIndicatorNotification overscroll) {
-            // Prevent stretchy effect
-            overscroll.disallowIndicator();
-            return true;
+    return Container(
+      color: context.theme.colorScheme.surface,
+      child: SizedBox(
+        height: pickerHeight,
+        child: RefreshIndicator(
+          onRefresh: () async {
+            await getAttachments();
           },
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            child: SizedBox(
-              height: pickerHeight,
-              child: Padding(
-                padding: const EdgeInsets.all(10.0),
-                child: CustomScrollView(
-                  physics: ThemeSwitcher.getScrollPhysics(),
-                  scrollDirection: Axis.horizontal,
-                  slivers: <Widget>[
-                    // Quick action list
-                    SliverPadding(
-                      padding: const EdgeInsets.only(bottom: 5),
-                      sliver: _buildActionList(),
-                    ),
-                    // Image grid
-                    const SliverPadding(padding: EdgeInsets.only(left: 5, right: 5)),
-                    // Image grid
-                    SliverPadding(
-                      padding: const EdgeInsets.only(bottom: 5),
-                      sliver: _buildImageGrid(),
-                    ),
-                  ],
+          child: NotificationListener<OverscrollIndicatorNotification>(
+            onNotification: (OverscrollIndicatorNotification overscroll) {
+              // Prevent stretchy effect
+              overscroll.disallowIndicator();
+              return true;
+            },
+            child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              child: SizedBox(
+                height: pickerHeight,
+                child: Padding(
+                  padding: const EdgeInsets.all(10.0),
+                  child: CustomScrollView(
+                    physics: ThemeSwitcher.getScrollPhysics(),
+                    scrollDirection: Axis.horizontal,
+                    slivers: <Widget>[
+                      // Quick action list
+                      SliverPadding(
+                        padding: const EdgeInsets.only(bottom: 5),
+                        sliver: _buildActionList(),
+                      ),
+                      // Image grid
+                      const SliverPadding(padding: EdgeInsets.only(left: 5, right: 5)),
+                      // Image grid
+                      SliverPadding(
+                        padding: const EdgeInsets.only(bottom: 5),
+                        sliver: _buildImageGrid(),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -729,7 +734,7 @@ class AttachmentPickerState extends State<AttachmentPicker> with ThemeHelpers {
   }
 }
 
-class _QuickActionItem extends StatelessWidget {
+class _QuickActionItem extends StatefulWidget {
   const _QuickActionItem({
     this.icon,
     this.logo,
@@ -747,33 +752,45 @@ class _QuickActionItem extends StatelessWidget {
   final FocusNode? focusNode;
 
   @override
+  State<_QuickActionItem> createState() => _QuickActionItemState();
+}
+
+class _QuickActionItemState extends State<_QuickActionItem> {
+  bool _focused = false;
+
+  @override
   Widget build(BuildContext context) {
-    final bgColor = color.withValues(alpha: 0.12);
+    final bgColor = widget.color.withValues(alpha: 0.12);
+    // When focused (D-pad), brighten the tile by blending white over it — no border.
+    final effectiveBg = _focused ? Color.alphaBlend(Colors.white.withValues(alpha: 0.22), bgColor) : bgColor;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: InkWell(
-        focusNode: focusNode,
+        focusNode: widget.focusNode,
+        onFocusChange: (focused) {
+          if (focused != _focused) setState(() => _focused = focused);
+        },
         borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
+        onTap: widget.onTap,
         child: Container(
           decoration: BoxDecoration(
-            color: bgColor,
+            color: effectiveBg,
             borderRadius: BorderRadius.circular(12),
           ),
           padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 10),
           child: Row(
             children: [
-              if (logo != null)
+              if (widget.logo != null)
                 ClipRRect(
                   borderRadius: BorderRadius.circular(6),
-                  child: Image.memory(logo!, width: 26, height: 26),
+                  child: Image.memory(widget.logo!, width: 26, height: 26),
                 )
               else
-                Icon(icon, color: color, size: 26),
+                Icon(widget.icon, color: widget.color, size: 26),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  label,
+                  widget.label,
                   style: context.theme.textTheme.bodyMedium,
                   overflow: TextOverflow.ellipsis,
                 ),

@@ -2232,7 +2232,7 @@ class RustPushService {
     var port = ReceivePort();
     port.listen((data) {
       if (data == null) {
-        PrefsSvc.i.reload(); // to get the new final sync time
+        PrefsSvc.i.reloadCache(); // to get the new final sync time
       }
       isSyncing.value = data;
     });
@@ -2250,7 +2250,7 @@ class RustPushService {
 
   (int, DateTime) getCutoffTime() {
     // yes, we call this a lot, it's a bit of a shame.
-    PrefsSvc.i.reload();
+    PrefsSvc.i.reloadCache();
     var time = PrefsSvc.i.getInt('syncHistoryTime') ?? 0;
 
     var cutoffDateTime = DateTime.fromMillisecondsSinceEpoch(0);
@@ -3743,9 +3743,14 @@ class RustPushService {
       if (myMsg.verificationFailed) return;
       var msg = myMsg.message as api.Message_SmsConfirmSent;
       if (msg.field0) {
+        var oldGuid = message.guid;
         message.guid = message.stagingGuid;
         message.stagingGuid = null;
         message.save();
+        if (message.chat.target != null && Get.isRegistered<MessagesService>(tag: message.chat.target!.guid)) {
+          // Update the UI, treating this as transitioning from temp to real GUID
+          MessagesSvc(message.chat.target!.guid).updateMessage(message, oldGuid: oldGuid);
+        }
       } else {
         // message failed to send
         var m = message;

@@ -1,3 +1,4 @@
+import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/helpers/ui/theme_helpers.dart';
 import 'package:bluebubbles/helpers/ui/ui_helpers.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/pages/conversation_list.dart';
@@ -74,54 +75,38 @@ class _CustomAvatarPanelState extends State<CustomAvatarPanel> with ThemeHelpers
                     inSelectMode: true,
                     onSelect: (_) {
                       if (chat.customAvatarPath != null) {
-                        showDialog(
+                        showBBDialog(
                           context: context,
-                          builder: (BuildContext context) {
-                            return AlertDialog(
-                                backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                                title: Text("Custom Avatar", style: context.theme.textTheme.titleLarge),
-                                content: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  mainAxisSize: MainAxisSize.min,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                        "You have already set a custom avatar for this chat. What would you like to do?",
-                                        style: context.theme.textTheme.bodyLarge),
-                                  ],
-                                ),
-                                actions: <Widget>[
-                                  TextButton(
-                                      child: Text("Cancel",
-                                          style: context.theme.textTheme.bodyLarge!
-                                              .copyWith(color: context.theme.colorScheme.primary)),
-                                      onPressed: () {
-                                        Navigator.of(context).pop();
-                                      }),
-                                  TextButton(
-                                      child: Text("Reset",
-                                          style: context.theme.textTheme.bodyLarge!
-                                              .copyWith(color: context.theme.colorScheme.primary)),
-                                      onPressed: () async {
-                                        await ChatsSvc.setChatCustomAvatarPath(chat, null);
-                                        Navigator.of(context, rootNavigator: true).pop();
-                                      }),
-                                  TextButton(
-                                      child: Text("Set New",
-                                          style: context.theme.textTheme.bodyLarge!
-                                              .copyWith(color: context.theme.colorScheme.primary)),
-                                      onPressed: () async {
-                                        Navigator.of(context).pop();
-                                        final result = await NavigationSvc.pushSettings(
-                                          context,
-                                          AvatarCrop(chat: chat),
-                                        );
-                                        if (result is String) {
-                                          await ChatsSvc.setChatCustomAvatarPath(chat, result);
-                                        }
-                                      }),
-                                ]);
-                          },
+                          title: "Custom Avatar",
+                          body: "You have already set a custom avatar for this chat. What would you like to do?",
+                          actions: [
+                            BBDialogAction(
+                              text: "Cancel",
+                              onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+                            ),
+                            BBDialogAction(
+                              text: "Reset",
+                              isDestructive: true,
+                              onPressed: () async {
+                                await ChatsSvc.setChatCustomAvatarPath(chat, null);
+                                Navigator.of(context, rootNavigator: true).pop();
+                              },
+                            ),
+                            BBDialogAction(
+                              text: "Set New",
+                              isDefault: true,
+                              onPressed: () async {
+                                Navigator.of(context, rootNavigator: true).pop();
+                                final result = await NavigationSvc.pushSettings(
+                                  context,
+                                  AvatarCrop(chat: chat),
+                                );
+                                if (result is String) {
+                                  await ChatsSvc.setChatCustomAvatarPath(chat, result);
+                                }
+                              },
+                            ),
+                          ],
                         );
                       } else {
                         NavigationSvc.pushSettings(

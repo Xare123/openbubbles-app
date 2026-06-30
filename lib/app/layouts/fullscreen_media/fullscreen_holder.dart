@@ -1,6 +1,7 @@
 import 'package:bluebubbles/app/components/circle_progress_bar.dart';
 import 'package:bluebubbles/app/layouts/fullscreen_media/fullscreen_image.dart';
 import 'package:bluebubbles/app/layouts/fullscreen_media/fullscreen_video.dart';
+import 'package:bluebubbles/models/models.dart' show MessageReplyContext;
 import 'package:bluebubbles/app/wrappers/bb_app_bar.dart';
 import 'package:bluebubbles/app/wrappers/bb_scaffold.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
@@ -22,13 +23,24 @@ class FullscreenMediaHolder extends StatefulWidget {
       required this.showInteractions,
       this.currentChat,
       this.videoController,
-      this.mute});
+      this.mute,
+      this.initialAttachmentGuid,
+      this.replyMessage,
+      this.replyPartIndex,
+      this.galleryAttachments});
 
   final Chat? currentChat;
   final Attachment attachment;
   final bool showInteractions;
   final VideoController? videoController;
   final RxBool? mute;
+  final String? initialAttachmentGuid;
+  final Message? replyMessage;
+  final int? replyPartIndex;
+
+  /// When non-null, the fullscreen carousel is limited to these attachments
+  /// instead of all images in the chat. Used when opening from a gallery card.
+  final List<Attachment>? galleryAttachments;
 
   @override
   FullscreenMediaHolderState createState() => FullscreenMediaHolderState();
@@ -37,10 +49,12 @@ class FullscreenMediaHolder extends StatefulWidget {
 class FullscreenMediaHolderState extends State<FullscreenMediaHolder> with ThemeHelpers {
   final focusNode = FocusNode();
   late final PageController controller;
-  late final messageService = widget.currentChat == null ? null : MessagesSvc(widget.currentChat!.guid);
-  late List<Attachment> attachments = widget.currentChat == null
-      ? [attachment]
-      : messageService!.struct.attachments.where((e) => e.mimeStart == "image").toList();
+  late final messageService = widget.currentChat == null ? null : maybeFindMessagesSvc(widget.currentChat!.guid);
+  late List<Attachment> attachments = widget.galleryAttachments != null
+      ? List<Attachment>.from(widget.galleryAttachments!)
+      : (widget.currentChat == null
+          ? [attachment]
+          : (messageService?.struct.attachments.where((e) => e.mimeStart == "image").toList() ?? [attachment]));
 
   int currentIndex = 0;
   ScrollPhysics? physics;
@@ -48,6 +62,7 @@ class FullscreenMediaHolderState extends State<FullscreenMediaHolder> with Theme
   // Start hidden for video (video auto-plays and manages its own overlay); show for images
   bool get _isVideoAttachment => attachment.mimeStart == "video";
   late bool showAppBar = kIsDesktop || kIsWeb || !_isVideoAttachment;
+  bool get _canReply => widget.replyMessage != null && widget.replyPartIndex != null && widget.currentChat != null;
 
   @override
   void initState() {
@@ -55,12 +70,14 @@ class FullscreenMediaHolderState extends State<FullscreenMediaHolder> with Theme
     if (kIsWeb || !widget.showInteractions) {
       controller = PageController(initialPage: 0);
     } else {
-      if (widget.currentChat != null) {
-        currentIndex = attachments.indexWhere((e) => e.guid == attachment.guid);
-        if (currentIndex == -1) {
+      if (widget.currentChat != null || widget.galleryAttachments != null) {
+        final targetGuid = widget.initialAttachmentGuid ?? attachment.guid;
+        currentIndex = attachments.indexWhere((e) => e.guid == targetGuid);
+        if (currentIndex == -1 && widget.currentChat != null) {
           attachments.add(attachment);
           currentIndex = attachments.indexWhere((e) => e.guid == attachment.guid);
         }
+        if (currentIndex == -1) currentIndex = 0;
       }
       controller = PageController(initialPage: currentIndex);
     }
@@ -74,6 +91,17 @@ class FullscreenMediaHolderState extends State<FullscreenMediaHolder> with Theme
 
   @override
   Widget build(BuildContext context) {
+    void triggerReply() {
+      if (!_canReply) return;
+      final selectedAttachment = attachments[currentIndex];
+      cvc(widget.currentChat!).replyToMessage = MessageReplyContext(
+        widget.replyMessage!,
+        widget.replyPartIndex!,
+        attachmentGuid: selectedAttachment.guid,
+      );
+      Navigator.of(context).pop();
+    }
+
     return TitleBarWrapper(
       child: Actions(
         actions: {
@@ -110,6 +138,13 @@ class FullscreenMediaHolderState extends State<FullscreenMediaHolder> with Theme
                   titleStyle:
                       context.theme.textTheme.titleLarge!.copyWith(color: context.theme.colorScheme.onSurfaceVariant),
                   iconTheme: IconThemeData(color: context.theme.colorScheme.primary),
+                  actions: [
+                    if (_canReply)
+                      IconButton(
+                        onPressed: triggerReply,
+                        icon: const Icon(CupertinoIcons.reply),
+                      ),
+                  ],
                   backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
                 ),
           backgroundColor: Colors.black,

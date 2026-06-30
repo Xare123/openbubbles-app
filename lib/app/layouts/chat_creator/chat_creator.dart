@@ -23,12 +23,14 @@ import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/services/backend/interfaces/sync_interface.dart';
 import 'package:bluebubbles/services/ui/chat/send_data.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/utils/string_utils.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
+import 'package:dio/dio.dart' show Response;
 import 'package:get/get.dart' hide Response;
 import 'package:slugify/slugify.dart';
 import 'package:bluebubbles/models/models.dart' show ContactSearchResult;
@@ -110,7 +112,7 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
             oldText = addressController.text;
             // if user has typed stuff, remove the message view and show filtered results
             if (addressController.text.isNotEmpty && fakeController.value != null) {
-              await ChatsSvc.setAllInactive();
+              ChatsSvc.setAllInactive();
               oldController = fakeController.value;
               fakeController.value = null;
             }
@@ -197,7 +199,9 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
           },
         );
       }
-    } catch (_) {}
+    } catch (e, s) {
+      Logger.warn("Failed to check iMessage availability for contact", error: e, trace: s, tag: 'ChatCreator');
+    }
     addressController.text = "";
     await findExistingChat();
   }
@@ -286,7 +290,7 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
   Future<Chat?> findExistingChat({bool checkDeleted = false, bool update = true}) async {
     // no selected items, remove message view
     if (selectedContacts.isEmpty) {
-      await ChatsSvc.setAllInactive();
+      ChatsSvc.setAllInactive();
       fakeController.value = null;
       return null;
     }
@@ -314,7 +318,9 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
           );
           query.close();
         }
-      } catch (_) {}
+      } catch (e, s) {
+        Logger.warn("Failed to find existing chat by identifier", error: e, trace: s, tag: 'ChatCreator');
+      }
     }
     // match each selected contact to a participant in a chat
     if (existingChat == null) {
@@ -328,14 +334,14 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
     // if match, show message view, otherwise hide it
     if (update) {
       if (existingChat != null) {
-        await ChatsSvc.setActiveChat(existingChat, clearNotifications: false);
+        ChatsSvc.setActiveChat(existingChat, clearNotifications: false);
         ChatsSvc.activeChat!.controller = cvc(existingChat);
 
         // Get or create the MessagesService for this chat
         // Only create a new one if we don't already have one for this chat
         // DON'T initialize it here - let MessagesView initialize it with proper handlers
         if (messagesService == null || messagesService!.tag != existingChat.guid) {
-          messagesService = MessagesSvc(existingChat.guid);
+          messagesService = maybeFindMessagesSvc(existingChat.guid) ?? MessagesService(existingChat.guid);
         }
 
         if (widget.initialAttachments.isNotEmpty) {
@@ -355,7 +361,7 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
 
         fakeController.value = ChatsSvc.activeChat!.controller;
       } else {
-        await ChatsSvc.setAllInactive();
+        ChatsSvc.setAllInactive();
         fakeController.value = null;
         messagesService = null;
       }
@@ -549,7 +555,7 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
                         textController.supportsFormatting = false;
                         filteredChats.value = List<Chat>.from(existingChats.where((e) => !e.isIMessage));
                       }
-                      await ChatsSvc.setAllInactive();
+                      ChatsSvc.setAllInactive();
                       fakeController.value = null;
                     },
                   )),
@@ -745,12 +751,13 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
                               final existingChat = chat;
                               // Ensure fakeController is set up for this chat
                               if (fakeController.value == null) {
-                                await ChatsSvc.setActiveChat(existingChat, clearNotifications: false);
+                                ChatsSvc.setActiveChat(existingChat, clearNotifications: false);
                                 ChatsSvc.activeChat!.controller = cvc(existingChat);
                                 fakeController.value = ChatsSvc.activeChat!.controller;
                               }
                               if (messagesService == null || messagesService!.tag != existingChat.guid) {
-                                messagesService = MessagesSvc(existingChat.guid);
+                                messagesService =
+                                    maybeFindMessagesSvc(existingChat.guid) ?? MessagesService(existingChat.guid);
                               }
 
                               final ctrl = fakeController.value!;
@@ -869,7 +876,7 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
 
                                 // Force close the message service for the chat so it can be reloaded.
                                 // If this isn't done, new messages will not show.
-                                MessagesSvc(newChat.guid).close(force: true);
+                                maybeFindMessagesSvc(newChat.guid)?.close(force: true);
                                 cvc(newChat).close();
 
                                 // Let awaiters know we completed
@@ -897,12 +904,21 @@ class ChatCreatorState extends State<ChatCreator> with ThemeHelpers {
                                   if (!createCompleter!.isCompleted) createCompleter?.completeError(error);
                                   return;
                                 }
-                                showDialog(
-                                    barrierDismissible: false,
-                                    context: context,
-                                    builder: (BuildContext dialogContext) {
-                                      return ChatCreatorDialogs.buildCreateChatErrorDialog(dialogContext, error);
-                                    });
+                                showBBDialog(
+                                  barrierDismissible: false,
+                                  context: context,
+                                  title: 'Failed to create chat!',
+                                  body: error is Response
+                                      ? 'Reason: (${error.data["error"]["type"]}) -> ${error.data["error"]["message"]}'
+                                      : error.toString(),
+                                  actions: [
+                                    BBDialogAction(
+                                      text: 'OK',
+                                      isDefault: true,
+                                      onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+                                    ),
+                                  ],
+                                );
                                 if (!createCompleter!.isCompleted) {
                                   createCompleter?.completeError(error);
                                 }

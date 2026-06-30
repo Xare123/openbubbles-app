@@ -92,33 +92,24 @@ class _AdvancedThemingTileState extends State<AdvancedThemingTile> {
                         }
                       : null,
                   onDoubleTap: () {
-                    showDialog(
+                    showBBDialog(
                       context: context,
-                      builder: (BuildContext context) {
-                        return AlertDialog(
-                          title: Text(
-                            "Info - ${widget.colorEntry.primary.key} ${widget.colorEntry.textColor != null ? "/ ${widget.colorEntry.textColor!.key}" : ""}",
-                            style: context.theme.textTheme.titleLarge,
-                          ),
-                          backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                          content: Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: Text(
-                                "${ThemeStruct.colorDescriptions[widget.colorEntry.primary.key]}${widget.colorEntry.textColor != null ? "\n\n${ThemeStruct.colorDescriptions[widget.colorEntry.textColor!.key]}" : ""}",
-                                style: context.theme.textTheme.bodyLarge),
-                          ),
-                          actions: <Widget>[
-                            TextButton(
-                              child: Text("OK",
-                                  style: context.theme.textTheme.bodyLarge!
-                                      .copyWith(color: context.theme.colorScheme.primary)),
-                              onPressed: () {
-                                Navigator.of(context).pop();
-                              },
-                            ),
-                          ],
-                        );
-                      },
+                      title:
+                          "Info - ${widget.colorEntry.primary.key} ${widget.colorEntry.textColor != null ? "/ ${widget.colorEntry.textColor!.key}" : ""}",
+                      content: Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Text(
+                          "${ThemeStruct.colorDescriptions[widget.colorEntry.primary.key]}${widget.colorEntry.textColor != null ? "\n\n${ThemeStruct.colorDescriptions[widget.colorEntry.textColor!.key]}" : ""}",
+                          style: context.theme.textTheme.bodyLarge,
+                        ),
+                      ),
+                      actions: [
+                        BBDialogAction(
+                          text: "OK",
+                          isDefault: true,
+                          onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+                        ),
+                      ],
                     );
                   },
                   child: Column(
@@ -152,53 +143,47 @@ class _AdvancedThemingTileState extends State<AdvancedThemingTile> {
   }
 
   Future<Color?> showThemeDialog(Color newColor) async {
-    return await showDialog(
-        context: context,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            scrollable: true,
-            content: ColorPicker(
-              color: newColor,
-              onColorChanged: (color) {
-                newColor = color;
-              },
-              title: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text('Choose a Color', style: Theme.of(context).textTheme.titleLarge)),
-              width: 40,
-              height: 40,
-              spacing: 0,
-              runSpacing: 0,
-              borderRadius: 0,
-              wheelDiameter: 165,
-              enableOpacity: false,
-              showColorCode: true,
-              colorCodeHasColor: true,
-              pickersEnabled: <ColorPickerType, bool>{
-                ColorPickerType.wheel: true,
-              },
-              copyPasteBehavior: const ColorPickerCopyPasteBehavior(
-                parseShortHexCode: true,
-              ),
-              actionButtons: const ColorPickerActionButtons(
-                dialogActionButtons: true,
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(context).pop(null);
-                },
-                child: const Text('CANCEL'),
-              ),
-              TextButton(
-                onPressed: () {
-                  Navigator.of(context).pop(newColor);
-                },
-                child: const Text('SAVE'),
-              ),
-            ],
-          );
-        });
+    return await showBBDialog<Color>(
+      context: context,
+      content: ColorPicker(
+        color: newColor,
+        onColorChanged: (color) {
+          newColor = color;
+        },
+        title: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Text('Choose a Color', style: Theme.of(context).textTheme.titleLarge),
+        ),
+        width: 40,
+        height: 40,
+        spacing: 0,
+        runSpacing: 0,
+        borderRadius: 0,
+        wheelDiameter: 165,
+        enableOpacity: false,
+        showColorCode: true,
+        colorCodeHasColor: true,
+        pickersEnabled: const <ColorPickerType, bool>{
+          ColorPickerType.wheel: true,
+        },
+        copyPasteBehavior: const ColorPickerCopyPasteBehavior(
+          parseShortHexCode: true,
+        ),
+        actionButtons: const ColorPickerActionButtons(
+          dialogActionButtons: false,
+        ),
+      ),
+      actions: [
+        BBDialogAction(
+          text: 'CANCEL',
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(null),
+        ),
+        BBDialogAction(
+          text: 'SAVE',
+          isDefault: true,
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(newColor),
+        ),
+      ],
+    );
   }
 }

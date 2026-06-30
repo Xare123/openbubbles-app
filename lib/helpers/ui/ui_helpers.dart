@@ -11,6 +11,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 import 'package:gesture_x_detector/gesture_x_detector.dart';
 import 'package:get/get.dart';
 import 'package:get_it/get_it.dart';
@@ -117,20 +118,13 @@ Widget buildBackButton(BuildContext context,
   );
 }
 
-Widget buildProgressIndicator(BuildContext context,
-    {double size = 20, double strokeWidth = 2, ui.Brightness? brightness}) {
-  brightness ??= ThemeData.estimateBrightnessForColor(context.theme.colorScheme.background);
+Widget buildProgressIndicator(BuildContext context, {double size = 20, double strokeWidth = 2}) {
   return SettingsSvc.settings.skin.value == Skins.iOS
-      ? Theme(
-          data: ThemeData(
-            cupertinoOverrideTheme: CupertinoThemeData(brightness: brightness),
-          ),
-          child: CupertinoActivityIndicator(
-            radius: size / 2,
-            color: ThemeSvc.isAnyMaterialYouSelected
-                ? context.theme.colorScheme.primary
-                : context.theme.colorScheme.onSurfaceVariant,
-          ),
+      ? CupertinoActivityIndicator(
+          radius: size / 2,
+          color: ThemeSvc.isAnyMaterialYouSelected
+              ? context.theme.colorScheme.primary
+              : context.theme.colorScheme.onSurfaceVariant,
         )
       : Container(
           alignment: Alignment.center,
@@ -169,7 +163,8 @@ Future<void> showConversationTileMenu(
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: () {
-              ChatsSvc.toggleChatPin(chat, !chat.isPinned!);
+              final chatState = ChatsSvc.getChatState(chat.guid);
+              ChatsSvc.setChatPinned(chatState?.chat ?? chat, !chat.isPinned!);
               Navigator.pop(context);
             },
             child: Padding(
@@ -262,7 +257,7 @@ Future<void> showConversationTileMenu(
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: () {
-              ChatsSvc.toggleChatArchive(chat, !chat.isArchived!);
+              ChatsSvc.setChatArchived(chat, !chat.isArchived!);
               Navigator.pop(context);
             },
             child: Padding(
@@ -474,6 +469,24 @@ void showSnackbar(String title, String message,
           if (Get.isSnackbarOpen) Get.back();
         },
   );
+}
+
+Future<void> showToast(String message, {bool isError = false}) async {
+  if (message.trim().isEmpty) return;
+  if (kIsDesktop) {
+    showSnackbar(isError ? "Error" : "Notice", message);
+    return;
+  }
+  try {
+    await Fluttertoast.showToast(
+      msg: message,
+      toastLength: isError ? Toast.LENGTH_LONG : Toast.LENGTH_SHORT,
+      gravity: ToastGravity.BOTTOM,
+    );
+  } catch (e, s) {
+    Logger.warn("Failed to show toast: $e");
+    Logger.debug(s.toString());
+  }
 }
 
 Widget getSocketStateIndicatorIcon(SocketState socketState, {double size = 24, bool showAlpha = true}) {
@@ -754,31 +767,85 @@ Future<ui.Image> loadImage(Uint8List data) async {
   return completer.future;
 }
 
-AlertDialog areYouSure(BuildContext context,
-    {Widget? content, String? title = "Are you sure?", required Function onNo, required Function onYes}) {
-  return AlertDialog(
-    title: Text(
-      title ?? "Are you sure?",
-      style: context.theme.textTheme.titleLarge,
-    ),
-    content: content,
-    backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-    actions: <Widget>[
-      TextButton(
-        child: Text("No", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-        onPressed: () {
-          onNo.call();
-        },
-      ),
-      TextButton(
-        child:
-            Text("Yes", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-        onPressed: () async {
-          onYes.call();
-        },
-      ),
-    ],
-  );
+@Deprecated('Use showAreYouSure() from dialog_helpers.dart instead')
+Widget areYouSure(BuildContext context,
+    {Widget? content,
+    String? title = "Are you sure?",
+    String? noText = "No",
+    String? yesText = "Yes",
+    Color? noColor,
+    Color? yesColor,
+    required Function onNo,
+    required Function onYes}) {
+  return _AreYouSureDialog(
+      content: content,
+      title: title,
+      onNo: onNo,
+      onYes: onYes,
+      noText: noText,
+      yesText: yesText,
+      noColor: noColor,
+      yesColor: yesColor);
+}
+
+class _AreYouSureDialog extends StatefulWidget {
+  final Widget? content;
+  final String? title;
+  final Function onNo;
+  final Function onYes;
+  final String? noText;
+  final String? yesText;
+  final Color? noColor;
+  final Color? yesColor;
+
+  const _AreYouSureDialog({
+    required this.onNo,
+    required this.onYes,
+    this.noText,
+    this.yesText,
+    this.noColor,
+    this.yesColor,
+    this.content,
+    this.title,
+  });
+
+  @override
+  State<_AreYouSureDialog> createState() => _AreYouSureDialogState();
+}
+
+class _AreYouSureDialogState extends State<_AreYouSureDialog> {
+  bool _loading = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title ?? "Are you sure?", style: context.theme.textTheme.titleLarge),
+      content: _loading ? SizedBox(height: 70, child: Center(child: buildProgressIndicator(context))) : widget.content,
+      backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+      actions: _loading
+          ? null
+          : [
+              TextButton(
+                child: Text(widget.noText ?? "No",
+                    style: context.theme.textTheme.bodyLarge!
+                        .copyWith(color: widget.noColor ?? context.theme.colorScheme.primary)),
+                onPressed: () => widget.onNo.call(),
+              ),
+              TextButton(
+                child: Text(widget.yesText ?? "Yes",
+                    style: context.theme.textTheme.bodyLarge!
+                        .copyWith(color: widget.yesColor ?? context.theme.colorScheme.primary)),
+                onPressed: () async {
+                  final result = widget.onYes.call();
+                  if (result is Future) {
+                    setState(() => _loading = true);
+                    await result;
+                  }
+                },
+              ),
+            ],
+    );
+  }
 }
 
 extension VideoAspectRatio on VideoController {

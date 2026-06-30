@@ -9,7 +9,5 @@ class SharedPreferencesSystemActions {
 
   int? getBackgroundCallbackHandle() => service.i.getInt(_backgroundCallbackHandleKey);
 
-  Future<void> setBackgroundCallbackHandle(int handle) async {
-    await service.i.setInt(_backgroundCallbackHandleKey, handle);
-  }
+  Future<void> setBackgroundCallbackHandle(int handle) => service.i.setInt(_backgroundCallbackHandleKey, handle);
 }

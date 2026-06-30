@@ -63,7 +63,7 @@ class ColorEditorTile extends StatelessWidget {
                 GestureDetector(
                   onLongPress: () async {
                     await Clipboard.setData(ClipboardData(text: _hexOf(mainColor)));
-                    showSnackbar("Copied", _hexOf(mainColor));
+                    showToast("Copied ${_hexOf(mainColor)}");
                   },
                   child: Text(
                     _hexOf(mainColor) + (onColor != null ? '  ·  ${_hexOf(onColor!)}' : ''),
@@ -193,27 +193,22 @@ class _InfoButton extends StatelessWidget {
 
   void _showInfo(BuildContext context, String desc) {
     final onDesc = onKey != null ? ThemeStruct.colorDescriptions[onKey!] : null;
-    showDialog(
+    showBBDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-        title: Text(
-          '$colorKey${onKey != null ? ' / $onKey' : ''}',
-          style: context.theme.textTheme.titleMedium,
+      title: '$colorKey${onKey != null ? ' / $onKey' : ''}',
+      content: SingleChildScrollView(
+        child: Text(
+          '$desc${onDesc != null ? '\n\n$onDesc' : ''}',
+          style: context.theme.textTheme.bodyMedium,
         ),
-        content: SingleChildScrollView(
-          child: Text(
-            '$desc${onDesc != null ? '\n\n$onDesc' : ''}',
-            style: context.theme.textTheme.bodyMedium,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text("OK", style: TextStyle(color: context.theme.colorScheme.primary)),
-          ),
-        ],
       ),
+      actions: [
+        BBDialogAction(
+          text: "OK",
+          isDefault: true,
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+        ),
+      ],
     );
   }
 }
@@ -222,41 +217,38 @@ class _InfoButton extends StatelessWidget {
 
 Future<Color?> showColorPickerDialog(BuildContext context, Color initial) async {
   Color selected = initial;
-  return showDialog<Color>(
+  return showBBDialog<Color>(
     context: context,
-    builder: (dialogContext) => AlertDialog(
-      scrollable: true,
-      backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-      content: ColorPicker(
-        color: selected,
-        onColorChanged: (c) => selected = c,
-        title: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Text('Choose a Color', style: context.theme.textTheme.titleLarge),
-        ),
-        width: 40,
-        height: 40,
-        spacing: 0,
-        runSpacing: 0,
-        borderRadius: 0,
-        wheelDiameter: 165,
-        enableOpacity: false,
-        showColorCode: true,
-        colorCodeHasColor: true,
-        pickersEnabled: const {ColorPickerType.wheel: true},
-        copyPasteBehavior: const ColorPickerCopyPasteBehavior(parseShortHexCode: true),
-        actionButtons: const ColorPickerActionButtons(dialogActionButtons: false),
+    content: ColorPicker(
+      color: selected,
+      onColorChanged: (c) => selected = c,
+      title: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Text('Choose a Color', style: context.theme.textTheme.titleLarge),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(dialogContext).pop(null),
-          child: const Text('CANCEL'),
-        ),
-        TextButton(
-          onPressed: () => Navigator.of(dialogContext).pop(selected),
-          child: const Text('SAVE'),
-        ),
-      ],
+      width: 40,
+      height: 40,
+      spacing: 0,
+      runSpacing: 0,
+      borderRadius: 0,
+      wheelDiameter: 165,
+      enableOpacity: false,
+      showColorCode: true,
+      colorCodeHasColor: true,
+      pickersEnabled: const {ColorPickerType.wheel: true},
+      copyPasteBehavior: const ColorPickerCopyPasteBehavior(parseShortHexCode: true),
+      actionButtons: const ColorPickerActionButtons(dialogActionButtons: false),
     ),
+    actions: [
+      BBDialogAction(
+        text: 'CANCEL',
+        onPressed: () => Navigator.of(context, rootNavigator: true).pop(null),
+      ),
+      BBDialogAction(
+        text: 'SAVE',
+        isDefault: true,
+        onPressed: () => Navigator.of(context, rootNavigator: true).pop(selected),
+      ),
+    ],
   );
 }

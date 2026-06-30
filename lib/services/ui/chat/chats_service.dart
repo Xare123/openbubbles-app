@@ -64,7 +64,6 @@ class ChatsService {
   /// Listeners for redacted mode settings to update all ChatStates
   StreamSubscription? _redactedModeListener;
   StreamSubscription? _hideContactInfoListener;
-  StreamSubscription? _generateFakeContactNamesListener;
   StreamSubscription? _generateFakeAvatarsListener;
   StreamSubscription? _hideAttachmentsListener;
 
@@ -377,7 +376,6 @@ class ChatsService {
     // Cancel existing listeners if any
     _redactedModeListener?.cancel();
     _hideContactInfoListener?.cancel();
-    _generateFakeContactNamesListener?.cancel();
     _generateFakeAvatarsListener?.cancel();
     _hideAttachmentsListener?.cancel();
 
@@ -394,17 +392,6 @@ class ChatsService {
 
     // Listen to hideContactInfo toggle - only affects contact info fields
     _hideContactInfoListener = SettingsSvc.settings.hideContactInfo.listen((enabled) {
-      for (final chatState in chatStates.values) {
-        if (enabled) {
-          chatState.redactContactInfo();
-        } else {
-          chatState.unredactContactInfo();
-        }
-      }
-    });
-
-    // Listen to generateFakeContactNames toggle - only affects contact info fields
-    _generateFakeContactNamesListener = SettingsSvc.settings.generateFakeContactNames.listen((enabled) {
       for (final chatState in chatStates.values) {
         if (enabled) {
           chatState.redactContactInfo();
@@ -465,7 +452,7 @@ class ChatsService {
   /// The UI notification is deferred to the next frame so this is safe to call
   /// from [State.dispose] (while the widget tree may still be locked).
   void refreshSortOrder() {
-    _sortedChats.sort(Chat.sort);
+    _sortedChats.sort(_sortCompare);
     SchedulerBinding.instance.addPostFrameCallback((_) {
       _scheduleListVersionUpdate(immediate: true);
     });
@@ -476,7 +463,6 @@ class ChatsService {
     _listVersionUpdateTimer?.cancel();
     _redactedModeListener?.cancel();
     _hideContactInfoListener?.cancel();
-    _generateFakeContactNamesListener?.cancel();
     _generateFakeAvatarsListener?.cancel();
     _hideAttachmentsListener?.cancel();
   }
@@ -485,6 +471,41 @@ class ChatsService {
   /// Returns the pre-sorted list - sorting is maintained on add/update
   List<Chat> getSortedChats() {
     return _sortedChats;
+  }
+
+  /// State-aware sort comparison used by [_findInsertionIndex] and [refreshSortOrder].
+  ///
+  /// Mirrors [Chat.sort] for pin-index ordering but resolves the latest-message
+  /// date from [chatStates] instead of [Chat.dbOnlyLatestMessageDate].  Using the
+  /// reactive state avoids a race condition where the DB write for the new message
+  /// has not yet completed when the chat list needs to be repositioned.
+  int _sortCompare(Chat a, Chat b) {
+    final aIsPinned = a.isPinned ?? false;
+    final bIsPinned = b.isPinned ?? false;
+
+    // Both pinned with an explicit order → sort by pinIndex.
+    if (aIsPinned && bIsPinned && a.pinIndex != null && b.pinIndex != null) {
+      return a.pinIndex!.compareTo(b.pinIndex!);
+    }
+
+    // b is ordered-pinned, a is not → b comes first.
+    if (bIsPinned && b.pinIndex != null && (!aIsPinned || a.pinIndex == null)) return 1;
+    // a is ordered-pinned, b is not → a comes first.
+    if (aIsPinned && a.pinIndex != null && (!bIsPinned || b.pinIndex == null)) return -1;
+
+    // One pinned, one not.
+    if (!aIsPinned && bIsPinned) return 1;
+    if (aIsPinned && !bIsPinned) return -1;
+
+    // Both unpinned (or both pinned without an index): sort by most-recent message.
+    // Use ChatState latestMessage date to avoid the DB-write race condition.
+    final aDate = chatStates[a.guid]?.latestMessage.value?.dateCreated ??
+        a.dbOnlyLatestMessageDate ??
+        DateTime.fromMillisecondsSinceEpoch(0);
+    final bDate = chatStates[b.guid]?.latestMessage.value?.dateCreated ??
+        b.dbOnlyLatestMessageDate ??
+        DateTime.fromMillisecondsSinceEpoch(0);
+    return -aDate.compareTo(bDate);
   }
 
   /// Find the correct insertion index for a chat using binary search
@@ -496,7 +517,7 @@ class ChatsService {
     while (left < right) {
       final mid = (left + right) ~/ 2;
       final midChat = _sortedChats[mid];
-      final comparison = Chat.sort(chat, midChat);
+      final comparison = _sortCompare(chat, midChat);
 
       if (comparison < 0) {
         right = mid;
@@ -608,26 +629,40 @@ class ChatsService {
     _scheduleListVersionUpdate(immediate: true);
   }
 
-  void markAllAsRead() {
-    final _chats = Database.chats.query(Chat_.hasUnreadMessage.equals(true)).build().find();
-    for (Chat c in _chats) {
-      c.hasUnreadMessage = false;
-      if (c.id != null) {
-        MethodChannelSvc.actions.deleteNotification(
-          notificationId: c.id!,
-          tag: NotificationsService.NEW_MESSAGE_TAG,
-        );
-      }
-      BackendSvc.markRead(
-          c, SettingsSvc.settings.enablePrivateAPI.value && SettingsSvc.settings.privateMarkChatAsRead.value);
+  Future<void> markAllAsRead() async {
+    try {
+      // Phase 1: instant UI update from in-memory state — no DB query needed
+      final unreadStates = chatStates.values.where((s) => s.hasUnreadMessage.value).toList();
+      final unreadChats = <Chat>[];
 
-      // Update chat state if it exists
-      final state = chatStates[c.guid];
-      if (state != null) {
+      for (final state in unreadStates) {
         state.hasUnreadMessage.value = false;
+        final chat = state.chat;
+        chat.hasUnreadMessage = false;
+        unreadChats.add(chat);
+        if (chat.id != null && !kIsDesktop && !kIsWeb) {
+          MethodChannelSvc.actions.deleteNotification(
+            notificationId: chat.id!,
+            tag: NotificationsService.NEW_MESSAGE_TAG,
+          );
+        }
       }
+
+      if (unreadChats.isEmpty) return;
+
+      // Phase 2: persist the read state and route the server-side mark-read through the
+      // backend (rustpush or HTTP server, per chat) instead of the BlueBubbles HTTP path.
+      Database.chats.putMany(unreadChats);
+
+      final shouldMark =
+          SettingsSvc.settings.enablePrivateAPI.value && SettingsSvc.settings.privateMarkChatAsRead.value;
+      for (final chat in unreadChats) {
+        await BackendSvc.markRead(chat, shouldMark);
+      }
+    } catch (e, stack) {
+      Logger.error("Error marking all chats as read", error: e, trace: stack, tag: "ChatsService");
+      showToast("Failed to mark all chats as read!");
     }
-    Database.chats.putMany(_chats);
   }
 
   void updateChatPinIndex(int oldIndex, int newIndex) {
@@ -786,8 +821,8 @@ class ChatsService {
   // ========== Chat Lifecycle Management Methods (migrated from ChatManager) ==========
 
   /// Set all chats to inactive synchronously
-  void setAllInactiveSync({bool save = true, bool clearActive = true}) {
-    Logger.debug('Setting chats to inactive (save: $save, clearActive: $clearActive)');
+  void _setAllInactiveSync({bool clearActive = true}) {
+    Logger.debug('Setting chats to inactive (clearActive: $clearActive)');
 
     String? skip;
     if (clearActive) {
@@ -804,30 +839,24 @@ class ChatsService {
       state.updateActiveInternal(false);
       state.updateAliveInternal(false);
     });
-
-    if (save) {
-      EventDispatcherSvc.emit("update-highlight", null);
-      unawaited(PrefsSvc.messaging.clearLastOpenedChat());
-    }
   }
 
-  /// Set all chats to inactive asynchronously
+  /// Set all chats to inactive
   Future<void> setAllInactive() async {
     Logger.debug('Setting all chats to inactive');
-    await PrefsSvc.messaging.clearLastOpenedChat();
-    setAllInactiveSync(save: false);
+    _setAllInactiveSync();
   }
 
   /// Set a chat as the active chat
   Future<void> setActiveChat(Chat chat, {bool clearNotifications = true}) async {
-    await PrefsSvc.messaging.setLastOpenedChat(chat.guid);
-    setActiveChatSync(chat, clearNotifications: clearNotifications, save: false);
+    _setActiveChatSync(chat, clearNotifications: clearNotifications);
   }
 
   api.ChannelInterestToken? provider;
 
-  /// Set a chat as the active chat synchronously
-  void setActiveChatSync(Chat chat, {bool clearNotifications = true, bool save = true}) {
+  /// Set a chat as the active chat synchronously.
+  /// This does NOT save the last opened chat to preferences
+  void _setActiveChatSync(Chat chat, {bool clearNotifications = true}) {
     EventDispatcherSvc.emit("update-highlight", chat.guid);
     Logger.debug('Setting active chat to ${chat.guid} (${chat.displayName})');
 
@@ -857,17 +886,13 @@ class ChatsService {
       chatState.updateActiveAndAliveInternal(true);
 
       // Clear all other chats to inactive
-      setAllInactiveSync(save: false, clearActive: false);
+      _setAllInactiveSync(clearActive: false);
 
       if (clearNotifications) {
         // Defer the observable update to avoid updating during build phase
         Future.microtask(() {
           setChatHasUnread(chatState.chat, false, force: true);
         });
-      }
-
-      if (save) {
-        unawaited(PrefsSvc.messaging.setLastOpenedChat(chat.guid));
       }
     }
   }
@@ -913,7 +938,7 @@ class ChatsService {
     // Handle active chat cleanup
     if (activeChat?.chat.guid == chat.guid) {
       NavigationSvc.closeAllConversationView(Get.context!);
-      await setAllInactive();
+      setAllInactive();
       await Future.delayed(const Duration(milliseconds: 500));
     }
 
@@ -946,7 +971,7 @@ class ChatsService {
     // Handle active chat cleanup
     if (activeChat?.chat.guid == chat.guid) {
       NavigationSvc.closeAllConversationView(Get.context!);
-      await setAllInactive();
+      setAllInactive();
       await Future.delayed(const Duration(milliseconds: 500));
     }
 
@@ -973,7 +998,7 @@ class ChatsService {
   }
 
   /// Toggle chat pin status with service updates
-  Future<Chat> toggleChatPin(Chat chat, bool isPinned) async {
+  Future<Chat> _toggleChatPin(Chat chat, bool isPinned) async {
     // Perform DB operation
     await chat.togglePinAsync(isPinned);
 
@@ -988,7 +1013,7 @@ class ChatsService {
   }
 
   /// Toggle chat archive status with service updates
-  Future<Chat> toggleChatArchive(Chat chat, bool isArchived) async {
+  Future<Chat> _toggleChatArchive(Chat chat, bool isArchived) async {
     // Perform DB operation
     await chat.toggleArchivedAsync(isArchived);
 
@@ -1003,7 +1028,7 @@ class ChatsService {
   }
 
   /// Toggle chat unread status with active chat awareness
-  Future<Chat> toggleChatHasUnread(Chat chat, bool hasUnread,
+  Future<Chat> _toggleChatHasUnread(Chat chat, bool hasUnread,
       {bool force = false, bool clearLocalNotifications = true, bool privateMark = true}) async {
     // Check if chat is active and adjust behavior
     final isActive = isChatActive(chat.guid);
@@ -1062,11 +1087,11 @@ class ChatsService {
 
       if (message.isFromMe! || isActive) {
         // Mark as read if from me or chat is active
-        await toggleChatHasUnread(chat, false,
+        await _toggleChatHasUnread(chat, false,
             clearLocalNotifications: clearNotificationsIfFromMe, force: isActive, privateMark: isActive);
       } else {
         // Mark as unread if not from me and chat is not active
-        await toggleChatHasUnread(chat, true, privateMark: false);
+        await _toggleChatHasUnread(chat, true, privateMark: false);
       }
     }
 
@@ -1083,7 +1108,7 @@ class ChatsService {
     if (state != null && state.isPinned.value == value) return;
 
     // Update DB
-    await toggleChatPin(chat, value);
+    await _toggleChatPin(chat, value);
 
     // Update state if available
     state?.updateIsPinnedInternal(value);
@@ -1117,7 +1142,7 @@ class ChatsService {
     if (state != null && state.hasUnreadMessage.value == value && !force) return;
 
     // Update DB with active chat awareness
-    await toggleChatHasUnread(chat, value,
+    await _toggleChatHasUnread(chat, value,
         force: force, clearLocalNotifications: clearLocalNotifications, privateMark: privateMark);
 
     // Update state if available
@@ -1146,7 +1171,7 @@ class ChatsService {
     if (state != null && state.isArchived.value == value) return;
 
     // Update DB
-    await toggleChatArchive(chat, value);
+    await _toggleChatArchive(chat, value);
 
     // Update state if available
     state?.updateArchivedInternal(value);
@@ -1253,16 +1278,45 @@ class ChatsService {
   /// Set chat custom background path
   Future<void> setChatCustomBackgroundPath(Chat chat, String? value) async {
     final state = getChatState(chat.guid);
+    final resolvedPath = value ?? FilesystemSvc.getExistingChatBackgroundPath(chat.guid);
+    final oldPath = state?.customBackgroundPath.value ?? FilesystemSvc.getExistingChatBackgroundPath(chat.guid);
+    if (state != null && state.customBackgroundPath.value == resolvedPath) return;
 
-    if (state != null && state.customBackgroundPath.value == value) return;
+    if (oldPath != null && oldPath != resolvedPath) {
+      ThemesService.clearAdaptiveThemeCache(oldPath);
+    }
 
-    // Update Chat model (use state.chat if available, otherwise use passed in chat)
+    final lightThemeName = state?.customThemeLight.value ?? chat.customThemeLight;
+    final darkThemeName = state?.customThemeDark.value ?? chat.customThemeDark;
+    final usesAdaptiveBackgroundTheme =
+        (lightThemeName != null && ThemesService.isAdaptiveBackgroundThemeName(lightThemeName)) ||
+            (darkThemeName != null && ThemesService.isAdaptiveBackgroundThemeName(darkThemeName));
+    if (resolvedPath != null && usesAdaptiveBackgroundTheme) {
+      await ThemesService.upsertAdaptiveBackgroundThemesFromImage(resolvedPath, scopeKey: chat.guid);
+    }
+
+    state?.updateCustomBackgroundPathInternal(resolvedPath);
+  }
+
+  /// Set the custom light and dark themes for a specific chat.
+  Future<void> setChatCustomThemes(
+    Chat chat, {
+    String? lightTheme,
+    String? darkTheme,
+  }) async {
+    final state = getChatState(chat.guid);
+    final changed =
+        state == null || state.customThemeLight.value != lightTheme || state.customThemeDark.value != darkTheme;
     final chatToUpdate = state?.chat ?? chat;
-    chatToUpdate.customBackgroundPath = value;
-    await chatToUpdate.saveAsync(updateCustomBackgroundPath: true);
+    chatToUpdate.customThemeLight = lightTheme;
+    chatToUpdate.customThemeDark = darkTheme;
+    await chatToUpdate.saveAsync(updateCustomThemes: true);
 
-    // Update state if available
-    state?.updateCustomBackgroundPathInternal(value);
+    state?.updateCustomThemeLightInternal(lightTheme);
+    state?.updateCustomThemeDarkInternal(darkTheme);
+    if (!changed) {
+      state.bumpThemeVersion();
+    }
   }
 
   /// Set chat latest message

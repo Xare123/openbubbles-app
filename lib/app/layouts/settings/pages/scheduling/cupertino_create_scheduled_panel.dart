@@ -1,5 +1,6 @@
 import 'package:animated_size_and_fade/animated_size_and_fade.dart';
 import 'package:bluebubbles/app/components/avatars/contact_avatar_group_widget.dart';
+import 'package:bluebubbles/app/layouts/chat_selector_view/chat_selector_view.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/scheduling/create_scheduled_mixin.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/settings_widgets.dart';
 import 'package:bluebubbles/database/models.dart';
@@ -109,58 +110,42 @@ class _CupertinoCreateScheduledMessageState extends State<CupertinoCreateSchedul
                       containerColor: context.theme.colorScheme.primary,
                     ),
                     trailing: Obx(() {
-                      final chat = ChatsSvc.findChatByGuid(selectedChat.value);
+                      final chat = selectedChat.value.isEmpty ? null : ChatsSvc.findChatByGuid(selectedChat.value);
                       return Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          if (chat != null) ContactAvatarGroupWidget(chat: chat, size: 28, editable: false),
-                          const SizedBox(width: 8),
-                          ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 120),
-                            child: Text(
-                              chat?.getTitle() ?? selectedChat.value,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: context.theme.textTheme.bodyMedium?.copyWith(
-                                color: context.theme.colorScheme.outline,
+                          if (chat != null) ...[
+                            ContactAvatarGroupWidget(chat: chat, size: 28, editable: false),
+                            const SizedBox(width: 8),
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 120),
+                              child: Text(
+                                chat.getTitle(),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: context.theme.textTheme.bodyMedium?.copyWith(
+                                  color: context.theme.colorScheme.outline,
+                                ),
                               ),
                             ),
-                          ),
+                          ] else
+                            Text(
+                              "Select a chat",
+                              style: context.theme.textTheme.bodyMedium?.copyWith(
+                                color: context.theme.colorScheme.error,
+                              ),
+                            ),
                           Icon(CupertinoIcons.chevron_right, size: 14, color: context.theme.colorScheme.outline),
                         ],
                       );
                     }),
                     onTap: () {
-                      showCupertinoModalPopup<void>(
-                        context: context,
-                        builder: (ctx) => CupertinoActionSheet(
-                          title: const Text("Select Chat"),
-                          actions: ChatsSvc.allChats.map((chat) {
-                            return CupertinoActionSheetAction(
-                              onPressed: () {
-                                selectedChat.value = chat.guid;
-                                Navigator.pop(ctx);
-                              },
-                              child: Row(
-                                children: [
-                                  ContactAvatarGroupWidget(chat: chat, size: 32, editable: false),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Text(
-                                      chat.getTitle(),
-                                      textAlign: TextAlign.start,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          }).toList(),
-                          cancelButton: CupertinoActionSheetAction(
-                            isDestructiveAction: true,
-                            onPressed: () => Navigator.pop(ctx),
-                            child: const Text("Cancel"),
-                          ),
+                      NavigationSvc.push(
+                        context,
+                        ChatSelectorView(
+                          onSelect: (chat) {
+                            selectedChat.value = chat.guid;
+                          },
                         ),
                       );
                     },

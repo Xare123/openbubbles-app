@@ -33,7 +33,9 @@ class ThemeStruct {
     if (googleFont.isEmpty) googleFont = 'Default';
   }
 
-  bool get isPreset => ThemesService.defaultThemes.map((e) => e.name).contains(name);
+  bool get isPreset =>
+      ThemesService.defaultThemes.map((e) => e.name).contains(name) ||
+      ThemesService.isAdaptiveBackgroundThemeName(name);
 
   ThemeStruct save({bool updateIfNotAbsent = true}) {
     return this;
@@ -43,8 +45,7 @@ class ThemeStruct {
     return;
   }
 
-  static ThemeStruct getLightTheme() {
-    final preset = ThemesService.defaultThemes.firstWhere((t) => t.name == "Bright White");
+  static ThemeStruct _clonePreset(dynamic preset) {
     return ThemeStruct(
       name: preset.name,
       themeData: preset.data,
@@ -53,29 +54,35 @@ class ThemeStruct {
     );
   }
 
+  static ThemeStruct getLightTheme() {
+    for (final preset in ThemesService.defaultThemes) {
+      if (preset.name == "Bright White") return _clonePreset(preset);
+    }
+    return ThemeStruct(name: "Bright White", themeData: ThemesService.whiteLightTheme);
+  }
+
   static ThemeStruct getDarkTheme() {
-    final preset = ThemesService.defaultThemes.firstWhere((t) => t.name == "OLED Dark");
-    return ThemeStruct(
-      name: preset.name,
-      themeData: preset.data,
-      gradientBg: preset.gradientBg,
-      googleFont: preset.googleFont,
-    );
+    for (final preset in ThemesService.defaultThemes) {
+      if (preset.name == "OLED Dark") return _clonePreset(preset);
+    }
+    return ThemeStruct(name: "OLED Dark", themeData: ThemesService.oledDarkTheme);
   }
 
   static ThemeStruct? findOne(String name) {
     return null;
   }
 
+  static ThemeStruct resolveByName(String? name, Brightness brightness) {
+    final fallback = brightness == Brightness.dark ? getDarkTheme() : getLightTheme();
+    if (name == null || name.isEmpty) return fallback;
+    for (final preset in ThemesService.defaultThemes) {
+      if (preset.name == name) return _clonePreset(preset);
+    }
+    return fallback;
+  }
+
   static List<ThemeStruct> getThemes() {
-    return ThemesService.defaultThemes
-        .map((preset) => ThemeStruct(
-              name: preset.name,
-              themeData: preset.data,
-              gradientBg: preset.gradientBg,
-              googleFont: preset.googleFont,
-            ))
-        .toList();
+    return ThemesService.defaultThemes.map(_clonePreset).toList();
   }
 
   Map<String, dynamic> toMap() => {

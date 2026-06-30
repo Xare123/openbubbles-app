@@ -174,7 +174,7 @@ class _FontPreviewBanner extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
-        color: context.theme.colorScheme.surfaceVariant.withValues(alpha: 0.4),
+        color: context.theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
@@ -269,6 +269,7 @@ class _FontPickerTile extends StatelessWidget {
   void _openSheet(BuildContext context) {
     showModalBottomSheet<void>(
       context: context,
+      backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
       isScrollControlled: true,
       builder: (_) => _FontPickerSheet(
         currentFont: currentFont,

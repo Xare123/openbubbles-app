@@ -28,9 +28,12 @@ const Map<Level, bool> defaultExcludeBoxes = {
   LoggerFactory.Level.debug: true,
   LoggerFactory.Level.info: true,
   LoggerFactory.Level.warning: true,
-  LoggerFactory.Level.error: false,
-  LoggerFactory.Level.trace: false,
-  LoggerFactory.Level.fatal: false,
+  // Disable boxing for all levels — box-drawing chars (┌, │, └) break the
+  // date-prefix detection in getLogs() and cause error entries to be absorbed
+  // into the preceding entry's body instead of starting their own record.
+  LoggerFactory.Level.error: true,
+  LoggerFactory.Level.trace: true,
+  LoggerFactory.Level.fatal: true,
 };
 
 class BaseLogger {
@@ -57,7 +60,7 @@ class BaseLogger {
   }
 
   LoggerFactory.LogOutput get defaultOutput {
-    List<LogOutput> outputs = kDebugMode ? [DebugConsoleOutput()] : [];
+    List<LogOutput> outputs = [DebugConsoleOutput()];
     if (!kIsWeb) outputs.add(fileOutput);
     return LoggerFactory.MultiOutput(outputs);
   }
@@ -238,7 +241,7 @@ class BaseLogger {
     }
   }
 
-  Future<List<String>> getLogs({maxLines = 1000}) async {
+  Future<List<String>> getLogs({int maxLines = 1000}) async {
     try {
       final Directory logDir = Directory(Logger.logDir);
       if (!logDir.existsSync()) return [];
@@ -250,40 +253,129 @@ class BaseLogger {
       final File logFile = logFiles.first as File;
       if (!logFile.existsSync()) return [];
 
+      final int fileSize = await logFile.length();
+      if (fileSize == 0) return [];
+
+      // Seek backwards to find the byte offset for the last [maxLines] entries.
+      // This avoids reading the entire file into memory.
+      final int startOffset = await _findTailStartOffset(logFile, fileSize, maxLines);
+
+      // Stream only the relevant tail of the file.
       final List<String> lines = await logFile
-          .openRead()
+          .openRead(startOffset)
           .transform(const Utf8Decoder(allowMalformed: true))
           .transform(const LineSplitter())
           .toList();
 
-      // Combine lines that are part of the same log message
-      List<String> logs = [];
-      String currentLog = "";
-      for (final log in lines) {
-        // Remove ansi colors (defensive, should already be stripped)
-        String line = log.replaceAll(RegExp(r'\x1B\[[0-?]*[ -/]*[@-~]'), '');
+      // Combine lines that are part of the same log message.
+      // PrettyPrinter wraps ERROR/TRACE/FATAL entries in Unicode box borders:
+      //   ┌──...  (top border — skip)
+      //   │ 2024-...  (content with │ prefix — strip prefix)
+      //   └──...  (bottom border — skip)
+      // Stripping these allows the date-start check below to work for all levels.
+      final List<String> logs = [];
+      String currentLog = '';
+      final dateStart = RegExp(r'^\d{4}-\d{2}-\d{2}');
+      for (final rawLine in lines) {
+        String line = rawLine.replaceAll(RegExp(r'\x1B\[[0-?]*[ -/]*[@-~]'), '');
 
-        // If the log starts with a date, then it's a new log
-        if (line.startsWith(RegExp(r"\d{4}-\d{2}-\d{2}"))) {
+        // Skip horizontal box border lines (┌, └, ├).
+        if (line.startsWith('┌') || line.startsWith('└') || line.startsWith('├')) continue;
+        // Strip the vertical-bar prefix used by boxed content lines.
+        if (line.startsWith('│ ')) line = line.substring(2);
+
+        if (dateStart.hasMatch(line)) {
           if (currentLog.isNotEmpty) logs.add(currentLog);
           currentLog = line;
-        } else {
-          currentLog += "\n$line";
+        } else if (currentLog.isNotEmpty) {
+          currentLog += '\n$line';
         }
       }
-
-      // Don't forget to add the last log entry
       if (currentLog.isNotEmpty) logs.add(currentLog);
 
-      // Take the last [maxLines] logs.
-      // We only want the logs starting from the end. But we want to keep the order of the logs.
-      logs = logs.reversed.take(maxLines).toList().reversed.toList();
+      // Safety trim in case startOffset==0 and the file has more entries than maxLines.
+      if (logs.length > maxLines) {
+        return logs.sublist(logs.length - maxLines);
+      }
       return logs;
     } catch (e, stackTrace) {
-      // Log the error but don't use the logger to avoid recursion
-      debugPrint("Error reading logs: $e\n$stackTrace");
+      debugPrint('Error reading logs: $e\n$stackTrace');
       return [];
     }
+  }
+
+  /// Scans [file] backwards in 64 KB chunks looking for newline bytes followed
+  /// by an ASCII date prefix (`YYYY-`).  Returns the absolute byte offset of
+  /// the [maxEntries]-th log-entry start from the end of the file, so callers
+  /// can open a stream starting at that offset and avoid reading the entire file.
+  ///
+  /// Returns 0 if the file contains fewer than [maxEntries] entries.
+  Future<int> _findTailStartOffset(File file, int fileSize, int maxEntries) async {
+    const int chunkSize = 65536; // 64 KB
+    final RandomAccessFile raf = await file.open();
+    try {
+      int entriesFound = 0;
+      int scanPos = fileSize;
+      // Holds the first few bytes of the chunk processed in the previous (rightward)
+      // iteration so we can detect a date pattern that straddles a chunk boundary.
+      List<int> rightBoundary = [];
+
+      while (scanPos > 0) {
+        final int readFrom = (scanPos - chunkSize).clamp(0, scanPos);
+        final int length = scanPos - readFrom;
+
+        await raf.setPosition(readFrom);
+        final List<int> chunk = await raf.read(length);
+
+        // Scan backwards through this chunk for \n followed by YYYY-.
+        for (int i = chunk.length - 1; i >= 0; i--) {
+          if (chunk[i] != 0x0A) continue; // not a newline
+
+          // Collect the 5 bytes after this \n (may span into rightBoundary).
+          final List<int> after;
+          final int available = chunk.length - i - 1;
+          if (available >= 5) {
+            after = chunk.sublist(i + 1, i + 6);
+          } else {
+            after = [
+              ...chunk.sublist(i + 1),
+              ...rightBoundary.take(5 - available),
+            ];
+          }
+
+          if (_isLogEntryStart(after)) {
+            entriesFound++;
+            if (entriesFound == maxEntries) {
+              return readFrom + i + 1;
+            }
+          }
+        }
+
+        // Keep the leading bytes of this chunk for the next (leftward) iteration.
+        rightBoundary = chunk.take(6).toList();
+        scanPos = readFrom;
+      }
+
+      // Fewer entries in the file than maxEntries — read from the start.
+      return 0;
+    } finally {
+      await raf.close();
+    }
+  }
+
+  /// Returns true when [bytes] starts with the ASCII pattern for a log-entry
+  /// date prefix: four decimal digits followed by a hyphen (`YYYY-`).
+  bool _isLogEntryStart(List<int> bytes) {
+    if (bytes.length < 5) return false;
+    return bytes[0] >= 0x30 &&
+        bytes[0] <= 0x39 &&
+        bytes[1] >= 0x30 &&
+        bytes[1] <= 0x39 &&
+        bytes[2] >= 0x30 &&
+        bytes[2] <= 0x39 &&
+        bytes[3] >= 0x30 &&
+        bytes[3] <= 0x39 &&
+        bytes[4] == 0x2D; // '-'
   }
 
   void clearLogs() {

@@ -113,7 +113,7 @@ class _ParticipantsListState extends State<ParticipantsList> with ThemeHelpers {
           if (index == participants.length) {
             if (shouldShowMore) {
               return ListTile(
-                mouseCursor: SystemMouseCursors.click,
+                mouseCursor: MouseCursor.defer,
                 onTap: () {
                   setState(() {
                     showMoreParticipants = !showMoreParticipants;

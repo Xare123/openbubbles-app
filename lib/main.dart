@@ -145,8 +145,9 @@ Future<Null> initApp(bool bubble, List<String> arguments) async {
         if (Platform.isWindows) {
           await Window.hideWindowControls();
         } else if (Platform.isLinux) {
-          await windowManager.setTitleBarStyle(
-              SettingsSvc.settings.useCustomTitleBar.value ? TitleBarStyle.hidden : TitleBarStyle.normal);
+          await windowManager.setTitleBarStyle(SettingsSvc.settings.titleBarStyle.value == BBTitleBarStyle.native
+              ? TitleBarStyle.normal
+              : TitleBarStyle.hidden);
         }
         windowManager.addListener(DesktopWindowListener.instance);
         doWhenWindowReady(() async {
@@ -301,8 +302,20 @@ class Main extends StatelessWidget {
       builder: (theme, darkTheme) => GetMaterialApp(
         debugShowCheckedModeBanner: false,
         title: 'BlueBubbles',
-        theme: theme.copyWith(appBarTheme: theme.appBarTheme.copyWith(elevation: 0.0)),
-        darkTheme: darkTheme.copyWith(appBarTheme: darkTheme.appBarTheme.copyWith(elevation: 0.0)),
+        theme: theme.copyWith(
+          appBarTheme: theme.appBarTheme.copyWith(elevation: 0.0),
+          dialogTheme: DialogThemeData(
+            barrierColor: theme.colorScheme.shadow.withValues(alpha: 0.6),
+            backgroundColor: theme.colorScheme.surfaceContainerHighest,
+          ),
+        ),
+        darkTheme: darkTheme.copyWith(
+          appBarTheme: darkTheme.appBarTheme.copyWith(elevation: 0.0),
+          dialogTheme: DialogThemeData(
+            barrierColor: darkTheme.colorScheme.shadow.withValues(alpha: 0.6),
+            backgroundColor: darkTheme.colorScheme.surfaceContainerHighest,
+          ),
+        ),
         navigatorKey: NavigationSvc.key,
         navigatorObservers: [routeObserver],
         scrollBehavior: const MaterialScrollBehavior().copyWith(

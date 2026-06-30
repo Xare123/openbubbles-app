@@ -125,6 +125,10 @@ class StartupTasks {
     GetIt.I.registerSingleton<ChatsService>(ChatsService());
     await ChatsSvc.init(headless: headless);
     Logger.info("ChatsService ready");
+
+    Logger.info("Registering TypingIndicatorService...");
+    GetIt.I.registerSingleton<TypingIndicatorService>(TypingIndicatorService());
+    Logger.info("TypingIndicatorService ready");
   }
 
   static Future<void> _initHttpService() async {

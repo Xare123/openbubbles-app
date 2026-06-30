@@ -35,7 +35,6 @@ class HandleService {
 
   StreamSubscription? _redactedModeListener;
   StreamSubscription? _hideContactInfoListener;
-  StreamSubscription? _generateFakeContactNamesListener;
   StreamSubscription? _generateFakeAvatarsListener;
   StreamSubscription? _hideNamesForReactionsListener;
 
@@ -106,16 +105,6 @@ class HandleService {
       }
     });
 
-    _generateFakeContactNamesListener = SettingsSvc.settings.generateFakeContactNames.listen((enabled) {
-      for (final state in _handleStates.values) {
-        if (enabled) {
-          state.redactContactInfo();
-        } else {
-          state.unredactContactInfo();
-        }
-      }
-    });
-
     _generateFakeAvatarsListener = SettingsSvc.settings.generateFakeAvatars.listen((enabled) {
       for (final state in _handleStates.values) {
         if (enabled) {
@@ -140,7 +129,6 @@ class HandleService {
   void close() {
     _redactedModeListener?.cancel();
     _hideContactInfoListener?.cancel();
-    _generateFakeContactNamesListener?.cancel();
     _generateFakeAvatarsListener?.cancel();
     _hideNamesForReactionsListener?.cancel();
     _handleStates.clear();

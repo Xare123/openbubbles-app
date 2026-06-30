@@ -83,7 +83,7 @@ class _MessageRemindersPanelState extends State<MessageRemindersPanel> with Them
                         final item = scheduled[index];
                         return ListTile(
                           key: ValueKey(item.id.toString()),
-                          mouseCursor: SystemMouseCursors.click,
+                          mouseCursor: MouseCursor.defer,
                           title: Text(item.body!, maxLines: 2, overflow: TextOverflow.ellipsis),
                           subtitle: int.tryParse(item.payload!) == null
                               ? Text(item.title!.replaceAll("Reminder: ", ""))

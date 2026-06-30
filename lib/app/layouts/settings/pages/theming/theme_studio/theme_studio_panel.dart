@@ -1,3 +1,4 @@
+import 'dart:async' show unawaited;
 import 'dart:convert';
 
 import 'package:flutter/cupertino.dart';
@@ -18,7 +19,29 @@ import 'package:get/get.dart';
 
 // ─── Controller ───────────────────────────────────────────────────────────────
 
+class ThemeStudioPanelConfig {
+  const ThemeStudioPanelConfig({
+    this.initialLightThemeName,
+    this.initialDarkThemeName,
+    this.adaptiveImagePath,
+    this.adaptiveThemeScopeKey,
+    this.onApply,
+  });
+
+  final String? initialLightThemeName;
+  final String? initialDarkThemeName;
+  final String? adaptiveImagePath;
+  final String? adaptiveThemeScopeKey;
+  final Future<void> Function(ThemeStruct lightTheme, ThemeStruct darkTheme)? onApply;
+
+  bool get isChatScoped => onApply != null;
+}
+
 class ThemeStudioController extends StatefulController {
+  ThemeStudioController({this.config});
+
+  final ThemeStudioPanelConfig? config;
+
   late ThemeStruct lightTheme;
   late ThemeStruct darkTheme;
 
@@ -33,6 +56,7 @@ class ThemeStudioController extends StatefulController {
   final RxBool previewDark = false.obs;
 
   final RxList<ThemeStruct> allThemes = <ThemeStruct>[].obs;
+  final RxList<ThemeStruct> adaptiveThemes = <ThemeStruct>[].obs;
 
   /// Bumped when active theme data (colors, font, sizes) changes, or when the
   /// active theme selection changes.
@@ -48,7 +72,27 @@ class ThemeStudioController extends StatefulController {
 
   ThemeStruct get previewTheme => previewDark.value ? darkTheme : lightTheme;
 
-  bool get isEditable => !activeTheme.isPreset;
+  bool get isEditable => !activeTheme.isPreset && !ThemesService.isAdaptiveBackgroundThemeName(activeTheme.name);
+  bool get isChatScoped => config?.isChatScoped == true;
+  Set<String> get adaptiveThemeNames => adaptiveThemes.map((theme) => theme.name).toSet();
+  String? get _sourceLightThemeName => appliedLightName.isNotEmpty ? appliedLightName : config?.initialLightThemeName;
+  String? get _sourceDarkThemeName => appliedDarkName.isNotEmpty ? appliedDarkName : config?.initialDarkThemeName;
+
+  String displayNameForThemeName(String name) {
+    if (ThemesService.isAdaptiveBackgroundThemeName(name)) {
+      return ThemesService.adaptiveBackgroundThemeDisplayName(name);
+    }
+    if (ThemesService.isMaterialYouThemeName(name)) {
+      return ThemesService.materialYouDisplayName(name);
+    }
+    return name;
+  }
+
+  bool includeInGeneralThemeLists(String name) {
+    if (!ThemesService.isAdaptiveBackgroundThemeName(name)) return true;
+    if (adaptiveThemeNames.contains(name)) return false;
+    return name == lightTheme.name || name == darkTheme.name || name == appliedLightName || name == appliedDarkName;
+  }
 
   void init(bool isDarkMode) {
     isDark.value = isDarkMode;
@@ -56,11 +100,14 @@ class ThemeStudioController extends StatefulController {
     _reload();
     appliedLightName = lightTheme.name;
     appliedDarkName = darkTheme.name;
+    if (config?.adaptiveImagePath != null && config?.adaptiveThemeScopeKey != null) {
+      unawaited(_loadAdaptiveThemes());
+    }
   }
 
   void _reload() {
-    lightTheme = ThemeStruct.getLightTheme();
-    darkTheme = ThemeStruct.getDarkTheme();
+    lightTheme = ThemeStruct.resolveByName(_sourceLightThemeName, Brightness.light);
+    darkTheme = ThemeStruct.resolveByName(_sourceDarkThemeName, Brightness.dark);
     allThemes.value = ThemeStruct.getThemes();
     themeDataVersion.value++;
     themeListVersion.value++;
@@ -71,6 +118,26 @@ class ThemeStudioController extends StatefulController {
   void _reloadThemesList() {
     allThemes.value = ThemeStruct.getThemes();
     themeListVersion.value++;
+  }
+
+  Future<void> _loadAdaptiveThemes() async {
+    final imagePath = config?.adaptiveImagePath;
+    final scopeKey = config?.adaptiveThemeScopeKey;
+    if (imagePath == null || scopeKey == null) return;
+
+    adaptiveThemes.value = await ThemesService.upsertAdaptiveBackgroundThemesFromImage(
+      imagePath,
+      scopeKey: scopeKey,
+    );
+    _reloadThemesList();
+
+    if (ThemesService.isAdaptiveBackgroundThemeName(lightTheme.name)) {
+      lightTheme = ThemeStruct.resolveByName(lightTheme.name, Brightness.light);
+    }
+    if (ThemesService.isAdaptiveBackgroundThemeName(darkTheme.name)) {
+      darkTheme = ThemeStruct.resolveByName(darkTheme.name, Brightness.dark);
+    }
+    themeDataVersion.value++;
   }
 
   void bump() {
@@ -101,15 +168,22 @@ class ThemeStudioController extends StatefulController {
     darkTheme.save();
     appliedLightName = lightTheme.name;
     appliedDarkName = darkTheme.name;
-    await ThemeSvc.changeTheme(context, light: lightTheme);
-    await ThemeSvc.changeTheme(context, dark: darkTheme);
+    if (config?.onApply != null) {
+      await config!.onApply!(lightTheme, darkTheme);
+    } else {
+      await ThemeSvc.changeTheme(context, light: lightTheme);
+      await ThemeSvc.changeTheme(context, dark: darkTheme);
+      EventDispatcherSvc.emit('theme-update', null);
+    }
     pendingChanges.value = false;
-    EventDispatcherSvc.emit('theme-update', null);
   }
 
   /// Discards all staged edits by reloading themes from the DB.
   void discardChanges() {
     _reload();
+    if (config?.adaptiveImagePath != null && config?.adaptiveThemeScopeKey != null) {
+      unawaited(_loadAdaptiveThemes());
+    }
     pendingChanges.value = false;
   }
 
@@ -248,7 +322,10 @@ class ThemeStudioController extends StatefulController {
   Future<void> deleteTheme(BuildContext context) async {
     if (activeTheme.isPreset) return;
     activeTheme.delete();
-    if (isDark.value) {
+    if (isChatScoped) {
+      darkTheme = ThemeStruct.resolveByName(_sourceDarkThemeName, Brightness.dark);
+      lightTheme = ThemeStruct.resolveByName(_sourceLightThemeName, Brightness.light);
+    } else if (isDark.value) {
       darkTheme = await ThemeSvc.revertToPreviousDarkTheme();
       await ThemeSvc.changeTheme(context, dark: darkTheme);
     } else {
@@ -294,7 +371,12 @@ class ThemeStudioController extends StatefulController {
 // ─── Panel ────────────────────────────────────────────────────────────────────
 
 class ThemeStudioPanel extends CustomStateful<ThemeStudioController> {
-  ThemeStudioPanel({super.key}) : super(parentController: Get.put(ThemeStudioController()));
+  ThemeStudioPanel({
+    super.key,
+    this.config,
+  }) : super(parentController: Get.put(ThemeStudioController(config: config)));
+
+  final ThemeStudioPanelConfig? config;
 
   @override
   State<StatefulWidget> createState() => _ThemeStudioPanelState();
@@ -307,11 +389,6 @@ class _ThemeStudioPanelState extends CustomState<ThemeStudioPanel, void, ThemeSt
   /// sections are deferred behind this flag so the visible content (preview +
   /// theme selector) can appear without blocking on below-fold layout work.
   final ValueNotifier<bool> _contentReady = ValueNotifier<bool>(false);
-
-  @override
-  void initState() {
-    super.initState();
-  }
 
   @override
   void didChangeDependencies() {
@@ -341,26 +418,27 @@ class _ThemeStudioPanelState extends CustomState<ThemeStudioPanel, void, ThemeSt
   /// Shows a dialog asking the user what to do with unsaved changes.
   /// Returns true if navigation should proceed (discard or apply+navigate).
   Future<bool> _confirmDiscard(BuildContext context) async {
-    final result = await showDialog<_PendingAction>(
+    final result = await showBBDialog<_PendingAction>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Unsaved Changes"),
-        content: const Text("You have pending changes that haven't been applied. What would you like to do?"),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(_PendingAction.cancel),
-            child: const Text("Keep Editing"),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(_PendingAction.discard),
-            child: Text("Discard", style: TextStyle(color: context.theme.colorScheme.error)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(_PendingAction.apply),
-            child: const Text("Apply & Exit"),
-          ),
-        ],
-      ),
+      title: "Unsaved Changes",
+      body: "You have pending changes that haven't been applied. What would you like to do?",
+      actions: [
+        BBDialogAction(
+          text: "Keep Editing",
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(_PendingAction.cancel),
+        ),
+        BBDialogAction(
+          text: "Discard",
+          isDestructive: true,
+          color: context.theme.colorScheme.error,
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(_PendingAction.discard),
+        ),
+        BBDialogAction(
+          text: "Apply & Exit",
+          isDefault: true,
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(_PendingAction.apply),
+        ),
+      ],
     );
     if (result == _PendingAction.apply && context.mounted) {
       await controller.applyChanges(context);

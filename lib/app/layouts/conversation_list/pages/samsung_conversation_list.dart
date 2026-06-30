@@ -41,7 +41,9 @@ class _SamsungConversationListState extends State<SamsungConversationList> with 
     // update widget when background color changes
     if (kIsDesktop) {
       SettingsSvc.settings.windowEffect.listen((WindowEffect effect) {
-        setState(() {});
+        if (mounted) {
+          setState(() {});
+        }
       });
     }
   }

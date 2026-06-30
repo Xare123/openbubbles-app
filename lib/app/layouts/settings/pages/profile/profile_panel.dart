@@ -84,7 +84,7 @@ class _ProfilePanelState extends State<ProfilePanel> with WidgetsBindingObserver
       final result2 = await BackendSvc.getAccountContact();
       accountContact.addAll(result2);
     } catch (e, s) {
-      Logger.info("err", error: e, trace: s);
+      Logger.warn("Failed to fetch account profile info", error: e, trace: s, tag: 'ProfilePanel');
     }
     final myHandles = await api.getMyPhoneHandles(state: PushSvc.state!.client);
     if (myHandles.isNotEmpty) {

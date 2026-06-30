@@ -158,7 +158,9 @@ class ActionHandler extends GetxService {
       case "participant-left":
         try {
           MessageHandlerSvc.handleNewOrUpdatedChat(Chat.fromMap(data['chats'].first.cast<String, Object>()));
-        } catch (_) {}
+        } catch (e, s) {
+          Logger.warn("Failed to handle chat participant change event", error: e, trace: s, tag: 'ActionHandler');
+        }
         return;
       case "chat-read-status-changed":
         Chat? chat = Chat.findOne(guid: data["chatGuid"]);

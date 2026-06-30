@@ -31,6 +31,12 @@ enum IsolateEvent {
 
   /// Attachment upload progress emitted from the isolate
   attachmentUploadProgress,
+
+  /// Emitted after each page of messages is persisted during incremental sync.
+  /// Payload: `Map<String, dynamic>` with keys:
+  ///   `messageIds`             — `List<int>` of all DB IDs saved in this page
+  ///   `latestMessageIdPerChat` — `Map<String, int>` chatGuid → latest message DB ID in this page
+  incrementalSyncPageComplete,
 }
 
 /// A standard event message format for isolate-to-main communication

@@ -1,6 +1,6 @@
+import 'package:animated_size_and_fade/animated_size_and_fade.dart';
 import 'dart:convert';
 
-import 'package:animated_size_and_fade/animated_size_and_fade.dart';
 import 'package:bluebubbles/app/layouts/conversation_details/dialogs/timeframe_picker.dart';
 import 'package:bluebubbles/app/layouts/settings/dialogs/custom_headers_dialog.dart';
 import 'package:bluebubbles/app/layouts/settings/dialogs/sync_dialog.dart';
@@ -257,36 +257,32 @@ mixin ConnectionPanelHelpersMixin {
       SettingsSvc.fcmData.applicationID,
     ];
     final String qrtext = jsonEncode(json);
-    showDialog(
+    showBBDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-        content: AspectRatio(
-          aspectRatio: 1,
-          child: SizedBox(
-            height: 320,
-            width: 320,
-            child: BarcodeWidget(
-              barcode: Barcode.qrCode(
-                errorCorrectLevel: BarcodeQRCorrectionLevel.high,
-              ),
-              data: qrtext,
-              backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-              width: 320,
-              height: 320,
-              color: context.theme.colorScheme.onSurface,
+      title: "QR Code",
+      content: AspectRatio(
+        aspectRatio: 1,
+        child: SizedBox(
+          height: 320,
+          width: 320,
+          child: BarcodeWidget(
+            barcode: Barcode.qrCode(
+              errorCorrectLevel: BarcodeQRCorrectionLevel.high,
             ),
+            data: qrtext,
+            backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+            width: 320,
+            height: 320,
+            color: context.theme.colorScheme.onSurface,
           ),
         ),
-        title: Text("QR Code", style: context.theme.textTheme.titleLarge),
-        actions: <Widget>[
-          TextButton(
-            child: Text("Dismiss",
-                style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-            onPressed: () => Navigator.of(context).pop(),
-          ),
-        ],
       ),
+      actions: [
+        BBDialogAction(
+          text: "Dismiss",
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+        ),
+      ],
     );
   }
 
@@ -296,112 +292,27 @@ mixin ConnectionPanelHelpersMixin {
     ServerManagementPanelController controller,
     Color tileColor,
   ) {
-    return Obx(() {
-      final hasChecked = controller.hasCheckedStats.value;
-      final supportsStats = controller.serverDetails.value.supportsPrivateApiStatus;
-      final hasStats = controller.stats.isNotEmpty;
-      final statsError = controller.statsLoadError.value;
-
-      // Stats API returned an error after server info loaded successfully.
-      if (hasChecked == true && supportsStats && statsError) {
-        return SettingsTile(
-          title: "Statistics Failed to Load",
-          subtitle: "Could not retrieve statistics from your server",
-          backgroundColor: tileColor,
-          leading: const SettingsLeadingIcon(
-            iosIcon: CupertinoIcons.exclamationmark_triangle,
-            materialIcon: Icons.warning_amber_rounded,
-            containerColor: Colors.red,
-          ),
+    return SettingsTile(
+      title: "iMessage Statistics",
+      subtitle: "Get an overview of your iMessage usage and statistics",
+      backgroundColor: tileColor,
+      leading: const SettingsLeadingIcon(
+        iosIcon: CupertinoIcons.chart_bar_square,
+        materialIcon: Icons.stacked_bar_chart,
+        containerColor: Colors.green,
+      ),
+      trailing: Obx(() => Icon(
+            SettingsSvc.settings.skin.value != Skins.Material ? CupertinoIcons.chevron_right : Icons.chevron_right,
+            color: context.theme.colorScheme.outline.withValues(alpha: 0.5),
+            size: 18,
+          )),
+      onTap: () {
+        NavigationSvc.pushSettings(
+          context,
+          IMessageStatsPage(parentController: controller),
         );
-      }
-
-      // Loading: server info not yet fetched, or server info loaded but stats still pending.
-      if (hasChecked == false || (hasChecked == true && supportsStats && !hasStats)) {
-        return SettingsTile(
-          title: "Loading Statistics...",
-          subtitle: "Fetching statistics from your server",
-          backgroundColor: tileColor,
-          leading: const SettingsLeadingIcon(
-            iosIcon: CupertinoIcons.chart_bar_square,
-            materialIcon: Icons.stacked_bar_chart,
-            containerColor: Colors.grey,
-          ),
-          trailing: Obx(() {
-            final skin = SettingsSvc.settings.skin.value;
-            if (skin == Skins.iOS) {
-              return const CupertinoActivityIndicator();
-            }
-            return SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                strokeWidth: 1.5,
-                valueColor: AlwaysStoppedAnimation<Color>(context.theme.colorScheme.primary),
-              ),
-            );
-          }),
-        );
-      }
-
-      // No connection / error loading server info.
-      if (hasChecked == null) {
-        return SettingsTile(
-          title: "Statistics Unavailable",
-          subtitle: "Could not connect to your BlueBubbles server",
-          backgroundColor: tileColor,
-          leading: const SettingsLeadingIcon(
-            iosIcon: CupertinoIcons.exclamationmark_circle,
-            materialIcon: Icons.cloud_off,
-            containerColor: Colors.red,
-          ),
-        );
-      }
-
-      // Server version does not support statistics.
-      if (!supportsStats) {
-        return SettingsTile(
-          title: "Statistics Not Supported",
-          subtitle: "Update your BlueBubbles server to view statistics",
-          backgroundColor: tileColor,
-          leading: const SettingsLeadingIcon(
-            iosIcon: CupertinoIcons.info_circle,
-            materialIcon: Icons.info_outline,
-            containerColor: Colors.orange,
-          ),
-        );
-      }
-
-      // Stats loaded and supported — show the navigation tile.
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SettingsTile(
-            title: "iMessage Statistics",
-            subtitle: "Get an overview of your iMessage usage and statistics",
-            backgroundColor: tileColor,
-            leading: const SettingsLeadingIcon(
-              iosIcon: CupertinoIcons.chart_bar_square,
-              materialIcon: Icons.stacked_bar_chart,
-              containerColor: Colors.green,
-            ),
-            trailing: Obx(() => Icon(
-                  SettingsSvc.settings.skin.value != Skins.Material
-                      ? CupertinoIcons.chevron_right
-                      : Icons.chevron_right,
-                  color: context.theme.colorScheme.outline.withValues(alpha: 0.5),
-                  size: 18,
-                )),
-            onTap: () {
-              NavigationSvc.pushSettings(
-                context,
-                IMessageStatsPage(parentController: controller),
-              );
-            },
-          ),
-        ],
-      );
-    });
+      },
+    );
   }
 
   /// Connection & Sync section (lifted verbatim from original ServerManagementPanel).
@@ -515,7 +426,9 @@ mixin ConnectionPanelHelpersMixin {
                           builder: (context) => SyncDialog(manager: newMgr),
                         );
                         await newMgr.start();
-                      } catch (_) {}
+                      } catch (e, s) {
+                        Logger.warn("Incremental sync failed", error: e, trace: s, tag: 'ConnectionPanel');
+                      }
                       Navigator.of(context, rootNavigator: true).pop();
                       setManager(null);
                       SyncSvc.isIncrementalSyncing.value = false;
@@ -555,63 +468,62 @@ mixin ConnectionPanelHelpersMixin {
                       containerColor: Colors.green,
                     ),
                   )),
-            if (!isSnap) const SettingsDivider(),
-            if (!isSnap)
-              SettingsTile(
-                leading: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Obx(() => Material(
-                          shape: SettingsSvc.settings.skin.value == Skins.Samsung
-                              ? SquircleBorder(
-                                  side: BorderSide(
-                                    color: context.theme.colorScheme.outline.withValues(alpha: 0.5),
-                                    width: 1.0,
-                                  ),
-                                )
-                              : null,
-                          color: Colors.transparent,
-                          borderRadius: SettingsSvc.settings.skin.value == Skins.iOS ? BorderRadius.circular(6) : null,
-                          child: SizedBox(
-                            width: 31,
-                            height: 31,
-                            child: Center(
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(6),
-                                  color: Colors.white,
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.grey.withValues(alpha: 0.5),
-                                      blurRadius: 0,
-                                      spreadRadius: 0.5,
-                                      offset: const Offset(0, 0),
-                                    ),
-                                  ],
+            const SettingsDivider(),
+            SettingsTile(
+              leading: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Obx(() => Material(
+                        shape: SettingsSvc.settings.skin.value == Skins.Samsung
+                            ? SquircleBorder(
+                                side: BorderSide(
+                                  color: context.theme.colorScheme.outline.withValues(alpha: 0.5),
+                                  width: 1.0,
                                 ),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(6),
-                                  child: Image.asset(
-                                    "assets/images/google-sign-in.png",
-                                    width: 33,
-                                    fit: BoxFit.contain,
+                              )
+                            : null,
+                        color: Colors.transparent,
+                        borderRadius: SettingsSvc.settings.skin.value == Skins.iOS ? BorderRadius.circular(6) : null,
+                        child: SizedBox(
+                          width: 31,
+                          height: 31,
+                          child: Center(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(6),
+                                color: Colors.white,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.grey.withValues(alpha: 0.5),
+                                    blurRadius: 0,
+                                    spreadRadius: 0.5,
+                                    offset: const Offset(0, 0),
                                   ),
+                                ],
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(6),
+                                child: Image.asset(
+                                  "assets/images/google-sign-in.png",
+                                  width: 33,
+                                  fit: BoxFit.contain,
                                 ),
                               ),
                             ),
                           ),
-                        )),
-                  ],
-                ),
-                title: "Sign in with Google",
-                subtitle: "Fetch Firebase Config by Signing in with Google",
-                backgroundColor: tileColor,
-                onTap: () => NavigationSvc.pushSettings(context, const OauthPanel()),
-                trailing: const ThemeSwitcher(
-                  iOSSkin: Icon(CupertinoIcons.chevron_forward),
-                  materialSkin: Icon(Icons.chevron_right),
-                ),
+                        ),
+                      )),
+                ],
               ),
+              title: "Sign in with Google",
+              subtitle: "Fetch Firebase Config by Signing in with Google",
+              backgroundColor: tileColor,
+              onTap: () => NavigationSvc.pushSettings(context, const OauthPanel()),
+              trailing: const ThemeSwitcher(
+                iOSSkin: Icon(CupertinoIcons.chevron_forward),
+                materialSkin: Icon(Icons.chevron_right),
+              ),
+            ),
             const SettingsDivider(),
             SettingsTile(
               leading: const SettingsLeadingIcon(
@@ -646,48 +558,42 @@ mixin ConnectionPanelHelpersMixin {
                     onChanged: (bool val) async {
                       if (val) {
                         final TextEditingController portController = TextEditingController();
-                        await showDialog(
+                        await showBBDialog(
                           context: context,
-                          builder: (_) => AlertDialog(
-                            actions: [
-                              TextButton(
-                                child: Text("Cancel",
-                                    style: context.theme.textTheme.bodyLarge!
-                                        .copyWith(color: context.theme.colorScheme.primary)),
-                                onPressed: () => Get.back(),
-                              ),
-                              TextButton(
-                                child: Text("OK",
-                                    style: context.theme.textTheme.bodyLarge!
-                                        .copyWith(color: context.theme.colorScheme.primary)),
-                                onPressed: () async {
-                                  if (portController.text.isEmpty || !portController.text.isNumericOnly) {
-                                    showSnackbar("Error", "Enter a valid port!");
-                                    return;
-                                  }
-                                  Navigator.of(context, rootNavigator: true).pop();
-                                  SettingsSvc.settings.localhostPort.value = portController.text;
-                                },
-                              ),
-                            ],
-                            content: TextField(
-                              controller: portController,
-                              decoration: const InputDecoration(
-                                labelText: "Port Number",
-                                border: OutlineInputBorder(),
-                              ),
-                              keyboardType: TextInputType.number,
+                          title: "Enter Server Port",
+                          content: TextField(
+                            controller: portController,
+                            decoration: const InputDecoration(
+                              labelText: "Port Number",
+                              border: OutlineInputBorder(),
                             ),
-                            title: Text("Enter Server Port", style: context.theme.textTheme.titleLarge),
-                            backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+                            keyboardType: TextInputType.number,
                           ),
+                          actions: [
+                            BBDialogAction(
+                              text: "Cancel",
+                              onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+                            ),
+                            BBDialogAction(
+                              text: "OK",
+                              isDefault: true,
+                              onPressed: () async {
+                                if (portController.text.isEmpty || !portController.text.isNumericOnly) {
+                                  showSnackbar("Error", "Enter a valid port!");
+                                  return;
+                                }
+                                Navigator.of(context, rootNavigator: true).pop();
+                                SettingsSvc.settings.localhostPort.value = portController.text;
+                              },
+                            ),
+                          ],
                         );
                       } else {
                         SettingsSvc.settings.localhostPort.value = null;
                       }
                       await SettingsSvc.settings.saveOneAsync('useLocalhost');
                       if (SettingsSvc.settings.localhostPort.value == null) {
-                        HttpSvc.originOverride = null;
+                        NetworkTasks.setOriginOverride(null);
                       } else {
                         NetworkTasks.detectLocalhost(createSnackbar: true);
                       }

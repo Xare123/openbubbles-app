@@ -2,6 +2,7 @@ import 'package:bluebubbles/app/state/handle_state.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flex_color_picker/flex_color_picker.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -89,6 +90,8 @@ class _ContactAvatarWidgetState extends State<ContactAvatarWidget> with ThemeHel
       enableOpacity: false,
       showColorCode: true,
       colorCodeHasColor: true,
+      backgroundColor: context.theme.dialogTheme.backgroundColor ?? context.theme.colorScheme.surfaceContainerHighest,
+      barrierColor: context.theme.dialogTheme.barrierColor ?? context.theme.colorScheme.shadow.withValues(alpha: 0.6),
       pickersEnabled: <ColorPickerType, bool>{
         ColorPickerType.wheel: true,
       },
@@ -143,18 +146,22 @@ class _ContactAvatarWidgetState extends State<ContactAvatarWidget> with ThemeHel
           (SettingsSvc.settings.skin.value == Skins.Material && ThemeSvc.isAnyMaterialYouSelected);
       final userAvatarPath = SettingsSvc.settings.userAvatarPath.value;
 
-      return MouseRegion(
-        cursor: !widget.editable || !colorfulAvatars || widget.handle == null
-            ? MouseCursor.defer
-            : SystemMouseCursors.click,
-        child: GestureDetector(
-          onTap: !widget.editable || (widget.handle == null && contactV2 == null)
+      return Material(
+        color: Colors.transparent,
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          splashColor: Colors.black,
+          onTap: (!widget.editable || (!kIsDesktop && widget.handle == null && contactV2 == null))
               ? null
               : () async {
-                  if (contactV2 != null && contactV2!.isNative) {
+                  if (kIsDesktop) {
+                    onAvatarTap();
+                  } else if (contactV2 != null && contactV2!.isNative) {
                     try {
                       await MethodChannelSvc.actions.viewContactForm(nativeContactId: contactV2!.nativeContactId);
-                    } catch (_) {
+                    } catch (e, s) {
+                      Logger.error("Failed to find contact on device", error: e, trace: s);
                       showSnackbar("Error", "Failed to find contact on device!");
                     }
                   } else if (widget.handle != null) {
@@ -164,7 +171,7 @@ class _ContactAvatarWidgetState extends State<ContactAvatarWidget> with ThemeHel
                     );
                   }
                 },
-          onLongPress: !widget.editable || widget.handle == null ? null : onAvatarTap,
+          onLongPress: kIsDesktop || !widget.editable || widget.handle == null ? null : onAvatarTap,
           child: Container(
             key: Key("$keyPrefix-avatar-container"),
             width: size,

@@ -24,8 +24,16 @@ class Mentionable {
   final Handle handle;
   String? customDisplayName;
 
-  String get displayName =>
-      customDisplayName ?? (handle.contactsV2.isNotEmpty ? handle.displayName.split(" ").first : handle.displayName);
+  String get displayName {
+    if (customDisplayName != null) return customDisplayName!;
+    // For handles with a real contact, show first name only. For phone numbers
+    // without a contact, show the full formatted address — splitting "+1 (555) 123-4567"
+    // by space would yield just "+1" (the country code).
+    if (!kIsWeb && handle.contactsV2.isNotEmpty) {
+      return handle.displayName.split(" ").first;
+    }
+    return handle.displayName;
+  }
 
   String get address => handle.address;
 

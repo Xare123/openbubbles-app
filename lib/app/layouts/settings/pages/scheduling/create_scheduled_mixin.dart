@@ -16,7 +16,7 @@ mixin CreateScheduledMixin<T extends StatefulWidget> on State<T> {
   late final TextEditingController numberController =
       TextEditingController(text: existingMessage?.schedule.interval?.toString() ?? '1');
 
-  late final RxString selectedChat = (existingMessage?.payload.chatGuid ?? ChatsSvc.allChats.first.guid).obs;
+  late final RxString selectedChat = (existingMessage?.payload.chatGuid ?? '').obs;
   late final RxString schedule = (existingMessage?.schedule.type ?? "once").obs;
   late final RxString frequency = (existingMessage?.schedule.intervalType ?? "daily").obs;
   late final RxInt repeatInterval = (existingMessage?.schedule.interval ?? 1).obs;
@@ -24,6 +24,7 @@ mixin CreateScheduledMixin<T extends StatefulWidget> on State<T> {
   late final RxBool isEmpty = (existingMessage?.payload.message.isNotEmpty ?? false).obs;
 
   String? get validationError {
+    if (selectedChat.value.isEmpty) return "Please select a chat!";
     if (isEmpty.value) return "Please enter a message!";
     if (date.value.isBefore(DateTime.now())) return "Please pick a date in the future!";
     return null;

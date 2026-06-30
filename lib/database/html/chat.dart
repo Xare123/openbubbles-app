@@ -79,6 +79,8 @@ class Chat {
   bool lockChatName;
   bool lockChatIcon;
   String? lastReadMessageGuid;
+  String? customThemeLight;
+  String? customThemeDark;
 
   final RxnString _customAvatarPath = RxnString();
   String? get customAvatarPath => _customAvatarPath.value;
@@ -87,6 +89,10 @@ class Chat {
     _customAvatarPath.value = null;
     _customAvatarPath.value = s;
   }
+
+  final RxnString _customBackgroundPath = RxnString();
+  String? get customBackgroundPath => _customBackgroundPath.value;
+  set customBackgroundPath(String? s) => _customBackgroundPath.value = s;
 
   final RxnInt _pinIndex = RxnInt();
   int? get pinIndex => _pinIndex.value;
@@ -117,8 +123,12 @@ class Chat {
     this.lockChatName = false,
     this.lockChatIcon = false,
     this.lastReadMessageGuid,
+    this.customThemeLight,
+    this.customThemeDark,
+    String? customBackground,
   }) {
     customAvatarPath = customAvatar;
+    customBackgroundPath = customBackground;
     pinIndex = pinnedIndex;
     if (textFieldAttachments.isEmpty) textFieldAttachments = [];
     this.participants = participants ?? [];
@@ -139,6 +149,7 @@ class Chat {
       latestMessage: message,
       displayName: json["displayName"],
       customAvatar: json['_customAvatarPath'],
+      customBackground: json['_customBackgroundPath'],
       pinnedIndex: json['_pinIndex'],
       participants: (json['participants'] as List? ?? []).map((e) => Handle.fromMap(e)).toList(),
       autoSendReadReceipts: json["autoSendReadReceipts"],
@@ -148,6 +159,8 @@ class Chat {
       lockChatName: json["lockChatName"] ?? false,
       lockChatIcon: json["lockChatIcon"] ?? false,
       lastReadMessageGuid: json["lastReadMessageGuid"],
+      customThemeLight: json["customThemeLight"],
+      customThemeDark: json["customThemeDark"],
     );
   }
 
@@ -558,6 +571,7 @@ class Chat {
         "participants": participants.map((item) => item.toMap()).toList(),
         "hasUnreadMessage": hasUnreadMessage!,
         "_customAvatarPath": _customAvatarPath.value,
+        "_customBackgroundPath": _customBackgroundPath.value,
         "_pinIndex": _pinIndex.value,
         "autoSendReadReceipts": autoSendReadReceipts!,
         "autoSendTypingIndicators": autoSendTypingIndicators!,
@@ -566,5 +580,7 @@ class Chat {
         "lockChatName": lockChatName,
         "lockChatIcon": lockChatIcon,
         "lastReadMessageGuid": lastReadMessageGuid,
+        "customThemeLight": customThemeLight,
+        "customThemeDark": customThemeDark,
       };
 }

@@ -87,17 +87,22 @@ class FindMyMapWidget extends StatelessWidget {
 
   Widget _buildMarkerPopup(BuildContext context, Marker marker) {
     final ValueKey? key = marker.key as ValueKey?;
-    if (key?.value == "current") return const SizedBox();
+    final keyStr = key?.value as String? ?? '';
+    if (keyStr == "current") return const SizedBox();
 
-    if (key?.value.contains("device")) {
-      final prefix = key!.value.toString().replaceFirst("device-", "");
-      final item = controller.devices.firstWhere((e) => e.id == prefix);
+    if (keyStr.startsWith("device-")) {
+      final deviceId = keyStr.substring("device-".length);
+      final item = controller.devices.firstWhereOrNull((e) => (e.id ?? '') == deviceId);
+      if (item == null) return const SizedBox();
       return _buildDevicePopup(context, item);
-    } else {
-      final prefix = key!.value.toString().replaceFirst("friend-", "");
-      final item = controller.friends.firstWhere((e) => e.handle?.uniqueAddressAndService == prefix);
+    } else if (keyStr.startsWith("friend-")) {
+      final stableId = keyStr.substring("friend-".length);
+      final item = controller.friends.firstWhereOrNull((e) => e.stableId == stableId);
+      if (item == null) return const SizedBox();
       return _buildFriendPopup(context, item);
     }
+
+    return const SizedBox();
   }
 
   Widget _buildDevicePopup(BuildContext context, FindMyDevice item) {

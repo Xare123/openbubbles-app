@@ -24,9 +24,15 @@ class AttachmentHolder extends StatefulWidget {
   const AttachmentHolder({
     super.key,
     required this.message,
+    this.transparentBackground = false,
+    this.showCardShadow = false,
+    this.galleryAttachments,
   });
 
   final MessagePart message;
+  final bool transparentBackground;
+  final bool showCardShadow;
+  final List<Attachment>? galleryAttachments;
 
   @override
   State<StatefulWidget> createState() => _AttachmentHolderState();
@@ -96,6 +102,18 @@ class _AttachmentHolderState extends State<AttachmentHolder> with ThemeHelpers {
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(covariant AttachmentHolder oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldId = oldWidget.message.attachments.firstOrNull?.id;
+    final newId = widget.message.attachments.firstOrNull?.id;
+    final oldGuid = oldWidget.message.attachments.firstOrNull?.guid;
+    final newGuid = widget.message.attachments.firstOrNull?.guid;
+    if (oldId != newId || oldGuid != newGuid) {
+      _loadContent();
+    }
+  }
+
   // ── Content loading ────────────────────────────────────────────────────────
 
   /// Delegates all content loading and download orchestration to the service
@@ -151,6 +169,12 @@ class _AttachmentHolderState extends State<AttachmentHolder> with ThemeHelpers {
     if (state.isSending.value && message.isFromMe!) {
       return EdgeInsets.zero;
     }
+    // Gallery cards (transparentBackground=true) constrain their height via an
+    // outer SizedBox. DownloadingContent / NotLoadedContent handle their own
+    // internal padding, so adding extra padding here causes overflow.
+    if (widget.transparentBackground) {
+      return EdgeInsets.zero;
+    }
     return const EdgeInsets.symmetric(vertical: 10, horizontal: 15).add(sideInsets);
   }
 
@@ -182,6 +206,8 @@ class _AttachmentHolderState extends State<AttachmentHolder> with ThemeHelpers {
           isiOS: isiOS,
           cvController: controller.cvController,
           isInReply: isInReply,
+          forceAllCornersRounded: widget.transparentBackground,
+          galleryAttachments: widget.galleryAttachments,
         );
       }
     }
@@ -196,6 +222,8 @@ class _AttachmentHolderState extends State<AttachmentHolder> with ThemeHelpers {
         isiOS: isiOS,
         cvController: controller.cvController,
         isInReply: isInReply,
+        forceAllCornersRounded: widget.transparentBackground,
+        galleryAttachments: widget.galleryAttachments,
       );
     }
 
@@ -214,6 +242,7 @@ class _AttachmentHolderState extends State<AttachmentHolder> with ThemeHelpers {
         downloadController: download,
         isInReply: isInReply,
         isiOS: isiOS,
+        isInGallery: widget.transparentBackground,
       );
     }
 
@@ -272,48 +301,120 @@ class _AttachmentHolderState extends State<AttachmentHolder> with ThemeHelpers {
           }
         }
 
-        return ColorFiltered(
-          colorFilter: ColorFilter.mode(
-            context.theme.colorScheme.tertiaryContainer.withValues(alpha: 0.5),
-            selected ? BlendMode.srcOver : BlendMode.dstOver,
-          ),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: onTap,
-              child: Ink(
-                color: context.theme.colorScheme.surfaceContainerHighest,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: NavigationSvc.width(context) * 0.5,
-                    maxHeight: isInReply ? double.infinity : context.height * 0.6,
-                    minHeight: isInReply ? 0 : 40,
-                    minWidth: isInReply ? 0 : 100,
-                  ),
-                  child: Padding(
-                    padding: _computePadding(state, hideAttachments, showTail, isInReply),
-                    child: AnimatedSize(
-                      duration: const Duration(milliseconds: 150),
-                      child: Center(
-                        heightFactor: 1,
-                        widthFactor: 1,
-                        // SendingOpacityWrapper has its own Obx so isSending
-                        // changes only rebuild the opacity layer, not this tree.
-                        child: _buildContent(
-                          state: state,
-                          hideAttachments: hideAttachments,
-                          showTail: showTail,
-                          isInReply: isInReply,
-                          isiOS: isiOS,
-                        ),
-                      ),
-                    ),
+        final hasError = state.hasError.value || message.error > 0;
+        final hasPreview = state.resolvedFile.value != null ||
+            (hasError && message.isFromMe == true && state.uploadPreviewFile.value != null);
+        final transparentCard = widget.transparentBackground && hasPreview;
+        // Gallery cards in non-preview states (downloading, not-loaded, etc.) need
+        // to fill the SizedBox dimensions set by MessageImageGallery and have their
+        // background clipped to rounded corners.
+        final shouldExpandAndClipForGallery = widget.transparentBackground && !hasPreview;
+        Widget content = Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            child: Ink(
+              color: transparentCard ? Colors.transparent : context.theme.colorScheme.surfaceContainerHighest,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: NavigationSvc.width(context) * 0.5,
+                  maxHeight: isInReply ? double.infinity : context.height * 0.6,
+                  minHeight: isInReply ? 0 : 40,
+                  minWidth: isInReply ? 0 : 100,
+                ),
+                child: Padding(
+                  padding: _computePadding(state, hideAttachments, showTail, isInReply),
+                  child: AnimatedSize(
+                    duration: const Duration(milliseconds: 150),
+                    // AnimatedSize loosens constraints, so content would render at its
+                    // natural size — smaller than the gallery SizedBox. SizedBox.expand()
+                    // snaps back to the max loosened constraints (= cardWidth x cardHeight)
+                    // and forces tight dimensions all the way down to the content widget.
+                    child: shouldExpandAndClipForGallery
+                        ? SizedBox.expand(
+                            child: SendingOpacityWrapper(
+                              child: _buildContent(
+                                state: state,
+                                hideAttachments: hideAttachments,
+                                showTail: showTail,
+                                isInReply: isInReply,
+                                isiOS: isiOS,
+                              ),
+                            ),
+                          )
+                        : Center(
+                            heightFactor: 1,
+                            widthFactor: 1,
+                            // SendingOpacityWrapper has its own Obx so isSending
+                            // changes only rebuild the opacity layer, not this tree.
+                            child: DecoratedBox(
+                              decoration: widget.showCardShadow
+                                  ? BoxDecoration(
+                                      borderRadius: BorderRadius.circular(20),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: context.theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.25),
+                                          blurRadius: 3,
+                                          offset: const Offset(0, 1),
+                                        ),
+                                      ],
+                                    )
+                                  : const BoxDecoration(),
+                              child: SendingOpacityWrapper(
+                                child: _buildContent(
+                                  state: state,
+                                  hideAttachments: hideAttachments,
+                                  showTail: showTail,
+                                  isInReply: isInReply,
+                                  isiOS: isiOS,
+                                ),
+                              ),
+                            ),
+                          ),
                   ),
                 ),
               ),
             ),
           ),
         );
+        // Gallery non-preview: wrap with shadow + rounded clip at the card boundary.
+        // This clips the surfaceContainerHighest Ink background to rounded corners and
+        // places the shadow around the full card rather than the smaller content widget.
+        if (shouldExpandAndClipForGallery) {
+          content = DecoratedBox(
+            decoration: widget.showCardShadow
+                ? BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: context.theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.25),
+                        blurRadius: 3,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  )
+                : const BoxDecoration(),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: content,
+            ),
+          );
+        }
+        // ColorFiltered is only for standalone (non-gallery) selection tinting.
+        // In gallery mode (transparentBackground = true), the ColorFilter creates a
+        // saveLayer bounded by the messages view repaint boundary. The dstOver blend
+        // then fills every transparent pixel in that large layer with tertiaryContainer,
+        // turning the entire messages view pink/purple while an attachment downloads.
+        if (!transparentCard && !widget.transparentBackground) {
+          content = ColorFiltered(
+            colorFilter: ColorFilter.mode(
+              context.theme.colorScheme.tertiaryContainer.withValues(alpha: 0.5),
+              selected ? BlendMode.srcOver : BlendMode.dstOver,
+            ),
+            child: content,
+          );
+        }
+        return content;
       }),
     );
   }

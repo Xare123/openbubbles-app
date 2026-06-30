@@ -10,9 +10,31 @@ import 'package:flutter/foundation.dart';
 
 class ChatActions {
   static Future<void> clearNotificationForChat(dynamic data) async {
+    if (kIsDesktop || kIsWeb) return;
     final chatId = data['chatId'] as int;
 
     await MethodChannelSvc.actions.deleteNotification(notificationId: chatId, tag: 'new_message');
+  }
+
+  static Future<void> markAllChatsRead(dynamic data) async {
+    final chatIds = (data['chatIds'] as List).cast<int>();
+    final shouldMarkOnServer = data['shouldMarkOnServer'] as bool;
+
+    final chats = Database.chats.getMany(chatIds).whereType<Chat>().toList();
+    for (final c in chats) {
+      c.hasUnreadMessage = false;
+    }
+    Database.runInTransaction(TxMode.write, () {
+      Database.chats.putMany(chats);
+    });
+
+    if (shouldMarkOnServer &&
+        SettingsSvc.settings.enablePrivateAPI.value &&
+        SettingsSvc.settings.privateMarkChatAsRead.value) {
+      for (final c in chats) {
+        await HttpSvc.chat.markRead(c.guid);
+      }
+    }
   }
 
   static Future<void> markChatReadUnread(dynamic data) async {
@@ -163,6 +185,10 @@ class ChatActions {
       }
       if (updateFlags['updateAttachmentGuid']!) {
         chat.photoAttachmentGuid = inputChat.photoAttachmentGuid;
+      }
+      if (updateFlags['updateCustomThemes'] == true) {
+        chat.customThemeLight = inputChat.customThemeLight;
+        chat.customThemeDark = inputChat.customThemeDark;
       }
       if (updateFlags['updateLatestMessage'] == true) {
         final latestMessageId = chatData['dbLatestMessageId'] as int?;

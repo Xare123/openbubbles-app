@@ -12,6 +12,7 @@ import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/services/backend/interfaces/sync_interface.dart';
 import 'package:bluebubbles/services/ui/chat/send_data.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/utils/string_utils.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -90,7 +91,7 @@ class ChatCreatorController extends StatefulController {
       // If the user has typed something while a chat is displayed, hide the
       // message view so the filtered search results are shown instead.
       if (text.isNotEmpty && activeController.value != null) {
-        await deactivateExistingChat();
+        deactivateExistingChat();
       }
 
       // If the user cleared the field and contacts are still selected,
@@ -249,7 +250,10 @@ class ChatCreatorController extends StatefulController {
       if (selectedContacts.contains(contact)) {
         await findExistingChat();
       }
-    } catch (_) {}
+    } catch (e, s) {
+      Logger.warn("Failed to check iMessage availability for contact",
+          error: e, trace: s, tag: 'ChatCreatorController');
+    }
   }
 
   Future<void> addSelectedFromChat(List<SelectedContact> contacts) async {
@@ -285,7 +289,7 @@ class ChatCreatorController extends StatefulController {
     filteredChats.value = result.chats;
     filteredContacts.value = result.contacts;
     if (selectedContacts.isEmpty) {
-      await deactivateExistingChat();
+      deactivateExistingChat();
     } else {
       await findExistingChat();
     }
@@ -295,14 +299,14 @@ class ChatCreatorController extends StatefulController {
   // Service type toggle
   // ---------------------------------------------------------------------------
 
-  Future<void> onServiceChanged(ChatServiceType service) async {
+  void onServiceChanged(ChatServiceType service) {
     if (selectedService.value == service) return;
     selectedService.value = service;
     textController.supportsFormatting = service == ChatServiceType.iMessage;
     selectedContacts.clear();
     addressController.text = '';
     currentQuery.value = '';
-    await deactivateExistingChat();
+    deactivateExistingChat();
     filteredChats.value = _allChats.where(_chatMatchesService).toList();
     filteredContacts.value = _allContacts.where(_contactHasAddressForService).toList();
   }
@@ -313,7 +317,7 @@ class ChatCreatorController extends StatefulController {
 
   Future<Chat?> findExistingChat({bool checkDeleted = false, bool update = true}) async {
     if (selectedContacts.isEmpty) {
-      await deactivateExistingChat();
+      deactivateExistingChat();
       return null;
     }
 
@@ -373,9 +377,9 @@ class ChatCreatorController extends StatefulController {
 
     if (update) {
       if (existingChat != null) {
-        await _activateExistingChat(existingChat);
+        _activateExistingChat(existingChat);
       } else {
-        await deactivateExistingChat();
+        deactivateExistingChat();
       }
     }
 
@@ -387,14 +391,14 @@ class ChatCreatorController extends StatefulController {
     return existingChat;
   }
 
-  Future<void> _activateExistingChat(Chat chat, {bool transferText = true}) async {
-    await ChatsSvc.setActiveChat(chat, clearNotifications: false);
+  void _activateExistingChat(Chat chat, {bool transferText = true}) {
+    ChatsSvc.setActiveChat(chat, clearNotifications: false);
     ChatsSvc.activeChat!.controller = cvc(chat);
 
     // Only create a new MessagesService if necessary.
     // Do NOT initialize here — MessagesView initializes it with proper handlers.
     if (messagesService == null || messagesService!.tag != chat.guid) {
-      messagesService = MessagesSvc(chat.guid);
+      messagesService = maybeFindMessagesSvc(chat.guid) ?? MessagesService(chat.guid);
     }
 
     final newCVC = ChatsSvc.activeChat!.controller!;
@@ -422,8 +426,8 @@ class ChatCreatorController extends StatefulController {
     activeController.value = newCVC;
   }
 
-  Future<void> deactivateExistingChat() async {
-    await ChatsSvc.setAllInactive();
+  void deactivateExistingChat() {
+    ChatsSvc.setAllInactive();
     activeController.value = null;
     messagesService = null;
   }
@@ -572,13 +576,10 @@ class ChatCreatorController extends StatefulController {
             'Finding or creating chat...',
             style: ctx.theme.textTheme.titleLarge,
           ),
-          content: SizedBox(
+          content: const SizedBox(
             height: 70,
             child: Center(
-              child: CircularProgressIndicator(
-                backgroundColor: ctx.theme.colorScheme.surfaceContainerHighest,
-                valueColor: AlwaysStoppedAnimation<Color>(ctx.theme.colorScheme.primary),
-              ),
+              child: CircularProgressIndicator(),
             ),
           ),
         ),
@@ -646,28 +647,20 @@ class ChatCreatorController extends StatefulController {
         _createCompleter?.completeError(error);
         isSending.value = false;
 
-        showDialog(
+        showBBDialog(
           barrierDismissible: false,
           context: context,
-          builder: (ctx) => AlertDialog(
-            backgroundColor: ctx.theme.colorScheme.surfaceContainerHighest,
-            title: Text('Failed to create chat!', style: ctx.theme.textTheme.titleLarge),
-            content: Text(
-              error is Response
-                  ? 'Reason: (${(error as dynamic).data["error"]["type"]}) -> ${(error as dynamic).data["error"]["message"]}'
-                  : error.toString(),
-              style: ctx.theme.textTheme.bodyLarge,
+          title: 'Failed to create chat!',
+          body: error is Response
+              ? 'Reason: (${(error as dynamic).data["error"]["type"]}) -> ${(error as dynamic).data["error"]["message"]}'
+              : error.toString(),
+          actions: [
+            BBDialogAction(
+              text: 'OK',
+              isDefault: true,
+              onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx, rootNavigator: true).pop(),
-                child: Text(
-                  'OK',
-                  style: ctx.theme.textTheme.bodyLarge!.copyWith(color: ctx.theme.colorScheme.primary),
-                ),
-              ),
-            ],
-          ),
+          ],
         );
         return;
       }
@@ -692,7 +685,7 @@ class ChatCreatorController extends StatefulController {
       // transferText: false — content is captured above and will go into pendingSend;
       // writing it into the CVC's textController would leave stale text visible in
       // the destination ConversationView if the clear races with Flutter rendering.
-      await _activateExistingChat(resolvedChat, transferText: false);
+      _activateExistingChat(resolvedChat, transferText: false);
     }
 
     // Pre-seed the messagesService struct with any messages already synced to the

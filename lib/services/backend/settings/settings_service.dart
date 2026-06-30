@@ -67,7 +67,10 @@ class SettingsService {
             }
           }),
         ]);
-      } catch (_) {}
+      } catch (e, s) {
+        Logger.warn("Failed to apply display mode or biometric check at startup",
+            error: e, trace: s, tag: 'SettingsService');
+      }
       // system appearance — apply both branches so the mode matches the setting at startup
       // (mirrors the toggle in the theming panel), not just when immersive mode is enabled.
       if (settings.immersiveMode.value) {
@@ -91,8 +94,8 @@ class SettingsService {
             _canAuthenticate = await LocalAuthentication().isDeviceSupported();
           } catch (_) {}
         }
-        SettingsSvc.settings.launchAtStartup.value = await setupLaunchAtStartup(
-            SettingsSvc.settings.launchAtStartup.value, SettingsSvc.settings.launchAtStartupMinimized.value);
+        settings.launchAtStartup.value =
+            await setupLaunchAtStartup(settings.launchAtStartup.value, settings.launchAtStartupMinimized.value);
       });
     }
 
@@ -102,46 +105,13 @@ class SettingsService {
   /// Returns true if LaunchAtStartup is enabled and false if it is disabled
   Future<bool> setupLaunchAtStartup(bool launchAtStartup, bool minimized) async {
     // Can't use fs here because it hasn't been initialized yet
-    if (!isMsix) {
-      LaunchAtStartup.setup((await PackageInfo.fromPlatform()).appName, minimized);
-      if (launchAtStartup) {
-        await LaunchAtStartup.enable();
-        return true;
-      }
-      await LaunchAtStartup.disable();
-      return false;
-    } else if (launchAtStartup) {
-      /// Copied from https://github.com/Merrit/nyrna/pull/172/files
-      /// Custom because LaunchAtStartup's implementation doesn't support args yet.
-      String script = '''
-        \$TargetPath = "shell:AppsFolder\\$windowsAppPackageName"
-        \$ShortcutFile = "\$env:USERPROFILE\\Start Menu\\Programs\\Startup\\$appName.lnk"
-        \$WScriptShell = New-Object -ComObject WScript.Shell
-        \$Shortcut = \$WScriptShell.CreateShortcut(\$ShortcutFile)
-        \$Shortcut.TargetPath = \$TargetPath
-        \$Shortcut.Arguments = "${minimized ? 'minimized' : ''}"
-        \$Shortcut.Save()
-        ''';
-      await Process.run(
-        'powershell',
-        ['-Command', script],
-      );
-    } else {
-      const String script = '''
-        Remove-Item -Path "\$env:USERPROFILE\\Start Menu\\Programs\\Startup\\$appName.lnk"
-      ''';
-      await Process.run(
-        'powershell',
-        ['-Command', script],
-      );
+    LaunchAtStartup.setup((await PackageInfo.fromPlatform()).appName, minimized);
+    if (launchAtStartup) {
+      await LaunchAtStartup.enable();
+      return true;
     }
-    final createdShortcut = File(
-      '${Platform.environment['USERPROFILE']}\\Start Menu\\Programs\\Startup\\$appName.lnk',
-    );
-    if (!createdShortcut.existsSync()) {
-      return false;
-    }
-    return true;
+    await LaunchAtStartup.disable();
+    return false;
   }
 
   void loadFcmDataFromDatabase() {
@@ -153,7 +123,9 @@ class SettingsService {
       try {
         final mode = await settings.getDisplayMode();
         FlutterDisplayMode.setPreferredMode(mode);
-      } catch (_) {}
+      } catch (e, s) {
+        Logger.warn("Failed to update display mode", error: e, trace: s, tag: 'SettingsService');
+      }
     }
   }
 
@@ -262,105 +234,101 @@ class SettingsService {
     final ScrollController controller = ScrollController();
     if (_showingPapiPopup) Navigator.of(Get.context!).pop();
     _showingPapiPopup = true;
-    await showDialog(
+    await showBBDialog(
       context: Get.context!,
       barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text("Private API Features"),
-          content: Column(
+      title: "Private API Features",
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: min(Get.context!.height / 3, Get.context!.height - 300)),
+            child: ScrollbarWrapper(
+              controller: controller,
+              showScrollbar: true,
+              child: SingleChildScrollView(
+                controller: controller,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text("You've enabled Private API Features on your server!"),
+                    const SizedBox(height: 10),
+                    const Text("Private API features give you the ability to:"),
+                    const Text(" - Send & Receive typing indicators"),
+                    const Text(" - Send tapbacks, effects, and mentions"),
+                    const Text(" - Send messages with subject lines"),
+                    if (_serverDetails.value.isMinBigSur) const Text(" - Send replies"),
+                    if (_serverDetails.value.isMinVentura) const Text(" - Edit & Unsend messages"),
+                    const SizedBox(height: 10),
+                    const Text(" - Mark chats read on the Mac server"),
+                    if (_serverDetails.value.isMinVentura) const Text(" - Mark chats as unread on the Mac server"),
+                    const SizedBox(height: 10),
+                    const Text(" - Rename group chats"),
+                    const Text(" - Add & remove people from group chats"),
+                    if (_serverDetails.value.isMinBigSur) const Text(" - Change the group chat photo"),
+                    if (_serverDetails.value.isMinBigSur) const SizedBox(height: 10),
+                    if (_serverDetails.value.isMinMonterey) const Text(" - View Focus statuses"),
+                    if (_serverDetails.value.isMinBigSur) const Text(" - Use Find My Friends"),
+                    if (_serverDetails.value.isMinBigSur) const Text(" - Be notified of incoming FaceTime calls"),
+                    if (_serverDetails.value.isMinVentura) const Text(" - Answer FaceTime calls (experimental)"),
+                    const SizedBox(height: 10),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              ConstrainedBox(
-                constraints: BoxConstraints(maxHeight: min(context.height / 3, Get.context!.height - 300)),
-                child: ScrollbarWrapper(
-                  controller: controller,
-                  showScrollbar: true,
-                  child: SingleChildScrollView(
-                    controller: controller,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text("You've enabled Private API Features on your server!"),
-                        const SizedBox(height: 10),
-                        const Text("Private API features give you the ability to:"),
-                        const Text(" - Send & Receive typing indicators"),
-                        const Text(" - Send tapbacks, effects, and mentions"),
-                        const Text(" - Send messages with subject lines"),
-                        if (_serverDetails.value.isMinBigSur) const Text(" - Send replies"),
-                        if (_serverDetails.value.isMinVentura) const Text(" - Edit & Unsend messages"),
-                        const SizedBox(height: 10),
-                        const Text(" - Mark chats read on the Mac server"),
-                        if (_serverDetails.value.isMinVentura) const Text(" - Mark chats as unread on the Mac server"),
-                        const SizedBox(height: 10),
-                        const Text(" - Rename group chats"),
-                        const Text(" - Add & remove people from group chats"),
-                        if (_serverDetails.value.isMinBigSur) const Text(" - Change the group chat photo"),
-                        if (_serverDetails.value.isMinBigSur) const SizedBox(height: 10),
-                        if (_serverDetails.value.isMinMonterey) const Text(" - View Focus statuses"),
-                        if (_serverDetails.value.isMinBigSur) const Text(" - Use Find My Friends"),
-                        if (_serverDetails.value.isMinBigSur) const Text(" - Be notified of incoming FaceTime calls"),
-                        if (_serverDetails.value.isMinVentura) const Text(" - Answer FaceTime calls (experimental)"),
-                        const SizedBox(height: 10),
-                      ],
+              Align(
+                alignment: Alignment.center,
+                child: ElevatedButton(
+                  onPressed: () async {
+                    await PrefsSvc.server.markPrivateApiEnableTipShown();
+                    if (Get.context == null) return;
+                    Navigator.of(Get.context!, rootNavigator: true).pop();
+                    NavigationSvc.closeSettings(Get.context!);
+                    NavigationSvc.closeAllConversationView(Get.context!);
+                    ChatsSvc.setAllInactive();
+                    await Navigator.of(Get.context!).push(
+                      ThemeSwitcher.buildPageRoute(
+                        builder: (BuildContext context) {
+                          return SettingsPage(
+                            initialPage: PrivateAPIPanel(
+                              enablePrivateAPIonInit: true,
+                            ),
+                          );
+                        },
+                      ),
+                    );
+                  },
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: Text(
+                      "Enable Private API Features",
+                      textScaler: TextScaler.linear(1.2),
                     ),
                   ),
                 ),
               ),
-              const SizedBox(height: 20),
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Align(
-                    alignment: Alignment.center,
-                    child: ElevatedButton(
-                      onPressed: () async {
-                        await PrefsSvc.server.markPrivateApiEnableTipShown();
-                        if (!context.mounted) return;
-                        Navigator.of(context).pop();
-                        NavigationSvc.closeSettings(context);
-                        NavigationSvc.closeAllConversationView(context);
-                        await ChatsSvc.setAllInactive();
-                        await Navigator.of(Get.context!).push(
-                          ThemeSwitcher.buildPageRoute(
-                            builder: (BuildContext context) {
-                              return SettingsPage(
-                                initialPage: PrivateAPIPanel(
-                                  enablePrivateAPIonInit: true,
-                                ),
-                              );
-                            },
-                          ),
-                        );
-                      },
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 8),
-                        child: Text(
-                          "Enable Private API Features",
-                          textScaler: TextScaler.linear(1.2),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Align(
-                    alignment: Alignment.center,
-                    child: TextButton(
-                      onPressed: () async {
-                        await PrefsSvc.server.markPrivateApiEnableTipShown();
-                        if (!context.mounted) return;
-                        Navigator.of(context).pop();
-                      },
-                      child: const Text("Don't ask again"),
-                    ),
-                  )
-                ],
-              ),
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.center,
+                child: TextButton(
+                  onPressed: () async {
+                    await PrefsSvc.server.markPrivateApiEnableTipShown();
+                    if (Get.context == null) return;
+                    Navigator.of(Get.context!, rootNavigator: true).pop();
+                  },
+                  child: const Text("Don't ask again"),
+                ),
+              )
             ],
           ),
-        );
-      },
+        ],
+      ),
     );
     _showingPapiPopup = false;
   }
@@ -424,53 +392,44 @@ class SettingsService {
       return;
     }
 
-    showDialog(
+    showBBDialog(
       context: Get.context!,
-      builder: (context) => AlertDialog(
-        backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-        title: Text("Server Update Check", style: context.theme.textTheme.titleLarge),
-        content: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            const SizedBox(
-              height: 15.0,
-            ),
-            Text(updateInfo.available ? "Updates available:" : "Your server is up-to-date!",
-                style: context.theme.textTheme.bodyLarge),
-            const SizedBox(
-              height: 15.0,
-            ),
-            if (updateInfo.version != null)
-              Text(
-                  "Version: ${updateInfo.version ?? "Unknown"}\nRelease Date: ${updateInfo.releaseDate ?? "Unknown"}\nRelease Name: ${updateInfo.releaseName ?? "Unknown"}\n\nWarning: Installing the update will briefly disconnect you.",
-                  style: context.theme.textTheme.bodyLarge)
-          ],
-        ),
-        actions: [
-          TextButton(
-            child: Text("OK",
-                style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-            onPressed: () async {
-              if (updateInfo.version != null) {
-                await PrefsSvc.server.setServerUpdateCheckVersion(updateInfo.version!);
-              }
-              Navigator.of(context).pop();
-            },
-          ),
-          TextButton(
-            child: Text("Install",
-                style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-            onPressed: () async {
-              if (updateInfo.version != null) {
-                await PrefsSvc.server.setServerUpdateCheckVersion(updateInfo.version!);
-              }
-              HttpSvc.server.installUpdate();
-              Navigator.of(context).pop();
-            },
-          ),
+      title: "Server Update Check",
+      content: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          const SizedBox(height: 15.0),
+          Text(updateInfo.available ? "Updates available:" : "Your server is up-to-date!"),
+          const SizedBox(height: 15.0),
+          if (updateInfo.version != null)
+            Text(
+              "Version: ${updateInfo.version ?? "Unknown"}\nRelease Date: ${updateInfo.releaseDate ?? "Unknown"}\nRelease Name: ${updateInfo.releaseName ?? "Unknown"}\n\nWarning: Installing the update will briefly disconnect you.",
+            )
         ],
       ),
+      actions: [
+        BBDialogAction(
+          text: "OK",
+          onPressed: () async {
+            if (updateInfo.version != null) {
+              await PrefsSvc.server.setServerUpdateCheckVersion(updateInfo.version!);
+            }
+            Navigator.of(Get.context!, rootNavigator: true).pop();
+          },
+        ),
+        BBDialogAction(
+          text: "Install",
+          isDefault: true,
+          onPressed: () async {
+            if (updateInfo.version != null) {
+              await PrefsSvc.server.setServerUpdateCheckVersion(updateInfo.version!);
+            }
+            HttpSvc.server.installUpdate();
+            Navigator.of(Get.context!, rootNavigator: true).pop();
+          },
+        ),
+      ],
     );
   }
 
@@ -549,46 +508,38 @@ class SettingsService {
     }
     if (!updateInfo.available) return;
 
-    showDialog(
+    showBBDialog(
       context: Get.context!,
-      builder: (context) => AlertDialog(
-        backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-        title: Text("App Update Check", style: context.theme.textTheme.titleLarge),
-        content: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            const SizedBox(
-              height: 15.0,
-            ),
-            Text("Updates available:", style: context.theme.textTheme.bodyLarge),
-            const SizedBox(
-              height: 15.0,
-            ),
-            Text(
-                "Version: ${updateInfo.version}\nRelease Date: ${buildDate(updateInfo.latestRelease.createdAt)}\nRelease Name: ${updateInfo.latestRelease.name}",
-                style: context.theme.textTheme.bodyLarge)
-          ],
-        ),
-        actions: [
-          if (updateInfo.latestRelease.htmlUrl != null)
-            TextButton(
-              child: Text("Download",
-                  style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-              onPressed: () async {
-                await launchUrl(Uri.parse(updateInfo.latestRelease.htmlUrl!), mode: LaunchMode.externalApplication);
-              },
-            ),
-          TextButton(
-            child: Text("OK",
-                style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-            onPressed: () async {
-              await PrefsSvc.server.setClientUpdateCheckCode(updateInfo.code);
-              Navigator.of(context).pop();
-            },
+      title: "App Update Check",
+      content: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          const SizedBox(height: 15.0),
+          const Text("Updates available:"),
+          const SizedBox(height: 15.0),
+          Text(
+            "Version: ${updateInfo.version}\nRelease Date: ${buildDate(updateInfo.latestRelease.createdAt)}\nRelease Name: ${updateInfo.latestRelease.name}",
           ),
         ],
       ),
+      actions: [
+        if (updateInfo.latestRelease.htmlUrl != null)
+          BBDialogAction(
+            text: "Download",
+            onPressed: () async {
+              await launchUrl(Uri.parse(updateInfo.latestRelease.htmlUrl!), mode: LaunchMode.externalApplication);
+            },
+          ),
+        BBDialogAction(
+          text: "OK",
+          isDefault: true,
+          onPressed: () async {
+            await PrefsSvc.server.setClientUpdateCheckCode(updateInfo.code);
+            Navigator.of(Get.context!, rootNavigator: true).pop();
+          },
+        ),
+      ],
     );
   }
 }

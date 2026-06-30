@@ -26,7 +26,7 @@ class _ConnectingDialogState extends State<ConnectingDialog> {
         } else if (event == SocketState.error || event == SocketState.disconnected) {
           widget.onConnect(false);
         }
-        setState(() {});
+        if (mounted) setState(() {});
       });
     }
   }

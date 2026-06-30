@@ -15,7 +15,6 @@ class RecentReplyState {
 }
 
 class SharedPreferencesMessagingActions {
-  static const String _lastOpenedChatKey = 'lastOpenedChat';
   static const String _recentReplyKey = 'recent-reply';
   static const String _replyToMessagePrefix = 'replyToMessage';
   static const String _replyToMessagePartPrefix = 'replyToMessagePart';
@@ -27,21 +26,6 @@ class SharedPreferencesMessagingActions {
   String _replyMessageKey(String chatGuid) => '${_replyToMessagePrefix}_$chatGuid';
 
   String _replyMessagePartKey(String chatGuid) => '${_replyToMessagePartPrefix}_$chatGuid';
-
-  String? getLastOpenedChat() => service.i.getString(_lastOpenedChatKey);
-
-  Future<void> setLastOpenedChat(String chatGuid) async {
-    await service.i.setString(_lastOpenedChatKey, chatGuid);
-  }
-
-  Future<void> clearLastOpenedChat() async {
-    await service.i.remove(_lastOpenedChatKey);
-  }
-
-  // Temporary alias while callsites are being migrated.
-  Future<void> clearLastOpenChat() async {
-    await clearLastOpenedChat();
-  }
 
   Future<void> saveReplyToMessageState({
     required String chatGuid,

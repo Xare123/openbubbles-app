@@ -1,11 +1,13 @@
 import 'dart:async';
 
+import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/main.dart';
 import 'package:bluebubbles/services/backend/interfaces/contact_v2_interface.dart';
 import 'package:bluebubbles/services/backend/interfaces/sync_interface.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
+import 'package:bluebubbles/services/isolates/incremental_sync_isolate.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:get/get.dart' hide Response;
@@ -77,6 +79,39 @@ class SyncService {
     isIncrementalSyncing.value = true;
     int errors = 0;
 
+    // Per-page tracking: record message IDs and chat subtitle message IDs that were
+    // already applied by per-page events so the final return can skip redundant work.
+    final processedMessageIds = <int>{};
+    final processedSubtitleByChat = <String, int>{}; // chatGuid → message DB ID
+
+    void onPageComplete(dynamic data) {
+      if (data is! Map<String, dynamic>) return;
+      final messageIds = (data['messageIds'] as List).cast<int>();
+      final latestPerChat = Map<String, int>.from(data['latestMessageIdPerChat'] as Map);
+
+      // Hydrate the page's messages and dispatch to any open chat view immediately.
+      final messages = Database.messages.getMany(messageIds).whereType<Message>().toList();
+      for (final message in messages) {
+        if (message.id != null) processedMessageIds.add(message.id!);
+        final chatGuid = message.chat.target?.guid;
+        if (chatGuid == null || message.guid == null) continue;
+        if (Get.isRegistered<MessagesService>(tag: chatGuid)) {
+          unawaited(Get.find<MessagesService>(tag: chatGuid).addNewMessage(message));
+        }
+      }
+
+      // Update chat subtitles for the per-page latest message per chat.
+      for (final entry in latestPerChat.entries) {
+        final msg = Database.messages.get(entry.value);
+        if (msg == null) continue;
+        ChatsSvc.updateChatLatestMessage(entry.key, msg);
+        processedSubtitleByChat[entry.key] = entry.value;
+      }
+    }
+
+    final syncIsolate = GetIt.I<IncrementalSyncIsolate>();
+    syncIsolate.addEventListener(IsolateEvent.incrementalSyncPageComplete, onPageComplete);
+
     try {
       // On rustpush there is no remote server to incrementally sync chats from; contact
       // refresh (performContactSyncToHandles) is run unconditionally below, so skip the
@@ -103,14 +138,19 @@ class SyncService {
 
           // IncrementalSyncManager.complete() already called ChatsSvc.updateChat() for every
           // synced chat. Here we only need to push the subtitle update into ChatState.
+          // Skip chats where the per-page event already applied the same (or newer) message.
           for (final entry in latestPerChat.entries) {
-            ChatsSvc.updateChatLatestMessage(entry.key, entry.value);
+            final message = entry.value;
+            if (message.id != null && processedSubtitleByChat[entry.key] == message.id) continue;
+            ChatsSvc.updateChatLatestMessage(entry.key, message);
           }
 
           // Dispatch newly synced messages to any currently active chat view.
+          // Skip messages already dispatched by a per-page event.
           // MessagesService.addNewMessage() is a no-op if the message is already present,
-          // so this is safe to call even though the ObjectBox watcher may also fire.
+          // so this is safe even without the skip, but avoiding the call reduces churn.
           for (final message in syncedMessages) {
+            if (message.id != null && processedMessageIds.contains(message.id)) continue;
             final chatGuid = message.chat.target?.guid;
             if (chatGuid == null || message.guid == null) continue;
             if (Get.isRegistered<MessagesService>(tag: chatGuid)) {
@@ -129,6 +169,8 @@ class SyncService {
     } catch (e, stack) {
       Logger.error('Incremental chat sync failed!', error: e, trace: stack, tag: 'Incremental Chat Sync');
       errors += 1;
+    } finally {
+      syncIsolate.removeEventListener(IsolateEvent.incrementalSyncPageComplete, onPageComplete);
     }
 
     final contactSyncResult = await performContactSyncToHandles();
@@ -141,12 +183,10 @@ class SyncService {
       errors += 1;
     }
 
-    if (SettingsSvc.settings.showIncrementalSync.value) {
-      if (errors > 0) {
-        showSnackbar('Error', '⚠️ Incremental sync completed with $errors errors ⚠️');
-      } else {
-        showSnackbar('Success', '🔄 Incremental sync complete 🔄');
-      }
+    if (errors > 0) {
+      await showToast('Incremental sync completed with $errors errors', isError: true);
+    } else if (SettingsSvc.settings.showIncrementalSync.value) {
+      await showToast('Incremental sync complete');
     }
 
     isIncrementalSyncing.value = false;

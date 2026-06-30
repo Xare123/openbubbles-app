@@ -12,6 +12,7 @@ import 'package:bluebubbles/app/layouts/conversation_view/widgets/effects/screen
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_acrylic/window_effect.dart';
@@ -70,7 +71,7 @@ class ConversationViewState extends State<ConversationView> with ThemeHelpers<Co
     super.initState();
     controller.fromChatCreator = widget.fromChatCreator;
     controller.fromSearchResult = widget.initialScrollToGuid != null;
-    ChatsSvc.setActiveChatSync(chat);
+    ChatsSvc.setActiveChat(chat);
     ChatsSvc.activeChat?.controller = controller;
     Logger.debug("Conversation View initialized for ${chat.guid}");
 
@@ -82,6 +83,14 @@ class ConversationViewState extends State<ConversationView> with ThemeHelpers<Co
     // Cache the stable header and body subtrees. See field comments above.
     _header = iOS ? CupertinoHeader(controller: controller) : MaterialHeader(controller: controller);
     _bodyContent = _buildBodyContent();
+
+    // Warm the image cache for the custom background so it's ready on first paint.
+    final bgPath = ChatsSvc.getChatState(chat.guid)?.customBackgroundPath.value;
+    if (bgPath != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) precacheImage(FileImage(File(bgPath)), context);
+      });
+    }
   }
 
   PreferredSizeWidget _buildAppBar() {
@@ -107,29 +116,56 @@ class ConversationViewState extends State<ConversationView> with ThemeHelpers<Co
               ? ImagePoster(poster: controller.backgroundPoster.value!.poster, images: controller.images)
               : const SizedBox.shrink()),
           const Positioned.fill(child: ScreenEffectsWidget()),
-          Column(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              Expanded(
-                child: Stack(
-                  children: [
-                    MessagesView(
-                      key: Key(chat.guid),
-                      customService: widget.customService,
-                      initialScrollToGuid: widget.initialScrollToGuid,
-                      controller: controller,
+          Builder(
+            builder: (context) {
+              final bottomInset = MediaQuery.paddingOf(context).bottom;
+              if (bottomInset <= 0) return const SizedBox.shrink();
+              return Obx(() => Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    height: bottomInset,
+                    child: IgnorePointer(
+                      child: ColoredBox(
+                        color: controller.showAttachmentPicker.value
+                            ? context.theme.colorScheme.surface
+                            : Colors.transparent,
+                      ),
                     ),
-                    ScrollDownButton(controller: controller),
+                  ));
+            },
+          ),
+          Builder(
+            builder: (context) {
+              final bottomInset = MediaQuery.paddingOf(context).bottom;
+              return Padding(
+                padding: EdgeInsets.only(bottom: bottomInset),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: Stack(
+                        children: [
+                          MessagesView(
+                            key: Key(chat.guid),
+                            customService: widget.customService,
+                            initialScrollToGuid: widget.initialScrollToGuid,
+                            controller: controller,
+                          ),
+                          ScrollDownButton(controller: controller),
+                        ],
+                      ),
+                    ),
+                    GestureDetector(
+                      onPanUpdate: _onPanUpdate,
+                      child: ConversationTextField(
+                        parentController: controller,
+                      ),
+                    ),
                   ],
                 ),
-              ),
-              GestureDetector(
-                onPanUpdate: _onPanUpdate,
-                child: ConversationTextField(
-                  parentController: controller,
-                ),
-              ),
-            ],
+              );
+            },
           ),
         ],
       ),
@@ -194,18 +230,31 @@ class ConversationViewState extends State<ConversationView> with ThemeHelpers<Co
 
   @override
   Widget build(BuildContext context) {
-    // Cache theme values to avoid repeated lookups
-    final theme = context.theme;
-    final colorScheme = theme.colorScheme;
     final windowEffect = SettingsSvc.settings.windowEffect.value;
-    final bubbleColor = colorScheme.bubble(context, chat.isIMessage);
-    final onBubbleColor = colorScheme.onBubble(context, chat.isIMessage);
-
     final chatState = ChatsSvc.getOrCreateChatState(chat);
     return ChatStateScope(
       chatState: chatState,
-      child: Obx(() => Theme(
-          data: theme.copyWith(
+      child: Obx(() {
+        final isDark = ThemeSvc.inDarkMode(context);
+        chatState.themeVersion.value;
+        final themeName = isDark ? chatState.customThemeDark.value : chatState.customThemeLight.value;
+        final baseTheme = ThemeStruct.resolveByName(themeName, isDark ? Brightness.dark : Brightness.light).data;
+
+        final colorScheme = baseTheme.colorScheme;
+        final bubbleColors = baseTheme.extensions[BubbleColors] as BubbleColors?;
+        final bubbleColor = bubbleColors != null
+            ? (chat.isIMessage
+                ? bubbleColors.iMessageBubbleColor ?? colorScheme.iMessageBubble
+                : bubbleColors.smsBubbleColor ?? colorScheme.smsBubble)
+            : colorScheme.bubble(context, chat.isIMessage);
+        final onBubbleColor = bubbleColors != null
+            ? (chat.isIMessage
+                ? bubbleColors.oniMessageBubbleColor ?? colorScheme.oniMessageBubble
+                : bubbleColors.onSmsBubbleColor ?? colorScheme.onSmsBubble)
+            : colorScheme.onBubble(context, chat.isIMessage);
+
+        return Theme(
+          data: baseTheme.copyWith(
             // Override primary color with our custom bubble color.
             primaryColor: bubbleColor,
             colorScheme: colorScheme.copyWith(
@@ -223,8 +272,8 @@ class ConversationViewState extends State<ConversationView> with ThemeHelpers<Co
                 controller.selected.clear();
                 return;
               }
-              if (controller.showAttachmentPicker) {
-                controller.showAttachmentPicker = false;
+              if (controller.showAttachmentPicker.value) {
+                controller.showAttachmentPicker.value = false;
                 controller.updateWidgets<ConversationTextField>(null);
                 return;
               }
@@ -238,13 +287,16 @@ class ConversationViewState extends State<ConversationView> with ThemeHelpers<Co
             child: BBScaffold(
               backgroundColor: windowEffect != WindowEffect.disabled ? Colors.transparent : colorScheme.surface,
               extendBodyBehindAppBar: true,
+              safeAreaBottom: false,
               appBar: _buildAppBar(),
               body: Actions(
                 actions: _actionsMap,
                 child: _bodyContent,
               ),
             ),
-          ))),
+          ),
+        );
+      }),
     );
   }
 }

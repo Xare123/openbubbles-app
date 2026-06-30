@@ -26,7 +26,8 @@ class TitleBarWrapper extends StatelessWidget {
     }
 
     return Obx(
-      () => (SettingsSvc.settings.useCustomTitleBar.value && Platform.isLinux) || (kIsDesktop && !Platform.isLinux)
+      () => (SettingsSvc.settings.titleBarStyle.value == BBTitleBarStyle.custom && Platform.isLinux) ||
+              (kIsDesktop && !Platform.isLinux)
           ? WindowBorder(
               color: Colors.transparent,
               width: 0,

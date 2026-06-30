@@ -20,9 +20,15 @@ class VideoPlayer extends StatefulWidget {
   final PlatformFile file;
   final Attachment attachment;
   final bool isFromMe;
+  final List<Attachment>? galleryAttachments;
 
   const VideoPlayer(
-      {super.key, required this.file, required this.attachment, required this.controller, required this.isFromMe});
+      {super.key,
+      required this.file,
+      required this.attachment,
+      required this.controller,
+      required this.isFromMe,
+      this.galleryAttachments});
 
   final ConversationViewController? controller;
 
@@ -349,6 +355,7 @@ class _VideoPlayerState extends State<VideoPlayer> with AutomaticKeepAliveClient
                           showInteractions: true,
                           videoController: videoController,
                           mute: muted,
+                          galleryAttachments: widget.galleryAttachments,
                         ),
                       ),
                     );
@@ -366,6 +373,7 @@ class _VideoPlayerState extends State<VideoPlayer> with AutomaticKeepAliveClient
                         showInteractions: true,
                         mute: muted,
                         videoController: videoController,
+                        galleryAttachments: widget.galleryAttachments,
                       ),
                     ),
                   );
@@ -412,6 +420,7 @@ class _VideoPlayerState extends State<VideoPlayer> with AutomaticKeepAliveClient
                   showInteractions: true,
                   mute: muted,
                   videoController: videoController,
+                  galleryAttachments: widget.galleryAttachments,
                 ),
               ),
             );

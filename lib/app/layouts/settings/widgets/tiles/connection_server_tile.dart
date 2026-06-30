@@ -60,7 +60,7 @@ class ConnectionServerTile extends StatelessWidget {
         onLongPress: () {
           Clipboard.setData(ClipboardData(text: HttpSvc.origin));
           if (!Platform.isAndroid || (FilesystemSvc.androidInfo?.version.sdkInt ?? 0) < 33) {
-            showSnackbar("Copied", "Server address copied to clipboard!");
+            showToast("Server address copied to clipboard");
           }
         },
         leading: Column(

@@ -454,7 +454,7 @@ class Message {
   bool showUpperMessage(Message olderMessage) {
     // find the part count of the older message
     final olderPartCount = chat.target?.guid != null
-        ? MessagesSvc(chat.target!.guid).getMessageStateIfExists(olderMessage.guid!)?.parts.length ?? 1
+        ? maybeFindMessagesSvc(chat.target!.guid)?.getMessageStateIfExists(olderMessage.guid!)?.parts.length ?? 1
         : 1;
     // make sure the older message is none of the following:
     // 1) thread originator
@@ -469,7 +469,7 @@ class Message {
 
   bool connectToLower(Message newerMessage) {
     final thisPartCount = chat.target?.guid != null
-        ? MessagesSvc(chat.target!.guid).getMessageStateIfExists(guid!)?.parts.length ?? 1
+        ? maybeFindMessagesSvc(chat.target!.guid)?.getMessageStateIfExists(guid!)?.parts.length ?? 1
         : 1;
     if (newerMessage.isFromMe != isFromMe) return false;
     if (newerMessage.normalizedThreadPart != thisPartCount - 1) return false;

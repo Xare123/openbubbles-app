@@ -2,6 +2,7 @@ import 'package:bluebubbles/app/layouts/settings/pages/server/imessage_stats/ime
 import 'package:bluebubbles/app/layouts/settings/pages/server/server_management_panel.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/settings_widgets.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -15,10 +16,22 @@ class MaterialIMessageStatsPage extends CustomStateful<ServerManagementPanelCont
 class _MaterialIMessageStatsPageState
     extends CustomState<MaterialIMessageStatsPage, void, ServerManagementPanelController>
     with IMessageStatsHelpersMixin {
+  bool _showRefreshSuccess = false;
+
   @override
   void initState() {
     super.initState();
     forceDelete = false;
+  }
+
+  Future<void> _handleRefresh() async {
+    if (controller.isActiveStatsLoading()) return;
+    final success = await controller.refreshSelectedStats();
+    if (!mounted || !success) return;
+    setState(() => _showRefreshSuccess = true);
+    await Future.delayed(const Duration(seconds: 2));
+    if (!mounted) return;
+    setState(() => _showRefreshSuccess = false);
   }
 
   Widget _buildLoadingState() {
@@ -105,8 +118,10 @@ class _MaterialIMessageStatsPageState
   }
 
   Widget _buildBody() {
-    final hasStats = controller.stats.isNotEmpty;
-    final isLoading = controller.hasCheckedStats.value == false;
+    final activeStats = controller.getActiveStatsMap();
+    final hasStats = activeStats.isNotEmpty;
+    final isLoading = controller.isActiveStatsLoading();
+    final error = controller.getActiveStatsError();
 
     if (isLoading && !hasStats) return _buildLoadingState();
 
@@ -116,6 +131,45 @@ class _MaterialIMessageStatsPageState
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(15, 16, 15, 4),
+          child: Center(
+            child: SegmentedButton<IMessageStatsSource>(
+              showSelectedIcon: false,
+              style: SegmentedButton.styleFrom(
+                foregroundColor: context.theme.colorScheme.onSurface,
+                selectedForegroundColor: context.theme.colorScheme.onPrimary,
+                selectedBackgroundColor: context.theme.colorScheme.primary,
+              ),
+              segments: [
+                const ButtonSegment(value: IMessageStatsSource.server, label: Text("Server")),
+                ButtonSegment(
+                  value: IMessageStatsSource.local,
+                  label: const Text("Local DB"),
+                  enabled: !kIsWeb,
+                ),
+              ],
+              selected: {controller.selectedStatsSource.value},
+              onSelectionChanged: (value) => controller.setStatsSource(value.first),
+            ),
+          ),
+        ),
+        if (kIsWeb)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(15, 4, 15, 4),
+            child: Text(
+              "Local DB stats are unavailable on web builds.",
+              style: context.theme.textTheme.bodySmall,
+            ),
+          ),
+        if (error != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(15, 4, 15, 4),
+            child: Text(
+              error,
+              style: context.theme.textTheme.bodySmall!.copyWith(color: context.theme.colorScheme.error),
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(15, 16, 15, 4),
           child: Text(
@@ -133,7 +187,7 @@ class _MaterialIMessageStatsPageState
                 children: gridItems.map((item) {
                   return SizedBox(
                     width: itemWidth,
-                    child: _buildStatCard(item, controller.stats[item.key]),
+                    child: _buildStatCard(item, activeStats[item.key]),
                   );
                 }).toList(),
               );
@@ -147,7 +201,7 @@ class _MaterialIMessageStatsPageState
             style: materialSubtitle,
           ),
         ),
-        ...mediaItems.map((item) => _buildMediaRow(item, controller.stats[item.key])),
+        ...mediaItems.map((item) => _buildMediaRow(item, activeStats[item.key])),
         const SizedBox(height: 8),
       ],
     );
@@ -164,19 +218,41 @@ class _MaterialIMessageStatsPageState
       headerColor: headerColor,
       actions: [
         Obx(() {
-          final isLoading = controller.hasCheckedStats.value == false && controller.stats.isEmpty;
+          final isLoading = controller.isActiveStatsLoading();
           return IconButton(
-            icon: isLoading
-                ? SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(context.theme.colorScheme.primary),
-                    ),
-                  )
-                : Icon(Icons.refresh, color: context.theme.colorScheme.onSurface),
-            onPressed: isLoading ? null : () => controller.getServerStats(),
+            icon: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 280),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              transitionBuilder: (child, animation) {
+                return FadeTransition(
+                  opacity: animation,
+                  child: ScaleTransition(scale: Tween<double>(begin: 0.92, end: 1.0).animate(animation), child: child),
+                );
+              },
+              child: isLoading
+                  ? SizedBox(
+                      key: const ValueKey('loading'),
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(context.theme.colorScheme.primary),
+                      ),
+                    )
+                  : _showRefreshSuccess
+                      ? Icon(
+                          Icons.check_rounded,
+                          key: const ValueKey('success'),
+                          color: context.theme.colorScheme.primary,
+                        )
+                      : Icon(
+                          Icons.refresh,
+                          key: const ValueKey('refresh'),
+                          color: context.theme.colorScheme.onSurface,
+                        ),
+            ),
+            onPressed: isLoading ? null : _handleRefresh,
           );
         }),
       ],

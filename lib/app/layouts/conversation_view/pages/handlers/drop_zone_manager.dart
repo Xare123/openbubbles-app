@@ -1,11 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:bluebubbles/database/global/platform_file.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:get/get.dart';
-import 'package:path/path.dart' hide context;
-import 'package:super_drag_and_drop/super_drag_and_drop.dart';
 import 'package:universal_io/io.dart';
 
 /// Manages drag-and-drop file operations on the message list.
@@ -27,71 +27,38 @@ class DropZoneManager {
   DropZoneManager({required this.controller});
 
   /// Check if drop is allowed (only copy operations with file format items)
-  DropOperation onDropOver(DropOverEvent event) {
-    if (!event.session.allowedOperations.contains(DropOperation.copy)) {
-      dragging.value = false;
-      return DropOperation.forbidden;
-    }
-
-    // Count files that can be provided in standard formats
-    numFiles.value = event.session.items
-        .where((item) => Formats.standardFormats.whereType<FileFormat>().any((f) => item.canProvide(f)))
-        .length;
-
-    if (numFiles.value > 0) {
-      dragging.value = true;
-      return DropOperation.copy;
-    }
-
-    dragging.value = false;
-    return DropOperation.forbidden;
+  void onDropOver(DropEventDetails event) {
+    dragging.value = true;
   }
 
   /// Handle drag leaving the drop zone
-  void onDropLeave(DropEvent event) {
+  void onDropLeave(DropEventDetails event) {
     dragging.value = false;
   }
 
-  /// Process dropped files and add them to attachments
+  /// Process dropped files and add them to attachments.
+  ///
+  /// Awaits all reader callbacks before returning so the native drop session
+  /// stays alive until data has been fully read.
   Future<void> onPerformDrop(
-    PerformDropEvent event,
+    DropDoneDetails event,
     ConversationViewController controller,
   ) async {
-    for (DropItem item in event.session.items) {
-      final reader = item.dataReader!;
-      FileFormat? format = reader.getFormats(Formats.standardFormats).whereType<FileFormat>().firstOrNull;
+    for (DropItem item in event.files) {
+      if (await FileSystemEntity.type(item.path) != FileSystemEntityType.file) continue;
 
-      if (format == null) continue;
+      Uint8List bytes = await item.readAsBytes();
+      String fileName = item.name;
 
-      await reader.getFile(format, (file) async {
-        Uint8List bytes = await file.readAll();
-        String filePath = file.fileName ?? "";
-        String fileName = file.fileName ?? "";
+      if (fileName.isEmpty) {
+        fileName = "Dragged_File_${controller.pickedAttachments.length + 1}";
+      }
 
-        // On Linux, the file path is encoded as UTF-8 bytes
-        if (Platform.isLinux) {
-          filePath = String.fromCharCodes(bytes);
-          File linuxFile = File(filePath);
-          bytes = await linuxFile.readAsBytes();
-          fileName = basename(filePath);
-        }
-
-        // Fallback names if not provided
-        if (filePath.isEmpty) {
-          filePath = "Dragged_File_${controller.pickedAttachments.length + 1}";
-        }
-        if (fileName.isEmpty) {
-          fileName = "Dragged_File_${controller.pickedAttachments.length + 1}";
-        }
-
-        // Add to attachments
-        controller.pickedAttachments.add(PlatformFile(
-          path: filePath,
-          name: fileName,
-          size: bytes.length,
-          bytes: bytes,
-        ));
-      });
+      controller.pickedAttachments.add(PlatformFile(
+        name: fileName,
+        size: bytes.length,
+        bytes: bytes,
+      ));
     }
 
     dragging.value = false;

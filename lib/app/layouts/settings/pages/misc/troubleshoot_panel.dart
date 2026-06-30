@@ -285,43 +285,27 @@ class _TroubleshootPanelState extends State<TroubleshootPanel> with ThemeHelpers
                 SettingsSection(backgroundColor: tileColor, children: [
                   SettingsTile(
                       onTap: () async {
-                        NavigationSvc.push(
+                        NavigationSvc.pushSettings(
                           context,
                           ChatSelectorView(
                             onSelect: (Chat chat) async {
-                              final bool? confirmed = await showDialog<bool>(
+                              final bool? confirmed = await showBBDialog<bool>(
                                 context: context,
-                                builder: (context) => AlertDialog(
-                                  backgroundColor: context.theme.colorScheme.surface,
-                                  title: Text(
-                                    "Delete Chat?",
-                                    style: context.theme.textTheme.titleLarge,
-                                  ),
-                                  content: Text(
+                                title: "Delete Chat?",
+                                body:
                                     "This will permanently delete the chat, all of its messages, and all of its participants (handles). This cannot be undone.",
-                                    style: context.theme.textTheme.bodyMedium,
+                                actions: [
+                                  BBDialogAction(
+                                    text: "Cancel",
+                                    onPressed: () => Navigator.of(context, rootNavigator: true).pop(false),
                                   ),
-                                  actions: [
-                                    TextButton(
-                                      child: Text(
-                                        "Cancel",
-                                        style: context.theme.textTheme.bodyLarge!.copyWith(
-                                          color: context.theme.colorScheme.primary,
-                                        ),
-                                      ),
-                                      onPressed: () => Navigator.of(context).pop(false),
-                                    ),
-                                    TextButton(
-                                      child: Text(
-                                        "Delete",
-                                        style: context.theme.textTheme.bodyLarge!.copyWith(
-                                          color: Colors.redAccent,
-                                        ),
-                                      ),
-                                      onPressed: () => Navigator.of(context).pop(true),
-                                    ),
-                                  ],
-                                ),
+                                  BBDialogAction(
+                                    text: "Delete",
+                                    isDestructive: true,
+                                    color: Colors.redAccent,
+                                    onPressed: () => Navigator.of(context, rootNavigator: true).pop(true),
+                                  ),
+                                ],
                               );
 
                               if (confirmed != true) return;
@@ -349,18 +333,6 @@ class _TroubleshootPanelState extends State<TroubleshootPanel> with ThemeHelpers
                       subtitle:
                           "Permanently deletes a selected chat, all its messages, and all its participants. Use this to simulate a brand-new chat arrival."),
                   const SettingsDivider(padding: EdgeInsets.only(left: 16.0)),
-                  SettingsTile(
-                      onTap: () async {
-                        await PrefsSvc.messaging.clearLastOpenedChat();
-                        showSnackbar("Success", "Successfully cleared the last opened chat!");
-                      },
-                      leading: const SettingsLeadingIcon(
-                        iosIcon: CupertinoIcons.rectangle_badge_xmark,
-                        materialIcon: Icons.folder_delete_outlined,
-                        containerColor: Colors.orange,
-                      ),
-                      title: "Clear Last Opened Chat",
-                      subtitle: "Use this if you are experiencing the app opening an incorrect chat")
                 ]),
                 SettingsHeader(iosSubtitle: iosSubtitle, materialSubtitle: materialSubtitle, text: "OpenBubbles"),
                 SettingsSection(backgroundColor: tileColor, children: [

@@ -71,9 +71,8 @@ void edit(MessagePopupActionContext ctx) {
   );
 }
 
-void delete(MessagePopupActionContext ctx) {
-  ctx.service.removeMessage(ctx.message);
-  Message.delete(ctx.message.guid!);
+Future<void> delete(MessagePopupActionContext ctx) async {
+  await ctx.service.deleteMessage(ctx.message);
   ctx.popDetails();
 }
 
@@ -110,34 +109,43 @@ void messageInfo(MessagePopupActionContext ctx) {
   }
   map["chat"] = ctx.chat.toMap();
   final String str = encoder.convert(map);
+  final adaptiveTheme = Theme.of(ctx.context);
   showDialog(
     context: ctx.context,
-    builder: (context) => AlertDialog(
-      title: Text("Message Info", style: context.theme.textTheme.titleLarge),
-      backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-      content: SizedBox(
-        width: NavigationSvc.width(ctx.widthContext) * 3 / 5,
-        height: context.height * 1 / 4,
-        child: Container(
-          padding: const EdgeInsets.all(10.0),
-          decoration: BoxDecoration(
-            color: context.theme.colorScheme.surface,
-            borderRadius: const BorderRadius.all(Radius.circular(10)),
-          ),
-          child: SingleChildScrollView(
-            child: SelectableText(str, style: context.theme.textTheme.bodyLarge),
+    builder: (context) => Theme(
+      data: adaptiveTheme,
+      child: AlertDialog(
+        title: Text("Message Info", style: adaptiveTheme.textTheme.titleLarge),
+        backgroundColor: adaptiveTheme.colorScheme.surfaceContainerHighest,
+        content: SizedBox(
+          width: NavigationSvc.width(ctx.widthContext) * 3 / 5,
+          height: context.height * 1 / 4,
+          child: Container(
+            padding: const EdgeInsets.all(10.0),
+            decoration: BoxDecoration(
+              color: adaptiveTheme.colorScheme.surface,
+              borderRadius: const BorderRadius.all(Radius.circular(10)),
+            ),
+            child: SingleChildScrollView(
+              child: SelectableText(str, style: adaptiveTheme.textTheme.bodyLarge),
+            ),
           ),
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(
+              "Close",
+              style: adaptiveTheme.textTheme.bodyLarge!.copyWith(color: adaptiveTheme.colorScheme.primary),
+            ),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(
-            "Close",
-            style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary),
-          ),
-        ),
-      ],
     ),
   );
+}
+
+Future<void> cancelSend(MessagePopupActionContext ctx) async {
+  ctx.popDetails();
+  await OutgoingMsgHandler.cancelMessage(ctx.message.guid!);
 }

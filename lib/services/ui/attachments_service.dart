@@ -276,55 +276,43 @@ class AttachmentsService extends GetxService {
       if (savePath == null) {
         return showSnackbar('Error', 'You didn\'t select a file path!');
       } else if (await File(savePath).exists()) {
-        await showDialog(
-          barrierDismissible: false,
+        await showBBDialog(
           context: Get.context!,
-          builder: (BuildContext context) {
-            return AlertDialog(
-              title: Text(
-                "Confirm save",
-                style: context.theme.textTheme.titleLarge,
-              ),
-              content: Text("This file already exists.\nAre you sure you want to overwrite it?",
-                  style: context.theme.textTheme.bodyLarge),
-              backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-              actions: <Widget>[
-                TextButton(
-                  child: Text("No",
-                      style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-                  onPressed: () {
-                    Navigator.of(context, rootNavigator: true).pop();
-                  },
-                ),
-                TextButton(
-                  child: Text("Yes",
-                      style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-                  onPressed: () async {
-                    if (file.path != null) {
-                      await File(file.path!).copy(savePath);
-                    } else {
-                      await File(savePath).writeAsBytes(file.bytes!);
-                    }
-                    Navigator.of(context, rootNavigator: true).pop();
-                    showSnackbar(
-                      'Success',
-                      'Saved attachment to $savePath!',
-                      durationMs: 3000,
-                      button: TextButton(
-                        style: TextButton.styleFrom(
-                          backgroundColor: Get.theme.colorScheme.surfaceVariant,
-                        ),
-                        onPressed: () {
-                          launchUrl(Uri.file(savePath));
-                        },
-                        child: Text("OPEN FILE", style: TextStyle(color: Get.theme.colorScheme.onSurfaceVariant)),
-                      ),
-                    );
-                  },
-                ),
-              ],
-            );
-          },
+          barrierDismissible: false,
+          title: "Confirm save",
+          body: "This file already exists.\nAre you sure you want to overwrite it?",
+          actions: <BBDialogAction>[
+            BBDialogAction(
+              text: "No",
+              onPressed: () => Navigator.of(Get.context!, rootNavigator: true).pop(),
+            ),
+            BBDialogAction(
+              text: "Yes",
+              isDefault: true,
+              onPressed: () async {
+                if (file.path != null) {
+                  await File(file.path!).copy(savePath);
+                } else {
+                  await File(savePath).writeAsBytes(file.bytes!);
+                }
+                Navigator.of(Get.context!, rootNavigator: true).pop();
+                showSnackbar(
+                  'Success',
+                  'Saved attachment to $savePath!',
+                  durationMs: 3000,
+                  button: TextButton(
+                    style: TextButton.styleFrom(
+                      backgroundColor: Get.theme.colorScheme.surfaceVariant,
+                    ),
+                    onPressed: () {
+                      launchUrl(Uri.file(savePath));
+                    },
+                    child: Text("OPEN FILE", style: TextStyle(color: Get.theme.colorScheme.onSurfaceVariant)),
+                  ),
+                );
+              },
+            ),
+          ],
         );
       } else {
         if (file.path != null) {

@@ -93,23 +93,32 @@ class FindMyController extends GetxController {
       Logger.info("Received new location for ${friend.handle?.address}");
       if ((friend.latitude ?? 0) == 0 && (friend.longitude ?? 0) == 0) return;
 
-      final existingFriendIndex =
-          friends.indexWhere((e) => e.handle?.uniqueAddressAndService == friend.handle?.uniqueAddressAndService);
-      if (existingFriendIndex == -1) return;
-      final existingFriend = friends[existingFriendIndex];
+      final existingFriendIndex = friends.indexWhere((e) => e.stableId != null && e.stableId == friend.stableId);
+      final existingFriend = existingFriendIndex == -1 ? null : friends[existingFriendIndex];
 
-      if (existingFriend.status == null ||
+      final shouldUpdate = existingFriend == null ||
+          existingFriend.status == null ||
           friend.locatingInProgress ||
           LocationStatus.values.indexOf(existingFriend.status!) <=
-              LocationStatus.values.indexOf(friend.status ?? LocationStatus.legacy)) {
-        friends[existingFriendIndex] = friend;
+              LocationStatus.values.indexOf(friend.status ?? LocationStatus.legacy);
+
+      if (shouldUpdate) {
+        Logger.info("Updating map for ${friend.stableId}");
+        if (existingFriendIndex == -1) {
+          friends.add(friend);
+        } else {
+          friends[existingFriendIndex] = friend;
+        }
+
         friendsWithLocation.value =
             friends.where((item) => (item.latitude ?? 0) != 0 && (item.longitude ?? 0) != 0).toList();
         friendsWithoutLocation.value =
             friends.where((item) => (item.latitude ?? 0) == 0 && (item.longitude ?? 0) == 0).toList();
         buildFriendMarker(friend);
       }
-    } catch (_) {}
+    } catch (e, s) {
+      Logger.warn("Failed to fetch FindMy locations", error: e, trace: s, tag: 'FindMyController');
+    }
   }
 
   Future<void> getLocations({bool refreshFriends = true, bool refreshDevices = true}) async {
@@ -183,6 +192,7 @@ class FindMyController extends GetxController {
                 handle:
                     Handle.findOne(addressAndService: HandleLookupKey(e.invitationAcceptedHandles.first, "iMessage")) ??
                         Handle(address: e.invitationAcceptedHandles.first),
+                handleAddress: e.invitationAcceptedHandles.first,
                 lastUpdated: e.lastLocation?.timestamp != null
                     ? DateTime.fromMillisecondsSinceEpoch(e.lastLocation!.timestamp)
                     : null,
@@ -504,8 +514,9 @@ class FindMyController extends GetxController {
   }
 
   void buildFriendMarker(FindMyFriend friend) {
-    markers[friend.handle?.uniqueAddressAndService ?? randomString(6)] = Marker(
-      key: ValueKey('friend-${friend.handle?.uniqueAddressAndService}'),
+    final markerKey = friend.stableId ?? randomString(6);
+    markers[markerKey] = Marker(
+      key: ValueKey('friend-$markerKey'),
       point: LatLng(friend.latitude!, friend.longitude!),
       width: 35,
       height: 35,

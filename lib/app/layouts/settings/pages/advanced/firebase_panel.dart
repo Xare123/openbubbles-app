@@ -209,13 +209,13 @@ class _FirebasePanelState extends State<FirebasePanel> with ThemeHelpers {
                     Obx(() {
                       final _enabled =
                           SettingsSvc.settings.firstFcmRegisterDate.value != 0 && !SettingsSvc.fcmData.isNull;
-                      if (_enabled && !isSnap) return const SizedBox.shrink();
+                      if (_enabled) return const SizedBox.shrink();
                       return const SettingsDivider();
                     }),
                     Obx(() {
                       final _enabled =
                           SettingsSvc.settings.firstFcmRegisterDate.value != 0 && !SettingsSvc.fcmData.isNull;
-                      if (_enabled && !isSnap) return const SizedBox.shrink();
+                      if (_enabled) return const SizedBox.shrink();
 
                       return SettingsTile(
                           leading: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -362,49 +362,38 @@ class _FirebasePanelState extends State<FirebasePanel> with ThemeHelpers {
                             containerColor: Colors.redAccent,
                           ),
                           onTap: () {
-                            showDialog(
+                            showBBDialog(
                               context: context,
-                              builder: (BuildContext context) {
-                                return AlertDialog(
-                                    backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                                    title: Text("Are You Sure?", style: context.theme.textTheme.titleLarge),
-                                    content: Text(
-                                      'This will remove all Firebase configurations from the app. You will no longer receive notifications or Server URL updates from Firebase and you will need to re-register your device if you want to use Firebase again. This will also close the app. Are you sure you want to continue?',
-                                      style: context.theme.textTheme.bodyLarge,
-                                    ),
-                                    actions: <Widget>[
-                                      TextButton(
-                                        child: Text("Cancel",
-                                            style: context.theme.textTheme.bodyLarge!
-                                                .copyWith(color: context.theme.colorScheme.primary)),
-                                        onPressed: () {
-                                          Navigator.of(context).pop();
-                                        },
-                                      ),
-                                      TextButton(
-                                        child: Text("Yes",
-                                            style: context.theme.textTheme.bodyLarge!
-                                                .copyWith(color: context.theme.colorScheme.primary)),
-                                        onPressed: () async {
-                                          // Clear the FCM data from the database, shared preferences, and locally
-                                          await FCMData.deleteFcmData();
+                              title: "Are You Sure?",
+                              body:
+                                  'This will remove all Firebase configurations from the app. You will no longer receive notifications or Server URL updates from Firebase and you will need to re-register your device if you want to use Firebase again. This will also close the app. Are you sure you want to continue?',
+                              actions: [
+                                BBDialogAction(
+                                  text: "Cancel",
+                                  onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+                                ),
+                                BBDialogAction(
+                                  text: "Yes",
+                                  isDefault: true,
+                                  onPressed: () async {
+                                    // Clear the FCM data from the database, shared preferences, and locally
+                                    await FCMData.deleteFcmData();
 
-                                          // Delete the Firebase FCM token
-                                          try {
-                                            if (FirebaseSvc.token != null) {
-                                              await MethodChannelSvc.actions.firebaseDeleteToken();
-                                            }
-                                          } catch (e, s) {
-                                            Logger.error("Failed to delete Firebase FCM token", error: e, trace: s);
-                                          }
+                                    // Delete the Firebase FCM token
+                                    try {
+                                      if (FirebaseSvc.token != null) {
+                                        await MethodChannelSvc.actions.firebaseDeleteToken();
+                                      }
+                                    } catch (e, s) {
+                                      Logger.error("Failed to delete Firebase FCM token", error: e, trace: s);
+                                    }
 
-                                          SettingsSvc.settings.firstFcmRegisterDate.value = 0;
-                                          await SettingsSvc.settings.saveOneAsync('firstFcmRegisterDate');
-                                          exit(0);
-                                        },
-                                      ),
-                                    ]);
-                              },
+                                    SettingsSvc.settings.firstFcmRegisterDate.value = 0;
+                                    await SettingsSvc.settings.saveOneAsync('firstFcmRegisterDate');
+                                    exit(0);
+                                  },
+                                ),
+                              ],
                             );
                           });
                     }),

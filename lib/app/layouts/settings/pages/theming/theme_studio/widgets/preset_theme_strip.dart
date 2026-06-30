@@ -48,8 +48,17 @@ class _ThemeSelectorSectionState extends State<ThemeSelectorSection> {
     final all = controller.allThemes;
 
     // Partition by brightness
-    final lightAll = all.where((t) => t.data.colorScheme.brightness == Brightness.light).toList();
-    final darkAll = all.where((t) => t.data.colorScheme.brightness == Brightness.dark).toList();
+    final lightAll = all
+        .where(
+            (t) => t.data.colorScheme.brightness == Brightness.light && controller.includeInGeneralThemeLists(t.name))
+        .toList();
+    final darkAll = all
+        .where((t) => t.data.colorScheme.brightness == Brightness.dark && controller.includeInGeneralThemeLists(t.name))
+        .toList();
+    final adaptiveLight =
+        controller.adaptiveThemes.where((t) => t.data.colorScheme.brightness == Brightness.light).toList();
+    final adaptiveDark =
+        controller.adaptiveThemes.where((t) => t.data.colorScheme.brightness == Brightness.dark).toList();
 
     // Canonical defaults shown full-width; everything else goes in the scroll row
     final brightWhite = lightAll.firstWhereOrNull((t) => t.name == "Bright White");
@@ -78,6 +87,7 @@ class _ThemeSelectorSectionState extends State<ThemeSelectorSection> {
             controller: controller,
             title: showDark ? "Dark Themes" : "Light Themes",
             defaultTheme: showDark ? oledDark : brightWhite,
+            adaptiveThemes: showDark ? adaptiveDark : adaptiveLight,
             materialYouThemes: showDark ? materialDark : materialLight,
             otherThemes: showDark ? darkOther : lightOther,
             isForDark: showDark,
@@ -101,6 +111,7 @@ class _ModeGroup extends StatefulWidget {
     required this.controller,
     required this.title,
     required this.defaultTheme,
+    required this.adaptiveThemes,
     required this.materialYouThemes,
     required this.otherThemes,
     required this.isForDark,
@@ -112,6 +123,7 @@ class _ModeGroup extends StatefulWidget {
   final ThemeStudioController controller;
   final String title;
   final ThemeStruct? defaultTheme;
+  final List<ThemeStruct> adaptiveThemes;
   final List<ThemeStruct> materialYouThemes;
   final List<ThemeStruct> otherThemes;
   final bool isForDark;
@@ -234,6 +246,36 @@ class _ModeGroupState extends State<_ModeGroup> {
           ),
           const SizedBox(height: 14),
         ],
+        if (widget.adaptiveThemes.isNotEmpty) ...[
+          const _SubLabel("Adaptive Theme From Custom Background"),
+          const SizedBox(height: 6),
+          SizedBox(
+            height: 110,
+            child: RepaintBoundary(
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: widget.adaptiveThemes.length,
+                itemBuilder: (ctx, i) {
+                  final t = widget.adaptiveThemes[i];
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 10),
+                    child: _ThemeCard(
+                      struct: t,
+                      titleOverride: widget.controller.displayNameForThemeName(t.name),
+                      isActive: widget.activeTheme.name == t.name,
+                      isApplied: widget.appliedThemeName == t.name,
+                      selectionIsPending: _selectionIsPending,
+                      onTap: () => widget.controller.applyTheme(context, t),
+                      onLongPress: () => dialogs.showContextMenu(context, t),
+                      onSecondaryTap: () => dialogs.showContextMenu(context, t),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
         if (widget.materialYouThemes.isNotEmpty) ...[
           const _SubLabel("Material You"),
           const SizedBox(height: 6),
@@ -249,7 +291,7 @@ class _ModeGroupState extends State<_ModeGroup> {
                     padding: const EdgeInsets.only(right: 10),
                     child: _ThemeCard(
                       struct: t,
-                      titleOverride: ThemesService.materialYouDisplayName(t.name),
+                      titleOverride: widget.controller.displayNameForThemeName(t.name),
                       isActive: widget.activeTheme.name == t.name,
                       isApplied: widget.appliedThemeName == t.name,
                       selectionIsPending: _selectionIsPending,
@@ -278,6 +320,7 @@ class _ModeGroupState extends State<_ModeGroup> {
                   padding: const EdgeInsets.only(right: 10),
                   child: _ThemeCard(
                     struct: t,
+                    titleOverride: widget.controller.displayNameForThemeName(t.name),
                     isActive: widget.activeTheme.name == t.name,
                     isApplied: widget.appliedThemeName == t.name,
                     selectionIsPending: _selectionIsPending,
@@ -300,6 +343,7 @@ class _ModeGroupState extends State<_ModeGroup> {
             onLoadMore: _loadMorePresets,
             cardBuilder: (t) => _ThemeCard(
               struct: t,
+              titleOverride: widget.controller.displayNameForThemeName(t.name),
               isActive: widget.activeTheme.name == t.name,
               isApplied: widget.appliedThemeName == t.name,
               selectionIsPending: _selectionIsPending,

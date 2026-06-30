@@ -31,14 +31,10 @@ class MaterialHeader extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Rx<Color> _backgroundColor = (ThemeSvc.isAnyMaterialYouSelected
-            ? context.theme.colorScheme.surfaceContainerHighest
-            : context.theme.colorScheme.surface)
+    final Rx<Color> _backgroundColor = context.theme.colorScheme.surfaceContainerHighest
         .withValues(alpha: (kIsDesktop && SettingsSvc.settings.windowEffect.value != WindowEffect.disabled) ? 0.4 : 1)
         .obs;
-    final Color _foregroundColor = ThemeSvc.isAnyMaterialYouSelected
-        ? context.theme.colorScheme.onSurfaceVariant
-        : context.theme.colorScheme.onSurface;
+    final Color _foregroundColor = context.theme.colorScheme.onSurfaceVariant;
 
     return Stack(children: [
       Obx(() => AppBar(
@@ -164,46 +160,34 @@ class MaterialHeader extends StatelessWidget implements PreferredSizeWidget {
                       }
                       Navigator.of(context).pop();
                     } else if (value == 2) {
-                      showDialog(
+                      showBBDialog(
                         barrierDismissible: false,
                         context: context,
-                        builder: (BuildContext context) {
-                          return AlertDialog(
-                            title: Text(
-                              "Are you sure?",
-                              style: context.theme.textTheme.titleLarge,
-                            ),
-                            content: Text("This chat will be moved to trash on all synced devices",
-                                style: context.theme.textTheme.bodyLarge),
-                            backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                            actions: <Widget>[
-                              TextButton(
-                                child: Text("No",
-                                    style: context.theme.textTheme.bodyLarge!
-                                        .copyWith(color: context.theme.colorScheme.primary)),
-                                onPressed: () {
-                                  if (Get.isSnackbarOpen) {
-                                    Get.closeAllSnackbars();
-                                  }
-                                  Navigator.of(context).pop();
-                                },
-                              ),
-                              TextButton(
-                                child: Text("Yes",
-                                    style: context.theme.textTheme.bodyLarge!
-                                        .copyWith(color: context.theme.colorScheme.primary)),
-                                onPressed: () async {
-                                  ChatsSvc.removeChat(controller.chat);
-                                  ChatsSvc.softDeleteChat(controller.chat);
-                                  if (Get.isSnackbarOpen) {
-                                    Get.closeAllSnackbars();
-                                  }
-                                  Navigator.of(context).pop();
-                                },
-                              ),
-                            ],
-                          );
-                        },
+                        title: "Are you sure?",
+                        body: "This chat will be moved to trash on all synced devices",
+                        actions: <BBDialogAction>[
+                          BBDialogAction(
+                            text: "No",
+                            onPressed: () {
+                              if (Get.isSnackbarOpen) {
+                                Get.closeAllSnackbars();
+                              }
+                              Navigator.of(context, rootNavigator: true).pop();
+                            },
+                          ),
+                          BBDialogAction(
+                            text: "Yes",
+                            isDestructive: true,
+                            onPressed: () async {
+                              ChatsSvc.removeChat(controller.chat);
+                              ChatsSvc.softDeleteChat(controller.chat);
+                              if (Get.isSnackbarOpen) {
+                                Get.closeAllSnackbars();
+                              }
+                              Navigator.of(context, rootNavigator: true).pop();
+                            },
+                          ),
+                        ],
                       );
                     } else if (value == 3) {
                       showBookmarksThread(controller, context);

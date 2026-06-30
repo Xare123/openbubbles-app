@@ -21,8 +21,6 @@ class _SamsungConversationTileState extends CustomState<SamsungConversationTile,
 
   bool get shouldHighlight => controller.shouldHighlight.value;
 
-  bool get hoverHighlight => controller.hoverHighlight.value;
-
   @override
   void initState() {
     super.initState();
@@ -121,9 +119,7 @@ class _SamsungConversationTileState extends CustomState<SamsungConversationTile,
                     ? context.theme.colorScheme.surfaceContainerHighest
                     : shouldHighlight
                         ? context.theme.colorScheme.primaryContainer
-                        : hoverHighlight
-                            ? context.theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5)
-                            : null,
+                        : Colors.transparent,
           ),
           duration: const Duration(milliseconds: 100),
           child: NavigationSvc.isAvatarOnly(context)

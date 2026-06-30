@@ -50,9 +50,10 @@ class KeyboardShortcutHandler {
           SettingsSvc.serverDetails.isMinVentura &&
           SettingsSvc.serverDetails.supportsEditAndUnsend) {
         final chat = controller.chat;
-        final message = MessagesSvc(chat.guid).mostRecentSent;
+        final service = maybeFindMessagesSvc(chat.guid);
+        final message = service?.mostRecentSent;
         if (message != null) {
-          final messageController = MessagesSvc(chat.guid).getOrCreateState(message);
+          final messageController = service!.getOrCreateState(message);
           final isSending = messageController.isSending.value;
           if (!isSending) {
             final parts = messageController.parts;

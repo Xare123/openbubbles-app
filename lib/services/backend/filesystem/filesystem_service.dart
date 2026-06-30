@@ -99,6 +99,25 @@ class FilesystemService {
   /// The file does not necessarily exist yet; callers must create it if needed.
   String chatAvatarPath(String chatGuid) => join(avatarsPath, sanitizeGuid(chatGuid), 'avatar.jpg');
 
+  /// Resolves an existing custom background for a chat using the same folder
+  /// layout as the background cropper.
+  String? getExistingChatBackgroundPath(String chatGuid) {
+    if (kIsWeb) return null;
+
+    final sanitizedGuid = sanitizeGuid(chatGuid);
+    final directory = Directory(join(customBackgroundsPath, sanitizedGuid));
+    if (!directory.existsSync()) return null;
+
+    final candidates = directory
+        .listSync()
+        .whereType<File>()
+        .where((file) => basename(file.path).startsWith('background'))
+        .toList()
+      ..sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+
+    return candidates.isEmpty ? null : candidates.first.path;
+  }
+
   /// Strips the Android internal storage prefix from [path] for display.
   /// Returns [path] unchanged on non-Android platforms.
   String toDisplayPath(String path) {

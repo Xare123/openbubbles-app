@@ -101,7 +101,7 @@ class LifecycleService with WidgetsBindingObserver {
       if (isBubble) {
         closeBubble();
       } else {
-        close();
+        unawaited(close());
       }
     }
 
@@ -208,7 +208,7 @@ class LifecycleService with WidgetsBindingObserver {
     IsolateNameServer.registerPortWithName(port.sendPort, 'bg_isolate');
   }
 
-  void close() {
+  Future<void> close() async {
     // DO NOT remove observer here, it needs to stay registered to receive resumed events.
     // Leaving this commented out as a reminder.
     // WidgetsBinding.instance.removeObserver(this);
@@ -219,6 +219,12 @@ class LifecycleService with WidgetsBindingObserver {
 
     if ((!kIsDesktop || wasActiveAliveBefore != false) && GetIt.I.isRegistered<ChatsService>()) {
       ChatsSvc.setActiveToDead();
+    }
+
+    // Stop any active typing indicators before draining the isolate so the
+    // HTTP request completes and the recipient's typing indicator is cleared.
+    if (GetIt.I.isRegistered<TypingIndicatorService>()) {
+      await TypingIndicatorSvc.stopAllTyping();
     }
 
     // Only stop the isolate and disconnect if the app is paused.

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:bluebubbles/helpers/ui/theme_helpers.dart';
@@ -43,6 +44,7 @@ class _TabletModeWrapperState extends State<TabletModeWrapper> with ThemeHelpers
   late final RxDouble _ratio;
   double? _maxWidth;
   bool? altLayoutCache;
+  StreamSubscription? _eventSub;
 
   get _width1 => max(
       min(_ratio * _maxWidth!, widget.maxWidthLeft ?? double.infinity), widget.minWidthLeft ?? double.negativeInfinity);
@@ -54,7 +56,8 @@ class _TabletModeWrapperState extends State<TabletModeWrapper> with ThemeHelpers
     super.initState();
     _ratio =
         RxDouble((PrefsSvc.desktop.getSplitRatio() ?? widget.initialRatio).clamp(widget.minRatio, widget.maxRatio));
-    EventDispatcherSvc.stream.listen((event) {
+    _eventSub = EventDispatcherSvc.stream.listen((event) {
+      if (!mounted) return;
       if (event.type == 'split-refresh') {
         _ratio.value = PrefsSvc.desktop.getSplitRatio() ?? _ratio.value;
         setState(() {});
@@ -67,6 +70,12 @@ class _TabletModeWrapperState extends State<TabletModeWrapper> with ThemeHelpers
       await PrefsSvc.desktop.setSplitRatio(val);
       EventDispatcherSvc.emit('split-refresh', null);
     });
+  }
+
+  @override
+  void dispose() {
+    _eventSub?.cancel();
+    super.dispose();
   }
 
   @override

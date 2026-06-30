@@ -34,7 +34,6 @@ Used for: callback handle storage (background isolate registration), install tim
 ```dart
 PrefsSvc.desktop.setWindowDimensions(width: 1280, height: 720);
 final themeName = PrefsSvc.theme.getSelectedDarkTheme();
-await PrefsSvc.messaging.clearLastOpenedChat();
 ```
 
 Use category helpers instead of `PrefsSvc.i` direct access. Keep raw `PrefsSvc.i` usage restricted to helper implementation internals.

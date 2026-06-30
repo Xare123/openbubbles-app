@@ -36,8 +36,9 @@ class UrlPreview extends StatefulWidget {
 class _UrlPreviewState extends State<UrlPreview> with AutomaticKeepAliveClientMixin, TickerProviderStateMixin {
   UrlPreviewData get data => widget.data;
   UrlPreviewData? dataOverride;
-  File? get file => content is PlatformFile && content?.path != null ? File(content!.path!) : null;
-  PlatformFile? content;
+  PlatformFile? get resolvedContent => content is PlatformFile ? content as PlatformFile : null;
+  File? get file => resolvedContent?.path != null ? File(resolvedContent!.path!) : null;
+  Object? content;
   Metadata? _fetchedMetadata;
   String? _previewImagePath;
   String? _iconImagePath;
@@ -373,16 +374,16 @@ class _UrlPreviewState extends State<UrlPreview> with AutomaticKeepAliveClientMi
     final webImageUrl = kIsWeb ? (data.imageMetadata?.url ?? _fetchedMetadata?.image) : null;
     final _rawSiteText = widget.file != null
         ? (dataOverride?.siteName ?? "")
-        : Uri.tryParse(data.url ?? data.originalUrl ?? "")?.host ?? data.siteName;
+        : Uri.tryParse(data.originalUrl ?? data.url ?? "")?.host ?? data.siteName;
     final siteText = _rawSiteText?.replaceFirst(RegExp(r'^www\.'), '');
     // Show the plugin-payload attachment image only when no disk-cached preview is available.
     final hasAppleImage = _previewImagePath == null && webImageUrl == null;
     final _data = dataOverride ?? data;
     final inReply = ReplyScope.maybeOf(context) != null;
     return InkWell(
-      onTap: widget.file != null && _data.url != null
+      onTap: widget.file != null && (_data.originalUrl ?? _data.url) != null
           ? () async {
-              await launchUrl(Uri.parse(_data.url!), mode: LaunchMode.externalApplication);
+              await launchUrl(Uri.parse(_data.originalUrl ?? _data.url!), mode: LaunchMode.externalApplication);
             }
           : null,
       child: Column(
@@ -392,13 +393,13 @@ class _UrlPreviewState extends State<UrlPreview> with AutomaticKeepAliveClientMi
           if (!inReply && (_previewImagePath != null || webImageUrl != null))
             _buildPreviewImage(context,
                 animate: _previewImagePath != null && !_previewImageFromDisk, webImageUrl: webImageUrl),
-          if (content is PlatformFile && hasAppleImage && content?.bytes != null && !inReply)
+          if (resolvedContent?.bytes != null && hasAppleImage && !inReply)
             ClipRRect(
               borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
               child: Container(
                 decoration: BoxDecoration(
                   image: DecorationImage(
-                    image: MemoryImage(content!.bytes!),
+                    image: MemoryImage(resolvedContent!.bytes!),
                     fit: BoxFit.cover,
                   ),
                 ),
@@ -409,7 +410,7 @@ class _UrlPreviewState extends State<UrlPreview> with AutomaticKeepAliveClientMi
                     child: ConstrainedBox(
                       constraints: BoxConstraints(maxHeight: context.height * 0.4, minHeight: 100),
                       child: Image.memory(
-                        content!.bytes!,
+                        resolvedContent!.bytes!,
                         gaplessPlayback: true,
                         filterQuality: FilterQuality.none,
                         errorBuilder: (context, object, stacktrace) => Center(
@@ -422,12 +423,7 @@ class _UrlPreviewState extends State<UrlPreview> with AutomaticKeepAliveClientMi
                 ),
               ),
             ),
-          if (content is PlatformFile &&
-              hasAppleImage &&
-              content?.bytes == null &&
-              content?.path != null &&
-              file != null &&
-              !inReply)
+          if (resolvedContent != null && hasAppleImage && resolvedContent?.bytes == null && file != null && !inReply)
             ClipRRect(
               borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
               child: Container(
@@ -456,39 +452,31 @@ class _UrlPreviewState extends State<UrlPreview> with AutomaticKeepAliveClientMi
                               const SizedBox(width: 2.0),
                               IconButton(
                                   onPressed: () {
-                                    showDialog(
+                                    showBBDialog(
                                       context: context,
-                                      builder: (context) => AlertDialog(
-                                        title: Text(
-                                          "URL Preview Stacktrace",
-                                          style: context.theme.textTheme.titleLarge,
-                                        ),
-                                        backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                                        content: SizedBox(
-                                          width: NavigationSvc.width(context) * 3 / 5,
-                                          height: context.height * 1 / 4,
-                                          child: Container(
-                                            padding: const EdgeInsets.all(10.0),
-                                            decoration: BoxDecoration(
-                                                color: context.theme.colorScheme.surface,
-                                                borderRadius: const BorderRadius.all(Radius.circular(10))),
-                                            child: SingleChildScrollView(
-                                              child: SelectableText(
-                                                stacktrace.toString(),
-                                                style: context.theme.textTheme.bodyLarge,
-                                              ),
+                                      title: "URL Preview Stacktrace",
+                                      content: SizedBox(
+                                        width: NavigationSvc.width(context) * 3 / 5,
+                                        height: context.height * 1 / 4,
+                                        child: Container(
+                                          padding: const EdgeInsets.all(10.0),
+                                          decoration: BoxDecoration(
+                                              color: context.theme.colorScheme.surface,
+                                              borderRadius: const BorderRadius.all(Radius.circular(10))),
+                                          child: SingleChildScrollView(
+                                            child: SelectableText(
+                                              stacktrace.toString(),
+                                              style: context.theme.textTheme.bodyLarge,
                                             ),
                                           ),
                                         ),
-                                        actions: [
-                                          TextButton(
-                                            child: Text("Close",
-                                                style: context.theme.textTheme.bodyLarge!
-                                                    .copyWith(color: context.theme.colorScheme.primary)),
-                                            onPressed: () => Navigator.of(context).pop(),
-                                          ),
-                                        ],
                                       ),
+                                      actions: [
+                                        BBDialogAction(
+                                          text: "Close",
+                                          onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+                                        ),
+                                      ],
                                     );
                                   },
                                   icon: const Icon(CupertinoIcons.info_circle))

@@ -15,15 +15,11 @@ class SharedPreferencesDatabaseActions {
 
   int? getDbVersion() => service.i.getInt(_dbVersionKey);
 
-  Future<void> setDbVersion(int version) async {
-    await service.i.setInt(_dbVersionKey, version);
-  }
+  Future<void> setDbVersion(int version) => service.i.setInt(_dbVersionKey, version);
 
   int getThemesVersion() => service.i.getInt(_themesVersionKey) ?? 0;
 
-  Future<void> setThemesVersion(int version) async {
-    await service.i.setInt(_themesVersionKey, version);
-  }
+  Future<void> setThemesVersion(int version) => service.i.setInt(_themesVersionKey, version);
 
   bool shouldUseCustomPath() => service.i.getBool(_useCustomPathKey) == true;
 

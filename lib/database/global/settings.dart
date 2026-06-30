@@ -17,6 +17,7 @@ import 'package:supercharged/supercharged.dart';
 import 'package:universal_io/io.dart';
 
 class Settings {
+  final RxString iMessageStatsSource = "server".obs;
   final RxInt firstFcmRegisterDate = 0.obs;
   final RxString iCloudAccount = "".obs;
   final RxString guidAuthKey = "".obs;
@@ -152,7 +153,6 @@ class Settings {
   final RxBool redactedMode = false.obs;
   final RxBool hideAttachments = true.obs;
   final RxBool hideContactInfo = true.obs;
-  final RxBool generateFakeContactNames = false.obs;
   final RxBool generateFakeAvatars = false.obs;
   final RxBool hideMessageContent = false.obs;
 
@@ -226,7 +226,7 @@ class Settings {
   List<DetailsMenuAction> get detailsMenuActions => _detailsMenuActions;
 
   // Linux settings
-  final RxBool useCustomTitleBar = RxBool(true);
+  final Rx<BBTitleBarStyle> titleBarStyle = BBTitleBarStyle.custom.obs;
 
   // Desktop settings
   final RxBool useDesktopAccent = RxBool(false);
@@ -441,7 +441,6 @@ class Settings {
       'hideMessageContent': hideMessageContent.value,
       'hideAttachments': hideAttachments.value,
       'hideContactInfo': hideContactInfo.value,
-      'generateFakeContactNames': generateFakeContactNames.value,
       'generateFakeAvatars': generateFakeAvatars.value,
       'generateFakeMessageContent': hideMessageContent.value,
       'enableQuickTapback': enableQuickTapback.value,
@@ -461,7 +460,7 @@ class Settings {
       'pinRowsLandscape': pinRowsLandscape.value,
       'pinColumnsLandscape': pinColumnsLandscape.value,
       'maxAvatarsInGroupWidget': maxAvatarsInGroupWidget.value,
-      'useCustomTitleBar': useCustomTitleBar.value,
+      'titleBarStyle': titleBarStyle.value.index,
       'windowEffect': windowEffect.value.name,
       'windowEffectCustomOpacityLight': windowEffectCustomOpacityLight.value,
       'windowEffectCustomOpacityDark': windowEffectCustomOpacityDark.value,
@@ -476,6 +475,7 @@ class Settings {
       'lastMessageRetentionCleanup': lastMessageRetentionCleanup.value,
       'lastReviewRequestTimestamp': lastReviewRequestTimestamp.value,
       'serverPrivateAPI': serverPrivateAPI.value,
+      'iMessageStatsSource': iMessageStatsSource.value,
     };
 
     if (includeAll) {
@@ -656,6 +656,7 @@ class Settings {
         usingRustPush ? true : map['enablePrivateAPI'] ?? SettingsSvc.settings.enablePrivateAPI.value;
     SettingsSvc.settings.serverPrivateAPI.value =
         map['serverPrivateAPI'] ?? SettingsSvc.settings.serverPrivateAPI.value;
+    SettingsSvc.settings.iMessageStatsSource.value = (map['iMessageStatsSource'] == 'local') ? 'local' : 'server';
     SettingsSvc.settings.privateSendTypingIndicators.value =
         map['privateSendTypingIndicators'] ?? SettingsSvc.settings.privateSendTypingIndicators.value;
     SettingsSvc.settings.privateMarkChatAsRead.value =
@@ -671,8 +672,6 @@ class Settings {
         map['hideMessageContent'] ?? SettingsSvc.settings.hideMessageContent.value;
     SettingsSvc.settings.hideAttachments.value = map['hideAttachments'] ?? SettingsSvc.settings.hideAttachments.value;
     SettingsSvc.settings.hideContactInfo.value = map['hideContactInfo'] ?? SettingsSvc.settings.hideContactInfo.value;
-    SettingsSvc.settings.generateFakeContactNames.value =
-        map['generateFakeContactNames'] ?? SettingsSvc.settings.generateFakeContactNames.value;
     SettingsSvc.settings.generateFakeAvatars.value =
         map['generateFakeAvatars'] ?? SettingsSvc.settings.generateFakeAvatars.value;
     SettingsSvc.settings.hideMessageContent.value =
@@ -716,8 +715,11 @@ class Settings {
         map['pinColumnsLandscape'] ?? SettingsSvc.settings.pinColumnsLandscape.value;
     SettingsSvc.settings.maxAvatarsInGroupWidget.value =
         map['maxAvatarsInGroupWidget'] ?? SettingsSvc.settings.maxAvatarsInGroupWidget.value;
-    SettingsSvc.settings.useCustomTitleBar.value =
-        map['useCustomTitleBar'] ?? SettingsSvc.settings.useCustomTitleBar.value;
+    SettingsSvc.settings.titleBarStyle.value = map['titleBarStyle'] != null
+        ? BBTitleBarStyle.values[map['titleBarStyle']]
+        : map['useCustomTitleBar'] == false
+            ? BBTitleBarStyle.native
+            : SettingsSvc.settings.titleBarStyle.value;
 
     SettingsSvc.settings.showReplyField.value = map['showReplyField'] ?? SettingsSvc.settings.showReplyField.value;
     if (map.containsKey('selectedActionIndices')) {
@@ -925,6 +927,7 @@ class Settings {
     s.privateAPIAttachmentSend.value = map['privateAPIAttachmentSend'] ?? false;
     s.enablePrivateAPI.value = usingRustPush ? true : map['enablePrivateAPI'] ?? false;
     s.serverPrivateAPI.value = map['serverPrivateAPI'];
+    s.iMessageStatsSource.value = (map['iMessageStatsSource'] == 'local') ? 'local' : 'server';
     s.privateSendTypingIndicators.value = map['privateSendTypingIndicators'] ?? false;
     s.privateMarkChatAsRead.value = map['privateMarkChatAsRead'] ?? false;
     s.privateManualMarkAsRead.value = map['privateManualMarkAsRead'] ?? false;
@@ -934,7 +937,6 @@ class Settings {
     s.hideMessageContent.value = map['hideMessageContent'] ?? true;
     s.hideAttachments.value = map['hideAttachments'] ?? true;
     s.hideContactInfo.value = map['hideContactInfo'] ?? true;
-    s.generateFakeContactNames.value = map['generateFakeContactNames'] ?? false;
     s.generateFakeAvatars.value = map['generateFakeAvatars'] ?? false;
     s.hideMessageContent.value = map['generateFakeMessageContent'] ?? false;
     s.enableUnifiedPush.value = map['enableUnifiedPush'] ?? false;
@@ -963,7 +965,11 @@ class Settings {
     s.pinRowsLandscape.value = map['pinRowsLandscape'] ?? 1;
     s.pinColumnsLandscape.value = map['pinColumnsLandscape'] ?? 4;
     s.maxAvatarsInGroupWidget.value = map['maxAvatarsInGroupWidget'] ?? 4;
-    s.useCustomTitleBar.value = map['useCustomTitleBar'] ?? true;
+    s.titleBarStyle.value = map['titleBarStyle'] != null
+        ? BBTitleBarStyle.values[map['titleBarStyle']]
+        : map['useCustomTitleBar'] == false
+            ? BBTitleBarStyle.native
+            : BBTitleBarStyle.custom;
 
     s.showReplyField.value = map['showReplyField'] ?? true;
     s.selectedActionIndices.value = _processSelectedActionIndices(map['selectedActionIndices'], s.showReplyField.value);

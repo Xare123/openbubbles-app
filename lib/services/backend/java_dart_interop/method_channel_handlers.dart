@@ -439,6 +439,7 @@ class MethodChannelHandlers {
   Future<bool> _handleSmsMessage(MethodCall call, Map<String, dynamic>? _) async {
     try {
       if (!SettingsSvc.settings.isSmsRouter.value) return _ok();
+      await PushSvc.initFuture;
       final List<Object?> addresses = call.arguments['recipients'];
       String sender = call.arguments['sender'];
       final List<Object?> body = call.arguments['body'];

@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/app/wrappers/bb_app_bar.dart';
 import 'package:bluebubbles/app/wrappers/bb_scaffold.dart';
@@ -13,6 +15,8 @@ import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:path/path.dart' as p;
 import 'package:universal_io/io.dart';
 
+enum _EditStep { selectImage, crop, blur }
+
 class BackgroundCrop extends StatefulWidget {
   final Chat chat;
 
@@ -24,29 +28,58 @@ class BackgroundCrop extends StatefulWidget {
 
 class _BackgroundCropState extends State<BackgroundCrop> with ThemeHelpers {
   final _cropController = CropController();
+  _EditStep _currentStep = _EditStep.selectImage;
   Uint8List? _imageData;
-  bool _isLoading = true;
+  Uint8List? _croppedData;
+  bool _isLoading = false;
   bool _isLocked = true;
+  double _blurSigma = 0.0;
 
   Chat get chat => widget.chat;
 
-  void onCropped(CropResult croppedResult) async {
-    Uint8List croppedData;
+  Future<Uint8List> _applyBlurToImage(Uint8List bytes, double sigma) async {
+    if (sigma == 0) return bytes;
+
+    final codec = await ui.instantiateImageCodec(bytes);
+    final frame = await codec.getNextFrame();
+    final sourceImage = frame.image;
+
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final paint = Paint()..imageFilter = ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma);
+    canvas.drawImage(sourceImage, Offset.zero, paint);
+    final picture = recorder.endRecording();
+    final blurredImage = await picture.toImage(sourceImage.width, sourceImage.height);
+    final byteData = await blurredImage.toByteData(format: ui.ImageByteFormat.png);
+
+    sourceImage.dispose();
+    blurredImage.dispose();
+
+    return byteData!.buffer.asUint8List();
+  }
+
+  void onCropped(CropResult croppedResult) {
     switch (croppedResult) {
       case CropSuccess(:final croppedImage):
-        croppedData = croppedImage;
-        break;
+        if (mounted) {
+          setState(() {
+            _croppedData = croppedImage;
+            _currentStep = _EditStep.blur;
+          });
+        }
       case CropFailure(:final cause, :final stackTrace):
-        Navigator.of(context, rootNavigator: true).pop();
         showSnackbar("Error", "Failed to crop image");
         Logger.error(cause);
         Logger.error(stackTrace);
-        return;
     }
+  }
 
+  Future<void> _saveImage() async {
+    _showSavingDialog();
+    final Uint8List finalData = await _applyBlurToImage(_croppedData!, _blurSigma);
     final String sanitizedGuid = FilesystemService.sanitizeGuid(chat.guid);
     final File file =
-        File(p.join(FilesystemSvc.customBackgroundsPath, sanitizedGuid, "background-${croppedData.length}.png"));
+        File(p.join(FilesystemSvc.customBackgroundsPath, sanitizedGuid, "background-${finalData.length}.png"));
 
     if (!(await file.exists())) {
       await file.create(recursive: true);
@@ -60,7 +93,7 @@ class _BackgroundCropState extends State<BackgroundCrop> with ThemeHelpers {
       }
     }
 
-    await file.writeAsBytes(croppedData);
+    await file.writeAsBytes(finalData);
     await ChatsSvc.setChatCustomBackgroundPath(chat, file.path);
 
     if (!mounted) return;
@@ -72,13 +105,31 @@ class _BackgroundCropState extends State<BackgroundCrop> with ThemeHelpers {
   @override
   Widget build(BuildContext context) {
     final double screenAspectRatio = NavigationSvc.width(context) / context.height;
-
     return BBScaffold(
-      appBar: BBAppBar(
-        titleText: "Set Custom Background",
-        leading: buildBackButton(context),
-        actions: [
-          if (_imageData != null)
+      extendBodyBehindAppBar: false,
+      appBar: _buildAppBar(context, screenAspectRatio),
+      body: _buildBody(context, screenAspectRatio),
+    );
+  }
+
+  PreferredSizeWidget _buildAppBar(BuildContext context, double screenAspectRatio) {
+    switch (_currentStep) {
+      case _EditStep.selectImage:
+        return BBAppBar(
+          titleText: "Set Custom Background",
+          leading: buildBackButton(context),
+        );
+      case _EditStep.crop:
+        return BBAppBar(
+          titleText: "Crop Image",
+          leading: buildBackButton(context, callback: () {
+            setState(() {
+              _currentStep = _EditStep.selectImage;
+              _isLoading = false;
+            });
+            return false;
+          }),
+          actions: [
             IconButton(
               tooltip: _isLocked ? "Switch to free-form crop" : "Lock to screen ratio",
               icon: Icon(
@@ -93,87 +144,209 @@ class _BackgroundCropState extends State<BackgroundCrop> with ThemeHelpers {
                 _cropController.aspectRatio = _isLocked ? screenAspectRatio : null;
               },
             ),
-          AbsorbPointer(
-            absorbing: _imageData == null || _isLoading,
-            child: TextButton(
+            AbsorbPointer(
+              absorbing: _isLoading,
+              child: TextButton(
+                child: Text(
+                  "NEXT",
+                  style: context.theme.textTheme.bodyLarge!.apply(
+                    color: _isLoading ? context.theme.colorScheme.outline : context.theme.colorScheme.primary,
+                  ),
+                ),
+                onPressed: () => _cropController.crop(),
+              ),
+            ),
+          ],
+        );
+      case _EditStep.blur:
+        return BBAppBar(
+          titleText: "Adjust Blur",
+          leading: buildBackButton(context, callback: () {
+            setState(() {
+              _currentStep = _EditStep.crop;
+              _croppedData = null;
+              _isLoading = true;
+            });
+            return false;
+          }),
+          actions: [
+            TextButton(
               child: Text(
                 "SAVE",
                 style: context.theme.textTheme.bodyLarge!.apply(
-                  color: _imageData == null || _isLoading
-                      ? context.theme.colorScheme.outline
-                      : context.theme.colorScheme.primary,
+                  color: context.theme.colorScheme.primary,
                 ),
               ),
-              onPressed: () {
-                _showSavingDialog();
-                _cropController.crop();
-              },
+              onPressed: _saveImage,
             ),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: _imageData != null
-                ? Crop(
-                    controller: _cropController,
-                    image: _imageData!,
-                    onCropped: onCropped,
-                    onStatusChanged: (status) {
-                      setState(() {
-                        _isLoading = status != CropStatus.ready && status != CropStatus.cropping;
-                      });
-                    },
-                    withCircleUi: false,
-                    aspectRatio: _isLocked ? screenAspectRatio : null,
-                  )
-                : Center(
-                    child: Text(
-                      "Pick an image to use as the chat background",
-                      style: context.theme.textTheme.bodyLarge,
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-          ),
-          const SizedBox(height: 16),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-                side: BorderSide(color: context.theme.colorScheme.onPrimaryContainer),
-              ),
-              backgroundColor: context.theme.colorScheme.primaryContainer,
-            ),
-            onPressed: () async {
-              final res = await FilePicker.pickFiles(
-                withData: true,
-                type: FileType.custom,
-                allowedExtensions: ['png', 'jpg', 'jpeg'],
-              );
-              if (res == null || res.files.isEmpty || res.files.first.bytes == null) return;
+          ],
+        );
+    }
+  }
 
-              setState(() {
-                _imageData = res.files.first.bytes!;
-                _isLoading = true;
-              });
-            },
-            child: Text(
-              _imageData != null ? "Pick New Image" : "Pick Image",
-              style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.onPrimaryContainer),
+  Widget _buildBody(BuildContext context, double screenAspectRatio) {
+    switch (_currentStep) {
+      case _EditStep.selectImage:
+        return _buildSelectImageStep(context);
+      case _EditStep.crop:
+        return _buildCropStep(context, screenAspectRatio);
+      case _EditStep.blur:
+        return _buildBlurStep(context);
+    }
+  }
+
+  Widget _buildSelectImageStep(BuildContext context) {
+    return Column(
+      children: [
+        Expanded(
+          child: _imageData != null
+              ? Image.memory(_imageData!, fit: BoxFit.contain, width: double.infinity, height: double.infinity)
+              : Center(
+                  child: Text(
+                    "Pick an image to use as the chat background",
+                    style: context.theme.textTheme.bodyLarge,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+        ),
+        const SizedBox(height: 16),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+              side: BorderSide(color: context.theme.colorScheme.onPrimaryContainer),
+            ),
+            backgroundColor: context.theme.colorScheme.primaryContainer,
+          ),
+          onPressed: () async {
+            final res = await FilePicker.pickFiles(
+              withData: true,
+              type: FileType.custom,
+              allowedExtensions: ['png', 'jpg', 'jpeg'],
+            );
+            if (res == null || res.files.isEmpty || res.files.first.bytes == null) return;
+            setState(() {
+              _imageData = res.files.first.bytes!;
+              _croppedData = null;
+              _currentStep = _EditStep.crop;
+              _isLoading = true;
+            });
+          },
+          child: Text(
+            _imageData != null ? "Pick New Image" : "Pick Image",
+            style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.onPrimaryContainer),
+          ),
+        ),
+        SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
+      ],
+    );
+  }
+
+  Widget _buildCropStep(BuildContext context, double screenAspectRatio) {
+    return Column(
+      children: [
+        Expanded(
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: Crop(
+                  controller: _cropController,
+                  image: _imageData!,
+                  onCropped: onCropped,
+                  onStatusChanged: (status) {
+                    setState(() {
+                      _isLoading = status != CropStatus.ready;
+                    });
+                  },
+                  withCircleUi: false,
+                  aspectRatio: _isLocked ? screenAspectRatio : null,
+                  baseColor: context.theme.colorScheme.surface,
+                  maskColor: context.theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                ),
+              ),
+              if (_isLoading)
+                Positioned.fill(
+                  child: Container(
+                    color: context.theme.colorScheme.surface.withValues(alpha: 0.6),
+                    child: Center(child: buildProgressIndicator(context)),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBlurStep(BuildContext context) {
+    return Column(
+      children: [
+        Expanded(
+          child: ImageFiltered(
+            imageFilter: ui.ImageFilter.blur(
+              sigmaX: _blurSigma,
+              sigmaY: _blurSigma,
+              tileMode: TileMode.decal,
+            ),
+            child: Image.memory(
+              _croppedData!,
+              fit: BoxFit.contain,
+              width: double.infinity,
+              height: double.infinity,
             ),
           ),
-          SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
-        ],
-      ),
+        ),
+        ..._buildBlurSlider(context),
+        SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
+      ],
     );
+  }
+
+  List<Widget> _buildBlurSlider(BuildContext context) {
+    return [
+      const SizedBox(height: 8),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Row(
+          children: [
+            Icon(
+              iOS ? CupertinoIcons.wand_stars : Icons.blur_on_outlined,
+              size: 18,
+              color: context.theme.colorScheme.onSurfaceVariant,
+            ),
+            Expanded(
+              child: Slider(
+                min: 0,
+                max: 10,
+                value: _blurSigma,
+                onChanged: (value) {
+                  setState(() {
+                    _blurSigma = value;
+                  });
+                },
+              ),
+            ),
+            SizedBox(
+              width: 60,
+              child: Text(
+                _blurSigma == 0 ? "No blur" : _blurSigma.toStringAsFixed(1),
+                style: context.theme.textTheme.bodySmall?.copyWith(
+                  color: context.theme.colorScheme.onSurfaceVariant,
+                ),
+                textAlign: TextAlign.end,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ];
   }
 
   void _showSavingDialog() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text("Saving background...", style: context.theme.textTheme.titleLarge),
+        title: Text("Processing image...", style: context.theme.textTheme.titleLarge),
         content: SizedBox(
           height: 70,
           child: Center(child: buildProgressIndicator(context)),

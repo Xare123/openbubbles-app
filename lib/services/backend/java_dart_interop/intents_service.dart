@@ -175,7 +175,9 @@ class IntentsService {
     try {
       final call = await HttpSvc.faceTime.answer(callUuid);
       link = call.data?["data"]?["link"];
-    } catch (_) {}
+    } catch (e, s) {
+      Logger.warn("Failed to fetch FaceTime answer link", error: e, trace: s, tag: 'IntentsService');
+    }
     if (Get.context != null) {
       Navigator.of(Get.context!).pop();
     }

@@ -76,6 +76,7 @@ class _FindMyState extends State<FindMy> with AutomaticKeepAliveClientMixin, The
       latitude: decoded["initialLocation"]["latitude"],
       longitude: decoded["initialLocation"]["longitude"],
       handle: widget.message.getHandle()!,
+      handleAddress: widget.message.getHandle()!.address,
       title: null,
       subtitle: null,
       longAddress: null,
@@ -145,6 +146,7 @@ class _FindMyState extends State<FindMy> with AutomaticKeepAliveClientMixin, The
         title: null,
         subtitle: null,
         handle: Handle(address: e.invitationAcceptedHandles.first),
+        handleAddress: e.invitationAcceptedHandles.first,
         lastUpdated:
             e.lastLocation?.timestamp != null ? DateTime.fromMillisecondsSinceEpoch(e.lastLocation!.timestamp) : null,
         status: null,

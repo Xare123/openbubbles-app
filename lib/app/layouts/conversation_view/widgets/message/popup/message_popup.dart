@@ -15,7 +15,6 @@ import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/message_popup_action_context.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/reaction_picker_clipper.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/widgets/reaction_details.dart';
-import 'package:bluebubbles/app/components/custom/custom_cupertino_alert_dialog.dart';
 import 'package:bluebubbles/app/layouts/findmy/findmy_pin_clipper.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/reaction/reaction_clipper.dart';
 import 'package:bluebubbles/app/wrappers/bb_app_bar.dart';
@@ -96,6 +95,8 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
       chat.handles.firstWhereOrNull((handle) => handle.address == message.handleRelation.target?.address) != null);
   String? selfReaction;
   String? currentlySelectedReaction = "init";
+  final GlobalKey _childKey = GlobalKey();
+  double? _measuredChildHeight;
 
   ConversationViewController get cvController => widget.cvController;
 
@@ -165,6 +166,7 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
     }
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      final measuredHeight = _childKey.currentContext?.size?.height;
       currentlySelectedReaction = null;
       reactions = getUniqueReactionMessages(message.associatedMessages
           .where((e) =>
@@ -197,7 +199,14 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
         });
       }());
       setState(() {
-        if (iOS) messageOffset = itemHeight * numberToShow + 40;
+        if (iOS) {
+          if (measuredHeight != null) {
+            _measuredChildHeight = measuredHeight;
+            final remainingHeight = max(Get.height - Get.statusBarHeight - 135 - measuredHeight, itemHeight);
+            numberToShow = min(remainingHeight ~/ itemHeight, 5);
+          }
+          messageOffset = itemHeight * numberToShow + 40;
+        }
       });
     });
   }
@@ -232,6 +241,16 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
     HapticFeedback.lightImpact();
     widget.sendTapback(selfReaction == emoji ? "-${ReactionTypes.EMOJI}" : ReactionTypes.EMOJI, emoji, part.part);
     popDetails();
+  }
+
+  void _remeasureChild() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final h = _childKey.currentContext?.size?.height;
+      if (h != null && h != _measuredChildHeight) {
+        setState(() => _measuredChildHeight = h);
+      }
+    });
   }
 
   void popDetails({bool returnVal = true}) {
@@ -329,12 +348,22 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
                         tween: Tween<double>(begin: 0.8, end: 1),
                         curve: Curves.easeOutBack,
                         duration: const Duration(milliseconds: 500),
-                        child: ConstrainedBox(
-                            constraints: BoxConstraints(maxWidth: widget.size.width),
-                            child: MessageStateScope(
-                              messageState: widget.controller,
-                              child: widget.child,
-                            )),
+                        child: NotificationListener<SizeChangedLayoutNotification>(
+                          onNotification: (_) {
+                            _remeasureChild();
+                            return false;
+                          },
+                          child: SizeChangedLayoutNotifier(
+                            child: ConstrainedBox(
+                              key: _childKey,
+                              constraints: BoxConstraints(maxWidth: widget.size.width),
+                              child: MessageStateScope(
+                                messageState: widget.controller,
+                                child: widget.child,
+                              ),
+                            ),
+                          ),
+                        ),
                         builder: (context, size, child) {
                           return Transform.scale(
                             scale: size.clamp(1, double.infinity),
@@ -358,9 +387,10 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
                     ),
                   if (SettingsSvc.settings.enablePrivateAPI.value && isSent && minSierra && chat.isIMessage)
                     Positioned(
-                      bottom:
-                          (iOS ? itemHeight * numberToShow + 35 + widget.size.height : context.height - materialOffset)
-                              .clamp(0, context.height - (narrowScreen ? 200 : 125)),
+                      bottom: (iOS
+                              ? itemHeight * numberToShow + 35 + (_measuredChildHeight ?? widget.size.height)
+                              : context.height - materialOffset)
+                          .clamp(0, context.height - (narrowScreen ? 200 : 125)),
                       right: message.isFromMe! ? max(15, widget.size.width - emojiPickerSize + 65) : null,
                       left: !message.isFromMe!
                           ? max(widget.childPosition.dx + 10,
@@ -965,6 +995,11 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
           shouldDisableBtn: !canUnsend,
           action: DetailsMenuAction.UndoSend,
         ),
+      if (message.isFromMe! && widget.controller.isSending.value && OutgoingMsgHandler.hasPendingMessage(message.guid!))
+        DetailsMenuActionWidget(
+          onTap: () => popup_message_actions.cancelSend(_buildActionContext(DetailsMenuAction.CancelSend)),
+          action: DetailsMenuAction.CancelSend,
+        ),
       if (BackendSvc.canEditUnsend() &&
           message.isFromMe! &&
           !widget.controller.isSending.value &&
@@ -1038,18 +1073,9 @@ class _MessagePopupState extends State<MessagePopup> with SingleTickerProviderSt
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: allActions.sublist(numberToShow - 1),
                     );
-                    showDialog(
-                      useRootNavigator: false,
+                    showBBDialog(
                       context: context,
-                      builder: (context) => SettingsSvc.settings.skin.value == Skins.iOS
-                          ? CupertinoAlertDialog(
-                              backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                              content: content,
-                            )
-                          : AlertDialog(
-                              backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                              content: content,
-                            ),
+                      content: content,
                     );
                   },
                   title: 'More...',

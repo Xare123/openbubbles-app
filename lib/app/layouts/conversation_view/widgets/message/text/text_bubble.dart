@@ -185,7 +185,10 @@ class _TextBubbleState extends State<TextBubble> with ThemeHelpers {
                     : 10,
             right: isFromMe && !message.isBigEmoji ? 10 : 0)),
         color: isFromMe && !message.isBigEmoji && controller.dateScheduled.value == null
-            ? (selected ? context.theme.colorScheme.tertiaryContainer : context.theme.colorScheme.bubble(context, true))
+            ? (selected
+                ? context.theme.colorScheme.tertiaryContainer
+                : context.theme.colorScheme
+                    .bubble(context, message.chat.target?.isIMessage ?? true))
             : null,
         decoration: isFromMe || message.isBigEmoji
             ? null

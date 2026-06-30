@@ -60,6 +60,7 @@ extension ClientMessageErrorExtension on ClientMessageError {
     ClientMessageError.notFound: 10005,
     ClientMessageError.editFailed: 10006,
     ClientMessageError.unsendFailed: 10007,
+    ClientMessageError.userCanceled: 10008,
   };
 
   static const friendlyTitles = {
@@ -70,6 +71,7 @@ extension ClientMessageErrorExtension on ClientMessageError {
     ClientMessageError.notFound: "Not Found",
     ClientMessageError.editFailed: "Edit Failed",
     ClientMessageError.unsendFailed: "Unsend Failed",
+    ClientMessageError.userCanceled: "Manually Canceled",
   };
 
   int get code => codes[this]!;
@@ -325,10 +327,31 @@ extension MessageNotificationExtension on Message {
         }
         return "${sender}Empty message";
       }
+
+      // Handle the case where it's just a link, and we can show the Website title instead of "1 Link"
+      if (!isNullOrEmpty(payloadData?.urlData)) {
+        // Get the title of the website
+        final title = payloadData!.urlData?.firstOrNull?.title;
+        if (!isNullOrEmpty(title)) {
+          String text = "Website: ${title!.shorten(50)}";
+
+          // If there is a URL, grab just the domain and show it in parentheses.
+          if (!isNullOrEmpty(payloadData!.urlData?.firstOrNull?.url)) {
+            final uri = Uri.tryParse(payloadData!.urlData!.first.url ?? "");
+            if (uri != null) {
+              final domain = uri.host.replaceFirst("www.", "");
+              text += " ($domain)";
+            }
+          }
+
+          return text;
+        }
+      }
+
       // If there are attachments, return the number of attachments
-      if (realAttachments.isNotEmpty) {
+      if (dbAttachments.isNotEmpty) {
         if (isSticker) return "${sender}1 Sticker";
-        return "$sender${_getAttachmentText(realAttachments)}";
+        return "$sender${_getAttachmentText(dbAttachments.toList())}";
       } else if (hasAttachments) {
         // Fallback: message is marked as having attachments but they haven't loaded yet
         // (can happen with outgoing messages before the attachment links are fully persisted)

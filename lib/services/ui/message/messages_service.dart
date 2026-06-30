@@ -17,10 +17,33 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart' hide Response;
 
+MessagesService? maybeFindMessagesSvc(String chatGuid) =>
+    Get.isRegistered<MessagesService>(tag: chatGuid) ? Get.find<MessagesService>(tag: chatGuid) : null;
+
+MessagesService ensureMessagesSvc(String chatGuid) =>
+    maybeFindMessagesSvc(chatGuid) ??
+    Get.put(
+      MessagesService(chatGuid),
+      tag: chatGuid,
+    );
+
+MessagesService registerMessagesSvc(MessagesService service) =>
+    maybeFindMessagesSvc(service.tag) ??
+    Get.put(
+      service,
+      tag: service.tag,
+    );
+
 // ignore: non_constant_identifier_names
-MessagesService MessagesSvc(String chatGuid) => Get.isRegistered<MessagesService>(tag: chatGuid)
-    ? Get.find<MessagesService>(tag: chatGuid)
-    : Get.put(MessagesService(chatGuid), tag: chatGuid);
+MessagesService MessagesSvc(String chatGuid) {
+  final service = maybeFindMessagesSvc(chatGuid);
+  if (service == null) {
+    throw StateError(
+      'MessagesService for chat $chatGuid is not registered. Only UI owner code should create it.',
+    );
+  }
+  return service;
+}
 
 String? lastReloadedChat() =>
     Get.isRegistered<String>(tag: 'lastReloadedChat') ? Get.find<String>(tag: 'lastReloadedChat') : null;
@@ -700,13 +723,19 @@ class MessagesService extends GetxController {
     super.onClose();
   }
 
-  void close({force = false}) {
+  void close({bool force = false}) {
     String? lastChat = lastReloadedChat();
     if (force || lastChat != tag) {
       Get.delete<MessagesService>(tag: tag);
     }
 
     struct.flush();
+    messagesLoaded = false;
+    messageUpdateTrigger.clear();
+    for (final state in messageStates.values) {
+      state.onClose();
+    }
+    messageStates.clear();
   }
 
   void reload() {
@@ -1202,12 +1231,45 @@ class MessagesService extends GetxController {
         ),
       );
     }
+
+    // The retried message always gets dateCreated = now, making it the newest
+    // message in the chat regardless of what was previously the latest.
+    // Always update the chat's latest message, subtitle, and sort position.
+    ChatsSvc.updateChatLatestMessage(tag, message);
   }
 
-  /// Delete a message from DB, struct, and MessageState
+  /// Delete a message from DB, struct, and MessageState.
+  /// If the deleted message was the chat's latest, updates the chat's latest message
+  /// in both the database and reactive state.
   Future<void> deleteMessage(Message message) async {
-    await Message.delete(message.guid!);
+    final deletedGuid = message.guid!;
+    await Message.delete(deletedGuid);
     removeMessage(message);
+    await _updateLatestMessageAfterDeletion(deletedGuid);
+  }
+
+  /// Soft-delete a message (sets dateDeleted) and remove it from the struct and MessageState.
+  /// If the deleted message was the chat's latest, updates the chat's latest message
+  /// in both the database and reactive state.
+  Future<void> softDeleteMessage(Message message) async {
+    final deletedGuid = message.guid!;
+    await Message.softDelete(deletedGuid);
+    removeMessage(message);
+    await _updateLatestMessageAfterDeletion(deletedGuid);
+  }
+
+  /// If [deletedGuid] was the chat's latest message, fetches the new latest from the
+  /// database and updates both [ChatState] and the [Chat] DB record.
+  Future<void> _updateLatestMessageAfterDeletion(String deletedGuid) async {
+    if (kIsWeb) return;
+    final chatState = ChatsSvc.getChatState(tag);
+    if (chatState == null || chatState.latestMessage.value?.guid != deletedGuid) return;
+    final chat = ChatsSvc.findChatByGuid(tag);
+    if (chat == null) return;
+    final latest = Chat.getMessages(chat, limit: 1);
+    if (latest.isNotEmpty) {
+      ChatsSvc.updateChatLatestMessage(tag, latest.first);
+    }
   }
 
   /// Toggle bookmark status on a message

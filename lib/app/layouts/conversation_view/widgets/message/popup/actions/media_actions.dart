@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/message_popup_action_context.dart';
 import 'package:bluebubbles/database/models.dart';
@@ -78,12 +77,11 @@ Future<void> openInImageViewer(MessagePopupActionContext ctx) async {
 }
 
 void copyAttachment(MessagePopupActionContext ctx) {
-  if (ctx.part.attachments.length == 1 && ctx.part.attachments.first.mimeStart == "image") {
-    final Uint8List bytes = File(ctx.part.attachments.first.path).readAsBytesSync();
-    Pasteboard.writeImage(bytes).then((_) {
+  if (ctx.part.attachments.length == 1) {
+    Pasteboard.writeFiles([ctx.part.attachments.first.path]).then((_) {
       ctx.popDetails();
     }).catchError((e) {
-      Logger.error("Failed to copy image!", error: e);
+      Logger.error("Failed to copy files!", error: e);
       ctx.showSnack("Copy Error", "Failed to copy image!");
     });
     return;
@@ -109,62 +107,52 @@ Future<void> downloadOriginalAttachments(MessagePopupActionContext ctx) async {
       (element.uti?.contains("tiff") ?? false));
   final length = toDownload.length;
 
-  showDialog(
+  showBBDialog(
     context: ctx.context,
-    builder: (context) => AlertDialog(
-      backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-      title: Text("Downloading attachment${length > 1 ? "s" : ""}...", style: context.theme.textTheme.titleLarge),
-      content: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Obx(
-            () => Text(
-              '${progress.value != null && attachmentObs.value != null ? (progress.value! * attachmentObs.value!.totalBytes!).getFriendlySize() : ""} / ${(attachmentObs.value!.totalBytes!.toDouble()).getFriendlySize()} (${((progress.value ?? 0) * 100).floor()}%)',
-              style: context.theme.textTheme.bodyLarge,
-            ),
-          ),
-          const SizedBox(height: 10.0),
-          Obx(
-            () => ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: LinearProgressIndicator(
-                backgroundColor: context.theme.colorScheme.outline,
-                valueColor: AlwaysStoppedAnimation<Color>(Get.context!.theme.colorScheme.primary),
-                value: progress.value,
-                minHeight: 5,
-              ),
-            ),
-          ),
-          const SizedBox(height: 15.0),
-          Obx(() => Text(
-                progress.value == 1
-                    ? "Download Complete!"
-                    : "You can close this dialog. The attachment(s) will continue to download in the background.",
-                maxLines: 2,
-                textAlign: TextAlign.center,
-                style: context.theme.textTheme.bodyLarge,
-              )),
-        ],
-      ),
-      actions: [
+    title: "Downloading attachment${length > 1 ? "s" : ""}...",
+    content: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
         Obx(
-          () => downloadingAttachments.value
-              ? const SizedBox(height: 0, width: 0)
-              : TextButton(
-                  onPressed: () async {
-                    Get.closeAllSnackbars();
-                    Navigator.of(context).pop();
-                    ctx.popDetails();
-                  },
-                  child: Text(
-                    "Close",
-                    style: context.theme.textTheme.bodyLarge!.copyWith(color: Get.context!.theme.colorScheme.primary),
-                  ),
-                ),
+          () => Text(
+            '${progress.value != null && attachmentObs.value != null ? (progress.value! * attachmentObs.value!.totalBytes!).getFriendlySize() : ""} / ${(attachmentObs.value!.totalBytes!.toDouble()).getFriendlySize()} (${((progress.value ?? 0) * 100).floor()}%)',
+            style: Theme.of(ctx.context).textTheme.bodyLarge,
+          ),
         ),
+        const SizedBox(height: 10.0),
+        Obx(
+          () => ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: LinearProgressIndicator(
+              backgroundColor: Theme.of(ctx.context).colorScheme.outline,
+              valueColor: AlwaysStoppedAnimation<Color>(Theme.of(ctx.context).colorScheme.primary),
+              value: progress.value,
+              minHeight: 5,
+            ),
+          ),
+        ),
+        const SizedBox(height: 15.0),
+        Obx(() => Text(
+              progress.value == 1
+                  ? "Download Complete!"
+                  : "You can close this dialog. The attachment(s) will continue to download in the background.",
+              maxLines: 2,
+              textAlign: TextAlign.center,
+              style: Theme.of(ctx.context).textTheme.bodyLarge,
+            )),
       ],
     ),
+    actions: [
+      BBDialogAction(
+        text: "Close",
+        onPressed: () async {
+          Get.closeAllSnackbars();
+          Navigator.of(ctx.context).pop();
+          ctx.popDetails();
+        },
+      ),
+    ],
   );
 
   try {
@@ -195,57 +183,48 @@ Future<void> downloadLivePhoto(MessagePopupActionContext ctx) async {
   final toDownload = ctx.part.attachments.where((element) => element.hasLivePhoto);
   final length = toDownload.length;
 
-  showDialog(
+  showBBDialog(
     context: ctx.context,
-    builder: (context) => AlertDialog(
-      backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-      title: Text("Downloading live photo${length > 1 ? "s" : ""}...", style: context.theme.textTheme.titleLarge),
-      content: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Obx(() => Text(progress.value?.toDouble().getFriendlySize() ?? "", style: context.theme.textTheme.bodyLarge)),
-          const SizedBox(height: 10.0),
-          Obx(
-            () => ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: LinearProgressIndicator(
-                backgroundColor: context.theme.colorScheme.outline,
-                valueColor: AlwaysStoppedAnimation<Color>(Get.context!.theme.colorScheme.primary),
-                value: downloadingAttachments.value ? null : 1,
-                minHeight: 5,
-              ),
+    title: "Downloading live photo${length > 1 ? "s" : ""}...",
+    content: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Obx(() =>
+            Text(progress.value?.toDouble().getFriendlySize() ?? "", style: Theme.of(ctx.context).textTheme.bodyLarge)),
+        const SizedBox(height: 10.0),
+        Obx(
+          () => ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: LinearProgressIndicator(
+              backgroundColor: Theme.of(ctx.context).colorScheme.outline,
+              valueColor: AlwaysStoppedAnimation<Color>(Theme.of(ctx.context).colorScheme.primary),
+              value: downloadingAttachments.value ? null : 1,
+              minHeight: 5,
             ),
           ),
-          const SizedBox(height: 15.0),
-          Obx(() => Text(
-                !downloadingAttachments.value
-                    ? "Download Complete!"
-                    : "You can close this dialog. The live photo(s) will continue to download in the background.",
-                maxLines: 2,
-                textAlign: TextAlign.center,
-                style: context.theme.textTheme.bodyLarge,
-              )),
-        ],
-      ),
-      actions: [
-        Obx(
-          () => downloadingAttachments.value
-              ? const SizedBox(height: 0, width: 0)
-              : TextButton(
-                  onPressed: () async {
-                    Get.closeAllSnackbars();
-                    Navigator.of(context).pop();
-                    ctx.popDetails();
-                  },
-                  child: Text(
-                    "Close",
-                    style: context.theme.textTheme.bodyLarge!.copyWith(color: Get.context!.theme.colorScheme.primary),
-                  ),
-                ),
         ),
+        const SizedBox(height: 15.0),
+        Obx(() => Text(
+              !downloadingAttachments.value
+                  ? "Download Complete!"
+                  : "You can close this dialog. The live photo(s) will continue to download in the background.",
+              maxLines: 2,
+              textAlign: TextAlign.center,
+              style: Theme.of(ctx.context).textTheme.bodyLarge,
+            )),
       ],
     ),
+    actions: [
+      BBDialogAction(
+        text: "Close",
+        onPressed: () async {
+          Get.closeAllSnackbars();
+          Navigator.of(ctx.context).pop();
+          ctx.popDetails();
+        },
+      ),
+    ],
   );
 
   try {

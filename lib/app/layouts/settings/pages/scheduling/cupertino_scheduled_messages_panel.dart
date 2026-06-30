@@ -131,7 +131,7 @@ class _CupertinoScheduledMessagesPanelState extends State<CupertinoScheduledMess
 
     return ListTile(
       key: ValueKey(item.id.toString()),
-      mouseCursor: SystemMouseCursors.click,
+      mouseCursor: MouseCursor.defer,
       contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 4),
       leading: SettingsLeadingIcon(
         iosIcon: icon,

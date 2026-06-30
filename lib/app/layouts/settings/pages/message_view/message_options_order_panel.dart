@@ -78,7 +78,7 @@ class _MessageOptionsOrderPanelState extends State<MessageOptionsOrderPanel> wit
                         ),
                       ),
                       MouseRegion(
-                        cursor: SystemMouseCursors.click,
+                        cursor: MouseCursor.defer,
                         child: ReorderableDragStartListener(
                           index: index,
                           child: Icon(

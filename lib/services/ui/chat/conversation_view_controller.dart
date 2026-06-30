@@ -83,7 +83,7 @@ class ConversationViewController extends StatefulController with GetSingleTicker
       _subjectWasLastFocused ? subjectTextController : textController;
 
   // text field items
-  bool showAttachmentPicker = false;
+  final RxBool showAttachmentPicker = false.obs;
   RxBool showEmojiPicker = false.obs;
   final GlobalKey textFieldKey = GlobalKey();
   final RxList<PlatformFile> pickedAttachments = <PlatformFile>[].obs;
@@ -369,7 +369,7 @@ class ConversationViewController extends StatefulController with GetSingleTicker
   void close() {
     updateSmartReplyLayout(visible: false, height: 0);
     EventDispatcherSvc.emit("update-highlight", null);
-    ChatsSvc.setAllInactiveSync();
+    ChatsSvc.setAllInactive();
     Get.delete<ConversationViewController>(tag: tag);
   }
 

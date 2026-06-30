@@ -43,7 +43,9 @@ class ThemeStruct {
     if (googleFont.isEmpty) googleFont = 'Default';
   }
 
-  bool get isPreset => ThemesService.defaultThemes.map((e) => e.name).contains(name);
+  bool get isPreset =>
+      ThemesService.defaultThemes.map((e) => e.name).contains(name) ||
+      ThemesService.isAdaptiveBackgroundThemeName(name);
 
   ThemeStruct save({bool updateIfNotAbsent = true}) {
     Database.runInTransaction(TxMode.write, () {
@@ -69,13 +71,23 @@ class ThemeStruct {
     });
   }
 
+  static ThemeStruct _clonePreset(dynamic preset) {
+    return ThemeStruct(
+      name: preset.name,
+      themeData: preset.data,
+      gradientBg: preset.gradientBg,
+      googleFont: preset.googleFont,
+    );
+  }
+
   static ThemeStruct getLightTheme() {
     final name = PrefsSvc.theme.getSelectedLightTheme();
     final query = Database.themes.query(ThemeStruct_.name.equals(name ?? "Bright White")).build();
     query.limit = 1;
     final result = query.findFirst();
     if (result == null) {
-      return ThemesService.defaultThemes.firstWhere((t) => t.name == "Bright White");
+      final preset = ThemesService.defaultThemes.firstWhere((t) => t.name == "Bright White");
+      return _clonePreset(preset);
     }
     return result;
   }
@@ -86,7 +98,8 @@ class ThemeStruct {
     query.limit = 1;
     final result = query.findFirst();
     if (result == null) {
-      return ThemesService.defaultThemes.firstWhere((t) => t.name == "OLED Dark");
+      final preset = ThemesService.defaultThemes.firstWhere((t) => t.name == "OLED Dark");
+      return _clonePreset(preset);
     }
     return result;
   }
@@ -102,11 +115,22 @@ class ThemeStruct {
     });
   }
 
+  static ThemeStruct resolveByName(String? name, Brightness brightness) {
+    final fallback = brightness == Brightness.dark ? getDarkTheme() : getLightTheme();
+    if (name == null || name.isEmpty) return fallback;
+    final found = findOne(name);
+    if (found != null) return found;
+    for (final preset in ThemesService.defaultThemes) {
+      if (preset.name == name) return _clonePreset(preset);
+    }
+    return fallback;
+  }
+
   static List<ThemeStruct> getThemes() {
-    if (kIsWeb) return ThemesService.defaultThemes;
+    if (kIsWeb) return ThemesService.defaultThemes.map(_clonePreset).toList();
     List<ThemeStruct> allThemes = Database.themes.getAll();
     // sometimes the theme box is empty, this ensures it is never empty when queried
-    if (allThemes.isEmpty) Database.themes.putMany(ThemesService.defaultThemes);
+    if (allThemes.isEmpty) Database.themes.putMany(ThemesService.defaultThemes.map(_clonePreset).toList());
     allThemes = Database.themes.getAll();
     return allThemes;
   }

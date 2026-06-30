@@ -20,6 +20,7 @@ class PresetThemeDialogs {
     final isCustom = !theme.isPreset;
     showModalBottomSheet(
       context: context,
+      backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -80,149 +81,140 @@ class PresetThemeDialogs {
 
   void showCloneDialog(BuildContext context, ThemeStruct source) {
     final textController = TextEditingController(text: "${source.name} Copy");
-    showDialog(
+    showBBDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-        title: Text("Clone \"${source.name}\"", style: Theme.of(context).textTheme.titleLarge),
-        content: TextField(
-          controller: textController,
-          autofocus: true,
-          decoration: InputDecoration(
-            labelText: "New Theme Name",
-            enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Theme.of(context).colorScheme.outline)),
-            focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Theme.of(context).colorScheme.primary)),
-          ),
-          onSubmitted: (_) => _doClone(ctx, source, textController.text),
+      title: "Clone \"${source.name}\"",
+      content: TextField(
+        controller: textController,
+        autofocus: true,
+        decoration: InputDecoration(
+          labelText: "New Theme Name",
+          enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Theme.of(context).colorScheme.outline)),
+          focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Theme.of(context).colorScheme.primary)),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text("Cancel", style: TextStyle(color: Theme.of(context).colorScheme.primary)),
-          ),
-          TextButton(
-            onPressed: () => _doClone(ctx, source, textController.text),
-            child: Text("Clone", style: TextStyle(color: Theme.of(context).colorScheme.primary)),
-          ),
-        ],
+        onSubmitted: (_) => _doClone(context, source, textController.text),
       ),
+      actions: [
+        BBDialogAction(
+          text: "Cancel",
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+        ),
+        BBDialogAction(
+          text: "Clone",
+          isDefault: true,
+          onPressed: () => _doClone(context, source, textController.text),
+        ),
+      ],
     );
   }
 
   void showRenameDialog(BuildContext context, ThemeStruct theme) {
     controller.applyTheme(context, theme);
     final textController = TextEditingController(text: theme.name);
-    showDialog(
+    showBBDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-        title: Text("Rename \"${theme.name}\"", style: Theme.of(context).textTheme.titleLarge),
-        content: TextField(
-          controller: textController,
-          autofocus: true,
-          decoration: InputDecoration(
-            labelText: "New Name",
-            enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Theme.of(context).colorScheme.outline)),
-            focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Theme.of(context).colorScheme.primary)),
-          ),
-          onSubmitted: (_) => _doRename(ctx, context, textController.text),
+      title: "Rename \"${theme.name}\"",
+      content: TextField(
+        controller: textController,
+        autofocus: true,
+        decoration: InputDecoration(
+          labelText: "New Name",
+          enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Theme.of(context).colorScheme.outline)),
+          focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Theme.of(context).colorScheme.primary)),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text("Cancel", style: TextStyle(color: Theme.of(context).colorScheme.primary)),
-          ),
-          TextButton(
-            onPressed: () => _doRename(ctx, context, textController.text),
-            child: Text("Rename", style: TextStyle(color: Theme.of(context).colorScheme.primary)),
-          ),
-        ],
+        onSubmitted: (_) => _doRename(context, context, textController.text),
       ),
+      actions: [
+        BBDialogAction(
+          text: "Cancel",
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+        ),
+        BBDialogAction(
+          text: "Rename",
+          isDefault: true,
+          onPressed: () => _doRename(context, context, textController.text),
+        ),
+      ],
     );
   }
 
   void confirmDelete(BuildContext context, ThemeStruct theme) {
-    showDialog(
+    showBBDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Delete Theme"),
-        content: Text("Delete \"${theme.name}\"? This cannot be undone."),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text("Cancel", style: TextStyle(color: Theme.of(context).colorScheme.primary)),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              controller.applyTheme(context, theme);
-              controller.deleteTheme(context);
-            },
-            child: Text("Delete", style: TextStyle(color: Theme.of(context).colorScheme.error)),
-          ),
-        ],
-      ),
+      title: "Delete Theme",
+      body: "Delete \"${theme.name}\"? This cannot be undone.",
+      actions: [
+        BBDialogAction(
+          text: "Cancel",
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+        ),
+        BBDialogAction(
+          text: "Delete",
+          isDestructive: true,
+          color: Theme.of(context).colorScheme.error,
+          onPressed: () {
+            Navigator.of(context, rootNavigator: true).pop();
+            controller.applyTheme(context, theme);
+            controller.deleteTheme(context);
+          },
+        ),
+      ],
     );
   }
 
   void showCreateDialog(BuildContext context) {
     final textController = TextEditingController();
-    showDialog(
+    showBBDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-        title: Text(
-          "New ${isForDark ? 'Dark' : 'Light'} Theme",
-          style: Theme.of(context).textTheme.titleLarge,
+      title: "New ${isForDark ? 'Dark' : 'Light'} Theme",
+      content: TextField(
+        controller: textController,
+        autofocus: true,
+        decoration: InputDecoration(
+          labelText: "Theme Name",
+          hintText: "e.g. My Custom Theme",
+          enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Theme.of(context).colorScheme.outline)),
+          focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Theme.of(context).colorScheme.primary)),
         ),
-        content: TextField(
-          controller: textController,
-          autofocus: true,
-          decoration: InputDecoration(
-            labelText: "Theme Name",
-            hintText: "e.g. My Custom Theme",
-            enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Theme.of(context).colorScheme.outline)),
-            focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Theme.of(context).colorScheme.primary)),
-          ),
-          onSubmitted: (_) => _doCreate(ctx, context, textController.text),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text("Cancel", style: TextStyle(color: Theme.of(context).colorScheme.primary)),
-          ),
-          TextButton(
-            onPressed: () => _doCreate(ctx, context, textController.text),
-            child: Text("Create", style: TextStyle(color: Theme.of(context).colorScheme.primary)),
-          ),
-        ],
+        onSubmitted: (_) => _doCreate(context, context, textController.text),
       ),
+      actions: [
+        BBDialogAction(
+          text: "Cancel",
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+        ),
+        BBDialogAction(
+          text: "Create",
+          isDefault: true,
+          onPressed: () => _doCreate(context, context, textController.text),
+        ),
+      ],
     );
   }
 
-  void _doClone(BuildContext dialogCtx, ThemeStruct source, String name) {
+  void _doClone(BuildContext context, ThemeStruct source, String name) {
     final err = PresetThemeActions.validateThemeName(name);
     if (err != null) {
       showSnackbar("Error", err);
       return;
     }
-    Navigator.of(dialogCtx).pop();
+    Navigator.of(context, rootNavigator: true).pop();
     controller.cloneTheme(name.trim(), source);
   }
 
-  Future<void> _doRename(BuildContext dialogCtx, BuildContext pageCtx, String newName) async {
-    Navigator.of(dialogCtx).pop();
+  Future<void> _doRename(BuildContext context, BuildContext pageCtx, String newName) async {
+    Navigator.of(context, rootNavigator: true).pop();
     final ok = await controller.renameTheme(pageCtx, newName.trim());
     if (!ok) showSnackbar("Error", "Could not rename — name is empty or already taken");
   }
 
-  void _doCreate(BuildContext dialogCtx, BuildContext pageCtx, String name) {
+  void _doCreate(BuildContext context, BuildContext pageCtx, String name) {
     final err = PresetThemeActions.validateThemeName(name);
     if (err != null) {
       showSnackbar("Error", err);
       return;
     }
-    Navigator.of(dialogCtx).pop();
+    Navigator.of(context, rootNavigator: true).pop();
     controller.createTheme(pageCtx, name.trim(), forDark: isForDark);
   }
 }

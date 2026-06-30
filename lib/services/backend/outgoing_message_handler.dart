@@ -167,6 +167,12 @@ class OutgoingMessageHandler {
   /// [LifecycleService] to decide when the background engine can be torn down.
   bool get isProcessing => _isProcessing || _queue.isNotEmpty;
 
+  /// Reactive set of chat GUIDs that currently have one or more items waiting
+  /// in the queue.  Widgets can wrap reads of this inside [Obx] to show or
+  /// hide UI controls (e.g. a "Cancel Outgoing Messages" action) only when
+  /// there is actually something pending for a given chat.
+  final pendingChatGuids = <String>{}.obs;
+
   /// Enqueues [item] for sending.  Preparation (DB write / file copy) is
   /// performed synchronously before the item enters the queue, so the
   /// outgoing bubble appears in the UI immediately.  The actual HTTP call
@@ -192,6 +198,7 @@ class OutgoingMessageHandler {
       _queue.add(_OutgoingEntry(item));
     }
 
+    pendingChatGuids.add(item.chat.guid);
     unawaited(_processNext());
   }
 
@@ -267,11 +274,50 @@ class OutgoingMessageHandler {
         Logger.error('Failed to handle outgoing queue item', error: ex, trace: st, tag: _tag);
         item.completer?.completeError(ex);
       }
+
+      // Recompute the reactive pending set after each item is fully processed.
+      pendingChatGuids.assignAll(_queue.map((e) => e.item.chat.guid).toSet());
     }
 
     _isProcessing = false;
     if (GetIt.I.isRegistered<LifecycleService>()) LifecycleSvc.scheduleEngineCloseIfIdle();
   }
+
+  /// Returns `true` if the message with [tempGuid] is currently waiting in the
+  /// queue and has not yet been handed off to the HTTP dispatch layer.
+  bool hasPendingMessage(String tempGuid) => _queue.any((e) => e.item.message.guid == tempGuid);
+
+  /// Removes [entries] from the queue, marks each message with
+  /// [ClientMessageError.userCanceled], finalizes them via
+  /// [_finalizeOutgoingFailure], and recomputes [pendingChatGuids].
+  ///
+  /// Callers must snapshot the relevant entries *before* passing them in,
+  /// since the iterable is evaluated lazily against the live queue.
+  Future<void> _cancelEntries(Iterable<_OutgoingEntry> entries) async {
+    final toCancel = entries.map((e) => e.item).toList();
+    for (final pending in toCancel) {
+      _queue.removeWhere((e) => e.item == pending);
+      final m = pending.message;
+      m.error = ClientMessageError.userCanceled.code;
+      m.errorMessage = 'Canceled by user';
+      await _finalizeOutgoingFailure(pending.chat, m, m.guid!);
+    }
+    if (toCancel.isNotEmpty) {
+      pendingChatGuids.assignAll(_queue.map((e) => e.item.chat.guid).toSet());
+    }
+  }
+
+  /// Cancels the single queued message identified by [tempGuid].
+  ///
+  /// If the message has already been dequeued for dispatch this is a no-op.
+  Future<void> cancelMessage(String tempGuid) => _cancelEntries(_queue.where((e) => e.item.message.guid == tempGuid));
+
+  /// Cancels all pending (not-yet-dispatched) outgoing messages for [chatGuid].
+  ///
+  /// The currently-dispatching item (if any) is left to complete on its own —
+  /// only items still waiting in the queue are affected.
+  Future<void> cancelPendingForChat(String chatGuid) =>
+      _cancelEntries(_queue.where((e) => e.item.chat.guid == chatGuid));
 
   /// Wraps a send [process] with the send-progress animation:
   ///
@@ -621,7 +667,8 @@ class OutgoingMessageHandler {
         onExtra: r != null
             ? (confirmed) async {
                 if (confirmed.associatedMessageGuid != null) {
-                  final parentState = MessagesSvc(c.guid).getMessageStateIfExists(confirmed.associatedMessageGuid!);
+                  final parentState =
+                      maybeFindMessagesSvc(c.guid)?.getMessageStateIfExists(confirmed.associatedMessageGuid!);
                   if (parentState != null) {
                     parentState.updateAssociatedMessageInternal(confirmed, tempGuid: tempGuid);
                   } else {
@@ -645,8 +692,8 @@ class OutgoingMessageHandler {
         // update the parent so the error badge propagates to the UI.
         onExtra: r != null && m.associatedMessageGuid != null
             ? (errorMsg) async {
-                MessagesSvc(c.guid)
-                    .getMessageStateIfExists(m.associatedMessageGuid!)
+                maybeFindMessagesSvc(c.guid)
+                    ?.getMessageStateIfExists(m.associatedMessageGuid!)
                     ?.updateAssociatedMessageInternal(errorMsg, tempGuid: tempGuid);
               }
             : null,
@@ -746,8 +793,8 @@ class OutgoingMessageHandler {
             // to the real key when updateMessage delivers the updated struct.
             if (Get.isRegistered<MessagesService>(tag: c.guid)) {
               MessagesSvc(c.guid).notifyAttachmentSendComplete(tempGuid, newMessage.guid!, tempGuid, a);
+              MessagesSvc(c.guid).updateMessage(newMessage);
             }
-            MessagesSvc(c.guid).updateMessage(newMessage);
           } catch (e, st) {
             Logger.warn('Failed to replace attachment ${a.guid}', error: e, trace: st, tag: _tag);
           }

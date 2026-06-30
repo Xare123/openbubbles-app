@@ -35,7 +35,6 @@ class BubbleEffects extends StatefulWidget {
 class _BubbleEffectsState extends State<BubbleEffects> with SingleTickerProviderStateMixin {
   late MovieTween tween;
   final rxControl = Rx<Control>(Control.stop);
-  Size size = Size.zero;
   Worker? _effectWorker;
 
   /// Cached reference to the nearest [MessageState]. Set in
@@ -53,6 +52,7 @@ class _BubbleEffectsState extends State<BubbleEffects> with SingleTickerProvider
   /// lazy initializer on a deactivated element.
   late final AnimationController _fadeController;
   late final Animation<double> _fadeAnimation;
+  final Rx<Size> _size = Size.zero.obs;
 
   @override
   void initState() {
@@ -104,21 +104,21 @@ class _BubbleEffectsState extends State<BubbleEffects> with SingleTickerProvider
           // that fires has the correct dimensions and BackdropFilter covers
           // the text from the very first animated frame.
           _whenSized((s) {
-            size = s;
+            _size.value = s;
             _fadeController.value = 1.0;
             rxControl.value = Control.play;
           });
         } else if (effect.isBubble && !ms.hasEffectPlayed.value) {
           _pendingAutoPlay = true;
           _whenSized((s) {
-            size = s;
+            _size.value = s;
             ms.triggerBubbleEffect(widget.part);
           });
         }
 
         _effectWorker = ever(ms.playEffectPart, (int? part) {
           if (part == widget.part) {
-            size = _readSize();
+            _size.value = _readSize();
             _fadeController.value = 1.0;
             rxControl.value = Control.playFromStart;
           }
@@ -199,57 +199,69 @@ class _BubbleEffectsState extends State<BubbleEffects> with SingleTickerProvider
     final effect = stringToMessageEffect[effectStr] ?? MessageEffect.none;
     if (message.expressiveSendStyleId == null) return widget.child;
     if (effect == MessageEffect.invisibleInk) {
-      return Obx(() => GestureDetector(
-            onHorizontalDragUpdate: rxControl.value == Control.stop
-                ? null
-                : (DragUpdateDetails details) {
-                    if (effect != MessageEffect.invisibleInk) return;
-                    if ((details.primaryDelta ?? 0).abs() > 1) {
-                      message.setPlayedDate();
-                      // Fade out, then mark stopped once the animation finishes.
-                      _fadeController.animateTo(0.0).then((_) {
-                        if (mounted) rxControl.value = Control.stop;
-                      });
-                    }
-                  },
-            child: AbsorbPointer(
-              absorbing: rxControl.value != Control.stop,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  widget.child,
-                  if (rxControl.value != Control.stop)
-                    FadeTransition(
-                      opacity: _fadeAnimation,
-                      child: ClipPath(
-                        clipper: TailClipper(
-                          isFromMe: message.isFromMe!,
-                          showTail: widget.showTail,
-                          connectLower: false,
-                          connectUpper: false,
-                        ),
-                        child: BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                          child: Particles(
-                            key: UniqueKey(),
-                            height: size.height,
-                            width: size.width,
-                            interaction: ParticleInteraction.none(),
-                            particles: List.generate(
-                                size.height * size.width ~/ 25,
-                                (index) => CircularParticle(
-                                      color: Colors.white.withAlpha(150),
-                                      radius: Random().nextDouble() * (size.height / 75).clamp(0.5, 1),
-                                      velocity: Offset(Random().nextDouble() * 10, Random().nextDouble() * 10),
-                                    )),
+      return NotificationListener<SizeChangedLayoutNotification>(
+        onNotification: (notification) {
+          if (rxControl.value != Control.stop) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              final newSize = _readSize();
+              if (newSize != Size.zero) _size.value = newSize;
+            });
+          }
+          return false;
+        },
+        child: Obx(() => GestureDetector(
+              onHorizontalDragUpdate: rxControl.value == Control.stop
+                  ? null
+                  : (DragUpdateDetails details) {
+                      if (effect != MessageEffect.invisibleInk) return;
+                      if ((details.primaryDelta ?? 0).abs() > 1) {
+                        message.setPlayedDate();
+                        // Fade out, then mark stopped once the animation finishes.
+                        _fadeController.animateTo(0.0).then((_) {
+                          if (mounted) rxControl.value = Control.stop;
+                        });
+                      }
+                    },
+              child: AbsorbPointer(
+                absorbing: rxControl.value != Control.stop,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    SizeChangedLayoutNotifier(child: widget.child),
+                    if (rxControl.value != Control.stop)
+                      FadeTransition(
+                        opacity: _fadeAnimation,
+                        child: ClipPath(
+                          clipper: TailClipper(
+                            isFromMe: message.isFromMe!,
+                            showTail: widget.showTail,
+                            connectLower: false,
+                            connectUpper: false,
+                          ),
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                            child: Particles(
+                              key: UniqueKey(),
+                              height: _size.value.height,
+                              width: _size.value.width,
+                              interaction: ParticleInteraction.none(),
+                              particles: List.generate(
+                                  _size.value.height * _size.value.width ~/ 25,
+                                  (index) => CircularParticle(
+                                        color: Colors.white.withAlpha(150),
+                                        radius: Random().nextDouble() * (_size.value.height / 75).clamp(0.5, 1),
+                                        velocity: Offset(Random().nextDouble() * 10, Random().nextDouble() * 10),
+                                      )),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ));
+            )),
+      );
     }
     getTween(message, effect);
     return Obx(() => CustomAnimationBuilder<Movie>(
@@ -281,7 +293,7 @@ class _BubbleEffectsState extends State<BubbleEffects> with SingleTickerProvider
             }
             if (effect == MessageEffect.gentle) {
               return Padding(
-                padding: EdgeInsets.only(top: size.height * (value1.clamp(1, 1.2) - 1)),
+                padding: EdgeInsets.only(top: _size.value.height * (value1.clamp(1, 1.2) - 1)),
                 child: Transform.scale(
                     scale: rxControl.value == Control.stop ? 1 : value1,
                     alignment: message.isFromMe! ? Alignment.bottomRight : Alignment.bottomLeft,
@@ -290,8 +302,8 @@ class _BubbleEffectsState extends State<BubbleEffects> with SingleTickerProvider
             }
             if (effect == MessageEffect.loud) {
               return SizedBox(
-                width: value1 == 1 ? null : size.width * value1,
-                height: value1 == 1 ? null : size.height * value1,
+                width: value1 == 1 ? null : _size.value.width * value1,
+                height: value1 == 1 ? null : _size.value.height * value1,
                 child: FittedBox(
                   alignment: Alignment.bottomLeft,
                   child: Transform.rotate(
@@ -304,8 +316,8 @@ class _BubbleEffectsState extends State<BubbleEffects> with SingleTickerProvider
             }
             if (effect == MessageEffect.slam) {
               return SizedBox(
-                width: value1 == 1 ? null : size.width * value1,
-                height: value1 == 1 ? null : size.height * value1,
+                width: value1 == 1 ? null : _size.value.width * value1,
+                height: value1 == 1 ? null : _size.value.height * value1,
                 child: FittedBox(
                   alignment: message.isFromMe! ? Alignment.centerRight : Alignment.centerLeft,
                   child: Transform.rotate(angle: value2, alignment: Alignment.bottomCenter, child: child),

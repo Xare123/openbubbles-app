@@ -54,7 +54,7 @@ class ConversationTextFieldState extends CustomState<ConversationTextField, void
 
   String get chatGuid => chat.guid;
 
-  bool get showAttachmentPicker => localController.showAttachmentPickerLocal.value;
+  bool get showAttachmentPicker => controller.showAttachmentPicker.value;
 
   late final double emojiPickerHeight = max(256, context.height * 0.4);
   late final emojiColumns =
@@ -161,8 +161,8 @@ class ConversationTextFieldState extends CustomState<ConversationTextField, void
   void focusListener(bool subject) async {
     final _focusNode = subject ? controller.subjectFocusNode : controller.focusNode;
     // OPTIMIZATION: Only update if state actually needs to change
-    if (_focusNode.hasFocus && localController.showAttachmentPickerLocal.value) {
-      localController.showAttachmentPickerLocal.value = false;
+    if (_focusNode.hasFocus && controller.showAttachmentPicker.value) {
+      controller.showAttachmentPicker.value = false;
     }
   }
 
@@ -243,6 +243,7 @@ class ConversationTextFieldState extends CustomState<ConversationTextField, void
     controller.subjectTextController.dispose();
     recorderController?.dispose();
     _emojiScrollController.dispose();
+    controller.showAttachmentPicker.value = false;
     localController.cancelAllTimers();
     Get.delete<ConversationTextFieldLocalController>();
     if (chat.autoSendTypingIndicators ?? SettingsSvc.settings.privateSendTypingIndicators.value) {
@@ -384,7 +385,7 @@ class ConversationTextFieldState extends CustomState<ConversationTextField, void
                     controller.focusNode.unfocus();
                     controller.subjectFocusNode.unfocus();
                   }
-                  localController.showAttachmentPickerLocal.value = !showAttachmentPicker;
+                  controller.showAttachmentPicker.value = !showAttachmentPicker;
                 },
               ),
               Expanded(
@@ -413,7 +414,7 @@ class ConversationTextFieldState extends CustomState<ConversationTextField, void
                   ],
                 ),
               ),
-              if (iOS) const SizedBox(width: 10),
+              if (iOS || material) const SizedBox(width: 10),
               if (samsung)
                 Padding(
                   padding: const EdgeInsets.only(right: 5.0),
@@ -437,9 +438,15 @@ class ConversationTextFieldState extends CustomState<ConversationTextField, void
                     alignment: Alignment.bottomCenter,
                     child: !showAttachmentPicker
                         ? SizedBox(width: pickerWidth)
-                        : AttachmentPicker(
-                            key: attachmentPicker,
-                            controller: controller,
+                        : Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const SizedBox(height: 8),
+                              AttachmentPicker(
+                                key: attachmentPicker,
+                                controller: controller,
+                              ),
+                            ],
                           ),
                   ));
             }),

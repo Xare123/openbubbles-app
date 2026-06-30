@@ -1,6 +1,11 @@
+import 'dart:async';
+import 'dart:math';
+
+import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/attachment/attachment_holder.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/popup/message_popup.dart';
 import 'package:bluebubbles/app/state/chat_state_scope.dart';
 import 'package:bluebubbles/app/state/message_state.dart';
+import 'package:bluebubbles/app/state/message_state_scope.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
@@ -19,6 +24,7 @@ class MessagePopupHolder extends StatefulWidget {
     required this.controller,
     required this.cvController,
     required this.isEditing,
+    this.galleryCurrentIndex,
   });
 
   final Widget child;
@@ -26,6 +32,10 @@ class MessagePopupHolder extends StatefulWidget {
   final MessageState controller;
   final ConversationViewController cvController;
   final bool isEditing;
+
+  /// For gallery parts: tracks which attachment is currently at the front.
+  /// When set, [openPopup] scopes the popup to just the selected attachment.
+  final ValueNotifier<int>? galleryCurrentIndex;
 
   @override
   State<StatefulWidget> createState() => _MessagePopupHolderState();
@@ -53,10 +63,33 @@ class _MessagePopupHolderState extends State<MessagePopupHolder> with ThemeHelpe
     super.dispose();
   }
 
+  Future<void> _waitForKeyboardDismiss() async {
+    final completer = Completer<void>();
+    void check() {
+      if (!mounted) {
+        completer.complete();
+        return;
+      }
+      if (MediaQuery.viewInsetsOf(context).bottom <= 0) {
+        completer.complete();
+      } else {
+        WidgetsBinding.instance.addPostFrameCallback((_) => check());
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => check());
+    return completer.future;
+  }
+
   void openPopup() async {
+    HapticFeedback.lightImpact();
+    final keyboardHeight = MediaQuery.viewInsetsOf(context).bottom;
     widget.cvController.focusNode.unfocus();
     widget.cvController.subjectFocusNode.unfocus();
-    HapticFeedback.lightImpact();
+    if (keyboardHeight > 0) {
+      await _waitForKeyboardDismiss();
+      if (!mounted) return;
+    }
     final size = globalKey.currentContext?.size;
     Offset? childPos = (globalKey.currentContext?.findRenderObject() as RenderBox?)?.localToGlobal(Offset.zero);
     if (size == null || childPos == null) return;
@@ -73,9 +106,59 @@ class _MessagePopupHolderState extends State<MessagePopupHolder> with ThemeHelpe
       widget.cvController.selected.add(message);
     }
 
+    // For gallery parts, scope the popup to the currently visible attachment.
+    final galleryIdx = widget.galleryCurrentIndex?.value;
+    final effectivePart = (galleryIdx != null && widget.part.attachments.isNotEmpty)
+        ? MessagePart(
+            part: widget.part.partIndexForAttachment(galleryIdx),
+            attachments: [widget.part.attachments[galleryIdx]],
+            shouldRedact: widget.part.shouldRedact,
+            edits: const [],
+            isUnsent: widget.part.isUnsent,
+          )
+        : widget.part;
+    final effectiveChild = (galleryIdx != null && widget.part.attachments.isNotEmpty)
+        ? MessageStateScope(
+            messageState: widget.controller,
+            child: AttachmentHolder(
+              message: effectivePart,
+              transparentBackground: true,
+              showCardShadow: true,
+              galleryAttachments: widget.part.attachments,
+            ),
+          )
+        : widget.child;
+
+    // For gallery selections, recompute the size to match the actual rendered
+    // height of the selected attachment (ImageViewer self-sizes to
+    // dh * min(1, halfWidth / dw)). The full gallery size.height is the
+    // tallest card in the fan, which may be much taller than the selected
+    // image — causing the reaction picker to float too high.
+    Size effectiveSize = size;
+    if (galleryIdx != null && widget.part.attachments.isNotEmpty) {
+      final selectedAttachment = widget.part.attachments[galleryIdx];
+      final halfWidth = NavigationSvc.width(context) * 0.5;
+      double attachmentHeight;
+      if (selectedAttachment.hasValidSize) {
+        final dw = selectedAttachment.displayWidth!.toDouble();
+        final dh = selectedAttachment.displayHeight!.toDouble();
+        attachmentHeight = dh * min(1.0, halfWidth / dw);
+      } else {
+        // No dimension metadata — use the default aspect ratio (0.78 portrait)
+        attachmentHeight = halfWidth / 0.78;
+      }
+      effectiveSize = Size(size.width, attachmentHeight);
+    }
+
     if (kIsDesktop || kIsWeb) {
       widget.cvController.showingOverlays = true;
     }
+    final chatState = ChatStateScope.of(context);
+    // Capture the conversation's theme before pushing the route — if adaptive
+    // theming is active, context.theme is already the per-chat theme.
+    final capturedTheme = context.theme;
+    final capturedIsM3 = ThemeSvc.isMaterialYouActive(context);
+    final capturedBubbleExt = capturedTheme.extensions[BubbleColors] as BubbleColors?;
     final result = await Navigator.push(
       iOS ? Get.context! : context,
       PageRouteBuilder(
@@ -84,32 +167,31 @@ class _MessagePopupHolderState extends State<MessagePopupHolder> with ThemeHelpe
           return FadeTransition(
             opacity: animation,
             child: Theme(
-              data: ctx.theme.copyWith(
+              data: capturedTheme.copyWith(
                 // in case some components still use legacy theming
-                primaryColor: ctx.theme.colorScheme.bubble(ctx, true),
-                colorScheme: ctx.theme.colorScheme.copyWith(
-                  primary: ctx.theme.colorScheme.bubble(ctx, true),
-                  onPrimary: ctx.theme.colorScheme.onBubble(ctx, true),
-                  surface: ThemeSvc.isMaterialYouActive(context)
-                      ? null
-                      : (ctx.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
-                  onSurface: ThemeSvc.isMaterialYouActive(context)
-                      ? null
-                      : (ctx.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
+                primaryColor: capturedBubbleExt?.iMessageBubbleColor ?? capturedTheme.colorScheme.primary,
+                colorScheme: capturedTheme.colorScheme.copyWith(
+                  primary: capturedBubbleExt?.iMessageBubbleColor ?? capturedTheme.colorScheme.primary,
+                  onPrimary: capturedBubbleExt?.oniMessageBubbleColor ?? capturedTheme.colorScheme.onPrimary,
+                  surface: capturedIsM3 ? null : capturedBubbleExt?.receivedBubbleColor,
+                  onSurface: capturedIsM3 ? null : capturedBubbleExt?.onReceivedBubbleColor,
                 ),
               ),
-              child: PopupScope(
-                child: MessagePopup(
-                  childPosition: childPos!,
-                  size: size,
-                  part: widget.part,
-                  controller: widget.controller,
-                  cvController: widget.cvController,
-                  serverDetails: MessagePopupServerDetails(
-                      minSierra: minSierra, minBigSur: minBigSur, supportsOriginalDownload: version > 100),
-                  sendTapback: sendTapback,
-                  widthContext: () => mounted ? context : null,
-                  child: widget.child,
+              child: ChatStateScope(
+                chatState: chatState,
+                child: PopupScope(
+                  child: MessagePopup(
+                    childPosition: childPos!,
+                    size: effectiveSize,
+                    part: effectivePart,
+                    controller: widget.controller,
+                    cvController: widget.cvController,
+                    serverDetails: MessagePopupServerDetails(
+                        minSierra: minSierra, minBigSur: minBigSur, supportsOriginalDownload: version > 100),
+                    sendTapback: sendTapback,
+                    widthContext: () => mounted ? context : null,
+                    child: effectiveChild,
+                  ),
                 ),
               ),
             ),
@@ -165,6 +247,16 @@ class _MessagePopupHolderState extends State<MessagePopupHolder> with ThemeHelpe
     );
   }
 
+  /// The part index to use for quick-tapbacks (double-tap / long-press shortcuts).
+  /// For gallery parts, returns the part index of the currently visible attachment.
+  int get _effectivePartIndex {
+    final galleryIdx = widget.galleryCurrentIndex?.value;
+    if (galleryIdx != null && widget.part.attachments.isNotEmpty) {
+      return widget.part.partIndexForAttachment(galleryIdx);
+    }
+    return widget.part.part;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Obx(() {
@@ -176,7 +268,7 @@ class _MessagePopupHolderState extends State<MessagePopupHolder> with ThemeHelpe
             : SettingsSvc.settings.doubleTapForDetails.value || isTempMessage
                 ? () => openPopup()
                 : SettingsSvc.settings.enableQuickTapback.value && widget.cvController.chat.isIMessage
-                    ? () => sendTapback(null, null, widget.part.part)
+                    ? () => sendTapback(null, null, _effectivePartIndex)
                     : null,
         onLongPress: widget.isEditing
             ? null
@@ -184,7 +276,7 @@ class _MessagePopupHolderState extends State<MessagePopupHolder> with ThemeHelpe
                     SettingsSvc.settings.enableQuickTapback.value &&
                     widget.cvController.chat.isIMessage &&
                     !isTempMessage
-                ? () => sendTapback(null, null, widget.part.part)
+                ? () => sendTapback(null, null, _effectivePartIndex)
                 : () => openPopup(),
         onSecondaryTapUp: widget.isEditing
             ? null

@@ -102,6 +102,16 @@ class _MessageHolderState extends State<MessageHolder> with ThemeHelpers {
   List<RxDouble> replyOffsets = [];
   List<GlobalKey> keys = [];
   final RxBool tapped = false.obs;
+  final Map<int, ValueNotifier<int>> _galleryIndices = {};
+
+  @override
+  void dispose() {
+    for (final notifier in _galleryIndices.values) {
+      notifier.dispose();
+    }
+    super.dispose();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -123,6 +133,46 @@ class _MessageHolderState extends State<MessageHolder> with ThemeHelpers {
       await service.editMessage(message, part, newEdit);
     }
     widget.cvController.lastFocusedNode.requestFocus();
+  }
+
+  List<MessagePart> _collapseImageGalleryParts(List<MessagePart> parts) {
+    if (!iOS) return parts;
+    final collapsed = <MessagePart>[];
+    int i = 0;
+    while (i < parts.length) {
+      final current = parts[i];
+      if (!current.isMediaOnlyPart) {
+        collapsed.add(current);
+        i++;
+        continue;
+      }
+
+      final groupedAttachments = <Attachment>[...current.attachments];
+      final groupedPartIndices = <int>[...List.filled(current.attachments.length, current.part)];
+      int j = i + 1;
+      while (j < parts.length) {
+        final next = parts[j];
+        if (!next.isMediaOnlyPart) break;
+        groupedAttachments.addAll(next.attachments);
+        groupedPartIndices.addAll(List.filled(next.attachments.length, next.part));
+        j++;
+      }
+
+      if (groupedAttachments.length > 1) {
+        collapsed.add(MessagePart(
+          attachments: groupedAttachments,
+          part: current.part,
+          shouldRedact: current.shouldRedact,
+          edits: const [],
+          isUnsent: current.isUnsent,
+          attachmentPartIndices: groupedPartIndices,
+        ));
+      } else {
+        collapsed.add(current);
+      }
+      i = j;
+    }
+    return collapsed;
   }
 
   @override
@@ -159,10 +209,16 @@ class _MessageHolderState extends State<MessageHolder> with ThemeHelpers {
     return MessageStateScope(
       messageState: messageState,
       child: Obx(() {
+        // Ensure this Obx always has direct reactive dependencies from MessageState.
+        // Some render paths can avoid touching other Rx fields.
+        // ignore: unused_local_variable
+        final _rxGuard = (controller.isSending.value, controller.hasError.value, controller.parts.length);
+
         // Read controller.parts reactively so Obx rebuilds when parts change
-        final messageParts = widget.isReplyThread && widget.replyPart != null
+        final rawMessageParts = widget.isReplyThread && widget.replyPart != null
             ? [controller.parts[widget.replyPart!]]
             : controller.parts.toList();
+        final messageParts = _collapseImageGalleryParts(rawMessageParts);
 
         // Grow per-part arrays so replyOffsets[index] and keys[index] are
         // always safe to access, even when parts are added after initState.
@@ -438,6 +494,10 @@ class _MessageHolderState extends State<MessageHolder> with ThemeHelpers {
                                                                     cvController: widget.cvController,
                                                                     part: e,
                                                                     isEditing: isEditing(e.part),
+                                                                    galleryCurrentIndex: e.isMediaGallery
+                                                                        ? _galleryIndices.putIfAbsent(
+                                                                            e.part, () => ValueNotifier(0))
+                                                                        : null,
                                                                     child: SwipeToReplyWrapper(
                                                                       enabled: canSwipeToReply && !isEditing(e.part),
                                                                       partIndex: index,
@@ -445,6 +505,45 @@ class _MessageHolderState extends State<MessageHolder> with ThemeHelpers {
                                                                       cvController: widget.cvController,
                                                                       child: Builder(
                                                                         builder: (context) {
+                                                                          final isGallery = iOS && e.isMediaGallery;
+                                                                          final inner = Stack(
+                                                                            alignment: Alignment.centerRight,
+                                                                            children: [
+                                                                              MessagePartContent(
+                                                                                messagePart: e,
+                                                                                galleryCurrentIndexNotifier: e
+                                                                                        .isMediaGallery
+                                                                                    ? _galleryIndices.putIfAbsent(
+                                                                                        e.part, () => ValueNotifier(0))
+                                                                                    : null,
+                                                                              ),
+                                                                              if (message.isFromMe!)
+                                                                                Obx(() {
+                                                                                  final editStuff = widget
+                                                                                      .cvController.editing
+                                                                                      .firstWhereOrNull((e2) =>
+                                                                                          e2.message.guid ==
+                                                                                              message.guid! &&
+                                                                                          e2.part.part == e.part);
+                                                                                  return AnimatedSize(
+                                                                                      duration: const Duration(
+                                                                                          milliseconds: 250),
+                                                                                      alignment: Alignment.centerRight,
+                                                                                      curve: Curves.easeOutBack,
+                                                                                      child: editStuff == null
+                                                                                          ? const SizedBox.shrink()
+                                                                                          : MessageEditField(
+                                                                                              part: e.part,
+                                                                                              editController:
+                                                                                                  editStuff.controller,
+                                                                                              cvController:
+                                                                                                  widget.cvController,
+                                                                                              onComplete: completeEdit,
+                                                                                            ));
+                                                                                }),
+                                                                            ],
+                                                                          );
+                                                                          if (isGallery) return inner;
                                                                           final child = ClipPath(
                                                                             clipper: TailClipper(
                                                                               isFromMe: message.isFromMe!,
@@ -461,41 +560,7 @@ class _MessageHolderState extends State<MessageHolder> with ThemeHelpers {
                                                                                           controller.parts.length > 1),
                                                                               connectUpper: iOS ? false : e.part != 0,
                                                                             ),
-                                                                            child: Stack(
-                                                                              alignment: Alignment.centerRight,
-                                                                              children: [
-                                                                                MessagePartContent(
-                                                                                  messagePart: e,
-                                                                                ),
-                                                                                if (message.isFromMe!)
-                                                                                  Obx(() {
-                                                                                    final editStuff = widget
-                                                                                        .cvController.editing
-                                                                                        .firstWhereOrNull((e2) =>
-                                                                                            e2.message.guid ==
-                                                                                                message.guid! &&
-                                                                                            e2.part.part == e.part);
-                                                                                    return AnimatedSize(
-                                                                                        duration: const Duration(
-                                                                                            milliseconds: 250),
-                                                                                        alignment:
-                                                                                            Alignment.centerRight,
-                                                                                        curve: Curves.easeOutBack,
-                                                                                        child: editStuff == null
-                                                                                            ? const SizedBox.shrink()
-                                                                                            : MessageEditField(
-                                                                                                part: e.part,
-                                                                                                editController:
-                                                                                                    editStuff
-                                                                                                        .controller,
-                                                                                                cvController:
-                                                                                                    widget.cvController,
-                                                                                                onComplete:
-                                                                                                    completeEdit,
-                                                                                              ));
-                                                                                  }),
-                                                                              ],
-                                                                            ),
+                                                                            child: inner,
                                                                           );
 
                                                                           if (controller.dateScheduled.value == null) {

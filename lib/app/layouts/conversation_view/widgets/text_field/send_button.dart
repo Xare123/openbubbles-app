@@ -28,14 +28,14 @@ class SendButtonState extends State<SendButton> with SingleTickerProviderStateMi
       duration: Duration(seconds: SettingsSvc.settings.sendDelay.value),
       animationBehavior: AnimationBehavior.preserve);
 
-  // Cache colors to prevent repeated theme access
-  late final Color _iosBaseColor = context.theme.colorScheme.primary;
-  late final Color _materialBaseColor = context.theme.colorScheme.surfaceContainerHighest;
-  late final Color _errorColor = context.theme.colorScheme.error;
-  late final Color _iosOnPrimary = context.theme.colorScheme.onPrimary;
-  late final Color _materialIconColor =
-      ThemeSvc.isAnyMaterialYouSelected ? context.theme.colorScheme.onPrimary : context.theme.colorScheme.secondary;
-  late final Color _onError = context.theme.colorScheme.onError;
+  // Colors cached here and refreshed in didChangeDependencies so they update
+  // when an inherited Theme changes (e.g. per-chat adaptive theme loading).
+  late Color _iosBaseColor;
+  late Color _materialBaseColor;
+  late Color _errorColor;
+  late Color _iosOnPrimary;
+  late Color _materialIconColor;
+  late Color _onError;
 
   Color get baseColor => iOS ? _iosBaseColor : _materialBaseColor;
 
@@ -52,6 +52,18 @@ class SendButtonState extends State<SendButton> with SingleTickerProviderStateMi
         widget.sendMessage.call();
       }
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _iosBaseColor = context.theme.colorScheme.primary;
+    _materialBaseColor = context.theme.colorScheme.surfaceContainerHighest;
+    _errorColor = context.theme.colorScheme.error;
+    _iosOnPrimary = context.theme.colorScheme.onPrimary;
+    _materialIconColor =
+        ThemeSvc.isAnyMaterialYouSelected ? context.theme.colorScheme.onPrimary : context.theme.colorScheme.secondary;
+    _onError = context.theme.colorScheme.onError;
   }
 
   @override

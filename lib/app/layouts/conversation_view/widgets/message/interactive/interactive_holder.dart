@@ -51,8 +51,8 @@ class _InteractiveHolderState extends State<InteractiveHolder> with AutomaticKee
   void initState() {
     super.initState();
     _ms = MessageStateScope.readStateOnce(context);
-    if (payloadData?.appData?.first.appIcon != null) {
-      appIcon = base64Decode(payloadData!.appData!.first.appIcon!);
+    if (payloadData?.appData?.first.icon != null) {
+      appIcon = base64Decode(payloadData!.appData!.first.icon!);
     }
     final attachment = message.dbAttachments.firstOrNull;
     if (attachment != null) {
@@ -87,8 +87,8 @@ class _InteractiveHolderState extends State<InteractiveHolder> with AutomaticKee
           ExtensionSvc.getLatest(message.amkSessionId!).firstOrNull != (message.stagingGuid ?? message.guid)) {
         var latestItems = ExtensionSvc.getLatest(message.amkSessionId!);
 
+        SettingsSvc.settings.alwaysShowAvatars.value; // needs this to assuage Obx.
         if (!latestItems.contains(message.stagingGuid ?? message.guid)) {
-          SettingsSvc.settings.actionList.value; // needs this to assuage Obx.
           return const SizedBox.shrink();
         }
 

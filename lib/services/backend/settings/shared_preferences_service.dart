@@ -1,4 +1,5 @@
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shared_preferences/util/legacy_to_async_migration_util.dart';
 import 'package:bluebubbles/services/backend/settings/actions/shared_preferences_admin_actions.dart';
 import 'package:bluebubbles/services/backend/settings/actions/shared_preferences_database_actions.dart';
 import 'package:bluebubbles/services/backend/settings/actions/shared_preferences_desktop_actions.dart';
@@ -15,7 +16,7 @@ SharedPreferencesService get PrefsSvc => GetIt.I<SharedPreferencesService>();
 
 class SharedPreferencesService {
   @Deprecated('Use categorized helpers on PrefsSvc instead of raw i access')
-  late final SharedPreferences i;
+  late final SharedPreferencesWithCache i;
   late final SharedPreferencesAdminActions admin;
   late final SharedPreferencesDatabaseActions database;
   late final SharedPreferencesDesktopActions desktop;
@@ -27,7 +28,15 @@ class SharedPreferencesService {
   late final SharedPreferencesSystemActions system;
 
   Future<void> init({bool headless = false}) async {
-    i = await SharedPreferences.getInstance();
+    const sharedPreferencesOptions = SharedPreferencesOptions();
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await migrateLegacySharedPreferencesToSharedPreferencesAsyncIfNecessary(
+      legacySharedPreferencesInstance: prefs,
+      sharedPreferencesAsyncOptions: sharedPreferencesOptions,
+      migrationCompletedKey: 'migrationCompleted',
+    );
+
+    i = await SharedPreferencesWithCache.create(cacheOptions: const SharedPreferencesWithCacheOptions());
     admin = SharedPreferencesAdminActions(this);
     database = SharedPreferencesDatabaseActions(this);
     desktop = SharedPreferencesDesktopActions(this);

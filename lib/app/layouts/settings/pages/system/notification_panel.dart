@@ -150,7 +150,7 @@ class _NotificationPanelState extends State<NotificationPanel> with SingleTicker
                       },
                       initialVal: SettingsSvc.settings.showIncrementalSync.value,
                       title: "Notify When Incremental Sync Complete",
-                      subtitle: "Show a snackbar whenever a message sync is completed",
+                      subtitle: "Show a toast whenever a message sync is completed",
                       backgroundColor: tileColor,
                       isThreeLine: true,
                     )),

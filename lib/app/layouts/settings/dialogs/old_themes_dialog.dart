@@ -44,75 +44,69 @@ class OldThemesDialog extends StatelessWidget {
                         mouseCursor: MouseCursor.defer,
                         title: Text(oldThemes[index].name ?? "Unknown Theme", style: context.theme.textTheme.bodyLarge),
                         onTap: () {
-                          showDialog(
-                              context: context,
-                              builder: (context) => AlertDialog(
-                                    title: Text("${oldThemes[index].name ?? "Unknown Theme"} Colors",
-                                        style: context.theme.textTheme.titleLarge),
-                                    backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                                    content: SingleChildScrollView(
-                                      child: SizedBox(
-                                        width: double.maxFinite,
-                                        child: StatefulBuilder(builder: (context, setState) {
-                                          return ConstrainedBox(
-                                            constraints: BoxConstraints(
-                                              maxHeight: context.mediaQuery.size.height * 0.4,
-                                            ),
-                                            child: ListView.builder(
-                                              shrinkWrap: true,
-                                              itemCount: 4,
-                                              findChildIndexCallback: (key) =>
-                                                  findChildIndexByKey(ThemeColors.Colors.toList(), key, (item) => item),
-                                              itemBuilder: (context, index2) {
-                                                final hex = oldThemes[index]
-                                                    .entries
-                                                    .firstWhere((element) =>
-                                                        element.name == ThemeColors.Colors.reversed.toList()[index2])
-                                                    .color!
-                                                    .hex;
-                                                return ListTile(
-                                                    key: ValueKey(ThemeColors.Colors.reversed.toList()[index2]),
-                                                    mouseCursor: SystemMouseCursors.click,
-                                                    title: Text(ThemeColors.Colors.reversed.toList()[index2],
-                                                        style: context.theme.textTheme.bodyLarge),
-                                                    subtitle: Text(
-                                                      hex,
-                                                    ),
-                                                    leading: Container(
-                                                      decoration: BoxDecoration(
-                                                          shape: BoxShape.circle,
-                                                          color: oldThemes[index]
-                                                              .entries
-                                                              .firstWhere((element) =>
-                                                                  element.name ==
-                                                                  ThemeColors.Colors.reversed.toList()[index2])
-                                                              .color!),
-                                                      height: 30,
-                                                      width: 30,
-                                                    ),
-                                                    onTap: () {
-                                                      Clipboard.setData(ClipboardData(text: hex));
-                                                      if (!Platform.isAndroid ||
-                                                          (FilesystemSvc.androidInfo?.version.sdkInt ?? 0) < 33) {
-                                                        showSnackbar("Copied", "Hex code copied to clipboard!");
-                                                      }
-                                                    });
-                                              },
-                                            ),
-                                          );
-                                        }),
-                                      ),
+                          showBBDialog(
+                            context: context,
+                            title: "${oldThemes[index].name ?? "Unknown Theme"} Colors",
+                            content: SingleChildScrollView(
+                              child: SizedBox(
+                                width: double.maxFinite,
+                                child: StatefulBuilder(builder: (context, setState) {
+                                  return ConstrainedBox(
+                                    constraints: BoxConstraints(
+                                      maxHeight: context.mediaQuery.size.height * 0.4,
                                     ),
-                                    actions: [
-                                      TextButton(
-                                          child: Text("OK",
-                                              style: context.theme.textTheme.bodyLarge!
-                                                  .copyWith(color: context.theme.colorScheme.primary)),
-                                          onPressed: () {
-                                            Navigator.of(context).pop();
-                                          }),
-                                    ],
-                                  ));
+                                    child: ListView.builder(
+                                      shrinkWrap: true,
+                                      itemCount: 4,
+                                      findChildIndexCallback: (key) =>
+                                          findChildIndexByKey(ThemeColors.Colors.toList(), key, (item) => item),
+                                      itemBuilder: (context, index2) {
+                                        final hex = oldThemes[index]
+                                            .entries
+                                            .firstWhere((element) =>
+                                                element.name == ThemeColors.Colors.reversed.toList()[index2])
+                                            .color!
+                                            .hex;
+                                        return ListTile(
+                                            key: ValueKey(ThemeColors.Colors.reversed.toList()[index2]),
+                                            mouseCursor: MouseCursor.defer,
+                                            title: Text(ThemeColors.Colors.reversed.toList()[index2],
+                                                style: context.theme.textTheme.bodyLarge),
+                                            subtitle: Text(
+                                              hex,
+                                            ),
+                                            leading: Container(
+                                              decoration: BoxDecoration(
+                                                  shape: BoxShape.circle,
+                                                  color: oldThemes[index]
+                                                      .entries
+                                                      .firstWhere((element) =>
+                                                          element.name == ThemeColors.Colors.reversed.toList()[index2])
+                                                      .color!),
+                                              height: 30,
+                                              width: 30,
+                                            ),
+                                            onTap: () {
+                                              Clipboard.setData(ClipboardData(text: hex));
+                                              if (!Platform.isAndroid ||
+                                                  (FilesystemSvc.androidInfo?.version.sdkInt ?? 0) < 33) {
+                                                showToast("Hex code copied to clipboard");
+                                              }
+                                            });
+                                      },
+                                    ),
+                                  );
+                                }),
+                              ),
+                            ),
+                            actions: [
+                              BBDialogAction(
+                                text: "OK",
+                                isDefault: true,
+                                onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+                              ),
+                            ],
+                          );
                         },
                       );
                     },

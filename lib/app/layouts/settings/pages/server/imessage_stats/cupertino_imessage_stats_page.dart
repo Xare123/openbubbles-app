@@ -2,6 +2,7 @@ import 'package:bluebubbles/app/layouts/settings/pages/server/imessage_stats/ime
 import 'package:bluebubbles/app/layouts/settings/pages/server/server_management_panel.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/settings_widgets.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -108,8 +109,10 @@ class _CupertinoIMessageStatsPageState
   }
 
   Widget _buildBody() {
-    final hasStats = controller.stats.isNotEmpty;
-    final isLoading = controller.hasCheckedStats.value == false;
+    final activeStats = controller.getActiveStatsMap();
+    final hasStats = activeStats.isNotEmpty;
+    final isLoading = controller.isActiveStatsLoading();
+    final error = controller.getActiveStatsError();
 
     if (isLoading && !hasStats) return _buildLoadingState();
 
@@ -119,6 +122,71 @@ class _CupertinoIMessageStatsPageState
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          child: Center(
+            child: CupertinoSlidingSegmentedControl<IMessageStatsSource>(
+              groupValue: controller.selectedStatsSource.value,
+              thumbColor: context.theme.colorScheme.primary,
+              children: {
+                IMessageStatsSource.server: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  child: Text(
+                    "Server",
+                    style: TextStyle(
+                      color: controller.selectedStatsSource.value == IMessageStatsSource.server
+                          ? context.theme.colorScheme.onPrimary
+                          : null,
+                    ),
+                  ),
+                ),
+                IMessageStatsSource.local: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  child: Text(
+                    "Local DB",
+                    style: TextStyle(
+                      color: kIsWeb
+                          ? context.theme.colorScheme.outline
+                          : controller.selectedStatsSource.value == IMessageStatsSource.local
+                              ? context.theme.colorScheme.onPrimary
+                              : null,
+                    ),
+                  ),
+                ),
+              },
+              onValueChanged: (value) {
+                if (value == null) return;
+                if (value == IMessageStatsSource.local && kIsWeb) return;
+                controller.setStatsSource(value);
+              },
+            ),
+          ),
+        ),
+        if (kIsWeb)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+            child: Text(
+              "Local DB stats are unavailable on web builds.",
+              style: context.theme.textTheme.bodySmall,
+            ),
+          ),
+        if (error != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+            child: Text(
+              error,
+              style: context.theme.textTheme.bodySmall!.copyWith(color: context.theme.colorScheme.error),
+            ),
+          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
+          child: Text(
+            "Tip: Pull down to refresh these stats.",
+            style: context.theme.textTheme.bodySmall!.copyWith(
+              color: context.theme.colorScheme.outline,
+            ),
+          ),
+        ),
         SettingsHeader(iosSubtitle: iosSubtitle, materialSubtitle: materialSubtitle, text: "Totals"),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -131,7 +199,7 @@ class _CupertinoIMessageStatsPageState
                 children: gridItems.map((item) {
                   return SizedBox(
                     width: itemWidth,
-                    child: _buildStatCard(item, controller.stats[item.key]),
+                    child: _buildStatCard(item, activeStats[item.key]),
                   );
                 }).toList(),
               );
@@ -141,7 +209,7 @@ class _CupertinoIMessageStatsPageState
         SettingsHeader(iosSubtitle: iosSubtitle, materialSubtitle: materialSubtitle, text: "Media"),
         SettingsSection(
           backgroundColor: tileColor,
-          children: mediaItems.map((item) => _buildMediaRow(item, controller.stats[item.key])).toList(),
+          children: mediaItems.map((item) => _buildMediaRow(item, activeStats[item.key])).toList(),
         ),
         const SizedBox(height: 8),
       ],
@@ -159,7 +227,9 @@ class _CupertinoIMessageStatsPageState
       headerColor: headerColor,
       bodySlivers: [
         CupertinoSliverRefreshControl(
-          onRefresh: () async => controller.getServerStats(),
+          onRefresh: () async {
+            await controller.refreshSelectedStats();
+          },
         ),
         SliverToBoxAdapter(
           child: Obx(() => _buildBody()),

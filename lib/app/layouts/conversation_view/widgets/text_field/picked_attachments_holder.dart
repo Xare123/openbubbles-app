@@ -11,6 +11,7 @@ import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -368,10 +369,10 @@ class _MentionSuggestions extends StatelessWidget {
                             style: context.textTheme.labelLarge!,
                             overflow: TextOverflow.ellipsis,
                           ),
-                          if (mention.displayName != mention.address) const SizedBox(width: 8),
-                          if (mention.displayName != mention.address)
+                          if (!kIsWeb && mention.handle.contactsV2.isNotEmpty) const SizedBox(width: 8),
+                          if (!kIsWeb && mention.handle.contactsV2.isNotEmpty)
                             Text(
-                              mention.address,
+                              mention.handle.formattedAddress ?? mention.address,
                               style: context.textTheme.labelLarge!.copyWith(fontWeight: FontWeight.bold),
                               overflow: TextOverflow.ellipsis,
                             ),

@@ -1,10 +1,12 @@
 import 'package:async_task/async_task_extension.dart';
+import 'package:bluebubbles/env.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/backend/sync/sync_manager_impl.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/services/backend/interfaces/sync_interface.dart';
+import 'package:bluebubbles/services/isolates/global_isolate.dart';
 import 'package:dio/dio.dart' as dio;
 
 class IncrementalSyncManager extends SyncManager {
@@ -359,6 +361,9 @@ class IncrementalSyncManager extends SyncManager {
     syncedChats.addAll(chatCache);
 
     // For each chat, bulk sync the messages
+    final pageMessageIds = <int>[];
+    final pageLatestMessageIdPerChat = <String, int>{};
+
     for (var item in messagesToSync.entries) {
       Chat? theChat = chatCache[item.key];
       if (theChat == null || item.value.isEmpty) continue;
@@ -378,6 +383,23 @@ class IncrementalSyncManager extends SyncManager {
       if (latest != null) {
         latestMessageIdPerChat[item.key] = latest.id!;
       }
+
+      // Collect per-page data for the progressive UI update event.
+      for (final m in syncResult.messages) {
+        if (m.id != null) pageMessageIds.add(m.id!);
+      }
+      if (latest != null) {
+        pageLatestMessageIdPerChat[item.key] = latest.id!;
+      }
+    }
+
+    // Emit a per-page event so the main thread can update the UI incrementally
+    // without waiting for all pages to finish.
+    if (isIsolate && pageMessageIds.isNotEmpty) {
+      IsolateEventEmitter.emit(IsolateEvent.incrementalSyncPageComplete, {
+        'messageIds': pageMessageIds,
+        'latestMessageIdPerChat': pageLatestMessageIdPerChat,
+      });
     }
   }
 

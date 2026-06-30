@@ -112,6 +112,8 @@ class Chat {
   bool isRoutingStub = false;
   String? transcriptPosterPath;
   int transcriptBackgroundVersion = 1;
+  String? customThemeLight;
+  String? customThemeDark;
 
   Message get sendLastMessage {
     var messages = Chat.getMessages(this, limit: 10, getDetails: true);
@@ -160,7 +162,9 @@ class Chat {
   @Transient()
   String get fakeName {
     if (_fakeName != null) return _fakeName!;
-    _fakeName = faker.lorem.words(getTitle().split(' ').length).join(" ").capitalize;
+    final color = faker.color.color();
+    final animal = faker.animal.name();
+    _fakeName = "${color.capitalize} ${animal.capitalize}";
     return _fakeName!;
   }
 
@@ -202,6 +206,8 @@ class Chat {
     this.isRoutingStub = false,
     this.transcriptPosterPath,
     this.transcriptBackgroundVersion = 1,
+    this.customThemeLight,
+    this.customThemeDark,
   }) {
     this.guidRefs = guidRefs ?? [guid];
     customAvatarPath = customAvatar;
@@ -249,6 +255,8 @@ class Chat {
       isRoutingStub: json["isRoutingStub"] ?? false,
       transcriptPosterPath: json["transcriptPosterPath"],
       transcriptBackgroundVersion: json["transcriptBackgroundVersion"] ?? 1,
+      customThemeLight: json["customThemeLight"],
+      customThemeDark: json["customThemeDark"],
       textFieldText: json["textFieldText"],
       textFieldAnnotations: json["textFieldAnnotations"],
       textFieldAttachments: (json["textFieldAttachments"] as List?)?.cast<String>() ?? const [],
@@ -292,6 +300,7 @@ class Chat {
     bool updateCkRecordId = false,
     bool updateCkSyncState = false,
     bool updateAttachmentGuid = false,
+    bool updateCustomThemes = false,
   }) async {
     if (kIsWeb) return this;
 
@@ -334,6 +343,7 @@ class Chat {
         'updateCkRecordId': updateCkRecordId,
         'updateCkSyncState': updateCkSyncState,
         'updateAttachmentGuid': updateAttachmentGuid,
+        'updateCustomThemes': updateCustomThemes,
       },
     );
 
@@ -1073,7 +1083,9 @@ class Chat {
           BackendSvc.markUnread(this);
         }
       }
-    } catch (_) {}
+    } catch (e, s) {
+      Logger.warn("Failed to mark chat as read on message add", error: e, trace: s, tag: 'Chat');
+    }
 
     return this;
   }
@@ -1888,6 +1900,8 @@ class Chat {
       "ckSyncState": ckSyncState,
       "photoAttachmentGuid": photoAttachmentGuid,
       "cloudGuid": cloudGuid,
+      "customThemeLight": customThemeLight,
+      "customThemeDark": customThemeDark,
       "textFieldText": textFieldText,
       "textFieldAnnotations": textFieldAnnotations,
       "textFieldAttachments": textFieldAttachments,

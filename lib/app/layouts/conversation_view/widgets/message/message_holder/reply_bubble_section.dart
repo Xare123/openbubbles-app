@@ -68,16 +68,21 @@ class ReplyBubbleSection extends StatelessWidget {
       );
     } else {
       // Android/Material style - separate decorative box
+      final hasBackground = ChatStateScope.maybeOf(context)?.customBackgroundPath.value?.isNotEmpty == true;
       return Padding(
         padding: showAvatar || alwaysShowAvatars
             ? const EdgeInsets.only(left: 45.0, right: 10)
             : const EdgeInsets.symmetric(horizontal: 10),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(25),
-            border: Border.fromBorderSide(BorderSide(color: context.theme.colorScheme.surfaceContainerHighest)),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(25),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(25),
+              color: hasBackground ? context.theme.colorScheme.surfaceContainerHighest : null,
+              border: Border.fromBorderSide(BorderSide(color: context.theme.colorScheme.surfaceContainerHighest)),
+            ),
+            child: replyBubble,
           ),
-          child: replyBubble,
         ),
       );
     }

@@ -9,6 +9,7 @@ import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
 import 'package:bluebubbles/app/wrappers/scrollbar_wrapper.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -175,7 +176,8 @@ class _AdvancedThemingContentState extends State<AdvancedThemingContent> with Th
                       await MethodChannelSvc.actions.startNotificationListener();
                       SettingsSvc.settings.colorsFromMedia.value = true;
                       toSave.add('colorsFromMedia');
-                    } catch (e) {
+                    } catch (e, s) {
+                      Logger.error("Failed to start notification listener for music theme", error: e, trace: s);
                       showSnackbar(
                           "Error", "Something went wrong, please ensure you granted the permission correctly!");
                       return;

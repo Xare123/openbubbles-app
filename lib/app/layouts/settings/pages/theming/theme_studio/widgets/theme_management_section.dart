@@ -165,32 +165,30 @@ class ThemeManagementSection extends StatelessWidget {
 
   void _showRenameDialog(BuildContext context) {
     final textController = TextEditingController(text: controller.activeTheme.name);
-    showDialog(
+    showBBDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-        title: Text("Rename Theme", style: context.theme.textTheme.titleLarge),
-        content: TextField(
-          controller: textController,
-          autofocus: true,
-          decoration: InputDecoration(
-            labelText: "New Name",
-            enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: context.theme.colorScheme.outline)),
-            focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: context.theme.colorScheme.primary)),
-          ),
-          onSubmitted: (v) => _doRename(ctx, context, v),
+      title: "Rename Theme",
+      content: TextField(
+        controller: textController,
+        autofocus: true,
+        decoration: InputDecoration(
+          labelText: "New Name",
+          enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: context.theme.colorScheme.outline)),
+          focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: context.theme.colorScheme.primary)),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text("Cancel", style: TextStyle(color: context.theme.colorScheme.primary)),
-          ),
-          TextButton(
-            onPressed: () => _doRename(ctx, context, textController.text),
-            child: Text("Rename", style: TextStyle(color: context.theme.colorScheme.primary)),
-          ),
-        ],
+        onSubmitted: (v) => _doRename(context, context, v),
       ),
+      actions: [
+        BBDialogAction(
+          text: "Cancel",
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+        ),
+        BBDialogAction(
+          text: "Rename",
+          isDefault: true,
+          onPressed: () => _doRename(context, context, textController.text),
+        ),
+      ],
     );
   }
 
@@ -204,7 +202,7 @@ class ThemeManagementSection extends StatelessWidget {
       showSnackbar("Error", "A theme named \"$trimmed\" already exists");
       return;
     }
-    Navigator.of(dialogCtx).pop();
+    Navigator.of(dialogCtx, rootNavigator: true).pop();
     await controller.renameTheme(pageCtx, trimmed);
   }
 
@@ -258,30 +256,26 @@ class ThemeManagementSection extends StatelessWidget {
     bool isDestructive = false,
     required VoidCallback onConfirm,
   }) {
-    showDialog(
+    showBBDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-        title: Text(title, style: context.theme.textTheme.titleLarge),
-        content: Text(message, style: context.theme.textTheme.bodyMedium),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text("Cancel", style: TextStyle(color: context.theme.colorScheme.primary)),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              onConfirm();
-            },
-            child: Text(
-              confirmLabel,
-              style:
-                  TextStyle(color: isDestructive ? context.theme.colorScheme.error : context.theme.colorScheme.primary),
-            ),
-          ),
-        ],
-      ),
+      title: title,
+      body: message,
+      actions: [
+        BBDialogAction(
+          text: "Cancel",
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+        ),
+        BBDialogAction(
+          text: confirmLabel,
+          isDefault: !isDestructive,
+          isDestructive: isDestructive,
+          color: isDestructive ? context.theme.colorScheme.error : null,
+          onPressed: () {
+            Navigator.of(context, rootNavigator: true).pop();
+            onConfirm();
+          },
+        ),
+      ],
     );
   }
 }
@@ -339,7 +333,7 @@ class _ExportDialog extends StatelessWidget {
           onPressed: () async {
             await Clipboard.setData(ClipboardData(text: json));
             if (context.mounted) {
-              showSnackbar("Copied", "Theme JSON copied to clipboard");
+              showToast("Theme JSON copied to clipboard");
               Navigator.of(context).pop();
             }
           },

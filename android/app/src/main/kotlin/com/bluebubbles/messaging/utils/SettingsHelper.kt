@@ -11,9 +11,9 @@ class SettingsHelper(private val context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
     
     companion object {
-        private const val PREFIX = "flutter."
+        private const val PREFIX = ""
     }
-    
+
     // Server connection settings
     val serverAddress: String
         get() = prefs.getString("${PREFIX}serverAddress", "") ?: ""

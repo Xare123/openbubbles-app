@@ -104,7 +104,7 @@ class HandleSyncManager extends SyncManager {
           h.defaultEmail = backedUpHandle?.defaultEmail;
           h.defaultPhone = backedUpHandle?.defaultPhone;
           if (!h.address.contains("@") && h.formattedAddress == null) {
-            h.formattedAddress = await formatPhoneNumber(h.address);
+            h.formattedAddress = formatPhoneNumber(h.address);
           }
 
           // Contact matching is now handled automatically by ContactServiceV2

@@ -5,12 +5,22 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 class ChatSyncDialog extends StatefulWidget {
-  const ChatSyncDialog({super.key, required this.chat, this.initialMessage, this.withOffset = false, this.limit = 100});
+  const ChatSyncDialog({
+    super.key,
+    required this.chat,
+    this.initialMessage,
+    required this.start,
+    required this.end,
+  });
 
   final Chat chat;
   final String? initialMessage;
-  final bool withOffset;
-  final int limit;
+
+  /// The start of the time range to sync (inclusive, converted to milliseconds for the API).
+  final DateTime start;
+
+  /// The end of the time range to sync (inclusive, converted to milliseconds for the API).
+  final DateTime end;
 
   @override
   State<ChatSyncDialog> createState() => _ChatSyncDialogState();
@@ -29,50 +39,67 @@ class _ChatSyncDialogState extends State<ChatSyncDialog> {
     syncMessages();
   }
 
-  void syncMessages() async {
+  Future<void> syncMessages() async {
+    const int batchSize = 200;
     int offset = 0;
-    if (widget.withOffset) {
-      offset = Message.countForChat(widget.chat) ?? 0;
-    }
+    int totalSynced = 0;
+    Message? latestMessage;
 
-    ChatsSvc.getMessages(widget.chat.guid, offset: offset, limit: widget.limit).then((dynamic rawData) {
-      final rawMessages = (rawData as List).cast<Map<String, dynamic>>();
-      if (mounted) {
-        setState(() {
-          message = "Adding ${rawMessages.length} messages...";
-        });
-      }
+    try {
+      while (true) {
+        final batch = (await ChatsSvc.getMessages(
+          widget.chat.guid,
+          after: widget.start.millisecondsSinceEpoch,
+          before: widget.end.millisecondsSinceEpoch,
+          offset: offset,
+          limit: batchSize,
+        ))
+            .cast<Map<String, dynamic>>();
 
-      SyncInterface.bulkSyncData(
-        chatData: widget.chat.toMap(),
-        messagesData: rawMessages,
-      ).then((result) {
-        final savedMessages = result.messages;
+        if (batch.isEmpty) break;
 
-        // Update ChatState with the new latest message so the conversation-list
-        // tile subtitle, sort position, and unread indicator stay in sync.
-        if (savedMessages.isNotEmpty) {
-          final latest = savedMessages.reduce((a, b) => (a.dateCreated ?? DateTime.fromMillisecondsSinceEpoch(0))
+        final result = await SyncInterface.bulkSyncData(
+          chatData: widget.chat.toMap(),
+          messagesData: batch,
+        );
+
+        totalSynced += result.messages.length;
+
+        if (mounted) {
+          setState(() {
+            message = "Synced $totalSynced messages...";
+          });
+        }
+
+        // Track the overall latest message across all batches.
+        if (result.messages.isNotEmpty) {
+          final batchLatest = result.messages.reduce((a, b) => (a.dateCreated ?? DateTime.fromMillisecondsSinceEpoch(0))
                   .isAfter(b.dateCreated ?? DateTime.fromMillisecondsSinceEpoch(0))
               ? a
               : b);
-          ChatsSvc.updateChatLatestMessage(widget.chat.guid, latest);
-        }
-
-        // Add the messages to the active messages view.
-        // They addition will get dropped if they already exist in the view.
-        // Only do this if we aren't using an offset, otherwise messages
-        // may end up out of order in the view.
-        if (!widget.withOffset && Get.isRegistered<MessagesService>(tag: widget.chat.guid)) {
-          for (var msg in savedMessages) {
-            Get.find<MessagesService>(tag: widget.chat.guid).addNewMessage(msg);
+          if (latestMessage == null ||
+              (batchLatest.dateCreated ?? DateTime.fromMillisecondsSinceEpoch(0))
+                  .isAfter(latestMessage.dateCreated ?? DateTime.fromMillisecondsSinceEpoch(0))) {
+            latestMessage = batchLatest;
           }
         }
-        onFinish(true);
-      });
-    }).catchError((_) {
+
+        // A page smaller than batchSize means we've reached the end.
+        if (batch.length < batchSize) break;
+        offset += batchSize;
+      }
+    } catch (_) {
       onFinish(false);
-    });
+      return;
+    }
+
+    final chatState = ChatsSvc.getChatState(widget.chat.guid);
+    final currentLatest = chatState?.latestMessage.value?.dateCreated ?? DateTime.fromMillisecondsSinceEpoch(0);
+    if (latestMessage != null && (latestMessage.dateCreated?.isAfter(currentLatest) ?? false)) {
+      ChatsSvc.updateChatLatestMessage(widget.chat.guid, latestMessage);
+    }
+
+    onFinish(true);
   }
 
   void onFinish([bool success = true]) {

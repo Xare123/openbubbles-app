@@ -32,13 +32,9 @@ class SharedPreferencesDesktopActions {
 
   String? getWindowEffect() => service.i.getString(_windowEffectKey);
 
-  Future<void> setWindowEffect(String effect) async {
-    await service.i.setString(_windowEffectKey, effect);
-  }
+  Future<void> setWindowEffect(String effect) => service.i.setString(_windowEffectKey, effect);
 
   double? getSplitRatio() => service.i.getDouble(_splitRatioKey);
 
-  Future<void> setSplitRatio(double ratio) async {
-    await service.i.setDouble(_splitRatioKey, ratio);
-  }
+  Future<void> setSplitRatio(double ratio) => service.i.setDouble(_splitRatioKey, ratio);
 }

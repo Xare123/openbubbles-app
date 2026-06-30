@@ -159,31 +159,22 @@ class _RequestPermissionsState extends State<RequestPermissions> with WidgetsBin
         if (!_notifStatus.isGranted && _notifRequired) missing.add("Notifications");
         if (!_nearbyStatus.isGranted) missing.add("Nearby");
 
-        return await showDialog<bool>(
+        return await showBBDialog<bool>(
               context: context,
-              builder: (context) => AlertDialog(
-                title: Text("Missing Permissions", style: context.theme.textTheme.titleLarge),
-                backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                content: Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Text(
-                    "${missing.join(' and ')} ${missing.length == 1 ? 'permission has' : 'permissions have'} not been granted.\n\nAre you sure you want to proceed?",
-                    style: context.theme.textTheme.bodyLarge,
-                  ),
+              title: "Missing Permissions",
+              body:
+                  "${missing.join(' and ')} ${missing.length == 1 ? 'permission has' : 'permissions have'} not been granted.\n\nAre you sure you want to proceed?",
+              actions: [
+                BBDialogAction(
+                  text: "No",
+                  onPressed: () => Navigator.of(context, rootNavigator: true).pop(false),
                 ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(false),
-                    child: Text("No",
-                        style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    child: Text("Yes",
-                        style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-                  ),
-                ],
-              ),
+                BBDialogAction(
+                  text: "Yes",
+                  isDefault: true,
+                  onPressed: () => Navigator.of(context, rootNavigator: true).pop(true),
+                ),
+              ],
             ) ??
             false;
       },

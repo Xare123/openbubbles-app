@@ -23,6 +23,7 @@ import kotlinx.coroutines.withContext
 class ServerUrlRequestHandler: MethodCallHandlerImpl() {
     companion object {
         const val tag: String = "get-server-url"
+        const val offlineCode: String = "OFFLINE"
     }
 
     override fun handleMethodCall(
@@ -50,6 +51,15 @@ class ServerUrlRequestHandler: MethodCallHandlerImpl() {
                     val serverUrl: String? = serverUrlTask.await().data?.get("serverUrl") as String?
                     submitData(serverUrl, result)
                 } catch (e: FirebaseFirestoreException) {
+                    if (e.code == FirebaseFirestoreException.Code.UNAVAILABLE) {
+                        Log.w(
+                            Constants.logTag,
+                            "Firestore is offline/unavailable while fetching server URL. Keeping existing URL.",
+                            e,
+                        )
+                        result.error(offlineCode, "Firestore unavailable/offline", null)
+                        return@launch
+                    }
                     Log.e(
                         Constants.logTag,
                         "Failed to fetch Firestore server URL (${e.code}): ${e.message}",
@@ -57,6 +67,16 @@ class ServerUrlRequestHandler: MethodCallHandlerImpl() {
                     )
                     result.error("403", "Missing or insufficient Firebase permissions", null)
                 } catch (e: Exception) {
+                    val rootCause = e.cause
+                    if (rootCause is FirebaseFirestoreException && rootCause.code == FirebaseFirestoreException.Code.UNAVAILABLE) {
+                        Log.w(
+                            Constants.logTag,
+                            "Firestore is offline/unavailable while fetching server URL. Keeping existing URL.",
+                            e,
+                        )
+                        result.error(offlineCode, "Firestore unavailable/offline", null)
+                        return@launch
+                    }
                     Log.e(Constants.logTag, "Failed to fetch Firestore server URL", e)
                     result.error("500", "Failed to get server URL from Firestore", null)
                 }

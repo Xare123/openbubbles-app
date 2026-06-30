@@ -36,6 +36,7 @@ enum DetailsMenuAction {
   Bookmark,
   SelectMultiple,
   MessageInfo,
+  CancelSend,
 }
 
 class PlatformSupport {
@@ -74,6 +75,7 @@ const Map<DetailsMenuAction, PlatformSupport> _actionPlatformSupport = {
   DetailsMenuAction.Bookmark: PlatformSupport(true, true, true, true),
   DetailsMenuAction.SelectMultiple: PlatformSupport(true, true, true, true),
   DetailsMenuAction.MessageInfo: PlatformSupport(true, true, true, true),
+  DetailsMenuAction.CancelSend: PlatformSupport(true, true, true, true),
 };
 
 const Map<DetailsMenuAction, (IconData, IconData)> _actionToIcon = {
@@ -103,6 +105,7 @@ const Map<DetailsMenuAction, (IconData, IconData)> _actionToIcon = {
   DetailsMenuAction.Bookmark: (CupertinoIcons.bookmark, Icons.bookmark_outlined),
   DetailsMenuAction.SelectMultiple: (CupertinoIcons.checkmark_square, Icons.check_box_outlined),
   DetailsMenuAction.MessageInfo: (CupertinoIcons.info, Icons.info),
+  DetailsMenuAction.CancelSend: (CupertinoIcons.xmark_circle, Icons.cancel_outlined),
 };
 
 const Map<DetailsMenuAction, String> _actionToText = {
@@ -132,6 +135,7 @@ const Map<DetailsMenuAction, String> _actionToText = {
   DetailsMenuAction.Bookmark: "Add/Remove Bookmark",
   DetailsMenuAction.SelectMultiple: "Select Multiple",
   DetailsMenuAction.MessageInfo: "Message Info",
+  DetailsMenuAction.CancelSend: "Cancel Send",
 };
 
 class _DetailsMenuActionUtils {
@@ -184,7 +188,7 @@ class CustomDetailsMenuActionWidget extends StatelessWidget {
       child: InkWell(
         onTap: isDisabled ? null : onTap,
         child: ListTile(
-          mouseCursor: SystemMouseCursors.click,
+          mouseCursor: MouseCursor.defer,
           dense: !kIsDesktop && !kIsWeb,
           title: Text(
             title,

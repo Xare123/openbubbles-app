@@ -1,4 +1,5 @@
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:faker/faker.dart';
 import 'package:flutter/foundation.dart';
@@ -66,6 +67,8 @@ class HandleState {
   /// mode is toggled, so the displayed name stays consistent.
   final String fakeName;
 
+  final String fakeAddress;
+
   HandleState(this.handle)
       : displayName = RxnString(handle.displayName),
         reactionDisplayName = RxnString(handle.reactionDisplayName),
@@ -75,7 +78,8 @@ class HandleState {
         defaultEmail = RxnString(handle.defaultEmail),
         defaultPhone = RxnString(handle.defaultPhone),
         formattedAddress = RxnString(handle.formattedAddress ?? handle.address),
-        fakeName = faker.person.name() {
+        fakeName = faker.person.name(),
+        fakeAddress = formatPhoneNumber(faker.phoneNumber.us().split('x').first.trim()) {
     if (SettingsSvc.settings.redactedMode.value) {
       redactFields();
     }
@@ -173,17 +177,12 @@ class HandleState {
   /// Redact display names: sets fake name or empty string per settings.
   void redactContactInfo() {
     if (!SettingsSvc.settings.redactedMode.value) return;
-    if (!SettingsSvc.settings.generateFakeContactNames.value && !SettingsSvc.settings.hideContactInfo.value) return;
+    if (!SettingsSvc.settings.hideContactInfo.value) return;
 
-    if (SettingsSvc.settings.generateFakeContactNames.value) {
-      updateDisplayNameInternal(fakeName);
-      _recomputeReactionDisplayName();
-      updateInitialsInternal(null);
-    } else if (SettingsSvc.settings.hideContactInfo.value) {
-      updateDisplayNameInternal("");
-      _recomputeReactionDisplayName();
-      updateInitialsInternal(null);
-    }
+    updateDisplayNameInternal(fakeName);
+    _recomputeReactionDisplayName();
+    updateInitialsInternal(null);
+    updateFormattedAddressInternal(fakeAddress);
   }
 
   /// Restore contact info to real values.
@@ -191,6 +190,7 @@ class HandleState {
     updateDisplayNameInternal(handle.displayName);
     _recomputeReactionDisplayName();
     updateInitialsInternal(handle.initials);
+    updateFormattedAddressInternal(handle.formattedAddress ?? handle.address);
   }
 
   /// Redact avatar: clears avatarPath so the widget falls back to a placeholder.
@@ -214,10 +214,8 @@ class HandleState {
   void _recomputeReactionDisplayName() {
     if (SettingsSvc.settings.hideNamesForReactions.value) {
       updateReactionDisplayNameInternal(null);
-    } else if (SettingsSvc.settings.redactedMode.value && SettingsSvc.settings.generateFakeContactNames.value) {
-      updateReactionDisplayNameInternal(fakeName);
     } else if (SettingsSvc.settings.redactedMode.value && SettingsSvc.settings.hideContactInfo.value) {
-      updateReactionDisplayNameInternal("");
+      updateReactionDisplayNameInternal(fakeName);
     } else {
       updateReactionDisplayNameInternal(handle.reactionDisplayName);
     }

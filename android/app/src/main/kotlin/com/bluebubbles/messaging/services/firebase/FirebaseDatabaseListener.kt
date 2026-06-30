@@ -28,25 +28,36 @@ class RealtimeDatabaseListener: ValueEventListener {
 
 class FirestoreDatabaseListener: EventListener<DocumentSnapshot> {
     override fun onEvent(value: DocumentSnapshot?, error: FirebaseFirestoreException?) {
-        if (error != null) {
-            Log.e(
-                Constants.logTag,
-                "Firestore Database listener error (${error.code}): ${error.message}",
-                error,
-            )
-            return
-        }
-
-        if (value != null) {
-            Log.d(Constants.logTag, "Firestore Database updated with new URL. Fetching...")
-            val serverUrl: String? = value.get("serverUrl", String::class.java)
-            if (serverUrl != null) {
-                MethodCallHandler.invokeMethod("NewServerUrl", mapOf("server_url" to serverUrl))
-            } else {
-                Log.e(Constants.logTag, "Firestore Database provided invalid URL!")
+        try {
+            if (error != null) {
+                if (error.code == FirebaseFirestoreException.Code.UNAVAILABLE) {
+                    Log.w(
+                        Constants.logTag,
+                        "Firestore listener is offline/unavailable. Keeping existing server URL.",
+                    )
+                } else {
+                    Log.e(
+                        Constants.logTag,
+                        "Firestore Database listener error (${error.code}): ${error.message}",
+                        error,
+                    )
+                }
+                return
             }
-        } else {
-            Log.e(Constants.logTag, "Firestore Database failed to provide a new URL!")
+
+            if (value != null) {
+                Log.d(Constants.logTag, "Firestore Database updated with new URL. Fetching...")
+                val serverUrl: String? = value.get("serverUrl", String::class.java)
+                if (serverUrl != null) {
+                    MethodCallHandler.invokeMethod("NewServerUrl", mapOf("server_url" to serverUrl))
+                } else {
+                    Log.e(Constants.logTag, "Firestore Database provided invalid URL!")
+                }
+            } else {
+                Log.e(Constants.logTag, "Firestore Database failed to provide a new URL!")
+            }
+        } catch (t: Throwable) {
+            Log.e(Constants.logTag, "Unhandled exception in FirestoreDatabaseListener", t)
         }
     }
 }

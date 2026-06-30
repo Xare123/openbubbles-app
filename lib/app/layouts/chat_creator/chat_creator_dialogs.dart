@@ -1,52 +1,37 @@
+import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart' hide Response;
 
 class ChatCreatorDialogs {
   static Future<void> showGroupChatCreationDialog(BuildContext context) {
-    return showDialog(
+    return showBBDialog(
       barrierDismissible: false,
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(
-          "Group Chat Creation",
-          style: ctx.theme.textTheme.titleLarge,
-        ),
-        content: Text(
+      title: "Group Chat Creation",
+      body:
           "Creating group chats from BlueBubbles is not possible on macOS 11 (Big Sur) and later due to limitations from Apple. You must setup the Private API to gain this feature.",
-          style: ctx.theme.textTheme.bodyLarge,
+      actions: [
+        BBDialogAction(
+          text: "Close",
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
         ),
-        backgroundColor: ctx.theme.colorScheme.surfaceContainerHighest,
-        actions: <Widget>[
-          TextButton(
-            child: Text("Close", style: ctx.theme.textTheme.bodyLarge!.copyWith(color: ctx.theme.colorScheme.primary)),
-            onPressed: () => Navigator.of(ctx).pop(),
-          ),
-        ],
-      ),
+      ],
     );
   }
 
   static Future<void> showCannotForwardAttachmentDialog(BuildContext context) {
-    return showDialog(
+    return showBBDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: ctx.theme.colorScheme.surfaceContainerHighest,
-        title: Text(
-          "Cannot Forward Attachment",
-          style: ctx.theme.textTheme.titleLarge,
+      title: "Cannot Forward Attachment",
+      body: "Attachments cannot be forwarded to a new conversation. Please select an existing contact.",
+      actions: [
+        BBDialogAction(
+          text: "OK",
+          isDefault: true,
+          onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
         ),
-        content: Text(
-          "Attachments cannot be forwarded to a new conversation. Please select an existing contact.",
-          style: ctx.theme.textTheme.bodyLarge,
-        ),
-        actions: [
-          TextButton(
-            child: Text("OK", style: ctx.theme.textTheme.bodyLarge!.copyWith(color: ctx.theme.colorScheme.primary)),
-            onPressed: () => Navigator.of(ctx).pop(),
-          ),
-        ],
-      ),
+      ],
     );
   }
 

@@ -23,13 +23,9 @@ class SharedPreferencesThemeActions {
     }
   }
 
-  Future<void> setSelectedLightTheme(String themeName) async {
-    await service.i.setString(_selectedLightKey, themeName);
-  }
+  Future<void> setSelectedLightTheme(String themeName) => service.i.setString(_selectedLightKey, themeName);
 
-  Future<void> setSelectedDarkTheme(String themeName) async {
-    await service.i.setString(_selectedDarkKey, themeName);
-  }
+  Future<void> setSelectedDarkTheme(String themeName) => service.i.setString(_selectedDarkKey, themeName);
 
   String? getPreviousLightTheme() => service.i.getString(_previousLightKey);
 
@@ -44,11 +40,7 @@ class SharedPreferencesThemeActions {
     }
   }
 
-  Future<void> clearPreviousLightTheme() async {
-    await service.i.remove(_previousLightKey);
-  }
+  Future<void> clearPreviousLightTheme() => service.i.remove(_previousLightKey);
 
-  Future<void> clearPreviousDarkTheme() async {
-    await service.i.remove(_previousDarkKey);
-  }
+  Future<void> clearPreviousDarkTheme() => service.i.remove(_previousDarkKey);
 }

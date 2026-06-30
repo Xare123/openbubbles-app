@@ -8,6 +8,7 @@
 .buildlog/
 .history
 .svn/
+mise.toml
 
 # IntelliJ related
 *.iml
@@ -54,3 +55,4 @@ pubspeck.lock
 .fvm/
 .fvmrc
 
+.claude/projects

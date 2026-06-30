@@ -9,7 +9,6 @@ import 'package:bluebubbles/app/layouts/conversation_list/widgets/initial_widget
 import 'package:bluebubbles/app/layouts/conversation_list/widgets/tile/conversation_tile.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/widgets/tile/material_conversation_tile.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/widgets/tile/samsung_conversation_tile.dart';
-import 'package:bluebubbles/app/layouts/conversation_view/pages/conversation_view.dart';
 import 'package:bluebubbles/app/wrappers/bb_scaffold.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/app/wrappers/tablet_mode_wrapper.dart';
@@ -177,27 +176,6 @@ class _ConversationListState extends CustomState<ConversationList, void, Convers
           t.cancel();
         }
       });
-    }
-
-    // Extra safety check to make sure Android doesn't open the last chat when opening the app
-    if (kIsDesktop || kIsWeb) {
-      final lastOpenedChat = PrefsSvc.messaging.getLastOpenedChat();
-      if (lastOpenedChat != null &&
-          showAltLayoutContextless &&
-          ChatsSvc.activeChat?.chat.guid != lastOpenedChat &&
-          !LifecycleSvc.isBubble) {
-        WidgetsBinding.instance.addPostFrameCallback((_) async {
-          if (kIsWeb) {
-            await ChatsSvc.loadedAllChats.future;
-          }
-          NavigationSvc.pushAndRemoveUntil(
-            context,
-            ConversationView(
-                chat: kIsWeb ? (await Chat.findOneWeb(guid: lastOpenedChat))! : Chat.findOne(guid: lastOpenedChat)!),
-            (route) => route.isFirst,
-          );
-        });
-      }
     }
   }
 

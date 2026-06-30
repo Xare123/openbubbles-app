@@ -68,8 +68,7 @@ class ManualMarkState extends State<ManualMark> with ThemeHelpers {
             onPressed: () async {
               if (widget.controller.inSelectMode.value) {
                 for (Message m in widget.controller.selected) {
-                  MessagesSvc(chat.guid).removeMessage(m);
-                  Message.softDelete(m.guid!);
+                  await MessagesSvc(chat.guid).softDeleteMessage(m);
                 }
                 widget.controller.inSelectMode.value = false;
                 widget.controller.selected.clear();

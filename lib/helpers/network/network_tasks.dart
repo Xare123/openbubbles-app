@@ -55,20 +55,20 @@ class NetworkTasks {
   static Future<void> _detectLocalhostImpl({bool createSnackbar = false}) async {
     final port = SettingsSvc.settings.localhostPort.value;
     if (port == null || kIsWeb) {
-      HttpSvc.originOverride = null;
+      setOriginOverride(null);
       return;
     }
 
     final status = await Connectivity().checkConnectivity();
     if (!status.contains(ConnectivityResult.wifi) && !status.contains(ConnectivityResult.ethernet)) {
-      HttpSvc.originOverride = null;
+      setOriginOverride(null);
       return;
     }
 
     // Reset any stale local override so serverInfo() queries the remote server
     // for fresh local IPs, and so the port-scan fallback isn't skipped if the
     // serverInfo call fails.
-    HttpSvc.originOverride = null;
+    setOriginOverride(null);
 
     // Phase 1: try the known local IPs reported by the server.
     try {
@@ -83,15 +83,16 @@ class NetworkTasks {
         ...localIpv4s,
       ];
 
-      HttpSvc.originOverride = await _probeAddresses(candidates, port);
+      setOriginOverride(await _probeAddresses(candidates, port));
     } catch (e) {
       Logger.warn('Could not fetch server info for localhost detection: $e', tag: 'NetworkTasks');
     }
 
     if (HttpSvc.originOverride != null) {
       Logger.debug('Localhost detected at ${HttpSvc.originOverride}', tag: 'NetworkTasks');
-      if (createSnackbar) showSnackbar('Localhost Detected', 'Connected to ${HttpSvc.originOverride}');
-      syncOriginOverrideToIsolate();
+      if (createSnackbar) {
+        showToast('Connected to ${HttpSvc.originOverride}');
+      }
       return;
     }
 
@@ -117,7 +118,7 @@ class NetworkTasks {
     Logger.debug('Falling back to port scanning', tag: 'NetworkTasks');
     final wifiIP = await NetworkInfo().getWifiIP();
     if (wifiIP == null) {
-      HttpSvc.originOverride = null;
+      setOriginOverride(null);
       return;
     }
 
@@ -127,18 +128,23 @@ class NetworkTasks {
     HostScannerService.instance.scanDevicesForSinglePort(subnet, int.parse(port)).listen(
       (host) => hosts.add(host),
       onDone: () async {
-        HttpSvc.originOverride = await _probeAddresses(hosts.map((h) => h.address).toList(), port);
+        setOriginOverride(await _probeAddresses(hosts.map((h) => h.address).toList(), port));
         if (createSnackbar && HttpSvc.originOverride != null) {
-          showSnackbar('Localhost Detected', 'Connected to ${HttpSvc.originOverride}');
+          showToast('Connected to ${HttpSvc.originOverride}');
         }
         completer.complete();
       },
       onError: (_, __) {
-        HttpSvc.originOverride = null;
+        setOriginOverride(null);
         completer.complete();
       },
     );
     await completer.future;
+  }
+
+  /// Sets [HttpSvc.originOverride] and syncs the new value to registered isolates.
+  static void setOriginOverride(String? originOverride) {
+    HttpSvc.originOverride = originOverride;
     syncOriginOverrideToIsolate();
   }
 

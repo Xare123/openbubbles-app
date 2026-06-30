@@ -1250,7 +1250,7 @@ class Message {
   bool showUpperMessage(Message olderMessage) {
     // find the part count of the older message
     final olderPartCount = chat.target?.guid != null
-        ? MessagesSvc(chat.target!.guid).getMessageStateIfExists(olderMessage.guid!)?.parts.length ?? 1
+        ? maybeFindMessagesSvc(chat.target!.guid)?.getMessageStateIfExists(olderMessage.guid!)?.parts.length ?? 1
         : 1;
     // make sure the older message is none of the following:
     // 1) thread originator
@@ -1267,7 +1267,7 @@ class Message {
 
   bool connectToLower(Message newerMessage) {
     final thisPartCount = chat.target?.guid != null
-        ? MessagesSvc(chat.target!.guid).getMessageStateIfExists(guid!)?.parts.length ?? 1
+        ? maybeFindMessagesSvc(chat.target!.guid)?.getMessageStateIfExists(guid!)?.parts.length ?? 1
         : 1;
     if (newerMessage.isFromMe != isFromMe) return false;
     if (newerMessage.normalizedThreadPart != thisPartCount - 1) return false;
@@ -1410,18 +1410,13 @@ class Message {
       existing.dateDeleted = newMessage.dateDeleted;
     }
 
-    // Update date edited (and attr body & message summary info)
-    if ((existing.dateEdited == null && newMessage.dateEdited != null) ||
-        (existing.dateEdited != null &&
-            newMessage.dateEdited != null &&
-            existing.dateEdited!.millisecondsSinceEpoch < newMessage.dateEdited!.millisecondsSinceEpoch)) {
-      existing.dateEdited = newMessage.dateEdited;
-      if (!isNullOrEmpty(newMessage.attributedBody)) {
-        existing.attributedBody = newMessage.attributedBody;
-      }
-      if (!isNullOrEmpty(newMessage.messageSummaryInfo)) {
-        existing.messageSummaryInfo = newMessage.messageSummaryInfo;
-      }
+    // Also update attributedBody / messageSummaryInfo when the existing record
+    // has no data but the incoming message does (independent of edit date).
+    if (!isNullOrEmpty(newMessage.attributedBody)) {
+      existing.attributedBody = newMessage.attributedBody;
+    }
+    if (!isNullOrEmpty(newMessage.messageSummaryInfo)) {
+      existing.messageSummaryInfo = newMessage.messageSummaryInfo;
     }
 
     // Update error
@@ -1575,8 +1570,9 @@ class Message {
       "associatedMessagePart": associatedMessagePart,
       "associatedMessageType": associatedMessageType,
       "expressiveSendStyleId": expressiveSendStyleId,
-      "handle": handle?.toMap(),
+      "handle": getHandle()?.toMap(),
       "hasAttachments": hasAttachments,
+      "attachments": dbAttachments.map((a) => a.toMap()).toList(),
       "hasReactions": hasReactions,
       "dateDeleted": dateDeleted?.millisecondsSinceEpoch,
       "metadata": jsonEncode(metadata),
@@ -1595,7 +1591,6 @@ class Message {
       "stagingGuid": stagingGuid,
       "ckRecordId": ckRecordId,
       "associatedMessageEmoji": associatedMessageEmoji,
-      "attachments": attachments.map((e) => e!.toMap()).toList(),
       "attributedBody": attributedBody.map((e) => e.toMap()).toList(),
       "messageSummaryInfo": messageSummaryInfo.map((e) => e.toJson()).toList(),
       "payloadData": payloadData?.toJson(),

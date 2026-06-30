@@ -132,7 +132,7 @@ class _ImageViewerState extends State<ImageViewer> with AutomaticKeepAliveClient
         final calculatedHeight = (displayHeight * Get.pixelRatio * qualityFactor).round().abs().nonZero;
         imageWidget = Image.memory(file.bytes!,
             gaplessPlayback: true,
-            filterQuality: FilterQuality.none,
+            filterQuality: FilterQuality.high,
             cacheWidth: calculatedWidth,
             cacheHeight: calculatedHeight,
             fit: BoxFit.contain,
@@ -163,39 +163,31 @@ class _ImageViewerState extends State<ImageViewer> with AutomaticKeepAliveClient
                       const SizedBox(width: 2.0),
                       IconButton(
                           onPressed: () {
-                            showDialog(
+                            showBBDialog(
                               context: context,
-                              builder: (context) => AlertDialog(
-                                title: Text(
-                                  "Image Stacktrace",
-                                  style: context.theme.textTheme.titleLarge,
-                                ),
-                                backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                                content: SizedBox(
-                                  width: NavigationSvc.width(context) * 3 / 5,
-                                  height: context.height * 1 / 4,
-                                  child: Container(
-                                    padding: const EdgeInsets.all(10.0),
-                                    decoration: BoxDecoration(
-                                        color: context.theme.colorScheme.surface,
-                                        borderRadius: const BorderRadius.all(Radius.circular(10))),
-                                    child: SingleChildScrollView(
-                                      child: SelectableText(
-                                        stacktrace.toString(),
-                                        style: context.theme.textTheme.bodyLarge,
-                                      ),
+                              title: "Image Stacktrace",
+                              content: SizedBox(
+                                width: NavigationSvc.width(context) * 3 / 5,
+                                height: context.height * 1 / 4,
+                                child: Container(
+                                  padding: const EdgeInsets.all(10.0),
+                                  decoration: BoxDecoration(
+                                      color: context.theme.colorScheme.surface,
+                                      borderRadius: const BorderRadius.all(Radius.circular(10))),
+                                  child: SingleChildScrollView(
+                                    child: SelectableText(
+                                      stacktrace.toString(),
+                                      style: context.theme.textTheme.bodyLarge,
                                     ),
                                   ),
                                 ),
-                                actions: [
-                                  TextButton(
-                                    child: Text("Close",
-                                        style: context.theme.textTheme.bodyLarge!
-                                            .copyWith(color: context.theme.colorScheme.primary)),
-                                    onPressed: () => Navigator.of(context).pop(),
-                                  ),
-                                ],
                               ),
+                              actions: [
+                                BBDialogAction(
+                                  text: "Close",
+                                  onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+                                ),
+                              ],
                             );
                           },
                           icon: const Icon(CupertinoIcons.info_circle))
@@ -219,7 +211,7 @@ class _ImageViewerState extends State<ImageViewer> with AutomaticKeepAliveClient
       imageWidget = Image.file(
         File(file.path!),
         gaplessPlayback: true,
-        filterQuality: FilterQuality.none,
+        filterQuality: FilterQuality.high,
         fit: BoxFit.contain,
         frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
           if (wasSynchronouslyLoaded) return child;

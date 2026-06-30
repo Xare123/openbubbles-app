@@ -3,8 +3,9 @@ import 'dart:ui';
 import 'package:bluebubbles/app/wrappers/bb_scaffold.dart';
 import 'package:bluebubbles/app/wrappers/scrollbar_wrapper.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
+import 'package:bluebubbles/models/parsed_log_entry.dart';
+import 'package:bluebubbles/services/backend/interfaces/log_interface.dart';
 import 'package:bluebubbles/services/services.dart';
-import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart';
@@ -19,14 +20,18 @@ class LoggingPanel extends StatefulWidget {
 }
 
 class _LoggingPanel extends State<LoggingPanel> {
-  final RxList<String> _logs = <String>[].obs;
+  // All parsed entries fetched from disk — never cleared on filter change.
+  List<ParsedLogEntry> _allParsedLogs = [];
+
+  // Currently displayed (filtered) subset.
+  final RxList<ParsedLogEntry> _logs = <ParsedLogEntry>[].obs;
   final RxList<int> _errorIndices = <int>[].obs;
-  final RxBool _showErrorFab = false.obs;
   final RxBool _errorNavigationActive = false.obs;
   final RxBool showInfo = true.obs;
   final RxBool showDebug = true.obs;
   final RxBool showWarn = true.obs;
   final RxBool showError = true.obs;
+  final RxBool _isLoading = false.obs;
 
   final AutoScrollController _scrollController = AutoScrollController();
   int _nextErrorOffset = 0;
@@ -34,79 +39,67 @@ class _LoggingPanel extends State<LoggingPanel> {
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_onScroll);
     loadLogs();
   }
 
+  /// Reads logs from disk via the isolate.  Only called on first open or
+  /// explicit refresh — never called when the user just toggles a filter.
   void loadLogs() {
+    _isLoading.value = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Logger.getLogs(maxLines: 500).then((value) {
-        _logs.clear();
-
-        final filtered = value.where((entry) {
-          if (entry.contains('[INFO]')) return showInfo.value;
-          if (entry.contains('[DEBUG]')) return showDebug.value;
-          if (entry.contains('[WARN]') || entry.contains('[WARNING]')) return showWarn.value;
-          if (entry.contains('[ERROR]')) return showError.value;
-          return true;
-        }).toList();
-
-        _logs.addAll(filtered);
-        _rebuildErrorState();
-        _scrollToBottom();
-      });
+      LogInterface.getLogs(maxLines: 1000).then((entries) {
+        _allParsedLogs = entries;
+        _applyFilters();
+      }).whenComplete(() => _isLoading.value = false);
     });
+  }
+
+  /// Filters [_allParsedLogs] using the current level toggles and assigns the
+  /// result to [_logs].  O(n) integer comparisons only — no I/O, no string
+  /// scanning.
+  void _applyFilters() {
+    final filtered = _allParsedLogs.where((entry) {
+      switch (entry.level) {
+        case ParsedLogEntry.info:
+          return showInfo.value;
+        case ParsedLogEntry.debug:
+          return showDebug.value;
+        case ParsedLogEntry.warn:
+          return showWarn.value;
+        case ParsedLogEntry.error:
+          return showError.value;
+        default:
+          return true; // trace, fatal, unknown always shown
+      }
+    }).toList();
+    _logs.assignAll(filtered);
+    _rebuildErrorState();
+    _scrollToBottom();
   }
 
   void _rebuildErrorState() {
     _errorIndices.assignAll(
-      _logs
-          .asMap()
-          .entries
-          .where((entry) => entry.value.contains('[ERROR]'))
-          .map((entry) => entry.key)
-          .toList()
-          .reversed,
+      _logs.asMap().entries.where((e) => e.value.level == ParsedLogEntry.error).map((e) => e.key).toList().reversed,
     );
     _nextErrorOffset = 0;
     _errorNavigationActive.value = false;
-    _updateFabVisibility();
-  }
-
-  void _onScroll() {
-    _updateFabVisibility();
-  }
-
-  void _updateFabVisibility() {
-    if (!_scrollController.hasClients || _logs.isEmpty || _errorIndices.isEmpty) {
-      _showErrorFab.value = false;
-      return;
-    }
-
-    const double showThresholdPx = 50;
-    final double fromBottom = _scrollController.position.maxScrollExtent - _scrollController.position.pixels;
-    _showErrorFab.value = fromBottom > showThresholdPx || _errorNavigationActive.value;
   }
 
   Future<void> _goToNextError() async {
     if (_errorIndices.isEmpty || !_scrollController.hasClients) return;
-
-    _errorNavigationActive.value = true;
     if (_nextErrorOffset >= _errorIndices.length) {
       _nextErrorOffset = 0;
     }
 
     final int targetIndex = _errorIndices[_nextErrorOffset];
     _nextErrorOffset = (_nextErrorOffset + 1) % _errorIndices.length;
-    final int scrollIndex = (targetIndex - 2).clamp(0, _logs.length - 1);
+    final int scrollIndex = (targetIndex - 3).clamp(0, _logs.length - 1);
 
     await _scrollController.scrollToIndex(
       scrollIndex,
       preferPosition: AutoScrollPosition.begin,
       duration: const Duration(milliseconds: 250),
     );
-
-    _updateFabVisibility();
   }
 
   Future<void> _scrollToBottom([int attempt = 0]) async {
@@ -140,10 +133,10 @@ class _LoggingPanel extends State<LoggingPanel> {
         showError.toggle();
         break;
       case _LogFilterAction.refresh:
-        break;
+        loadLogs();
+        return; // loadLogs already calls _applyFilters
     }
-
-    loadLogs();
+    _applyFilters();
   }
 
   void _setExclusiveFilter(_LogFilterAction action) {
@@ -151,7 +144,7 @@ class _LoggingPanel extends State<LoggingPanel> {
     showDebug.value = action == _LogFilterAction.debug;
     showWarn.value = action == _LogFilterAction.warn;
     showError.value = action == _LogFilterAction.error;
-    loadLogs();
+    _applyFilters();
   }
 
   PopupMenuItem<_LogFilterAction> _buildLevelFilterItem({
@@ -203,7 +196,6 @@ class _LoggingPanel extends State<LoggingPanel> {
 
   @override
   void dispose() {
-    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
   }
@@ -276,7 +268,7 @@ class _LoggingPanel extends State<LoggingPanel> {
             ),
           ),
         ),
-        floatingActionButton: (_showErrorFab.value && _errorIndices.isNotEmpty)
+        floatingActionButton: _errorIndices.isNotEmpty
             ? FloatingActionButton.extended(
                 onPressed: _goToNextError,
                 icon: const Icon(Icons.error_outline),
@@ -288,49 +280,51 @@ class _LoggingPanel extends State<LoggingPanel> {
           controller: _scrollController,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 5.0),
-            child: (_logs.isEmpty)
-                ? const Center(
-                    child: Text(
-                      'No logs to display',
-                      style: TextStyle(fontSize: 16.0),
-                    ),
-                  )
-                : ListView.separated(
-                    itemCount: _logs.length,
-                    shrinkWrap: true,
-                    controller: _scrollController,
-                    separatorBuilder: (context, index) =>
-                        Divider(thickness: 0.25, color: context.theme.colorScheme.onSurface),
-                    itemBuilder: (context, index) {
-                      String log = _logs[index].trim();
-
-                      // Remove date
-                      log = log.split(' ').sublist(1).join(' ');
-
-                      Color textColor = context.theme.colorScheme.primary;
-                      if (log.contains('[ERROR]')) {
-                        textColor = Colors.red;
-                      } else if (log.contains('[WARNING]')) {
-                        textColor = Colors.orange;
-                      } else if (log.contains('[TRACE]')) {
-                        textColor = context.theme.colorScheme.primary;
-                      } else if (log.contains('[FATAL]')) {
-                        textColor = Colors.red;
-                      } else if (log.contains('[DEBUG]')) {
-                        textColor = context.theme.colorScheme.secondary;
-                      }
-
-                      return AutoScrollTag(
-                        key: ValueKey(index),
-                        controller: _scrollController,
-                        index: index,
+            child: _isLoading.value
+                ? const Center(child: CircularProgressIndicator())
+                : (_logs.isEmpty)
+                    ? const Center(
                         child: Text(
-                          log,
-                          style: TextStyle(fontSize: 12.0, color: textColor),
+                          'No logs to display',
+                          style: TextStyle(fontSize: 16.0),
                         ),
-                      );
-                    },
-                  ),
+                      )
+                    : ListView.separated(
+                        itemCount: _logs.length,
+                        shrinkWrap: true,
+                        controller: _scrollController,
+                        separatorBuilder: (context, index) =>
+                            Divider(thickness: 0.25, color: context.theme.colorScheme.onSurface),
+                        itemBuilder: (context, index) {
+                          final ParsedLogEntry entry = _logs[index];
+
+                          Color textColor = context.theme.colorScheme.primary;
+                          switch (entry.level) {
+                            case ParsedLogEntry.error:
+                            case ParsedLogEntry.fatal:
+                              textColor = Colors.red;
+                              break;
+                            case ParsedLogEntry.warn:
+                              textColor = Colors.orange;
+                              break;
+                            case ParsedLogEntry.debug:
+                              textColor = context.theme.colorScheme.secondary;
+                              break;
+                            default:
+                              break; // trace, info, unknown use primary
+                          }
+
+                          return AutoScrollTag(
+                            key: ValueKey(index),
+                            controller: _scrollController,
+                            index: index,
+                            child: Text(
+                              entry.body.trim(),
+                              style: TextStyle(fontSize: 12.0, color: textColor),
+                            ),
+                          );
+                        },
+                      ),
           ),
         ),
       ),

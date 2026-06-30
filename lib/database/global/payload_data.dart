@@ -233,29 +233,40 @@ class iMessageAppData {
         "userInfo": userInfo?.toJson(),
       };
 
-  factory iMessageAppData.fromNative(Map<String, dynamic> json, dynamic app) => iMessageAppData(
-        appName: app.madridName ?? app.name,
-        ldText: json["ldText"] ?? json["ldtext"],
-        url: json["url"],
-        session: json["session"] ?? json["amkSessionId"],
-        appIcon: json["imageBase64"] ?? app.available?.icon,
-        appId: app.appId,
-        bundleId: app.madridBundleId,
-        isLive: json["isLive"],
-        userInfo: json["userInfo"] == null ? null : UserInfo.fromJson(Map<String, dynamic>.from(json["userInfo"])),
-      );
+  factory iMessageAppData.fromNative(Map<String, dynamic> args, App app) => iMessageAppData(
+    appName: app.madridName,
+    ldText: args["ldText"],
+    url: args["url"],
+    session: args["session"],
+    appIcon: app.available!.icon,
+    appId: app.appId,
+    isLive: args["isLive"],
+    userInfo: UserInfo(
+      imageSubtitle: args["imageSubtitle"],
+      imageTitle: args["imageTitle"],
+      caption: args["caption"],
+      secondarySubcaption: args["secondaryCaption"],
+      tertiarySubcaption: args["tertiaryCaption"],
+      subcaption: args["subcaption"],
+    )
+  );
 
-  Map<String, dynamic> toNative(dynamic _) => {
-        "appId": appId,
-        "bundleId": bundleId,
-        "appName": appName,
-        "ldText": ldText,
-        "url": url,
-        "session": session,
-        "imageBase64": appIcon,
-        "isLive": isLive,
-        "userInfo": userInfo?.toJson(),
-      };
+  Map<String, dynamic> toNative(String? image) => {
+    "ldText": ldText,
+    "url": url,
+    "session": session,
+    
+    "imageBase64": image,
+    "imageSubtitle": userInfo?.imageSubtitle,
+    "imageTitle": userInfo?.imageTitle,
+    "caption": userInfo?.caption,
+    "secondaryCaption": userInfo?.secondarySubcaption,
+    "tertiaryCaption": userInfo?.tertiarySubcaption,
+    "subcaption": userInfo?.subcaption,
+    "appId": appId,
+
+    "isLive": isLive,
+  };
 }
 
 class UserInfo {

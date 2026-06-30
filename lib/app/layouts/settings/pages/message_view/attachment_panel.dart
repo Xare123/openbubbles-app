@@ -109,59 +109,51 @@ class _AttachmentPanelState extends State<AttachmentPanel> with ThemeHelpers {
                             backgroundColor: tileColor,
                             onTap: () async {
                               final TextEditingController pathController = TextEditingController();
-                              await showDialog(
-                                  context: context,
-                                  builder: (_) {
-                                    return AlertDialog(
-                                      actions: [
-                                        TextButton(
-                                          child: Text("Cancel",
-                                              style: context.theme.textTheme.bodyLarge!
-                                                  .copyWith(color: context.theme.colorScheme.primary)),
-                                          onPressed: () => Get.back(),
+                              await showBBDialog(
+                                context: context,
+                                title: "Enter Relative Path",
+                                content: Row(
+                                  children: [
+                                    Text("Pictures/", style: context.theme.textTheme.titleMedium),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: TextField(
+                                        controller: pathController,
+                                        decoration: const InputDecoration(
+                                          labelText: "Relative Path",
+                                          border: OutlineInputBorder(),
                                         ),
-                                        TextButton(
-                                          child: Text("OK",
-                                              style: context.theme.textTheme.bodyLarge!
-                                                  .copyWith(color: context.theme.colorScheme.primary)),
-                                          onPressed: () async {
-                                            if (pathController.text.isEmpty) {
-                                              Navigator.of(context, rootNavigator: true).pop();
-                                              SettingsSvc.settings.autoSavePicsLocation.value = "Pictures";
-                                            } else {
-                                              final regex = RegExp(r"^[a-zA-Z0-9-_]+");
-                                              if (!regex.hasMatch(pathController.text) ||
-                                                  pathController.text.endsWith("/")) {
-                                                showSnackbar("Error", "Enter a valid path!");
-                                                return;
-                                              }
-                                              Navigator.of(context, rootNavigator: true).pop();
-                                              SettingsSvc.settings.autoSavePicsLocation.value =
-                                                  "Pictures/${pathController.text}";
-                                            }
-                                            await SettingsSvc.settings.saveOneAsync('autoSavePicsLocation');
-                                          },
-                                        ),
-                                      ],
-                                      content: Row(
-                                        children: [
-                                          Text("Pictures/", style: context.theme.textTheme.titleMedium),
-                                          const SizedBox(width: 10),
-                                          Expanded(
-                                            child: TextField(
-                                              controller: pathController,
-                                              decoration: const InputDecoration(
-                                                labelText: "Relative Path",
-                                                border: OutlineInputBorder(),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
                                       ),
-                                      title: Text("Enter Relative Path", style: context.theme.textTheme.titleLarge),
-                                      backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                                    );
-                                  });
+                                    ),
+                                  ],
+                                ),
+                                actions: [
+                                  BBDialogAction(
+                                    text: "Cancel",
+                                    onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+                                  ),
+                                  BBDialogAction(
+                                    text: "OK",
+                                    isDefault: true,
+                                    onPressed: () async {
+                                      if (pathController.text.isEmpty) {
+                                        Navigator.of(context, rootNavigator: true).pop();
+                                        SettingsSvc.settings.autoSavePicsLocation.value = "Pictures";
+                                      } else {
+                                        final regex = RegExp(r"^[a-zA-Z0-9-_]+");
+                                        if (!regex.hasMatch(pathController.text) || pathController.text.endsWith("/")) {
+                                          showSnackbar("Error", "Enter a valid path!");
+                                          return;
+                                        }
+                                        Navigator.of(context, rootNavigator: true).pop();
+                                        SettingsSvc.settings.autoSavePicsLocation.value =
+                                            "Pictures/${pathController.text}";
+                                      }
+                                      await SettingsSvc.settings.saveOneAsync('autoSavePicsLocation');
+                                    },
+                                  ),
+                                ],
+                              );
                             },
                           )),
                     if (!kIsWeb && !kIsDesktop) const SettingsDivider(padding: EdgeInsets.only(left: 16.0)),

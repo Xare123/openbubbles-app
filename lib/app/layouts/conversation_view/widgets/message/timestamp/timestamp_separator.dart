@@ -1,3 +1,4 @@
+import 'package:bluebubbles/app/state/chat_state_scope.dart';
 import 'package:bluebubbles/app/state/message_state_scope.dart';
 import 'package:bluebubbles/app/layouts/conversation_details/dialogs/timeframe_picker.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
@@ -53,40 +54,56 @@ class TimestampSeparator extends StatelessWidget {
   Widget build(BuildContext context) {
     final message = MessageStateScope.messageOf(context);
     final timestamp = _buildTimeStamp(message);
-    final child = timestamp != null
+    final hasBackground = ChatStateScope.maybeOf(context)?.customBackgroundPath.value?.isNotEmpty == true;
+    final textColor = hasBackground ? context.theme.colorScheme.onSurfaceVariant : context.theme.colorScheme.outline;
+
+    final richText = timestamp != null
+        ? RichText(
+            textAlign: TextAlign.center,
+            text: TextSpan(
+              style: context.theme.textTheme.labelSmall!.copyWith(color: textColor, fontWeight: FontWeight.normal),
+              children: [
+                if (message.dateScheduled != null && olderMessage?.dateScheduled == null)
+                  TextSpan(
+                    text: "Send Later\n",
+                    style: context.theme.textTheme.labelSmall!.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: textColor,
+                      height: 2.5,
+                    ),
+                  ),
+                if (timestamp.date != null)
+                  TextSpan(
+                    text: "${timestamp.date!} ",
+                    style: context.theme.textTheme.labelSmall!.copyWith(fontWeight: FontWeight.w600, color: textColor),
+                  ),
+                TextSpan(text: timestamp.time),
+                if (message.dateScheduled != null)
+                  TextSpan(
+                    text: " Edit",
+                    style: context.theme.textTheme.labelSmall!
+                        .copyWith(fontWeight: FontWeight.w600, color: context.theme.primaryColor),
+                  ),
+              ],
+            ),
+          )
+        : null;
+
+    final child = richText != null
         ? Padding(
             padding: const EdgeInsets.all(14.0),
-            child: RichText(
-              textAlign: TextAlign.center,
-              text: TextSpan(
-                style: context.theme.textTheme.labelSmall!
-                    .copyWith(color: context.theme.colorScheme.outline, fontWeight: FontWeight.normal),
-                children: [
-                  if (message.dateScheduled != null && olderMessage?.dateScheduled == null)
-                    TextSpan(
-                      text: "Send Later\n",
-                      style: context.theme.textTheme.labelSmall!.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: context.theme.colorScheme.outline,
-                        height: 2.5,
+            child: hasBackground
+                ? Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 10),
+                      decoration: BoxDecoration(
+                        color: context.theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.75),
+                        borderRadius: BorderRadius.circular(12),
                       ),
+                      child: richText,
                     ),
-                  if (timestamp.date != null)
-                    TextSpan(
-                      text: "${timestamp.date!} ",
-                      style: context.theme.textTheme.labelSmall!
-                          .copyWith(fontWeight: FontWeight.w600, color: context.theme.colorScheme.outline),
-                    ),
-                  TextSpan(text: timestamp.time),
-                  if (message.dateScheduled != null)
-                    TextSpan(
-                      text: " Edit",
-                      style: context.theme.textTheme.labelSmall!
-                          .copyWith(fontWeight: FontWeight.w600, color: context.theme.primaryColor),
-                    ),
-                ],
-              ),
-            ),
+                  )
+                : richText,
           )
         : const SizedBox.shrink();
 

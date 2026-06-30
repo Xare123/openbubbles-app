@@ -25,7 +25,7 @@ class OpenSettingsAction extends Action<OpenSettingsIntent> {
     if (SettingsSvc.settings.finishedSetup.value) {
       final currentChat = ChatsSvc.activeChat?.chat;
       NavigationSvc.closeAllConversationView(context);
-      await ChatsSvc.setAllInactive();
+      ChatsSvc.setAllInactive();
       await Navigator.of(Get.context!).push(
         ThemeSwitcher.buildPageRoute(
           builder: (BuildContext context) {
@@ -108,9 +108,11 @@ class ReplyRecentAction extends Action<ReplyRecentIntent> {
   Object? invoke(covariant ReplyRecentIntent intent) async {
     final chat = ChatsSvc.getChatState(chatGuid)?.chat;
     if (chat == null) return null;
-    final message = MessagesSvc(chatGuid).mostRecentReceived;
+    final service = maybeFindMessagesSvc(chatGuid);
+    if (service == null) return null;
+    final message = service.mostRecentReceived;
     if (message != null && SettingsSvc.settings.enablePrivateAPI.value) {
-      final parts = MessagesSvc(chatGuid).getOrCreateState(message).parts;
+      final parts = service.getOrCreateState(message).parts;
       cvc(chat).replyToMessage = MessageReplyContext(message, parts.length - 1);
     }
     return null;
@@ -130,7 +132,7 @@ class HeartRecentAction extends Action<HeartRecentIntent> {
   Object? invoke(covariant HeartRecentIntent intent) async {
     final chat = ChatsSvc.getChatState(chatGuid)?.chat;
     if (chat == null) return null;
-    final message = MessagesSvc(chatGuid).mostRecent;
+    final message = maybeFindMessagesSvc(chatGuid)?.mostRecent;
     if (message != null && SettingsSvc.settings.enablePrivateAPI.value) {
       _sendReactionHelper(chat, message, ReactionTypes.LOVE);
     }
@@ -151,7 +153,7 @@ class LikeRecentAction extends Action<LikeRecentIntent> {
   Object? invoke(covariant LikeRecentIntent intent) async {
     final chat = ChatsSvc.getChatState(chatGuid)?.chat;
     if (chat == null) return null;
-    final message = MessagesSvc(chatGuid).mostRecent;
+    final message = maybeFindMessagesSvc(chatGuid)?.mostRecent;
     if (message != null && SettingsSvc.settings.enablePrivateAPI.value) {
       _sendReactionHelper(chat, message, ReactionTypes.LIKE);
     }
@@ -172,7 +174,7 @@ class DislikeRecentAction extends Action<DislikeRecentIntent> {
   Object? invoke(covariant DislikeRecentIntent intent) async {
     final chat = ChatsSvc.getChatState(chatGuid)?.chat;
     if (chat == null) return null;
-    final message = MessagesSvc(chatGuid).mostRecent;
+    final message = maybeFindMessagesSvc(chatGuid)?.mostRecent;
     if (message != null && SettingsSvc.settings.enablePrivateAPI.value) {
       _sendReactionHelper(chat, message, ReactionTypes.DISLIKE);
     }
@@ -193,7 +195,7 @@ class LaughRecentAction extends Action<LaughRecentIntent> {
   Object? invoke(covariant LaughRecentIntent intent) async {
     final chat = ChatsSvc.getChatState(chatGuid)?.chat;
     if (chat == null) return null;
-    final message = MessagesSvc(chatGuid).mostRecent;
+    final message = maybeFindMessagesSvc(chatGuid)?.mostRecent;
     if (message != null && SettingsSvc.settings.enablePrivateAPI.value) {
       _sendReactionHelper(chat, message, ReactionTypes.LAUGH);
     }
@@ -214,7 +216,7 @@ class EmphasizeRecentAction extends Action<EmphasizeRecentIntent> {
   Object? invoke(covariant EmphasizeRecentIntent intent) async {
     final chat = ChatsSvc.getChatState(chatGuid)?.chat;
     if (chat == null) return null;
-    final message = MessagesSvc(chatGuid).mostRecent;
+    final message = maybeFindMessagesSvc(chatGuid)?.mostRecent;
     if (message != null && SettingsSvc.settings.enablePrivateAPI.value) {
       _sendReactionHelper(chat, message, ReactionTypes.EMPHASIZE);
     }
@@ -235,7 +237,7 @@ class QuestionRecentAction extends Action<QuestionRecentIntent> {
   Object? invoke(covariant QuestionRecentIntent intent) async {
     final chat = ChatsSvc.getChatState(chatGuid)?.chat;
     if (chat == null) return null;
-    final message = MessagesSvc(chatGuid).mostRecent;
+    final message = maybeFindMessagesSvc(chatGuid)?.mostRecent;
     if (message != null && SettingsSvc.settings.enablePrivateAPI.value) {
       _sendReactionHelper(chat, message, ReactionTypes.QUESTION);
     }

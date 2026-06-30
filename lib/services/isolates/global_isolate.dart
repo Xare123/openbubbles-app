@@ -18,6 +18,7 @@ class GlobalIsolate {
   SendPort? _sendPort;
   final Map<String, _RequestInfo> _pendingRequests = {};
   bool _shutdownPending = false;
+  Completer<void>? _drainCompleter;
   final StreamController<dynamic> _controller = StreamController.broadcast();
   final Map<IsolateEvent, List<Function(dynamic)>> _eventListeners = {};
   bool _isRunning = false;
@@ -100,7 +101,12 @@ class GlobalIsolate {
     _sendPortCompleter = Completer<void>();
 
     _isStarting = true;
-    _shutdownPending = false;
+    // Only clear the shutdown flag if we're not in the middle of a requested drain —
+    // a restart triggered by another code path (e.g. _cleanupDeadIsolate) must not
+    // silently cancel a pending drainAndStop().
+    if (_drainCompleter == null) {
+      _shutdownPending = false;
+    }
 
     try {
       // Create a new ReceivePort for this isolate instance
@@ -190,11 +196,16 @@ class GlobalIsolate {
   /// Stops the isolate process but keeps runtime listeners/state by default so
   /// lazy restarts continue to deliver events to existing subscribers.
   void stop({bool clearEventListeners = false, bool closeOutputStream = false}) {
-    if (!_isRunning) return;
+    if (!_isRunning && !_isStarting) return;
 
     // Cancel the idle timer
     _idleTimer?.cancel();
     _idleTimer = null;
+
+    // If we're mid-startup, fail the SendPort completer so _waitForSendPort unblocks.
+    if (_isStarting && _sendPortCompleter != null && !_sendPortCompleter!.isCompleted) {
+      _sendPortCompleter!.completeError('Isolate was stopped before SendPort was received');
+    }
 
     // Unregister the named port when stopping
     IsolateNameServer.removePortNameMapping(isolatePortName);
@@ -219,12 +230,21 @@ class GlobalIsolate {
 
     _pendingRequests.clear();
     _shutdownPending = false;
+
+    // Resolve any awaiter of drainAndStop() so they aren't left hanging.
+    final drainCompleter = _drainCompleter;
+    _drainCompleter = null;
+    if (drainCompleter != null && !drainCompleter.isCompleted) {
+      drainCompleter.complete();
+    }
+
     if (clearEventListeners) {
       _eventListeners.clear();
     }
     _isolate = null;
     _sendPort = null;
     _isRunning = false;
+    _isStarting = false;
 
     // Reset the start completer
     if (_startCompleter.isCompleted) {
@@ -233,23 +253,31 @@ class GlobalIsolate {
   }
 
   /// Requests graceful shutdown:
-  /// - blocks new requests while draining
-  /// - stops immediately once in-flight requests reach zero
+  /// - rejects new [send]/[broadcast] calls immediately
+  /// - stops the isolate once all in-flight requests complete (or immediately if none)
   ///
-  /// Safe to fire-and-forget with [unawaited].
-  Future<void> drainAndStop() async {
+  /// Returns a Future that completes when the isolate has fully stopped.
+  /// Safe to fire-and-forget with [unawaited] if the caller doesn't need to wait.
+  Future<void> drainAndStop() {
+    if (!_isRunning && !_isStarting) return Future.value();
+
+    // Return the same future if a drain is already in progress.
+    if (_drainCompleter != null) return _drainCompleter!.future;
+
     _shutdownPending = true;
+    _drainCompleter = Completer<void>();
 
     if (_pendingRequests.isEmpty) {
       Logger.info('$isolateDebugName draining complete (0 pending). Stopping now.');
-      stop();
-      return;
+      stop(); // clears _drainCompleter and completes it
+      return Future.value();
     }
 
     Logger.info(
       '$isolateDebugName drain requested with ${_pendingRequests.length} pending request(s). '
       'Will stop when all pending requests complete.',
     );
+    return _drainCompleter!.future;
   }
 
   /// Closes the isolate and clears all listeners
@@ -293,6 +321,9 @@ class GlobalIsolate {
 
   /// Sends a request to the isolate and waits for a response
   Future<T> send<T>(IsolateRequestType type, {dynamic input, Duration? customTimeout}) async {
+    if (_shutdownPending) {
+      return Future.error('$isolateDebugName is shutting down; request $type rejected');
+    }
     await _ensureStarted();
 
     final requestId = const Uuid().v4();
@@ -327,6 +358,10 @@ class GlobalIsolate {
 
   /// Fire-and-forget send (no response expected)
   void broadcast(IsolateRequestType type, dynamic input) {
+    if (_shutdownPending) {
+      Logger.warn('$isolateDebugName is shutting down; broadcast $type rejected');
+      return;
+    }
     _ensureStarted().then((_) {
       _scheduleIdleShutdown();
 
@@ -366,18 +401,20 @@ class GlobalIsolate {
         final requestInfo = _pendingRequests.remove(uuid)!;
         requestInfo.timer?.cancel();
 
-        // Reset idle shutdown after work completes.
-        // This controls the idle timeout, not the shutdownPending case.
-        _scheduleIdleShutdown();
-
         if (isolateResponse.ok) {
           requestInfo.completer.complete(isolateResponse.data);
         } else {
           requestInfo.completer.completeError(isolateResponse.error ?? 'Unknown error');
         }
 
-        // If we have a pending shutdown and this was the last in-flight request, stop the isolate now
-        _maybeStopAfterDrain();
+        // Check drain first: if a stop was requested and this was the last in-flight
+        // request, stop now rather than scheduling an idle timer that would be
+        // immediately cancelled.
+        if (_shutdownPending) {
+          _maybeStopAfterDrain();
+        } else {
+          _scheduleIdleShutdown();
+        }
       } else if (isolateResponse.data != null) {
         // Broadcast the response data
         _controller.add(isolateResponse.data);
@@ -607,6 +644,7 @@ enum IsolateRequestType {
 
   // Chat actions
   clearNotificationForChat,
+  markAllChatsRead,
   markChatReadUnread,
   startTyping,
   stopTyping,
@@ -654,6 +692,9 @@ enum IsolateRequestType {
   // Sync actions
   performIncrementalSync,
   bulkSyncData,
+
+  // Log actions
+  getLogs,
 
   // Send message actions (routed through isolate so sends survive backgrounding)
   sendTextMessage,

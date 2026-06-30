@@ -149,6 +149,7 @@ class TextFieldComponentState extends State<TextFieldComponent> {
   bool get isChatCreator => focusNode != null;
 
   bool _showAttachmentPickerLocal = false;
+  bool _pasteHandledOnKeyDown = false;
 
   @override
   Widget build(BuildContext context) {
@@ -158,11 +159,14 @@ class TextFieldComponentState extends State<TextFieldComponent> {
     // Captured here because contextMenuBuilder receives its own `context` that shadows this
     // one and may not have the dark theme properly applied (it's a detached overlay context).
     final outerTheme = Theme.of(context);
-    Widget textInput = Focus(
+    Widget focusWidget = Focus(
       onKeyEvent: (_, ev) => handleKey(_, ev, context, isChatCreator),
       child: ValueListenableBuilder<bool>(
           valueListenable: isRecordingNotifier,
           builder: (context, isRecording, child) {
+            final hasBackground = chat != null
+                ? (ChatsSvc.getChatState(chat!.guid)?.customBackgroundPath.value?.isNotEmpty == true)
+                : false;
             return Container(
               // Border is placed in the foregroundDecoration so it paints on top of
               // child content (ReplyHolder, attachments, etc.) and remains visible
@@ -178,14 +182,10 @@ class TextFieldComponentState extends State<TextFieldComponent> {
                       borderRadius: BorderRadius.circular(20),
                     )
                   : null,
-              decoration: iOS
-                  ? const BoxDecoration(
-                      borderRadius: BorderRadius.all(Radius.circular(20)),
-                    )
-                  : BoxDecoration(
-                      color: context.theme.colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
+              decoration: BoxDecoration(
+                color: (!iOS || hasBackground) ? context.theme.colorScheme.surfaceContainerHighest : null,
+                borderRadius: BorderRadius.circular(20),
+              ),
               clipBehavior: Clip.antiAlias,
               child: AnimatedSize(
                 duration: const Duration(milliseconds: 400),
@@ -368,6 +368,28 @@ class TextFieldComponentState extends State<TextFieldComponent> {
             );
           }),
     );
+    // On Windows, wrap with Shortcuts/Actions to intercept Ctrl+V on KeyDown.
+    // This prevents Win+V (clipboard history) from double-firing a paste.
+    Widget textInput;
+    if (!kIsWeb && Platform.isWindows) {
+      textInput = Shortcuts(
+        shortcuts: {
+          const SingleActivator(LogicalKeyboardKey.keyV, control: true, includeRepeats: false): const _PasteIntent(),
+        },
+        child: Actions(
+          actions: {
+            _PasteIntent: CallbackAction<_PasteIntent>(onInvoke: (_) {
+              _pasteHandledOnKeyDown = true;
+              clipboardHandler?.handlePasteEvent();
+              return null;
+            }),
+          },
+          child: focusWidget,
+        ),
+      );
+    } else {
+      textInput = focusWidget;
+    }
     if (!showIcons) return textInput;
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -432,10 +454,24 @@ class TextFieldComponentState extends State<TextFieldComponent> {
   }
 
   KeyEventResult handleKey(FocusNode _, KeyEvent ev, BuildContext context, bool isChatCreator) {
+    // Windows: Win+V clipboard history sends Ctrl on KeyUp, not KeyDown.
+    // The Shortcuts widget handles normal Ctrl+V on KeyDown; this catches Win+V.
+    if (!kIsWeb && Platform.isWindows) {
+      if (ev is KeyUpEvent && ev.logicalKey == LogicalKeyboardKey.keyV && HardwareKeyboard.instance.isControlPressed) {
+        if (_pasteHandledOnKeyDown) {
+          _pasteHandledOnKeyDown = false;
+          return KeyEventResult.ignored;
+        }
+        clipboardHandler?.handlePasteEvent();
+        return KeyEventResult.handled;
+      }
+    }
+
     if (ev is! KeyDownEvent) return KeyEventResult.ignored;
 
-    // Handle clipboard paste (Ctrl+V or Cmd+V)
-    if ((kIsWeb || Platform.isWindows || Platform.isLinux) &&
+    // Handle clipboard paste (Ctrl+V) on Linux
+    if (!kIsWeb &&
+        Platform.isLinux &&
         (ev.physicalKey == PhysicalKeyboardKey.keyV || ev.logicalKey == LogicalKeyboardKey.keyV) &&
         HardwareKeyboard.instance.isControlPressed) {
       final handler = clipboardHandler;
@@ -446,7 +482,6 @@ class TextFieldComponentState extends State<TextFieldComponent> {
       return KeyEventResult.ignored;
     }
 
-    // Early return if holding modifier keys (unless for special Ctrl+V case above)
     if (HardwareKeyboard.instance.isMetaPressed ||
         HardwareKeyboard.instance.isControlPressed ||
         HardwareKeyboard.instance.isAltPressed) {
@@ -624,4 +659,8 @@ class TextFieldComponentState extends State<TextFieldComponent> {
     }
     return Uint8List.fromList(chunks.expand((e) => e).toList());
   }
+}
+
+class _PasteIntent extends Intent {
+  const _PasteIntent();
 }

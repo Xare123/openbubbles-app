@@ -7,7 +7,7 @@ class LaunchAtStartup {
 
   static Future<void> disable() async => await las.LaunchAtStartup.instance.disable();
 
-  static setup(String appName, bool minimized) => las.LaunchAtStartup.instance.setup(
+  static void setup(String appName, bool minimized) => las.LaunchAtStartup.instance.setup(
         appName: appName,
         appPath: isFlatpak ? "flatpak run app.bluebubbles.BlueBubbles" : Platform.resolvedExecutable,
         args: minimized ? ["minimized"] : [],

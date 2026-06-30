@@ -423,8 +423,7 @@ class SyncActions {
       return incrementalSyncManager.latestMessageIdPerChat.values.toList();
     } catch (ex, s) {
       Logger.error('Incremental sync failed!', error: ex, trace: s);
+      rethrow;
     }
-
-    return [];
   }
 }

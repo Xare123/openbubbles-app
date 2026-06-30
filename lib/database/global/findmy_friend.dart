@@ -14,6 +14,7 @@ class FindMyFriend {
     required this.title,
     required this.subtitle,
     required this.handle,
+    required this.handleAddress,
     required this.lastUpdated,
     required this.status,
     required this.locatingInProgress,
@@ -27,10 +28,16 @@ class FindMyFriend {
   final String? title;
   final String? subtitle;
   final Handle? handle;
+  // Raw address from the server — stable even when handle is not in the local DB.
+  final String? handleAddress;
   final DateTime? lastUpdated;
   final LocationStatus? status;
   final bool locatingInProgress;
   final String? id;
+
+  /// Stable identifier for matching and map marker keys.
+  /// Prefers the hydrated handle key; falls back to the raw server address.
+  String? get stableId => handle?.uniqueAddressAndService ?? handleAddress;
 
   factory FindMyFriend.fromJson(Map<String, dynamic> json) => FindMyFriend(
         id: json["id"],
@@ -40,6 +47,7 @@ class FindMyFriend {
         shortAddress: json["short_address"],
         title: json["title"],
         subtitle: json["subtitle"],
+        handleAddress: json["handle"] ?? json["title"],
         handle: json["handle"] == null && json["title"] == null
             ? null
             : Handle.findOne(addressAndService: HandleLookupKey(json["handle"] ?? json["title"], "iMessage")),

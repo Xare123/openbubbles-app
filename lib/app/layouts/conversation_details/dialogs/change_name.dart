@@ -10,69 +10,64 @@ import 'package:bluebubbles/services/network/backend_service.dart';
 void showChangeName(Chat chat, String method, BuildContext context) {
   final controller = TextEditingController(text: chat.displayName);
   final node = FocusNode();
-  showDialog(
-      context: context,
-      builder: (_) {
-        return AlertDialog(
-          backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-          actions: [
-            TextButton(
-              child: Text("OK",
-                  style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-              onPressed: () async {
-                node.unfocus();
-                if (method == "private-api") {
-                  showDialog(
-                      context: context,
-                      builder: (BuildContext context) {
-                        return AlertDialog(
+  showBBDialog(
+    context: context,
+    title: "Change Name",
+    content: TextField(
+      controller: controller,
+      focusNode: node,
+      decoration: const InputDecoration(
+        labelText: "Chat Name",
+        border: OutlineInputBorder(),
+      ),
+    ),
+    actions: [
+      BBDialogAction(
+        text: "OK",
+        isDefault: true,
+        onPressed: () async {
+          node.unfocus();
+          if (method == "private-api") {
+            showDialog(
+                context: context,
+                builder: (BuildContext context) {
+                  return AlertDialog(
+                    backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
+                    title: Text(
+                      controller.text.isEmpty ? "Removing name..." : "Changing name to ${controller.text}...",
+                      style: context.theme.textTheme.titleLarge,
+                    ),
+                    content: SizedBox(
+                      height: 70,
+                      child: Center(
+                        child: CircularProgressIndicator(
                           backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                          title: Text(
-                            controller.text.isEmpty ? "Removing name..." : "Changing name to ${controller.text}...",
-                            style: context.theme.textTheme.titleLarge,
-                          ),
-                          content: SizedBox(
-                            height: 70,
-                            child: Center(
-                              child: CircularProgressIndicator(
-                                backgroundColor: context.theme.colorScheme.surfaceContainerHighest,
-                                valueColor: AlwaysStoppedAnimation<Color>(context.theme.colorScheme.primary),
-                              ),
-                            ),
-                          ),
-                        );
-                      });
-                  final response = await BackendSvc.renameChat(chat, controller.text);
-                  if (response) {
-                    Navigator.of(context, rootNavigator: true).pop();
-                    Navigator.of(context, rootNavigator: true).pop();
-                    unawaited(ChatsSvc.setChatDisplayName(chat, controller.text));
-                    showSnackbar("Notice", "Updated name successfully!");
-                  } else {
-                    Navigator.of(context, rootNavigator: true).pop();
-                    showSnackbar("Error", "Failed to update name!");
-                  }
-                } else {
-                  Navigator.of(context, rootNavigator: true).pop();
-                  unawaited(ChatsSvc.setChatDisplayName(chat, controller.text));
-                }
-              },
-            ),
-            TextButton(
-              child: Text("Cancel",
-                  style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-              onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
-            ),
-          ],
-          content: TextField(
-            controller: controller,
-            focusNode: node,
-            decoration: const InputDecoration(
-              labelText: "Chat Name",
-              border: OutlineInputBorder(),
-            ),
-          ),
-          title: Text("Change Name", style: context.theme.textTheme.titleLarge),
-        );
-      });
+                          valueColor: AlwaysStoppedAnimation<Color>(context.theme.colorScheme.primary),
+                        ),
+                      ),
+                    ),
+                  );
+                });
+            final response = await BackendSvc.renameChat(chat, controller.text);
+            if (response) {
+              Navigator.of(context, rootNavigator: true).pop();
+              Navigator.of(context, rootNavigator: true).pop();
+              unawaited(ChatsSvc.setChatDisplayName(chat, controller.text));
+              showSnackbar("Notice", "Updated name successfully!");
+            } else {
+              Navigator.of(context, rootNavigator: true).pop();
+              showSnackbar("Error", "Failed to update name!");
+            }
+          } else {
+            Navigator.of(context, rootNavigator: true).pop();
+            unawaited(ChatsSvc.setChatDisplayName(chat, controller.text));
+          }
+        },
+      ),
+      BBDialogAction(
+        text: "Cancel",
+        onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+      ),
+    ],
+  );
 }
