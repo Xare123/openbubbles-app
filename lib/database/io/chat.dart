@@ -1122,19 +1122,20 @@ class Chat {
       }
     }
 
+    var effectiveMessage = newMessage ?? message;
     // Handle post-save operations on main thread
     if (isNewer) {
-      setLatestMessage(message);
+      setLatestMessage(effectiveMessage);
       if (dateDeleted != null) {
         dateDeleted = null;
         await saveAsync(updateDateDeleted: true);
       }
-      if (isArchived! && !message.isFromMe! && SettingsSvc.settings.unarchiveOnNewMessage.value) {
+      if (isArchived! && !effectiveMessage.isFromMe! && SettingsSvc.settings.unarchiveOnNewMessage.value) {
         await toggleArchivedAsync(false);
       }
     }
 
-    if (!(senderIsKnown ?? true) && message.isFromMe!) {
+    if (!(senderIsKnown ?? true) && effectiveMessage.isFromMe!) {
       senderIsKnown = true;
       cvc(this).reportJunkAvailable.value = !(senderIsKnown ?? true);
       await saveAsync(updateSenderIsKnown: true);
@@ -1148,7 +1149,7 @@ class Chat {
     // If the incoming message was newer than the "last" one, set the unread status accordingly
     if (checkForMessageText && changeUnreadStatus && isNewer) {
       // Simple logic: mark read if from me, mark unread if not
-      if (message.isFromMe!) {
+      if (effectiveMessage.isFromMe!) {
         await toggleHasUnreadAsync(false, clearLocalNotifications: clearNotificationsIfFromMe, privateMark: false);
       } else {
         await toggleHasUnreadAsync(true, privateMark: false);
@@ -1157,12 +1158,12 @@ class Chat {
 
     // If the message is for adding or removing participants,
     // we need to ensure that all of the chat participants are correct by syncing with the server
-    if (message.isParticipantEvent && checkForMessageText) {
+    if (effectiveMessage.isParticipantEvent && checkForMessageText) {
       serverSyncParticipantsAsync();
     }
 
     // Return the saved message and isNewer flag
-    return MessageSaveResult(newMessage ?? message, isNewer);
+    return MessageSaveResult(effectiveMessage, isNewer);
   }
 
   Message addMessageLocal(Message message,

@@ -2097,14 +2097,14 @@ class RustPushService {
     return result;
   }
 
-  Future<void> markFailed(Message mistakeFor, String error) async {
+  Future<void> markFailed(Message mistakeFor, String error, {bool notify = true}) async {
     if (mistakeFor.guid != null && !mistakeFor.guid!.contains("temp") && !mistakeFor.guid!.contains("error")) {
       mistakeFor.stagingGuid = mistakeFor.guid;
     }
     mistakeFor.generateTempGuid();
     mistakeFor.guid = mistakeFor.guid!.replaceAll("temp", "error-protocol: $error");
     var chat = mistakeFor.chat.target!;
-    if (!LifecycleSvc.isAlive || !(ChatsSvc.getChatController(chat.guid)?.isAlive.value ?? false)) {
+    if ((!LifecycleSvc.isAlive || !(ChatsSvc.getChatController(chat.guid)?.isAlive.value ?? false)) && notify) {
       await NotificationsSvc.createFailedToSend(chat);
     }
     await Message.replaceMessage(mistakeFor.stagingGuid, mistakeFor);
@@ -3718,7 +3718,7 @@ class RustPushService {
       var myHandles = (await api.getHandles(state: PushSvc.state!.client));
       if (!myHandles.contains(myMsg.sender)) return;
 
-      markFailed(mistakeFor, message.field0.statusStr);
+      markFailed(mistakeFor, message.field0.statusStr, notify: false);
       return;
     }
     if (myMsg.message is api.Message_UpdateExtension) {
@@ -5032,7 +5032,7 @@ class RustPushService {
   // uniquely identify the backend service that is running
   String serviceId = "";
 
-  RustPushService({isFrontEnd = true}) {
+  RustPushService({bool isFrontEnd = true}) {
     if (isFrontEnd) {
       client = BillingClientManager();
     }
