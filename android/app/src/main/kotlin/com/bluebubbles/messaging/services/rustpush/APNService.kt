@@ -23,6 +23,7 @@ import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import com.bluebubbles.messaging.MainActivity
 import com.bluebubbles.messaging.R
+import com.bluebubbles.messaging.diagnostics.MessagingDiagnostics
 import com.bluebubbles.messaging.services.backend_ui_interop.DartWorkManager
 import com.bluebubbles.messaging.services.backend_ui_interop.DartWorker
 import com.bluebubbles.messaging.services.backend_ui_interop.MethodCallHandler
@@ -151,14 +152,18 @@ class APNService : Service(), MsgReceiver {
 
     fun launchAgent() {
         Log.i("launching agent", "herer")
+        MessagingDiagnostics.event("provider_observer", transport = "sms", outcome = "starting")
         SMSObserver.init(applicationContext) { context, map ->
+            MessagingDiagnostics.event("provider_observer", transport = "sms", outcome = "change_observed")
             if (MainActivity.engine != null && MainActivity.engine_ready) {
                 // app is alive, deliver directly there
                 MethodCallHandler.invokeMethod("SMSMsg", map)
+                MessagingDiagnostics.event("provider_observer", transport = "sms", outcome = "delivered_to_ui")
                 return@init
             }
             CoroutineScope(Dispatchers.Main).launch {
                 DartWorker.callMethod(this@APNService, "SMSMsg", map)
+                MessagingDiagnostics.event("provider_observer", transport = "sms", outcome = "delivered_to_worker")
             }
         }
 

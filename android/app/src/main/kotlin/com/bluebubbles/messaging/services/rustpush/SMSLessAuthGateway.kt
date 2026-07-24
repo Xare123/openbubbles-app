@@ -7,7 +7,7 @@ import android.os.Build
 import android.os.Handler
 import android.telephony.SmsManager
 import android.telephony.TelephonyManager
-import android.util.Log
+import com.bluebubbles.messaging.diagnostics.MessagingDiagnostics
 import com.bluebubbles.messaging.models.MethodCallHandlerImpl
 import com.bluebubbles.messaging.services.rustpush.eap_aka.EapAkaChallenge
 import com.bluebubbles.messaging.services.rustpush.eap_aka.EapAkaResponse
@@ -55,7 +55,7 @@ class SMSLessAuthGateway: MethodCallHandlerImpl() {
             result.error("No ICC auth permission!", null, null)
         }
 
-        Log.i("MCCMNC", "$carrierMccMnc ${telephonyManager.subscriberId}")
+        MessagingDiagnostics.event("carrier_auth_requested", transport = "sms")
 
         val realm = "nai.epc"
 
@@ -73,6 +73,7 @@ class SMSLessAuthGateway: MethodCallHandlerImpl() {
         )
 
         result.success(gson.toJson(r).toString())
+        MessagingDiagnostics.event("carrier_auth_result", transport = "sms", outcome = "success")
 
     }
 

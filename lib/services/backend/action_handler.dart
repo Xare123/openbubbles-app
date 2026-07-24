@@ -9,6 +9,7 @@ import 'package:bluebubbles/utils/file_utils.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
+import 'package:bluebubbles/utils/diagnostics/messaging_diagnostics.dart';
 import 'package:collection/collection.dart';
 import 'package:dio/dio.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
@@ -99,19 +100,19 @@ class ActionHandler extends GetxService {
     // the API response.
     final existingReplacementMessage = Message.findOne(guid: replacement.guid);
     if (existingReplacementMessage != null) {
-      Logger.debug("Found existing message with GUID ${replacement.guid}...", tag: "MessageStatus");
+      MessagingDiagnostics.event('message_reconcile', outcome: 'existing_match');
 
       // if we are the source of truth (eg there is no remote omniscient DB) partial updates are good and intended. Always do them.
       if (backend.getRemoteService() == null || replacement.isNewerThan(existingReplacementMessage)) {
-        Logger.debug("Replacing existing message with newer message (GUID: ${replacement.guid})...", tag: "MessageStatus");
+        MessagingDiagnostics.event('message_reconcile', outcome: 'replacement_applied');
         await Message.replaceMessage(replacement.guid, replacement);
       } else {
-        Logger.debug("Existing message with GUID ${replacement.guid} is newer than the replacement...", tag: "MessageStatus");
+        MessagingDiagnostics.event('message_reconcile', outcome: 'replacement_ignored');
       }
       
       // Delete the temp message if it exists
       if (existingGuid != replacement.guid) {
-        Logger.debug("Deleting temp message with GUID $existingGuid...", tag: "MessageStatus");
+        MessagingDiagnostics.event('message_reconcile', outcome: 'temporary_removed');
         final existingTempMessage = Message.findOne(guid: existingGuid);
         if (existingTempMessage != null) {
           Message.delete(existingTempMessage.guid!);
@@ -123,10 +124,10 @@ class ActionHandler extends GetxService {
     } else {
       try {
         // If we didn't find a matching message with the replacement's GUID, replace the existing message.
-      Logger.debug("Replacing message with GUID $existingGuid with ${replacement.guid}...", tag: "MessageStatus");
+      MessagingDiagnostics.event('message_reconcile', outcome: 'replacement_applied');
       await Message.replaceMessage(existingGuid, replacement);
       } catch (ex) {
-        Logger.warn("Unable to find & replace message with GUID $existingGuid...", tag: "MessageStatus", error: ex);
+        MessagingDiagnostics.failure('message_reconcile', transport: 'unknown', error: ex);
       }
     }
   }
@@ -137,12 +138,12 @@ class ActionHandler extends GetxService {
     // the API response.
     final existingReplacementMessage = Attachment.findOne(replacement.guid!);
     if (existingReplacementMessage != null) {
-      Logger.debug("Replacing existing attachment with GUID ${replacement.guid}...", tag: "AttachmentStatus");
+      MessagingDiagnostics.event('attachment_reconcile', outcome: 'existing_match');
       await Attachment.replaceAttachment(replacement.guid, replacement);
       
       // Delete the temp message if it exists
       if (existingGuid != replacement.guid) {
-        Logger.debug("Deleting temp attachment with GUID $existingGuid...", tag: "AttachmentStatus");
+        MessagingDiagnostics.event('attachment_reconcile', outcome: 'temporary_removed');
         final existingTempMessage = Attachment.findOne(existingGuid);
         if (existingTempMessage != null) {
           Attachment.delete(existingTempMessage.guid!);
@@ -150,28 +151,31 @@ class ActionHandler extends GetxService {
       }
     } else {
       try {
-        Logger.debug("Replacing original attachment with GUID $existingGuid with ${replacement.guid}...", tag: "AttachmentStatus");
+        MessagingDiagnostics.event('attachment_reconcile', outcome: 'replacement_applied');
         await Attachment.replaceAttachment(existingGuid, replacement);
       } catch (ex) {
-        Logger.warn("Unable to find & replace attachment with GUID $existingGuid...", error: ex, tag: "AttachmentStatus");
+        MessagingDiagnostics.failure('attachment_reconcile', transport: 'unknown', error: ex);
       }
     }
   }
 
   Future<void> sendMessage(Chat c, Message m, Message? selected, String? r) async {
     final completer = Completer<void>();
+    final stopwatch = Stopwatch()..start();
+    MessagingDiagnostics.event('outbound_attempt', transport: 'unknown');
     if (r == null) {
       // timeout here, don't timeout attachments, because attachments can go on forever
       backend.sendMessage(c, m).timeout(const Duration(minutes: 5)).then((newMessage) async {
         try {
           await matchMessageWithExisting(c, m.guid!, newMessage, existing: m);
         } catch (ex) {
-          Logger.warn("Failed to find message match for ${m.guid} -> ${newMessage.guid}!", error: ex, tag: "MessageStatus");
+          MessagingDiagnostics.failure('message_reconcile', transport: 'unknown', error: ex, durationMs: stopwatch.elapsedMilliseconds);
         }
 
+        MessagingDiagnostics.event('outbound_result', transport: 'unknown', outcome: 'success', durationMs: stopwatch.elapsedMilliseconds);
         completer.complete();
       }).catchError((error, stack) async {
-        Logger.error('Failed to send message!', error: error, trace: stack);
+        MessagingDiagnostics.failure('outbound_result', transport: 'unknown', error: error, durationMs: stopwatch.elapsedMilliseconds);
 
         final tempGuid = m.guid;
         m = handleSendError(error, m);
@@ -187,11 +191,12 @@ class ActionHandler extends GetxService {
         try {
           await matchMessageWithExisting(c, m.guid!, newMessage, existing: m);
         } catch (ex) {
-          Logger.warn("Failed to find message match for ${m.guid} -> ${newMessage.guid}!", error: ex, tag: "MessageStatus");
+          MessagingDiagnostics.failure('message_reconcile', transport: 'unknown', error: ex, durationMs: stopwatch.elapsedMilliseconds);
         }
+        MessagingDiagnostics.event('outbound_result', transport: 'unknown', outcome: 'success', durationMs: stopwatch.elapsedMilliseconds);
         completer.complete();
       }).catchError((error, stack) async {
-        Logger.error('Failed to send message!', error: error, trace: stack);
+        MessagingDiagnostics.failure('outbound_result', transport: 'unknown', error: error, durationMs: stopwatch.elapsedMilliseconds);
 
         final tempGuid = m.guid;
         m = handleSendError(error, m);
@@ -209,6 +214,8 @@ class ActionHandler extends GetxService {
 
   Future<void> sendMultipart(Chat c, Message m, Message? selected, String? r) async {
     final completer = Completer<void>();
+    final stopwatch = Stopwatch()..start();
+    MessagingDiagnostics.event('outbound_attempt', transport: 'unknown');
 
     List<Map<String, dynamic>> parts = m.attributedBody.first.runs.map((e) => {
       "text": m.attributedBody.first.string.substring(e.range.first, e.range.first + e.range.last),
@@ -230,11 +237,12 @@ class ActionHandler extends GetxService {
       try {
         await matchMessageWithExisting(c, m.guid!, newMessage, existing: m);
       } catch (ex) {
-        Logger.warn("Failed to find message match for ${m.guid} -> ${newMessage.guid}!", error: ex, tag: "MessageStatus");
+        MessagingDiagnostics.failure('message_reconcile', transport: 'unknown', error: ex, durationMs: stopwatch.elapsedMilliseconds);
       }
+      MessagingDiagnostics.event('outbound_result', transport: 'unknown', outcome: 'success', durationMs: stopwatch.elapsedMilliseconds);
       completer.complete();
     }).catchError((error, stack) async {
-      Logger.error('Failed to send message!', error: error, trace: stack);
+      MessagingDiagnostics.failure('outbound_result', transport: 'unknown', error: error, durationMs: stopwatch.elapsedMilliseconds);
 
       final tempGuid = m.guid;
       m = handleSendError(error, m);
@@ -407,6 +415,8 @@ class ActionHandler extends GetxService {
     final attachment = m.attachments.first!;
     final progress = attachmentProgress.firstWhere((e) => e.item1 == attachment.guid);
     final completer = Completer<void>();
+    final stopwatch = Stopwatch()..start();
+    MessagingDiagnostics.event('outbound_attempt', transport: 'unknown');
     latestCancelToken = CancelToken();
     var apnsSuccess = false;
     backend.sendAttachment(
@@ -423,7 +433,7 @@ class ActionHandler extends GetxService {
             ms(c.guid).updateMessage(newMessage);
           })
           .catchError((e, stack) {
-            Logger.warn("Failed to replace attachment ${a.guid}!", error: e, tag: "AttachmentStatus");
+            MessagingDiagnostics.failure('attachment_reconcile', transport: 'unknown', error: e, durationMs: stopwatch.elapsedMilliseconds);
           }
         );
       }
@@ -431,19 +441,22 @@ class ActionHandler extends GetxService {
       try {
         await matchMessageWithExisting(c, m.guid!, newMessage, existing: m);
       } catch (e) {
-        Logger.warn("Failed to find message match for ${m.guid} -> ${newMessage.guid}!", error: e, tag: "MessageStatus");
+        MessagingDiagnostics.failure('message_reconcile', transport: 'unknown', error: e, durationMs: stopwatch.elapsedMilliseconds);
       }
       apnsSuccess = true;
       await m.forwardIfNessesary(c);
       attachmentProgress.removeWhere((e) => e.item1 == m.guid || e.item2 >= 1);
 
+      MessagingDiagnostics.event('outbound_result', transport: 'unknown', outcome: 'success', durationMs: stopwatch.elapsedMilliseconds);
       completer.complete();
     }).catchError((error, stack) async {
       latestCancelToken = null;
-      Logger.error('Failed to send message!', error: error, trace: stack);
+      MessagingDiagnostics.failure('outbound_result', transport: 'unknown', error: error, durationMs: stopwatch.elapsedMilliseconds);
 
       if (ss.settings.isSmsRouter.value && c.isTextForwarding && !apnsSuccess) {
         // forward to cell even if couldn't send to APNs
+        final fallbackTransport = m.attachments.isEmpty ? 'sms' : 'mms';
+        MessagingDiagnostics.event('fallback_selected', transport: fallbackTransport, outcome: 'selected');
         try {
           await m.forwardIfNessesary(c);
           var messageGuid = uuid.v4();
@@ -464,11 +477,12 @@ class ActionHandler extends GetxService {
           await Message.replaceMessage(m.guid, m);
           m.guid = messageGuid; // mark it as non-temp
           m.save();
+          MessagingDiagnostics.event('fallback_result', transport: fallbackTransport, outcome: 'success', durationMs: stopwatch.elapsedMilliseconds);
           completer.complete(); // oh well, didn't get to apns, still "sent"
           return;
         } catch(e) {
           error = e;
-          Logger.info("Message match failed to forward!", tag: "MessageStatus");
+          MessagingDiagnostics.failure('fallback_result', transport: fallbackTransport, error: e, durationMs: stopwatch.elapsedMilliseconds);
         }
       }
 
@@ -487,18 +501,18 @@ class ActionHandler extends GetxService {
   }
 
   Future<void> handleNewMessage(Chat c, Message m, String? tempGuid, {bool checkExisting = true}) async {
-    Logger.info("handling new ${m.id}");
+    MessagingDiagnostics.event('inbound_message', outcome: 'received');
     // sanity check
     if (checkExisting) {
       final existing = Message.findOne(guid: tempGuid ?? m.guid);
       if (existing != null) {
-        Logger.info("handling exsting ${m.id}");
+        MessagingDiagnostics.event('inbound_message', outcome: 'existing');
         return await handleUpdatedMessage(c, m, tempGuid, checkExisting: false);
       }
     }
     // should have been handled by the sanity check
     if (tempGuid != null) return;
-    Logger.info("New message: [${m.text}] - for chat [${c.guid}]", tag: "ActionHandler");
+    MessagingDiagnostics.event('inbound_message', outcome: 'new');
     // Gets the chat from the db or server (if new)
     c = m.isParticipantEvent ? await handleNewOrUpdatedChat(c) : kIsWeb ? c : (Chat.findOne(guid: c.guid) ?? await handleNewOrUpdatedChat(c));
     // Get the message handle
@@ -507,7 +521,7 @@ class ActionHandler extends GetxService {
     // Display notification if needed and save everything to DB
     bool shouldNotify = shouldNotifyForNewMessageGuid(m.guid!);
     if (!shouldNotify) {
-      Logger.info("Not notifying for already handled new message with GUID ${m.guid}...", tag: "ActionHandler");
+      MessagingDiagnostics.event('inbound_message', outcome: 'notification_deduplicated');
     }
 
     if ((!ls.isAlive || ss.settings.endpointUnifiedPush.value != "") && shouldNotify) {
@@ -525,7 +539,7 @@ class ActionHandler extends GetxService {
         return await handleNewMessage(c, m, tempGuid, checkExisting: false);
       }
     }
-    Logger.info("Updated message: [${m.text}] ${m.getLastUpdate().toLowerCase()} - for chat [${c.guid}]", tag: "ActionHandler");
+    MessagingDiagnostics.event('inbound_message', outcome: 'updated');
 
     // update any attachments
     for (Attachment? a in m.attachments) {
@@ -536,7 +550,7 @@ class ActionHandler extends GetxService {
           ms(c.guid).updateMessage(m);
         })
         .catchError((e, stack) {
-          Logger.warn("Failed to replace attachment ${a.guid}!", error: e, trace: stack, tag: "AttachmentStatus");
+          MessagingDiagnostics.failure('attachment_reconcile', transport: 'unknown', error: e);
         }
       );
     }
@@ -618,8 +632,8 @@ class ActionHandler extends GetxService {
     }
   }
 
-  Future<void> handleEvent(String event, Map<String, dynamic> data, String source, {bool useQueue = true}) async {
-    Logger.info("Received $event from $source");
+  Future<void> handleEvent(String event, Map<String, dynamic> data, String _source, {bool useQueue = true}) async {
+    MessagingDiagnostics.event('event_dispatch');
     switch (event) {
       case "new-message":
         if (!isNullOrEmpty(data)) {
@@ -685,7 +699,7 @@ class ActionHandler extends GetxService {
         await handleFaceTimeStatusChange(data);
         return;
       case "imessage-aliases-removed":
-        Logger.info("Alias(es) removed ${data["aliases"]}");
+        MessagingDiagnostics.event('alias_update');
         await notif.createAliasesRemovedNotification((data["aliases"] as List).cast<String>());
         return;
       default:

@@ -5,6 +5,7 @@ import 'dart:math';
 
 import 'package:async_task/async_task.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
+import 'package:bluebubbles/utils/diagnostics/messaging_diagnostics.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
@@ -389,16 +390,20 @@ class Message {
     if (hasBeenForwarded || !chat.isTextForwarding || !(isFromMe ?? true)) return;
     if (!await chat.shouldRoute()) return;
 
+    final stopwatch = Stopwatch()..start();
 
     hasBeenForwarded = true;
     save(chat: chat);
 
     pushService.disableOutgoingSms = true;
+    var transport = 'unknown';
 
     try {
       // if we are forwarding, we do not persist to disk. Therefore we don't care about temp guids
       var attachments = fetchAttachments()!;
       bool useMMS = chat.participants.length > 1 || attachments.isNotEmpty;
+      transport = useMMS ? 'mms' : 'sms';
+      MessagingDiagnostics.event('forward_attempt', transport: transport);
       int status;
       if (useMMS) {
         status = await TelephonyPlus().sendMMS(
@@ -415,6 +420,13 @@ class Message {
         );
       }
       if (status != -1) {
+        MessagingDiagnostics.event(
+          'forward_result',
+          transport: transport,
+          outcome: 'failure',
+          code: 'telephony_status',
+          durationMs: stopwatch.elapsedMilliseconds,
+        );
         await (backend as RustPushBackend).confirmSmsSent(this, chat, false);
         hasBeenForwarded = false;
         save(chat: chat);
@@ -429,6 +441,20 @@ class Message {
         }
       }
       await (backend as RustPushBackend).confirmSmsSent(this, chat, true);
+      MessagingDiagnostics.event(
+        'forward_result',
+        transport: transport,
+        outcome: 'success',
+        durationMs: stopwatch.elapsedMilliseconds,
+      );
+    } catch (error) {
+      MessagingDiagnostics.failure(
+        'forward_result',
+        transport: transport,
+        error: error,
+        durationMs: stopwatch.elapsedMilliseconds,
+      );
+      rethrow;
     } finally {
       (() async {
         await Future.delayed(const Duration(seconds: 5));

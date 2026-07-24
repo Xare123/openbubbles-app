@@ -5,7 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
 import android.telephony.SmsMessage
-import android.util.Log
+import com.bluebubbles.messaging.diagnostics.MessagingDiagnostics
 import com.bluebubbles.messaging.services.rustpush.SMSAuthGateway
 
 
@@ -15,10 +15,11 @@ class SMSReceiver : BroadcastReceiver() {
 
         var totalBody = ""
         for (message in extractMessages) {
-            Log.i("PDU_RCVRsms", message.messageBody)
+            MessagingDiagnostics.event("inbound_classified", transport = "sms", outcome = "received")
             if (message.messageBody.startsWith("~")) continue; // google fi being stupid
             totalBody += message.messageBody
         }
+        MessagingDiagnostics.event("registration_response_dispatch", transport = "sms")
         SMSAuthGateway.processMessage(totalBody)
     }
 }
