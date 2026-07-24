@@ -120,9 +120,9 @@ class _FindMySearchDelegate extends SearchDelegate<_FindMySearchItem?> {
         return ListTile(
           onTap: () => close(context, item),
           leading: Icon(switch (item.section) {
-            _FindMySection.devices => iOS ? CupertinoIcons.device_desktop : Icons.devices,
-            _FindMySection.items => iOS ? CupertinoIcons.location : Icons.location_on_outlined,
-            _FindMySection.people => iOS ? CupertinoIcons.person_2 : Icons.person,
+            _FindMySection.devices => ss.settings.skin.value == Skins.iOS ? CupertinoIcons.device_desktop : Icons.devices,
+            _FindMySection.items => ss.settings.skin.value == Skins.iOS ? CupertinoIcons.location : Icons.location_on_outlined,
+            _FindMySection.people => ss.settings.skin.value == Skins.iOS ? CupertinoIcons.person_2 : Icons.person,
           }),
           title: Text(item.title),
           subtitle: Text('${item.section.label} · ${item.subtitle}'),
@@ -688,6 +688,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       delegate: _FindMySearchDelegate(items: _buildSearchItems()),
     );
     if (!mounted || result == null) return;
+    Logger.info("Find My search result selected: ${result.section.label}");
     if (result?.device != null) {
       await _selectDevice(result!.device!);
     } else if (result?.friend != null) {
@@ -698,6 +699,9 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   Future<void> _showSection(_FindMySection section, {bool togglePanel = false}) async {
     if (!mounted) return;
     final wasSelected = index.value == section.visibleIndex;
+    if (!wasSelected) {
+      Logger.info("Find My section changed: ${section.label}");
+    }
     index.value = section.visibleIndex;
     if (tabController.index != section.pageIndex) {
       tabController.animateTo(section.pageIndex);
@@ -751,20 +755,28 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   }
 
   Future<void> _selectDevice(FindMyDevice device) async {
-    await _showSection(_sectionForDevice(device));
-    if (!mounted) return;
-    await _focusMarker(_deviceMarkerKey(device), device.location?.latitude, device.location?.longitude);
+    try {
+      await _showSection(_sectionForDevice(device));
+      if (!mounted) return;
+      await _focusMarker(_deviceMarkerKey(device), device.location?.latitude, device.location?.longitude);
+    } catch (_) {
+      Logger.error("Find My device selection failed");
+    }
   }
 
   Future<void> _selectFriend(FindMyFriend friend, {bool refreshLocation = false}) async {
-    await _showSection(_FindMySection.people);
-    if (!mounted) return;
-    final hasLocation = (friend.latitude ?? 0) != 0 && (friend.longitude ?? 0) != 0;
-    if ((refreshLocation || !hasLocation) && fmfClient != null && friend.id != null) {
-      await api.selectFriend(config: pushService.state!.osConfig, client: fmfClient!, friend: friend.id);
+    try {
+      await _showSection(_FindMySection.people);
       if (!mounted) return;
+      final hasLocation = (friend.latitude ?? 0) != 0 && (friend.longitude ?? 0) != 0;
+      if ((refreshLocation || !hasLocation) && fmfClient != null && friend.id != null) {
+        await api.selectFriend(config: pushService.state!.osConfig, client: fmfClient!, friend: friend.id);
+        if (!mounted) return;
+      }
+      await _focusMarker(_friendMarkerKey(friend), friend.latitude, friend.longitude);
+    } catch (_) {
+      Logger.error("Find My friend selection failed");
     }
-    await _focusMarker(_friendMarkerKey(friend), friend.latitude, friend.longitude);
   }
 
   void _rebuildFriendMarkers() {
