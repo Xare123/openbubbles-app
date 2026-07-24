@@ -1313,6 +1313,107 @@ class RustPushService extends GetxService {
 
   var disableOutgoingSms = false;
 
+  final RxBool relayHealthChecking = false.obs;
+  final RxnBool relayReachable = RxnBool();
+  final Rxn<DateTime> relayLastChecked = Rxn<DateTime>();
+  final Rxn<DateTime> relayLastSuccess = Rxn<DateTime>();
+  Timer? relayHealthTimer;
+
+  void restoreRelayHealthState() {
+    final lastChecked = ss.prefs.getInt("relay-health-last-checked");
+    final lastSuccess = ss.prefs.getInt("relay-health-last-success");
+    relayReachable.value = ss.prefs.getBool("relay-health-reachable");
+    relayLastChecked.value = lastChecked == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(lastChecked);
+    relayLastSuccess.value = lastSuccess == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(lastSuccess);
+  }
+
+  Future<bool> usesUserManagedIPhoneRelay() async {
+    if (state == null || ss.settings.deviceIsHosted.value) {
+      return false;
+    }
+
+    final device = await api.getDeviceInfo(config: state!.osConfig);
+    return device.name.contains("iPhone") ||
+        device.name.contains("iPod") ||
+        device.name.contains("iPad");
+  }
+
+  Future<bool?> checkRelayHealth({bool notifyOnFailure = false}) async {
+    if (relayHealthChecking.value) {
+      return relayReachable.value;
+    }
+    try {
+      if (!await usesUserManagedIPhoneRelay()) {
+        return null;
+      }
+    } catch (e, s) {
+      Logger.warn("Failed to identify iPhone relay",
+          error: e, trace: s);
+      return null;
+    }
+
+    relayHealthChecking.value = true;
+    final checkedAt = DateTime.now();
+    relayLastChecked.value = checkedAt;
+    ss.prefs.setInt(
+        "relay-health-last-checked", checkedAt.millisecondsSinceEpoch);
+
+    try {
+      final relayCode =
+          await api.validateRelay(configRef: state!.osConfig);
+      final reachable = relayCode != null;
+      relayReachable.value = reachable;
+      ss.prefs.setBool("relay-health-reachable", reachable);
+
+      if (reachable) {
+        relayLastSuccess.value = checkedAt;
+        ss.prefs.setInt(
+            "relay-health-last-success", checkedAt.millisecondsSinceEpoch);
+        await notif.clearRelayUnavailable();
+      } else if (notifyOnFailure) {
+        await notif.createRelayUnavailable();
+      }
+
+      return reachable;
+    } catch (e, s) {
+      relayReachable.value = false;
+      ss.prefs.setBool("relay-health-reachable", false);
+      Logger.warn("iPhone relay health check failed", error: e, trace: s);
+      if (notifyOnFailure) {
+        await notif.createRelayUnavailable();
+      }
+      return false;
+    } finally {
+      relayHealthChecking.value = false;
+    }
+  }
+
+  Future<void> scheduleRelayHealthCheck(int secondsUntilRenewal) async {
+    relayHealthTimer?.cancel();
+    relayHealthTimer = null;
+
+    try {
+      if (!await usesUserManagedIPhoneRelay()) {
+        return;
+      }
+    } catch (e, s) {
+      Logger.warn("Failed to schedule iPhone relay health check",
+          error: e, trace: s);
+      return;
+    }
+
+    const warningLeadTime = Duration(minutes: 15);
+    final delaySeconds =
+        max(10, secondsUntilRenewal - warningLeadTime.inSeconds);
+    relayHealthTimer = Timer(Duration(seconds: delaySeconds), () {
+      checkRelayHealth(notifyOnFailure: true);
+    });
+  }
+
   Map<String, api.Attachment> attachments = {};
 
   Future<List<String>> doValidateTargets(List<String> targets, String handle) async {
@@ -3353,12 +3454,19 @@ class RustPushService extends GetxService {
       var state = push.field0;
       if (state is api.RegisterState_Registered) {
         notifiedFailed = false;
+        scheduleRelayHealthCheck(state.nextS);
         if (ss.settings.deviceIsHosted.value) {
           mixpanel?.track("hosted-register-success");
         }
         handleRegistered();
       }
+      if (state is api.RegisterState_Registering) {
+        relayHealthTimer?.cancel();
+        relayHealthTimer = null;
+      }
       if (state is api.RegisterState_Failed && !notifiedFailed) {
+        relayHealthTimer?.cancel();
+        relayHealthTimer = null;
         if (ss.settings.deviceIsHosted.value) {
           mixpanel?.track("hosted-register-failure");
         }
@@ -4877,6 +4985,19 @@ class RustPushService extends GetxService {
     initAppLinks();
     initMixPanel();
     await initFuture;
+    restoreRelayHealthState();
+    if (state != null) {
+      try {
+        final registrationState =
+            await api.getRegstate(state: state!.client);
+        if (registrationState is api.RegisterState_Registered) {
+          scheduleRelayHealthCheck(registrationState.nextS);
+        }
+      } catch (e, s) {
+        Logger.warn("Failed to schedule iPhone relay health check",
+            error: e, trace: s);
+      }
+    }
     Timer(const Duration(seconds: 2), checkIncident);
     // pre-cache next FT link
     if (pushService.state != null) api.getFtLink(facetime: pushService.state!.ftClient, usage: "next");
@@ -4978,6 +5099,8 @@ class RustPushService extends GetxService {
   
 
   void disposeState(api.SharedPushState state, bool hw, bool setup) {
+    relayHealthTimer?.cancel();
+    relayHealthTimer = null;
     state.cancelPoll.dispose();
     state.localBroadcast.dispose();
     state.ftClient.dispose();
@@ -5036,6 +5159,8 @@ class RustPushService extends GetxService {
 
   @override
   void onClose() {
+    relayHealthTimer?.cancel();
+    relayHealthTimer = null;
     if (state != null) disposeState(state!, true, false);
     super.onClose();
   }

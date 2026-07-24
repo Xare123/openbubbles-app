@@ -55,6 +55,7 @@ class NotificationsService extends GetxService {
   /// For desktop use only
   static LocalNotification? allToast;
   static LocalNotification? failedToast;
+  static LocalNotification? relayToast;
   static LocalNotification? socketToast;
   static LocalNotification? aliasesToast;
   static Map<String, List<LocalNotification>> notifications = {};
@@ -1067,6 +1068,63 @@ class NotificationsService extends GetxService {
         ),
       ),
       payload: loggedOut ? "" : "-51"
+    );
+  }
+
+  Future<void> clearRelayUnavailable() async {
+    if (kIsWeb) {
+      return;
+    }
+    if (kIsDesktop) {
+      await relayToast?.close();
+      relayToast = null;
+      return;
+    }
+    await flnp.cancel(-6 - 50);
+  }
+
+  Future<void> createRelayUnavailable() async {
+    if (kIsWeb) {
+      return;
+    }
+    const title = "iPhone relay unavailable";
+    const subtitle =
+        "OpenBubbles may lose phone number registration. Turn on the relay, then tap Test Relay.";
+    if (kIsDesktop) {
+      relayToast = LocalNotification(
+        title: title,
+        body: subtitle,
+        actions: [],
+      );
+
+      relayToast!.onClick = () async {
+        relayToast = null;
+        await windowManager.show();
+        if (ss.settings.finishedSetup.value) {
+          ns.pushLeft(Get.context!, ProfilePanel());
+        }
+      };
+
+      await relayToast!.show();
+      return;
+    }
+
+    await flnp.show(
+      -6 - 50,
+      title,
+      subtitle,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          ERROR_CHANNEL,
+          "Errors",
+          channelDescription:
+              "Displays message send failures, connection failures, and more",
+          priority: Priority.max,
+          importance: Importance.max,
+          color: HexColor("4990de"),
+        ),
+      ),
+      payload: "-51",
     );
   }
 

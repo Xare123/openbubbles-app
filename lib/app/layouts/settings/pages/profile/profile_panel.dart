@@ -63,6 +63,29 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
   Rxn<api.QuotaInfo> quotaInfo = Rxn(null);
   Rxn<GoogleSignInCredentials> googleCreds = Rxn(null);
 
+  String relayHealthSubtitle() {
+    if (pushService.relayHealthChecking.value) {
+      return "Testing the iPhone relay...";
+    }
+
+    final checked = pushService.relayLastChecked.value;
+    final lastSuccess = pushService.relayLastSuccess.value;
+    final checkedText =
+        checked == null ? null : buildChatListDateMaterial(checked);
+    final successText =
+        lastSuccess == null ? null : buildChatListDateMaterial(lastSuccess);
+
+    if (pushService.relayReachable.value == true) {
+      return "Reachable${checkedText == null ? "" : " as of $checkedText"}. Tap to test again.";
+    }
+    if (pushService.relayReachable.value == false) {
+      final lastSuccessSuffix =
+          successText == null ? "" : " Last successful check: $successText.";
+      return "Unavailable${checkedText == null ? "" : " as of $checkedText"}.$lastSuccessSuffix Turn on the relay and tap to retry.";
+    }
+    return "Not checked yet. Tap to verify the iPhone is online before registration renewal.";
+  }
+
   Future<void> handleSubscriptionToken(String subscription) async {
     var activated = await http.dio.post("https://hw.openbubbles.app/ticket/${ticket!}/activate", data: {"purchase_token": subscription});
     var useTicket = activated.data["ticket"];
@@ -664,6 +687,61 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                             ),
                           ));
                       }),
+                      if ((accountInfo["can_pnr"] ?? false) &&
+                          !ss.settings.deviceIsHosted.value)
+                        Obx(() {
+                          final reachable =
+                              pushService.relayReachable.value;
+                          final checking =
+                              pushService.relayHealthChecking.value;
+                          final color = checking
+                              ? context.theme.colorScheme.outline
+                              : reachable == true
+                                  ? getIndicatorColor(
+                                      SocketState.connected)
+                                  : reachable == false
+                                      ? getIndicatorColor(
+                                          SocketState.disconnected)
+                                      : context.theme.colorScheme.outline;
+
+                          return SettingsTile(
+                            title: "iPhone Relay",
+                            subtitle: relayHealthSubtitle(),
+                            isThreeLine: true,
+                            leading:
+                                Icon(Icons.phone_iphone, color: color),
+                            trailing: checking
+                                ? SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 3,
+                                      valueColor:
+                                          AlwaysStoppedAnimation<Color>(
+                                              color),
+                                    ),
+                                  )
+                                : Icon(
+                                    reachable == true
+                                        ? Icons.check_circle
+                                        : reachable == false
+                                            ? Icons.error
+                                            : Icons.help_outline,
+                                    color: color,
+                                  ),
+                            onTap: () async {
+                              final result =
+                                  await pushService.checkRelayHealth();
+                              if (result == true) {
+                                showSnackbar("iPhone Relay",
+                                    "The relay is online and responding.");
+                              } else if (result == false) {
+                                showSnackbar("iPhone Relay",
+                                    "The relay could not be reached. Check its power, Wi-Fi, and ValidationRelay status.");
+                              }
+                            },
+                          );
+                        }),
                       if (accountInfo['login_status_message']?.startsWith("Deregistered") ?? false)
                         Container(
                           color: tileColor,
