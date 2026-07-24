@@ -3144,13 +3144,8 @@ class RustPushService extends GetxService {
     Chat.softDelete(chat);
   }
 
-  Future handleMsg(api.PushMessage push, bool finalAttempt) async {
-    try {
-      await handleMsgInner(push).timeout(const Duration(minutes: 3));
-    } catch (e, s) {
-      if (finalAttempt) markCertified(push);
-      rethrow;
-    }
+  Future handleMsg(api.PushMessage push) async {
+    await handleMsgInner(push).timeout(const Duration(minutes: 3));
     // if we complete successfully, mark delivery "certified"
     markCertified(push);
   }
@@ -4484,13 +4479,9 @@ class RustPushService extends GetxService {
 
   Future<void> markAsHandledAfter(String ptr, {required String eventId, required int retry}) async {
     final ackStopwatch = Stopwatch()..start();
-    if (inq.isProcessing.value) {
-      Logger.info("rustpush_receive ack_wait_start id=$eventId retry=$retry pending_count=${inq.items.length}");
-      await for (final value in inq.isProcessing.stream) {
-        if (!value) break;
-      }
-    }
-    Logger.info("rustpush_receive save_and_queue_drained id=$eventId retry=$retry wait_ms=${_durationMs(ackStopwatch)} pending_count=${inq.items.length}");
+    // handleMsg awaits the completion for this pointer's queue item. Do not
+    // wait for unrelated incoming work before acknowledging this message.
+    Logger.info("rustpush_receive durable_work_complete id=$eventId retry=$retry pending_count=${inq.items.length}");
     Logger.info("rustpush_receive ack_commit id=$eventId retry=$retry");
     await api.completeMsg(ptr: ptr);
     Logger.info("rustpush_receive ack_complete id=$eventId retry=$retry duration_ms=${_durationMs(ackStopwatch)}");
@@ -4509,19 +4500,16 @@ class RustPushService extends GetxService {
     Logger.info("rustpush_receive aps_init_wait_start id=$eventId retry=$retryCount");
     await initFuture;
     Logger.info("rustpush_receive aps_init_wait_complete id=$eventId retry=$retryCount duration_ms=${_durationMs(initStopwatch)} total_ms=${_durationMs(receiveStopwatch)}");
-    var isFinal = retryCount >= 3;
     try {
       final handlingStopwatch = Stopwatch()..start();
       Logger.info("rustpush_receive handle_start id=$eventId retry=$retryCount");
-      await handleMsg(message, isFinal);
+      await handleMsg(message);
       Logger.info("rustpush_receive handle_complete id=$eventId retry=$retryCount duration_ms=${_durationMs(handlingStopwatch)} total_ms=${_durationMs(receiveStopwatch)}");
       await markAsHandledAfter(pointer, eventId: eventId, retry: retryCount);
     } catch (e, s) {
       Logger.error("Handle failed", error: e, trace: s);
-      if (isFinal) {
-        Logger.info("rustpush_receive final_attempt_ack id=$eventId retry=$retryCount");
-        await markAsHandledAfter(pointer, eventId: eventId, retry: retryCount);
-      }
+      // Leave the pointer pending so the native bounded retry loop can try
+      // again. A failed handler must never be acknowledged as delivered.
       rethrow;
     }
   }
@@ -4542,7 +4530,7 @@ class RustPushService extends GetxService {
         if (msg == null) {
           continue;
         }
-        await handleMsg(msg, true);
+        await handleMsg(msg);
       } catch (e, t) {
         // if there was an error somewhere, log it and move on.
         // don't stop our loop
