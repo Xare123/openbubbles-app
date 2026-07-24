@@ -459,6 +459,26 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
   bool isDelivered = false;
   bool isFromMe = false;
 
+  /// Notification text can be assembled from partially populated records while
+  /// an imported message is being saved. Avoid showing Dart's null placeholder.
+  String _subtitleOrFallback(String? candidate, {String? fallback}) {
+    final value = candidate?.trim();
+    final containsNullPlaceholder = value != null && RegExp(r'(^|[\s:])null($|[\s,])', caseSensitive: false).hasMatch(value);
+    if (value == null || value.isEmpty || containsNullPlaceholder) {
+      final previous = fallback?.trim();
+      if (previous != null && previous.isNotEmpty && !RegExp(r'(^|[\s:])null($|[\s,])', caseSensitive: false).hasMatch(previous)) {
+        return previous;
+      }
+      return "Empty message";
+    }
+    return value;
+  }
+
+  String _notificationSubtitle(Message? message, {String? fallback}) {
+    if (message == null) return _subtitleOrFallback(null, fallback: fallback);
+    return _subtitleOrFallback(MessageHelper.getNotificationText(message), fallback: fallback);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -466,10 +486,11 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
     // keep controller in memory since the widget is part of a list
     // (it will be disposed when scrolled out of view)
     forceDelete = false;
-    subtitle = MessageHelper.getNotificationText(controller.chat.latestMessage);
-    cachedLatestMessageGuid = controller.chat.latestMessage.guid!;
-    cachedDateEdited = controller.chat.latestMessage.dateEdited;
-    isFromMe = controller.chat.latestMessage.isFromMe!;
+    final latestMessage = controller.chat.latestMessage;
+    subtitle = _notificationSubtitle(latestMessage);
+    cachedLatestMessageGuid = latestMessage.guid;
+    cachedDateEdited = latestMessage.dateEdited;
+    isFromMe = latestMessage.isFromMe ?? false;
     isDelivered = controller.chat.isGroup || !isFromMe || controller.chat.latestMessage.dateDelivered != null
         || controller.chat.latestMessage.dateRead != null;
     fakeText = faker.lorem.words(subtitle.split(" ").length).join(" ");
@@ -490,8 +511,9 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
           // check if we really need to update this widget
           if (message != null && (message.guid != cachedLatestMessageGuid || message.dateEdited != cachedDateEdited)) {
             message.handle = message.getHandle();
-            String newSubtitle = MessageHelper.getNotificationText(message);
+            String newSubtitle = _notificationSubtitle(message, fallback: subtitle);
             if (newSubtitle != subtitle) {
+              if (!mounted) return;
               setState(() {
                 subtitle = newSubtitle;
                 fakeText = faker.lorem.words(subtitle.split(" ").length).join(" ");
@@ -514,7 +536,7 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
         if (!mounted) return;
         if (event.item1 != 'update-contacts') return;
         if (event.item2.isNotEmpty) {
-          String newSubtitle = MessageHelper.getNotificationText(controller.chat.latestMessage);
+          String newSubtitle = _notificationSubtitle(controller.chat.latestMessage, fallback: subtitle);
           if (newSubtitle != subtitle) {
             setState(() {
               subtitle = newSubtitle;
@@ -529,7 +551,7 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
           isFromMe = message.isFromMe ?? false;
           isDelivered = controller.chat.isGroup || !isFromMe || message.dateDelivered != null || message.dateRead != null;
           if (message.guid != cachedLatestMessageGuid || message.dateEdited != cachedDateEdited) {
-            String newSubtitle = MessageHelper.getNotificationText(message);
+            String newSubtitle = _notificationSubtitle(message, fallback: subtitle);
             if (newSubtitle != subtitle) {
               setState(() {
                 subtitle = newSubtitle;
@@ -562,7 +584,14 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
     return Obx(() {
       final hideContent = ss.settings.redactedMode.value && ss.settings.hideMessageContent.value;
       final hideContacts = ss.settings.redactedMode.value && ss.settings.hideContactInfo.value;
-      String _subtitle = hideContent ? fakeText : hideContacts && !kIsWeb ? MessageHelper.getNotificationText(Message.findOne(guid: cachedLatestMessageGuid!)!) : subtitle;
+      final latestMessage = cachedLatestMessageGuid == null ? null : Message.findOne(guid: cachedLatestMessageGuid!);
+      final resolvedSubtitle = _subtitleOrFallback(subtitle);
+      final redactedSubtitle = _notificationSubtitle(latestMessage, fallback: resolvedSubtitle);
+      final String _subtitle = hideContent
+          ? _subtitleOrFallback(fakeText, fallback: "Empty message")
+          : hideContacts && !kIsWeb
+              ? redactedSubtitle
+              : resolvedSubtitle;
 
       return RichText(
         text: TextSpan(
