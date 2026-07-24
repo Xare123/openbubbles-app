@@ -4032,9 +4032,11 @@ class RustPushService extends GetxService {
             myMsg.target = otherIds.map((element) => api.MessageTarget.uuid(element)).toList(); // forward to other devices
             await (backend as RustPushBackend).sendMsg(myMsg);
           }
-          var msg = (await pushService.reflectMessageDyn(myMsg))!;
-          msg.temp = true;
-          msg.forwardIfNessesary(chat);
+          final msg = await pushService.reflectMessageDyn(myMsg);
+          if (msg != null) {
+            msg.temp = true;
+            await msg.forwardIfNessesary(chat);
+          }
           return;
         }
       }
@@ -4054,12 +4056,15 @@ class RustPushService extends GetxService {
     Logger.info("rustpush_receive reflection_complete id=$receiveId duration_ms=${_durationMs(receiveStopwatch)} reflected=${reflected != null}");
     if (reflected != null) {
       final queueStopwatch = Stopwatch()..start();
+      final queueCompletion = Completer<void>();
       Logger.info("rustpush_receive incoming_queue_enqueue id=$receiveId pending_count=${inq.items.length}");
       await inq.queue(IncomingItem(
         chat: chat,
         message: reflected,
-        type: QueueType.newMessage
+        type: QueueType.newMessage,
+        completer: queueCompletion,
       ));
+      await queueCompletion.future;
       Logger.info("rustpush_receive incoming_queue_complete id=$receiveId duration_ms=${_durationMs(queueStopwatch)} pending_count=${inq.items.length}");
     }
   }
