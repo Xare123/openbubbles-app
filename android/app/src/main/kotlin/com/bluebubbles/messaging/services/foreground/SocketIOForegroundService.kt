@@ -132,7 +132,6 @@ class SocketIOForegroundService : Service() {
             val encodedPw = URLEncoder.encode(storedPassword, "UTF-8")
             opts.query = "password=$encodedPw"
             mSocket = IO.socket(serverUrl, opts)
-            mSocket!!.connect()
 
             mSocket!!.on(Socket.EVENT_CONNECT) {
                 Log.d(Constants.logTag, "Socket.io connected to your server!")
@@ -185,6 +184,10 @@ class SocketIOForegroundService : Service() {
                     }
                 }
             }
+
+            // Register every callback before opening the transport so an
+            // immediate connect or event cannot race listener setup.
+            mSocket!!.connect()
         } catch (e: Exception) {
             if (isBeingDestroyed) {
                 return
