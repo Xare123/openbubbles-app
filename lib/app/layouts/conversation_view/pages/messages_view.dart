@@ -141,6 +141,7 @@ class MessagesViewState extends OptimizedState<MessagesView> {
       if (e.item1 == "refresh-messagebloc" && e.item2 == chat.guid) {
         // Clear state items
         noMoreMessages = false;
+        fetching = false;
         _messages = [];
         // Reload the state after refreshing
         messageService.reload();
@@ -293,28 +294,35 @@ class MessagesViewState extends OptimizedState<MessagesView> {
     if (noMoreMessages || fetching) return;
     fetching = true;
 
-    // Start loading the next chunk of messages
-    noMoreMessages = !(await messageService.loadChunk(_messages.length, controller, limit: limit).catchError((e, stack) {
-      Logger.error("Failed to fetch message chunk!", error: e, trace: stack);
-      return true;
-    }));
+    try {
+      // Start loading the next chunk of messages
+      noMoreMessages = !(await messageService.loadChunk(_messages.length, controller, limit: limit).catchError((e, stack) {
+        Logger.error("Failed to fetch message chunk!", error: e, trace: stack);
+        return true;
+      }));
 
-    if (noMoreMessages) return setState(() {});
-
-    final oldLength = _messages.length;
-    _messages = messageService.struct.messages;
-    _messages.sort(Message.sort);
-    fetching = false;
-    _messages.sublist(max(oldLength - 1, 0)).forEachIndexed((i, m) {
       if (!mounted) return;
-      final c = mwc(m);
-      c.cvController = controller;
-      listKey.currentState!.insertItem(i, duration: const Duration(milliseconds: 0));
-    });
-    _syncBottomMessageFocusNode();
-    // should only happen when a reaction is the most recent message
-    if (oldLength == 0) {
-      setState(() {});
+
+      if (noMoreMessages) {
+        setState(() {});
+        return;
+      }
+
+      final oldLength = _messages.length;
+      _messages = messageService.struct.messages;
+      _messages.sort(Message.sort);
+      _messages.sublist(max(oldLength - 1, 0)).forEachIndexed((i, m) {
+        final c = mwc(m);
+        c.cvController = controller;
+        listKey.currentState!.insertItem(i, duration: const Duration(milliseconds: 0));
+      });
+      _syncBottomMessageFocusNode();
+      // should only happen when a reaction is the most recent message
+      if (oldLength == 0) {
+        setState(() {});
+      }
+    } finally {
+      fetching = false;
     }
   }
 
