@@ -3845,7 +3845,7 @@ class RustPushService extends GetxService {
   Timer? myTimer;
 
   List<Function> subscriptions = [];
-  Function subscribeToLocationUpdates(Function subscribe) {
+  VoidCallback subscribeToLocationUpdates(Function subscribe) {
     var timer = ((timer) async {
       var subs = await api.refreshBackgroundFollowing(state: pushService.state!.icloudServices!.fmfd!, config: pushService.state!.osConfig);
       for (var sub in subscriptions) {
