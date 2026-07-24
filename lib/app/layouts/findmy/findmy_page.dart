@@ -181,11 +181,48 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   bool _refreshInProgress = false;
   bool _appInForeground = true;
   bool _pageIsActive = true;
+  final String _diagnosticCaptureId = _newDiagnosticId();
+  int _nextDiagnosticOperation = 0;
 
   bool get _isPageVisible => mounted && _pageIsActive && (ModalRoute.of(context)?.isCurrent ?? true);
 
   api.FindMyFriendsClientDefaultAnisetteProvider? fmfClient;
   api.FindMyPhoneClientDefaultAnisetteProvider? fmipClient;
+
+  static String _newDiagnosticId() {
+    final random = Random.secure();
+    final value = List<int>.generate(12, (_) => random.nextInt(256));
+    return base64UrlEncode(value).replaceAll('=', '');
+  }
+
+  String _nextOperationId() => 'op-${++_nextDiagnosticOperation}-${_newDiagnosticId()}';
+
+  /// Logs only stable diagnostic fields. Do not add user, device, location, or
+  /// server-derived values here: this logger is intentionally safe to collect.
+  void _logDiagnostic(
+    String category,
+    String event, {
+    String? operationId,
+    String? source,
+    String? status,
+    String? errorType,
+    int? durationMs,
+    int? resultCount,
+  }) {
+    final record = <String, Object>{
+      'schema': 'openbubbles.findmy.diag.v1',
+      'capture_id': _diagnosticCaptureId,
+      'category': category,
+      'event': event,
+      if (operationId != null) 'operation_id': operationId,
+      if (source != null) 'source': source,
+      if (status != null) 'status': status,
+      if (errorType != null) 'error_type': errorType,
+      if (durationMs != null) 'duration_ms': durationMs,
+      if (resultCount != null) 'result_count': resultCount,
+    };
+    Logger.info('[FindMyDiag] ${jsonEncode(record)}', tag: 'FindMy');
+  }
 
   @override
   void initState() {
@@ -193,23 +230,26 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
     WidgetsBinding.instance.addObserver(this);
     final lifecycleState = WidgetsBinding.instance.lifecycleState;
     _appInForeground = lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
+    _logDiagnostic('lifecycle', 'initialized', status: _appInForeground ? 'foreground' : 'background');
     tabController.addListener(_syncSectionWithPage);
     if (widget.defaultFriend != null) {
       index.value = _FindMySection.people.visibleIndex;
       tabController.index = 1;
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) => getLocations());
+    WidgetsBinding.instance.addPostFrameCallback((_) => getLocations(source: 'initial'));
     _startRefreshTimer();
 
     socket.socket.on("new-findmy-location", (data) {
       try {
         final friend = FindMyFriend.fromJson(data);
-        Logger.info("Received Find My location update");
-        if ((friend.latitude ?? 0) == 0 && (friend.longitude ?? 0) == 0) return;
+        _logDiagnostic('socket_update', 'received');
+        if ((friend.latitude ?? 0) == 0 && (friend.longitude ?? 0) == 0) {
+          _logDiagnostic('socket_update', 'ignored', status: 'no_location');
+          return;
+        }
         final existingFriendIndex = friends.indexWhere((e) => e.handle?.uniqueAddressAndService == friend.handle?.uniqueAddressAndService);
         final existingFriend = existingFriendIndex == -1 ? null : friends[existingFriendIndex];
         if (existingFriend == null || existingFriend.status == null || friend.locatingInProgress || LocationStatus.values.indexOf(existingFriend.status!) <= LocationStatus.values.indexOf(friend.status ?? LocationStatus.legacy)) {
-          Logger.info("Updating Find My map marker");
           if (existingFriendIndex == -1) {
             friends.add(friend);
           } else {
@@ -221,8 +261,13 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
 
           _rebuildFriendMarkers();
           setState(() {});
+          _logDiagnostic('socket_update', 'applied');
+        } else {
+          _logDiagnostic('socket_update', 'ignored', status: 'stale');
         }
-      } catch (_) {}
+      } catch (error) {
+        _logDiagnostic('socket_update', 'error', status: 'parse_failed', errorType: error.runtimeType.toString());
+      }
     });
   }
 
@@ -240,7 +285,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
     if (!_appInForeground || !_pageIsActive) return;
     myTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (_appInForeground && _isPageVisible) {
-        getLocations(refreshDevices: false);
+        getLocations(refreshDevices: false, source: 'foreground_timer');
       }
     });
   }
@@ -253,6 +298,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _appInForeground = state == AppLifecycleState.resumed;
+    _logDiagnostic('lifecycle', 'state_changed', status: _appInForeground ? 'foreground' : 'background');
     if (_appInForeground) {
       _startRefreshTimer();
     } else {
@@ -264,24 +310,29 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   void activate() {
     super.activate();
     _pageIsActive = true;
+    _logDiagnostic('lifecycle', 'activated');
     _startRefreshTimer();
   }
 
   @override
   void deactivate() {
     _pageIsActive = false;
+    _logDiagnostic('lifecycle', 'deactivated');
     _stopRefreshTimer();
     super.deactivate();
   }
 
   Future<void> _refreshManually() async {
-    if (!canRefresh || _refreshInProgress || !_appInForeground || !_isPageVisible) return;
+    if (!canRefresh || _refreshInProgress || !_appInForeground || !_isPageVisible) {
+      _logDiagnostic('refresh', 'skipped', source: 'manual', status: 'unavailable');
+      return;
+    }
     setState(() {
       canRefresh = false;
       refreshing = true;
       refreshing2 = true;
     });
-    await getLocations();
+    await getLocations(source: 'manual');
   }
 
   /// Fetches the FindMy data from the server.
@@ -290,8 +341,23 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   /// however, the refresh friends endpoint does. The way this was coded assumes that the server
   /// will return the data for both endpoints. A server update will fix this, but for now,
   /// we will "patch" it by only "refreshing" devices when the user manually refreshes the data.
-  Future<void> getLocations({bool refreshFriends = true, bool refreshDevices = true}) async {
-    if (!_appInForeground || !_isPageVisible || _refreshInProgress) return;
+  Future<void> getLocations({bool refreshFriends = true, bool refreshDevices = true, String source = 'internal'}) async {
+    if (!_appInForeground) {
+      _logDiagnostic('refresh', 'skipped', source: source, status: 'not_foreground');
+      return;
+    }
+    if (!_isPageVisible) {
+      _logDiagnostic('refresh', 'skipped', source: source, status: 'not_visible');
+      return;
+    }
+    if (_refreshInProgress) {
+      _logDiagnostic('refresh', 'skipped', source: source, status: 'in_progress');
+      return;
+    }
+    final operationId = _nextOperationId();
+    final startedAt = Stopwatch()..start();
+    var refreshSucceeded = false;
+    _logDiagnostic('refresh', 'started', operationId: operationId, source: source);
     _refreshInProgress = true;
     try {
     if (!(Platform.isLinux && !kIsWeb)) {
@@ -316,16 +382,21 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
               setState(() {
                 buildLocationMarker(event);
               });
+            }, onError: (Object error, StackTrace stackTrace) {
+              _logDiagnostic('api', 'error', operationId: operationId, status: 'position_stream', errorType: error.runtimeType.toString());
             });
           }
           if (!refreshFriends) {
             mapController.move(LatLng(location!.latitude, location!.longitude), 10);
           }
+        }, onError: (Object error, StackTrace stackTrace) {
+          _logDiagnostic('api', 'error', operationId: operationId, status: 'current_position', errorType: error.runtimeType.toString());
         });
       }
     }
 
     var isNew = fmfClient == null;
+    if (isNew) _logDiagnostic('api', 'started', operationId: operationId, status: 'create_friends_client');
     fmfClient ??= await api.makeFindMyFriends(
       path: pushService.statePath,
       config: pushService.state!.osConfig,
@@ -333,13 +404,18 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       anisette: pushService.state!.anisette,
       provider: pushService.state!.icloudServices!.tokenProvider,
     );
+    if (isNew) _logDiagnostic('api', 'succeeded', operationId: operationId, status: 'create_friends_client');
 
     try {
       if (refreshFriends && !isNew) {
+        _logDiagnostic('api', 'started', operationId: operationId, status: 'refresh_following');
         await api.refreshFollowing(config: pushService.state!.osConfig, client: fmfClient!);
+        _logDiagnostic('api', 'succeeded', operationId: operationId, status: 'refresh_following');
       }
 
+      _logDiagnostic('api', 'started', operationId: operationId, status: 'get_following');
       var following = await api.getFollowing(client: fmfClient!);
+      _logDiagnostic('api', 'succeeded', operationId: operationId, status: 'get_following', resultCount: following.length);
     
       friends = following
           .map((e) => 
@@ -376,8 +452,8 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
           await _selectFriend(friend, refreshLocation: true);
         }
       }
-    } catch (e, s) {
-      Logger.error("Failed to parse FindMy People location data!", error: e, trace: s);
+    } catch (e) {
+      _logDiagnostic('api', 'error', operationId: operationId, status: 'people_data', errorType: e.runtimeType.toString());
       if (mounted) {
         setState(() {
           fetching2 = null;
@@ -388,6 +464,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
     }
 
     var isNewi = fmipClient == null;
+    if (isNewi) _logDiagnostic('api', 'started', operationId: operationId, status: 'create_devices_client');
     fmipClient ??= await api.makeFindMyPhone(
       config: pushService.state!.osConfig,
       path: pushService.statePath,
@@ -395,14 +472,19 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       anisette: pushService.state!.anisette,
       provider: pushService.state!.icloudServices!.tokenProvider,
     );
+    if (isNewi) _logDiagnostic('api', 'succeeded', operationId: operationId, status: 'create_devices_client');
 
 
     try {
       if (refreshDevices && !isNewi) {
+        _logDiagnostic('api', 'started', operationId: operationId, status: 'refresh_devices');
         await api.refreshDevices(config: pushService.state!.osConfig, client: fmipClient!);
+        _logDiagnostic('api', 'succeeded', operationId: operationId, status: 'refresh_devices');
       }
 
+      _logDiagnostic('api', 'started', operationId: operationId, status: 'get_devices');
       var following = await api.getDevices(client: fmipClient!);
+      _logDiagnostic('api', 'succeeded', operationId: operationId, status: 'get_devices', resultCount: following.length);
     
       var devices = following
           .map((e) => 
@@ -475,10 +557,12 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       if (beaconCacheDate == null || DateTime.now().difference(beaconCacheDate!).inMinutes > 3) {
         isInClique = await api.isInClique(keychain: pushService.state!.icloudServices!.keychain!);
         try {
+          _logDiagnostic('api', 'started', operationId: operationId, status: 'get_beacon_items');
           cachedBeacons = isInClique ? await api.getBeaconItems(items: pushService.state!.icloudServices!.fmfd!) : [];
-        } catch (e, s) {
+          _logDiagnostic('api', 'succeeded', operationId: operationId, status: 'get_beacon_items', resultCount: cachedBeacons.length);
+        } catch (e) {
           // used for PCS key missing catching after we reset the clique.
-          Logger.error("Failed to fetch beacon data", error: e, trace: s);
+          _logDiagnostic('api', 'error', operationId: operationId, status: 'get_beacon_items', errorType: e.runtimeType.toString());
         }
         beaconCacheDate = DateTime.now();
         for (var cached in cachedBeacons) {
@@ -509,8 +593,8 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                 areaOfInterest: [],
               );
             }
-          } catch (e, s) {
-            Logger.warn("Geocoding failed", error: e, trace: s);
+          } catch (e) {
+            _logDiagnostic('api', 'error', operationId: operationId, status: 'reverse_geocode', errorType: e.runtimeType.toString());
           }
         }
       }
@@ -600,8 +684,9 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
         fetching = false;
         refreshing = false;
       });
-    } catch (e, s) {
-      Logger.error("Failed to parse FindMy Devices location data!", error: e, trace: s);
+      refreshSucceeded = true;
+    } catch (e) {
+      _logDiagnostic('api', 'error', operationId: operationId, status: 'device_data', errorType: e.runtimeType.toString());
       if (mounted) {
         setState(() {
           fetching = null;
@@ -610,8 +695,8 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       }
       return;
     }
-    } catch (e, s) {
-      Logger.error("Failed to refresh Find My location data!", error: e, trace: s);
+    } catch (e) {
+      _logDiagnostic('refresh', 'error', operationId: operationId, source: source, status: 'unexpected', errorType: e.runtimeType.toString());
       if (mounted) {
         setState(() {
           fetching = null;
@@ -619,6 +704,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
         });
       }
     } finally {
+      startedAt.stop();
       _refreshInProgress = false;
       if (mounted) {
         setState(() {
@@ -627,6 +713,14 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
           canRefresh = true;
         });
       }
+      _logDiagnostic(
+        'refresh',
+        refreshSucceeded ? 'succeeded' : 'failed',
+        operationId: operationId,
+        source: source,
+        durationMs: startedAt.elapsedMilliseconds,
+        resultCount: friends.length + devices.length,
+      );
     }
   }
 
@@ -688,7 +782,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       delegate: _FindMySearchDelegate(items: _buildSearchItems()),
     );
     if (!mounted || result == null) return;
-    Logger.info("Find My search result selected: ${result.section.label}");
+    _logDiagnostic('map', 'search_result_selected');
     if (result?.device != null) {
       await _selectDevice(result!.device!);
     } else if (result?.friend != null) {
@@ -699,9 +793,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   Future<void> _showSection(_FindMySection section, {bool togglePanel = false}) async {
     if (!mounted) return;
     final wasSelected = index.value == section.visibleIndex;
-    if (!wasSelected) {
-      Logger.info("Find My section changed: ${section.label}");
-    }
+    if (!wasSelected) _logDiagnostic('map', 'section_changed');
     index.value = section.visibleIndex;
     if (tabController.index != section.pageIndex) {
       tabController.animateTo(section.pageIndex);
@@ -739,7 +831,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
     try {
       await completer.future.timeout(const Duration(seconds: 5));
     } on TimeoutException {
-      Logger.warn("Timed out waiting for the Find My map to become ready");
+      _logDiagnostic('map', 'error', status: 'map_not_ready', errorType: 'TimeoutException');
       return;
     }
     if (!mounted) return;
@@ -752,6 +844,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       popupController.showPopupsOnlyFor([marker]);
     }
     mapController.move(LatLng(latitude, longitude), 10);
+    _logDiagnostic('map', 'focused');
   }
 
   Future<void> _selectDevice(FindMyDevice device) async {
@@ -759,8 +852,8 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       await _showSection(_sectionForDevice(device));
       if (!mounted) return;
       await _focusMarker(_deviceMarkerKey(device), device.location?.latitude, device.location?.longitude);
-    } catch (_) {
-      Logger.error("Find My device selection failed");
+    } catch (error) {
+      _logDiagnostic('map', 'error', status: 'device_selection', errorType: error.runtimeType.toString());
     }
   }
 
@@ -774,8 +867,8 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
         if (!mounted) return;
       }
       await _focusMarker(_friendMarkerKey(friend), friend.latitude, friend.longitude);
-    } catch (_) {
-      Logger.error("Find My friend selection failed");
+    } catch (error) {
+      _logDiagnostic('map', 'error', status: 'friend_selection', errorType: error.runtimeType.toString());
     }
   }
 
@@ -784,6 +877,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
     for (final friend in friendsWithLocation) {
       buildFriendMarker(friend);
     }
+    _logDiagnostic('map', 'markers_rebuilt', resultCount: friendsWithLocation.length);
   }
 
   void _rebuildDeviceMarkers() {
@@ -823,6 +917,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
         alignment: Alignment.topCenter,
       );
     }
+    _logDiagnostic('map', 'markers_rebuilt', resultCount: markers.length);
   }
 
   void buildFriendMarker(FindMyFriend friend) {
@@ -909,11 +1004,12 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       _rebuildDeviceMarkers();
     });
     beaconCacheDate = null;
-    getLocations();
+    getLocations(source: 'item_share_changed');
   }
 
   @override
   void dispose() {
+    _logDiagnostic('lifecycle', 'disposed');
     locationSub?.cancel();
     mapController.dispose();
     popupController.dispose();
@@ -1063,7 +1159,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                   }
                   if (!await pushService.joinClique()) return;
                   beaconCacheDate = null;
-                  getLocations();
+                  getLocations(source: 'clique_joined');
                 },
                 trailing: const NextButton(),
               ),
