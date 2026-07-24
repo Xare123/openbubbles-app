@@ -1318,6 +1318,7 @@ class RustPushService extends GetxService {
   var disableOutgoingSms = false;
 
   final RxBool relayHealthChecking = false.obs;
+  final RxBool relayHealthAvailable = false.obs;
   final RxnBool relayReachable = RxnBool();
   final Rxn<DateTime> relayLastChecked = Rxn<DateTime>();
   final Rxn<DateTime> relayLastSuccess = Rxn<DateTime>();
@@ -1351,6 +1352,7 @@ class RustPushService extends GetxService {
   }
 
   Future<void> clearRelayHealthState({bool clearPreferences = true}) async {
+    relayHealthAvailable.value = false;
     relayReachable.value = null;
     relayLastChecked.value = null;
     relayLastSuccess.value = null;
@@ -1375,10 +1377,12 @@ class RustPushService extends GetxService {
     }
 
     final fingerprint = relayHealthFingerprint(device);
+    relayHealthAvailable.value = true;
     final savedFingerprint =
         ss.prefs.getString("relay-health-fingerprint");
     if (savedFingerprint != fingerprint) {
       await clearRelayHealthState();
+      relayHealthAvailable.value = true;
       _relayHealthFingerprint = fingerprint;
       await ss.prefs.setString(
           "relay-health-fingerprint", fingerprint);
@@ -1436,10 +1440,12 @@ class RustPushService extends GetxService {
     if (relayDevice == null) {
       return null;
     }
+    relayHealthAvailable.value = true;
 
     final fingerprint = relayHealthFingerprint(relayDevice);
     if (_relayHealthFingerprint != fingerprint) {
       await clearRelayHealthState();
+      relayHealthAvailable.value = true;
       _relayHealthFingerprint = fingerprint;
       await ss.prefs.setString(
           "relay-health-fingerprint", fingerprint);

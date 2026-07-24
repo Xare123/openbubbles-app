@@ -690,6 +690,9 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                       if ((accountInfo["can_pnr"] ?? false) &&
                           !ss.settings.deviceIsHosted.value)
                         Obx(() {
+                          if (!pushService.relayHealthAvailable.value) {
+                            return const SizedBox.shrink();
+                          }
                           final reachable =
                               pushService.relayReachable.value;
                           final checking =
