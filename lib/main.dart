@@ -475,7 +475,8 @@ class _HomeState extends OptimizedState<Home> with WidgetsBindingObserver, TrayL
       }
 
       ErrorWidget.builder = (FlutterErrorDetails error) {
-        _logRenderError(error);
+        // FlutterError.onError above records the incident. Logging here would
+        // produce a second incident ID for the same rendering failure.
         return CustomErrorWidget(
           "An unexpected error occurred when rendering.",
         );
