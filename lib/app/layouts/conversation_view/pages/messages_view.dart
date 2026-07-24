@@ -214,6 +214,10 @@ class MessagesViewState extends OptimizedState<MessagesView> {
 
   Future<void> _refreshMessageBloc() async {
     if (_refreshing) return;
+    if (widget.customService != null) {
+      Logger.info("message_refresh skipped_custom_service");
+      return;
+    }
     _refreshing = true;
     try {
       final staleMessages = List<Message>.from(_messages);
@@ -234,12 +238,11 @@ class MessagesViewState extends OptimizedState<MessagesView> {
       fetching = false;
       _messages = [];
 
-      // Re-acquire the service after its GetX reload so the view does not
-      // continue using stale callbacks while the transcript is repopulated.
-      messageService.reload();
-      if (widget.customService == null) {
-        messageService = ms(chat.guid);
-      }
+      // Get.reload rebuilds the original Get.put instance. Close it instead
+      // so its subscriptions and in-memory message structure are flushed
+      // before registering a genuinely new service for this transcript.
+      messageService.close(force: true);
+      messageService = ms(chat.guid);
       messageService.init(chat, handleNewMessage, handleUpdatedMessage, handleDeletedMessage, jumpToMessage);
       await messageService.loadChunk(0, controller);
       if (!mounted) return;
