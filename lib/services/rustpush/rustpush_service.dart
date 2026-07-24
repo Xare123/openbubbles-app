@@ -62,6 +62,10 @@ const rpApiRoot = "https://hw.openbubbles.app/code";
 const clientId = '1041242226917-ik21n86fp43e82iu1e5soh6bu6gvuste.apps.googleusercontent.com';
 const clientSecret = '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';
 
+String _diagnosticHash(String value) => sha256.convert(utf8.encode(value)).toString().substring(0, 12);
+
+String _durationMs(Stopwatch stopwatch) => stopwatch.elapsedMilliseconds.toString();
+
 
 class SyncIsolate {
   static void initialize() {
@@ -3806,16 +3810,20 @@ class RustPushService extends GetxService {
         return;
       }
     }
-    Logger.info("Reflecting ${myMsg.id}");
+    final receiveStopwatch = Stopwatch()..start();
+    final receiveId = _diagnosticHash(myMsg.id);
+    Logger.info("rustpush_receive reflection_start id=$receiveId");
     var reflected = await pushService.reflectMessageDyn(myMsg);
-    Logger.info("Reflect finished ${myMsg.id}");
+    Logger.info("rustpush_receive reflection_complete id=$receiveId duration_ms=${_durationMs(receiveStopwatch)} reflected=${reflected != null}");
     if (reflected != null) {
-      Logger.info("Queing");
+      final queueStopwatch = Stopwatch()..start();
+      Logger.info("rustpush_receive incoming_queue_enqueue id=$receiveId pending_count=${inq.items.length}");
       await inq.queue(IncomingItem(
         chat: chat,
         message: reflected,
         type: QueueType.newMessage
       ));
+      Logger.info("rustpush_receive incoming_queue_complete id=$receiveId duration_ms=${_durationMs(queueStopwatch)} pending_count=${inq.items.length}");
     }
   }
 
@@ -4469,36 +4477,45 @@ class RustPushService extends GetxService {
     }
   }
 
-  Future<void> markAsHandledAfter(String ptr) async {
+  Future<void> markAsHandledAfter(String ptr, {required String eventId, required int retry}) async {
+    final ackStopwatch = Stopwatch()..start();
     if (inq.isProcessing.value) {
-      Logger.info("Marking as handled processing wait $ptr");
+      Logger.info("rustpush_receive ack_wait_start id=$eventId retry=$retry pending_count=${inq.items.length}");
       await for (final value in inq.isProcessing.stream) {
         if (!value) break;
       }
     }
-    Logger.info("Marking as handled commit $ptr");
+    Logger.info("rustpush_receive save_and_queue_drained id=$eventId retry=$retry wait_ms=${_durationMs(ackStopwatch)} pending_count=${inq.items.length}");
+    Logger.info("rustpush_receive ack_commit id=$eventId retry=$retry");
     await api.completeMsg(ptr: ptr);
+    Logger.info("rustpush_receive ack_complete id=$eventId retry=$retry duration_ms=${_durationMs(ackStopwatch)}");
   }
 
   Future recievedMsgPointer(String pointer, String retry) async {
+    final eventId = _diagnosticHash(pointer);
+    final retryCount = int.tryParse(retry) ?? 3;
+    final receiveStopwatch = Stopwatch()..start();
     var message = await api.ptrToDart(ptr: pointer);
     if (message == null) {
-      Logger.info("bad pointer $pointer $retry");
+      Logger.info("rustpush_receive pointer_missing id=$eventId retry=$retryCount");
       return;
     }
-    Logger.info("waitingForInit $pointer $retry");
+    final initStopwatch = Stopwatch()..start();
+    Logger.info("rustpush_receive aps_init_wait_start id=$eventId retry=$retryCount");
     await initFuture;
-    var isFinal = (int.tryParse(retry) ?? 3) >= 3;
+    Logger.info("rustpush_receive aps_init_wait_complete id=$eventId retry=$retryCount duration_ms=${_durationMs(initStopwatch)} total_ms=${_durationMs(receiveStopwatch)}");
+    var isFinal = retryCount >= 3;
     try {
-      Logger.info("Handling $pointer $retry");
+      final handlingStopwatch = Stopwatch()..start();
+      Logger.info("rustpush_receive handle_start id=$eventId retry=$retryCount");
       await handleMsg(message, isFinal);
-      Logger.info("Marking as handled $pointer");
-      await markAsHandledAfter(pointer);
+      Logger.info("rustpush_receive handle_complete id=$eventId retry=$retryCount duration_ms=${_durationMs(handlingStopwatch)} total_ms=${_durationMs(receiveStopwatch)}");
+      await markAsHandledAfter(pointer, eventId: eventId, retry: retryCount);
     } catch (e, s) {
       Logger.error("Handle failed", error: e, trace: s);
       if (isFinal) {
-        Logger.info("Failed; Marking as handled anyways $pointer");
-        await markAsHandledAfter(pointer);
+        Logger.info("rustpush_receive final_attempt_ack id=$eventId retry=$retryCount");
+        await markAsHandledAfter(pointer, eventId: eventId, retry: retryCount);
       }
       rethrow;
     }
