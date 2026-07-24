@@ -28,6 +28,7 @@ abstract class CustomStateful<T extends StatefulController> extends StatefulWidg
 abstract class CustomState<T extends CustomStateful, R, S extends StatefulController> extends State<T> with ThemeHelpers {
   // completer to check if the page animation is complete
   final animCompleted = Completer<void>();
+  late final void Function(R) _updateWidgetCallback;
 
   @protected
   /// Convenience getter for the [GetxController]
@@ -55,7 +56,8 @@ abstract class CustomState<T extends CustomStateful, R, S extends StatefulContro
       widget.parentController.updateObx = updateObx;
     }
     widget.parentController.updateWidgetFunctions[T] ??= [];
-    widget.parentController.updateWidgetFunctions[T]!.add(updateWidget);
+    _updateWidgetCallback = updateWidget;
+    widget.parentController.updateWidgetFunctions[T]!.add(_updateWidgetCallback);
 
     // complete the completer when we know the page animation has finished
     WidgetsBinding.instance.addPostFrameCallback((timeStamp) {
@@ -83,6 +85,11 @@ abstract class CustomState<T extends CustomStateful, R, S extends StatefulContro
   /// Force delete the [GetxController] when the page has disposed (unless we
   /// don't want to)
   void dispose() {
+    final callbacks = widget.parentController.updateWidgetFunctions[T];
+    callbacks?.remove(_updateWidgetCallback);
+    if (callbacks?.isEmpty ?? false) {
+      widget.parentController.updateWidgetFunctions.remove(T);
+    }
     if (_forceDelete) Get.delete<S>(tag: _tag);
     super.dispose();
   }

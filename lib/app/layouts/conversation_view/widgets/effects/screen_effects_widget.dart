@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:bluebubbles/app/animations/balloon_classes.dart';
@@ -36,6 +37,7 @@ class _ScreenEffectsWidgetState extends OptimizedState<ScreenEffectsWidget> with
   late final SpotlightController spotlightController;
   late final LaserController laserController;
   String screenSelected = "";
+  late final StreamSubscription _effectSubscription;
 
   @override
   void initState() {
@@ -51,7 +53,7 @@ class _ScreenEffectsWidgetState extends OptimizedState<ScreenEffectsWidget> with
       laserController = LaserController(vsync: this, windowSize: Size(ns.width(context), context.height));
     });
 
-    eventDispatcher.stream.listen((event) async {
+    _effectSubscription = eventDispatcher.stream.listen((event) async {
       if (event.item1 == 'play-effect' && mounted && screenSelected.isEmpty) {
         setState(() {
           screenSelected = event.item2['type'];
@@ -124,6 +126,12 @@ class _ScreenEffectsWidgetState extends OptimizedState<ScreenEffectsWidget> with
         }
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _effectSubscription.cancel();
+    super.dispose();
   }
 
 
