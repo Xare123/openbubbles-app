@@ -51,6 +51,7 @@ class NotificationsService extends GetxService {
   final FlutterLocalNotificationsPlugin flnp = FlutterLocalNotificationsPlugin();
   StreamSubscription? countSub;
   int currentCount = 0;
+  Timer? relayReminderTimer;
 
   /// For desktop use only
   static LocalNotification? allToast;
@@ -170,6 +171,8 @@ class NotificationsService extends GetxService {
   @override
   void onClose() {
     countSub?.cancel();
+    relayReminderTimer?.cancel();
+    relayReminderTimer = null;
     super.onClose();
   }
 
@@ -1071,48 +1074,57 @@ class NotificationsService extends GetxService {
     );
   }
 
-  Future<void> clearRelayUnavailable() async {
-    if (kIsWeb) {
-      return;
-    }
+  Future<void> cancelRelayCheckReminder() async {
+    relayReminderTimer?.cancel();
+    relayReminderTimer = null;
+
     if (kIsDesktop) {
       await relayToast?.close();
       relayToast = null;
       return;
     }
-    await flnp.cancel(-6 - 50);
+    if (!kIsWeb) {
+      await flnp.cancel(-7 - 50);
+    }
   }
 
-  Future<void> createRelayUnavailable() async {
+  Future<void> scheduleRelayCheckReminder(DateTime time) async {
+    await cancelRelayCheckReminder();
+
+    const title = "Check your iPhone relay";
+    const subtitle =
+        "Phone number registration renews soon. Tap to verify that the relay is online.";
+    if (kIsDesktop) {
+      final delay = time.difference(DateTime.now());
+      relayReminderTimer =
+          Timer(delay.isNegative ? Duration.zero : delay, () async {
+        relayToast = LocalNotification(
+          title: title,
+          body: subtitle,
+          actions: [],
+        );
+
+        relayToast!.onClick = () async {
+          relayToast = null;
+          await windowManager.show();
+          if (ss.settings.finishedSetup.value) {
+            ns.pushLeft(Get.context!, ProfilePanel());
+          }
+        };
+
+        await relayToast!.show();
+      });
+      return;
+    }
     if (kIsWeb) {
       return;
     }
-    const title = "iPhone relay unavailable";
-    const subtitle =
-        "OpenBubbles may lose phone number registration. Turn on the relay, then tap Test Relay.";
-    if (kIsDesktop) {
-      relayToast = LocalNotification(
-        title: title,
-        body: subtitle,
-        actions: [],
-      );
 
-      relayToast!.onClick = () async {
-        relayToast = null;
-        await windowManager.show();
-        if (ss.settings.finishedSetup.value) {
-          ns.pushLeft(Get.context!, ProfilePanel());
-        }
-      };
-
-      await relayToast!.show();
-      return;
-    }
-
-    await flnp.show(
-      -6 - 50,
+    await flnp.zonedSchedule(
+      -7 - 50,
       title,
       subtitle,
+      TZDateTime.from(time, local),
       NotificationDetails(
         android: AndroidNotificationDetails(
           ERROR_CHANNEL,
@@ -1125,6 +1137,9 @@ class NotificationsService extends GetxService {
         ),
       ),
       payload: "-51",
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
     );
   }
 

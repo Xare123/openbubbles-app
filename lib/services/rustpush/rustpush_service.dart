@@ -51,6 +51,7 @@ import 'package:mixpanel_flutter/mixpanel_flutter.dart';
 import 'package:bluebubbles/helpers/backend/startup_tasks.dart';
 import 'package:flutter_isolate/flutter_isolate.dart';
 import 'package:google_sign_in_all_platforms/google_sign_in_all_platforms.dart';
+import 'package:synchronized/synchronized.dart';
 
 var uuid = const Uuid();
 RustPushService pushService =
@@ -58,6 +59,9 @@ RustPushService pushService =
 
 
 const rpApiRoot = "https://hw.openbubbles.app/code";
+const registrationRelayHost = "https://registration-relay.beeper.com";
+const registrationRelayAccessToken =
+    "5c175851953ecaf5209185d897591badb6c3e712";
 
 const clientId = '1041242226917-ik21n86fp43e82iu1e5soh6bu6gvuste.apps.googleusercontent.com';
 const clientSecret = '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';
@@ -1317,9 +1321,71 @@ class RustPushService extends GetxService {
   final RxnBool relayReachable = RxnBool();
   final Rxn<DateTime> relayLastChecked = Rxn<DateTime>();
   final Rxn<DateTime> relayLastSuccess = Rxn<DateTime>();
-  Timer? relayHealthTimer;
+  Future<bool?>? _relayHealthInFlight;
+  String? _relayHealthFingerprint;
+  final Lock _relayReminderLock = Lock();
 
-  void restoreRelayHealthState() {
+  Future<api.DeviceInfo?> getUserManagedIPhoneRelayDevice(
+      {api.SharedPushState? fromState}) async {
+    final currentState = fromState ?? state;
+    if (currentState == null || ss.settings.deviceIsHosted.value) {
+      return null;
+    }
+
+    final device =
+        await api.getDeviceInfo(config: currentState.osConfig);
+    if (device.name.contains("iPhone") ||
+        device.name.contains("iPod") ||
+        device.name.contains("iPad")) {
+      return device;
+    }
+    return null;
+  }
+
+  String relayHealthFingerprint(api.DeviceInfo device) {
+    final relayHost = ss.prefs.getString("registration-relay-host") ??
+        registrationRelayHost;
+    final fingerprintSource =
+        "${device.serial}|${ss.settings.iCloudAccount.value}|$relayHost";
+    return sha256.convert(utf8.encode(fingerprintSource)).toString();
+  }
+
+  Future<void> clearRelayHealthState({bool clearPreferences = true}) async {
+    relayReachable.value = null;
+    relayLastChecked.value = null;
+    relayLastSuccess.value = null;
+    _relayHealthFingerprint = null;
+    if (!clearPreferences) {
+      return;
+    }
+
+    await Future.wait([
+      ss.prefs.remove("relay-health-fingerprint"),
+      ss.prefs.remove("relay-health-last-checked"),
+      ss.prefs.remove("relay-health-last-success"),
+      ss.prefs.remove("relay-health-reachable"),
+    ]);
+  }
+
+  Future<void> restoreRelayHealthState() async {
+    final device = await getUserManagedIPhoneRelayDevice();
+    if (device == null) {
+      await clearRelayHealthState();
+      return;
+    }
+
+    final fingerprint = relayHealthFingerprint(device);
+    final savedFingerprint =
+        ss.prefs.getString("relay-health-fingerprint");
+    if (savedFingerprint != fingerprint) {
+      await clearRelayHealthState();
+      _relayHealthFingerprint = fingerprint;
+      await ss.prefs.setString(
+          "relay-health-fingerprint", fingerprint);
+      return;
+    }
+
+    _relayHealthFingerprint = fingerprint;
     final lastChecked = ss.prefs.getInt("relay-health-last-checked");
     final lastSuccess = ss.prefs.getInt("relay-health-last-success");
     relayReachable.value = ss.prefs.getBool("relay-health-reachable");
@@ -1332,86 +1398,145 @@ class RustPushService extends GetxService {
   }
 
   Future<bool> usesUserManagedIPhoneRelay() async {
-    if (state == null || ss.settings.deviceIsHosted.value) {
-      return false;
-    }
-
-    final device = await api.getDeviceInfo(config: state!.osConfig);
-    return device.name.contains("iPhone") ||
-        device.name.contains("iPod") ||
-        device.name.contains("iPad");
+    return await getUserManagedIPhoneRelayDevice() != null;
   }
 
-  Future<bool?> checkRelayHealth({bool notifyOnFailure = false}) async {
-    if (relayHealthChecking.value) {
-      return relayReachable.value;
+  Future<bool?> checkRelayHealth() async {
+    final existingCheck = _relayHealthInFlight;
+    if (existingCheck != null) {
+      return await existingCheck;
     }
+
+    final check = _performRelayHealthCheck();
+    _relayHealthInFlight = check;
     try {
-      if (!await usesUserManagedIPhoneRelay()) {
-        return null;
+      return await check;
+    } finally {
+      if (identical(_relayHealthInFlight, check)) {
+        _relayHealthInFlight = null;
       }
+    }
+  }
+
+  Future<bool?> _performRelayHealthCheck() async {
+    final currentState = state;
+    if (currentState == null) {
+      return null;
+    }
+
+    api.DeviceInfo? relayDevice;
+    try {
+      relayDevice = await getUserManagedIPhoneRelayDevice(
+          fromState: currentState);
     } catch (e, s) {
       Logger.warn("Failed to identify iPhone relay",
           error: e, trace: s);
       return null;
     }
+    if (relayDevice == null) {
+      return null;
+    }
+
+    final fingerprint = relayHealthFingerprint(relayDevice);
+    if (_relayHealthFingerprint != fingerprint) {
+      await clearRelayHealthState();
+      _relayHealthFingerprint = fingerprint;
+      await ss.prefs.setString(
+          "relay-health-fingerprint", fingerprint);
+    }
 
     relayHealthChecking.value = true;
     final checkedAt = DateTime.now();
     relayLastChecked.value = checkedAt;
-    ss.prefs.setInt(
+    await ss.prefs.setInt(
         "relay-health-last-checked", checkedAt.millisecondsSinceEpoch);
 
     try {
       final relayCode =
-          await api.validateRelay(configRef: state!.osConfig);
-      final reachable = relayCode != null;
+          await api.validateRelay(configRef: currentState.osConfig);
+      var reachable = false;
+      if (relayCode != null) {
+        final relayHost =
+            ss.prefs.getString("registration-relay-host") ??
+                registrationRelayHost;
+        final response = await http.dio.post(
+          "$relayHost/api/v1/bridge/get-version-info",
+          data: {},
+          options: Options(
+            headers: {
+              "X-Beeper-Access-Token":
+                  registrationRelayAccessToken,
+              "Authorization": "Bearer $relayCode",
+            },
+          ),
+        );
+        final responseData = response.data;
+        final versions =
+            responseData is Map ? responseData["versions"] : null;
+        reachable = response.statusCode == 200 &&
+            versions is Map &&
+            versions["software_name"] == "iPhone OS";
+      }
+
       relayReachable.value = reachable;
-      ss.prefs.setBool("relay-health-reachable", reachable);
+      await ss.prefs.setBool("relay-health-reachable", reachable);
 
       if (reachable) {
         relayLastSuccess.value = checkedAt;
-        ss.prefs.setInt(
+        await ss.prefs.setInt(
             "relay-health-last-success", checkedAt.millisecondsSinceEpoch);
-        await notif.clearRelayUnavailable();
-      } else if (notifyOnFailure) {
-        await notif.createRelayUnavailable();
       }
 
       return reachable;
     } catch (e, s) {
       relayReachable.value = false;
-      ss.prefs.setBool("relay-health-reachable", false);
+      await ss.prefs.setBool("relay-health-reachable", false);
       Logger.warn("iPhone relay health check failed", error: e, trace: s);
-      if (notifyOnFailure) {
-        await notif.createRelayUnavailable();
-      }
       return false;
     } finally {
       relayHealthChecking.value = false;
     }
   }
 
-  Future<void> scheduleRelayHealthCheck(int secondsUntilRenewal) async {
-    relayHealthTimer?.cancel();
-    relayHealthTimer = null;
-
-    try {
-      if (!await usesUserManagedIPhoneRelay()) {
+  Future<void> scheduleRelayHealthReminder(
+      int secondsUntilRenewal) async {
+    await _relayReminderLock.synchronized(() async {
+      await notif.cancelRelayCheckReminder();
+      final currentState = state;
+      if (currentState == null) {
         return;
       }
-    } catch (e, s) {
-      Logger.warn("Failed to schedule iPhone relay health check",
-          error: e, trace: s);
-      return;
-    }
+      try {
+        if (await getUserManagedIPhoneRelayDevice(
+                fromState: currentState) ==
+            null) {
+          return;
+        }
+        if ((await api.getMyPhoneHandles(
+                state: currentState.client))
+            .isEmpty) {
+          return;
+        }
+      } catch (e, s) {
+        Logger.warn("Failed to schedule iPhone relay reminder",
+            error: e, trace: s);
+        return;
+      }
+      if (!identical(state, currentState)) {
+        return;
+      }
 
-    const warningLeadTime = Duration(minutes: 15);
-    final delaySeconds =
-        max(10, secondsUntilRenewal - warningLeadTime.inSeconds);
-    relayHealthTimer = Timer(Duration(seconds: delaySeconds), () {
-      checkRelayHealth(notifyOnFailure: true);
+      const warningLeadTime = Duration(minutes: 15);
+      final delaySeconds =
+          max(10, secondsUntilRenewal - warningLeadTime.inSeconds);
+      await notif.scheduleRelayCheckReminder(
+          DateTime.now().add(Duration(seconds: delaySeconds)));
     });
+  }
+
+  Future<void> cancelRelayHealthReminder() async {
+    await _relayReminderLock.synchronized(
+        () => notif.cancelRelayCheckReminder());
   }
 
   Map<String, api.Attachment> attachments = {};
@@ -3454,19 +3579,17 @@ class RustPushService extends GetxService {
       var state = push.field0;
       if (state is api.RegisterState_Registered) {
         notifiedFailed = false;
-        scheduleRelayHealthCheck(state.nextS);
+        unawaited(scheduleRelayHealthReminder(state.nextS));
         if (ss.settings.deviceIsHosted.value) {
           mixpanel?.track("hosted-register-success");
         }
         handleRegistered();
       }
       if (state is api.RegisterState_Registering) {
-        relayHealthTimer?.cancel();
-        relayHealthTimer = null;
+        unawaited(cancelRelayHealthReminder());
       }
       if (state is api.RegisterState_Failed && !notifiedFailed) {
-        relayHealthTimer?.cancel();
-        relayHealthTimer = null;
+        unawaited(cancelRelayHealthReminder());
         if (ss.settings.deviceIsHosted.value) {
           mixpanel?.track("hosted-register-failure");
         }
@@ -4985,13 +5108,19 @@ class RustPushService extends GetxService {
     initAppLinks();
     initMixPanel();
     await initFuture;
-    restoreRelayHealthState();
+    try {
+      await restoreRelayHealthState();
+    } catch (e, s) {
+      Logger.warn("Failed to restore iPhone relay health",
+          error: e, trace: s);
+      await clearRelayHealthState();
+    }
     if (state != null) {
       try {
         final registrationState =
             await api.getRegstate(state: state!.client);
         if (registrationState is api.RegisterState_Registered) {
-          scheduleRelayHealthCheck(registrationState.nextS);
+          await scheduleRelayHealthReminder(registrationState.nextS);
         }
       } catch (e, s) {
         Logger.warn("Failed to schedule iPhone relay health check",
@@ -5076,6 +5205,14 @@ class RustPushService extends GetxService {
     var thisState = state;
     state = null;
 
+    final relayHealthCheck = _relayHealthInFlight;
+    if (relayHealthCheck != null) {
+      await relayHealthCheck;
+    }
+    await cancelRelayHealthReminder();
+    if (hw || logout) {
+      await clearRelayHealthState();
+    }
     if (thisState == null) return;
 
     if (logout) {
@@ -5099,8 +5236,6 @@ class RustPushService extends GetxService {
   
 
   void disposeState(api.SharedPushState state, bool hw, bool setup) {
-    relayHealthTimer?.cancel();
-    relayHealthTimer = null;
     state.cancelPoll.dispose();
     state.localBroadcast.dispose();
     state.ftClient.dispose();
@@ -5159,8 +5294,7 @@ class RustPushService extends GetxService {
 
   @override
   void onClose() {
-    relayHealthTimer?.cancel();
-    relayHealthTimer = null;
+    unawaited(cancelRelayHealthReminder());
     if (state != null) disposeState(state!, true, false);
     super.onClose();
   }

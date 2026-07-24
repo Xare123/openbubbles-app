@@ -729,17 +729,19 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                                             : Icons.help_outline,
                                     color: color,
                                   ),
-                            onTap: () async {
-                              final result =
-                                  await pushService.checkRelayHealth();
-                              if (result == true) {
-                                showSnackbar("iPhone Relay",
-                                    "The relay is online and responding.");
-                              } else if (result == false) {
-                                showSnackbar("iPhone Relay",
-                                    "The relay could not be reached. Check its power, Wi-Fi, and ValidationRelay status.");
-                              }
-                            },
+                            onTap: checking
+                                ? null
+                                : () async {
+                                    final result =
+                                        await pushService.checkRelayHealth();
+                                    if (result == true) {
+                                      showSnackbar("iPhone Relay",
+                                          "The relay is online and responding.");
+                                    } else if (result == false) {
+                                      showSnackbar("iPhone Relay",
+                                          "The relay could not be reached. Check its power, Wi-Fi, and ValidationRelay status.");
+                                    }
+                                  },
                           );
                         }),
                       if (accountInfo['login_status_message']?.startsWith("Deregistered") ?? false)
