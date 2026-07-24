@@ -75,7 +75,7 @@ jobs:
 
       - name: Build Alpha Debug APK
         run: flutter build apk --flavor alpha --debug --target-platform android-arm64
-      
+
       - uses: actions/upload-artifact@v4
         with:
           name: Alpha Debug APK
