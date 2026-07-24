@@ -1585,6 +1585,11 @@ class RustPushService extends GetxService {
   }
 
   Future<void> updateChatParticipants(Chat c, api.MessageInst myMsg, List<String> oldParticipants, List<String> newParticipants) async {
+    final sender = myMsg.sender;
+    if (sender == null || sender.isEmpty) {
+      Logger.warn("Ignoring participant update without a sender");
+      return;
+    }
     var myHandles = await api.getHandles(state: pushService.state!.client);
     var newP = newParticipants.filter((p) => !oldParticipants.contains(p) && !myHandles.contains(p));
     var delP = oldParticipants.filter((p) => !newParticipants.contains(p));
@@ -1603,8 +1608,8 @@ class RustPushService extends GetxService {
       var bb = RustPushBBUtils.rustHandleToBB(item);
       var msg = Message(
         guid: useId ? myMsg.id : uuid.v4(),
-        isFromMe: myHandles.contains(myMsg.sender),
-        handleId: RustPushBBUtils.rustHandleToBB(myMsg.sender!).originalROWID!,
+        isFromMe: myHandles.contains(sender),
+        handleId: RustPushBBUtils.rustHandleToBB(sender).originalROWID!,
         dateCreated: DateTime.fromMillisecondsSinceEpoch(myMsg.sentTimestamp),
         itemType: 1,
         groupActionType: 0,
@@ -1620,11 +1625,11 @@ class RustPushService extends GetxService {
 
     for (var item in delP) {
       var bb = RustPushBBUtils.rustHandleToBB(item);
-      var personDidLeave = item == myMsg.sender;
+      var personDidLeave = item == sender;
       var msg = Message(
         guid: useId ? myMsg.id : uuid.v4(),
-        isFromMe: myHandles.contains(myMsg.sender),
-        handleId: RustPushBBUtils.rustHandleToBB(myMsg.sender!).originalROWID!,
+        isFromMe: myHandles.contains(sender),
+        handleId: RustPushBBUtils.rustHandleToBB(sender).originalROWID!,
         dateCreated: DateTime.fromMillisecondsSinceEpoch(myMsg.sentTimestamp),
         itemType: personDidLeave ? 3 : 1,
         groupActionType: personDidLeave ? 0 : 1,
@@ -1917,15 +1922,16 @@ class RustPushService extends GetxService {
       return msg;
     } else if (myMsg.message is api.Message_RenameMessage) {
       var msg = myMsg.message as api.Message_RenameMessage;
-      if (myMsg.verificationFailed) return null;
+      final sender = myMsg.sender;
+      if (myMsg.verificationFailed || chat == null || sender == null || sender.isEmpty) return null;
 
-      chat!.ckSyncState = false;
+      chat.ckSyncState = false;
       chat.save(updateCkSyncState: true);
       
       return Message(
         guid: myMsg.id,
-        isFromMe: myHandles.contains(myMsg.sender),
-        handleId: RustPushBBUtils.rustHandleToBB(myMsg.sender!).originalROWID!,
+        isFromMe: myHandles.contains(sender),
+        handleId: RustPushBBUtils.rustHandleToBB(sender).originalROWID!,
         dateCreated: DateTime.fromMillisecondsSinceEpoch(myMsg.sentTimestamp),
         itemType: 2,
         groupActionType: 2,
@@ -1933,15 +1939,18 @@ class RustPushService extends GetxService {
       );
     } else if (myMsg.message is api.Message_ChangeParticipants) {
       var msg = myMsg.message as api.Message_ChangeParticipants;
-      if (myMsg.verificationFailed) return null;
-      await updateChatParticipants(chat!, myMsg, myMsg.conversation!.participants, msg.field0.newParticipants);
+      final conversation = myMsg.conversation;
+      if (myMsg.verificationFailed || chat == null || conversation == null || myMsg.sender == null) return null;
+      await updateChatParticipants(chat, myMsg, conversation.participants, msg.field0.newParticipants);
       chat.groupVersion = msg.field0.groupVersion;
       chat.ckSyncState = false;
       chat.save(updateGroupVersion: true, updateCkSyncState: true);
       return null;
     } else if (myMsg.message is api.Message_IconChange) {
       var innerMsg = myMsg.message as api.Message_IconChange;
-      if (!chat!.lockChatIcon && (chat.groupVersion ?? 0) < innerMsg.field0.groupVersion) {
+      final sender = myMsg.sender;
+      if (chat == null || sender == null || sender.isEmpty) return null;
+      if (!chat.lockChatIcon && (chat.groupVersion ?? 0) < innerMsg.field0.groupVersion) {
         var file = innerMsg.field0.file;
         chat.groupVersion = innerMsg.field0.groupVersion;
         chat.ckSyncState = false;
@@ -1960,16 +1969,21 @@ class RustPushService extends GetxService {
       }
       return Message(
         guid: myMsg.id,
-        isFromMe: myHandles.contains(myMsg.sender),
-        handleId: RustPushBBUtils.rustHandleToBB(myMsg.sender!).originalROWID!,
+        isFromMe: myHandles.contains(sender),
+        handleId: RustPushBBUtils.rustHandleToBB(sender).originalROWID!,
         dateCreated: DateTime.fromMillisecondsSinceEpoch(myMsg.sentTimestamp),
         itemType: 3,
         groupActionType: 1,
       );
     } else if (myMsg.message is api.Message_React) {
       var msg = myMsg.message as api.Message_React;
+      final sender = myMsg.sender;
+      if (sender == null || sender.isEmpty) {
+        Logger.warn("Ignoring reaction without a sender");
+        return null;
+      }
       if (msg.field0.embeddedProfile != null) {
-        handleSharedProfile(msg.field0.embeddedProfile!, myMsg.sender!, chat?.participants ?? []);
+        handleSharedProfile(msg.field0.embeddedProfile!, sender, chat?.participants ?? []);
       }
 
       String? reaction;
@@ -2021,7 +2035,11 @@ class RustPushService extends GetxService {
           final messages = query.find();
           query.close();
 
-          final original = messages.firstWhere((msg) => (msg.stagingGuid ?? msg.guid) != myMsg.id);
+          final original = messages.firstWhereOrNull((msg) => (msg.stagingGuid ?? msg.guid) != myMsg.id);
+          if (original == null) {
+            Logger.warn("Ignoring extension update without a base message");
+            return null;
+          }
 
           original.fetchAssociatedMessages();
 
@@ -2033,7 +2051,12 @@ class RustPushService extends GetxService {
           }
           
           // allow updating image
-          attributedBodyData = (attributedBodyData.$3.isEmpty ? original.attributedBody[0] : attributedBodyData.$1, original.text!, attributedBodyData.$3.isEmpty ? original.dbAttachments : attributedBodyData.$3);
+          final originalBody = original.attributedBody.firstOrNull;
+          if (attributedBodyData.$3.isEmpty && originalBody == null) {
+            Logger.warn("Ignoring extension update without message content");
+            return null;
+          }
+          attributedBodyData = (attributedBodyData.$3.isEmpty ? originalBody! : attributedBodyData.$1, original.text ?? "", attributedBodyData.$3.isEmpty ? original.dbAttachments : attributedBodyData.$3);
           var tag = es.getLatest(msg.field0.toUuid);
           // updates cached value; we are latest
           if (tag.firstOrNull != myMsg.id) {
@@ -2055,8 +2078,8 @@ class RustPushService extends GetxService {
       }
       var message = Message(
         guid: myMsg.id,
-        isFromMe: myHandles.contains(myMsg.sender),
-        handleId: RustPushBBUtils.rustHandleToBB(myMsg.sender!).originalROWID!,
+        isFromMe: myHandles.contains(sender),
+        handleId: RustPushBBUtils.rustHandleToBB(sender).originalROWID!,
         dateCreated: DateTime.fromMillisecondsSinceEpoch(myMsg.sentTimestamp),
         associatedMessagePart: msg.field0.toPart,
         associatedMessageGuid: reaction == null ? null : msg.field0.toUuid,
@@ -2080,7 +2103,11 @@ class RustPushService extends GetxService {
       return message;
     } else if (myMsg.message is api.Message_Unsend) {
       var msg = myMsg.message as api.Message_Unsend;
-      var msgObj = Message.findOne(guid: msg.field0.tuuid)!;
+      var msgObj = Message.findOne(guid: msg.field0.tuuid);
+      if (msgObj == null) {
+        Logger.warn("Ignoring unsend for a missing message");
+        return null;
+      }
       msgObj.verificationFailed = myMsg.verificationFailed;
       msgObj.dateEdited = DateTime.now();
       var summaryInfo = msgObj.messageSummaryInfo.firstOrNull;
