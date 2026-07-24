@@ -65,14 +65,6 @@ jobs:
           done
 
       # First run is expected to fail until ffmpeg_kit_flutter_new is fixed.
-      - name: Build Alpha Debug APK
-        run: flutter build apk --flavor alpha --debug --target-platform android-arm64
-      
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Alpha Debug APK
-          path: build/app/outputs/flutter-apk/app-alpha-debug.apk
-
       - name: Build Alpha Profile APK
         run: flutter build apk --flavor alpha --profile --target-platform android-arm64
 
@@ -80,3 +72,11 @@ jobs:
         with:
           name: Alpha Profile APK
           path: build/app/outputs/flutter-apk/app-alpha-profile.apk
+
+      - name: Build Alpha Debug APK
+        run: flutter build apk --flavor alpha --debug --target-platform android-arm64
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Alpha Debug APK
+          path: build/app/outputs/flutter-apk/app-alpha-debug.apk
