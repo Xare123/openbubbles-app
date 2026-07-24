@@ -448,13 +448,12 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
   bool isFromMe = false;
 
   /// Notification text can be assembled from partially populated records while
-  /// an imported message is being saved. Avoid showing Dart's null placeholder.
+  /// an imported message is being saved. Keep the last usable tile subtitle.
   String _subtitleOrFallback(String? candidate, {String? fallback}) {
     final value = candidate?.trim();
-    final containsNullPlaceholder = value != null && RegExp(r'(^|[\s:])null($|[\s,])', caseSensitive: false).hasMatch(value);
-    if (value == null || value.isEmpty || containsNullPlaceholder) {
+    if (value == null || value.isEmpty) {
       final previous = fallback?.trim();
-      if (previous != null && previous.isNotEmpty && !RegExp(r'(^|[\s:])null($|[\s,])', caseSensitive: false).hasMatch(previous)) {
+      if (previous != null && previous.isNotEmpty) {
         return previous;
       }
       return "Empty message";
