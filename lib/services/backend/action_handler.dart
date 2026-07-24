@@ -498,7 +498,7 @@ class ActionHandler extends GetxService {
     }
     // should have been handled by the sanity check
     if (tempGuid != null) return;
-    Logger.info("New message: [${m.text}] - for chat [${c.guid}]", tag: "ActionHandler");
+    Logger.debug("Received new message (attachments=${m.hasAttachments})", tag: "ActionHandler");
     // Gets the chat from the db or server (if new)
     c = m.isParticipantEvent ? await handleNewOrUpdatedChat(c) : kIsWeb ? c : (Chat.findOne(guid: c.guid) ?? await handleNewOrUpdatedChat(c));
     // Get the message handle
