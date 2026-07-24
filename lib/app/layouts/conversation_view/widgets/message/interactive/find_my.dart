@@ -11,6 +11,7 @@ import 'package:bluebubbles/services/backend/settings/settings_service.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/utils/share.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -48,7 +49,7 @@ class _FindMyState extends OptimizedState<FindMy> with AutomaticKeepAliveClientM
   @override
   bool get wantKeepAlive => true;
 
-  late Function cancel;
+  VoidCallback? cancelLocationUpdates;
   String mainLocation = "";
 
   StreamSubscription? locationSub;
@@ -63,7 +64,6 @@ class _FindMyState extends OptimizedState<FindMy> with AutomaticKeepAliveClientM
     var uri = Uri.parse(data.url!.replaceAll("+", "%2B"));
     var dataKey = base64.decode(uri.queryParameters["FindMyMessagePayloadZippedDataKey"]!);
     var decoded = json.decode(utf8.decode(ZLibCodec(raw: true).decode(dataKey)));
-    print(decoded);
     if (decoded["kind"]?["request"] != null) {
       isRequest = true;
       return;
@@ -89,7 +89,7 @@ class _FindMyState extends OptimizedState<FindMy> with AutomaticKeepAliveClientM
       updateFollows(await api.getBackgroundFollowing(fmfd: pushService.state!.icloudServices!.fmfd!));
     })();
 
-    cancel = pushService.subscribeToLocationUpdates((updates) {
+    cancelLocationUpdates = pushService.subscribeToLocationUpdates((updates) {
       updateFollows(updates);
     });
   }
@@ -100,7 +100,7 @@ class _FindMyState extends OptimizedState<FindMy> with AutomaticKeepAliveClientM
       api.selectBackgroundFriend(fmfd: pushService.state!.icloudServices!.fmfd!, friend: null);
     }
     locationSub?.cancel();
-    cancel();
+    cancelLocationUpdates?.call();
     super.dispose();
   }
 
@@ -206,7 +206,6 @@ class _FindMyState extends OptimizedState<FindMy> with AutomaticKeepAliveClientM
       mapController.move(LatLng(userPosition[mainLocation]!.latitude!, userPosition[mainLocation]!.longitude!), 15);
     }
 
-    print(userPosition);
     setState(() {});
   }
 
@@ -297,7 +296,14 @@ class _FindMyState extends OptimizedState<FindMy> with AutomaticKeepAliveClientM
             const SizedBox(height: 15),
             const Text("Requested your location"),
             const SizedBox(height: 10),
-            const Text("Live sharing not supported")
+            const Text("Live sharing not supported"),
+            TextButton.icon(
+              onPressed: widget.message.chat.target == null
+                  ? null
+                  : () => Share.location(widget.message.chat.target!),
+              icon: const Icon(Icons.location_on_outlined),
+              label: const Text("Send one-time location"),
+            ),
           ],
         ),
       );

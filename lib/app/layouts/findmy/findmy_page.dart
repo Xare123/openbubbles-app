@@ -44,7 +44,7 @@ class FindMyPage extends StatefulWidget {
   State<StatefulWidget> createState() => _FindMyPageState();
 }
 
-class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProviderStateMixin {
+class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final ScrollController controller1 = ScrollController();
   final ScrollController controller2 = ScrollController();
   late final TabController tabController = TabController(vsync: this, length: 2);
@@ -74,6 +74,11 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   DateTime? beaconCacheDate;
 
   Timer? myTimer;
+  bool _refreshInProgress = false;
+  bool _appInForeground = true;
+  bool _pageIsActive = true;
+
+  bool get _isPageVisible => mounted && _pageIsActive && (ModalRoute.of(context)?.isCurrent ?? true);
 
   api.FindMyFriendsClientDefaultAnisetteProvider? fmfClient;
   api.FindMyPhoneClientDefaultAnisetteProvider? fmipClient;
@@ -81,42 +86,88 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    final lifecycleState = WidgetsBinding.instance.lifecycleState;
+    _appInForeground = lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
     if (widget.defaultFriend != null) {
       index.value = 1; // select friends tab
       tabController.index = 1;
     }
-    getLocations();
-
-    myTimer = Timer.periodic(const Duration(seconds: 5), (timer) => getLocations());
+    WidgetsBinding.instance.addPostFrameCallback((_) => getLocations());
+    _startRefreshTimer();
 
     socket.socket.on("new-findmy-location", (data) {
       try {
         final friend = FindMyFriend.fromJson(data);
-        Logger.info("Received new location for ${friend.handle?.address}");
+        Logger.info("Received Find My location update");
         if ((friend.latitude ?? 0) == 0 && (friend.longitude ?? 0) == 0) return;
         final existingFriendIndex = friends.indexWhere((e) => e.handle?.uniqueAddressAndService == friend.handle?.uniqueAddressAndService);
         final existingFriend = existingFriendIndex == -1 ? null : friends[existingFriendIndex];
         if (existingFriend == null || existingFriend.status == null || friend.locatingInProgress || LocationStatus.values.indexOf(existingFriend.status!) <= LocationStatus.values.indexOf(friend.status ?? LocationStatus.legacy)) {
-          Logger.info("Updating map for ${friend.handle?.address}");
-          friends[existingFriendIndex] = friend;
+          Logger.info("Updating Find My map marker");
+          if (existingFriendIndex == -1) {
+            friends.add(friend);
+          } else {
+            friends[existingFriendIndex] = friend;
+          }
 
           friendsWithLocation = friends.where((item) => (item.latitude ?? 0) != 0 && (item.longitude ?? 0) != 0).toList();
           friendsWithoutLocation = friends.where((item) => (item.latitude ?? 0) == 0 && (item.longitude ?? 0) == 0).toList();
 
-          buildFriendMarker(friend);
+          _rebuildFriendMarkers();
           setState(() {});
         }
       } catch (_) {}
     });
+  }
 
-    // // Allow users to refresh after 30sec
-    // Future.delayed(const Duration(seconds: 30), () {
-    //   if (mounted) {
-    //     setState(() {
-    //       canRefresh = true;
-    //     });
-    //   }
-    // });
+  void _startRefreshTimer() {
+    myTimer?.cancel();
+    if (!_appInForeground || !_pageIsActive) return;
+    myTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (_appInForeground && _isPageVisible) {
+        getLocations(refreshDevices: false);
+      }
+    });
+  }
+
+  void _stopRefreshTimer() {
+    myTimer?.cancel();
+    myTimer = null;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appInForeground = state == AppLifecycleState.resumed;
+    if (_appInForeground) {
+      _startRefreshTimer();
+    } else {
+      _stopRefreshTimer();
+    }
+  }
+
+  @override
+  void activate() {
+    super.activate();
+    _pageIsActive = true;
+    _startRefreshTimer();
+  }
+
+  @override
+  void deactivate() {
+    _pageIsActive = false;
+    _stopRefreshTimer();
+    super.deactivate();
+  }
+
+  Future<void> _refreshManually() async {
+    if (!canRefresh || _refreshInProgress || !_appInForeground || !_isPageVisible) return;
+    setState(() {
+      canRefresh = false;
+      refreshing = true;
+      refreshing2 = true;
+    });
+    await getLocations();
   }
 
   /// Fetches the FindMy data from the server.
@@ -125,7 +176,10 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   /// however, the refresh friends endpoint does. The way this was coded assumes that the server
   /// will return the data for both endpoints. A server update will fix this, but for now,
   /// we will "patch" it by only "refreshing" devices when the user manually refreshes the data.
-  void getLocations({bool refreshFriends = true, bool refreshDevices = true}) async {
+  Future<void> getLocations({bool refreshFriends = true, bool refreshDevices = true}) async {
+    if (!_appInForeground || !_isPageVisible || _refreshInProgress) return;
+    _refreshInProgress = true;
+    try {
     if (!(Platform.isLinux && !kIsWeb)) {
       LocationPermission granted = await Geolocator.checkPermission();
       if (granted == LocationPermission.denied) {
@@ -195,9 +249,8 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       friendsWithLocation = friends.where((item) => (item.latitude ?? 0) != 0 && (item.longitude ?? 0) != 0).toList();
       friendsWithoutLocation = friends.where((item) => (item.latitude ?? 0) == 0 && (item.longitude ?? 0) == 0).toList();
 
-      for (FindMyFriend e in friendsWithLocation) {
-        buildFriendMarker(e);
-      }
+      if (!mounted) return;
+      _rebuildFriendMarkers();
       setState(() {
         fetching2 = false;
         refreshing2 = false;
@@ -217,7 +270,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
           if (friend.latitude != null) {
 
             final marker = markers.values.firstWhere(
-                (e) => (e.key as ValueKey?)?.value == "friend-${friend.handle?.uniqueAddressAndService}");
+                (e) => (e.key as ValueKey?)?.value == _friendMarkerKey(friend));
             popupController.showPopupsOnlyFor([marker]);
             mapController.move(LatLng(friend.latitude!, friend.longitude!), 10);
 
@@ -226,10 +279,12 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       }
     } catch (e, s) {
       Logger.error("Failed to parse FindMy Friends location data!", error: e, trace: s);
-      setState(() {
-        fetching2 = null;
-        refreshing2 = false;
-      });
+      if (mounted) {
+        setState(() {
+          fetching2 = null;
+          refreshing2 = false;
+        });
+      }
       return;
     }
 
@@ -440,77 +495,95 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
 
       this.devices = devices;
 
-      for (FindMyDevice e in devices.where((e) => e.location?.latitude != null && e.location?.longitude != null)) {
-          markers[e.id ?? randomString(6)] = Marker(
-            key: ValueKey('device-${e.id ?? randomString(6)}'),
-            point: LatLng(e.location!.latitude!, e.location!.longitude!),
-            width: 30,
-            height: 35,
-            child: ClipShadowPath(
-              clipper: const FindMyPinClipper(),
-              shadow: const BoxShadow(
-                color: Colors.black,
-                blurRadius: 2,
-              ),
-              child: Container(
-                color: Colors.white,
-                child: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 5.0),
-                    child: e.role?['emoji'] != null
-                        ? Text(e.role!['emoji'],
-                            style: context.theme.textTheme.bodyLarge!.copyWith(fontFamily: 'Apple Color Emoji'))
-                        : Icon(
-                            (e.isMac ?? false)
-                                ? CupertinoIcons.desktopcomputer
-                                : e.isConsideredAccessory
-                                    ? CupertinoIcons.headphones
-                                    : CupertinoIcons.device_phone_portrait,
-                            color: Colors.black,
-                            size: 20,
-                          ),
-                  ),
-                ),
-              ),
-            ),
-            alignment: Alignment.topCenter,
-          );
-        }
+      if (!mounted) return;
+      _rebuildDeviceMarkers();
       setState(() {
         fetching = false;
         refreshing = false;
       });
     } catch (e, s) {
       Logger.error("Failed to parse FindMy Devices location data!", error: e, trace: s);
-      setState(() {
-        fetching = null;
-        refreshing = false;
-      });
+      if (mounted) {
+        setState(() {
+          fetching = null;
+          refreshing = false;
+        });
+      }
       return;
     }
-    
+    } catch (e, s) {
+      Logger.error("Failed to refresh Find My location data!", error: e, trace: s);
+      if (mounted) {
+        setState(() {
+          fetching = null;
+          fetching2 = null;
+        });
+      }
+    } finally {
+      _refreshInProgress = false;
+      if (mounted) {
+        setState(() {
+          refreshing = false;
+          refreshing2 = false;
+          canRefresh = true;
+        });
+      }
+    }
+  }
 
-    // // Call the FindMy Friends refresh anyways so that new data comes through the socket
-    // if (!refreshFriends) {
-    //   http.refreshFindMyFriends();
-    // } else {
-    //   setState(() {
-    //     canRefresh = false;
-    //   });
-    //   // Allow users to refresh after 30sec
-    //   Future.delayed(const Duration(seconds: 30), () {
-    //     if (mounted) {
-    //       setState(() {
-    //         canRefresh = true;
-    //       });
-    //     }
-    //   });
-    // }
+  String _friendMarkerKey(FindMyFriend friend) => 'friend-${friend.handle?.uniqueAddressAndService ?? friend.id ?? friend.title ?? "unknown"}';
+
+  String _deviceMarkerKey(FindMyDevice device) => 'device-${device.id ?? device.deviceDiscoveryId ?? device.name ?? "unknown"}';
+
+  void _rebuildFriendMarkers() {
+    markers.removeWhere((key, _) => key.startsWith('friend-'));
+    for (final friend in friendsWithLocation) {
+      buildFriendMarker(friend);
+    }
+  }
+
+  void _rebuildDeviceMarkers() {
+    markers.removeWhere((key, _) => key.startsWith('device-'));
+    for (final device in devices.where((device) => device.location?.latitude != null && device.location?.longitude != null)) {
+      markers[_deviceMarkerKey(device)] = Marker(
+        key: ValueKey(_deviceMarkerKey(device)),
+        point: LatLng(device.location!.latitude!, device.location!.longitude!),
+        width: 30,
+        height: 35,
+        child: ClipShadowPath(
+          clipper: const FindMyPinClipper(),
+          shadow: const BoxShadow(
+            color: Colors.black,
+            blurRadius: 2,
+          ),
+          child: Container(
+            color: Colors.white,
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 5.0),
+                child: device.role?['emoji'] != null
+                    ? Text(device.role!['emoji'], style: context.theme.textTheme.bodyLarge!.copyWith(fontFamily: 'Apple Color Emoji'))
+                    : Icon(
+                        (device.isMac ?? false)
+                            ? CupertinoIcons.desktopcomputer
+                            : device.isConsideredAccessory
+                                ? CupertinoIcons.headphones
+                                : CupertinoIcons.device_phone_portrait,
+                        color: Colors.black,
+                        size: 20,
+                      ),
+              ),
+            ),
+          ),
+        ),
+        alignment: Alignment.topCenter,
+      );
+    }
   }
 
   void buildFriendMarker(FindMyFriend friend) {
-    markers[friend.handle?.uniqueAddressAndService ?? randomString(6)] = Marker(
-      key: ValueKey('friend-${friend.handle?.uniqueAddressAndService ?? randomString(6)}'),
+    markers[_friendMarkerKey(friend)] = Marker(
+      key: ValueKey(_friendMarkerKey(friend)),
       point: LatLng(friend.latitude!, friend.longitude!),
       width: 35,
       height: 35,
@@ -580,6 +653,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
     await api.deleteBeaconShare(items: pushService.state!.icloudServices!.fmfd!, share: item.role!['sharingId']!);
     setState(() {
       devices.remove(item);
+      _rebuildDeviceMarkers();
     });
     beaconCacheDate = null;
   }
@@ -588,6 +662,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
     await api.acceptBeaconShare(items: pushService.state!.icloudServices!.fmfd!, share: item.role!['sharingId']!);
     setState(() {
       devices.remove(item); // it'll go away anyways because it has no location
+      _rebuildDeviceMarkers();
     });
     beaconCacheDate = null;
     getLocations();
@@ -599,7 +674,8 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
     mapController.dispose();
     popupController.dispose();
     tabController.dispose();
-    myTimer?.cancel();
+    _stopRefreshTimer();
+    WidgetsBinding.instance.removeObserver(this);
     // TODO
     socket.socket.off("new-findmy-location");
     super.dispose();
@@ -1199,7 +1275,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                   child: Stack(
                     children: [
                       buildMap(),
-                      if (!samsung && canRefresh)
+                      if (!samsung && (canRefresh || refreshing || refreshing2))
                         Positioned(
                           top: 10 + (kIsDesktop ? appWindow.titleBarHeight : MediaQuery.of(context).padding.top),
                           right: 20,
@@ -1218,13 +1294,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                                       iconSize: 22,
                                       icon: Icon(iOS ? CupertinoIcons.arrow_counterclockwise : Icons.refresh,
                                           color: context.theme.colorScheme.onBackground, size: 22),
-                                      onPressed: () {
-                                        setState(() {
-                                          refreshing = true;
-                                          refreshing2 = true;
-                                        });
-                                        getLocations();
-                                      },
+                                      onPressed: _refreshManually,
                                     ),
                             ),
                           ),
@@ -1554,7 +1624,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                       color: Theme.of(context).colorScheme.properSurface.withOpacity(0.9),
                     ),
                   )),
-            if (!samsung && canRefresh)
+            if (!samsung && (canRefresh || refreshing || refreshing2))
               Positioned(
                 top: 10 + (kIsDesktop ? appWindow.titleBarHeight : MediaQuery.of(context).padding.top),
                 right: 20,
@@ -1573,13 +1643,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                             iconSize: 22,
                             icon: Icon(iOS ? CupertinoIcons.arrow_counterclockwise : Icons.refresh,
                                 color: context.theme.colorScheme.onBackground, size: 22),
-                            onPressed: () {
-                              setState(() {
-                                refreshing = true;
-                                refreshing2 = true;
-                              });
-                              getLocations(refreshDevices: true);
-                            },
+                            onPressed: _refreshManually,
                           ),
                   ),
                 ),
@@ -1633,7 +1697,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
 
   Widget buildSamsungAppBar(BuildContext context, String title) {
     final actions = [
-      if (canRefresh)
+      if (canRefresh || refreshing || refreshing2)
         Container(
           width: 48,
           height: 48,
@@ -1646,13 +1710,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                     iconSize: 22,
                     icon: Icon(iOS ? CupertinoIcons.arrow_counterclockwise : Icons.refresh,
                         color: context.theme.colorScheme.onBackground, size: 22),
-                    onPressed: () {
-                      setState(() {
-                        refreshing = true;
-                        refreshing2 = true;
-                      });
-                      getLocations(refreshDevices: true);
-                    },
+                    onPressed: _refreshManually,
                   ),
           ),
         ),
@@ -1780,9 +1838,9 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
               builder: (context, marker) {
                 final ValueKey? key = marker.key as ValueKey?;
                 if (key?.value == "current") return const SizedBox();
-                if (key?.value.contains("device")) {
-                  String prefix = key!.value.replaceFirst("device-", "");
-                  final item = devices.firstWhere((e) => e.id == prefix);
+                final markerKey = key?.value;
+                if (markerKey is String && markerKey.startsWith("device-")) {
+                  final item = devices.firstWhere((e) => _deviceMarkerKey(e) == markerKey);
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 5.0),
                     child: Container(
@@ -1825,8 +1883,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                     ),
                   );
                 } else {
-                  String prefix = key!.value.replaceFirst("friend-", "");
-                  final item = friends.firstWhere((e) => e.handle?.uniqueAddressAndService == prefix);
+                  final item = friends.firstWhere((e) => _friendMarkerKey(e) == markerKey);
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 5.0),
                     child: Container(
