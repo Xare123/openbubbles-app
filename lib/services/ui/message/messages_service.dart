@@ -19,7 +19,7 @@ String? lastReloadedChat() => Get.isRegistered<String>(tag: 'lastReloadedChat') 
 class MessagesService extends GetxController {
   static final Map<String, Size> cachedBubbleSizes = {};
   late Chat chat;
-  late StreamSubscription countSub;
+  StreamSubscription? countSub;
   final ChatMessages struct = ChatMessages();
   late Function(Message) newFunc;
   late Function(Message, {String? oldGuid}) updateFunc;
@@ -85,7 +85,7 @@ class MessagesService extends GetxController {
   @override
   void onClose() {
     if (_init) {
-      countSub.cancel();
+      countSub?.cancel();
     }
     _init = false;
     super.onClose();
