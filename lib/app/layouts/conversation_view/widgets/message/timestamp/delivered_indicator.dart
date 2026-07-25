@@ -24,7 +24,7 @@ class DeliveredIndicator extends CustomStateful<MessageWidgetController> {
 class _DeliveredIndicatorState extends CustomState<DeliveredIndicator, void, MessageWidgetController> {
   Message get message => controller.message;
   bool get showAvatar => (controller.cvController?.chat ?? cm.activeChat!.chat).isGroup;
-  late final StreamSubscription _messageUpdateSubscription;
+  StreamSubscription? _messageUpdateSubscription;
 
   @override
   void initState() {
@@ -41,7 +41,7 @@ class _DeliveredIndicatorState extends CustomState<DeliveredIndicator, void, Mes
 
   @override
   void dispose() {
-    _messageUpdateSubscription.cancel();
+    _messageUpdateSubscription?.cancel();
     super.dispose();
   }
 

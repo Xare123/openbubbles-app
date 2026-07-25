@@ -37,7 +37,7 @@ class _TextBubbleState extends CustomState<TextBubble, void, MessageWidgetContro
   late MovieTween tween;
   Control anim = Control.stop;
   late bool selected = controller.cvController?.isSelected(message.guid!) ?? false;
-  late final StreamSubscription _effectSubscription;
+  StreamSubscription? _effectSubscription;
   Worker? _selectionWorker;
 
   @override
@@ -83,7 +83,7 @@ class _TextBubbleState extends CustomState<TextBubble, void, MessageWidgetContro
 
   @override
   void dispose() {
-    _effectSubscription.cancel();
+    _effectSubscription?.cancel();
     _selectionWorker?.dispose();
     super.dispose();
   }

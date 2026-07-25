@@ -85,7 +85,7 @@ class _MessageHolderState extends CustomState<MessageHolder, void, MessageWidget
   List<GlobalKey> keys = [];
   bool gaveHapticFeedback = false;
   final RxBool tapped = false.obs;
-  late final StreamSubscription _avatarRefreshSubscription;
+  StreamSubscription? _avatarRefreshSubscription;
 
   @override
   void initState() {
@@ -118,7 +118,7 @@ class _MessageHolderState extends CustomState<MessageHolder, void, MessageWidget
 
   @override
   void dispose() {
-    _avatarRefreshSubscription.cancel();
+    _avatarRefreshSubscription?.cancel();
     super.dispose();
   }
 

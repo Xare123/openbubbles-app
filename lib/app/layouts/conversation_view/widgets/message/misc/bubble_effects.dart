@@ -42,7 +42,7 @@ class _BubbleEffectsState extends OptimizedState<BubbleEffects> {
   late MovieTween tween;
   Control controller = Control.stop;
   Size size = Size.zero;
-  late final StreamSubscription _effectSubscription;
+  StreamSubscription? _effectSubscription;
 
   @override
   void initState() {
@@ -63,7 +63,7 @@ class _BubbleEffectsState extends OptimizedState<BubbleEffects> {
 
   @override
   void dispose() {
-    _effectSubscription.cancel();
+    _effectSubscription?.cancel();
     super.dispose();
   }
 

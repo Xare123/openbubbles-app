@@ -40,7 +40,7 @@ class _ContactAvatarWidgetState extends OptimizedState<ContactAvatarWidget> {
   Contact? get contact => widget.contact ?? widget.handle?.contact;
   late final String _keyPrefix;
   String get keyPrefix => _keyPrefix;
-  late final StreamSubscription _avatarRefreshSubscription;
+  StreamSubscription? _avatarRefreshSubscription;
 
   @override
   void initState() {
@@ -57,7 +57,7 @@ class _ContactAvatarWidgetState extends OptimizedState<ContactAvatarWidget> {
 
   @override
   void dispose() {
-    _avatarRefreshSubscription.cancel();
+    _avatarRefreshSubscription?.cancel();
     super.dispose();
   }
 

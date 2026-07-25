@@ -37,7 +37,7 @@ class _ScreenEffectsWidgetState extends OptimizedState<ScreenEffectsWidget> with
   late final SpotlightController spotlightController;
   late final LaserController laserController;
   String screenSelected = "";
-  late final StreamSubscription _effectSubscription;
+  StreamSubscription? _effectSubscription;
 
   @override
   void initState() {
@@ -130,7 +130,7 @@ class _ScreenEffectsWidgetState extends OptimizedState<ScreenEffectsWidget> with
 
   @override
   void dispose() {
-    _effectSubscription.cancel();
+    _effectSubscription?.cancel();
     super.dispose();
   }
 
