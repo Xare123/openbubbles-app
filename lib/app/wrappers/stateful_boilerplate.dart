@@ -8,7 +8,7 @@ import 'package:get/get.dart';
 /// [GetxController] with support for optimized state management
 class StatefulController extends GetxController {
   final Map<Object, List<Function>> updateWidgetFunctions = {};
-  late final void Function(VoidCallback) updateObx;
+  late void Function(VoidCallback) updateObx;
 
   void updateWidgets<T>(Object? arg) {
     updateWidgetFunctions[T]?.forEach((e) => e.call(arg));
@@ -50,8 +50,8 @@ abstract class CustomState<T extends CustomStateful, R, S extends StatefulContro
     super.initState();
 
     // set functions in the custom [GetxController]
-    // this if clause allows us to only set the late final variable
-    // when we are sure the controller is a fresh one
+    // Rebind after the last widget using a retained controller is disposed.
+    // Message controllers can outlive lazily recycled list rows.
     if (widget.parentController.updateWidgetFunctions.isEmpty) {
       widget.parentController.updateObx = updateObx;
     }
