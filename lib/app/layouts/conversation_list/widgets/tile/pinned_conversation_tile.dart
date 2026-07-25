@@ -271,7 +271,7 @@ class ChatTitle extends CustomStateful<ConversationTileController> {
 
 class _ChatTitleState extends CustomState<ChatTitle, void, ConversationTileController> {
   String title = "Unknown";
-  late final StreamSubscription sub;
+  StreamSubscription? sub;
   String? cachedDisplayName = "";
   List<Handle> cachedParticipants = [];
 
@@ -331,7 +331,7 @@ class _ChatTitleState extends CustomState<ChatTitle, void, ConversationTileContr
 
   @override
   void dispose() {
-    sub.cancel();
+    sub?.cancel();
     super.dispose();
   }
 
