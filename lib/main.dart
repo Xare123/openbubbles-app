@@ -58,10 +58,23 @@ final systemTray = st.SystemTray();
 
 String _renderIncidentId() => Random.secure().nextInt(0x7fffffff).toRadixString(16).padLeft(8, '0');
 
+String _redactedRenderContext(FlutterErrorDetails details) {
+  var context = details.context?.toDescription() ?? details.library ?? "unknown";
+  context = context
+      .replaceAll(RegExp(r"'[^']*'"), "'[redacted]'")
+      .replaceAll(RegExp(r'"[^"]*"'), '"[redacted]"')
+      .replaceAll(RegExp(r"\s+"), " ")
+      .trim();
+  if (context.length > 160) {
+    context = context.substring(0, 160);
+  }
+  return context;
+}
+
 void _logRenderError(FlutterErrorDetails details) {
   final incidentId = _renderIncidentId();
   Logger.error(
-    "Render error incident=$incidentId exceptionType=${details.exception.runtimeType}",
+    "Render error incident=$incidentId exceptionType=${details.exception.runtimeType} context=${_redactedRenderContext(details)}",
     trace: details.stack,
   );
 }

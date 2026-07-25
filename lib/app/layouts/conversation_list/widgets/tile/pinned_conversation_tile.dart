@@ -39,7 +39,7 @@ class PinnedConversationTile extends CustomStateful<ConversationTileController> 
 class _PinnedConversationTileState extends CustomState<PinnedConversationTile, void, ConversationTileController> {
   ConversationListController get listController => controller.listController;
   Offset? longPressPosition;
-  late final StreamSubscription _highlightSubscription;
+  StreamSubscription? _highlightSubscription;
 
   @override
   void initState() {
@@ -68,7 +68,7 @@ class _PinnedConversationTileState extends CustomState<PinnedConversationTile, v
 
   @override
   void dispose() {
-    _highlightSubscription.cancel();
+    _highlightSubscription?.cancel();
     super.dispose();
   }
 

@@ -44,8 +44,8 @@ class _TabletModeWrapperState extends OptimizedState<TabletModeWrapper> {
   late final RxDouble _ratio;
   double? _maxWidth;
   bool? altLayoutCache;
-  late final StreamSubscription _eventSubscription;
-  late final Worker _ratioWorker;
+  StreamSubscription? _eventSubscription;
+  Worker? _ratioWorker;
 
   get _width1 => max(min(_ratio * _maxWidth!, widget.maxWidthLeft ?? double.infinity), widget.minWidthLeft ?? double.negativeInfinity);
 
@@ -73,8 +73,8 @@ class _TabletModeWrapperState extends OptimizedState<TabletModeWrapper> {
 
   @override
   void dispose() {
-    _eventSubscription.cancel();
-    _ratioWorker.dispose();
+    _eventSubscription?.cancel();
+    _ratioWorker?.dispose();
     super.dispose();
   }
 

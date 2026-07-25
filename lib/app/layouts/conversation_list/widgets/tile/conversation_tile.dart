@@ -220,7 +220,7 @@ class ConversationTile extends CustomStateful<ConversationTileController> {
 
 class _ConversationTileState extends CustomState<ConversationTile, void, ConversationTileController> with AutomaticKeepAliveClientMixin {
   ConversationListController get listController => controller.listController;
-  late final StreamSubscription _highlightSubscription;
+  StreamSubscription? _highlightSubscription;
 
   @override
   bool get wantKeepAlive => true;
@@ -252,7 +252,7 @@ class _ConversationTileState extends CustomState<ConversationTile, void, Convers
 
   @override
   void dispose() {
-    _highlightSubscription.cancel();
+    _highlightSubscription?.cancel();
     super.dispose();
   }
 

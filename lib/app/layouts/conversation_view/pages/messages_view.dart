@@ -61,7 +61,7 @@ class MessagesViewState extends OptimizedState<MessagesView> {
   final RxBool latestMessageDeliveredState = false.obs;
   final RxBool jumpingToOldestUnread = false.obs;
   final Map<String, FocusNode> messageFocusNodes = {};
-  late final StreamSubscription _eventSubscription;
+  StreamSubscription? _eventSubscription;
 
   ConversationViewController get controller => widget.controller;
 
@@ -262,7 +262,7 @@ class MessagesViewState extends OptimizedState<MessagesView> {
 
   @override
   void dispose() {
-    _eventSubscription.cancel();
+    _eventSubscription?.cancel();
     if (!kIsWeb && !kIsDesktop) smartReply.close();
     if (_messages.isNotEmpty) {
       chat.lastReadMessageGuid = _messages.first.guid;

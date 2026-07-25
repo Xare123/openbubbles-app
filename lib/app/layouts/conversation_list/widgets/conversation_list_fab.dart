@@ -20,7 +20,7 @@ class ConversationListFAB extends CustomStateful<ConversationListController> {
 }
 
 class _ConversationListFABState extends CustomState<ConversationListFAB, void, ConversationListController> {
-  late final StreamSubscription _avatarOnlySubscription;
+  StreamSubscription? _avatarOnlySubscription;
 
   void _focusBackToList() {
     if (!FocusScope.of(context).focusInDirection(TraversalDirection.left)) {
@@ -70,7 +70,7 @@ class _ConversationListFABState extends CustomState<ConversationListFAB, void, C
   @override
   void dispose() {
     controller.materialScrollController.removeListener(_handleMaterialScroll);
-    _avatarOnlySubscription.cancel();
+    _avatarOnlySubscription?.cancel();
     super.dispose();
   }
 
