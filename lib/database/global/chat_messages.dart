@@ -12,14 +12,19 @@ class ChatMessages {
   List<Message> get messages => _messages.values.toList();
   List<Message> get reactions => _reactions.values.toList();
   List<Attachment> get attachments => _attachments.values.toList();
-  List<Message> threads(String originatorGuid, int originatorPart, {bool returnOriginator = true}) =>
-      _threads[originatorGuid]
-          ?.values
-          .where((e) =>
-              (e.normalizedThreadPart == originatorPart && e.guid != originatorGuid) ||
-              (returnOriginator ? e.guid == originatorGuid : false))
-          .toList() ??
-      [];
+  List<Message> threads(String originatorGuid, int originatorPart, {bool returnOriginator = true}) {
+    // addMessages only registers the originator when a reply is already in the
+    // thread map, so a thread whose originator loaded before its replies would
+    // omit it here. getThreadOriginator registers it on demand.
+    if (returnOriginator) getThreadOriginator(originatorGuid);
+    return _threads[originatorGuid]
+            ?.values
+            .where((e) =>
+                (e.normalizedThreadPart == originatorPart && e.guid != originatorGuid) ||
+                (returnOriginator && e.guid == originatorGuid))
+            .toList() ??
+        [];
+  }
 
   void addMessages(List<Message> __messages) {
     for (Message m in __messages) {
