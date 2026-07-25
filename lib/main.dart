@@ -65,6 +65,7 @@ void _logRenderError(FlutterErrorDetails details) {
   final incidentId = _renderIncidentId();
   Logger.error(
     "Render error incident=$incidentId exceptionType=${details.exception.runtimeType} context=${_redactedRenderContext(details)}",
+    error: details.exception,
     trace: details.stack,
   );
 }
