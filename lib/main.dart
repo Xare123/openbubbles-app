@@ -10,7 +10,6 @@ import 'package:bluebubbles/helpers/backend/startup_tasks.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/network/http_overrides.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
-import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/utils/window_effects.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/pages/conversation_list.dart';
 import 'package:bluebubbles/app/layouts/startup/failure_to_start.dart';
@@ -29,7 +28,6 @@ import 'package:flutter/scheduler.dart' hide Priority;
 import 'package:flutter/services.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:get/get.dart';
 import 'package:google_ml_kit/google_ml_kit.dart' hide Message;
@@ -59,16 +57,8 @@ final systemTray = st.SystemTray();
 String _renderIncidentId() => Random.secure().nextInt(0x7fffffff).toRadixString(16).padLeft(8, '0');
 
 String _redactedRenderContext(FlutterErrorDetails details) {
-  var context = details.context?.toDescription() ?? details.library ?? "unknown";
-  context = context
-      .replaceAll(RegExp(r"'[^']*'"), "'[redacted]'")
-      .replaceAll(RegExp(r'"[^"]*"'), '"[redacted]"')
-      .replaceAll(RegExp(r"\s+"), " ")
-      .trim();
-  if (context.length > 160) {
-    context = context.substring(0, 160);
-  }
-  return context;
+  final contextType = details.context?.runtimeType.toString() ?? "none";
+  return "contextType=$contextType";
 }
 
 void _logRenderError(FlutterErrorDetails details) {

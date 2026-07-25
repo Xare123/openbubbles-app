@@ -12,7 +12,6 @@ import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/app/wrappers/scrollbar_wrapper.dart';
-import 'package:bluebubbles/app/components/avatars/contact_avatar_widget.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/database/models.dart';
@@ -62,6 +61,7 @@ class MessagesViewState extends OptimizedState<MessagesView> {
   final RxBool jumpingToOldestUnread = false.obs;
   final Map<String, FocusNode> messageFocusNodes = {};
   StreamSubscription? _eventSubscription;
+  int _lifecycleGeneration = 0;
 
   ConversationViewController get controller => widget.controller;
 
@@ -153,29 +153,34 @@ class MessagesViewState extends OptimizedState<MessagesView> {
     });
 
     updateObx(() async {
+      if (!mounted) return;
+      final generation = _lifecycleGeneration;
       if (chat.isIMessage && !chat.isGroup) {
         getFocusState();
       }
-      final searchMessage = (messageService.method == null) ? null : messageService.struct.messages.firstOrNull;
-      if (messageService.method != null) {
-        await messageService.loadSearchChunk(
-            messageService.struct.messages.first, messageService.method == "local" ? SearchMethod.local : SearchMethod.network);
-      } else if (messageService.struct.isEmpty) {
-        await messageService.loadChunk(0, controller);
+      final initialService = messageService;
+      final searchMessage = (initialService.method == null) ? null : initialService.struct.messages.firstOrNull;
+      if (initialService.method != null) {
+        await initialService.loadSearchChunk(
+            initialService.struct.messages.first, initialService.method == "local" ? SearchMethod.local : SearchMethod.network);
+      } else if (initialService.struct.isEmpty) {
+        await initialService.loadChunk(0, controller);
       }
-      _messages = messageService.struct.messages;
+      if (!mounted || generation != _lifecycleGeneration || !identical(messageService, initialService)) return;
+      _messages = initialService.struct.messages;
       _messages.sort(Message.sort);
       setState(() {});
       _messages.forEachIndexed((i, m) {
         final c = mwc(m);
         c.cvController = controller;
-        listKey.currentState!.insertItem(i, duration: const Duration(milliseconds: 0));
+        listKey.currentState?.insertItem(i, duration: const Duration(milliseconds: 0));
       });
       _syncBottomMessageFocusNode();
       // scroll to message if needed
       if (searchMessage != null) {
         final index = _messages.indexWhere((element) => element.guid == searchMessage.guid);
         await scrollController.scrollToIndex(index, preferPosition: AutoScrollPosition.middle);
+        if (!mounted || generation != _lifecycleGeneration) return;
         scrollController.highlight(index, highlightDuration: const Duration(milliseconds: 500));
       } else if (!(_messages.firstOrNull?.isFromMe ?? true)) {
         updateReplies();
@@ -219,6 +224,7 @@ class MessagesViewState extends OptimizedState<MessagesView> {
       return;
     }
     _refreshing = true;
+    final generation = ++_lifecycleGeneration;
     try {
       final staleMessages = List<Message>.from(_messages);
       _closeMessageControllers(staleMessages);
@@ -242,12 +248,13 @@ class MessagesViewState extends OptimizedState<MessagesView> {
       // so its subscriptions and in-memory message structure are flushed
       // before registering a genuinely new service for this transcript.
       messageService.close(force: true);
-      messageService = ms(chat.guid);
-      messageService.init(chat, handleNewMessage, handleUpdatedMessage, handleDeletedMessage, jumpToMessage);
-      await messageService.loadChunk(0, controller);
-      if (!mounted) return;
+      final refreshedService = ms(chat.guid);
+      messageService = refreshedService;
+      refreshedService.init(chat, handleNewMessage, handleUpdatedMessage, handleDeletedMessage, jumpToMessage);
+      await refreshedService.loadChunk(0, controller);
+      if (!mounted || generation != _lifecycleGeneration || !identical(messageService, refreshedService)) return;
 
-      _messages = List<Message>.from(messageService.struct.messages);
+      _messages = List<Message>.from(refreshedService.struct.messages);
       _messages.sort(Message.sort);
       _bindMessageControllers(_messages);
       _syncBottomMessageFocusNode();
@@ -262,6 +269,7 @@ class MessagesViewState extends OptimizedState<MessagesView> {
 
   @override
   void dispose() {
+    _lifecycleGeneration++;
     _eventSubscription?.cancel();
     if (!kIsWeb && !kIsDesktop) smartReply.close();
     if (_messages.isNotEmpty) {
@@ -750,7 +758,7 @@ class MessagesViewState extends OptimizedState<MessagesView> {
                                                                 .copyWith(color: Colors.deepPurple)),
                                                         style: TextButton.styleFrom(
                                                           padding: EdgeInsets.zero,
-                                                          minimumSize: Size(50, 30),
+                                                          minimumSize: const Size(50, 30),
                                                           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                                           alignment: Alignment.centerLeft),
                                                         onPressed: () async {
