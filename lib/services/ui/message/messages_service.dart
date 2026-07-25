@@ -182,7 +182,11 @@ class MessagesService extends GetxController {
     for (Message m in _messages.where((e) => e.threadOriginatorGuid != null)) {
       // see if the originator is already loaded
       final guid = m.threadOriginatorGuid!;
-      if (struct.getMessage(guid) != null) continue;
+      final loadedOriginator = struct.getMessage(guid);
+      if (loadedOriginator != null) {
+        struct.addThreadOriginator(loadedOriginator);
+        continue;
+      }
       // if not, fetch local and add to data
       final threadOriginator = Message.findOne(guid: guid);
       if (threadOriginator != null) {
