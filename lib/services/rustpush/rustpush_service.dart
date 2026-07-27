@@ -398,22 +398,60 @@ class RustPushBackend implements BackendService {
     return const api.MessageType.iMessage();
   }
 
-  Future<void> sendMsg(api.MessageInst msg) async {
+  static final RegExp resourceRetryRegex = RegExp(r"retrying in (\d+)s");
+  static const maxResourceWait = Duration(seconds: 35);
+
+  /// rustpush's ResourceManager hands the *cached* failure to every caller for as long as
+  /// it is backing off, so anything we do inside that window fails instantly without ever
+  /// touching the network (e.g. the APNs socket got reset and won't be redialed for another
+  /// 30s). Those aren't real failures, they just mean "not yet" -- so return how long the
+  /// resource wants before it tries again, or null if the error isn't worth waiting on.
+  Duration? resourceRetryWait(Object e) {
+    if (e is! AnyhowException) return null;
+    // "not retrying" means the resource gave up entirely, nothing to wait for. Note that a
+    // "Do not retry" prefix is *not* the same thing; that only means the caller (e.g. an IDS
+    // lookup) already burned its own immediate retries, the resource itself is still coming back.
+    if (!e.message.contains("Failed to generate resource")) return null;
+    if (e.message.contains("not retrying")) return null;
+    var seconds = int.tryParse(resourceRetryRegex.firstMatch(e.message)?.group(1) ?? "");
+    if (seconds == null) return null;
+    var wait = Duration(seconds: seconds);
+    return wait > maxResourceWait ? maxResourceWait : wait;
+  }
+
+  /// How long we are willing to wait on a reconnecting resource before giving up on a send.
+  /// Kept under the 5 minute timeout ActionHandler puts on sends.
+  static const sendRetryBudget = Duration(minutes: 3);
+
+  Future<void> sendMsg(api.MessageInst msg, {bool waitForResource = true}) async {
     var message = Message.findOne(guid: msg.id);
     if (message != null) {
       message.sendingServiceId = pushService.serviceId;
       message.save(updateSendingServiceId: true);
     }
     var stillRunning = false;
+    var waited = Duration.zero;
     try {
-      stillRunning = await api.send(state: pushService.state!.client, local: pushService.state!.localBroadcast, msg: msg);
-    } catch (e) {
-      if (e is AnyhowException) {
-        if (e.message.contains("Failed to generate resource") && e.message.contains("not retrying")) {
-          pushService.markFailedToLogin();
+      while (true) {
+        try {
+          stillRunning = await api.send(state: pushService.state!.client, local: pushService.state!.localBroadcast, msg: msg);
+          break;
+        } catch (e) {
+          if (e is AnyhowException) {
+            if (e.message.contains("Failed to generate resource") && e.message.contains("not retrying")) {
+              pushService.markFailedToLogin();
+              rethrow;
+            }
+          }
+          var wait = waitForResource ? resourceRetryWait(e) : null;
+          // add a second so we retry *after* rustpush has had a chance to regenerate
+          if (wait != null) wait += const Duration(seconds: 1);
+          if (wait == null || waited + wait > sendRetryBudget) rethrow;
+          Logger.warn("Connection isn't ready; retrying ${msg.id} in ${wait.inSeconds}s ($e)");
+          await Future.delayed(wait);
+          waited += wait;
         }
       }
-      rethrow;
     } finally {
       if (!stillRunning) {
         message = Message.findOne(guid: msg.id);
@@ -1279,7 +1317,7 @@ class RustPushBackend implements BackendService {
         icon: base64Decode(appdata.appIcon!),
       ) : null)
     );
-    await sendMsg(msg);
+    await sendMsg(msg, waitForResource: false); // a typing indicator is worthless by the time we reconnect
   }
 
   @override
@@ -1290,7 +1328,7 @@ class RustPushBackend implements BackendService {
       sender: await c.ensureHandle(),
       message: const api.Message.typing(false)
     );
-    await sendMsg(msg);
+    await sendMsg(msg, waitForResource: false);
   }
 
   @override
