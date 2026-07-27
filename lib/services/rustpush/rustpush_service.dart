@@ -2827,8 +2827,89 @@ class RustPushService extends GetxService {
     return null;
   }
 
-  List<String> profilesDownloading = [];
-  Future handleSharedProfile(api.ShareProfileMessage shared, String sender, List<Handle> targets) async {
+  final Set<String> profilesDownloading = {};
+  final Map<String, Timer> _profileRetryTimers = {};
+  final Map<String, int> _profileRetryAttempts = {};
+  static const List<Duration> _profileRetryDelays = [
+    Duration(seconds: 5),
+    Duration(seconds: 30),
+    Duration(minutes: 2),
+  ];
+
+  String _profileFailureCategory(Object error) {
+    final description = error.toString().toLowerCase();
+    if (description.contains("profile service unavailable")) return "service_unavailable";
+    if (description.contains("timeout")) return "timeout";
+    if (description.contains("connection") ||
+        description.contains("network") ||
+        description.contains("socket") ||
+        description.contains("dns")) {
+      return "network";
+    }
+    if (description.contains("record") && description.contains("not found")) return "record_not_found";
+    if (description.contains("plist") || description.contains("serde")) return "plist";
+    if (description.contains("decrypt") ||
+        description.contains("hmac") ||
+        description.contains("crypto")) {
+      return "crypto";
+    }
+    if (description.contains("asset")) return "asset";
+    if (description.contains("panic")) return "panic";
+    return error.runtimeType.toString();
+  }
+
+  void _clearProfileRetry(String profileKey) {
+    _profileRetryTimers.remove(profileKey)?.cancel();
+    _profileRetryAttempts.remove(profileKey);
+  }
+
+  void _scheduleProfileRetry(
+    api.ShareProfileMessage shared,
+    String sender,
+    List<Handle> targets,
+    String category,
+  ) {
+    final profileKey = shared.cloudKitRecordKey;
+    if (_profileRetryTimers.containsKey(profileKey)) return;
+
+    final attempt = _profileRetryAttempts[profileKey] ?? 0;
+    if (attempt >= _profileRetryDelays.length) {
+      _profileRetryAttempts.remove(profileKey);
+      Logger.warn("Shared profile fetch exhausted category=$category attempts=$attempt");
+      return;
+    }
+
+    final delay = _profileRetryDelays[attempt];
+    _profileRetryAttempts[profileKey] = attempt + 1;
+    Logger.warn(
+      "Shared profile fetch deferred category=$category "
+      "attempt=${attempt + 1} retry_in_seconds=${delay.inSeconds}",
+    );
+    _profileRetryTimers[profileKey] = Timer(delay, () {
+      _profileRetryTimers.remove(profileKey);
+      unawaited(handleSharedProfile(shared, sender, targets));
+    });
+  }
+
+  Future<void> handleSharedProfile(api.ShareProfileMessage shared, String sender, List<Handle> targets) async {
+    final profileKey = shared.cloudKitRecordKey;
+    if (_profileRetryTimers.containsKey(profileKey) || !profilesDownloading.add(profileKey)) return;
+
+    try {
+      await _handleSharedProfile(shared, sender, targets);
+      _clearProfileRetry(profileKey);
+    } catch (error) {
+      // Shared profile payloads are optional message metadata. A malformed
+      // CloudKit plist must not escape an unawaited profile task and disturb
+      // message delivery. Retry independently so the contact image can recover
+      // after transient CloudKit, network, or service-initialization failures.
+      _scheduleProfileRetry(shared, sender, targets, _profileFailureCategory(error));
+    } finally {
+      profilesDownloading.remove(profileKey);
+    }
+  }
+
+  Future<void> _handleSharedProfile(api.ShareProfileMessage shared, String sender, List<Handle> targets) async {
     var myHandles = await api.getHandles(state: pushService.state!.client);
     if (myHandles.contains(sender)) {
       for (var target in targets) {
@@ -2841,68 +2922,72 @@ class RustPushService extends GetxService {
       return;
     }
     var profiles = pushService.state?.icloudServices?.profilesClient;
-    if (profiles == null) return;
+    if (profiles == null) throw StateError("Profile service unavailable");
 
     // mask with profilesDownloading because iPhones have a nasty habit of sharing once to every handle. We don't want to download 15 times for each handle
-    if (Contact.findOne(id: shared.cloudKitRecordKey) != null || profilesDownloading.contains(shared.cloudKitRecordKey)) return; // already downloaded
-    profilesDownloading.add(shared.cloudKitRecordKey);
+    if (Contact.findOne(id: shared.cloudKitRecordKey) != null) return; // already downloaded
 
-    try {
-      var fetch = await api.fetchProfile(profiles: profiles, message: shared);
-      var otherHandle = RustPushBBUtils.rustHandleToBB(sender);
+    var fetch = await api.fetchProfile(profiles: profiles, message: shared);
+    var otherHandle = RustPushBBUtils.rustHandleToBB(sender);
 
-      String? posterPath;
-      if (fetch.poster != null && !kIsDesktop) {
-        var decoded = await api.parsePoster(poster: fetch.poster!);
+    String? posterPath;
+    if (fetch.poster != null && !kIsDesktop) {
+      var decoded = await api.parsePoster(poster: fetch.poster!);
+      try {
+        posterPath = await savePoster(decoded);
+      } catch (e, t) {
+        Logger.error("Could not decode other poster", error: e, trace: t);
+      }
+    }
+
+    Uint8List? avatar = fetch.image;
+    if ((avatar == null || avatar.isEmpty) && posterPath != null) {
+      final posterPreview = File("$posterPath.jpg");
+      if (await posterPreview.exists()) {
+        avatar = await posterPreview.readAsBytes();
+      }
+    }
+
+    var existingShared = Contact.findOne(address: otherHandle.address, wantShared: true);
+    if (existingShared != null) {
+      if (otherHandle.contactRelation.targetId == existingShared.dbId) {
+        otherHandle.contactRelation.target = null;
+      }
+      if (existingShared.posterPath != null) {
         try {
-          posterPath = await savePoster(decoded);
-        } catch (e, t) {
-          Logger.error("Could not decode other poster", error: e, trace: t); 
-        }
+          await deletePoster(existingShared.posterPath!);
+        } catch (e) { /* */ }
       }
-
-      var existingShared = Contact.findOne(address: otherHandle.address, wantShared: true);
-      if (existingShared != null) {
-        if (otherHandle.contactRelation.targetId == existingShared.dbId) {
-          otherHandle.contactRelation.target = null;
-        }
-        if (existingShared.posterPath != null) {
-          try {
-            await deletePoster(existingShared.posterPath!);
-          } catch (e) { /* */ }
-        }
-        Database.contacts.remove(existingShared.dbId!);
-      }
-      if (otherHandle.getPoster() == null) {
-        otherHandle.setPoster(posterPath);
-        posterPath = "alreadyset";
-      }
-      var newId = Database.contacts.put(Contact(
-        id: shared.cloudKitRecordKey,
-        displayName: "Maybe: ${fetch.name.name}",
-        structuredName: StructuredName(
-          namePrefix: "",
-          nameSuffix: "",
-          givenName: fetch.name.first,
-          middleName: "",
-          familyName: fetch.name.last,
-        ),
-        avatar: fetch.image,
-        isShared: true,
-        phones: otherHandle.contact?.phones ?? (otherHandle.address.isEmail ? [] : [otherHandle.address]),
-        emails: otherHandle.contact?.emails ?? (otherHandle.address.isEmail ? [otherHandle.address] : []),
-        posterPath: posterPath,
-      ));
-      if (otherHandle.contactRelation.target == null) {
-        otherHandle.contactRelation.targetId = newId;
-        Database.handles.put(otherHandle);
-      }
-      final result = (await Chat.findByRust(api.ConversationData(participants: [sender]), "iMessage", soft: true));
-      if (result != null) {
-        cvc(result).updateContactInfo();
-      }
-    } finally {
-      profilesDownloading.remove(shared.cloudKitRecordKey);
+      Database.contacts.remove(existingShared.dbId!);
+    }
+    if (otherHandle.getPoster() == null) {
+      otherHandle.setPoster(posterPath);
+      posterPath = "alreadyset";
+    }
+    var newId = Database.contacts.put(Contact(
+      id: shared.cloudKitRecordKey,
+      displayName: "Maybe: ${fetch.name.name}",
+      structuredName: StructuredName(
+        namePrefix: "",
+        nameSuffix: "",
+        givenName: fetch.name.first,
+        middleName: "",
+        familyName: fetch.name.last,
+      ),
+      avatar: avatar,
+      isShared: true,
+      phones: otherHandle.contact?.phones ?? (otherHandle.address.isEmail ? [] : [otherHandle.address]),
+      emails: otherHandle.contact?.emails ?? (otherHandle.address.isEmail ? [otherHandle.address] : []),
+      posterPath: posterPath,
+    ));
+    if (otherHandle.contactRelation.target == null) {
+      otherHandle.contactRelation.targetId = newId;
+      Database.handles.put(otherHandle);
+    }
+    eventDispatcher.emit("refresh-avatar", [otherHandle.address, otherHandle.color]);
+    final result = (await Chat.findByRust(api.ConversationData(participants: [sender]), "iMessage", soft: true));
+    if (result != null) {
+      cvc(result).updateContactInfo();
     }
   }
 
@@ -2959,7 +3044,7 @@ class RustPushService extends GetxService {
 
     String appDocPath = fs.appDocDir.path;
 
-    savePosterData(decoded.poster, number);
+    await savePosterData(decoded.poster, number);
 
     var save = await api.parsePosterSave(poster: decoded);
     File file = File("$appDocPath/avatars/you/poster-$number.jpg");
@@ -2978,7 +3063,7 @@ class RustPushService extends GetxService {
 
     String appDocPath = fs.appDocDir.path;
 
-    savePosterData(decoded.poster, number);
+    await savePosterData(decoded.poster, number);
 
     var save = await api.transcriptPosterSave(poster: decoded);
     File file = File("$appDocPath/avatars/you/poster-$number.jpg");
@@ -5036,6 +5121,11 @@ class RustPushService extends GetxService {
 
   @override
   void onClose() {
+    for (final timer in _profileRetryTimers.values) {
+      timer.cancel();
+    }
+    _profileRetryTimers.clear();
+    _profileRetryAttempts.clear();
     if (state != null) disposeState(state!, true, false);
     super.onClose();
   }
