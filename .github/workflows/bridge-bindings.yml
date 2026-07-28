@@ -62,6 +62,27 @@ jobs:
       - name: Resolve Dart packages
         run: flutter pub get
 
+      - name: Set up test FairPlay certificates
+        shell: bash
+        run: |
+          destination="rustpush/certs/fairplay"
+          mkdir -p "$destination"
+          for name in \
+            4056631661436364584235346952193 \
+            4056631661436364584235346952194 \
+            4056631661436364584235346952195 \
+            4056631661436364584235346952196 \
+            4056631661436364584235346952197 \
+            4056631661436364584235346952198 \
+            4056631661436364584235346952199 \
+            4056631661436364584235346952200 \
+            4056631661436364584235346952201 \
+            4056631661436364584235346952208
+          do
+            cp rustpush/certs/legacy-fairplay/fairplay.pem "$destination/$name.pem"
+            cp rustpush/certs/legacy-fairplay/fairplay.crt "$destination/$name.crt"
+          done
+
       - name: Regenerate Rust bridge bindings
         env:
           RUST_LOG: info
