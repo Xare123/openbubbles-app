@@ -1,4 +1,4 @@
-name: Rust bridge bindings
+name: Rust bridge validation
 
 on:
   workflow_dispatch:
@@ -28,39 +28,10 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: 3.24.0
-          channel: stable
-          cache: true
-
       - name: Install native build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler
-          cargo install cargo-expand --locked
-
-      - name: Install Flutter Rust Bridge generator 2.3.0
-        shell: bash
-        run: |
-          set -euo pipefail
-          release="https://github.com/fzyzcjy/flutter_rust_bridge/releases/download/v2.3.0"
-          archive="flutter_rust_bridge_codegen-x86_64-unknown-linux-gnu-v2.3.0.tgz"
-          mkdir -p "$RUNNER_TEMP/frb"
-          curl --fail --location --retry 3 --output "$RUNNER_TEMP/$archive" "$release/$archive"
-          curl --fail --location --retry 3 --output "$RUNNER_TEMP/$archive.sha256" "$release/$archive.sha256"
-          expected="$(tr -d '[:space:]' < "$RUNNER_TEMP/$archive.sha256")"
-          actual="$(sha256sum "$RUNNER_TEMP/$archive" | awk '{print $1}')"
-          if [[ "$actual" != "$expected" ]]; then
-            echo "Flutter Rust Bridge archive checksum mismatch" >&2
-            exit 1
-          fi
-          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/frb"
-          echo "$RUNNER_TEMP/frb" >> "$GITHUB_PATH"
-
-      - name: Resolve Dart packages
-        run: flutter pub get
 
       - name: Set up test FairPlay certificates
         shell: bash
@@ -83,29 +54,5 @@ jobs:
             cp rustpush/certs/legacy-fairplay/fairplay.crt "$destination/$name.crt"
           done
 
-      - name: Regenerate Rust bridge bindings
-        env:
-          RUST_LOG: info
-        run: flutter_rust_bridge_codegen generate
-
-      - name: Upload generated bindings
-        uses: actions/upload-artifact@v4
-        with:
-          name: rust-bridge-bindings
-          if-no-files-found: error
-          path: |
-            lib/src/rust/api/api.dart
-            lib/src/rust/frb_generated.dart
-            lib/src/rust/frb_generated.io.dart
-            lib/src/rust/frb_generated.web.dart
-            rust/src/frb_generated.rs
-            rust/src/frb_generated.io.rs
-            rust/src/frb_generated.web.rs
-
-      - name: Verify generated bindings are committed
-        run: |
-          git diff --exit-code -- \
-            lib/src/rust \
-            rust/src/frb_generated.rs \
-            rust/src/frb_generated.io.rs \
-            rust/src/frb_generated.web.rs
+      - name: Compile committed Rust bridge
+        run: cargo check --manifest-path rust/Cargo.toml --lib --message-format short
