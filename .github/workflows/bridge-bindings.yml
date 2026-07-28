@@ -2,6 +2,12 @@ name: Rust bridge bindings
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - "rust/src/api/**"
+      - "flutter_rust_bridge.yaml"
+      - "lib/src/rust/**"
+      - "rust/src/frb_generated*"
   pull_request:
     paths:
       - "rust/src/api/**"
