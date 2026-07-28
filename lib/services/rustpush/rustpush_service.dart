@@ -430,6 +430,8 @@ class RustPushBackend implements BackendService {
   /// How long we are willing to wait on a reconnecting resource before giving up on a send.
   /// Kept under the 5 minute timeout ActionHandler puts on sends.
   static const sendRetryBudget = Duration(minutes: 3);
+  static const sendTimeoutRetryWait = Duration(seconds: 2);
+  static const maxSendTimeoutRetries = 1;
 
   Future<void> sendMsg(api.MessageInst msg, {bool waitForResource = true}) async {
     var message = Message.findOne(guid: msg.id);
@@ -439,6 +441,7 @@ class RustPushBackend implements BackendService {
     }
     var stillRunning = false;
     var waited = Duration.zero;
+    var sendTimeoutRetries = 0;
     try {
       while (true) {
         try {
@@ -449,6 +452,12 @@ class RustPushBackend implements BackendService {
             if (e.message.contains("Failed to generate resource") && e.message.contains("not retrying")) {
               pushService.markFailedToLogin();
               rethrow;
+            }
+            if (e.message.contains("Send timeout; try again") && sendTimeoutRetries < maxSendTimeoutRetries) {
+              sendTimeoutRetries++;
+              Logger.warn("Send confirmation timed out; retrying once after the push connection reload");
+              await Future.delayed(sendTimeoutRetryWait);
+              continue;
             }
           }
           var wait = waitForResource ? resourceRetryWait(e) : null;
