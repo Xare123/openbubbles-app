@@ -106,22 +106,29 @@ class _AttachmentHolderState extends CustomState<AttachmentHolder, void, Message
     final bool hideAttachments = ss.settings.redactedMode.value && ss.settings.hideAttachments.value;
     return ColorFiltered(
       colorFilter: ColorFilter.mode(context.theme.colorScheme.tertiaryContainer.withOpacity(0.5), selected ? BlendMode.srcOver : BlendMode.dstOver),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: content is PlatformFile ? null : () async {
-            if (content is Attachment && message.error == 0 && !message.guid!.contains("temp")) {
-              setState(() {
-                content = attachmentDownloader.startDownload(content, onComplete: onComplete);
-              });
-            } else if (content is AttachmentDownloadController) {
-              final AttachmentDownloadController _content = content;
-              if (!_content.error.value) return;
-              Get.delete<AttachmentDownloadController>(tag: _content.attachment.guid);
-              setState(() {
-                content = attachmentDownloader.startDownload(_content.attachment, onComplete: onComplete);
-              });
-            }
+          child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: content is PlatformFile ? null : () async {
+              if (content is Attachment && message.error == 0 && !message.guid!.contains("temp")) {
+                final downloader =
+                    attachmentDownloader.startDownload(content, onComplete: onComplete, prioritized: true);
+                setState(() {
+                  content = downloader;
+                });
+              } else if (content is AttachmentDownloadController) {
+                final AttachmentDownloadController _content = content;
+                if (!_content.error.value) {
+                  attachmentDownloader.prioritize(_content);
+                  return;
+                }
+                Get.delete<AttachmentDownloadController>(tag: _content.attachment.guid);
+                final downloader = attachmentDownloader.startDownload(
+                    _content.attachment, onComplete: onComplete, prioritized: true);
+                setState(() {
+                  content = downloader;
+                });
+              }
           },
           child: Ink(
             color: context.theme.colorScheme.properSurface,
