@@ -22,7 +22,10 @@ jobs:
       matrix:
         include:
           - arch: x64
-            runner: windows-latest
+            # Flutter 3.24 does not recognize the Visual Studio 2026 image
+            # currently behind windows-latest. Pin VS 2022 until the app's
+            # Flutter toolchain is upgraded.
+            runner: windows-2022
             flutter-version: 3.24.0
             rust-target: x86_64-pc-windows-msvc
             build-directory: x64
