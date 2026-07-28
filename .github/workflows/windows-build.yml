@@ -171,15 +171,30 @@ jobs:
         run: |
           # OpenSSL's longest generated object path exceeds the legacy
           # 260-character compiler limit from GitHub's nested checkout path.
-          # A temporary drive mapping shortens the same workspace to W:\.
-          subst W: "$env:GITHUB_WORKSPACE"
-          Set-Location W:\
+          # Build from a real short path and regenerate Flutter's absolute
+          # plugin links there. A substituted drive breaks Cargokit's link
+          # integrity checks because the links retain the original drive.
+          $shortWorkspace = "D:\s"
+          New-Item -ItemType Directory -Force -Path $shortWorkspace | Out-Null
+          robocopy "$env:GITHUB_WORKSPACE" $shortWorkspace /E `
+            /XD `
+              "$env:GITHUB_WORKSPACE\.git" `
+              "$env:GITHUB_WORKSPACE\.dart_tool" `
+              "$env:GITHUB_WORKSPACE\build" `
+              "$env:GITHUB_WORKSPACE\windows\flutter\ephemeral" `
+            /NFL /NDL /NJH /NJS /NP
+          if ($LASTEXITCODE -ge 8) {
+            throw "Failed to stage the short Windows build workspace."
+          }
+
+          Set-Location $shortWorkspace
+          flutter pub get
           flutter build windows --release
 
       - name: Package Windows release
         shell: pwsh
         run: |
-          $bundle = "build\windows\${{ matrix.build-directory }}\runner\Release"
+          $bundle = "D:\s\build\windows\${{ matrix.build-directory }}\runner\Release"
           if (-not (Test-Path "$bundle\bluebubbles_app.exe")) {
             throw "Expected release executable was not produced at $bundle\bluebubbles_app.exe"
           }
