@@ -1,7 +1,7 @@
 ---
 type: implementation-status
 title: Windows ARM64 Alpha
-description: Verified printing removal and remaining native dependency blockers for an OpenBubbles Windows ARM64 alpha.
+description: Media acceptance work, verified native archive architecture, and remaining blockers for an OpenBubbles Windows ARM64 alpha.
 resource: OpenBubbles
 tags:
   - windows
@@ -33,6 +33,30 @@ Focused tests verify:
 - successful font caching;
 - generation of a PDF with the downloaded TrueType font;
 - Helvetica fallback and retry after a download failure.
+
+## Blocker: Flutter Windows ARM64 target
+
+This workstation is running Windows 11 on ARM64 hardware. Flutter stable 3.44.8
+still reports its Windows device as `windows-x64`, and `flutter build windows -h`
+does not expose a Windows `--target-platform` option. The stock Flutter SDK
+therefore cannot produce a native Windows ARM64 application here.
+
+The relevant Flutter work remains open:
+
+- <https://github.com/flutter/flutter/issues/62597>
+- <https://github.com/flutter/flutter/issues/129808>
+- <https://github.com/flutter/flutter/issues/136417>
+
+This is blocker zero. The `windows-arm64` native-library selections in this branch
+are preparatory and cannot be reached by a stock Flutter 3.44.8 Windows build.
+Removing plugin-level x64 libraries is still useful, but it does not create a
+native Flutter engine, runner, or AOT application.
+
+The application also does not currently resolve on Flutter 3.44.8. Running
+`flutter pub get` fails because `build_verify` 3.x, Flutter's pinned test packages,
+and Freezed 2.x require incompatible analyzer and test versions. Moving from the
+verified Flutter 3.24 dependency set to a future ARM64-capable Flutter toolchain
+therefore requires a reviewed generator and test-stack migration.
 
 ## Blocker: ObjectBox
 
@@ -76,42 +100,76 @@ Upstream evidence:
 ObjectBox cannot be disabled for an alpha. It is the primary persistent store for
 messages, chats, contacts, attachments, handles, scheduled messages, and themes.
 
-## Blocker: media_kit
+## Media acceptance checkpoint
 
-Current `media_kit_libs_windows_video` selects an ARM64 libmpv on its development
-branch, but still consumes an x64 ANGLE archive. The package cannot provide native
-ARM64 playback until both libmpv and ANGLE are ARM64.
+Receiving and downloading images, audio, and video share the same attachment
+download path. HTTP-backed desktop downloads previously invoked the attachment UI
+callback before downloaded bytes were written to disk. Audio and video could
+therefore try to open an empty file. Downloaded bytes are now persisted before
+metadata inspection and before the callback receives the playable path.
 
-The full-support work remains unmerged:
+The in-app media paths are:
+
+| Requirement | Application path | Native dependency | Checkpoint state |
+| --- | --- | --- | --- |
+| Receive/download photos | Backend download, then local attachment file | None beyond the backend and filesystem | Ordering fixed and unit-tested |
+| Display JPEG/PNG/GIF/WebP photos | `Image.memory` through the Flutter engine | A Flutter Windows ARM64 engine that stock Flutter does not provide | Code path audited, native app unavailable |
+| Display HEIC photos | Desktop currently skips HEIC-to-PNG conversion | No working Windows converter is wired in | Not met |
+| Receive/download audio | Shared attachment download path | None beyond the backend and filesystem | Ordering fixed and unit-tested |
+| Play audio in the message | media_kit `Player` | ARM64 libmpv | Native archives pinned, build and hardware test pending |
+| Receive/download video | Shared attachment download path | None beyond the backend and filesystem | Ordering fixed and unit-tested |
+| Play video in the message or fullscreen | media_kit `VideoController` and `Video` | ARM64 libmpv and ARM64 ANGLE | Native archives pinned, build and hardware test pending |
+
+HEIC remains a specific photo-format blocker. The current
+`flutter_image_compress` conversion is intentionally skipped on desktop. The
+recent `heic_native` Windows package bundles dependencies built only for
+`x64-windows`. An architecture-neutral Windows Imaging Component alternative is
+available in `platform_image_converter`, but its current release requires Flutter
+3.38 and Dart 3.10, while this application does not yet resolve on Flutter 3.44.8.
+It also depends on a HEIC decoder being present in Windows. Adding either package
+now would hide, not solve, the toolchain boundary.
+
+The pub.dev release remains `media_kit_libs_windows_video` 1.0.11 and does not
+contain ARM64 support. Upstream main labels unreleased 1.0.12 as ARM64-capable,
+but its shared ANGLE URL still resolves to x64 DLLs. The full-support work remains
+unmerged:
 
 - <https://github.com/media-kit/media-kit/issues/867>
 - <https://github.com/media-kit/media-kit/pull/1381>
 - <https://github.com/alexmercerind/flutter-windows-ANGLE-OpenGL-ES/pull/6>
 
-For the first alpha, use an ARM64-specific native-library stub or package override
-that leaves `MEDIA_KIT_LIBS_AVAILABLE` false. Do not relabel an x64 DLL or remove
-architecture checks. The ARM64 UI must then avoid initializing media_kit and offer
-the existing external-file open path for audio and video attachments.
+This branch vendors the locked 1.0.10 package and changes only its Windows native
+artifact selection:
 
-This alpha may conditionally disable:
+- x64 retains the package's original libmpv and ANGLE archives;
+- ARM64 uses media-kit's `mpv-dev-aarch64-20241021-git-0f78584.7z`, pinned at
+  SHA-256
+  `d445d02ab2ee60b1b5988f08ce4d2394cdcc594e98321b746a313313e96133ae`;
+- ARM64 uses the ANGLE artifact attached to the still-unmerged support work,
+  pinned at SHA-256
+  `151a9a191af3711cc90e1c415e0affc60854ed089fb3defdc8bbf023f3806083`;
+- CMake rejects targets other than `windows-x64` and `windows-arm64`;
+- the build verifies every extracted DLL's PE machine type before linking.
 
-- in-app audio playback;
-- in-app and full-screen video playback;
-- embedded video;
-- send and receive sounds;
-- custom sound previews.
-
-Core messaging, attachment transfer and saving, image display, authentication, and
-sync do not depend on in-app media playback.
+The downloaded archives were independently inspected. `libmpv-2.dll` and all
+seven ARM64 ANGLE runtime DLLs report PE machine type `0xAA64`. The unchanged x64
+archives also pass the verifier. This is static artifact evidence, not proof that
+audio or video renders correctly on a Windows ARM64 device. The ARM64 ANGLE
+archive comes from a contributor fork attached to unmerged upstream work, so it
+must be replaced by a reviewed upstream release when one becomes available.
 
 ## Verification boundary
 
-The printing slice has focused Dart analysis and tests. Full-repository analysis
+The printing and media slices have focused Dart analysis and tests. Media tests
+cover byte persistence before playback, exact archive pins, explicit target
+selection, and positive and negative PE machine checks. Full-repository analysis
 remains nonzero with 755 repository-level findings, including missing dependencies
-in nested Cargokit and telephony example packages; the changed Dart files have no
-analyzer findings.
+in nested Cargokit and telephony example packages.
 
-A local Windows build was attempted but could not start because this workstation
-does not have the Visual Studio Desktop development with C++ toolchain installed.
-No native Windows ARM64 artifact has been produced or device-tested from this
-branch.
+A local Windows build cannot start because this workstation does not have the
+Visual Studio Desktop development with C++ toolchain installed. Even with that
+workload, stock Flutter currently targets x64 on this ARM64 device. ObjectBox then
+remains a separate application-startup blocker. No native Windows ARM64 artifact
+has been produced or device-tested from this branch. The photo, audio, and video
+acceptance criteria remain unverified until a complete native ARM64 build is
+installed on Windows ARM64 hardware and tested with received attachments.
