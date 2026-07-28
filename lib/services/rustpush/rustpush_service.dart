@@ -2819,6 +2819,7 @@ class RustPushService extends GetxService {
       Logger.info("Syncing group of ${items2.length} messages, total $totalMessages");
       totalMessages += items2.length;
 
+      var processedInBatch = 0;
       for (var item in items2.entries) {
         try {
           if (item.value == null) {
@@ -2856,7 +2857,15 @@ class RustPushService extends GetxService {
           message.applyFromCloud(item.value!, item.key);
           remoteNew++;
         } catch (e, s) {
-          Logger.error("Failed to sync attachment ${item.key}", error: e, trace: s);
+          Logger.error("Failed to sync cloud message", error: e, trace: s);
+        } finally {
+          processedInBatch++;
+          // Cloud decoding and ObjectBox writes run on Flutter's main isolate.
+          // Yield periodically so window painting and input remain responsive
+          // during a multi-thousand-message initial sync.
+          if (processedInBatch % 25 == 0) {
+            await Future<void>.delayed(const Duration(milliseconds: 1));
+          }
         }
       }
 
@@ -2971,6 +2980,7 @@ class RustPushService extends GetxService {
   }
 
   Future<PurchaseWrapper?> getPurchaseDetails() async {
+    if (!Platform.isAndroid) return null;
     try {
       var purchases = await pushService.client.runWithClient((client) => client.queryPurchases(ProductType.subs));
       var token = purchases.purchasesList.firstOrNull?.purchaseToken;
@@ -2996,7 +3006,7 @@ class RustPushService extends GetxService {
 
   Future<void> handleRegistered() async {
     notif.clearRegisterFailed();
-    if (ss.settings.hostedToken.value != null) {
+    if (Platform.isAndroid && ss.settings.hostedToken.value != null) {
       var detail = await getPurchaseDetails();
       if (detail == null) return;
 
@@ -5270,7 +5280,10 @@ class RustPushService extends GetxService {
           }
           if (ss.settings.cloudSyncingEnabled.value) {
             Logger.info("Doing cloudkit sync!");
-            pushService.doCloudKitSync();
+            pushService.doCloudKitSync().catchError((error, stackTrace) {
+              Logger.warn("Initial CloudKit sync failed",
+                  error: error, trace: stackTrace);
+            });
           }
         }
         var keychain = pushService.state?.icloudServices?.keychain;
@@ -5304,7 +5317,16 @@ class RustPushService extends GetxService {
     }
     Timer(const Duration(seconds: 2), checkIncident);
     // pre-cache next FT link
-    if (pushService.state != null) api.getFtLink(facetime: pushService.state!.ftClient, usage: "next");
+    if (pushService.state != null) {
+      api
+          .getFtLink(
+              facetime: pushService.state!.ftClient,
+              usage: "next")
+          .then<void>((_) {}, onError: (Object error, StackTrace stackTrace) {
+        Logger.warn("Failed to pre-cache FaceTime link",
+            error: error, trace: stackTrace);
+      });
+    }
     Logger.info("initDone");
     final sendingProgress = Database.messages.query(Message_.sendingServiceId.notNull()).build().find();
     for (var item in sendingProgress) {

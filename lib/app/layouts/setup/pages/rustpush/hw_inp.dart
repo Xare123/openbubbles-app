@@ -482,7 +482,7 @@ class HwInpState extends OptimizedState<HwInp> {
       ss.settings.hostedToken.value = detail.purchaseToken;
       ss.saveSettings();
       await wrapSubscriptionPromise(handleSubscriptionToken(detail.purchaseToken));
-      Logger.info("Purchased token ${detail.purchaseToken}");
+      Logger.info("Hosted subscription purchase received");
       return true;
     }
     return false;

@@ -13,10 +13,19 @@ import 'package:maps_launcher/maps_launcher.dart';
 import 'package:tuple/tuple.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+@visibleForTesting
+String? safeMessageSubstring(String? text, List<int> range) {
+  if (text == null || range.length < 2) return null;
+  final start = range.first.clamp(0, text.length).toInt();
+  final end = range.last.clamp(start, text.length).toInt();
+  if (start >= end) return null;
+  return text.substring(start, end);
+}
+
 List<InlineSpan> buildMessageSpans(BuildContext context, MessagePart part, Message message, {Color? colorOverride, bool hideBodyText = false}) {
   final textSpans = <InlineSpan>[];
   final textStyle = (context.theme.extensions[BubbleText] as BubbleText).bubbleText.apply(
-    color: colorOverride ?? (message.isFromMe! ? context.theme.colorScheme.onPrimary : context.theme.colorScheme.properOnSurface),
+    color: colorOverride ?? ((message.isFromMe ?? false) ? context.theme.colorScheme.onPrimary : context.theme.colorScheme.properOnSurface),
     fontSizeFactor: message.isBigEmoji ? 3 : 1,
   );
 
@@ -29,6 +38,8 @@ List<InlineSpan> buildMessageSpans(BuildContext context, MessagePart part, Messa
   if (part.annotations.isNotEmpty) {
     part.annotations.forEachIndexed((i, e) {
       final range = part.annotations[i].range;
+      final text = safeMessageSubstring(part.displayText, range);
+      if (text == null) return;
       var style = textStyle;
       if (e.bold ?? false) style = style.apply(fontWeightDelta: 2);
       if (e.italic ?? false) style = style.apply(fontStyle: FontStyle.italic);
@@ -40,7 +51,7 @@ List<InlineSpan> buildMessageSpans(BuildContext context, MessagePart part, Messa
       if (e.textEffect == Attributes.SMALL) style = style.apply(fontSizeDelta: -2);
       if (e.mentionedAddress != null) {
         textSpans.addAll(MessageHelper.buildEmojiText(
-          part.displayText!.substring(range.first, range.last),
+          text,
           style.apply(fontWeightDelta: 2),
           recognizer: TapGestureRecognizer()..onTap = () async {
             if (kIsDesktop || kIsWeb) return;
@@ -58,7 +69,7 @@ List<InlineSpan> buildMessageSpans(BuildContext context, MessagePart part, Messa
         ));
       } else {  
         textSpans.addAll(MessageHelper.buildEmojiText(
-          part.displayText!.substring(range.first, range.last),
+          text,
           style,
         ));
       }
@@ -76,13 +87,16 @@ List<InlineSpan> buildMessageSpans(BuildContext context, MessagePart part, Messa
 Future<List<InlineSpan>> buildEnrichedMessageSpans(BuildContext context, MessagePart part, Message message, {Color? colorOverride, bool hideBodyText = false}) async {
   final textSpans = <InlineSpan>[];
   final textStyle = (context.theme.extensions[BubbleText] as BubbleText).bubbleText.apply(
-    color: colorOverride ?? (message.isFromMe! ? context.theme.colorScheme.onPrimary : context.theme.colorScheme.properOnSurface),
+    color: colorOverride ?? ((message.isFromMe ?? false) ? context.theme.colorScheme.onPrimary : context.theme.colorScheme.properOnSurface),
     fontSizeFactor: message.isBigEmoji ? 3 : 1,
   );
   // extract rich content
   final urlRegex = RegExp(r'((https?://)|(www\.))[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}([-a-zA-Z0-9/()@:%_.~#?&=*\[\]]*)\b');
 
-  List<Annotation> annotations = part.annotations.map((a) => a.copy()).toList();
+  List<Annotation> annotations = part.annotations
+      .where((annotation) => safeMessageSubstring(part.displayText, annotation.range) != null)
+      .map((annotation) => annotation.copy())
+      .toList();
   void markRange(Tuple3<String, List<int>, List?> annotation) {
     var range = annotation.item2;
     List<Annotation> extras = [];
@@ -176,7 +190,8 @@ Future<List<InlineSpan>> buildEnrichedMessageSpans(BuildContext context, Message
       final type = item?.item1;
       final range = e.range;
       final data = item?.item3;
-      final text = part.displayText!.substring(range.first, range.last);
+      final text = safeMessageSubstring(part.displayText, range);
+      if (text == null) return;
 
       var style = textStyle;
       if (e.bold ?? false) style = style.apply(fontWeightDelta: 2);

@@ -2306,16 +2306,26 @@ pub async fn auth_phone(conn: &APSConnection, config: &JoinedOSConfig, number: S
 
 pub async fn send_2fa_to_devices(state: &Arc<Mutex<AppleAccount<DefaultAnisetteProvider>>>, conn: &APSConnection) -> anyhow::Result<(CircleClientSession<DefaultAnisetteProvider>, LoginState, Option<String>)> {
     let account = state.lock().await;
-
     let spd = account.spd.as_ref().unwrap();
     let dsid = spd["DsPrsId"].as_unsigned_integer().unwrap();
-
     drop(account);
 
     let client_session = CircleClientSession::new(dsid, state.clone(), conn.get_token().await).await?;
-    let sid = client_session.session_id.clone();
 
-    Ok((client_session, LoginState::Needs2FAVerification, sid))
+    #[cfg(target_os = "android")]
+    {
+        let sid = client_session.session_id.clone();
+        Ok((client_session, LoginState::Needs2FAVerification, sid))
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        // Desktop cannot advertise the BLE proximity service required to
+        // complete the circle exchange. Keep the session object for bridge
+        // compatibility, but trigger Apple's standard trusted-device prompt.
+        let login_state = state.lock().await.send_2fa_to_devices().await?;
+        Ok((client_session, login_state, None))
+    }
 }
 
 #[frb(type_64bit_int)]
@@ -2597,24 +2607,34 @@ pub async fn circle_setup_clique(client: &Arc<Mutex<Option<CircleClientSession<D
 }
 
 pub async fn verify_2fa(path: String, client: &mut CircleClientSession<DefaultAnisetteProvider>, anisette: &ArcAnisetteClient<DefaultAnisetteProvider>, os_config: &JoinedOSConfig, account: &Arc<Mutex<AppleAccount<DefaultAnisetteProvider>>>, watcher: &mut broadcast::Receiver<APSMessage>, idms: &Arc<IdmsAuthListener>, code: String) -> anyhow::Result<(LoginState, Option<IDSUser>)> {
-    client.send_code(&code).await?;
+    #[cfg(target_os = "android")]
+    let mut login_state = {
+        client.send_code(&code).await?;
 
-    // todo add timeout
-    let mut login_state = tokio::time::timeout(Duration::from_secs(30), async {
-        Ok::<_, PushError>(loop {
-            let msg = watcher.recv().await.unwrap();
-            if let Some(test) = idms.handle(msg)? {
-                match test {
-                    IdmsMessage::CircleRequest(c, _) => {
-                        if let Some(state) = client.handle_circle_request(&c).await? {
-                            break state;
-                        }
-                    },
-                    _ => { }
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let msg = watcher.recv().await
+                    .map_err(|error| anyhow!("Trusted-device 2FA push listener closed: {error}"))?;
+                if let Some(test) = idms.handle(msg)? {
+                    match test {
+                        IdmsMessage::CircleRequest(c, _) => {
+                            if let Some(state) = client.handle_circle_request(&c).await? {
+                                break Ok::<_, anyhow::Error>(state);
+                            }
+                        },
+                        _ => { }
+                    }
                 }
             }
-        })
-    }).await.map_err(|_| anyhow!("Timed Out!"))??;
+        }).await.map_err(|_| anyhow!("Timed out waiting for the trusted-device 2FA proximity response"))??
+    };
+
+    #[cfg(not(target_os = "android"))]
+    let mut login_state = {
+        // The code shown by Apple's normal trusted-device prompt can be
+        // verified directly without waiting on an unavailable BLE exchange.
+        account.lock().await.verify_2fa(code).await?
+    };
 
     let mut user = None;
     let pet = account.lock().await.get_pet();

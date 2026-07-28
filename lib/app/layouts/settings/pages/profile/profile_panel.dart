@@ -147,7 +147,7 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
       ss.settings.hostedToken.value = detail.purchaseToken;
       ss.saveSettings();
       await wrapPromise(handleSubscriptionToken(detail.purchaseToken), "Validating subscription...");
-      Logger.info("Purchased token ${detail.purchaseToken}");
+      Logger.info("Hosted subscription purchase received");
       return true;
     }
     return false;
@@ -210,11 +210,13 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
           api.SimplifiedIncomingCallPoster? poster;
           if (ss.settings.userPosterPath.value != null && !kIsDesktop) {
             var data = await File("${ss.settings.userPosterPath.value!}.jpg").readAsBytes();
-            print("Parsing file");
             poster = await api.fromPosterSave(poster: data);
           }
 
-          await restorePoster(poster?.poster, ss.settings.userPosterPath.value!);
+          final posterPath = ss.settings.userPosterPath.value;
+          if (poster != null && posterPath != null) {
+            await restorePoster(poster.poster, posterPath);
+          }
 
           api.ShareProfileMessage message;
           try {
@@ -608,7 +610,7 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                         onTap: () async {
                           final credentials = await pushService.googleSignIn.signIn();
                           if (credentials != null) {
-                            print('Signed in successfully: ${credentials.accessToken}');
+                            Logger.info("Google account sign-in succeeded");
                             googleCreds.value = credentials;
                             cs.refreshContacts();
                           } else {
