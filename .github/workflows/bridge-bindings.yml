@@ -50,10 +50,12 @@ jobs:
           mkdir -p "$RUNNER_TEMP/frb"
           curl --fail --location --retry 3 --output "$RUNNER_TEMP/$archive" "$release/$archive"
           curl --fail --location --retry 3 --output "$RUNNER_TEMP/$archive.sha256" "$release/$archive.sha256"
-          (
-            cd "$RUNNER_TEMP"
-            sha256sum --check "$archive.sha256"
-          )
+          expected="$(tr -d '[:space:]' < "$RUNNER_TEMP/$archive.sha256")"
+          actual="$(sha256sum "$RUNNER_TEMP/$archive" | awk '{print $1}')"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "Flutter Rust Bridge archive checksum mismatch" >&2
+            exit 1
+          fi
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/frb"
           echo "$RUNNER_TEMP/frb" >> "$GITHUB_PATH"
 
