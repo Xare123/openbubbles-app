@@ -23,7 +23,6 @@ list(APPEND FLUTTER_PLUGIN_LIST
   objectbox_flutter_libs
   pasteboard
   permission_handler_windows
-  printing
   record_windows
   screen_brightness_windows
   screen_retriever

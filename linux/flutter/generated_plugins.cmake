@@ -17,7 +17,6 @@ list(APPEND FLUTTER_PLUGIN_LIST
   media_kit_video
   objectbox_flutter_libs
   pasteboard
-  printing
   record_linux
   screen_retriever
   super_native_extensions

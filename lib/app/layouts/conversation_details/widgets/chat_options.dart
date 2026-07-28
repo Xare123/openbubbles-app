@@ -7,6 +7,7 @@ import 'package:bluebubbles/app/layouts/settings/pages/profile/posterkit.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/app/wrappers/theme_switcher.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
+import 'package:bluebubbles/helpers/pdf/transcript_pdf_font.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/settings_widgets.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/theming/avatar/avatar_crop.dart';
 import 'package:bluebubbles/database/models.dart';
@@ -19,7 +20,6 @@ import 'package:get/get.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 import 'package:universal_io/io.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
@@ -594,7 +594,7 @@ class _ChatOptionsState extends OptimizedState<ChatOptions> {
                           dimensions.add(null);
                         }
                       }
-                      final font = await PdfGoogleFonts.openSansRegular();
+                      final font = await TranscriptPdfFontLoader.shared.openSansRegular();
                       doc.addPage(pw.MultiPage(
                           maxPages: 1000,
                           header: (pw.Context context) => pw.Padding(
