@@ -399,7 +399,7 @@ class MethodChannelService extends GetxService {
         try {
           if (!isNullOrEmpty(data)) {
             final payload = ServerPayload.fromJson(data!);
-            Logger.info("Alias(es) removed ${payload.data["aliases"]}");
+            Logger.info("Alias(es) removed");
             await notif.createAliasesRemovedNotification((payload.data["aliases"] as List).cast<String>());
           } else {
             Logger.warn("Aliases removed data empty or null");

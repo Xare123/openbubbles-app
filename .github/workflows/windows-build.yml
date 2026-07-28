@@ -168,7 +168,13 @@ jobs:
 
       - name: Build Windows release
         shell: pwsh
-        run: flutter build windows --release
+        run: |
+          # OpenSSL's longest generated object path exceeds the legacy
+          # 260-character compiler limit from GitHub's nested checkout path.
+          # A temporary drive mapping shortens the same workspace to W:\.
+          subst W: "$env:GITHUB_WORKSPACE"
+          Set-Location W:\
+          flutter build windows --release
 
       - name: Package Windows release
         shell: pwsh
