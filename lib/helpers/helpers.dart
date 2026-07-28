@@ -1,5 +1,6 @@
 export 'backend/sync/sync_helpers.dart';
 export 'network/metadata_helper.dart';
+export 'network/downloaded_attachment_file.dart';
 export 'network/network_error_handler.dart';
 export 'network/network_helpers.dart';
 export 'network/network_tasks.dart';

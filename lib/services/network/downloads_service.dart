@@ -117,11 +117,12 @@ class AttachmentDownloadController extends GetxController {
       attachmentDownloader._removeFromQueue(this);
       return;
     }
-    if (!kIsWeb && !kIsDesktop && response.path == null) {
-      File _file = await File(attachment.path).create(recursive: true);
-      await _file.writeAsBytes(response.bytes!);
-      response.path = attachment.path;
-    }
+    response.path = await persistDownloadedAttachmentBytes(
+          bytes: response.bytes,
+          responsePath: response.path,
+          fallbackPath: attachment.path,
+        ) ??
+        response.path;
     Logger.info("Finished fetching attachment");
     stopwatch.stop();
     Logger.info("Attachment downloaded in ${stopwatch.elapsedMilliseconds} ms");
@@ -143,12 +144,6 @@ class AttachmentDownloadController extends GetxController {
     file.value = response;
     for (Function f in completeFuncs) {
       f.call(file.value);
-    }
-    if (kIsDesktop) {
-      if (attachment.bytes != null) {
-        File _file = await File(attachment.path).create(recursive: true);
-        await _file.writeAsBytes(attachment.bytes!.toList());
-      }
     }
     if (ss.settings.autoSave.value
         && !kIsWeb
