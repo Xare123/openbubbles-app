@@ -4,12 +4,14 @@ on:
   workflow_dispatch:
   push:
     paths:
+      - ".github/workflows/bridge-bindings.yml"
       - "rust/src/api/**"
       - "flutter_rust_bridge.yaml"
       - "lib/src/rust/**"
       - "rust/src/frb_generated*"
   pull_request:
     paths:
+      - ".github/workflows/bridge-bindings.yml"
       - "rust/src/api/**"
       - "flutter_rust_bridge.yaml"
       - "lib/src/rust/**"
