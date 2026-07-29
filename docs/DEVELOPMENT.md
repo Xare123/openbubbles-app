@@ -51,6 +51,8 @@ Run a focused test before a full build:
 
 ```bash
 flutter test test/helpers/message_helper_test.dart
+flutter test test/helpers/memory/bounded_byte_cache_test.dart \
+  test/helpers/memory/bounded_lru_map_test.dart
 ```
 
 The CI workflow builds unsigned arm64 Alpha artifacts. The equivalent local
@@ -60,6 +62,23 @@ commands are:
 flutter build apk --flavor alpha --profile --target-platform android-arm64
 flutter build apk --flavor alpha --debug --target-platform android-arm64
 ```
+
+On Windows, use the verified wrapper so a stale APK cannot survive a failed
+Rust native build:
+
+```powershell
+.\tooling\android\build_verified_alpha.ps1 -Mode profile
+```
+
+The wrapper deletes only the previous target APK before building and verifies
+that the resulting archive contains Flutter, Dart AOT, and
+`librust_lib_bluebubbles.so` ARM64 libraries. Do not install an APK when the
+wrapper fails this gate. It discovers Flutter and `protoc` from `PATH`, the
+Android SDK from `ANDROID_SDK_ROOT` or `ANDROID_HOME`, and Cargo/Rustup from
+their standard environment variables. Non-standard toolchains can be passed
+with the script's explicit path parameters. `-PerlExecutable`,
+`-PerlModuleRoot`, and `-MakeExecutable` are available for Windows OpenSSL
+environments that do not provide those prerequisites on `PATH`.
 
 Use a release build for performance measurements. Do not compare a debug build
 with a store release and attribute every frame difference to application code.
@@ -91,6 +110,12 @@ Never include registration codes, registration secrets, Apple IDs, phone
 numbers, message text, attachment URLs, auth tokens, or full device identifiers
 in an issue or pull request. A short-lived hash or local incident ID is enough
 to correlate events.
+
+## Memory and media lifecycle
+
+See [`MEMORY_MANAGEMENT.md`](MEMORY_MANAGEMENT.md) for cache budgets, media
+ownership, physical-device measurement, acceptance thresholds, known
+limitations, and rollback guidance.
 
 ## Known limitations
 
