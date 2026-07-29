@@ -67,6 +67,12 @@ jobs:
       - name: Run focused message helper tests
         run: flutter test test/helpers/message_helper_test.dart
 
+      - name: Run bounded memory cache tests
+        run: >-
+          flutter test
+          test/helpers/memory/bounded_byte_cache_test.dart
+          test/helpers/memory/bounded_lru_map_test.dart
+
       # First run is expected to fail until ffmpeg_kit_flutter_new is fixed.
       - name: Build Alpha Profile APK
         run: flutter build apk --flavor alpha --profile --target-platform android-arm64

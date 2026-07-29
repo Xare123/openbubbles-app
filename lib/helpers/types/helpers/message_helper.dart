@@ -225,7 +225,9 @@ class MessageHelper {
       // if we can't fetch the associated message for some reason
       // (or none of the above conditions about it are true)
       // then we should fallback to unparsed reaction messages
-      Logger.info("Couldn't fetch associated message for reaction");
+      // The bounded ChatMessages pending cache attaches this reaction if the
+      // parent arrives later. Keep the fallback without flooding normal logs.
+      Logger.debug("Reaction parent is not available yet");
       return getReactionFallbackText(sender, message.text);
     } else {
       // It's all other message types
