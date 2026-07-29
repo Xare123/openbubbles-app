@@ -52,6 +52,7 @@ class NotificationsService extends GetxService {
   StreamSubscription? countSub;
   int currentCount = 0;
   Timer? relayReminderTimer;
+  Future<void>? _initializationFuture;
 
   /// For desktop use only
   static LocalNotification? allToast;
@@ -70,7 +71,11 @@ class NotificationsService extends GetxService {
 
   bool get hideContent => ss.settings.hideTextPreviews.value;
 
-  Future<void> init() async {
+  Future<void> init() {
+    return _initializationFuture ??= _init();
+  }
+
+  Future<void> _init() async {
     if (!kIsWeb && !kIsDesktop) {
       const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('ic_stat_icon');
       const InitializationSettings initializationSettings = InitializationSettings(android: initializationSettingsAndroid);
@@ -1089,6 +1094,8 @@ class NotificationsService extends GetxService {
   }
 
   Future<void> scheduleRelayCheckReminder(DateTime time) async {
+    // Relay registration can finish before startup notification tasks.
+    await init();
     await cancelRelayCheckReminder();
 
     const title = "Check your iPhone relay";

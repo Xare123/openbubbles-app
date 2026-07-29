@@ -3156,6 +3156,11 @@ class RustPushService extends GetxService {
     Duration(minutes: 2),
   ];
 
+  bool _isTransientProfileFailure(String category) =>
+      category == "service_unavailable" ||
+      category == "timeout" ||
+      category == "network";
+
   String _profileFailureCategory(Object error) {
     final description = error.toString().toLowerCase();
     if (description.contains("profile service unavailable")) return "service_unavailable";
@@ -3191,6 +3196,11 @@ class RustPushService extends GetxService {
   ) {
     final profileKey = shared.cloudKitRecordKey;
     if (_profileRetryTimers.containsKey(profileKey)) return;
+    if (!_isTransientProfileFailure(category)) {
+      _profileRetryAttempts.remove(profileKey);
+      Logger.warn("Shared profile fetch skipped retry category=$category transient=false");
+      return;
+    }
 
     final attempt = _profileRetryAttempts[profileKey] ?? 0;
     if (attempt >= _profileRetryDelays.length) {
@@ -4749,7 +4759,15 @@ class RustPushService extends GetxService {
     var isInClique = await checkClique();
     if (isInClique) return true;
 
-    var bottles = await wrapPromise(api.getBottles(keychain: pushService.state!.icloudServices!.keychain!), "Fetching Bottles...");
+    var bottles = await wrapPromise(
+      api.getBottles(keychain: pushService.state!.icloudServices!.keychain!).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => throw TimeoutException(
+          "Apple did not return recovery data within 30 seconds.",
+        ),
+      ),
+      "Fetching Bottles...",
+    );
 
     if (bottles.isEmpty) {
       await promptResetData(true);
