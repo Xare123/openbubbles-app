@@ -1,0 +1,96 @@
+---
+type: provenance_ledger
+title: OpenBubbles Cloud Sync V2 Provenance Ledger
+description: Per-idea record of borrowed protocol facts and patterns, their source licence, whether code or only a concept was taken, and the file that implements each one.
+resource: openbubbles-app
+tags: [licensing, provenance, cloudkit, sspl, apache-2.0, compliance]
+timestamp: 2026-08-06
+---
+
+# Cloud Sync V2 provenance ledger
+
+## Why this exists
+
+[Open-source pattern review](CLOUD_SYNC_V2_OPEN_SOURCE_REVIEW.md) states the
+rule: for every borrowed implementation idea, record the project, exact source
+URL, licence, whether code or only a concept was used, and the OpenBubbles file
+that implements it. That document holds a per-project table. This one holds the
+per-idea entries the rule actually asks for, and it is a release gate.
+
+## The distinction this ledger turns on
+
+A field name, a wire type number, a zone name, and the grammar of an identifier
+are **facts about Apple's protocol**. Observing that Apple encodes a reaction
+parent as `p:<part>/<guid>` is a fact, and facts are not copyrightable.
+
+A struct definition, a derive macro, a `.proto` file, and a function body are
+**expression**. They carry the licence of the project that wrote them.
+
+Every entry below records which of the two was taken. Where the source is
+SSPL-1.0 or GPL-family, only facts were used and the implementation was written
+independently against them.
+
+## The rustpush boundary, stated precisely
+
+`rustpush` is **SSPL-1.0** and ships an exception granting an MIT-style licence
+to OpenBubbles itself, not to third parties. The application already depends on
+it as a submodule and links it, which is a deliberate existing architecture
+decision, not something this work introduced.
+
+What this ledger governs is narrower: **no rustpush source may be copied into
+the Apache-2.0 Dart or `rust/src` layer.** Protocol facts learned by reading it
+may be, and each one is listed below.
+
+## Ledger
+
+### Apple protocol facts
+
+| # | Fact taken | Source | Licence | Code or concept | Implemented in |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Reaction parent is encoded `p:<part>/<guid>`, and as a **bare GUID with no prefix** when no part is targeted | [rustpush `messages.rs`](https://github.com/OpenBubbles/rustpush/blob/master/src/imessage/messages.rs) `amk` construction | SSPL-1.0 | Fact only | `rust/src/cloud_sync_canonical_dto.rs` (`parse_associated_parent`), `lib/services/rustpush/cloud_sync/cloud_associated_message_parent_reference.dart` |
+| 2 | Reply parent is `r:<part>:<guid>`, colon-separated, an independent grammar from the reaction form | same, `tg` field | SSPL-1.0 | Fact only | `rust/src/cloud_sync_canonical_dto.rs` (`parse_reply_parent`) |
+| 3 | Owned attachment identity is `at_<part>_<guid>`, and the GUID may itself contain underscores | same, `transfer_guid` | SSPL-1.0 | Fact only | `lib/utils/attachment_guid_utils.dart`, `rust/src/cloud_sync_canonical_dto.rs` (`parse_owned_attachment_guid`) |
+| 4 | `bp` and `bpdi` are IDS wire-payload keys, **not** CloudKit record fields; the record equivalent is `MessageProto.payloadData` | [rustpush `rawmessages.rs`](https://github.com/OpenBubbles/rustpush/blob/master/src/imessage/rawmessages.rs) vs `cloud_messages.rs` | SSPL-1.0 | Fact only | No code change. Recorded because it prevented inventing presence rules for fields that do not exist on these records. |
+| 5 | `filt`, `sqry`, `ste` are `i64`, not booleans | [rustpush `cloud_messages.rs`](https://github.com/OpenBubbles/rustpush/blob/master/src/imessage/cloud_messages.rs) | SSPL-1.0 | Fact only | Already correct before this review; verified, not changed |
+| 6 | `ust`, `hbr`, `oui`, `osn`, `euh`, `bcg`, `ams`/`ampt`/`amc`/`amb`/`amd` live inside a `MessageSummaryInfo` plist at protobuf field 7, gzipped; `bcg` sits inside a `MessageEdit`; `ec` and `otr` are keyed by decimal-string part | same | SSPL-1.0 | Fact only | Already correct before this review; verified, not changed |
+| 7 | Apple's summary plist omits empty collections rather than sending them, so there is no explicit-clear state in that plist | same, serde `skip_serializing_if` on collections | SSPL-1.0 | Fact only | `rust/src/cloud_sync_canonical_converter.rs` (empty `ec`/`rp` now reads as absent rather than a clear instruction) |
+| 8 | Zone-to-record-type mapping for the three Manatee zones | same | SSPL-1.0 | Fact only | `rust/src/cloud_sync_native_fetch.rs` |
+| 9 | `messageUpdateZone` and `recoverableMessageDeleteZone` exist and are not currently read | same, zone reset list | SSPL-1.0 | Fact only | Not implemented. Recorded as an open scope question in [path to production](CLOUD_SYNC_V2_PATH_TO_PRODUCTION.md). |
+| 10 | PCS GCM additional authenticated data is scoped `zone-record-field`, so a wrong field name fails authentication rather than yielding wrong plaintext | [rustpush `pcs.rs`](https://github.com/OpenBubbles/rustpush/blob/master/src/icloud/pcs.rs) | SSPL-1.0 | Fact only | Not code. Informs live validation: field names are self-verifying against real data. |
+
+### Wire-format facts
+
+| # | Fact taken | Source | Licence | Code or concept | Implemented in |
+| --- | --- | --- | --- | --- | --- |
+| 11 | CloudKit's field value type enum includes `EMPTY_LIST = 9`, a distinct representation of "present but empty" | `rustpush/cloudkit-proto/src/cloudkit.proto`, vendored in-tree | SSPL-1.0 | Fact only | `rust/src/cloud_sync_canonical_converter.rs` records the observation as evidence; no decision reads it |
+| 12 | Error codes `RESET_NEEDED = 17` and `FULL_RESET_NEEDED = 40` | same | SSPL-1.0 | Fact only | Not implemented. Feeds the rebootstrap requirement in the production-readiness notes. |
+
+### Engineering patterns
+
+| # | Pattern taken | Source | Licence | Code or concept | Implemented in |
+| --- | --- | --- | --- | --- | --- |
+| 13 | Windows provides no directory-sync primitive; a no-op is the correct implementation and durability rests on startup reconciliation | [Restic](https://github.com/restic/restic) `local_windows.go` | BSD-2-Clause | Concept only | `rust/src/cloud_sync_native_fetch.rs` (`sync_directory` on Windows) |
+| 14 | Part-index semantics, and that `bp:` is a real GUID prefix for bubble/tapback messages in the local database schema | [imessage-exporter](https://github.com/ReagentX/imessage-exporter) `variants.rs` doc comments | **GPL-3.0** | Concept only, no code | Informed entry 4. No GPL code is present in this repository. |
+| 15 | Exactly-once local projection is achieved by writing the cursor in the same transaction as the projected rows, with a sequence-guarded upsert, rather than a dedup table | CouchDB replication protocol (Apache-2.0), Replicache server-pull docs, Debezium docs | Apache-2.0 and documentation | Concept only | Not yet implemented. Recorded as a binding constraint for semantic apply. |
+| 16 | Contiguous-prefix cursor with a separate high watermark, and a bounded gap set that stops admission rather than evicting | NATS JetStream docs, Apache Pulsar PIP-81, PostgreSQL replication slots | Apache-2.0 and documentation | Concept only | Partially present as the existing contiguous checkpoint. The bounded retry queue and stall timer are not implemented. |
+| 17 | Server-authoritative field classification instead of CRDTs for a single-writer projection | [Figma multiplayer writeup](https://www.figma.com/blog/how-figmas-multiplayer-technology-works/) | Article | Concept only | Not yet implemented. Recorded as a Phase 2 prerequisite. |
+| 18 | One fsynced contiguous-prefix integer per blob, truncated to on startup | Restic, Syncthing (MPL-2.0) design docs | BSD-2-Clause, MPL-2.0 | Concept only, no code from either | Attachment materialisation design; not yet implemented |
+| 19 | Two-level fault injection where a call site is armed per run and then fires probabilistically | FoundationDB `BUGGIFY` | Apache-2.0 | Concept only | Not yet implemented |
+| 20 | Incrementing fail-on-Nth-operation loop for crash testing, run in both fail-once and fail-persistently modes | [SQLite testing](https://www.sqlite.org/testing.html) | Public domain | Concept only | Not yet implemented |
+
+## Sources deliberately not used
+
+| Project | Licence | Why excluded |
+| --- | --- | --- |
+| Signal Desktop | AGPL-3.0 | Incompatible with the Apache-2.0 layer; architecture comparison only |
+| mautrix/imessage | AGPL-3.0 | Same, and it reads a local database rather than CloudKit |
+| imessage-exporter | GPL-3.0 | Concepts only, as recorded in entry 14 |
+| Apple Security / CKKS mirror | Apple Public Source-style, no licence metadata on the mirror | Concepts only; also predates Advanced Data Protection |
+| InflatableDonkey | MIT | Permissively licensed and reusable, but scoped to iOS 9 backups with no Manatee zones or per-field encryption. Nothing taken so far. |
+
+## Maintenance
+
+Add an entry whenever a protocol fact or pattern is taken from an outside
+project, in the same change that implements it. An entry naming no
+OpenBubbles file is acceptable only when the fact prevented work, as in entries
+4 and 9, and that should be stated in the row.

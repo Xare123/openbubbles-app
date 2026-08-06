@@ -39,6 +39,12 @@ timestamp: 2026-07-31
 - [Cloud Sync V2 path to production](CLOUD_SYNC_V2_PATH_TO_PRODUCTION.md):
   dependency-ordered remaining sequence, separating code work from work that
   needs live Apple access, hardware, or a licensing decision.
+- [Cloud Sync V2 provenance ledger](CLOUD_SYNC_V2_PROVENANCE_LEDGER.md):
+  per-idea record of borrowed protocol facts and patterns, their source licence,
+  and the file implementing each one.
+- [Decision: ObjectBox dependency posture](DECISION_OBJECTBOX_DEPENDENCY.md):
+  what is actually depended on, which licence covers which part, and the
+  triggers that would reopen the choice.
 - [Windows host build environment](WINDOWS_HOST_BUILD_ENVIRONMENT.md): verified
   Windows-on-ARM toolchain layout and the host constraints for building the
   Rust bridge and running the suites for all three targets.

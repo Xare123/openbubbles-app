@@ -115,6 +115,8 @@ before the read-only transport and recovery invariants are live-proven.
 
 For every borrowed implementation idea, record the project, exact source URL,
 license, whether code or only a concept was used, and the OpenBubbles file that
-implements it. Apache-2.0, BSD, and MIT material may still require notices and
+implements it. Those entries live in the
+[provenance ledger](CLOUD_SYNC_V2_PROVENANCE_LEDGER.md); this section states the
+rule, that document records the evidence. Apache-2.0, BSD, and MIT material may still require notices and
 attribution. MPL code needs file-level handling. AGPL and SSPL code must not be
 copied into the Apache-2.0 application without a deliberate licensing decision.
