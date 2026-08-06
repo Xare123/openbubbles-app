@@ -58,23 +58,28 @@ jobs:
         with:
           channel: stable
           flutter-version: ${{ matrix.flutter-version }}
-          # Request the SDK that matches the runner. Flutter 3.44 publishes a
-          # native Windows ARM64 Dart SDK and engine, so neither architecture
-          # needs the Dart SDK swapped after setup.
-          architecture: ${{ matrix.arch }}
+          # Flutter publishes only an x64 Windows SDK archive; every entry in
+          # releases_windows.json reports dart_sdk_arch x64. On the ARM64 runner
+          # the next step swaps in the ARM64 Dart SDK and ARM64 engines.
+          architecture: x64
           cache: true
 
-      # This previously deleted engine-dart-sdk.stamp and called Flutter's
-      # private bin\internal\update_dart_sdk.ps1 to force an ARM64 Dart SDK on
-      # top of an x64 install. Flutter 3.44.8 no longer ships that script, so
-      # the step failed outright. Requesting architecture: arm64 above replaces
-      # it. The assertions stay so a silent fallback to an x64 SDK or a missing
-      # ARM64 engine still fails the job.
-      - name: Verify native ARM64 Dart and Flutter engine
+      # Uses $env:FLUTTER_ROOT rather than the action's cache-path output. The
+      # SDK lives one directory below cache-path, so the previous
+      # "$cachePath\bin\internal\update_dart_sdk.ps1" never resolved and this
+      # step failed with command-not-found before doing any work. The script
+      # itself does ship in 3.44.8.
+      - name: Bootstrap native ARM64 Dart and Flutter engine
         if: matrix.arch == 'arm64'
         shell: pwsh
         run: |
-          $flutterRoot = "${{ steps.flutter.outputs['cache-path'] }}"
+          $flutterRoot = "$env:FLUTTER_ROOT"
+          if (-not (Test-Path "$flutterRoot\bin\internal\update_dart_sdk.ps1")) {
+            throw "Flutter SDK layout changed: no bin\internal\update_dart_sdk.ps1 under $flutterRoot"
+          }
+          Remove-Item -Force "$flutterRoot\bin\cache\engine-dart-sdk.stamp" -ErrorAction SilentlyContinue
+          & "$flutterRoot\bin\internal\update_dart_sdk.ps1"
+
           $dartVersion = & "$flutterRoot\bin\dart.bat" --version 2>&1 | Out-String
           Write-Host $dartVersion
           if ($dartVersion -notmatch "windows_arm64") {
