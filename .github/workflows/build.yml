@@ -163,6 +163,10 @@ jobs:
           unzip -q "$archive" -d "$RUNNER_TEMP/gradle"
           echo "$RUNNER_TEMP/gradle/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH"
 
+      # Slower than it used to be: CargoKit now actually applies, so this
+      # compile also builds the Rust bridge and vendored OpenSSL. That cost is
+      # the price of the APKs below containing a native library at all, since
+      # before the fix they were uploaded without one.
       - name: Run Android cold-start delivery tests
         working-directory: android
         run: gradle --no-daemon :app:testAlphaDebugUnitTest :app:compileAlphaDebugKotlin
@@ -182,6 +186,73 @@ jobs:
         with:
           name: Alpha Debug APK
           path: build/app/outputs/flutter-apk/app-alpha-debug.apk
+
+  # Separate job so the developer sampler APK is not queued behind the full
+  # test suite and the two alpha APK builds, each of which now pays its own
+  # CargoKit Rust and vendored-OpenSSL compile. Setup mirrors the APK job above,
+  # including the Fairplay fixtures the Rust build needs.
+  sampler-apk:
+    name: Beta Sampler APK
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.8
+
+      - name: Set up Java
+        uses: actions/setup-java@v2
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: amyu/setup-android@v5
+
+      - name: Install Protobuf compiler
+        run: sudo apt-get install -y protobuf-compiler
+
+      - name: Set up fake Fairplay keys
+        run: |
+          mkdir -p rustpush/certs/fairplay
+
+          cert_names=(
+            "4056631661436364584235346952193"
+            "4056631661436364584235346952194"
+            "4056631661436364584235346952195"
+            "4056631661436364584235346952196"
+            "4056631661436364584235346952197"
+            "4056631661436364584235346952198"
+            "4056631661436364584235346952199"
+            "4056631661436364584235346952200"
+            "4056631661436364584235346952201"
+            "4056631661436364584235346952208"
+          )
+
+          for name in "${cert_names[@]}"; do
+              cp rustpush/certs/legacy-fairplay/fairplay.pem rustpush/certs/fairplay/$name.pem
+              cp rustpush/certs/legacy-fairplay/fairplay.crt rustpush/certs/fairplay/$name.crt
+          done
 
       # Developer-only build for the first live read-only Cloud Sync V2 run.
       # The beta flavour is a separate applicationId, so it installs alongside
