@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:async_task/async_task.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
 import 'package:bluebubbles/utils/attachment_guid_utils.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
@@ -1165,8 +1166,29 @@ class Message {
         associatedMessageType = ReactionTypes.fromAssociatedMessageType(proto1.associatedMessageType!);
       }
     }
-    associatedMessageGuid = proto1.associatedMessageGuid;
-    associatedMessagePart = attributedBody.firstOrNull?.runs.firstWhereOrNull((b) => b.range[0] == proto1.associatedMessageRangeLocation && b.range[1] == proto1.associatedMessageRangeLength)?.attributes?.messagePart;
+    // Apple sends the parent as `p:<part>/<guid>`, or as a bare GUID when the
+    // reaction targets no particular part. This previously stored that value
+    // verbatim, so a wrapped parent never matched Message_.guid and every
+    // CloudKit reaction stayed orphaned from its parent. The part was also
+    // derived from the reaction's own attributed body, which the canonical
+    // mapping explicitly forbids: the associated range is validation evidence,
+    // not the source of the part.
+    final parentWire = proto1.associatedMessageGuid;
+    if (parentWire == null) {
+      associatedMessageGuid = null;
+      associatedMessagePart = null;
+    } else {
+      try {
+        final parent = CloudAssociatedMessageParentReference.parse(parentWire);
+        associatedMessageGuid = parent.localMessageGuid;
+        associatedMessagePart = parent.part;
+      } on CloudAssociatedMessageParentReferenceFormatException {
+        // Keep the message. An unparseable parent leaves the reaction
+        // unassociated rather than aborting the whole download.
+        associatedMessageGuid = null;
+        associatedMessagePart = null;
+      }
+    }
     guid = c.guid;
     var bits = c.flags.bits();
     isFromMe = (bits & IS_FROM_ME) != 0;
