@@ -602,17 +602,22 @@ impl PlatformCloudNativeProtectedStore {
             .map_err(|_| CloudNativeStoreFailure::Io)
     }
 
+    /// Windows exposes no directory-sync primitive.
+    ///
+    /// This previously opened the directory read-only with backup semantics and
+    /// called `sync_all`, which issues `FlushFileBuffers`. That call needs write
+    /// access and is not supported on a directory handle, so it always failed
+    /// and took every enclosing store operation down with it. Eighteen lease and
+    /// recovery tests failed on Windows for this reason alone, each reporting an
+    /// opaque `Io` because the underlying error is discarded.
+    ///
+    /// Established practice is a no-op here rather than pretending to a
+    /// guarantee the platform does not provide. Durability of a rename on
+    /// Windows therefore rests on startup reconciliation, which treats the
+    /// database as authoritative and repairs the staging directory against it.
     #[cfg(windows)]
-    fn sync_directory(path: &Path) -> Result<(), CloudNativeStoreFailure> {
-        use std::os::windows::fs::OpenOptionsExt;
-
-        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
-        OpenOptions::new()
-            .read(true)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-            .open(path)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|_| CloudNativeStoreFailure::Io)
+    fn sync_directory(_path: &Path) -> Result<(), CloudNativeStoreFailure> {
+        Ok(())
     }
 
     #[cfg(not(any(unix, windows)))]
