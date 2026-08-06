@@ -1,8 +1,9 @@
 /// A validated CloudKit reference to the local parent of an associated message.
 ///
 /// Apple encodes the reference as `p:<part>/<message-guid>` when the reaction
-/// targets a specific part, and as a bare `<message-guid>` when it targets the
-/// message as a whole. The raw envelope is accepted only at the parsing
+/// targets a specific part, `bp:<part>/<message-guid>` for a bubble or tapback
+/// message, and as a bare `<message-guid>` when it targets the message as a
+/// whole. The raw envelope is accepted only at the parsing
 /// boundary and is never retained. In particular, diagnostic rendering must not
 /// reveal the message GUID.
 final class CloudAssociatedMessageParentReference {
@@ -23,9 +24,12 @@ final class CloudAssociatedMessageParentReference {
 
   static CloudAssociatedMessageParentReference parse(String encoded) {
     const prefix = 'p:';
+    const bubblePrefix = 'bp:';
     const separatorLength = 1;
+    // Bound against the longer prefix so a maximal `bp:` value is not rejected
+    // one code unit early.
     const maximumEncodedCodeUnits =
-        prefix.length +
+        bubblePrefix.length +
         _maximumPartDigits +
         separatorLength +
         maximumGuidCodeUnits;
@@ -33,10 +37,18 @@ final class CloudAssociatedMessageParentReference {
       throw const CloudAssociatedMessageParentReferenceFormatException();
     }
 
-    if (!encoded.startsWith(prefix)) {
+    // Apple uses `p:` for an ordinary message part and `bp:` for a bubble or
+    // tapback message. Both name a parent GUID and a part, and this app's JSON
+    // ingestion path has always stripped `bp:` for that reason. `bpdi:` is the
+    // balloon payload reference and is deliberately not accepted.
+    final matchedPrefix = encoded.startsWith(prefix)
+        ? prefix
+        : (encoded.startsWith(bubblePrefix) ? bubblePrefix : null);
+
+    if (matchedPrefix == null) {
       // The partless form is a bare GUID. It must carry no structure of its
-      // own, or a malformed wrapper such as `0/<guid>` or `bp:0/<guid>` would
-      // be accepted whole as the parent identifier.
+      // own, or a malformed wrapper such as `0/<guid>` or `bpdi:0/<guid>`
+      // would be accepted whole as the parent identifier.
       if (encoded.contains('/') ||
           encoded.contains(':') ||
           !_isValidGuid(encoded)) {
@@ -48,14 +60,14 @@ final class CloudAssociatedMessageParentReference {
       );
     }
 
-    final separator = encoded.indexOf('/', prefix.length);
+    final separator = encoded.indexOf('/', matchedPrefix.length);
     if (separator == -1 ||
         encoded.indexOf('/', separator + 1) != -1 ||
-        separator == prefix.length) {
+        separator == matchedPrefix.length) {
       throw const CloudAssociatedMessageParentReferenceFormatException();
     }
 
-    final encodedPart = encoded.substring(prefix.length, separator);
+    final encodedPart = encoded.substring(matchedPrefix.length, separator);
     // Reject a non-canonical part spelling. The native parser rejects leading
     // zeros, and accepting them here made `p:0003/<guid>` convert on one side
     // of the bridge and quarantine on the other.

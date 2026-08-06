@@ -67,24 +67,6 @@ jobs:
               cp rustpush/certs/legacy-fairplay/fairplay.crt rustpush/certs/fairplay/$name.crt
           done
 
-      - name: Run focused message helper tests
-        run: flutter test test/helpers/message_helper_test.dart
-
-      - name: Run bounded memory cache tests
-        run: >-
-          flutter test
-          test/helpers/memory/bounded_byte_cache_test.dart
-          test/helpers/memory/bounded_lru_map_test.dart
-
-      - name: Run delivery, media, and CloudKit state tests
-        run: >-
-          flutter test --no-pub
-          test/layouts/fullscreen_media/fullscreen_media_list_test.dart
-          test/services/apple_network_health_test.dart
-          test/services/cloud_message_upload_state_test.dart
-          test/services/conversation_media_pager_test.dart
-          test/services/trusted_device_2fa_fallback_test.dart
-
       # The Dart test host loads the ObjectBox C library from the system loader
       # path, and the runner image does not ship one. Without this the Cloud
       # Sync suite fails 63 ObjectBox-backed tests with a dynamic-library error
@@ -115,8 +97,12 @@ jobs:
           fi
           echo "LD_LIBRARY_PATH=$(dirname "$library")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
 
-      - name: Run Cloud Sync V2 offline safety suite
-        run: flutter test --no-pub test/services/cloud_sync
+      # Deliberately the whole suite rather than an enumerated list. The list
+      # had drifted: eleven test files were never executed by any workflow,
+      # including the only coverage for the attachment-GUID parser and the
+      # reaction-type mapper. A test that cannot fail a build is not a gate.
+      - name: Run the Dart test suite
+        run: flutter test
 
       # This gate is a .ps1 shared with local Windows runs, so install pwsh
       # rather than forking the scan logic into a second implementation that

@@ -11,6 +11,17 @@ void main() {
     expect(reference.localMessageGuid, 'ABCDEF12-3456-7890-ABCD-EF1234567890');
   });
 
+  test('accepts the bubble/tapback bp: spelling', () {
+    // The app's own JSON ingestion path strips `bp:`, so it is a real shape.
+    // Rejecting it dropped the association entirely.
+    final reference = CloudAssociatedMessageParentReference.parse(
+      'bp:2/ABCDEF12-3456-7890-ABCD-EF1234567890',
+    );
+
+    expect(reference.part, 2);
+    expect(reference.localMessageGuid, 'ABCDEF12-3456-7890-ABCD-EF1234567890');
+  });
+
   test('accepts a bare GUID as the partless form', () {
     // Apple drops the wrapper when a reaction targets no particular part.
     // Requiring the prefix quarantined every partless reaction.
@@ -44,7 +55,6 @@ void main() {
 
   test('rejects wrappers and structured values that are not bare GUIDs', () {
     for (final value in <String>[
-      'bp:0/message-guid',
       'bpdi:0/message-guid',
       '0/message-guid',
       'P:0/message-guid',

@@ -1787,7 +1787,17 @@ pub(crate) fn parse_associated_parent(
     // only rejects empty, oversized, and NUL-bearing values, so without this
     // check a malformed wrapper like `0/<guid>` or `bp:0/<guid>` would be
     // accepted whole as if it were the parent identifier.
-    let Some(body) = value.strip_prefix("p:") else {
+    // Apple uses `p:` for an ordinary message part and `bp:` for a bubble or
+    // tapback message. Both name the same thing, a parent GUID and a part, and
+    // the app's own JSON ingestion path has always stripped `bp:` for exactly
+    // that reason. Rejecting it dropped the association.
+    //
+    // `bpdi:` is deliberately not accepted. That is the balloon payload MMCS
+    // reference, not a parent.
+    let stripped = value
+        .strip_prefix("p:")
+        .or_else(|| value.strip_prefix("bp:"));
+    let Some(body) = stripped else {
         if value.contains('/') || value.contains(':') {
             return Err(CloudCanonicalValidationFailure::MalformedAssociatedParent);
         }
@@ -2391,9 +2401,14 @@ mod tests {
         // A bare value carries no structure of its own. Without this the
         // identifier validator, which only rejects empty, oversized, and
         // NUL-bearing values, would accept a malformed wrapper whole.
+        // `bp:` is the bubble/tapback spelling of the same reference and is
+        // accepted; `bpdi:` is a balloon payload reference and is not.
+        let bubble = parse_associated_parent("bp:2/PARENT-GUID").expect("bubble parent");
+        assert_eq!(bubble.parent_part, Some(2));
+        assert_eq!(bubble.parent_guid, "PARENT-GUID");
+
         for malformed in [
             "0/guid",
-            "bp:0/guid",
             "bpdi:0/guid",
             "P:0/guid",
             "r:0:guid",
@@ -2417,7 +2432,7 @@ mod tests {
         assert!(!format!("{parsed:?}").contains("PARENT"));
 
         for malformed in [
-            "bp:7/guid",
+            "bpdi:7/guid",
             "p:/guid",
             "p:x/guid",
             "p:07/guid",

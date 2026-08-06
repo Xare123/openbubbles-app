@@ -58,3 +58,16 @@ jobs:
 
       - name: Compile committed Rust bridge
         run: cargo check --manifest-path rust/Cargo.toml --lib --message-format short
+
+      # cargo check --lib does not even compile #[cfg(test)] code, so until now
+      # no Rust test in this repository could fail a build. That covered the
+      # canonical converter, the DTO parsers, the protected store, and the
+      # keyed identity hasher. A suite that cannot fail a build is not a gate.
+      - name: Run Rust tests
+        run: cargo test --manifest-path rust/Cargo.toml --lib
+
+      # The protector harness is a separate crate and is deliberately
+      # dependency-light so these security invariants can run on hosts where the
+      # full application crate cannot build.
+      - name: Run the Cloud Sync protector harness
+        run: cargo test --manifest-path rust/cloud_sync_protector_harness/Cargo.toml
