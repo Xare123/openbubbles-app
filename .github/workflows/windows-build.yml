@@ -87,9 +87,20 @@ jobs:
           }
 
           & "$flutterRoot\bin\flutter.bat" precache --windows
-          $engineDirectory = "$flutterRoot\bin\cache\artifacts\engine\windows-arm64-release"
-          if (-not (Test-Path $engineDirectory)) {
-            throw "Flutter did not install the native Windows ARM64 release engine."
+
+          # precache fetches only the host debug engine, "windows-arm64".
+          # The profile and release engines download on demand during the build,
+          # so asserting windows-arm64-release here always fails. Verified by
+          # reproducing this exact sequence on an ARM64 host: precache produced
+          # windows-arm64 alongside the archive's x64 engines and no
+          # windows-arm64-release. What matters at this point is that Flutter
+          # resolved ARM64 artifacts at all rather than silently staying on x64.
+          $engineRoot = "$flutterRoot\bin\cache\artifacts\engine"
+          if (-not (Test-Path "$engineRoot\windows-arm64")) {
+            $present = (Get-ChildItem $engineRoot -Directory -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -like 'windows*' } |
+              Select-Object -ExpandProperty Name) -join ', '
+            throw "Flutter did not install a native Windows ARM64 engine. Present: $present"
           }
 
       - name: Resolve Flutter dependencies
