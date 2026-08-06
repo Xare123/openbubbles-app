@@ -80,6 +80,15 @@ jobs:
           Remove-Item -Force "$flutterRoot\bin\cache\engine-dart-sdk.stamp" -ErrorAction SilentlyContinue
           & "$flutterRoot\bin\internal\update_dart_sdk.ps1"
 
+          # flutter_tools.snapshot ships compiled for the archive's x64 Dart VM.
+          # Once the VM above is ARM64 that snapshot is rejected with "Snapshot
+          # not compatible with the current VM configuration", so every later
+          # flutter command fails and no ARM64 engine is ever fetched. Dropping
+          # the snapshot and its stamp makes the next flutter invocation
+          # recompile the tool against the ARM64 VM.
+          Remove-Item -Force "$flutterRoot\bin\cache\flutter_tools.snapshot" -ErrorAction SilentlyContinue
+          Remove-Item -Force "$flutterRoot\bin\cache\flutter_tools.stamp" -ErrorAction SilentlyContinue
+
           $dartVersion = & "$flutterRoot\bin\dart.bat" --version 2>&1 | Out-String
           Write-Host $dartVersion
           if ($dartVersion -notmatch "windows_arm64") {
