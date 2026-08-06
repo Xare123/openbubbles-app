@@ -39,6 +39,9 @@ timestamp: 2026-07-31
 - [Cloud Sync V2 path to production](CLOUD_SYNC_V2_PATH_TO_PRODUCTION.md):
   dependency-ordered remaining sequence, separating code work from work that
   needs live Apple access, hardware, or a licensing decision.
+- [Cloud Sync V2 field ownership](CLOUD_SYNC_V2_FIELD_OWNERSHIP.md): which
+  fields the server owns, which the device owns, and the merge rule each class
+  carries.
 - [Cloud Sync V2 provenance ledger](CLOUD_SYNC_V2_PROVENANCE_LEDGER.md):
   per-idea record of borrowed protocol facts and patterns, their source licence,
   and the file implementing each one.

@@ -78,6 +78,32 @@ Nothing here needs a device or an Apple account.
    it. This is a question for the first live fetch, but the transport must be
    able to *record* the distinction before that run, or the run cannot answer it.
 
+4. **Decide what unblocks a stalled applied floor.** `_advanceContiguousApplied`
+   stops at the first inbox row whose status is not `applied`, and a
+   `quarantined` row therefore blocks the checkpoint permanently. That is
+   deliberate: the design refuses to skip a change. What is missing is any
+   bound on the stall.
+
+   The consequence chain is worth stating plainly. One malformed record blocks
+   the floor, the pending journal keeps growing, the journal budget eventually
+   refuses further fetches, and sync stops. If the stall outlasts the CloudKit
+   change-token lifetime the token expires and the cost is a full re-bootstrap
+   of the entire zone, which is far worse than the single record that caused it.
+   That lifetime is undocumented, so no safe stall duration can be assumed.
+
+   Two options, and this needs an explicit choice rather than a default:
+
+   - **Advance past a terminal quarantine.** The row stays in the inbox as
+     evidence, so nothing is dropped, but the checkpoint moves past it and
+     CloudKit will not re-offer that record. Recovery then depends on a
+     fetch-by-record-name sweep that does not exist yet.
+   - **Keep blocking, but bound the stall by token age** and force a decision
+     before the token can expire. Preserves the no-skip guarantee at the cost
+     of needing a token-age estimate we do not have.
+
+   Whichever is chosen, the stall must become observable first. Today a blocked
+   floor produces no diagnostic at all, so the symptom is sync quietly stopping.
+
 Exit: CI green on all lanes with the corrections landed.
 
 ### Stage 2 — first live read-only run
@@ -90,14 +116,14 @@ Keychain on with the device admitted to the clique; a trusted device passcode,
 because PCS keys are only available to trusted devices and under Advanced Data
 Protection there is no server-side fallback at all; and local 2FA entry.
 
-4. **Install the sampler build** on a device whose profile is separate from any
+5. **Install the sampler build** on a device whose profile is separate from any
    real account, and verify package identity, UID, native ABI, and data
    directory before trusting isolation.
-5. **One manual read-only pass, then an immediate replay in the same session.**
+6. **One manual read-only pass, then an immediate replay in the same session.**
    The replay must be in-session: the journal budget rejects pending entries
    older than 24 hours, so a next-day replay can be legitimately blocked and
    will look like a failure.
-6. **Read the result carefully.** A zone that returns `completed` with
+7. **Read the result carefully.** A zone that returns `completed` with
    `fetched: 0` and no failure category is a success, but an empty zone and a
    never-populated zone are indistinguishable in the report. Confirm upload
    from the Mac first or this stage proves only that transport works.
@@ -111,21 +137,22 @@ message semantics.
 The largest block of code work, and the first point at which the local message
 database is written by this path.
 
-7. **Widen the bridge once.** The transient DTO carries a narrow subset and no
+8. **Widen the bridge once.** The transient DTO carries a narrow subset and no
    canonical GUID for chats or messages. Widening it is a binding regeneration,
    which is disruptive, so it should happen once and deliberately rather than
    incrementally.
-8. **Implement the Dart semantic decoder.** None exists today; the interface
+9. **Implement the Dart semantic decoder.** None exists today; the interface
    has no implementation outside test fakes.
-9. **Expand the production entity adapter** to map onto the real `Chat`,
+10. **Expand the production entity adapter** to map onto the real `Chat`,
    `Message`, `Handle`, and `Attachment` entities. The legacy `applyFromCloud`
    path is the field-by-field reference implementation and already handles
-   attributed bodies, edits, retractions, and reply parents.
-10. **Respect the transaction boundary.** The gateway already performs the whole
+   attributed bodies, edits, retractions, and reply parents. Field classes and
+   merge rules are specified in [field ownership](CLOUD_SYNC_V2_FIELD_OWNERSHIP.md).
+11. **Respect the transaction boundary.** The gateway already performs the whole
     multi-box transition in one write transaction. The adapter cannot reuse the
     entities' own `save()` methods, which open their own transactions, and
     `Handle.save()` reaches into the contacts service.
-11. **Prove no duplicate rows.** `Message.guid` is unique, and the legacy
+12. **Prove no duplicate rows.** `Message.guid` is unique, and the legacy
     CloudKit path still ships. A live coexistence test is the only way to show
     V2 does not create duplicates alongside it.
 
@@ -134,16 +161,16 @@ x64, with zero lost and zero duplicated logical message GUIDs.
 
 ### Stage 4 — writes
 
-12. Durable dependency-aware outbox, explicit per-record confirmation, then
+13. Durable dependency-aware outbox, explicit per-record confirmation, then
     tombstones behind their own flag. Deletion stays disabled until its own
     review.
 
 ### Stage 5 — rollout
 
-13. Android wake-cost suite under Doze, Battery Saver, locked screen, and 24-hour
+14. Android wake-cost suite under Doze, Battery Saver, locked screen, and 24-hour
     idle, with paired sync-off and sync-on runs. No credible battery claim can
     be made before this, and none is made now.
-14. Staged rollout with the alarm thresholds already specified in the
+15. Staged rollout with the alarm thresholds already specified in the
     production-readiness notes wired as rollback signals.
 
 ## What is blocked on something other than code
