@@ -182,3 +182,36 @@ jobs:
         with:
           name: Alpha Debug APK
           path: build/app/outputs/flutter-apk/app-alpha-debug.apk
+
+      # Developer-only build for the first live read-only Cloud Sync V2 run.
+      # The beta flavour is a separate applicationId, so it installs alongside
+      # alpha without touching its database. Debug rather than release because
+      # the beta release config needs a signing keystore, and because the shadow
+      # report has no in-app export and must be pulled with adb run-as, which a
+      # release build does not permit.
+      - name: Build Beta Debug APK with the Cloud Sync V2 sampler
+        run: >-
+          flutter build apk --flavor beta --debug --target-platform android-arm64
+          --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true
+          --dart-define=OPENBUBBLES_BUILD_COMMIT=${{ github.sha }}
+
+      - name: Verify the beta APK carries the Rust bridge
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-beta-debug.apk
+          # CargoKit silently skipped the Rust build on Flutter 3.44.8 until the
+          # plugin-detection fix, producing a package that installs and cannot
+          # work. Fail here rather than ship that again.
+          for entry in lib/arm64-v8a/libflutter.so lib/arm64-v8a/librust_lib_bluebubbles.so; do
+            if ! unzip -l "$apk" | grep -q "$entry"; then
+              echo "beta APK is missing $entry" >&2
+              unzip -l "$apk" | grep 'lib/' >&2 || true
+              exit 1
+            fi
+          done
+          unzip -l "$apk" | grep 'lib/arm64-v8a/'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Beta Debug APK (Cloud Sync sampler)
+          path: build/app/outputs/flutter-apk/app-beta-debug.apk
