@@ -52,6 +52,15 @@ final class CloudKitOperationInterlock {
     database: 'private',
     zone: 'cloudkit-operation-fence',
   );
+  /// Storage key of the mutual-exclusion fence lease.
+  ///
+  /// This interlock holds a lease on a sentinel scope for the duration of the
+  /// work it guards, including while that work runs its own preflight. A
+  /// coordinator-lease probe must exclude this key, because a mutual-exclusion
+  /// fence is not another sync coordinator and an operation must not observe
+  /// itself as one.
+  static String get fenceScopeKey => _fenceScope.storageKey;
+
   static final Object _zoneLeaseKey = Object();
   static final Set<String> _locallyReservedPaths = <String>{};
 
