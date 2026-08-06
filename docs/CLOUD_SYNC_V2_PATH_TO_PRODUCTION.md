@@ -62,11 +62,24 @@ Dependency-ordered. Each step assumes the ones above it.
 
 Nothing here needs a device or an Apple account.
 
-1. **Land the protocol corrections** from the prior-art review: the reaction
-   parent grammar's bare-UUID case, the integer-typed `filt`/`sqry`/`ste`
-   fields, the removal of `bp`/`bpdi` handling from the record layer where
-   those keys do not exist, and the `MessageSummaryInfo` nesting depth. Each is
-   small, offline-testable, and independently landable.
+1. ~~**Land the protocol corrections** from the prior-art review.~~ **Done,
+   with one correction worth recording.** The reaction parent now accepts the
+   bare-GUID partless form and the `bp:` bubble/tapback spelling, both parsers
+   agree on the part spelling, and the legacy CloudKit download path parses the
+   parent instead of storing the wrapper.
+
+   Two of the four items in the original review were already correct in the
+   tree: `filt`/`sqry`/`ste` were already `i64`, and the `MessageSummaryInfo`
+   nesting was already right down to `bcg` inside `MessageEdit`.
+
+   The fourth was wrong, and the error is instructive. The review said
+   `bp`/`bpdi` are IDS wire keys rather than record fields. That is true of the
+   **field names** in the IDS payload, and says nothing about the `bp:`
+   **prefix** inside `associatedMessageGuid`, which is a real shape that this
+   app's own `Message.fromMap` has always stripped. Acting on the first
+   statement as though it covered the second briefly made both parsers reject a
+   valid parent. Field names and identifier prefixes are different things even
+   when they share letters.
 2. **Decide the zone set.** We synchronize three Manatee zones.
    `messageUpdateZone` and `recoverableMessageDeleteZone` also exist and are
    plausibly where edits and recoverable deletes live. If so, reconciliation
@@ -141,6 +154,11 @@ database is written by this path.
    canonical GUID for chats or messages. Widening it is a binding regeneration,
    which is disruptive, so it should happen once and deliberately rather than
    incrementally.
+
+   Carry the `EMPTY_LIST` observation across at the same time.
+   `CloudRawRecordPresence` already records which fields arrived with that wire
+   type, but nothing can read it from Dart, so the evidence is gathered and
+   discarded. It is held back rather than regenerated for one diagnostic field.
 9. **Implement the Dart semantic decoder.** None exists today; the interface
    has no implementation outside test fakes.
 10. **Expand the production entity adapter** to map onto the real `Chat`,

@@ -1070,7 +1070,15 @@ class Message {
         dateDelivered: dateDelivered != null ? RustPushBBUtils.nsSinceAppleEpoch(dateDelivered!) : 0,
         unk14: 0,
         associatedMessageType: amt,
-        associatedMessageGuid: associatedMessageGuid != null ? "p:$associatedMessagePart/$associatedMessageGuid" : null,
+        // Emit the bare GUID when there is no part. Interpolating a null part
+        // produced the literal "p:null/<guid>", which Apple never sends and
+        // which both of this app's parsers reject, so a round trip through the
+        // uploader could not be read back.
+        associatedMessageGuid: associatedMessageGuid == null
+            ? null
+            : (associatedMessagePart == null
+                ? associatedMessageGuid
+                : "p:$associatedMessagePart/$associatedMessageGuid"),
         associatedMessageRangeLength: associatedMessagePart != null ? Message.findOne(guid: associatedMessageGuid!)?.attributedBody[0].runs.firstWhere((r) => r.attributes!.messagePart == associatedMessagePart).range[1] : null,
         associatedMessageRangeLocation: associatedMessagePart != null ? Message.findOne(guid: associatedMessageGuid!)?.attributedBody[0].runs.firstWhere((r) => r.attributes!.messagePart == associatedMessagePart).range[0] : null
       )),

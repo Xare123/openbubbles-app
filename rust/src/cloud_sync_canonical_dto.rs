@@ -2390,6 +2390,30 @@ mod tests {
     }
 
     #[test]
+    fn partless_and_part_zero_are_distinct_payloads_sharing_one_parent_hash() {
+        // Pinning deliberate behaviour, not asserting it is semantically right.
+        //
+        // The parent hash covers only the GUID, so both spellings resolve to the
+        // same parent. The payload keeps the part, so they are not equal values.
+        // That is the truthful representation: for a single-part message a bare
+        // GUID and part 0 may well mean the same thing, but for a message with
+        // several parts "the message" and "its first part" are different
+        // targets, and nothing available offline settles which Apple intends.
+        //
+        // The consequence to watch for on a live run is one reaction arriving in
+        // both spellings, which would read here as a content change. Dart keeps
+        // the same distinction in storage and only coerces `?? 0` when matching
+        // for display.
+        let bare = parse_associated_parent("PARENT-GUID").expect("bare");
+        let zero = parse_associated_parent("p:0/PARENT-GUID").expect("part zero");
+
+        assert_eq!(bare.parent_guid, zero.parent_guid);
+        assert_ne!(bare.parent_part, zero.parent_part);
+        assert_eq!(bare.parent_part, None);
+        assert_eq!(zero.parent_part, Some(0));
+    }
+
+    #[test]
     fn associated_parent_accepts_a_bare_guid_as_the_partless_form() {
         // Apple drops the wrapper when a reaction targets no particular part.
         // Requiring the prefix quarantined every partless reaction.

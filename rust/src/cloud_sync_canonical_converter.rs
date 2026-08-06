@@ -652,15 +652,24 @@ impl CloudRawRecordPresence {
 
     /// Whether CloudKit sent this field as wire type `EMPTY_LIST`.
     ///
-    /// Diagnostic evidence for the first live fetch. Nothing in conversion
-    /// branches on it.
+    /// Deliberately unused outside tests for now. Surfacing it means adding a
+    /// field to the transient DTO, and that DTO must be widened once and
+    /// deliberately rather than regenerated for a single diagnostic. It is
+    /// recorded as a required item for that widening.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn was_sent_as_empty_list(&self, name: &str) -> bool {
         self.empty_list_fields.contains(name)
     }
 
-    /// Field names sent as `EMPTY_LIST`, for redacted diagnostics.
-    pub(crate) fn empty_list_field_names(&self) -> impl Iterator<Item = &str> {
-        self.empty_list_fields.iter().map(String::as_str)
+    /// Field names sent as `EMPTY_LIST`, sorted, for redacted diagnostics.
+    ///
+    /// Sorted because the backing set has no stable iteration order and this
+    /// is destined for a report that should not vary between runs.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn empty_list_field_names(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self.empty_list_fields.iter().map(String::as_str).collect();
+        names.sort_unstable();
+        names
     }
 
     /// Records an authoritative clear marker supplied by a pre-typed decoder.
@@ -3565,10 +3574,7 @@ mod tests {
         assert!(!presence.was_sent_as_empty_list("populated"));
         assert!(!presence.was_sent_as_empty_list("untyped"));
         assert!(!presence.was_sent_as_empty_list("absent"));
-        assert_eq!(
-            presence.empty_list_field_names().collect::<Vec<_>>(),
-            vec!["empty"]
-        );
+        assert_eq!(presence.empty_list_field_names(), vec!["empty"]);
 
         // Recording the observation must not move any conversion decision.
         // Whether an empty list means "clear" is unanswered, so it still reads
