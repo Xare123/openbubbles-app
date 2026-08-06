@@ -20,7 +20,7 @@ use rustpush::{
         cloudmessagesp::{MessageProto, MessageProto2, MessageProto4},
         AttachmentMeta, CloudChat, CloudMessage, MessageFlags, MessageSummaryInfo,
     },
-    cloudkit_proto::Record,
+    cloudkit_proto::{record::field::value::Type as CloudKitFieldType, Record},
 };
 use sha2::{Digest, Sha256};
 
@@ -549,6 +549,18 @@ pub(crate) struct CloudRawRecordPresence {
     nested_plist_keys: HashMap<String, HashSet<String>>,
     explicit_top_level_clears: HashSet<String>,
     explicit_nested_clears: HashSet<(String, String)>,
+    /// Field names CloudKit sent with wire type `EMPTY_LIST`.
+    ///
+    /// The wire format distinguishes "present but empty" from a field being
+    /// absent, and the merge contract depends on that distinction. It was
+    /// previously discarded at this boundary, so no live fetch could report
+    /// whether Apple emits it at all.
+    ///
+    /// Recorded as evidence only. No decision reads it, because whether an
+    /// empty list means "clear" is precisely the question a live run has to
+    /// answer, and inferring a meaning here would repeat the mistake of
+    /// inferring one from an empty summary dictionary.
+    empty_list_fields: HashSet<String>,
 }
 
 impl CloudRawRecordPresence {
@@ -557,6 +569,7 @@ impl CloudRawRecordPresence {
             return Err(CloudRawPresenceFailure::TooManyFields);
         }
         let mut fields = HashMap::with_capacity(record.record_field.len());
+        let mut empty_list_fields = HashSet::new();
         for field in &record.record_field {
             let name = field
                 .identifier
@@ -573,6 +586,14 @@ impl CloudRawRecordPresence {
             } else {
                 CloudRawFieldPresence::PresentWithoutValue
             };
+            if field
+                .value
+                .as_ref()
+                .and_then(|value| value.r#type)
+                .is_some_and(|kind| kind == CloudKitFieldType::EmptyList as i32)
+            {
+                empty_list_fields.insert(name.to_owned());
+            }
             if fields.insert(name.to_owned(), state).is_some() {
                 return Err(CloudRawPresenceFailure::DuplicateFieldIdentifier);
             }
@@ -582,6 +603,7 @@ impl CloudRawRecordPresence {
             nested_plist_keys: HashMap::new(),
             explicit_top_level_clears: HashSet::new(),
             explicit_nested_clears: HashSet::new(),
+            empty_list_fields,
         })
     }
 
@@ -626,6 +648,19 @@ impl CloudRawRecordPresence {
             .get(name)
             .copied()
             .unwrap_or(CloudRawFieldPresence::Absent)
+    }
+
+    /// Whether CloudKit sent this field as wire type `EMPTY_LIST`.
+    ///
+    /// Diagnostic evidence for the first live fetch. Nothing in conversion
+    /// branches on it.
+    pub(crate) fn was_sent_as_empty_list(&self, name: &str) -> bool {
+        self.empty_list_fields.contains(name)
+    }
+
+    /// Field names sent as `EMPTY_LIST`, for redacted diagnostics.
+    pub(crate) fn empty_list_field_names(&self) -> impl Iterator<Item = &str> {
+        self.empty_list_fields.iter().map(String::as_str)
     }
 
     /// Records an authoritative clear marker supplied by a pre-typed decoder.
@@ -3451,6 +3486,63 @@ mod tests {
         assert_eq!(
             presence.field("guid"),
             CloudRawFieldPresence::PresentWithoutValue
+        );
+    }
+
+    #[test]
+    fn presence_extractor_preserves_the_empty_list_wire_type() {
+        // CloudKit distinguishes "present but empty" from absent with its own
+        // wire type. Discarding the tag here left a live fetch unable to report
+        // whether Apple emits it, which is the evidence the merge contract
+        // depends on.
+        let record = Record {
+            record_field: vec![
+                Field {
+                    identifier: Some(field::Identifier {
+                        name: Some("empty".to_owned()),
+                    }),
+                    value: Some(field::Value {
+                        r#type: Some(CloudKitFieldType::EmptyList as i32),
+                        ..Default::default()
+                    }),
+                },
+                Field {
+                    identifier: Some(field::Identifier {
+                        name: Some("populated".to_owned()),
+                    }),
+                    value: Some(field::Value {
+                        r#type: Some(CloudKitFieldType::StringType as i32),
+                        string_value: Some("value".to_owned()),
+                        ..Default::default()
+                    }),
+                },
+                Field {
+                    identifier: Some(field::Identifier {
+                        name: Some("untyped".to_owned()),
+                    }),
+                    value: Some(field::Value::default()),
+                },
+            ],
+            ..Default::default()
+        };
+
+        let presence = CloudRawRecordPresence::extract(&record).unwrap();
+
+        assert!(presence.was_sent_as_empty_list("empty"));
+        assert!(!presence.was_sent_as_empty_list("populated"));
+        assert!(!presence.was_sent_as_empty_list("untyped"));
+        assert!(!presence.was_sent_as_empty_list("absent"));
+        assert_eq!(
+            presence.empty_list_field_names().collect::<Vec<_>>(),
+            vec!["empty"]
+        );
+
+        // Recording the observation must not move any conversion decision.
+        // Whether an empty list means "clear" is unanswered, so it still reads
+        // as an ordinary valued field until a live run settles the question.
+        assert_eq!(
+            presence.field("empty"),
+            CloudRawFieldPresence::PresentWithValue
         );
     }
 
