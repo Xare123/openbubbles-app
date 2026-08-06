@@ -1458,9 +1458,17 @@ fn decode_message_summary(
         ));
     }
 
+    // A present-but-empty edit collection is not a clear instruction. Apple's
+    // summary plist omits empty collections rather than sending them, so this
+    // shape carries no meaning we can act on, and treating it as "clear every
+    // edit" would wipe local edit history on a guess.
+    //
+    // This also brings the summary path in line with the record-level rule in
+    // this same file, where a clear requires an authoritative marker from a
+    // pre-typed decoder and raw presence alone is deliberately insufficient.
     let edits = if edit_state_present {
         if canonical_edits.is_empty() {
-            CloudCanonicalField::ExplicitClear
+            CloudCanonicalField::Absent
         } else {
             CloudCanonicalField::Value(canonical_edits)
         }
@@ -1471,9 +1479,11 @@ fn decode_message_summary(
             CloudCanonicalQuarantineReason::MalformedMessageSummary,
         ));
     };
+    // Same reasoning as the edit collection above: an empty retraction list is
+    // not an instruction to un-retract every part.
     let retracted_parts = if retraction_state_present {
         if retracted_parts.is_empty() {
-            CloudCanonicalField::ExplicitClear
+            CloudCanonicalField::Absent
         } else {
             CloudCanonicalField::Value(retracted_parts)
         }
@@ -2865,7 +2875,7 @@ mod tests {
     }
 
     #[test]
-    fn encoded_empty_attributed_and_summary_fields_preserve_explicit_clear() {
+    fn empty_summary_collections_do_not_become_a_clear_instruction() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let mut message = normal_message(Some(""));
         message.msg_proto.0.attributed_body = Some(coder_encode_flattened(&[]));
@@ -2880,13 +2890,20 @@ mod tests {
             payload.attributed_bodies_state(),
             crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::ExplicitClear
         );
+        // attributedBody is protobuf `optional bytes`, where present-and-empty
+        // is genuinely distinguishable from absent, so a clear is well founded
+        // there.
+        //
+        // The summary collections are not. Apple omits an empty collection
+        // rather than sending one, so an empty `ec`/`rp` carries no instruction
+        // and must not wipe local edit or retraction state.
         assert_eq!(
             payload.edits_state(),
-            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::ExplicitClear
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::Absent
         );
         assert_eq!(
             payload.retracted_parts_state(),
-            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::ExplicitClear
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::Absent
         );
     }
 
@@ -3237,7 +3254,23 @@ mod tests {
     fn reaction_cannot_smuggle_edit_or_retraction_state() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let mut reaction = reaction_message();
-        reaction.msg_proto.0.message_summary_info = Some(encoded_explicit_clear_message_summary());
+        // Carry real edit and retraction content. This previously used the
+        // all-empty summary and passed only because empty collections were
+        // being turned into a clear instruction, so the test was exercising
+        // that fabricated state rather than actual smuggled state.
+        let mut summary = MessageSummaryInfo {
+            ep: vec![0],
+            ..Default::default()
+        };
+        summary.ec.insert(
+            "0".to_owned(),
+            vec![WireMessageEdit {
+                t: plain_encoded_attributed_body("smuggled edit"),
+                d: 1_720_000_000_400.0,
+                bcg: None,
+            }],
+        );
+        reaction.msg_proto.0.message_summary_info = Some(encoded_message_summary(&summary));
         assert_eq!(
             convert_message(
                 &context(&hasher, "server-reaction-with-summary", None),
