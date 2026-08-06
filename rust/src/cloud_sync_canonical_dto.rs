@@ -960,7 +960,8 @@ impl Debug for CloudCanonicalAttributedBody {
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct CloudCanonicalParentReference {
     parent_guid: String,
-    parent_part: u32,
+    /// Absent when the reaction targets the whole message rather than a part.
+    parent_part: Option<u32>,
     parent_logical_key_hash: CloudCanonicalHash,
     range_location: Option<u32>,
     range_length: Option<u32>,
@@ -969,7 +970,7 @@ pub(crate) struct CloudCanonicalParentReference {
 impl CloudCanonicalParentReference {
     pub(crate) fn new(
         parent_guid: String,
-        parent_part: u32,
+        parent_part: Option<u32>,
         parent_logical_key_hash: CloudCanonicalHash,
         range_location: Option<u32>,
         range_length: Option<u32>,
@@ -1764,7 +1765,9 @@ impl ParsedOwnedAttachment {
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct ParsedAssociatedParent {
     parent_guid: String,
-    parent_part: u32,
+    /// Absent when Apple sent a bare GUID, meaning the reaction targets the
+    /// message rather than one of its parts.
+    parent_part: Option<u32>,
 }
 
 impl Debug for ParsedAssociatedParent {
@@ -1776,9 +1779,25 @@ impl Debug for ParsedAssociatedParent {
 pub(crate) fn parse_associated_parent(
     value: &str,
 ) -> Result<ParsedAssociatedParent, CloudCanonicalValidationFailure> {
-    let body = value
-        .strip_prefix("p:")
-        .ok_or(CloudCanonicalValidationFailure::MalformedAssociatedParent)?;
+    // Apple omits the wrapper entirely when a reaction targets no particular
+    // part, so a bare GUID is the ordinary partless encoding rather than a
+    // malformed value. Requiring the prefix quarantined every such reaction.
+    //
+    // A bare GUID must still carry no structure of its own: `validate_identifier`
+    // only rejects empty, oversized, and NUL-bearing values, so without this
+    // check a malformed wrapper like `0/<guid>` or `bp:0/<guid>` would be
+    // accepted whole as if it were the parent identifier.
+    let Some(body) = value.strip_prefix("p:") else {
+        if value.contains('/') || value.contains(':') {
+            return Err(CloudCanonicalValidationFailure::MalformedAssociatedParent);
+        }
+        validate_identifier(value)
+            .map_err(|_| CloudCanonicalValidationFailure::MalformedAssociatedParent)?;
+        return Ok(ParsedAssociatedParent {
+            parent_guid: value.to_owned(),
+            parent_part: None,
+        });
+    };
     let (part, parent_guid) = body
         .split_once('/')
         .ok_or(CloudCanonicalValidationFailure::MalformedAssociatedParent)?;
@@ -1797,7 +1816,7 @@ pub(crate) fn parse_associated_parent(
         .map_err(|_| CloudCanonicalValidationFailure::MalformedAssociatedParent)?;
     Ok(ParsedAssociatedParent {
         parent_guid: parent_guid.to_owned(),
-        parent_part,
+        parent_part: Some(parent_part),
     })
 }
 
@@ -1806,7 +1825,7 @@ impl ParsedAssociatedParent {
         &self.parent_guid
     }
 
-    pub(crate) fn parent_part(&self) -> u32 {
+    pub(crate) fn parent_part(&self) -> Option<u32> {
         self.parent_part
     }
 }
@@ -2226,7 +2245,7 @@ mod tests {
 
         let parent = CloudCanonicalParentReference::new(
             "parent-guid".to_owned(),
-            0,
+            Some(0),
             hash('P'),
             Some(0),
             Some(4),
@@ -2361,9 +2380,39 @@ mod tests {
     }
 
     #[test]
+    fn associated_parent_accepts_a_bare_guid_as_the_partless_form() {
+        // Apple drops the wrapper when a reaction targets no particular part.
+        // Requiring the prefix quarantined every partless reaction.
+        let parsed = parse_associated_parent("PARENT-GUID").expect("bare associated parent");
+        assert_eq!(parsed.parent_part, None);
+        assert_eq!(parsed.parent_guid, "PARENT-GUID");
+        assert!(!format!("{parsed:?}").contains("PARENT"));
+
+        // A bare value carries no structure of its own. Without this the
+        // identifier validator, which only rejects empty, oversized, and
+        // NUL-bearing values, would accept a malformed wrapper whole.
+        for malformed in [
+            "0/guid",
+            "bp:0/guid",
+            "bpdi:0/guid",
+            "P:0/guid",
+            "r:0:guid",
+            "guid/extra",
+            "guid:extra",
+            "",
+        ] {
+            assert_eq!(
+                parse_associated_parent(malformed),
+                Err(CloudCanonicalValidationFailure::MalformedAssociatedParent),
+                "{malformed}"
+            );
+        }
+    }
+
+    #[test]
     fn associated_parent_parser_requires_exact_unambiguous_prefix_part_and_guid() {
         let parsed = parse_associated_parent("p:7/PARENT-GUID").expect("associated parent");
-        assert_eq!(parsed.parent_part, 7);
+        assert_eq!(parsed.parent_part, Some(7));
         assert_eq!(parsed.parent_guid, "PARENT-GUID");
         assert!(!format!("{parsed:?}").contains("PARENT"));
 
@@ -2485,7 +2534,7 @@ mod tests {
     #[test]
     fn emoji_reaction_requires_transient_emoji_content() {
         let parent = || {
-            CloudCanonicalParentReference::new("parent".to_owned(), 0, hash('P'), None, None)
+            CloudCanonicalParentReference::new("parent".to_owned(), Some(0), hash('P'), None, None)
                 .expect("parent")
         };
         let result = CloudCanonicalMessagePayload::new(

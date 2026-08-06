@@ -1,8 +1,10 @@
 /// A validated CloudKit reference to the local parent of an associated message.
 ///
-/// Apple encodes the reference as `p:<part>/<message-guid>`. The raw envelope
-/// is accepted only at the parsing boundary and is never retained. In
-/// particular, diagnostic rendering must not reveal the message GUID.
+/// Apple encodes the reference as `p:<part>/<message-guid>` when the reaction
+/// targets a specific part, and as a bare `<message-guid>` when it targets the
+/// message as a whole. The raw envelope is accepted only at the parsing
+/// boundary and is never retained. In particular, diagnostic rendering must not
+/// reveal the message GUID.
 final class CloudAssociatedMessageParentReference {
   const CloudAssociatedMessageParentReference._({
     required this.part,
@@ -14,7 +16,9 @@ final class CloudAssociatedMessageParentReference {
   static const int maximumGuidCodeUnits = 512;
   static const int _maximumPartDigits = 19;
 
-  final int part;
+  /// Null when Apple sent a bare GUID, meaning the reaction targets the whole
+  /// message rather than one of its parts.
+  final int? part;
   final String localMessageGuid;
 
   static CloudAssociatedMessageParentReference parse(String encoded) {
@@ -25,9 +29,23 @@ final class CloudAssociatedMessageParentReference {
         _maximumPartDigits +
         separatorLength +
         maximumGuidCodeUnits;
-    if (encoded.length > maximumEncodedCodeUnits ||
-        !encoded.startsWith(prefix)) {
+    if (encoded.length > maximumEncodedCodeUnits) {
       throw const CloudAssociatedMessageParentReferenceFormatException();
+    }
+
+    if (!encoded.startsWith(prefix)) {
+      // The partless form is a bare GUID. It must carry no structure of its
+      // own, or a malformed wrapper such as `0/<guid>` or `bp:0/<guid>` would
+      // be accepted whole as the parent identifier.
+      if (encoded.contains('/') ||
+          encoded.contains(':') ||
+          !_isValidGuid(encoded)) {
+        throw const CloudAssociatedMessageParentReferenceFormatException();
+      }
+      return CloudAssociatedMessageParentReference._(
+        part: null,
+        localMessageGuid: encoded,
+      );
     }
 
     final separator = encoded.indexOf('/', prefix.length);
@@ -38,8 +56,12 @@ final class CloudAssociatedMessageParentReference {
     }
 
     final encodedPart = encoded.substring(prefix.length, separator);
+    // Reject a non-canonical part spelling. The native parser rejects leading
+    // zeros, and accepting them here made `p:0003/<guid>` convert on one side
+    // of the bridge and quarantine on the other.
     if (encodedPart.length > _maximumPartDigits ||
-        !_isAsciiDecimal(encodedPart)) {
+        !_isAsciiDecimal(encodedPart) ||
+        (encodedPart.length > 1 && encodedPart.startsWith('0'))) {
       throw const CloudAssociatedMessageParentReferenceFormatException();
     }
     final part = int.tryParse(encodedPart);

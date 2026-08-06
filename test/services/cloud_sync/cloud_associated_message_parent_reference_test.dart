@@ -2,34 +2,55 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test(
-    'normalizes an exact parent reference to local GUID and numeric part',
-    () {
-      final reference = CloudAssociatedMessageParentReference.parse(
-        'p:0003/ABCDEF12-3456-7890-ABCD-EF1234567890',
-      );
+  test('normalizes an exact parent reference to local GUID and numeric part', () {
+    final reference = CloudAssociatedMessageParentReference.parse(
+      'p:3/ABCDEF12-3456-7890-ABCD-EF1234567890',
+    );
 
-      expect(reference.part, 3);
-      expect(
-        reference.localMessageGuid,
-        'ABCDEF12-3456-7890-ABCD-EF1234567890',
-      );
-      expect(
-        reference,
-        CloudAssociatedMessageParentReference.parse(
-          'p:3/ABCDEF12-3456-7890-ABCD-EF1234567890',
-        ),
-      );
-    },
-  );
+    expect(reference.part, 3);
+    expect(reference.localMessageGuid, 'ABCDEF12-3456-7890-ABCD-EF1234567890');
+  });
 
-  test('rejects non-parent prefixes and raw unprefixed values', () {
+  test('accepts a bare GUID as the partless form', () {
+    // Apple drops the wrapper when a reaction targets no particular part.
+    // Requiring the prefix quarantined every partless reaction.
+    final reference = CloudAssociatedMessageParentReference.parse(
+      'ABCDEF12-3456-7890-ABCD-EF1234567890',
+    );
+
+    expect(reference.part, isNull);
+    expect(reference.localMessageGuid, 'ABCDEF12-3456-7890-ABCD-EF1234567890');
+  });
+
+  test('rejects an empty reference', () {
+    expect(
+      () => CloudAssociatedMessageParentReference.parse(''),
+      throwsA(isA<CloudAssociatedMessageParentReferenceFormatException>()),
+    );
+  });
+
+  test('rejects a non-canonical part spelling', () {
+    // The native parser rejects leading zeros. Accepting them here made the
+    // same wire value convert on one side of the bridge and quarantine on the
+    // other.
+    for (final value in <String>[
+      'p:0003/message-guid',
+      'p:00/message-guid',
+      'p:01/message-guid',
+    ]) {
+      expectInvalid(value);
+    }
+  });
+
+  test('rejects wrappers and structured values that are not bare GUIDs', () {
     for (final value in <String>[
       'bp:0/message-guid',
       'bpdi:0/message-guid',
       '0/message-guid',
-      'message-guid',
       'P:0/message-guid',
+      'r:0:message-guid',
+      'message-guid/extra',
+      'message-guid:extra',
     ]) {
       expectInvalid(value);
     }
