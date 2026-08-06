@@ -19,7 +19,9 @@ on:
 
 jobs:
   bindings:
-    runs-on: ubuntu-latest
+    # Generated bindings must be reproducible, so pin the image instead of
+    # letting ubuntu-latest drift the toolchain under the drift check.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:

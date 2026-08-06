@@ -3,7 +3,10 @@ name: Build
 jobs:
   build:
     name: OpenBubbles APK
-    runs-on: ubuntu-latest
+    # Pinned rather than ubuntu-latest so the image cannot drift underneath the
+    # gates. ubuntu-latest moved to an image without PowerShell, which silently
+    # broke the protected-data logging scan below.
+    runs-on: ubuntu-24.04
     steps:
       - name: Free Disk Space (Ubuntu)
         uses: jlumbroso/free-disk-space@main
@@ -114,6 +117,20 @@ jobs:
 
       - name: Run Cloud Sync V2 offline safety suite
         run: flutter test --no-pub test/services/cloud_sync
+
+      # This gate is a .ps1 shared with local Windows runs, so install pwsh
+      # rather than forking the scan logic into a second implementation that
+      # could drift. Guarded so a runner image that already ships PowerShell
+      # costs nothing.
+      - name: Ensure PowerShell is available
+        run: |
+          set -euo pipefail
+          if command -v pwsh >/dev/null 2>&1; then
+            pwsh --version
+            exit 0
+          fi
+          sudo snap install powershell --classic
+          pwsh --version
 
       - name: Scan Rust diagnostics for protected-data logging
         shell: pwsh
