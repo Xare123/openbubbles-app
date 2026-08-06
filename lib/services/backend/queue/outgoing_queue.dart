@@ -11,9 +11,9 @@ OutgoingQueue outq = Get.isRegistered<OutgoingQueue>() ? Get.find<OutgoingQueue>
 class OutgoingQueue extends Queue {
 
   @override
-  Future<dynamic> prepItem(QueueItem _) async {
-    assert(_ is OutgoingItem);
-    final item = _ as OutgoingItem;
+  Future<dynamic> prepItem(QueueItem queueItem) async {
+    assert(queueItem is OutgoingItem);
+    final item = queueItem as OutgoingItem;
 
     switch (item.type) {
       case QueueType.sendMultipart:
@@ -53,9 +53,9 @@ class OutgoingQueue extends Queue {
   }
 
   @override
-  Future<void> handleQueueItem(QueueItem _) async {
-    assert(_ is OutgoingItem);
-    final item = _ as OutgoingItem;
+  Future<void> handleQueueItem(QueueItem queueItem) async {
+    assert(queueItem is OutgoingItem);
+    final item = queueItem as OutgoingItem;
 
     switch (item.type) {
       case QueueType.sendMessage:

@@ -28,7 +28,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.24.0
+          flutter-version: 3.44.8
 
       - name: Set up Java
         uses: actions/setup-java@v2
@@ -73,7 +73,28 @@ jobs:
           test/helpers/memory/bounded_byte_cache_test.dart
           test/helpers/memory/bounded_lru_map_test.dart
 
-      # First run is expected to fail until ffmpeg_kit_flutter_new is fixed.
+      - name: Run delivery, media, and CloudKit state tests
+        run: >-
+          flutter test --no-pub
+          test/layouts/fullscreen_media/fullscreen_media_list_test.dart
+          test/services/apple_network_health_test.dart
+          test/services/cloud_message_upload_state_test.dart
+          test/services/conversation_media_pager_test.dart
+          test/services/trusted_device_2fa_fallback_test.dart
+
+      - name: Run Cloud Sync V2 offline safety suite
+        run: flutter test --no-pub test/services/cloud_sync
+
+      - name: Scan Rust diagnostics for protected-data logging
+        shell: pwsh
+        run: >-
+          ./tooling/cloud_sync/check_sensitive_rust_logs.ps1
+          -RepositoryRoot $env:GITHUB_WORKSPACE
+
+      - name: Run Android cold-start delivery tests
+        working-directory: android
+        run: ./gradlew :app:testAlphaDebugUnitTest :app:compileAlphaDebugKotlin
+
       - name: Build Alpha Profile APK
         run: flutter build apk --flavor alpha --profile --target-platform android-arm64
 

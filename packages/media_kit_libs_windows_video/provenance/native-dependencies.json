@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "upstream_package": {
+    "name": "media_kit_libs_windows_video",
+    "version": "1.0.11",
+    "repository": "https://github.com/media-kit/media-kit",
+    "license": "MIT"
+  },
+  "angle": {
+    "source_url": "https://chromium.googlesource.com/angle/angle.git",
+    "source_commit": "cd05752a5137b5f068c11a7a3561e7441a34df75",
+    "source_license": "BSD-style with third-party notices",
+    "depot_tools_url": "https://chromium.googlesource.com/chromium/tools/depot_tools.git",
+    "depot_tools_commit": "e154c8eda5e63cbe85a765ae9d06e2b7af05139e",
+    "gn_args_common": [
+      "is_debug=false",
+      "is_component_build=false",
+      "is_clang=true",
+      "clang_use_chrome_plugins=false",
+      "symbol_level=0",
+      "angle_build_tests=false",
+      "angle_enable_d3d11=true",
+      "angle_enable_gl=false",
+      "angle_enable_vulkan=false",
+      "angle_enable_vulkan_system_info=false",
+      "use_remoteexec=false"
+    ],
+    "runtime_files": {
+      "x64": [
+        "bin/libEGL.dll",
+        "bin/libGLESv2.dll"
+      ],
+      "arm64": [
+        "bin/libEGL.dll",
+        "bin/libGLESv2.dll"
+      ]
+    }
+  },
+  "libmpv": {
+    "builder_repository": "https://github.com/media-kit/libmpv-win32-video-cmake",
+    "builder_commit": "8ddbe5472465950b87853789f7173f2eedc5586a",
+    "release": "20241021",
+    "release_url": "https://github.com/media-kit/libmpv-win32-video-cmake/releases/tag/20241021",
+    "mpv_commit": "0f7858451817c5fd5ebdb74a807a7c997662c390",
+    "license_mode_evidence": {
+      "mpv_configure": "-Dgpl=false",
+      "ffmpeg_configure": "--disable-gpl --disable-nonfree --enable-version3",
+      "redistribution_status": "blocked_pending_transitive_license_inventory"
+    },
+    "release_audit": {
+      "verified_builder_commit": "8ddbe5472465950b87853789f7173f2eedc5586a",
+      "archive_inventory": {
+        "x64_entry_count": 8,
+        "arm64_entry_count": 8,
+        "license_or_notice_files": [],
+        "source_revision_manifest_present": false
+      },
+      "builder_recipe": {
+        "direct_mpv_dependency_count": 13,
+        "direct_ffmpeg_dependency_count": 32,
+        "all_transitive_source_revisions_resolved": false,
+        "unresolved_revision_examples": [
+          "FFmpeg",
+          "OpenSSL",
+          "libpng",
+          "libjpeg-turbo@main",
+          "shaderc@main",
+          "Vulkan-Loader@main"
+        ]
+      }
+    },
+    "artifacts": {
+      "x64": {
+        "url": "https://github.com/media-kit/libmpv-win32-video-cmake/releases/download/20241021/mpv-dev-x86_64-20241021-git-0f78584.7z",
+        "sha256": "e23701df0adc1fe57c8ede3ff313513b0b80519870058c2d35ff02754284a007",
+        "archive_name": "mpv-dev-x86_64-20241021-git-0f78584.7z",
+        "dll_relative_path": "libmpv-2.dll",
+        "pe_machine": "X64"
+      },
+      "arm64": {
+        "url": "https://github.com/media-kit/libmpv-win32-video-cmake/releases/download/20241021/mpv-dev-aarch64-20241021-git-0f78584.7z",
+        "sha256": "d445d02ab2ee60b1b5988f08ce4d2394cdcc594e98321b746a313313e96133ae",
+        "archive_name": "mpv-dev-aarch64-20241021-git-0f78584.7z",
+        "dll_relative_path": "libmpv-2.dll",
+        "pe_machine": "ARM64"
+      }
+    }
+  }
+}

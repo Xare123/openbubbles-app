@@ -24,6 +24,7 @@ import com.bluebubbles.messaging.services.notifications.NotificationChannelHandl
 import com.bluebubbles.messaging.services.notifications.NotificationListenerPermissionRequestHandler
 import com.bluebubbles.messaging.services.notifications.StartNotificationListenerHandler
 import com.bluebubbles.messaging.services.notifications.UnifiedPushHandler
+import com.bluebubbles.messaging.services.rustpush.APNService
 import com.bluebubbles.messaging.services.rustpush.NotifyNativeConfiguredHandler
 import com.bluebubbles.messaging.services.rustpush.SIMInfoQuery
 import com.bluebubbles.messaging.services.rustpush.SMSAuthGateway
@@ -143,7 +144,10 @@ class MethodCallHandler {
             ProvisionNative.tag -> ProvisionNative().handleMethodCall(call, result, context)
             EAPAKAGateway.tag -> EAPAKAGateway().handleMethodCall(call, result, context)
             KeystoreUnlockHandler.tag -> KeystoreUnlockHandler().handleMethodCall(call, result, context)
-            "ready" -> { MainActivity.engine_ready = true }
+            "ready" -> {
+                MainActivity.engine_ready = true
+                APNService.onMainEngineReady()
+            }
             else -> {
                 val error = "Could not find method call handler for ${call.method}!"
                 Log.d(Constants.logTag, error)

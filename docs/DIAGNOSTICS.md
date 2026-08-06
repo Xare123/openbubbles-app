@@ -49,6 +49,18 @@ An acknowledgement before persistence can create a loss window after a process
 restart. Any instrumentation should use a short redacted event ID and elapsed
 milliseconds, never message text or a secret.
 
+On Android, a notification can arrive before Flutter finishes registering its
+method-channel handler. The bounded startup handoff records only these redacted
+state markers:
+
+- `engine_buffered`: the pointer is waiting for the UI engine to become ready;
+- `engine_buffer_flush`: the ready UI engine accepted the buffered pointer;
+- `headless_handoff`: a destroyed UI engine transferred the pointer once to
+  the existing headless worker.
+
+The raw native pointer must never be logged. Repeated `engine_buffered` entries
+without a flush or handoff indicate a startup-readiness regression.
+
 ### Duplicates or wrong app routing
 
 Check that only one SMS/MMS/RCS path is enabled. If both Google Messages and
@@ -78,18 +90,76 @@ format. Validation errors should be surfaced as a bounded failure and retry,
 not a tight loop. Relay registration secrets belong in Keychain on iOS and must
 never appear in logs or shared preferences.
 
+### Cloud message sync
+
+A message is synchronized only after the CloudKit API explicitly confirms the
+write. A missing or false result remains pending and should be retried. A batch
+that contains only retryable failures stops without spinning forever.
+
+When diagnosing a cross-device gap, distinguish:
+
+1. local database save;
+2. cloud upload requested;
+3. cloud write confirmed;
+4. other device pull started;
+5. pulled record saved locally.
+
+Do not treat an upload request or generated record ID as proof of cloud
+persistence. Current sync is startup, periodic, or manual rather than a
+continuous real-time replication channel.
+
 ## Current audit themes
 
-The recent field logs identified four recurring classes to keep covered by
+The recent field logs identified five recurring classes to keep covered by
 tests and review:
 
 - notification avatar data can be incomplete;
 - CloudKit plist decoding can receive an unexpected byte-array shape;
 - reaction events can race message persistence;
-- anisette/validation WebSockets can reset during provisioning.
+- anisette/validation WebSockets can reset during provisioning;
+- APS can lose DNS or a socket, reconnect, and then miss or mis-correlate a
+  rapid send acknowledgement. Keep DNS, TCP 5223-to-443 fallback, connection
+  budget, subscribe-before-send, and acknowledgement-ID tests together.
 
 These are not all necessarily present in every build. When a fix is proposed,
 include the before/after log counts and a focused test or reproduction.
+
+### Redacted Pixel field evidence
+
+The pre-fix Pixel capture contained 406 warnings and 9 errors in the affected
+archived log. The useful signals were:
+
+- contact matching emitted hundreds of per-candidate warnings that included
+  phone or email identifiers;
+- relay reminder scheduling sometimes ran before timezone initialization;
+- initial clique checks and scheduled password or CloudKit maintenance could
+  escape as unhandled asynchronous errors when the account was not in a
+  clique.
+
+The current implementation replaces candidate-level output with one redacted
+debug summary, initializes timezone data inside the notification service
+owner with a UTC fallback, and awaits or catches the initial and scheduled
+maintenance futures. A failed clique check now records the service as not
+ready instead of escaping through the Flutter zone.
+
+After the updated profile APK was installed over the existing package, the
+bounded per-process `logcat` check contained no matching fatal, exception,
+timeout, clique, APS, CloudKit, or WebSocket entry. The active on-device
+developer log was still empty, so this is a startup smoke check, not an
+endurance or delivery-pass claim.
+
+### Fullscreen video paging
+
+On mobile, video controls and the surrounding `PageView` can both claim a
+horizontal drag. The fullscreen viewer now gives an active video one
+navigation owner: a bounded raw-pointer swipe surface advances the parent
+pager, while the bottom 88 logical pixels remain reserved for playback
+controls. Inactive videos pause and do not retain their page unnecessarily.
+
+Keep the gesture unit tests and a physical-device check together. Test from
+the middle of a playing video in both directions, then verify that seeking,
+play/pause, and the bottom controls still work. Do not call the gesture fix
+device-validated until that exact check passes.
 
 ## Privacy and retention
 

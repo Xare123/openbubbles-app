@@ -204,9 +204,9 @@ class BaseLogger extends GetxService {
     final encoder = ZipFileEncoder();
     encoder.create(zippedLogFile.path);
     for (final logPath in logPaths) {
-      encoder.addFile(File(logPath));
+      encoder.addFileSync(File(logPath));
     }
-    encoder.close();
+    encoder.closeSync();
 
     return zippedLogFile.path;
   }

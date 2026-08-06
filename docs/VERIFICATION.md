@@ -19,22 +19,127 @@ Run the same commands locally from the repository root:
 
 ```bash
 flutter pub get
-flutter test test/helpers/message_helper_test.dart
-flutter analyze
-flutter build apk --flavor alpha --profile --target-platform android-arm64
-flutter build apk --flavor alpha --debug --target-platform android-arm64
+flutter test --no-pub
+flutter analyze --no-pub <changed Dart paths>
 ```
 
-The focused helper test is the required CI test today. `flutter analyze` is an
-additional local gate for source changes. Do not call a build verified when the
-machine has a different Flutter or Java major version.
+The repository still contains analyzer noise in vendored and example sources,
+so review the changed Dart paths directly and require zero analyzer errors
+there. Existing warnings or deprecations should be listed rather than hidden.
+
+On Windows, use the verified Android wrapper so a stale or incomplete APK
+cannot be mistaken for a successful build:
+
+```powershell
+.\tooling\android\build_verified_alpha.ps1 -Mode profile
+.\tooling\android\build_verified_alpha.ps1 -Mode debug
+.\tooling\android\build_verified_alpha.ps1 -Mode profile -SplitPerAbi
+```
+
+The wrapper removes the prior target artifact before building and verifies
+that the APK contains nonempty ARM64 `libflutter.so`, `libapp.so`, and
+`librust_lib_bluebubbles.so` entries. `-SplitPerAbi` additionally rejects any
+native library outside `lib/arm64-v8a/`; use it for a Pixel-specific sideload
+instead of carrying unused ARMv7 and x86 libraries. `-Mode release` is
+supported only when `android/key.properties` supplies the release signing
+configuration. The Android CI job also runs:
+
+```bash
+cd android
+./gradlew :app:testAlphaDebugUnitTest :app:compileAlphaDebugKotlin
+```
+
+Do not call a build verified when tests failed, the native-library inspection
+was skipped, or the machine used a different Flutter or Java major version.
 
 ### Environment evidence from the Windows review host
 
-On 2026-07-24 this host had `adb 37.0.0` and Java 8, but `flutter` and `dart`
-were not on `PATH`. Therefore no Flutter test, analyzer, or APK build was
-claimed locally. The expected next action is to install/use Flutter 3.24.0 and
-Java 21, then run the commands above or rely on the GitHub workflow.
+On 2026-07-31 this host verified the changed surfaces with Flutter 3.24.0,
+Java 21, the local Android SDK, and Rust-backed APK packaging. Record the exact
+test count, artifact byte size, SHA-256, and required native-library entries in
+the review handoff. Device installation and live delivery behavior remain
+separate gates.
+
+### Pixel profile installation record
+
+The ARM64-only Alpha profile artifact installed as an in-place update on the
+Pixel test device. The installation retained the application package and data;
+no uninstall or data clear was used.
+
+```text
+version name: 1.15.0
+version code: 20004227
+artifact bytes: 194,911,911
+SHA-256: 518E6F0ADD5811170B13F57E222B7021060BE032A0EC5BC74C9B0F2428407539
+lib/arm64-v8a/libflutter.so: 15,402,480 bytes
+lib/arm64-v8a/libapp.so: 39,388,064 bytes
+lib/arm64-v8a/librust_lib_bluebubbles.so: 36,620,096 bytes
+```
+
+The post-install inspection found no native library outside `arm64-v8a`.
+ObjectBox files, app-managed files, and existing logs remained present. The
+app started without a native-library load failure or fatal startup exception.
+That proves packaging, upgrade preservation, and startup only. It does not
+replace foreground/background delivery, locked-phone endurance, battery, or
+the explicit fullscreen-video gesture check.
+
+### Windows x64 release record
+
+The same source state produced a Windows x64 Release bundle on the ARM64
+review host. The portable bundle was isolated from the build tree before
+signing and contains:
+
+```text
+files: 167
+bundle bytes: 170,009,166
+PE files: 99
+PE machine type: 0x8664 (x64), 99 of 99
+Authenticode status: Valid, 99 of 99
+portable archive bytes: 66,633,911
+portable archive SHA-256:
+00253D214A45F4AC78DD68A4AB2B73C6FC3719008AE6819796F50ABB894A84E4
+```
+
+Static import inspection found no unresolved redistributable DLL. The eight
+names not present as physical files are Windows API-set contracts. The bundle
+includes the target-specific `WebView2Loader.dll`, the Rust library, ObjectBox,
+Flutter, and media playback libraries. Debug-only C/C++ runtime DLLs were
+excluded.
+
+All 152 Flutter tests passed with the x64 bundle on `PATH`. The changed Pixel
+logging, fullscreen-video, and Cloud Sync surfaces also passed focused
+analysis with no issue, and the generated-Rust guard reported zero duplicate
+SSE implementation groups.
+
+The bundle is signed for local testing with a certificate trusted only in the
+current user's certificate stores. That signature is not a public publisher
+identity and should not be used for distribution.
+
+One clean-build dependency remains before an upstream Windows submission is
+fully reproducible: `desktop_webview_auth` currently requires a small
+Windows patch that removes its unnecessary ATL dependency, converts the
+WebView URL with `WideCharToMultiByte`, and releases the COM-allocated source
+buffer. The verified host used that patch in its package cache. Publish it in
+a dedicated plugin fork or upstream plugin change, then pin the reviewed
+revision in `pubspec.yaml`; do not present the application repository alone as
+a clean-machine reproduction until that is done.
+
+### Windows ARM64 boundary
+
+The Windows ARM64 port has source parity for the transport, Cloud Sync,
+diagnostic, fullscreen-media, and UI fixes. Its Flutter tests pass, focused
+analysis has no errors, and a WSL ARM64 Rust check succeeds. A native Windows
+ARM64 Release artifact is not yet validated because this host's Code Integrity
+policy blocks an unsigned Rust proc-macro DLL during compilation. The locked
+`media_kit_libs_windows_video` 1.0.11 package still selects an x86_64 libmpv
+archive and an x64 ANGLE bundle. ObjectBox 5.3.2 publishes a Windows ARM64
+binary, and `printing` 5.15.0 derives its PDFium architecture from the Flutter
+target and uses a release that publishes `pdfium-win-arm64`. Those two
+dependencies are no longer known static blockers, but neither has been
+validated inside a complete native ARM64 app bundle. WSL proves source
+compatibility only; it does not produce a Windows executable. Keep the ARM64
+package experimental until the native build, PE architecture audit, dependency
+audit, signing, launch, media playback, and sync tests all pass.
 
 ## Functional delivery matrix
 

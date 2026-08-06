@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:async_task/async_task.dart';
+import 'package:bluebubbles/utils/attachment_guid_utils.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
@@ -948,19 +949,10 @@ class Message {
     });
   }
 
-  String convertAttachmentGuid(String guid) {
-    if (guid.startsWith("at")) {
-      var items = guid.split("_");
-      guid = "${items[2]}_${items[1]}";
-    }
-    return guid;
-  }
+  String convertAttachmentGuid(String guid) => convertAppleAttachmentGuid(guid);
 
-  String unconvertAttachmentGuid(String guid) {
-    var items = guid.split("_");
-    if (items.length == 1) return guid;
-    return "at_${items[1]}_${items[0]}";
-  }
+  String unconvertAttachmentGuid(String guid) =>
+      unconvertAppleAttachmentGuid(guid);
 
   Uint8List? encodeAttributedBody(List<AttributedBody> body, bool noAttachments) {
     if (body.isEmpty) return null;
@@ -1121,6 +1113,7 @@ class Message {
     if (chat?.isRpSms ?? true) return;
 
     ckRecordId = cloudkitId;
+    ckSyncState = true;
 
     error = c.error;
     handle = RustPushBBUtils.rustHandleToBB(c.sender);
@@ -1166,10 +1159,10 @@ class Message {
     if (proto1.associatedMessageType != null) {
       if (proto1.associatedMessageType == 2) {
         associatedMessageType = "sticker";
-      } else if (proto1.associatedMessageType! >= 2000 && proto1.associatedMessageType! < 3000) {
-        associatedMessageType = ReactionTypes.toList()[proto1.associatedMessageType! - 2000];
-      } else if (proto1.associatedMessageType! >= 3000 && proto1.associatedMessageType! < 4000) {
-        associatedMessageType = "-${ReactionTypes.toList()[proto1.associatedMessageType! - 3000]}";
+      } else {
+        // An unknown type stays unset so the message still syncs without a
+        // reaction row instead of throwing out of the whole download.
+        associatedMessageType = ReactionTypes.fromAssociatedMessageType(proto1.associatedMessageType!);
       }
     }
     associatedMessageGuid = proto1.associatedMessageGuid;

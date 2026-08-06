@@ -17,12 +17,11 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.gson.GsonBuilder
 import com.google.gson.ToNumberPolicy
 import com.google.gson.reflect.TypeToken
+import io.flutter.FlutterInjector
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.dart.DartExecutor
-import io.flutter.embedding.engine.loader.ApplicationInfoLoader
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.view.FlutterCallbackInformation
-import io.flutter.view.FlutterMain
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -49,12 +48,12 @@ class DartWorker(context: Context, workerParams: WorkerParameters): ListenableWo
         /// Code idea taken from https://github.com/flutter/flutter/wiki/Experimental:-Reuse-FlutterEngine-across-screens
         private suspend fun initNewEngine(applicationContext: Context) {
             Log.d(Constants.logTag, "Ensuring Flutter is initialized before creating engine")
-            // We use the deprecated class here anyways, the new one doesn't work correctly using the same code
-            FlutterMain.startInitialization(applicationContext)
-            FlutterMain.ensureInitializationComplete(applicationContext, null)
+            val flutterLoader = FlutterInjector.instance().flutterLoader()
+            flutterLoader.startInitialization(applicationContext)
+            flutterLoader.ensureInitializationComplete(applicationContext, null)
+            val appBundlePath = flutterLoader.findAppBundlePath()
 
             Log.d(Constants.logTag, "Loading callback info")
-            val info = ApplicationInfoLoader.load(applicationContext)
             workerEngine = FlutterEngine(applicationContext)
 
             currentJobs.set(0)
@@ -81,7 +80,7 @@ class DartWorker(context: Context, workerParams: WorkerParameters): ListenableWo
                 }
                 }
                 val callbackInfo = FlutterCallbackInformation.lookupCallbackInformation(applicationContext.getSharedPreferences("FlutterSharedPreferences", 0).getLong("flutter.backgroundCallbackHandle", -1))
-                val callback = DartExecutor.DartCallback(applicationContext.assets, info.flutterAssetsDir, callbackInfo)
+                val callback = DartExecutor.DartCallback(applicationContext.assets, appBundlePath, callbackInfo)
 
                 Log.d(Constants.logTag, "Executing Dart callback")
                 workerEngine!!.dartExecutor.executeDartCallback(callback)

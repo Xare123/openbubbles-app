@@ -12,9 +12,9 @@ class IncomingQueue extends Queue {
   Future<void> prepItem(QueueItem _) async {}
 
   @override
-  Future<void> handleQueueItem(QueueItem _) async {
-    assert(_ is IncomingItem);
-    final item = _ as IncomingItem;
+  Future<void> handleQueueItem(QueueItem queueItem) async {
+    assert(queueItem is IncomingItem);
+    final item = queueItem as IncomingItem;
 
     switch (item.type) {
       case QueueType.newMessage:

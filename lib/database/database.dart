@@ -15,6 +15,18 @@ class Database {
   static late final Store store;
   static late final Box<Attachment> attachments;
   static late final Box<Chat> chats;
+  static late final Box<CloudSyncCheckpointEntity> cloudSyncCheckpoints;
+  static late final Box<CloudInboxChangeEntity> cloudSyncInbox;
+  static late final Box<CloudSyncLeaseEntity> cloudSyncLeases;
+  static late final Box<CloudProtectedPageLeaseEntity>
+      cloudProtectedPageLeases;
+  static late final Box<CloudOutboxOperationEntity> cloudSyncOutbox;
+  static late final Box<CloudRecordMapEntity> cloudSyncRecordMap;
+  static late final Box<CloudSyncRunEntity> cloudSyncRuns;
+  static late final Box<CloudAttachmentMaterializationEntity>
+      cloudAttachmentMaterializations;
+  static late final Box<CloudSemanticSnapshotEntity> cloudSemanticSnapshots;
+  static late final Box<CloudSemanticReplayEntity> cloudSemanticReplay;
   static late final Box<Contact> contacts;
   static late final Box<FCMData> fcmData;
   static late final Box<Handle> handles;
@@ -41,6 +53,19 @@ class Database {
     try {
       Database.attachments = store.box<Attachment>();
       Database.chats = store.box<Chat>();
+      Database.cloudSyncCheckpoints = store.box<CloudSyncCheckpointEntity>();
+      Database.cloudSyncInbox = store.box<CloudInboxChangeEntity>();
+      Database.cloudSyncLeases = store.box<CloudSyncLeaseEntity>();
+      Database.cloudProtectedPageLeases =
+          store.box<CloudProtectedPageLeaseEntity>();
+      Database.cloudSyncOutbox = store.box<CloudOutboxOperationEntity>();
+      Database.cloudSyncRecordMap = store.box<CloudRecordMapEntity>();
+      Database.cloudSyncRuns = store.box<CloudSyncRunEntity>();
+      Database.cloudAttachmentMaterializations =
+          store.box<CloudAttachmentMaterializationEntity>();
+      Database.cloudSemanticSnapshots =
+          store.box<CloudSemanticSnapshotEntity>();
+      Database.cloudSemanticReplay = store.box<CloudSemanticReplayEntity>();
       Database.contacts = store.box<Contact>();
       Database.fcmData = store.box<FCMData>();
       Database.handles = store.box<Handle>();

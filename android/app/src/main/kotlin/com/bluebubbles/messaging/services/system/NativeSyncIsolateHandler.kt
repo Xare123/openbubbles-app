@@ -5,13 +5,12 @@ import android.util.Log
 import com.bluebubbles.messaging.Constants
 import com.bluebubbles.messaging.models.MethodCallHandlerImpl
 import com.bluebubbles.messaging.services.backend_ui_interop.MethodCallHandler
+import io.flutter.FlutterInjector
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.dart.DartExecutor
-import io.flutter.embedding.engine.loader.ApplicationInfoLoader
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.view.FlutterCallbackInformation
-import io.flutter.view.FlutterMain
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
@@ -42,11 +41,12 @@ class NativeSyncIsolateHandler : MethodCallHandlerImpl() {
             return
         }
 
-        FlutterMain.startInitialization(context)
-        FlutterMain.ensureInitializationComplete(context, null)
+        val flutterLoader = FlutterInjector.instance().flutterLoader()
+        flutterLoader.startInitialization(context)
+        flutterLoader.ensureInitializationComplete(context, null)
+        val appBundlePath = flutterLoader.findAppBundlePath()
 
         Log.d(Constants.logTag, "Loading callback info")
-        val info = ApplicationInfoLoader.load(context)
         val workerEngine = FlutterEngine(context)
         engine = workerEngine
         MethodChannel(workerEngine.dartExecutor.binaryMessenger, Constants.methodChannel).setMethodCallHandler {
@@ -63,7 +63,7 @@ class NativeSyncIsolateHandler : MethodCallHandlerImpl() {
         }
         }
         val callbackInfo = FlutterCallbackInformation.lookupCallbackInformation(context.getSharedPreferences("FlutterSharedPreferences", 0).getLong("flutter.backgroundSyncIsolate", -1))
-        val callback = DartExecutor.DartCallback(context.assets, info.flutterAssetsDir, callbackInfo)
+        val callback = DartExecutor.DartCallback(context.assets, appBundlePath, callbackInfo)
 
         Log.d(Constants.logTag, "Executing Dart callback")
         workerEngine.dartExecutor.executeDartCallback(callback)

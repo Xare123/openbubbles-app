@@ -19,9 +19,12 @@ class DesktopPanel extends StatefulWidget {
   @override
   State<StatefulWidget> createState() => _DesktopPanelState();
 }
-
 class _DesktopPanelState extends OptimizedState<DesktopPanel> {
-  final RxList<bool> showButtons = RxList<bool>.filled(ReactionTypes.toList().length + 1, false);
+  // Notification actions intentionally exclude reaction types that cannot be
+  // represented as fixed Windows notification buttons (for example, arbitrary
+  // emoji and sticker reactions). Keep hover state aligned to the configured
+  // action list so future ReactionTypes cannot create out-of-range widgets.
+  final RxList<bool> showButtons = RxList<bool>.filled(ss.settings.actionList.length, false);
   final int maxActions = Platform.isWindows ? 5 : ss.settings.actionList.length; // Don't limit actions on Linux
 
   @override
@@ -205,7 +208,7 @@ class _DesktopPanelState extends OptimizedState<DesktopPanel> {
                                         saveSettings();
                                       },
                                       children: List.generate(
-                                        ReactionTypes.toList().length + 1,
+                                        ss.settings.actionList.length,
                                         (int index) => MouseRegion(
                                           cursor: SystemMouseCursors.click,
                                           onEnter: (event) => showButtons[index] = true,
@@ -312,7 +315,9 @@ class _DesktopPanelState extends OptimizedState<DesktopPanel> {
                                         .settings
                                         .selectedActionIndices
                                         .where((s) =>
-                                            ss.settings.enablePrivateAPI.value || s == markReadIndex);
+                                            s >= 0 &&
+                                            s < ss.settings.actionList.length &&
+                                            (ss.settings.enablePrivateAPI.value || s == markReadIndex));
                                     int numActions = actualIndices.length;
                                     bool showMarkRead =
                                         ss.settings.selectedActionIndices.contains(markReadIndex);
@@ -438,7 +443,8 @@ class _DesktopPanelState extends OptimizedState<DesktopPanel> {
                                                               index == markReadIndex
                                                                   ? ss.settings.actionList[index]
                                                                   : ReactionTypes.reactionToEmoji[
-                                                                      ss.settings.actionList[index]]!,
+                                                                          ss.settings.actionList[index]] ??
+                                                                      ss.settings.actionList[index],
                                                               style: context.textTheme.bodyMedium!
                                                                   .copyWith(fontSize: size * 0.037),
                                                               textAlign: TextAlign.center,
@@ -459,7 +465,9 @@ class _DesktopPanelState extends OptimizedState<DesktopPanel> {
                                         .settings
                                         .selectedActionIndices
                                         .where((s) =>
-                                            ss.settings.enablePrivateAPI.value || s == markReadIndex);
+                                            s >= 0 &&
+                                            s < ss.settings.actionList.length &&
+                                            (ss.settings.enablePrivateAPI.value || s == markReadIndex));
                                     int numActions = actualIndices.length;
                                     bool showMarkRead =
                                         ss.settings.selectedActionIndices.contains(markReadIndex);

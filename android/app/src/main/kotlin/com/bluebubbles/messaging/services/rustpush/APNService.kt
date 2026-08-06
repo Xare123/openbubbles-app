@@ -43,14 +43,38 @@ import uniffi.rust_lib_bluebubbles.setupKeystore
 import uniffi.rust_lib_bluebubbles.start
 
 class APNService : Service(), MsgReceiver {
+    companion object {
+        private const val RECEIVE_LOG_TAG = "RustPushReceive"
+        private const val MAX_PENDING_ENGINE_DISPATCHES = 256
+
+        @Volatile
+        private var activeService: APNService? = null
+
+        fun onMainEngineReady() {
+            activeService?.flushPendingMainEngineDispatches()
+        }
+
+        fun onMainEngineUnavailable() {
+            activeService?.handoffPendingMainEngineDispatches()
+        }
+    }
+
     var pushState: NativePushState? = null
     private var started = false
     private val binder = APNBinder()
     private var ready = false
     private val waitingHandleCb = ArrayList<(handle: ULong) -> Unit>()
     private val waitingStartedCb = ArrayList<() -> Unit>()
+    private val pendingMainEngineDispatches =
+        PendingApnDispatchQueue(MAX_PENDING_ENGINE_DISPATCHES)
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val job = SupervisorJob()
     val scope = CoroutineScope(Dispatchers.IO + job)
+
+    override fun onCreate() {
+        super.onCreate()
+        activeService = this
+    }
 
     fun ready() {
         Log.i("launching agent", "ready")
@@ -94,15 +118,122 @@ class APNService : Service(), MsgReceiver {
     }
 
     override fun receievedMsg(ptr: ULong, retry: ULong) {
-        Handler(Looper.getMainLooper()).post {
-            if (MainActivity.engine != null) {
-                // app is alive, deliver directly there
-                MethodCallHandler.invokeMethod("APNMsg", mapOf("pointer" to ptr.toString(), "retry" to retry.toString()))
+        mainHandler.post {
+            if (MainActivity.engine != null && MainActivity.engine_ready) {
+                dispatchToMainEngine(PendingApnDispatch(ptr, retry))
                 return@post
             }
-            CoroutineScope(Dispatchers.Main).launch {
-                DartWorker.callMethod(this@APNService, "APNMsg", mapOf("pointer" to ptr.toString(), "retry" to retry.toString()))
+
+            if (MainActivity.engine != null) {
+                val result = pendingMainEngineDispatches.enqueue(ptr, retry)
+                when {
+                    result.evicted -> Log.w(
+                        RECEIVE_LOG_TAG,
+                        "engine_buffer_evicted retry=$retry pending_count=${result.size}",
+                    )
+                    result.added -> Log.i(
+                        RECEIVE_LOG_TAG,
+                        "engine_buffered retry=$retry pending_count=${result.size}",
+                    )
+                    else -> Log.d(
+                        RECEIVE_LOG_TAG,
+                        "engine_buffer_coalesced retry=$retry pending_count=${result.size}",
+                    )
+                }
+                return@post
             }
+
+            dispatchToHeadless(
+                listOf(PendingApnDispatch(ptr, retry)),
+                reason = "no_main_engine",
+            )
+        }
+    }
+
+    private fun dispatchToMainEngine(dispatch: PendingApnDispatch) {
+        MethodCallHandler.invokeMethod(
+            "APNMsg",
+            mapOf(
+                "pointer" to dispatch.pointer.toString(),
+                "retry" to dispatch.retry.toString(),
+            ),
+        )
+    }
+
+    private fun flushPendingMainEngineDispatches() {
+        runOnMainThread {
+            if (MainActivity.engine == null || !MainActivity.engine_ready) {
+                return@runOnMainThread
+            }
+
+            val dispatches = pendingMainEngineDispatches.drain()
+            if (dispatches.isEmpty()) {
+                return@runOnMainThread
+            }
+
+            Log.i(
+                RECEIVE_LOG_TAG,
+                "engine_buffer_flush count=${dispatches.size}",
+            )
+            for (dispatch in dispatches) {
+                dispatchToMainEngine(dispatch)
+            }
+        }
+    }
+
+    private fun handoffPendingMainEngineDispatches() {
+        runOnMainThread {
+            if (MainActivity.engine != null) {
+                if (MainActivity.engine_ready) {
+                    flushPendingMainEngineDispatches()
+                }
+                return@runOnMainThread
+            }
+
+            val dispatches = pendingMainEngineDispatches.drain()
+            dispatchToHeadless(dispatches, reason = "main_engine_unavailable")
+        }
+    }
+
+    private fun dispatchToHeadless(
+        dispatches: List<PendingApnDispatch>,
+        reason: String,
+    ) {
+        if (dispatches.isEmpty()) {
+            return
+        }
+
+        Log.i(
+            RECEIVE_LOG_TAG,
+            "headless_handoff reason=$reason count=${dispatches.size}",
+        )
+        CoroutineScope(Dispatchers.Main).launch {
+            for (dispatch in dispatches) {
+                Log.d(RECEIVE_LOG_TAG, "headless_dispatch retry=${dispatch.retry}")
+                try {
+                    DartWorker.callMethod(
+                        this@APNService,
+                        "APNMsg",
+                        mapOf(
+                            "pointer" to dispatch.pointer.toString(),
+                            "retry" to dispatch.retry.toString(),
+                        ),
+                    )
+                } catch (error: Exception) {
+                    Log.w(
+                        RECEIVE_LOG_TAG,
+                        "headless_dispatch_failed retry=${dispatch.retry} error=${error.javaClass.simpleName}",
+                    )
+                }
+            }
+        }
+    }
+
+    private inline fun runOnMainThread(crossinline block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            block()
+        } else {
+            mainHandler.post { block() }
         }
     }
 
@@ -287,6 +418,16 @@ class APNService : Service(), MsgReceiver {
     }
 
     override fun onDestroy() {
+        if (activeService === this) {
+            activeService = null
+        }
+        val discarded = pendingMainEngineDispatches.clear()
+        if (discarded > 0) {
+            Log.i(
+                RECEIVE_LOG_TAG,
+                "engine_buffer_cleared_on_service_destroy count=$discarded",
+            )
+        }
         super.onDestroy()
         pushState?.destroy()
         job.cancel()

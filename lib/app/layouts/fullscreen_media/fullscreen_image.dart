@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:isolate';
 
 import 'package:bluebubbles/app/layouts/fullscreen_media/dialogs/metadata_dialog.dart';
+import 'package:bluebubbles/app/layouts/fullscreen_media/fullscreen_media_operation_gate.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/utils/share.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
@@ -38,8 +39,10 @@ class FullscreenImage extends StatefulWidget {
 
 class _FullscreenImageState extends OptimizedState<FullscreenImage> with AutomaticKeepAliveClientMixin {
   final PhotoViewController controller = PhotoViewController();
+  final FullscreenMediaOperationGate _loadGate = FullscreenMediaOperationGate();
   bool showOverlay = true;
   bool hasError = false;
+  bool _refreshInProgress = false;
   Uint8List? bytes;
 
   PlatformFile get file => widget.file;
@@ -50,47 +53,83 @@ class _FullscreenImageState extends OptimizedState<FullscreenImage> with Automat
   void initState() {
     super.initState();
     message?.handle = message?.getHandle();
+    final initialFile = file;
+    final initialAttachment = attachment;
+    final generation = _loadGate.begin();
     updateObx(() {
-      initBytes();
+      _loadBytes(initialFile, initialAttachment, generation);
     });
   }
 
   Future<void> initBytes() async {
-    if (kIsWeb || file.path == null) {
-      if (attachment.mimeType?.contains("image/tif") ?? false) {
+    final generation = _loadGate.begin();
+    await _loadBytes(file, attachment, generation);
+  }
+
+  Future<void> _loadBytes(
+    PlatformFile sourceFile,
+    Attachment sourceAttachment,
+    int generation,
+  ) async {
+    Uint8List? loadedBytes;
+    if (kIsWeb || sourceFile.path == null) {
+      if (sourceAttachment.mimeType?.contains("image/tif") ?? false) {
         final receivePort = ReceivePort();
-        await Isolate.spawn(unsupportedToPngIsolate, IsolateData(file, receivePort.sendPort));
+        await Isolate.spawn(unsupportedToPngIsolate, IsolateData(sourceFile, receivePort.sendPort));
         // Get the processed image from the isolate.
-        final image = await receivePort.first as Uint8List?;
-        bytes = image;
+        loadedBytes = await receivePort.first as Uint8List?;
       } else {
-        bytes = file.bytes;
+        loadedBytes = sourceFile.bytes;
       }
-    } else if (attachment.canCompress) {
-      bytes = await as.loadAndGetProperties(attachment, actualPath: file.path!);
+    } else if (sourceAttachment.canCompress) {
+      loadedBytes = await as.loadAndGetProperties(sourceAttachment, actualPath: sourceFile.path!);
       // All other attachments can be held in memory as bytes
     } else {
-      bytes = await File(file.path!).readAsBytes();
+      loadedBytes = await File(sourceFile.path!).readAsBytes();
     }
-    setState(() {});
+
+    if (!mounted || !_loadGate.isCurrent(generation)) return;
+    setState(() {
+      bytes = loadedBytes;
+      hasError = false;
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant FullscreenImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.file == widget.file && oldWidget.attachment == widget.attachment) return;
+    _refreshInProgress = false;
+    bytes = null;
+    hasError = false;
+    initBytes();
   }
 
   @override
   void dispose() {
+    _loadGate.dispose();
     controller.dispose();
     super.dispose();
   }
 
   void refreshAttachment() {
+    if (_refreshInProgress) return;
+    _refreshInProgress = true;
+    final generation = _loadGate.begin();
+    final sourceAttachment = widget.attachment;
     showSnackbar('In Progress', 'Redownloading attachment. Please wait...');
     setState(() {
       bytes = null;
+      hasError = false;
     });
-    as.redownloadAttachment(widget.attachment, onComplete: (file) {
-      setState(() {
-        bytes = file.bytes;
-      });
+    as.redownloadAttachment(sourceAttachment, onComplete: (file) async {
+      if (!mounted || !_loadGate.isCurrent(generation)) return;
+      await _loadBytes(file, sourceAttachment, generation);
+      if (!mounted || !_loadGate.isCurrent(generation)) return;
+      _refreshInProgress = false;
     }, onError: () {
+      if (!mounted || !_loadGate.isCurrent(generation)) return;
+      _refreshInProgress = false;
       setState(() {
         hasError = true;
       });
@@ -126,8 +165,9 @@ class _FullscreenImageState extends OptimizedState<FullscreenImage> with Automat
                         color: context.theme.colorScheme.onSecondary,
                       ),
                       onPressed: () async {
-                        if (widget.file.path == null)
+                        if (widget.file.path == null) {
                           return showSnackbar("Error", "Failed to find a path to share attachment!");
+                        }
                         Share.file(
                           "Shared ${widget.attachment.mimeType!.split("/")[0]} from OpenBubbles: ${widget.attachment.transferName}",
                           widget.file.path!,

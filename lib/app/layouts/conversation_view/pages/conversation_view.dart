@@ -1,6 +1,7 @@
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/header/cupertino_header.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/header/material_header.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/text_field/conversation_text_field.dart';
+import 'package:bluebubbles/app/layouts/conversation_view/pages/conversation_keyboard_policy.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/posterkit.dart';
 import 'package:bluebubbles/app/wrappers/gradient_background_wrapper.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
@@ -166,9 +167,12 @@ class ConversationViewState extends OptimizedState<ConversationView> {
                                   Listener(
                                     behavior: HitTestBehavior.translucent,
                                     onPointerDown: (_) {
-                                      if (controller.keyboardOpen ||
-                                          controller.focusNode.hasFocus ||
-                                          controller.subjectFocusNode.hasFocus) {
+                                      if (shouldDismissKeyboardFromTranscript(
+                                        hasActiveMessageEdit: controller.editing.isNotEmpty,
+                                        keyboardOpen: controller.keyboardOpen,
+                                        composerHasFocus: controller.focusNode.hasFocus,
+                                        subjectHasFocus: controller.subjectFocusNode.hasFocus,
+                                      )) {
                                         controller.dismissKeyboard();
                                       }
                                     },

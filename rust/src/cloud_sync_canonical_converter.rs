@@ -1,0 +1,3481 @@
+//! Private, default-off Cloud Sync V2 raw-presence conversion gate.
+//!
+//! `CloudKitRecord` derives populate missing fields through `Default`. This
+//! gate therefore captures field presence from the raw protobuf before typed
+//! decoding and captures nested plist keys immediately after decryption but
+//! before serde. It refuses to infer absence or an explicit clear from a
+//! defaulted typed value.
+
+#![allow(dead_code)]
+
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::{self, Debug, Formatter},
+    io::Cursor,
+};
+
+use plist::Value as PlistValue;
+use rustpush::{
+    cloud_messages::{
+        cloudmessagesp::{MessageProto, MessageProto2, MessageProto4},
+        AttachmentMeta, CloudChat, CloudMessage, MessageFlags, MessageSummaryInfo,
+    },
+    cloudkit_proto::Record,
+};
+use sha2::{Digest, Sha256};
+
+use crate::{
+    cloud_sync_canonical_dto::{
+        parse_associated_parent, parse_owned_attachment_guid, parse_reply_parent,
+        CloudCanonicalAlias, CloudCanonicalAliasKind, CloudCanonicalAttachmentPayload,
+        CloudCanonicalAttachmentReference, CloudCanonicalAttributedBody, CloudCanonicalChatPayload,
+        CloudCanonicalChatStyle, CloudCanonicalDigest, CloudCanonicalEditPartSnapshot,
+        CloudCanonicalEntityKind, CloudCanonicalEnvelope, CloudCanonicalField, CloudCanonicalHash,
+        CloudCanonicalKnownMessageFlags, CloudCanonicalMessageAssociation,
+        CloudCanonicalMessageEdit, CloudCanonicalMessagePayload, CloudCanonicalMutation,
+        CloudCanonicalMutationKind, CloudCanonicalParentReference, CloudCanonicalPayload,
+        CloudCanonicalProtectedReference, CloudCanonicalReactionKind, CloudCanonicalReplyReference,
+        CloudCanonicalService, CloudCanonicalSnapshot, CloudCanonicalTextRun,
+        CloudCanonicalTombstone, CloudCanonicalValidationFailure, CLOUD_CANONICAL_SCHEMA_VERSION,
+    },
+    cloud_sync_semantic_decoder::CloudSemanticIdentifierHasher,
+};
+
+const MAX_RAW_FIELDS: usize = 4_096;
+const MAX_FIELD_NAME_BYTES: usize = 256;
+const MAX_NESTED_PLIST_BYTES: usize = 16 * 1024 * 1024;
+const MAX_ATTRIBUTED_BODY_BYTES: usize = 16 * 1024 * 1024;
+const MAX_MESSAGE_SUMMARY_BYTES: usize = 16 * 1024 * 1024;
+const MAX_TYPED_STREAM_OBJECTS: usize = 131_072;
+const MAX_TYPED_STREAM_FIELDS: usize = 131_072;
+const MAX_TYPED_STREAM_EXPANDED_BYTES: usize = 32 * 1024 * 1024;
+const MAX_TYPED_STREAM_DEPTH: usize = 64;
+const MAX_ATTRIBUTED_BODIES: usize = 4_096;
+const MAX_RUNS_PER_BODY: usize = 65_536;
+const MAX_ATTRIBUTES_PER_RUN: usize = 256;
+const MAX_MESSAGE_EDITS: usize = 65_536;
+const MAX_RETRACTED_PARTS: usize = 65_536;
+const MAX_CANONICAL_TIMESTAMP_MILLIS: i64 = 253_402_300_799_999;
+const APPLE_EPOCH_OFFSET_MILLIS: i64 = 978_307_200_000;
+
+const TYPED_STREAM_TAG_START: u8 = 0x84;
+const TYPED_STREAM_TAG_EMPTY: u8 = 0x85;
+const TYPED_STREAM_FIELDS_END: u8 = 0x86;
+const TYPED_STREAM_REF_START: usize = 0x92;
+
+#[derive(Clone)]
+enum BoundedStreamValue {
+    Object(Option<usize>),
+    String(String),
+    Bool(bool),
+    Byte(u8),
+    Int(u32, bool),
+    Float(f32),
+    Double(f64),
+    Array(Vec<u8>),
+}
+
+enum BoundedStreamObject {
+    Class {
+        parent: Option<usize>,
+        name: String,
+    },
+    Object {
+        class: usize,
+        fields: Vec<Vec<BoundedStreamValue>>,
+    },
+    CString(String),
+    Placeholder,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BoundedStreamFailure {
+    Malformed,
+    Oversized,
+}
+
+struct BoundedTypedStreamDecoder<'a> {
+    input: &'a [u8],
+    offset: usize,
+    string_cache: Vec<String>,
+    objects: Vec<BoundedStreamObject>,
+    field_count: usize,
+    expanded_bytes: usize,
+}
+
+impl<'a> BoundedTypedStreamDecoder<'a> {
+    fn new(input: &'a [u8]) -> Result<Self, BoundedStreamFailure> {
+        if input.len() > MAX_ATTRIBUTED_BODY_BYTES {
+            return Err(BoundedStreamFailure::Oversized);
+        }
+        Ok(Self {
+            input,
+            offset: 0,
+            string_cache: Vec::new(),
+            objects: Vec::new(),
+            field_count: 0,
+            expanded_bytes: 0,
+        })
+    }
+
+    fn charge_bytes(&mut self, count: usize) -> Result<(), BoundedStreamFailure> {
+        self.expanded_bytes = self
+            .expanded_bytes
+            .checked_add(count)
+            .ok_or(BoundedStreamFailure::Oversized)?;
+        if self.expanded_bytes > MAX_TYPED_STREAM_EXPANDED_BYTES {
+            return Err(BoundedStreamFailure::Oversized);
+        }
+        Ok(())
+    }
+
+    fn charge_fields(&mut self, count: usize) -> Result<(), BoundedStreamFailure> {
+        self.field_count = self
+            .field_count
+            .checked_add(count)
+            .ok_or(BoundedStreamFailure::Oversized)?;
+        if self.field_count > MAX_TYPED_STREAM_FIELDS {
+            return Err(BoundedStreamFailure::Oversized);
+        }
+        Ok(())
+    }
+
+    fn reserve_object(&mut self) -> Result<usize, BoundedStreamFailure> {
+        if self.objects.len() >= MAX_TYPED_STREAM_OBJECTS {
+            return Err(BoundedStreamFailure::Oversized);
+        }
+        let index = self.objects.len();
+        self.objects.push(BoundedStreamObject::Placeholder);
+        Ok(index)
+    }
+
+    fn read_u8(&mut self) -> Result<u8, BoundedStreamFailure> {
+        let value = *self
+            .input
+            .get(self.offset)
+            .ok_or(BoundedStreamFailure::Malformed)?;
+        self.offset += 1;
+        Ok(value)
+    }
+
+    fn read_exact(&mut self, count: usize) -> Result<&'a [u8], BoundedStreamFailure> {
+        let end = self
+            .offset
+            .checked_add(count)
+            .ok_or(BoundedStreamFailure::Oversized)?;
+        let bytes = self
+            .input
+            .get(self.offset..end)
+            .ok_or(BoundedStreamFailure::Malformed)?;
+        self.offset = end;
+        Ok(bytes)
+    }
+
+    fn read_number(&mut self, tag: Option<u8>) -> Result<u32, BoundedStreamFailure> {
+        let tag = tag.map_or_else(|| self.read_u8(), Ok)?;
+        match tag {
+            0x81 => {
+                let bytes: [u8; 2] = self
+                    .read_exact(2)?
+                    .try_into()
+                    .map_err(|_| BoundedStreamFailure::Malformed)?;
+                Ok(u16::from_le_bytes(bytes) as u32)
+            }
+            0x82 => {
+                let bytes: [u8; 4] = self
+                    .read_exact(4)?
+                    .try_into()
+                    .map_err(|_| BoundedStreamFailure::Malformed)?;
+                Ok(u32::from_le_bytes(bytes))
+            }
+            0x80..=0x91 => Err(BoundedStreamFailure::Malformed),
+            value => Ok(value as u32),
+        }
+    }
+
+    fn read_float(&mut self) -> Result<f32, BoundedStreamFailure> {
+        let tag = self.read_u8()?;
+        if tag == 0x83 {
+            let bytes: [u8; 4] = self
+                .read_exact(4)?
+                .try_into()
+                .map_err(|_| BoundedStreamFailure::Malformed)?;
+            Ok(f32::from_le_bytes(bytes))
+        } else {
+            self.read_number(Some(tag)).map(|value| value as f32)
+        }
+    }
+
+    fn read_double(&mut self) -> Result<f64, BoundedStreamFailure> {
+        let tag = self.read_u8()?;
+        if tag == 0x83 {
+            let bytes: [u8; 8] = self
+                .read_exact(8)?
+                .try_into()
+                .map_err(|_| BoundedStreamFailure::Malformed)?;
+            Ok(f64::from_le_bytes(bytes))
+        } else {
+            self.read_number(Some(tag)).map(|value| value as f64)
+        }
+    }
+
+    fn read_string_raw(&mut self) -> Result<String, BoundedStreamFailure> {
+        let length = usize::try_from(self.read_number(None)?)
+            .map_err(|_| BoundedStreamFailure::Oversized)?;
+        if length > MAX_ATTRIBUTED_BODY_BYTES {
+            return Err(BoundedStreamFailure::Oversized);
+        }
+        self.charge_bytes(length)?;
+        String::from_utf8(self.read_exact(length)?.to_vec())
+            .map_err(|_| BoundedStreamFailure::Malformed)
+    }
+
+    fn read_reference_index(&mut self, tag: u8) -> Result<usize, BoundedStreamFailure> {
+        let encoded = usize::try_from(self.read_number(Some(tag))?)
+            .map_err(|_| BoundedStreamFailure::Oversized)?;
+        encoded
+            .checked_sub(TYPED_STREAM_REF_START)
+            .ok_or(BoundedStreamFailure::Malformed)
+    }
+
+    fn read_string(&mut self, tag: Option<u8>) -> Result<Option<String>, BoundedStreamFailure> {
+        let tag = tag.map_or_else(|| self.read_u8(), Ok)?;
+        match tag {
+            TYPED_STREAM_TAG_START => {
+                let string = self.read_string_raw()?;
+                if self.string_cache.len() >= MAX_TYPED_STREAM_OBJECTS {
+                    return Err(BoundedStreamFailure::Oversized);
+                }
+                self.string_cache.push(string.clone());
+                Ok(Some(string))
+            }
+            TYPED_STREAM_TAG_EMPTY => Ok(None),
+            tag => {
+                let index = self.read_reference_index(tag)?;
+                let value = self
+                    .string_cache
+                    .get(index)
+                    .ok_or(BoundedStreamFailure::Malformed)?
+                    .clone();
+                self.charge_bytes(value.len())?;
+                Ok(Some(value))
+            }
+        }
+    }
+
+    fn decode_class_list(&mut self, depth: usize) -> Result<Option<usize>, BoundedStreamFailure> {
+        if depth > MAX_TYPED_STREAM_DEPTH {
+            return Err(BoundedStreamFailure::Oversized);
+        }
+        match self.read_u8()? {
+            TYPED_STREAM_TAG_START => {
+                let index = self.reserve_object()?;
+                let name = self
+                    .read_string(None)?
+                    .ok_or(BoundedStreamFailure::Malformed)?;
+                if name.is_empty() || name.len() > MAX_FIELD_NAME_BYTES {
+                    return Err(BoundedStreamFailure::Malformed);
+                }
+                let _version = self.read_number(None)?;
+                let parent = self.decode_class_list(depth + 1)?;
+                self.objects[index] = BoundedStreamObject::Class { parent, name };
+                Ok(Some(index))
+            }
+            TYPED_STREAM_TAG_EMPTY => Ok(None),
+            tag => {
+                let index = self.read_reference_index(tag)?;
+                if !matches!(
+                    self.objects.get(index),
+                    Some(BoundedStreamObject::Class { .. })
+                ) {
+                    return Err(BoundedStreamFailure::Malformed);
+                }
+                Ok(Some(index))
+            }
+        }
+    }
+
+    fn decode_c_string(&mut self) -> Result<Option<usize>, BoundedStreamFailure> {
+        match self.read_u8()? {
+            TYPED_STREAM_TAG_START => {
+                let index = self.reserve_object()?;
+                let value = self
+                    .read_string(None)?
+                    .ok_or(BoundedStreamFailure::Malformed)?;
+                self.objects[index] = BoundedStreamObject::CString(value);
+                Ok(Some(index))
+            }
+            TYPED_STREAM_TAG_EMPTY => Ok(None),
+            tag => {
+                let index = self.read_reference_index(tag)?;
+                if !matches!(
+                    self.objects.get(index),
+                    Some(BoundedStreamObject::CString(_))
+                ) {
+                    return Err(BoundedStreamFailure::Malformed);
+                }
+                Ok(Some(index))
+            }
+        }
+    }
+
+    fn decode_object(&mut self, depth: usize) -> Result<Option<usize>, BoundedStreamFailure> {
+        if depth > MAX_TYPED_STREAM_DEPTH {
+            return Err(BoundedStreamFailure::Oversized);
+        }
+        match self.read_u8()? {
+            TYPED_STREAM_TAG_START => {
+                let index = self.reserve_object()?;
+                let class = self
+                    .decode_class_list(depth + 1)?
+                    .ok_or(BoundedStreamFailure::Malformed)?;
+                let mut fields = Vec::new();
+                loop {
+                    let tag = self.read_u8()?;
+                    if tag == TYPED_STREAM_FIELDS_END {
+                        break;
+                    }
+                    self.charge_fields(1)?;
+                    fields.push(self.decode_type(Some(tag), depth + 1)?);
+                }
+                self.objects[index] = BoundedStreamObject::Object { class, fields };
+                Ok(Some(index))
+            }
+            TYPED_STREAM_TAG_EMPTY => Ok(None),
+            tag => {
+                let index = self.read_reference_index(tag)?;
+                if !matches!(
+                    self.objects.get(index),
+                    Some(BoundedStreamObject::Object { .. })
+                ) {
+                    return Err(BoundedStreamFailure::Malformed);
+                }
+                Ok(Some(index))
+            }
+        }
+    }
+
+    fn decode_type(
+        &mut self,
+        tag: Option<u8>,
+        depth: usize,
+    ) -> Result<Vec<BoundedStreamValue>, BoundedStreamFailure> {
+        if depth > MAX_TYPED_STREAM_DEPTH {
+            return Err(BoundedStreamFailure::Oversized);
+        }
+        let type_string = self
+            .read_string(tag)?
+            .ok_or(BoundedStreamFailure::Malformed)?;
+        if type_string.starts_with('[') && type_string.ends_with("c]") {
+            let count = type_string[1..type_string.len() - 2]
+                .parse::<usize>()
+                .map_err(|_| BoundedStreamFailure::Malformed)?;
+            if count > MAX_ATTRIBUTED_BODY_BYTES {
+                return Err(BoundedStreamFailure::Oversized);
+            }
+            self.charge_bytes(count)?;
+            return Ok(vec![BoundedStreamValue::Array(
+                self.read_exact(count)?.to_vec(),
+            )]);
+        }
+        if type_string.len() > MAX_FIELD_NAME_BYTES {
+            return Err(BoundedStreamFailure::Oversized);
+        }
+        self.charge_fields(type_string.len())?;
+        let mut values = Vec::with_capacity(type_string.len());
+        for kind in type_string.bytes() {
+            let value = match kind {
+                b'@' => BoundedStreamValue::Object(self.decode_object(depth + 1)?),
+                b'+' => BoundedStreamValue::String(self.read_string_raw()?),
+                b'*' => BoundedStreamValue::Object(self.decode_c_string()?),
+                b'B' => BoundedStreamValue::Bool(match self.read_u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(BoundedStreamFailure::Malformed),
+                }),
+                b'C' | b'c' => BoundedStreamValue::Byte(self.read_u8()?),
+                b's' | b'i' | b'l' | b'q' | b'S' | b'I' | b'L' | b'Q' => BoundedStreamValue::Int(
+                    self.read_number(None)?,
+                    matches!(kind, b's' | b'i' | b'l' | b'q'),
+                ),
+                b'f' => BoundedStreamValue::Float(self.read_float()?),
+                b'd' => BoundedStreamValue::Double(self.read_double()?),
+                _ => return Err(BoundedStreamFailure::Malformed),
+            };
+            values.push(value);
+        }
+        Ok(values)
+    }
+
+    fn decode(mut self) -> Result<(Self, Vec<BoundedStreamValue>), BoundedStreamFailure> {
+        if self.read_u8()? != 0x04
+            || self.read_string_raw()? != "streamtyped"
+            || self.read_number(None)? != 1000
+        {
+            return Err(BoundedStreamFailure::Malformed);
+        }
+        let values = self.decode_type(None, 0)?;
+        if self.offset != self.input.len() {
+            return Err(BoundedStreamFailure::Malformed);
+        }
+        Ok((self, values))
+    }
+
+    fn class_name(&self, class: usize) -> Result<&str, BoundedStreamFailure> {
+        match self.objects.get(class) {
+            Some(BoundedStreamObject::Class { parent, name }) => {
+                if let Some(parent) = parent {
+                    if !matches!(
+                        self.objects.get(*parent),
+                        Some(BoundedStreamObject::Class { .. })
+                    ) {
+                        return Err(BoundedStreamFailure::Malformed);
+                    }
+                }
+                Ok(name)
+            }
+            _ => Err(BoundedStreamFailure::Malformed),
+        }
+    }
+
+    fn object_fields(
+        &self,
+        object: usize,
+        accepted_classes: &[&str],
+    ) -> Result<&[Vec<BoundedStreamValue>], BoundedStreamFailure> {
+        let (class, fields) = match self.objects.get(object) {
+            Some(BoundedStreamObject::Object { class, fields }) => (*class, fields),
+            _ => return Err(BoundedStreamFailure::Malformed),
+        };
+        let class_name = self.class_name(class)?;
+        if !accepted_classes.contains(&class_name) {
+            return Err(BoundedStreamFailure::Malformed);
+        }
+        Ok(fields)
+    }
+
+    fn string_object(&self, value: &BoundedStreamValue) -> Result<String, BoundedStreamFailure> {
+        let BoundedStreamValue::Object(Some(object)) = value else {
+            return Err(BoundedStreamFailure::Malformed);
+        };
+        let fields = self.object_fields(*object, &["NSString", "NSMutableString"])?;
+        match fields.first().and_then(|field| field.first()) {
+            Some(BoundedStreamValue::String(value)) => Ok(value.clone()),
+            _ => Err(BoundedStreamFailure::Malformed),
+        }
+    }
+
+    fn number_object(&self, value: &BoundedStreamValue) -> Result<u32, BoundedStreamFailure> {
+        let BoundedStreamValue::Object(Some(object)) = value else {
+            return Err(BoundedStreamFailure::Malformed);
+        };
+        let fields = self.object_fields(*object, &["NSNumber"])?;
+        match fields.get(1).and_then(|field| field.first()) {
+            Some(BoundedStreamValue::Int(value, _)) => Ok(*value),
+            _ => Err(BoundedStreamFailure::Malformed),
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+struct DecodedRunAttributes {
+    message_part: Option<u32>,
+    attachment_guid: Option<String>,
+    mention: Option<String>,
+    audio_transcript: Option<String>,
+    text_effect: Option<i64>,
+    bold: Option<bool>,
+    italic: Option<bool>,
+    strikethrough: Option<bool>,
+    underline: Option<bool>,
+}
+
+struct DecodedAttributedContent {
+    field: CloudCanonicalField<Vec<CloudCanonicalAttributedBody>>,
+    maximum_utf16_length: Option<u32>,
+}
+
+struct DecodedMessageSummary {
+    edits: CloudCanonicalField<Vec<CloudCanonicalMessageEdit>>,
+    retracted_parts: CloudCanonicalField<Vec<u32>>,
+    edit_snapshots: Vec<CloudCanonicalEditPartSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CloudRawFieldPresence {
+    Absent,
+    PresentWithoutValue,
+    PresentWithValue,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CloudRawPresenceFailure {
+    TooManyFields,
+    MalformedFieldIdentifier,
+    DuplicateFieldIdentifier,
+    FieldNotPresent,
+    NestedPayloadTooLarge,
+    MalformedNestedPlist,
+    NestedPlistIsNotDictionary,
+    ExplicitClearWithoutPresence,
+}
+
+impl fmt::Display for CloudRawPresenceFailure {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::TooManyFields => "Cloud Sync raw record contains too many fields",
+            Self::MalformedFieldIdentifier => "Cloud Sync raw field identifier is malformed",
+            Self::DuplicateFieldIdentifier => "Cloud Sync raw field identifier is duplicated",
+            Self::FieldNotPresent => "Cloud Sync nested presence source field is absent",
+            Self::NestedPayloadTooLarge => "Cloud Sync nested presence payload exceeds its bound",
+            Self::MalformedNestedPlist => "Cloud Sync nested presence plist is malformed",
+            Self::NestedPlistIsNotDictionary => {
+                "Cloud Sync nested presence plist is not a dictionary"
+            }
+            Self::ExplicitClearWithoutPresence => {
+                "Cloud Sync explicit-clear evidence has no matching present field"
+            }
+        })
+    }
+}
+
+impl std::error::Error for CloudRawPresenceFailure {}
+
+/// Content-free presence evidence. Values and decrypted plist payloads are
+/// discarded after their field names are captured.
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct CloudRawRecordPresence {
+    fields: HashMap<String, CloudRawFieldPresence>,
+    nested_plist_keys: HashMap<String, HashSet<String>>,
+    explicit_top_level_clears: HashSet<String>,
+    explicit_nested_clears: HashSet<(String, String)>,
+}
+
+impl CloudRawRecordPresence {
+    pub(crate) fn extract(record: &Record) -> Result<Self, CloudRawPresenceFailure> {
+        if record.record_field.len() > MAX_RAW_FIELDS {
+            return Err(CloudRawPresenceFailure::TooManyFields);
+        }
+        let mut fields = HashMap::with_capacity(record.record_field.len());
+        for field in &record.record_field {
+            let name = field
+                .identifier
+                .as_ref()
+                .and_then(|identifier| identifier.name.as_deref())
+                .filter(|name| {
+                    !name.is_empty()
+                        && name.len() <= MAX_FIELD_NAME_BYTES
+                        && !name.chars().any(char::is_control)
+                })
+                .ok_or(CloudRawPresenceFailure::MalformedFieldIdentifier)?;
+            let state = if field.value.is_some() {
+                CloudRawFieldPresence::PresentWithValue
+            } else {
+                CloudRawFieldPresence::PresentWithoutValue
+            };
+            if fields.insert(name.to_owned(), state).is_some() {
+                return Err(CloudRawPresenceFailure::DuplicateFieldIdentifier);
+            }
+        }
+        Ok(Self {
+            fields,
+            nested_plist_keys: HashMap::new(),
+            explicit_top_level_clears: HashSet::new(),
+            explicit_nested_clears: HashSet::new(),
+        })
+    }
+
+    /// Captures keys from a decrypted, already-decompressed plist dictionary.
+    /// Callers handling `cm` must decompress its gzip wrapper before this
+    /// boundary. This method retains neither values nor the supplied bytes.
+    pub(crate) fn capture_decrypted_plist_dictionary(
+        &mut self,
+        outer_field: &str,
+        decrypted_plist: &[u8],
+    ) -> Result<(), CloudRawPresenceFailure> {
+        if self.field(outer_field) == CloudRawFieldPresence::Absent {
+            return Err(CloudRawPresenceFailure::FieldNotPresent);
+        }
+        if decrypted_plist.len() > MAX_NESTED_PLIST_BYTES {
+            return Err(CloudRawPresenceFailure::NestedPayloadTooLarge);
+        }
+        let value = PlistValue::from_reader(Cursor::new(decrypted_plist))
+            .map_err(|_| CloudRawPresenceFailure::MalformedNestedPlist)?;
+        let dictionary = value
+            .into_dictionary()
+            .ok_or(CloudRawPresenceFailure::NestedPlistIsNotDictionary)?;
+        if dictionary.len() > MAX_RAW_FIELDS {
+            return Err(CloudRawPresenceFailure::TooManyFields);
+        }
+        let mut keys = HashSet::with_capacity(dictionary.len());
+        for (key, _) in dictionary.into_iter() {
+            if key.is_empty()
+                || key.len() > MAX_FIELD_NAME_BYTES
+                || key.chars().any(char::is_control)
+            {
+                return Err(CloudRawPresenceFailure::MalformedFieldIdentifier);
+            }
+            keys.insert(key);
+        }
+        self.nested_plist_keys.insert(outer_field.to_owned(), keys);
+        Ok(())
+    }
+
+    pub(crate) fn field(&self, name: &str) -> CloudRawFieldPresence {
+        self.fields
+            .get(name)
+            .copied()
+            .unwrap_or(CloudRawFieldPresence::Absent)
+    }
+
+    /// Records an authoritative clear marker supplied by a pre-typed decoder.
+    /// Raw presence by itself is deliberately insufficient evidence.
+    pub(crate) fn mark_top_level_explicit_clear(
+        &mut self,
+        field: &str,
+    ) -> Result<(), CloudRawPresenceFailure> {
+        if self.field(field) != CloudRawFieldPresence::PresentWithValue {
+            return Err(CloudRawPresenceFailure::ExplicitClearWithoutPresence);
+        }
+        self.explicit_top_level_clears.insert(field.to_owned());
+        Ok(())
+    }
+
+    /// Records an authoritative nested clear marker before serde defaults can
+    /// erase the distinction.
+    pub(crate) fn mark_nested_explicit_clear(
+        &mut self,
+        outer_field: &str,
+        nested_field: &str,
+    ) -> Result<(), CloudRawPresenceFailure> {
+        if self.nested_field(outer_field, nested_field) != CloudNestedPresence::Present {
+            return Err(CloudRawPresenceFailure::ExplicitClearWithoutPresence);
+        }
+        self.explicit_nested_clears
+            .insert((outer_field.to_owned(), nested_field.to_owned()));
+        Ok(())
+    }
+
+    fn is_top_level_explicit_clear(&self, field: &str) -> bool {
+        self.explicit_top_level_clears.contains(field)
+    }
+
+    fn is_nested_explicit_clear(&self, outer_field: &str, nested_field: &str) -> bool {
+        self.explicit_nested_clears
+            .contains(&(outer_field.to_owned(), nested_field.to_owned()))
+    }
+
+    fn nested_field(&self, outer_field: &str, nested_field: &str) -> CloudNestedPresence {
+        match self.field(outer_field) {
+            CloudRawFieldPresence::Absent => CloudNestedPresence::OuterAbsent,
+            CloudRawFieldPresence::PresentWithoutValue => CloudNestedPresence::OuterWithoutValue,
+            CloudRawFieldPresence::PresentWithValue => self
+                .nested_plist_keys
+                .get(outer_field)
+                .map(|keys| {
+                    if keys.contains(nested_field) {
+                        CloudNestedPresence::Present
+                    } else {
+                        CloudNestedPresence::Absent
+                    }
+                })
+                .unwrap_or(CloudNestedPresence::Unavailable),
+        }
+    }
+}
+
+impl Debug for CloudRawRecordPresence {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CloudRawRecordPresence")
+            .field("field_count", &self.fields.len())
+            .field("nested_dictionary_count", &self.nested_plist_keys.len())
+            .field(
+                "explicit_clear_count",
+                &(self.explicit_top_level_clears.len() + self.explicit_nested_clears.len()),
+            )
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CloudNestedPresence {
+    OuterAbsent,
+    OuterWithoutValue,
+    Unavailable,
+    Absent,
+    Present,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CloudCanonicalDeferredReason {
+    NestedPresenceUnavailable,
+    UnprovenEditTimestamp,
+    UnsupportedExtensionPayload,
+    UnsupportedMediaCredentials,
+    UnsupportedGroupPhoto,
+    UnsupportedSticker,
+    UnsupportedScheduling,
+    UnsupportedOffGridMetadata,
+    UnsupportedNegativeAttachmentSize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CloudCanonicalQuarantineReason {
+    MalformedRequiredIdentity,
+    FieldPresenceMismatch,
+    UnsupportedService,
+    UnsupportedChatStyle,
+    UnsupportedMessageType,
+    UnsupportedAssociationType,
+    MalformedParent,
+    AmbiguousReply,
+    MalformedAttributedBody,
+    MalformedMessageSummary,
+    ConflictingEditAndRetraction,
+    OversizedContent,
+    InvalidCanonicalPayload,
+    MalformedRecord,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) enum CloudCanonicalConversionOutcome {
+    Ready(Box<CloudCanonicalMutation>),
+    Deferred(CloudCanonicalDeferredReason),
+    Quarantined(CloudCanonicalQuarantineReason),
+}
+
+impl Debug for CloudCanonicalConversionOutcome {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ready(_) => {
+                formatter.write_str("CloudCanonicalConversionOutcome::Ready(redacted)")
+            }
+            Self::Deferred(reason) => formatter
+                .debug_tuple("CloudCanonicalConversionOutcome::Deferred")
+                .field(reason)
+                .finish(),
+            Self::Quarantined(reason) => formatter
+                .debug_tuple("CloudCanonicalConversionOutcome::Quarantined")
+                .field(reason)
+                .finish(),
+        }
+    }
+}
+
+pub(crate) struct CloudCanonicalConversionContext<'a> {
+    hasher: &'a CloudSemanticIdentifierHasher,
+    scope_fingerprint: CloudCanonicalHash,
+    zone_fingerprint: CloudCanonicalHash,
+    generation: u64,
+    change_id: CloudCanonicalHash,
+    record_name: &'a str,
+    etag: Option<&'a str>,
+    server_created_at_millis: Option<i64>,
+    server_modified_at_millis: Option<i64>,
+    protected_raw_envelope_reference: &'a str,
+}
+
+impl<'a> CloudCanonicalConversionContext<'a> {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        hasher: &'a CloudSemanticIdentifierHasher,
+        scope_fingerprint: CloudCanonicalHash,
+        zone_fingerprint: CloudCanonicalHash,
+        generation: u64,
+        change_id: CloudCanonicalHash,
+        record_name: &'a str,
+        etag: Option<&'a str>,
+        server_created_at_millis: Option<i64>,
+        server_modified_at_millis: Option<i64>,
+        protected_raw_envelope_reference: &'a str,
+    ) -> Self {
+        Self {
+            hasher,
+            scope_fingerprint,
+            zone_fingerprint,
+            generation,
+            change_id,
+            record_name,
+            etag,
+            server_created_at_millis,
+            server_modified_at_millis,
+            protected_raw_envelope_reference,
+        }
+    }
+}
+
+impl Debug for CloudCanonicalConversionContext<'_> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str("CloudCanonicalConversionContext(redacted)")
+    }
+}
+
+fn require_present(
+    presence: &CloudRawRecordPresence,
+    fields: &[&str],
+) -> Result<(), CloudCanonicalQuarantineReason> {
+    if fields
+        .iter()
+        .all(|field| presence.field(field) == CloudRawFieldPresence::PresentWithValue)
+    {
+        Ok(())
+    } else {
+        Err(CloudCanonicalQuarantineReason::MalformedRequiredIdentity)
+    }
+}
+
+fn top_optional_string(
+    presence: &CloudRawRecordPresence,
+    field: &str,
+    value: &Option<String>,
+) -> Result<CloudCanonicalField<String>, CloudCanonicalQuarantineReason> {
+    match (presence.field(field), value) {
+        (CloudRawFieldPresence::Absent, None) => Ok(CloudCanonicalField::Absent),
+        (CloudRawFieldPresence::PresentWithValue, Some(value)) => {
+            Ok(CloudCanonicalField::Value(value.clone()))
+        }
+        (CloudRawFieldPresence::PresentWithValue, None)
+            if presence.is_top_level_explicit_clear(field) =>
+        {
+            Ok(CloudCanonicalField::ExplicitClear)
+        }
+        (CloudRawFieldPresence::PresentWithValue, None) => {
+            Err(CloudCanonicalQuarantineReason::FieldPresenceMismatch)
+        }
+        (CloudRawFieldPresence::PresentWithoutValue, _) => {
+            Err(CloudCanonicalQuarantineReason::MalformedRecord)
+        }
+        _ => Err(CloudCanonicalQuarantineReason::FieldPresenceMismatch),
+    }
+}
+
+fn top_default_string(
+    presence: &CloudRawRecordPresence,
+    field: &str,
+    value: &str,
+) -> Result<CloudCanonicalField<String>, CloudCanonicalQuarantineReason> {
+    match presence.field(field) {
+        CloudRawFieldPresence::Absent if value.is_empty() => Ok(CloudCanonicalField::Absent),
+        CloudRawFieldPresence::Absent => Err(CloudCanonicalQuarantineReason::FieldPresenceMismatch),
+        CloudRawFieldPresence::PresentWithoutValue => {
+            Err(CloudCanonicalQuarantineReason::MalformedRecord)
+        }
+        CloudRawFieldPresence::PresentWithValue
+            if value.is_empty() && presence.is_top_level_explicit_clear(field) =>
+        {
+            Ok(CloudCanonicalField::ExplicitClear)
+        }
+        CloudRawFieldPresence::PresentWithValue if value.is_empty() => {
+            Err(CloudCanonicalQuarantineReason::FieldPresenceMismatch)
+        }
+        CloudRawFieldPresence::PresentWithValue => Ok(CloudCanonicalField::Value(value.to_owned())),
+    }
+}
+
+fn nested_optional<T: Clone>(
+    presence: &CloudRawRecordPresence,
+    outer: &str,
+    nested: &str,
+    typed_outer_present: bool,
+    value: &Option<T>,
+) -> Result<CloudCanonicalField<T>, CloudCanonicalConversionOutcome> {
+    match presence.nested_field(outer, nested) {
+        CloudNestedPresence::OuterAbsent if !typed_outer_present && value.is_none() => {
+            Ok(CloudCanonicalField::Absent)
+        }
+        CloudNestedPresence::OuterAbsent => Err(CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::FieldPresenceMismatch,
+        )),
+        CloudNestedPresence::OuterWithoutValue => {
+            Err(CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRecord,
+            ))
+        }
+        CloudNestedPresence::Unavailable => Err(CloudCanonicalConversionOutcome::Deferred(
+            CloudCanonicalDeferredReason::NestedPresenceUnavailable,
+        )),
+        CloudNestedPresence::Absent if value.is_none() => Ok(CloudCanonicalField::Absent),
+        CloudNestedPresence::Absent => Err(CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::FieldPresenceMismatch,
+        )),
+        CloudNestedPresence::Present => match value {
+            Some(value) => Ok(CloudCanonicalField::Value(value.clone())),
+            None if presence.is_nested_explicit_clear(outer, nested) => {
+                Ok(CloudCanonicalField::ExplicitClear)
+            }
+            None => Err(CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::FieldPresenceMismatch,
+            )),
+        },
+    }
+}
+
+fn bounded_stream_failure_outcome(
+    failure: BoundedStreamFailure,
+) -> CloudCanonicalConversionOutcome {
+    CloudCanonicalConversionOutcome::Quarantined(match failure {
+        BoundedStreamFailure::Malformed => CloudCanonicalQuarantineReason::MalformedAttributedBody,
+        BoundedStreamFailure::Oversized => CloudCanonicalQuarantineReason::OversizedContent,
+    })
+}
+
+fn decode_attribute_dictionary(
+    decoder: &BoundedTypedStreamDecoder<'_>,
+    value: &BoundedStreamValue,
+) -> Result<DecodedRunAttributes, BoundedStreamFailure> {
+    let BoundedStreamValue::Object(Some(object)) = value else {
+        return Err(BoundedStreamFailure::Malformed);
+    };
+    let fields = decoder.object_fields(*object, &["NSDictionary", "NSMutableDictionary"])?;
+    let count = match fields.first().and_then(|field| field.first()) {
+        Some(BoundedStreamValue::Int(value, _)) => {
+            usize::try_from(*value).map_err(|_| BoundedStreamFailure::Oversized)?
+        }
+        _ => return Err(BoundedStreamFailure::Malformed),
+    };
+    if count > MAX_ATTRIBUTES_PER_RUN
+        || fields.len()
+            != count
+                .checked_mul(2)
+                .and_then(|value| value.checked_add(1))
+                .ok_or(BoundedStreamFailure::Oversized)?
+    {
+        return Err(if count > MAX_ATTRIBUTES_PER_RUN {
+            BoundedStreamFailure::Oversized
+        } else {
+            BoundedStreamFailure::Malformed
+        });
+    }
+
+    let mut decoded = DecodedRunAttributes::default();
+    for pair in fields[1..].chunks_exact(2) {
+        let key = pair
+            .first()
+            .and_then(|field| field.first())
+            .ok_or(BoundedStreamFailure::Malformed)
+            .and_then(|value| decoder.string_object(value))?;
+        let value = pair
+            .get(1)
+            .and_then(|field| field.first())
+            .ok_or(BoundedStreamFailure::Malformed)?;
+        match key.as_str() {
+            "__kIMMessagePartAttributeName" => {
+                decoded.message_part = Some(decoder.number_object(value)?);
+            }
+            "__kIMFileTransferGUIDAttributeName" => {
+                decoded.attachment_guid = Some(decoder.string_object(value)?);
+            }
+            "__kIMMentionConfirmedMention" => {
+                decoded.mention = Some(decoder.string_object(value)?);
+            }
+            "IMAudioTranscription" => {
+                decoded.audio_transcript = Some(decoder.string_object(value)?);
+            }
+            "__kIMTextEffectAttributeName" => {
+                decoded.text_effect = Some(i64::from(decoder.number_object(value)?));
+            }
+            "__kIMTextBoldAttributeName" => {
+                decoded.bold = Some(decode_boolean_number(decoder, value)?);
+            }
+            "__kIMTextItalicAttributeName" => {
+                decoded.italic = Some(decode_boolean_number(decoder, value)?);
+            }
+            "__kIMTextStrikethroughAttributeName" => {
+                decoded.strikethrough = Some(decode_boolean_number(decoder, value)?);
+            }
+            "__kIMTextUnderlineAttributeName" => {
+                decoded.underline = Some(decode_boolean_number(decoder, value)?);
+            }
+            // Unknown attributed-string keys remain available through the
+            // protected raw envelope. Projecting known text and runs does not
+            // authorize logging or discarding that protected source.
+            _ => {}
+        }
+    }
+    Ok(decoded)
+}
+
+fn decode_boolean_number(
+    decoder: &BoundedTypedStreamDecoder<'_>,
+    value: &BoundedStreamValue,
+) -> Result<bool, BoundedStreamFailure> {
+    match decoder.number_object(value)? {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(BoundedStreamFailure::Malformed),
+    }
+}
+
+fn attachment_reference_for_run(
+    context: &CloudCanonicalConversionContext<'_>,
+    message_guid: &str,
+    wire_guid: &str,
+) -> Result<CloudCanonicalAttachmentReference, CloudCanonicalConversionOutcome> {
+    let (canonical_guid, logical_identifier) = match parse_owned_attachment_guid(wire_guid) {
+        Ok(owned) => {
+            if owned.message_guid() != message_guid {
+                return Err(CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::MalformedParent,
+                ));
+            }
+            (
+                owned.canonical_guid().to_owned(),
+                format!("{}\0{}", owned.message_guid(), owned.part()),
+            )
+        }
+        Err(_) if wire_guid.starts_with("at_") => {
+            return Err(CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedParent,
+            ))
+        }
+        Err(_) => (wire_guid.to_owned(), wire_guid.to_owned()),
+    };
+    let logical_key_hash = context
+        .hasher
+        .canonical_entity_key_hash(CloudCanonicalEntityKind::Attachment, &logical_identifier)
+        .map_err(validation_quarantine)?;
+    CloudCanonicalAttachmentReference::new(canonical_guid, logical_key_hash)
+        .map_err(validation_quarantine)
+}
+
+fn decode_attributed_body_object(
+    context: &CloudCanonicalConversionContext<'_>,
+    message_guid: &str,
+    decoder: &BoundedTypedStreamDecoder<'_>,
+    object: usize,
+) -> Result<(CloudCanonicalAttributedBody, u32), CloudCanonicalConversionOutcome> {
+    let fields = decoder
+        .object_fields(object, &["NSAttributedString", "NSMutableAttributedString"])
+        .map_err(bounded_stream_failure_outcome)?;
+    let text = fields
+        .first()
+        .and_then(|field| field.first())
+        .ok_or_else(|| bounded_stream_failure_outcome(BoundedStreamFailure::Malformed))
+        .and_then(|value| {
+            decoder
+                .string_object(value)
+                .map_err(bounded_stream_failure_outcome)
+        })?;
+    let utf16_length = u32::try_from(text.encode_utf16().count()).map_err(|_| {
+        CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::OversizedContent,
+        )
+    })?;
+
+    let mut ranges = HashMap::<u32, DecodedRunAttributes>::new();
+    let mut runs = Vec::new();
+    let mut field_index = 1usize;
+    let mut start_utf16 = 0u32;
+    while field_index < fields.len() {
+        if runs.len() >= MAX_RUNS_PER_BODY {
+            return Err(CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::OversizedContent,
+            ));
+        }
+        let range_field = fields
+            .get(field_index)
+            .ok_or_else(|| bounded_stream_failure_outcome(BoundedStreamFailure::Malformed))?;
+        let range_id = match range_field.first() {
+            Some(BoundedStreamValue::Int(value, _)) => *value,
+            _ => {
+                return Err(bounded_stream_failure_outcome(
+                    BoundedStreamFailure::Malformed,
+                ))
+            }
+        };
+        let length_utf16 = match range_field.get(1) {
+            Some(BoundedStreamValue::Int(value, _)) => *value,
+            _ => {
+                return Err(bounded_stream_failure_outcome(
+                    BoundedStreamFailure::Malformed,
+                ))
+            }
+        };
+        field_index += 1;
+        let attributes = if let Some(cached) = ranges.get(&range_id) {
+            cached.clone()
+        } else {
+            let dictionary = fields
+                .get(field_index)
+                .and_then(|field| field.first())
+                .ok_or_else(|| bounded_stream_failure_outcome(BoundedStreamFailure::Malformed))?;
+            field_index += 1;
+            let decoded = decode_attribute_dictionary(decoder, dictionary)
+                .map_err(bounded_stream_failure_outcome)?;
+            ranges.insert(range_id, decoded.clone());
+            decoded
+        };
+        let attachment = match attributes.attachment_guid.as_deref() {
+            Some(guid) => Some(attachment_reference_for_run(context, message_guid, guid)?),
+            None => None,
+        };
+        let run = CloudCanonicalTextRun::new(
+            start_utf16,
+            length_utf16,
+            attributes.message_part,
+            attachment,
+            attributes.mention,
+            attributes.audio_transcript,
+            attributes.text_effect,
+            attributes.bold,
+            attributes.italic,
+            attributes.strikethrough,
+            attributes.underline,
+        )
+        .map_err(validation_quarantine)?;
+        start_utf16 = start_utf16.checked_add(length_utf16).ok_or({
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedAttributedBody,
+            )
+        })?;
+        runs.push(run);
+    }
+    let body = CloudCanonicalAttributedBody::new(text, runs).map_err(validation_quarantine)?;
+    Ok((body, utf16_length))
+}
+
+fn decode_attributed_content(
+    context: &CloudCanonicalConversionContext<'_>,
+    message_guid: &str,
+    raw: Option<&[u8]>,
+) -> Result<DecodedAttributedContent, CloudCanonicalConversionOutcome> {
+    let Some(raw) = raw else {
+        return Ok(DecodedAttributedContent {
+            field: CloudCanonicalField::Absent,
+            maximum_utf16_length: None,
+        });
+    };
+    if raw.is_empty() {
+        return Err(CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::MalformedAttributedBody,
+        ));
+    }
+    let (decoder, values) = BoundedTypedStreamDecoder::new(raw)
+        .and_then(BoundedTypedStreamDecoder::decode)
+        .map_err(bounded_stream_failure_outcome)?;
+    if values.len() > MAX_ATTRIBUTED_BODIES {
+        return Err(CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::OversizedContent,
+        ));
+    }
+    if values.is_empty() {
+        return Ok(DecodedAttributedContent {
+            field: CloudCanonicalField::ExplicitClear,
+            maximum_utf16_length: Some(0),
+        });
+    }
+    let mut bodies = Vec::with_capacity(values.len());
+    let mut maximum_utf16_length = 0u32;
+    for value in values {
+        let BoundedStreamValue::Object(Some(object)) = value else {
+            return Err(CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedAttributedBody,
+            ));
+        };
+        let (body, utf16_length) =
+            decode_attributed_body_object(context, message_guid, &decoder, object)?;
+        maximum_utf16_length = maximum_utf16_length.max(utf16_length);
+        bodies.push(body);
+    }
+    Ok(DecodedAttributedContent {
+        field: CloudCanonicalField::Value(bodies),
+        maximum_utf16_length: Some(maximum_utf16_length),
+    })
+}
+
+fn parse_decimal_part(value: &str) -> Option<u32> {
+    if value.is_empty()
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+        || (value.len() > 1 && value.starts_with('0'))
+    {
+        return None;
+    }
+    let part = value.parse::<u32>().ok()?;
+    (part.to_string() == value).then_some(part)
+}
+
+fn validated_edit_timestamp(value: f64) -> Result<i64, CloudCanonicalConversionOutcome> {
+    if !value.is_finite() || value < 0.0 || value > MAX_CANONICAL_TIMESTAMP_MILLIS as f64 {
+        return Err(CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::MalformedMessageSummary,
+        ));
+    }
+    if value.fract() != 0.0 || value < APPLE_EPOCH_OFFSET_MILLIS as f64 {
+        return Err(CloudCanonicalConversionOutcome::Deferred(
+            CloudCanonicalDeferredReason::UnprovenEditTimestamp,
+        ));
+    }
+    Ok(value as i64)
+}
+
+fn decode_message_summary(
+    context: &CloudCanonicalConversionContext<'_>,
+    message_guid: &str,
+    raw: Option<&[u8]>,
+    original_maximum_utf16_length: Option<u32>,
+) -> Result<DecodedMessageSummary, CloudCanonicalConversionOutcome> {
+    let Some(raw) = raw else {
+        return Ok(DecodedMessageSummary {
+            edits: CloudCanonicalField::Absent,
+            retracted_parts: CloudCanonicalField::Absent,
+            edit_snapshots: Vec::new(),
+        });
+    };
+    if raw.is_empty() {
+        return Err(CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::MalformedMessageSummary,
+        ));
+    }
+    if raw.len() > MAX_MESSAGE_SUMMARY_BYTES {
+        return Err(CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::OversizedContent,
+        ));
+    }
+    let raw_value = PlistValue::from_reader(Cursor::new(raw)).map_err(|_| {
+        CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::MalformedMessageSummary,
+        )
+    })?;
+    let raw_dictionary =
+        raw_value
+            .as_dictionary()
+            .ok_or(CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedMessageSummary,
+            ))?;
+    if raw_dictionary.len() > MAX_RAW_FIELDS {
+        return Err(CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::OversizedContent,
+        ));
+    }
+    let edit_state_present = ["ec", "ep", "otr"]
+        .iter()
+        .any(|key| raw_dictionary.contains_key(key));
+    let retraction_state_present = raw_dictionary.contains_key("rp");
+    let summary: MessageSummaryInfo = plist::from_bytes(raw).map_err(|_| {
+        CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::MalformedMessageSummary,
+        )
+    })?;
+    // This projection owns only edit history, original edit ranges, and
+    // retractions. Other summary keys (including associated-message and
+    // extension metadata) and each edit's `bcg` remain losslessly reachable
+    // through the protected raw envelope reference for a later schema.
+    if summary.ec.len() > MAX_MESSAGE_EDITS
+        || summary.ep.len() > MAX_MESSAGE_EDITS
+        || summary.otr.len() > MAX_MESSAGE_EDITS
+        || summary.rp.len() > MAX_RETRACTED_PARTS
+    {
+        return Err(CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::OversizedContent,
+        ));
+    }
+
+    let mut declared_edit_parts = summary.ep;
+    declared_edit_parts.sort_unstable();
+    declared_edit_parts.dedup();
+    let declared_edit_parts = declared_edit_parts.into_iter().collect::<HashSet<_>>();
+
+    let mut encoded_parts = Vec::with_capacity(summary.ec.len());
+    for (wire_part, wire_edits) in summary.ec {
+        let part =
+            parse_decimal_part(&wire_part).ok_or(CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedMessageSummary,
+            ))?;
+        if wire_edits.is_empty() || wire_edits.len() > MAX_MESSAGE_EDITS {
+            return Err(CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedMessageSummary,
+            ));
+        }
+        encoded_parts.push((part, wire_edits));
+    }
+    encoded_parts.sort_unstable_by_key(|(part, _)| *part);
+    if encoded_parts
+        .windows(2)
+        .any(|window| window[0].0 == window[1].0)
+    {
+        return Err(CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::MalformedMessageSummary,
+        ));
+    }
+    let encoded_part_set = encoded_parts
+        .iter()
+        .map(|(part, _)| *part)
+        .collect::<HashSet<_>>();
+    if encoded_part_set != declared_edit_parts {
+        return Err(CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::MalformedMessageSummary,
+        ));
+    }
+
+    let mut original_ranges = HashMap::with_capacity(summary.otr.len());
+    for (wire_part, range) in summary.otr {
+        let part =
+            parse_decimal_part(&wire_part).ok_or(CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedMessageSummary,
+            ))?;
+        if !declared_edit_parts.contains(&part)
+            || range.lo.checked_add(range.le).is_none()
+            || original_maximum_utf16_length.is_some_and(|maximum| {
+                range
+                    .lo
+                    .checked_add(range.le)
+                    .is_none_or(|end| end > maximum)
+            })
+            || original_ranges.insert(part, (range.lo, range.le)).is_some()
+        {
+            return Err(CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedMessageSummary,
+            ));
+        }
+    }
+
+    let mut retracted_parts = summary.rp;
+    retracted_parts.sort_unstable();
+    retracted_parts.dedup();
+    if retracted_parts
+        .iter()
+        .any(|part| declared_edit_parts.contains(part))
+    {
+        return Err(CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::ConflictingEditAndRetraction,
+        ));
+    }
+
+    struct PreparedEdit {
+        bodies: Vec<CloudCanonicalAttributedBody>,
+        modified_at_millis: i64,
+        content_digest: CloudCanonicalDigest,
+    }
+
+    let mut canonical_edits = Vec::new();
+    let mut edit_snapshots = Vec::new();
+    for (part, wire_edits) in encoded_parts {
+        let part_key_hash = context
+            .hasher
+            .canonical_entity_key_hash(
+                CloudCanonicalEntityKind::Message,
+                &format!("{message_guid}\0{part}"),
+            )
+            .map_err(validation_quarantine)?;
+        let mut prepared = Vec::with_capacity(wire_edits.len());
+        for wire_edit in wire_edits {
+            let modified_at_millis = validated_edit_timestamp(wire_edit.d)?;
+            let content_digest = sha256_digest(&[&wire_edit.t]).map_err(validation_quarantine)?;
+            let decoded =
+                decode_attributed_content(context, message_guid, Some(wire_edit.t.as_slice()))?;
+            let bodies = match decoded.field {
+                CloudCanonicalField::Value(bodies) if !bodies.is_empty() => bodies,
+                CloudCanonicalField::Absent
+                | CloudCanonicalField::ExplicitClear
+                | CloudCanonicalField::Value(_) => {
+                    return Err(CloudCanonicalConversionOutcome::Quarantined(
+                        CloudCanonicalQuarantineReason::MalformedMessageSummary,
+                    ))
+                }
+            };
+            prepared.push(PreparedEdit {
+                bodies,
+                modified_at_millis,
+                content_digest,
+            });
+        }
+        prepared.sort_by(|left, right| {
+            left.modified_at_millis
+                .cmp(&right.modified_at_millis)
+                .then_with(|| {
+                    left.content_digest
+                        .value()
+                        .cmp(right.content_digest.value())
+                })
+        });
+        prepared.dedup_by(|left, right| {
+            left.modified_at_millis == right.modified_at_millis
+                && left.content_digest == right.content_digest
+        });
+        for (revision_index, edit) in prepared.into_iter().enumerate() {
+            let revision = u32::try_from(revision_index).map_err(|_| {
+                CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::OversizedContent,
+                )
+            })?;
+            edit_snapshots.push(CloudCanonicalEditPartSnapshot::new(
+                part_key_hash.clone(),
+                revision,
+                edit.content_digest.clone(),
+                edit.modified_at_millis,
+            ));
+            canonical_edits.push(
+                CloudCanonicalMessageEdit::new(
+                    part,
+                    revision,
+                    edit.bodies,
+                    edit.modified_at_millis,
+                    original_ranges.get(&part).copied(),
+                )
+                .map_err(validation_quarantine)?,
+            );
+        }
+    }
+    if canonical_edits.len() > MAX_MESSAGE_EDITS || edit_snapshots.len() > MAX_MESSAGE_EDITS {
+        return Err(CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::OversizedContent,
+        ));
+    }
+
+    let edits = if edit_state_present {
+        if canonical_edits.is_empty() {
+            CloudCanonicalField::ExplicitClear
+        } else {
+            CloudCanonicalField::Value(canonical_edits)
+        }
+    } else if canonical_edits.is_empty() {
+        CloudCanonicalField::Absent
+    } else {
+        return Err(CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::MalformedMessageSummary,
+        ));
+    };
+    let retracted_parts = if retraction_state_present {
+        if retracted_parts.is_empty() {
+            CloudCanonicalField::ExplicitClear
+        } else {
+            CloudCanonicalField::Value(retracted_parts)
+        }
+    } else if retracted_parts.is_empty() {
+        CloudCanonicalField::Absent
+    } else {
+        return Err(CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::MalformedMessageSummary,
+        ));
+    };
+    Ok(DecodedMessageSummary {
+        edits,
+        retracted_parts,
+        edit_snapshots,
+    })
+}
+
+fn sha256_digest(parts: &[&[u8]]) -> Result<CloudCanonicalDigest, CloudCanonicalValidationFailure> {
+    let mut hasher = Sha256::new();
+    for part in parts {
+        hasher.update((part.len() as u64).to_be_bytes());
+        hasher.update(part);
+    }
+    let hex = hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    CloudCanonicalDigest::new(hex)
+}
+
+fn etag_hash(
+    hasher: &CloudSemanticIdentifierHasher,
+    etag: Option<&str>,
+) -> Result<Option<CloudCanonicalHash>, CloudCanonicalValidationFailure> {
+    etag.map(|value| hasher.canonical_etag_hash(value))
+        .transpose()
+}
+
+fn protected_reference(
+    context: &CloudCanonicalConversionContext<'_>,
+) -> Result<CloudCanonicalProtectedReference, CloudCanonicalQuarantineReason> {
+    CloudCanonicalProtectedReference::new(context.protected_raw_envelope_reference)
+        .map_err(|_| CloudCanonicalQuarantineReason::MalformedRecord)
+}
+
+fn validation_quarantine(_: CloudCanonicalValidationFailure) -> CloudCanonicalConversionOutcome {
+    CloudCanonicalConversionOutcome::Quarantined(
+        CloudCanonicalQuarantineReason::InvalidCanonicalPayload,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_upsert(
+    context: &CloudCanonicalConversionContext<'_>,
+    entity_kind: CloudCanonicalEntityKind,
+    logical_entity_key_hash: CloudCanonicalHash,
+    parent_logical_key_hash: Option<CloudCanonicalHash>,
+    aliases: Vec<CloudCanonicalAlias>,
+    payload: CloudCanonicalPayload,
+    immutable_content_digest: Option<CloudCanonicalDigest>,
+    created_at_millis: Option<i64>,
+    read_at_millis: Option<i64>,
+    delivered_at_millis: Option<i64>,
+    edit_parts: Vec<CloudCanonicalEditPartSnapshot>,
+    group_version: Option<u32>,
+) -> CloudCanonicalConversionOutcome {
+    let protected = match protected_reference(context) {
+        Ok(value) => value,
+        Err(reason) => return CloudCanonicalConversionOutcome::Quarantined(reason),
+    };
+    let server_record_id_hash = match context
+        .hasher
+        .canonical_server_record_id_hash(context.record_name)
+    {
+        Ok(value) => value,
+        Err(error) => return validation_quarantine(error),
+    };
+    let etag_hash = match etag_hash(context.hasher, context.etag) {
+        Ok(value) => value,
+        Err(error) => return validation_quarantine(error),
+    };
+    let envelope = match CloudCanonicalEnvelope::new(
+        context.scope_fingerprint.clone(),
+        context.zone_fingerprint.clone(),
+        context.generation,
+        CLOUD_CANONICAL_SCHEMA_VERSION,
+        context.change_id.clone(),
+        entity_kind,
+        CloudCanonicalMutationKind::Upsert,
+        server_record_id_hash,
+        logical_entity_key_hash.clone(),
+        parent_logical_key_hash.clone(),
+        aliases,
+        etag_hash.clone(),
+        context.server_created_at_millis,
+        context.server_modified_at_millis,
+        protected.clone(),
+    ) {
+        Ok(value) => value,
+        Err(error) => return validation_quarantine(error),
+    };
+    let snapshot = match CloudCanonicalSnapshot::new(
+        entity_kind,
+        logical_entity_key_hash,
+        parent_logical_key_hash,
+        immutable_content_digest,
+        created_at_millis,
+        read_at_millis,
+        delivered_at_millis,
+        edit_parts,
+        None,
+        group_version,
+        None,
+        etag_hash,
+        protected,
+    ) {
+        Ok(value) => value,
+        Err(error) => return validation_quarantine(error),
+    };
+    CloudCanonicalMutation::new(envelope, Some(snapshot), Some(payload), None)
+        .map(Box::new)
+        .map(CloudCanonicalConversionOutcome::Ready)
+        .unwrap_or_else(validation_quarantine)
+}
+
+pub(crate) fn convert_chat(
+    context: &CloudCanonicalConversionContext<'_>,
+    presence: &CloudRawRecordPresence,
+    chat: &CloudChat,
+) -> CloudCanonicalConversionOutcome {
+    if let Err(reason) = require_present(
+        presence,
+        &["guid", "cid", "gid", "ogid", "svc", "stl", "ptcpts"],
+    ) {
+        return CloudCanonicalConversionOutcome::Quarantined(reason);
+    }
+    if chat.service_name != "iMessage" {
+        return CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::UnsupportedService,
+        );
+    }
+    let style = match chat.style {
+        45 => CloudCanonicalChatStyle::Direct,
+        43 => CloudCanonicalChatStyle::Group,
+        _ => {
+            return CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::UnsupportedChatStyle,
+            )
+        }
+    };
+    if [
+        &chat.guid,
+        &chat.chat_identifier,
+        &chat.group_id,
+        &chat.original_group_id,
+    ]
+    .iter()
+    .any(|value| value.is_empty())
+    {
+        return CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
+        );
+    }
+    match (presence.field("gp"), chat.group_photo.is_some()) {
+        (CloudRawFieldPresence::Absent, false) => {}
+        (CloudRawFieldPresence::PresentWithValue, true)
+            if style == CloudCanonicalChatStyle::Group
+                && chat
+                    .group_photo_guid
+                    .as_deref()
+                    .is_some_and(|guid| !guid.is_empty()) =>
+        {
+            // The asset remains N0 behind the protected envelope reference.
+            // Only its independently supplied stable GUID is projected.
+        }
+        (CloudRawFieldPresence::PresentWithValue, true) => {
+            return CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::UnsupportedGroupPhoto,
+            )
+        }
+        (CloudRawFieldPresence::PresentWithValue, false)
+            if presence.is_top_level_explicit_clear("gp") => {}
+        (CloudRawFieldPresence::PresentWithoutValue, _) => {
+            return CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRecord,
+            )
+        }
+        _ => {
+            return CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::FieldPresenceMismatch,
+            )
+        }
+    }
+
+    let display_name = match top_optional_string(presence, "name", &chat.display_name) {
+        Ok(value) => value,
+        Err(reason) => return CloudCanonicalConversionOutcome::Quarantined(reason),
+    };
+    let last_addressed_handle =
+        match top_default_string(presence, "lah", &chat.last_addressed_handle) {
+            Ok(value) => value,
+            Err(reason) => return CloudCanonicalConversionOutcome::Quarantined(reason),
+        };
+    let typed_properties_present = chat.properties.is_some();
+    let properties = chat.properties.as_ref();
+    let group_version = match nested_optional(
+        presence,
+        "prop",
+        "pv",
+        typed_properties_present,
+        &properties.and_then(|value| value.pv),
+    ) {
+        Ok(value) => value,
+        Err(outcome) => return outcome,
+    };
+    let last_seen_message_guid = match nested_optional(
+        presence,
+        "prop",
+        "lastSeenMessageGuid",
+        typed_properties_present,
+        &properties.and_then(|value| value.last_seen_message_guid.clone()),
+    ) {
+        Ok(value) => value,
+        Err(outcome) => return outcome,
+    };
+    let group_photo_guid = match top_optional_string(presence, "gpid", &chat.group_photo_guid) {
+        Ok(value) => value,
+        Err(reason) => return CloudCanonicalConversionOutcome::Quarantined(reason),
+    };
+    if style == CloudCanonicalChatStyle::Direct
+        && !matches!(group_photo_guid, CloudCanonicalField::Absent)
+    {
+        return CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::MalformedRecord,
+        );
+    }
+
+    let logical_hash = match context
+        .hasher
+        .canonical_entity_key_hash(CloudCanonicalEntityKind::Chat, &chat.guid)
+    {
+        Ok(value) => value,
+        Err(error) => return validation_quarantine(error),
+    };
+    let mut aliases = Vec::new();
+    for (kind, value) in [
+        (CloudCanonicalAliasKind::ChatGroupId, chat.group_id.as_str()),
+        (
+            CloudCanonicalAliasKind::ChatOriginalGroupId,
+            chat.original_group_id.as_str(),
+        ),
+        (
+            CloudCanonicalAliasKind::ChatServiceIdentifier,
+            chat.chat_identifier.as_str(),
+        ),
+    ] {
+        let hash = match context.hasher.canonical_alias_key_hash(kind, value) {
+            Ok(value) => value,
+            Err(error) => return validation_quarantine(error),
+        };
+        aliases.push(CloudCanonicalAlias::new(kind, hash));
+    }
+    if let Some(properties) = properties {
+        for legacy in &properties.legacy_group_identifiers {
+            if legacy.is_empty() {
+                return CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
+                );
+            }
+            let hash = match context.hasher.canonical_alias_key_hash(
+                CloudCanonicalAliasKind::ChatLegacyGroupIdentifier,
+                legacy,
+            ) {
+                Ok(value) => value,
+                Err(error) => return validation_quarantine(error),
+            };
+            aliases.push(CloudCanonicalAlias::new(
+                CloudCanonicalAliasKind::ChatLegacyGroupIdentifier,
+                hash,
+            ));
+        }
+    }
+
+    let group_version_snapshot = match &group_version {
+        CloudCanonicalField::Value(value) => Some(*value),
+        CloudCanonicalField::Absent | CloudCanonicalField::ExplicitClear => None,
+    };
+    let payload = match CloudCanonicalChatPayload::new(
+        chat.guid.clone(),
+        chat.chat_identifier.clone(),
+        chat.group_id.clone(),
+        chat.original_group_id.clone(),
+        CloudCanonicalService::IMessage,
+        style,
+        chat.participants
+            .iter()
+            .map(|participant| participant.uri.clone())
+            .collect(),
+        display_name,
+        last_addressed_handle,
+        group_version,
+        last_seen_message_guid,
+        group_photo_guid,
+    ) {
+        Ok(value) => value,
+        Err(error) => return validation_quarantine(error),
+    };
+    build_upsert(
+        context,
+        CloudCanonicalEntityKind::Chat,
+        logical_hash,
+        None,
+        aliases,
+        CloudCanonicalPayload::Chat(Box::new(payload)),
+        None,
+        None,
+        None,
+        None,
+        vec![],
+        group_version_snapshot,
+    )
+}
+
+fn apple_nanos_to_unix_millis(value: u64) -> Option<i64> {
+    let millis = i64::try_from(value / 1_000_000).ok()?;
+    APPLE_EPOCH_OFFSET_MILLIS.checked_add(millis)
+}
+
+fn proto_string(value: &Option<String>) -> CloudCanonicalField<String> {
+    value
+        .clone()
+        .map(CloudCanonicalField::Value)
+        .unwrap_or(CloudCanonicalField::Absent)
+}
+
+fn proto_timestamp(
+    value: Option<u64>,
+) -> Result<CloudCanonicalField<i64>, CloudCanonicalQuarantineReason> {
+    match value {
+        None => Ok(CloudCanonicalField::Absent),
+        Some(0) => Ok(CloudCanonicalField::ExplicitClear),
+        Some(value) => apple_nanos_to_unix_millis(value)
+            .map(CloudCanonicalField::Value)
+            .ok_or(CloudCanonicalQuarantineReason::MalformedRecord),
+    }
+}
+
+fn reaction_kind(index: u32) -> Option<CloudCanonicalReactionKind> {
+    match index {
+        0 => Some(CloudCanonicalReactionKind::Heart),
+        1 => Some(CloudCanonicalReactionKind::Like),
+        2 => Some(CloudCanonicalReactionKind::Dislike),
+        3 => Some(CloudCanonicalReactionKind::Laugh),
+        4 => Some(CloudCanonicalReactionKind::Emphasize),
+        5 => Some(CloudCanonicalReactionKind::Question),
+        6 => Some(CloudCanonicalReactionKind::Emoji),
+        7 => Some(CloudCanonicalReactionKind::StickerBack),
+        _ => None,
+    }
+}
+
+fn build_association(
+    context: &CloudCanonicalConversionContext<'_>,
+    message_type: i64,
+    proto: &MessageProto,
+) -> Result<
+    (
+        CloudCanonicalMessageAssociation,
+        CloudCanonicalEntityKind,
+        Option<CloudCanonicalHash>,
+    ),
+    CloudCanonicalConversionOutcome,
+> {
+    let Some(associated_type) = proto.associated_message_type else {
+        if message_type != 1 {
+            return Err(CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::UnsupportedMessageType,
+            ));
+        }
+        if proto.associated_message_guid.is_some()
+            || proto.associated_message_range_location.is_some()
+            || proto.associated_message_range_length.is_some()
+        {
+            return Err(CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedParent,
+            ));
+        }
+        return Ok((
+            CloudCanonicalMessageAssociation::None,
+            CloudCanonicalEntityKind::Message,
+            None,
+        ));
+    };
+    if message_type != 2 {
+        return Err(CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::UnsupportedMessageType,
+        ));
+    }
+    if associated_type == 2 {
+        return Err(CloudCanonicalConversionOutcome::Deferred(
+            CloudCanonicalDeferredReason::UnsupportedSticker,
+        ));
+    }
+
+    let (remove, index) = match associated_type {
+        2000..=2007 => (false, associated_type - 2000),
+        3000..=3007 => (true, associated_type - 3000),
+        _ => {
+            return Err(CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::UnsupportedAssociationType,
+            ))
+        }
+    };
+    let kind = reaction_kind(index).ok_or(CloudCanonicalConversionOutcome::Quarantined(
+        CloudCanonicalQuarantineReason::UnsupportedAssociationType,
+    ))?;
+    if kind == CloudCanonicalReactionKind::StickerBack {
+        return Err(CloudCanonicalConversionOutcome::Deferred(
+            CloudCanonicalDeferredReason::UnsupportedSticker,
+        ));
+    }
+    let parent_wire = proto.associated_message_guid.as_deref().ok_or(
+        CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::MalformedParent,
+        ),
+    )?;
+    let parsed = parse_associated_parent(parent_wire).map_err(|_| {
+        CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::MalformedParent,
+        )
+    })?;
+    let parent_hash = context
+        .hasher
+        .canonical_entity_key_hash(CloudCanonicalEntityKind::Message, parsed.parent_guid())
+        .map_err(validation_quarantine)?;
+    let parent = CloudCanonicalParentReference::new(
+        parsed.parent_guid().to_owned(),
+        parsed.parent_part(),
+        parent_hash.clone(),
+        proto.associated_message_range_location,
+        proto.associated_message_range_length,
+    )
+    .map_err(validation_quarantine)?;
+    let association = if remove {
+        CloudCanonicalMessageAssociation::ReactionRemove { kind, parent }
+    } else {
+        CloudCanonicalMessageAssociation::ReactionAdd { kind, parent }
+    };
+    Ok((
+        association,
+        CloudCanonicalEntityKind::Reaction,
+        Some(parent_hash),
+    ))
+}
+
+fn build_reply(
+    context: &CloudCanonicalConversionContext<'_>,
+    proto_2: Option<&MessageProto2>,
+) -> Result<Option<CloudCanonicalReplyReference>, CloudCanonicalConversionOutcome> {
+    let Some(reply) = proto_2.and_then(|value| value.reply.as_deref()) else {
+        return Ok(None);
+    };
+    let parsed = parse_reply_parent(reply).map_err(|error| {
+        CloudCanonicalConversionOutcome::Quarantined(match error {
+            CloudCanonicalValidationFailure::AmbiguousReplyParent => {
+                CloudCanonicalQuarantineReason::AmbiguousReply
+            }
+            _ => CloudCanonicalQuarantineReason::MalformedParent,
+        })
+    })?;
+    let parent_hash = context
+        .hasher
+        .canonical_entity_key_hash(CloudCanonicalEntityKind::Message, parsed.parent_guid())
+        .map_err(validation_quarantine)?;
+    CloudCanonicalReplyReference::new(
+        parsed.parent_guid().to_owned(),
+        parsed.parent_part().to_owned(),
+        parent_hash,
+    )
+    .map(Some)
+    .map_err(validation_quarantine)
+}
+
+fn reject_unsupported_message_content(
+    proto: &MessageProto,
+    proto_4: Option<&MessageProto4>,
+) -> Option<CloudCanonicalConversionOutcome> {
+    if proto.payload_data.is_some() {
+        return Some(CloudCanonicalConversionOutcome::Deferred(
+            CloudCanonicalDeferredReason::UnsupportedExtensionPayload,
+        ));
+    }
+    if let Some(proto_4) = proto_4 {
+        if proto_4.schedule_type.unwrap_or_default() != 0
+            || proto_4.schedule_state.unwrap_or_default() != 0
+        {
+            return Some(CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::UnsupportedScheduling,
+            ));
+        }
+        if proto_4.sent_or_received_off_grid.unwrap_or_default() != 0 {
+            return Some(CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::UnsupportedOffGridMetadata,
+            ));
+        }
+        if proto_4
+            .service
+            .as_deref()
+            .is_some_and(|service| service != "iMessage")
+        {
+            return Some(CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::UnsupportedService,
+            ));
+        }
+    }
+    None
+}
+
+pub(crate) fn convert_message(
+    context: &CloudCanonicalConversionContext<'_>,
+    presence: &CloudRawRecordPresence,
+    message: &CloudMessage,
+) -> CloudCanonicalConversionOutcome {
+    if let Err(reason) = require_present(
+        presence,
+        &[
+            "msgType", "eCode", "chatID", "sender", "time", "msgProto", "flags", "guid", "svc",
+        ],
+    ) {
+        return CloudCanonicalConversionOutcome::Quarantined(reason);
+    }
+    if message.service != "iMessage" {
+        return CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::UnsupportedService,
+        );
+    }
+    if message.guid.is_empty() || message.chat_id.is_empty() {
+        return CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
+        );
+    }
+    let proto = &message.msg_proto.0;
+    let proto_2 = message.msg_proto_2.as_ref().map(|value| &value.0);
+    let proto_4 = message.msg_proto_4.as_ref().map(|value| &value.0);
+    if let Some(outcome) = reject_unsupported_message_content(proto, proto_4) {
+        return outcome;
+    }
+    let (association, entity_kind, association_parent_hash) =
+        match build_association(context, message.r#type, proto) {
+            Ok(value) => value,
+            Err(outcome) => return outcome,
+        };
+    let reply = match build_reply(context, proto_2) {
+        Ok(value) => value,
+        Err(outcome) => return outcome,
+    };
+    if association.is_reaction() && reply.is_some() {
+        return CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::AmbiguousReply,
+        );
+    }
+    let parent_hash =
+        association_parent_hash.or_else(|| reply.as_ref().map(|value| value.parent_hash().clone()));
+
+    let created_at_millis = match u64::try_from(message.time)
+        .ok()
+        .and_then(apple_nanos_to_unix_millis)
+    {
+        Some(value) => value,
+        None => {
+            return CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRecord,
+            )
+        }
+    };
+    let read_at_millis = match proto_timestamp(proto.date_read) {
+        Ok(value) => value,
+        Err(reason) => return CloudCanonicalConversionOutcome::Quarantined(reason),
+    };
+    let delivered_at_millis = match proto_timestamp(proto.date_delivered) {
+        Ok(value) => value,
+        Err(reason) => return CloudCanonicalConversionOutcome::Quarantined(reason),
+    };
+    let read_snapshot = match &read_at_millis {
+        CloudCanonicalField::Value(value) => Some(*value),
+        CloudCanonicalField::Absent | CloudCanonicalField::ExplicitClear => None,
+    };
+    let delivered_snapshot = match &delivered_at_millis {
+        CloudCanonicalField::Value(value) => Some(*value),
+        CloudCanonicalField::Absent | CloudCanonicalField::ExplicitClear => None,
+    };
+    let associated_emoji = proto_4
+        .and_then(|value| value.associated_message_emoji.clone())
+        .map(CloudCanonicalField::Value)
+        .unwrap_or(CloudCanonicalField::Absent);
+    let flags = CloudCanonicalKnownMessageFlags {
+        from_me: message.flags.contains(MessageFlags::IS_FROM_ME),
+        delivered: message.flags.contains(MessageFlags::IS_DELIVERED),
+        read: message.flags.contains(MessageFlags::IS_READ),
+        has_data_detector_results: message.flags.contains(MessageFlags::HAS_DD_RESULTS),
+        delivered_quietly: message.flags.contains(MessageFlags::WAS_DELIVERED_QUIETLY),
+        did_notify_recipient: message.flags.contains(MessageFlags::DID_NOTIFY_RECIPIENT),
+    };
+    let chat_alias_hash = match context.hasher.canonical_alias_key_hash(
+        CloudCanonicalAliasKind::ChatServiceIdentifier,
+        &message.chat_id,
+    ) {
+        Ok(value) => value,
+        Err(error) => return validation_quarantine(error),
+    };
+    let logical_identifier = if entity_kind == CloudCanonicalEntityKind::Reaction {
+        let Some(parent) = proto.associated_message_guid.as_deref() else {
+            return CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedParent,
+            );
+        };
+        format!("{}\0{}", message.guid, parent)
+    } else {
+        message.guid.clone()
+    };
+    let logical_hash = match context
+        .hasher
+        .canonical_entity_key_hash(entity_kind, &logical_identifier)
+    {
+        Ok(value) => value,
+        Err(error) => return validation_quarantine(error),
+    };
+    let subject = proto_string(&proto.subject);
+    let text = proto_string(&proto.text);
+    let attributed_content =
+        match decode_attributed_content(context, &message.guid, proto.attributed_body.as_deref()) {
+            Ok(value) => value,
+            Err(outcome) => return outcome,
+        };
+    let original_maximum_utf16_length = attributed_content.maximum_utf16_length.or_else(|| {
+        proto
+            .text
+            .as_ref()
+            .and_then(|value| u32::try_from(value.encode_utf16().count()).ok())
+    });
+    let message_summary = match decode_message_summary(
+        context,
+        &message.guid,
+        proto.message_summary_info.as_deref(),
+        original_maximum_utf16_length,
+    ) {
+        Ok(value) => value,
+        Err(outcome) => return outcome,
+    };
+    let immutable_digest = match sha256_digest(&[
+        message.guid.as_bytes(),
+        message.chat_id.as_bytes(),
+        message.sender.as_bytes(),
+        proto.subject.as_deref().unwrap_or_default().as_bytes(),
+        proto.text.as_deref().unwrap_or_default().as_bytes(),
+        proto.attributed_body.as_deref().unwrap_or_default(),
+        &message.r#type.to_be_bytes(),
+    ]) {
+        Ok(value) => value,
+        Err(error) => return validation_quarantine(error),
+    };
+    let payload = match CloudCanonicalMessagePayload::new(
+        message.guid.clone(),
+        chat_alias_hash,
+        message.sender.clone(),
+        created_at_millis,
+        message.error,
+        CloudCanonicalService::IMessage,
+        subject,
+        text,
+        attributed_content.field,
+        proto_string(&proto.balloon_bundle_id),
+        CloudCanonicalField::Absent,
+        proto_string(&proto.effect),
+        read_at_millis,
+        delivered_at_millis,
+        flags,
+        association,
+        reply,
+        message_summary.edits,
+        message_summary.retracted_parts,
+        associated_emoji,
+    ) {
+        Ok(value) => value,
+        Err(error) => return validation_quarantine(error),
+    };
+    build_upsert(
+        context,
+        entity_kind,
+        logical_hash,
+        parent_hash,
+        vec![],
+        CloudCanonicalPayload::Message(Box::new(payload)),
+        Some(immutable_digest),
+        Some(created_at_millis),
+        read_snapshot,
+        delivered_snapshot,
+        message_summary.edit_snapshots,
+        None,
+    )
+}
+
+fn nested_attachment_string(
+    presence: &CloudRawRecordPresence,
+    field: &str,
+    value: &Option<String>,
+) -> Result<CloudCanonicalField<String>, CloudCanonicalConversionOutcome> {
+    nested_optional(presence, "cm", field, true, value)
+}
+
+pub(crate) fn convert_attachment(
+    context: &CloudCanonicalConversionContext<'_>,
+    presence: &CloudRawRecordPresence,
+    attachment: &AttachmentMeta,
+) -> CloudCanonicalConversionOutcome {
+    if let Err(reason) = require_present(presence, &["cm", "lqa"]) {
+        return CloudCanonicalConversionOutcome::Quarantined(reason);
+    }
+    for field in ["aguid", "tb", "ig"] {
+        match presence.nested_field("cm", field) {
+            CloudNestedPresence::Present => {}
+            CloudNestedPresence::Unavailable => {
+                return CloudCanonicalConversionOutcome::Deferred(
+                    CloudCanonicalDeferredReason::NestedPresenceUnavailable,
+                )
+            }
+            _ => {
+                return CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
+                )
+            }
+        }
+    }
+    if attachment.guid.is_empty() {
+        return CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
+        );
+    }
+    if attachment.user_info.is_some() {
+        return CloudCanonicalConversionOutcome::Deferred(
+            CloudCanonicalDeferredReason::UnsupportedMediaCredentials,
+        );
+    }
+    if attachment.is_sticker {
+        return CloudCanonicalConversionOutcome::Deferred(
+            CloudCanonicalDeferredReason::UnsupportedSticker,
+        );
+    }
+    let (canonical_guid, logical_identifier, owner_hash, owner_part) =
+        match parse_owned_attachment_guid(&attachment.guid) {
+            Ok(owned) => {
+                let owner_hash = match context.hasher.canonical_entity_key_hash(
+                    CloudCanonicalEntityKind::Message,
+                    owned.message_guid(),
+                ) {
+                    Ok(value) => value,
+                    Err(error) => return validation_quarantine(error),
+                };
+                (
+                    owned.canonical_guid().to_owned(),
+                    format!("{}\0{}", owned.message_guid(), owned.part()),
+                    Some(owner_hash),
+                    Some(owned.part()),
+                )
+            }
+            Err(_) if attachment.guid.starts_with("at_") => {
+                return CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::MalformedParent,
+                )
+            }
+            Err(_) => (attachment.guid.clone(), attachment.guid.clone(), None, None),
+        };
+    let logical_hash = match context
+        .hasher
+        .canonical_entity_key_hash(CloudCanonicalEntityKind::Attachment, &logical_identifier)
+    {
+        Ok(value) => value,
+        Err(error) => return validation_quarantine(error),
+    };
+    let uti = match nested_attachment_string(presence, "t", &attachment.uti) {
+        Ok(value) => value,
+        Err(outcome) => return outcome,
+    };
+    let mime_type = match nested_attachment_string(presence, "mimet", &attachment.mime_type) {
+        Ok(value) => value,
+        Err(outcome) => return outcome,
+    };
+    let transfer_name = match nested_attachment_string(presence, "tn", &attachment.transfer_name) {
+        Ok(value) => value,
+        Err(outcome) => return outcome,
+    };
+    let total_bytes = if attachment.total_bytes < 0 {
+        return CloudCanonicalConversionOutcome::Deferred(
+            CloudCanonicalDeferredReason::UnsupportedNegativeAttachmentSize,
+        );
+    } else {
+        CloudCanonicalField::Value(attachment.total_bytes as u64)
+    };
+    let payload = match CloudCanonicalAttachmentPayload::new(
+        canonical_guid,
+        owner_hash.clone(),
+        owner_part,
+        uti,
+        mime_type,
+        transfer_name,
+        total_bytes,
+        CloudCanonicalField::Value(attachment.is_outgoing),
+        CloudCanonicalField::Absent,
+    ) {
+        Ok(value) => value,
+        Err(error) => return validation_quarantine(error),
+    };
+    build_upsert(
+        context,
+        CloudCanonicalEntityKind::Attachment,
+        logical_hash,
+        owner_hash,
+        vec![],
+        CloudCanonicalPayload::Attachment(Box::new(payload)),
+        None,
+        Some(attachment.created_date),
+        None,
+        None,
+        vec![],
+        None,
+    )
+}
+
+pub(crate) fn convert_tombstone(
+    context: &CloudCanonicalConversionContext<'_>,
+    entity_kind: CloudCanonicalEntityKind,
+    mapped_logical_entity_key_hash: CloudCanonicalHash,
+) -> CloudCanonicalConversionOutcome {
+    let protected = match protected_reference(context) {
+        Ok(value) => value,
+        Err(reason) => return CloudCanonicalConversionOutcome::Quarantined(reason),
+    };
+    let server_record_id_hash = match context
+        .hasher
+        .canonical_server_record_id_hash(context.record_name)
+    {
+        Ok(value) => value,
+        Err(error) => return validation_quarantine(error),
+    };
+    let envelope = match CloudCanonicalEnvelope::new(
+        context.scope_fingerprint.clone(),
+        context.zone_fingerprint.clone(),
+        context.generation,
+        CLOUD_CANONICAL_SCHEMA_VERSION,
+        context.change_id.clone(),
+        entity_kind,
+        CloudCanonicalMutationKind::Tombstone,
+        server_record_id_hash.clone(),
+        mapped_logical_entity_key_hash.clone(),
+        None,
+        vec![],
+        match etag_hash(context.hasher, context.etag) {
+            Ok(value) => value,
+            Err(error) => return validation_quarantine(error),
+        },
+        context.server_created_at_millis,
+        context.server_modified_at_millis,
+        protected.clone(),
+    ) {
+        Ok(value) => value,
+        Err(error) => return validation_quarantine(error),
+    };
+    let tombstone = match CloudCanonicalTombstone::new(
+        entity_kind,
+        server_record_id_hash,
+        mapped_logical_entity_key_hash,
+        protected,
+        context.server_modified_at_millis,
+        true,
+    ) {
+        Ok(value) => value,
+        Err(error) => return validation_quarantine(error),
+    };
+    CloudCanonicalMutation::new(envelope, None, None, Some(tombstone))
+        .map(Box::new)
+        .map(CloudCanonicalConversionOutcome::Ready)
+        .unwrap_or_else(validation_quarantine)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prost::Message as _;
+    use rustpush::{
+        cloud_messages::{
+            CloudParticipant, CloudProp, GZipWrapper, MessageEdit as WireMessageEdit,
+            MessageEditRange,
+        },
+        cloudkit_proto::{
+            record::{field, Field},
+            Asset, Record,
+        },
+        coder_encode_flattened, NSAttributedString, NSDictionaryTypedCoder, NSNumber, NSString,
+        StCollapsedValue,
+    };
+
+    const SECRET: &str = "private-body-secret-should-never-be-logged";
+
+    fn hash(character: char) -> CloudCanonicalHash {
+        CloudCanonicalHash::new(character.to_string().repeat(43)).expect("fixture hash")
+    }
+
+    fn context<'a>(
+        hasher: &'a CloudSemanticIdentifierHasher,
+        record_name: &'a str,
+        modified_at: Option<i64>,
+    ) -> CloudCanonicalConversionContext<'a> {
+        CloudCanonicalConversionContext::new(
+            hasher,
+            hash('a'),
+            hash('b'),
+            7,
+            hash('c'),
+            record_name,
+            Some("private-etag"),
+            Some(1_720_000_000_000),
+            modified_at,
+            "obcs2.fixture.protected",
+        )
+    }
+
+    fn raw_presence(fields: &[&str]) -> CloudRawRecordPresence {
+        let record = Record {
+            record_field: fields
+                .iter()
+                .map(|name| Field {
+                    identifier: Some(field::Identifier {
+                        name: Some((*name).to_owned()),
+                    }),
+                    value: Some(field::Value::default()),
+                })
+                .collect(),
+            ..Default::default()
+        };
+        CloudRawRecordPresence::extract(&record).expect("fixture presence")
+    }
+
+    fn capture_keys(presence: &mut CloudRawRecordPresence, outer: &str, keys: &[&str]) {
+        let mut dictionary = plist::Dictionary::new();
+        for key in keys {
+            dictionary.insert((*key).to_owned(), PlistValue::String("fixture".to_owned()));
+        }
+        let mut bytes = Vec::new();
+        plist::to_writer_binary(&mut bytes, &PlistValue::Dictionary(dictionary))
+            .expect("fixture plist");
+        presence
+            .capture_decrypted_plist_dictionary(outer, &bytes)
+            .expect("capture fixture keys");
+    }
+
+    fn direct_chat() -> CloudChat {
+        CloudChat {
+            style: 45,
+            chat_identifier: "iMessage;-;+15555550100".to_owned(),
+            group_id: "chat-direct".to_owned(),
+            service_name: "iMessage".to_owned(),
+            original_group_id: "chat-direct-original".to_owned(),
+            participants: vec![CloudParticipant {
+                uri: "tel:+15555550100".to_owned(),
+            }],
+            guid: "chat-guid-direct".to_owned(),
+            ..Default::default()
+        }
+    }
+
+    fn group_chat() -> CloudChat {
+        CloudChat {
+            style: 43,
+            chat_identifier: "iMessage;+;group".to_owned(),
+            group_id: "chat-group".to_owned(),
+            service_name: "iMessage".to_owned(),
+            original_group_id: "chat-group-original".to_owned(),
+            properties: Some(CloudProp {
+                pv: Some(9),
+                ..Default::default()
+            }),
+            participants: vec![
+                CloudParticipant {
+                    uri: "tel:+15555550100".to_owned(),
+                },
+                CloudParticipant {
+                    uri: "tel:+15555550101".to_owned(),
+                },
+            ],
+            guid: "chat-guid-group".to_owned(),
+            ..Default::default()
+        }
+    }
+
+    fn chat_required_presence(with_prop: bool) -> CloudRawRecordPresence {
+        let mut fields = vec!["guid", "cid", "gid", "ogid", "svc", "stl", "ptcpts"];
+        if with_prop {
+            fields.push("prop");
+        }
+        raw_presence(&fields)
+    }
+
+    fn message_presence() -> CloudRawRecordPresence {
+        raw_presence(&[
+            "msgType", "eCode", "chatID", "sender", "time", "msgProto", "flags", "guid", "svc",
+        ])
+    }
+
+    fn normal_message(text: Option<&str>) -> CloudMessage {
+        CloudMessage {
+            r#type: 1,
+            chat_id: "iMessage;-;+15555550100".to_owned(),
+            sender: "tel:+15555550100".to_owned(),
+            time: 123_000_000,
+            msg_proto: GZipWrapper(MessageProto {
+                unk1: 1,
+                text: text.map(ToOwned::to_owned),
+                ..Default::default()
+            }),
+            guid: "message-guid-normal".to_owned(),
+            service: "iMessage".to_owned(),
+            ..Default::default()
+        }
+    }
+
+    fn reaction_message() -> CloudMessage {
+        CloudMessage {
+            r#type: 2,
+            chat_id: "iMessage;-;+15555550100".to_owned(),
+            sender: "tel:+15555550100".to_owned(),
+            time: 124_000_000,
+            msg_proto: GZipWrapper(MessageProto {
+                unk1: 1,
+                associated_message_type: Some(2000),
+                associated_message_guid: Some("p:0/parent-guid-not-loaded".to_owned()),
+                associated_message_range_location: Some(0),
+                associated_message_range_length: Some(4),
+                ..Default::default()
+            }),
+            guid: "reaction-guid".to_owned(),
+            service: "iMessage".to_owned(),
+            ..Default::default()
+        }
+    }
+
+    fn attachment_presence() -> CloudRawRecordPresence {
+        let mut presence = raw_presence(&["cm", "lqa"]);
+        capture_keys(&mut presence, "cm", &["aguid", "tb", "ig"]);
+        presence
+    }
+
+    fn attribute_dictionary(
+        entries: impl IntoIterator<Item = (&'static str, StCollapsedValue)>,
+    ) -> NSDictionaryTypedCoder {
+        NSDictionaryTypedCoder(
+            entries
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value))
+                .collect(),
+        )
+    }
+
+    fn encoded_attributed_body(text: &str, ranges: Vec<(u32, NSDictionaryTypedCoder)>) -> Vec<u8> {
+        coder_encode_flattened(&[NSAttributedString {
+            text: text.to_owned(),
+            ranges,
+        }
+        .encode()])
+    }
+
+    fn plain_encoded_attributed_body(text: &str) -> Vec<u8> {
+        encoded_attributed_body(
+            text,
+            vec![(text.encode_utf16().count() as u32, attribute_dictionary([]))],
+        )
+    }
+
+    fn encoded_message_summary(summary: &MessageSummaryInfo) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        plist::to_writer_binary(&mut encoded, summary).expect("fixture message summary");
+        encoded
+    }
+
+    fn encoded_explicit_clear_message_summary() -> Vec<u8> {
+        let mut summary = plist::Dictionary::new();
+        summary.insert("ec".to_owned(), PlistValue::Dictionary(Default::default()));
+        summary.insert("ep".to_owned(), PlistValue::Array(Vec::new()));
+        summary.insert("otr".to_owned(), PlistValue::Dictionary(Default::default()));
+        summary.insert("rp".to_owned(), PlistValue::Array(Vec::new()));
+        let mut encoded = Vec::new();
+        plist::to_writer_binary(&mut encoded, &PlistValue::Dictionary(summary))
+            .expect("explicit-clear summary");
+        encoded
+    }
+
+    fn message_payload(outcome: &CloudCanonicalConversionOutcome) -> &CloudCanonicalMessagePayload {
+        let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+            panic!("message fixture should convert");
+        };
+        let Some(CloudCanonicalPayload::Message(payload)) = mutation.payload() else {
+            panic!("message payload expected");
+        };
+        payload
+    }
+
+    #[test]
+    fn direct_chat_fixture_converts_without_default_inference() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let outcome = convert_chat(
+            &context(&hasher, "server-chat-direct", Some(1_720_000_000_001)),
+            &chat_required_presence(false),
+            &direct_chat(),
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+            panic!("direct chat should convert");
+        };
+        assert_eq!(
+            mutation.envelope().entity_kind(),
+            CloudCanonicalEntityKind::Chat
+        );
+        let Some(CloudCanonicalPayload::Chat(payload)) = mutation.payload() else {
+            panic!("chat payload expected");
+        };
+        assert_eq!(
+            payload.display_name_state(),
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::Absent
+        );
+        assert_eq!(
+            payload.group_version_state(),
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::Absent
+        );
+    }
+
+    #[test]
+    fn group_chat_fixture_preserves_nested_pv_presence() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut presence = chat_required_presence(true);
+        capture_keys(&mut presence, "prop", &["pv"]);
+        let outcome = convert_chat(
+            &context(&hasher, "server-chat-group", Some(1_720_000_000_001)),
+            &presence,
+            &group_chat(),
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+            panic!("group chat should convert");
+        };
+        let Some(CloudCanonicalPayload::Chat(payload)) = mutation.payload() else {
+            panic!("chat payload expected");
+        };
+        assert_eq!(
+            payload.group_version_state(),
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::Value
+        );
+    }
+
+    #[test]
+    fn nested_presence_is_deferred_instead_of_guessed() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let outcome = convert_chat(
+            &context(&hasher, "server-chat-group", None),
+            &chat_required_presence(true),
+            &group_chat(),
+        );
+        assert_eq!(
+            outcome,
+            CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::NestedPresenceUnavailable
+            )
+        );
+    }
+
+    #[test]
+    fn normal_text_preserves_omitted_vs_explicit_empty() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let omitted = convert_message(
+            &context(&hasher, "server-message-omitted", None),
+            &message_presence(),
+            &normal_message(None),
+        );
+        let empty = convert_message(
+            &context(&hasher, "server-message-empty", None),
+            &message_presence(),
+            &normal_message(Some("")),
+        );
+        let CloudCanonicalConversionOutcome::Ready(omitted) = omitted else {
+            panic!("omitted fixture should convert");
+        };
+        let CloudCanonicalConversionOutcome::Ready(empty) = empty else {
+            panic!("empty fixture should convert");
+        };
+        let Some(CloudCanonicalPayload::Message(omitted)) = omitted.payload() else {
+            panic!("message payload expected");
+        };
+        let Some(CloudCanonicalPayload::Message(empty)) = empty.payload() else {
+            panic!("message payload expected");
+        };
+        assert_eq!(
+            omitted.text_state(),
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::Absent
+        );
+        assert_eq!(
+            empty.text_state(),
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::Value
+        );
+    }
+
+    #[test]
+    fn attributed_body_projects_utf16_runs_known_attributes_and_attachment_reference() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let attributes = attribute_dictionary([
+            ("__kIMMessagePartAttributeName", NSNumber(0).encode()),
+            (
+                "__kIMFileTransferGUIDAttributeName",
+                NSString("at_0_message-guid-normal".to_owned()).encode(),
+            ),
+            (
+                "__kIMMentionConfirmedMention",
+                NSString("mailto:synthetic@example.invalid".to_owned()).encode(),
+            ),
+            (
+                "IMAudioTranscription",
+                NSString("transcript".to_owned()).encode(),
+            ),
+            ("__kIMTextEffectAttributeName", NSNumber(3).encode()),
+            ("__kIMTextBoldAttributeName", NSNumber(1).encode()),
+            ("__kIMTextItalicAttributeName", NSNumber(0).encode()),
+            (
+                "__kIMUnknownFutureAttribute",
+                NSString(SECRET.to_owned()).encode(),
+            ),
+        ]);
+        let mut message = normal_message(Some("A😀B"));
+        message.msg_proto.0.attributed_body =
+            Some(encoded_attributed_body("A😀B", vec![(4, attributes)]));
+
+        let outcome = convert_message(
+            &context(&hasher, "server-message-attributed", None),
+            &message_presence(),
+            &message,
+        );
+        let payload = message_payload(&outcome);
+        assert_eq!(
+            payload.attributed_bodies_state(),
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::Value
+        );
+        assert_eq!(payload.attributed_bodies().len(), 1);
+        assert_eq!(payload.attributed_bodies()[0].text_utf16_length(), 4);
+        assert_eq!(payload.attributed_bodies()[0].runs().len(), 1);
+        assert_eq!(
+            payload.attributed_bodies()[0].runs()[0].message_part(),
+            Some(0)
+        );
+        assert!(payload.attributed_bodies()[0].runs()[0].has_attachment());
+        assert!(!format!("{outcome:?}").contains(SECRET));
+    }
+
+    #[test]
+    fn attributed_attachment_owner_must_match_the_message() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let attributes = attribute_dictionary([(
+            "__kIMFileTransferGUIDAttributeName",
+            NSString("at_0_another-message-guid".to_owned()).encode(),
+        )]);
+        let mut message = normal_message(Some("attachment"));
+        message.msg_proto.0.attributed_body = Some(encoded_attributed_body(
+            "attachment",
+            vec![(10, attributes)],
+        ));
+
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-message-owner-mismatch", None),
+                &message_presence(),
+                &message,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedParent
+            )
+        );
+    }
+
+    #[test]
+    fn message_summary_edits_are_sorted_deduplicated_and_snapshotted() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let older_body = plain_encoded_attributed_body("older");
+        let newer_body = plain_encoded_attributed_body("newer");
+        let mut summary = MessageSummaryInfo {
+            ep: vec![2, 1],
+            rp: vec![7, 3, 7],
+            ..Default::default()
+        };
+        summary.ec.insert(
+            "1".to_owned(),
+            vec![WireMessageEdit {
+                t: plain_encoded_attributed_body("other part"),
+                d: 1_720_000_000_300.0,
+                bcg: None,
+            }],
+        );
+        summary.ec.insert(
+            "2".to_owned(),
+            vec![
+                WireMessageEdit {
+                    t: newer_body,
+                    d: 1_720_000_000_200.0,
+                    bcg: None,
+                },
+                WireMessageEdit {
+                    t: older_body.clone(),
+                    d: 1_720_000_000_100.0,
+                    bcg: None,
+                },
+                WireMessageEdit {
+                    t: older_body,
+                    d: 1_720_000_000_100.0,
+                    bcg: None,
+                },
+            ],
+        );
+        summary
+            .otr
+            .insert("2".to_owned(), MessageEditRange { lo: 0, le: 4 });
+        summary
+            .otr
+            .insert("1".to_owned(), MessageEditRange { lo: 0, le: 4 });
+
+        let mut message = normal_message(Some("base"));
+        message.msg_proto.0.attributed_body = Some(plain_encoded_attributed_body("base"));
+        message.msg_proto.0.message_summary_info = Some(encoded_message_summary(&summary));
+        let outcome = convert_message(
+            &context(&hasher, "server-message-edits", None),
+            &message_presence(),
+            &message,
+        );
+        let payload = message_payload(&outcome);
+        assert_eq!(
+            payload.edits_state(),
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::Value
+        );
+        assert_eq!(payload.edit_count(), 3);
+        assert_eq!(
+            payload
+                .edits()
+                .iter()
+                .map(CloudCanonicalMessageEdit::part)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 2]
+        );
+        assert_eq!(
+            payload
+                .edits()
+                .iter()
+                .map(CloudCanonicalMessageEdit::revision)
+                .collect::<Vec<_>>(),
+            vec![0, 0, 1]
+        );
+        assert_eq!(
+            payload
+                .edits()
+                .iter()
+                .map(CloudCanonicalMessageEdit::modified_at_millis)
+                .collect::<Vec<_>>(),
+            vec![1_720_000_000_300, 1_720_000_000_100, 1_720_000_000_200]
+        );
+        assert_eq!(payload.retracted_parts(), &[3, 7]);
+
+        let CloudCanonicalConversionOutcome::Ready(mutation) = &outcome else {
+            unreachable!("payload helper already proved ready");
+        };
+        let snapshot = mutation.snapshot().expect("edit snapshot");
+        assert_eq!(snapshot.edit_parts().len(), 3);
+        assert_eq!(
+            snapshot
+                .edit_parts()
+                .iter()
+                .map(CloudCanonicalEditPartSnapshot::revision)
+                .collect::<Vec<_>>(),
+            vec![0, 0, 1]
+        );
+        assert_eq!(
+            snapshot
+                .edit_parts()
+                .iter()
+                .map(CloudCanonicalEditPartSnapshot::modified_at_millis)
+                .collect::<Vec<_>>(),
+            vec![1_720_000_000_300, 1_720_000_000_100, 1_720_000_000_200]
+        );
+    }
+
+    #[test]
+    fn encoded_empty_attributed_and_summary_fields_preserve_explicit_clear() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut message = normal_message(Some(""));
+        message.msg_proto.0.attributed_body = Some(coder_encode_flattened(&[]));
+        message.msg_proto.0.message_summary_info = Some(encoded_explicit_clear_message_summary());
+        let outcome = convert_message(
+            &context(&hasher, "server-message-explicit-clears", None),
+            &message_presence(),
+            &message,
+        );
+        let payload = message_payload(&outcome);
+        assert_eq!(
+            payload.attributed_bodies_state(),
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::ExplicitClear
+        );
+        assert_eq!(
+            payload.edits_state(),
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::ExplicitClear
+        );
+        assert_eq!(
+            payload.retracted_parts_state(),
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::ExplicitClear
+        );
+    }
+
+    #[test]
+    fn malformed_and_oversized_attributed_content_fail_closed() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut malformed = normal_message(Some("body"));
+        malformed.msg_proto.0.attributed_body = Some(vec![1, 2, 3]);
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-message-malformed-body", None),
+                &message_presence(),
+                &malformed,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedAttributedBody
+            )
+        );
+
+        let oversized = vec![0_u8; MAX_ATTRIBUTED_BODY_BYTES + 1];
+        assert!(matches!(
+            BoundedTypedStreamDecoder::new(&oversized),
+            Err(BoundedStreamFailure::Oversized)
+        ));
+
+        let mut declared_oversized = vec![0x04, 11];
+        declared_oversized.extend_from_slice(b"streamtyped");
+        declared_oversized.extend_from_slice(&[0x81, 0xe8, 0x03, TYPED_STREAM_TAG_START, 13]);
+        declared_oversized.extend_from_slice(b"[4294967295c]");
+        assert!(matches!(
+            BoundedTypedStreamDecoder::new(&declared_oversized)
+                .and_then(BoundedTypedStreamDecoder::decode),
+            Err(BoundedStreamFailure::Oversized)
+        ));
+    }
+
+    #[test]
+    fn every_truncated_typedstream_prefix_returns_without_panicking() {
+        let encoded = plain_encoded_attributed_body("A😀B");
+        for length in 0..encoded.len() {
+            let prefix = &encoded[..length];
+            let result = std::panic::catch_unwind(|| {
+                BoundedTypedStreamDecoder::new(prefix).and_then(BoundedTypedStreamDecoder::decode)
+            });
+            assert!(result.is_ok(), "decoder panicked at prefix length {length}");
+            assert!(
+                result.expect("checked above").is_err(),
+                "truncated prefix unexpectedly decoded at length {length}"
+            );
+        }
+
+        let mut trailing = encoded;
+        trailing.push(0);
+        assert!(matches!(
+            BoundedTypedStreamDecoder::new(&trailing).and_then(BoundedTypedStreamDecoder::decode),
+            Err(BoundedStreamFailure::Malformed)
+        ));
+    }
+
+    #[test]
+    fn unproven_edit_time_and_edit_retraction_conflict_do_not_apply() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        assert_eq!(
+            validated_edit_timestamp(0.0),
+            Err(CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::UnprovenEditTimestamp
+            ))
+        );
+        let mut fractional = MessageSummaryInfo {
+            ep: vec![0],
+            ..Default::default()
+        };
+        fractional.ec.insert(
+            "0".to_owned(),
+            vec![WireMessageEdit {
+                t: plain_encoded_attributed_body("edit"),
+                d: 1_720_000_000_100.5,
+                bcg: None,
+            }],
+        );
+        let mut message = normal_message(Some("base"));
+        message.msg_proto.0.message_summary_info = Some(encoded_message_summary(&fractional));
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-message-fractional-time", None),
+                &message_presence(),
+                &message,
+            ),
+            CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::UnprovenEditTimestamp
+            )
+        );
+
+        let mut conflicting = fractional;
+        conflicting.ec.get_mut("0").expect("edit")[0].d = 1_720_000_000_100.0;
+        conflicting.rp = vec![0];
+        message.msg_proto.0.message_summary_info = Some(encoded_message_summary(&conflicting));
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-message-conflict", None),
+                &message_presence(),
+                &message,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::ConflictingEditAndRetraction
+            )
+        );
+    }
+
+    #[test]
+    fn reply_parent_sets_envelope_parent_and_malformed_parts_are_rejected() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut reply = normal_message(Some("reply"));
+        reply.msg_proto_2 = Some(GZipWrapper(MessageProto2 {
+            reply: Some("r:0:parent-guid".to_owned()),
+        }));
+        let outcome = convert_message(
+            &context(&hasher, "server-message-valid-reply", None),
+            &message_presence(),
+            &reply,
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+            panic!("valid reply should convert");
+        };
+        assert!(mutation.envelope().parent_logical_key_hash().is_some());
+
+        for malformed in ["r:x:parent-guid", "r:01:parent-guid"] {
+            reply.msg_proto_2 = Some(GZipWrapper(MessageProto2 {
+                reply: Some(malformed.to_owned()),
+            }));
+            assert_eq!(
+                convert_message(
+                    &context(&hasher, "server-message-malformed-reply", None),
+                    &message_presence(),
+                    &reply,
+                ),
+                CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::MalformedParent
+                ),
+                "{malformed}"
+            );
+        }
+    }
+
+    #[test]
+    fn safe_group_photo_guid_is_projected_while_asset_stays_protected() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut chat = group_chat();
+        chat.properties = None;
+        chat.group_photo_guid = Some("group-photo-guid".to_owned());
+        chat.group_photo = Some(Asset::default());
+        let presence = raw_presence(&[
+            "guid", "cid", "gid", "ogid", "svc", "stl", "ptcpts", "gpid", "gp",
+        ]);
+        let outcome = convert_chat(
+            &context(&hasher, "server-chat-group-photo", None),
+            &presence,
+            &chat,
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+            panic!("group photo metadata should convert");
+        };
+        let Some(CloudCanonicalPayload::Chat(payload)) = mutation.payload() else {
+            panic!("chat payload expected");
+        };
+        assert_eq!(
+            payload.group_photo_guid_state(),
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::Value
+        );
+        assert_eq!(
+            mutation
+                .envelope()
+                .protected_raw_envelope_reference()
+                .value(),
+            "obcs2.fixture.protected"
+        );
+
+        chat.group_photo_guid = None;
+        assert_eq!(
+            convert_chat(
+                &context(&hasher, "server-chat-unbound-group-photo", None),
+                &raw_presence(&["guid", "cid", "gid", "ogid", "svc", "stl", "ptcpts", "gp",]),
+                &chat,
+            ),
+            CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::UnsupportedGroupPhoto
+            )
+        );
+    }
+
+    #[test]
+    fn unknown_protobuf_fields_preserve_the_protected_source_reference() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut encoded = MessageProto {
+            unk1: 1,
+            text: Some("known text".to_owned()),
+            ..Default::default()
+        }
+        .encode_to_vec();
+        // Unknown field 99, varint wire type, value 1. Prost safely ignores
+        // the projection, while the protected raw envelope retains it.
+        encoded.extend_from_slice(&[0x98, 0x06, 0x01]);
+        let decoded = MessageProto::decode(encoded.as_slice()).expect("protobuf fixture");
+        let mut message = normal_message(None);
+        message.msg_proto = GZipWrapper(decoded);
+        let outcome = convert_message(
+            &context(&hasher, "server-message-unknown-proto", None),
+            &message_presence(),
+            &message,
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+            panic!("unknown protobuf fields should not block known projection");
+        };
+        assert_eq!(
+            mutation
+                .envelope()
+                .protected_raw_envelope_reference()
+                .value(),
+            "obcs2.fixture.protected"
+        );
+    }
+
+    #[test]
+    fn explicit_clear_requires_authoritative_pre_typed_evidence() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut presence = chat_required_presence(false);
+        presence
+            .fields
+            .insert("name".to_owned(), CloudRawFieldPresence::PresentWithValue);
+        let unsafe_guess = convert_chat(
+            &context(&hasher, "server-chat-clear-unproven", None),
+            &presence,
+            &direct_chat(),
+        );
+        assert_eq!(
+            unsafe_guess,
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::FieldPresenceMismatch
+            )
+        );
+
+        presence
+            .mark_top_level_explicit_clear("name")
+            .expect("fixture carries authoritative clear evidence");
+        let proven_clear = convert_chat(
+            &context(&hasher, "server-chat-clear-proven", None),
+            &presence,
+            &direct_chat(),
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = proven_clear else {
+            panic!("authoritative clear marker should convert");
+        };
+        let Some(CloudCanonicalPayload::Chat(payload)) = mutation.payload() else {
+            panic!("chat payload expected");
+        };
+        assert_eq!(
+            payload.display_name_state(),
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::ExplicitClear
+        );
+    }
+
+    #[test]
+    fn reaction_fixture_carries_parent_metadata_before_parent_exists() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let outcome = convert_message(
+            &context(&hasher, "server-reaction", None),
+            &message_presence(),
+            &reaction_message(),
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+            panic!("reaction should convert without requiring parent storage");
+        };
+        assert_eq!(
+            mutation.envelope().entity_kind(),
+            CloudCanonicalEntityKind::Reaction
+        );
+        assert!(mutation.envelope().parent_logical_key_hash().is_some());
+        let Some(CloudCanonicalPayload::Message(payload)) = mutation.payload() else {
+            panic!("reaction message payload expected");
+        };
+        assert!(payload.association().is_reaction());
+    }
+
+    #[test]
+    fn emoji_reaction_content_is_required_only_for_the_emoji_reaction_kind() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut emoji = reaction_message();
+        emoji.msg_proto.0.associated_message_type = Some(2006);
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-emoji-missing-content", None),
+                &message_presence(),
+                &emoji,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::InvalidCanonicalPayload
+            )
+        );
+
+        emoji.msg_proto_4 = Some(GZipWrapper(MessageProto4 {
+            associated_message_emoji: Some("😀".to_owned()),
+            ..Default::default()
+        }));
+        assert!(matches!(
+            convert_message(
+                &context(&hasher, "server-emoji-reaction", None),
+                &message_presence(),
+                &emoji,
+            ),
+            CloudCanonicalConversionOutcome::Ready(_)
+        ));
+
+        let mut ordinary = reaction_message();
+        ordinary.msg_proto_4 = emoji.msg_proto_4;
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-ordinary-with-emoji", None),
+                &message_presence(),
+                &ordinary,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::InvalidCanonicalPayload
+            )
+        );
+    }
+
+    #[test]
+    fn reaction_parent_rejects_noncanonical_part_or_nested_guid_separator() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut reaction = reaction_message();
+        for malformed in ["p:00/parent-guid", "p:0/parent/guid"] {
+            reaction.msg_proto.0.associated_message_guid = Some(malformed.to_owned());
+            assert_eq!(
+                convert_message(
+                    &context(&hasher, "server-malformed-reaction-parent", None),
+                    &message_presence(),
+                    &reaction,
+                ),
+                CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::MalformedParent
+                ),
+                "{malformed}"
+            );
+        }
+    }
+
+    #[test]
+    fn reaction_cannot_smuggle_edit_or_retraction_state() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut reaction = reaction_message();
+        reaction.msg_proto.0.message_summary_info = Some(encoded_explicit_clear_message_summary());
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-reaction-with-summary", None),
+                &message_presence(),
+                &reaction,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::InvalidCanonicalPayload
+            )
+        );
+    }
+
+    #[test]
+    fn ambiguous_reply_is_quarantined_instead_of_guessed() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut message = normal_message(Some("reply"));
+        message.msg_proto_2 = Some(GZipWrapper(MessageProto2 {
+            reply: Some("r:0:parent:ambiguous".to_owned()),
+        }));
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-message-reply", None),
+                &message_presence(),
+                &message,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::AmbiguousReply
+            )
+        );
+    }
+
+    #[test]
+    fn owned_attachment_keeps_entire_guid_suffix_and_owner_part() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let attachment = AttachmentMeta {
+            guid: "at_0_parent_guid_with_underscore".to_owned(),
+            total_bytes: 42,
+            is_outgoing: true,
+            ..Default::default()
+        };
+        let outcome = convert_attachment(
+            &context(&hasher, "server-attachment-owned", None),
+            &attachment_presence(),
+            &attachment,
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+            panic!("owned attachment should convert");
+        };
+        let Some(CloudCanonicalPayload::Attachment(payload)) = mutation.payload() else {
+            panic!("attachment payload expected");
+        };
+        assert_eq!(payload.canonical_guid(), "parent_guid_with_underscore_0");
+        assert_eq!(payload.owner_part(), Some(0));
+        assert!(mutation.envelope().parent_logical_key_hash().is_some());
+    }
+
+    #[test]
+    fn standalone_attachment_has_no_invented_owner() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let attachment = AttachmentMeta {
+            guid: "standalone-attachment-guid".to_owned(),
+            total_bytes: 42,
+            ..Default::default()
+        };
+        let outcome = convert_attachment(
+            &context(&hasher, "server-attachment-standalone", None),
+            &attachment_presence(),
+            &attachment,
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+            panic!("standalone attachment should convert");
+        };
+        let Some(CloudCanonicalPayload::Attachment(payload)) = mutation.payload() else {
+            panic!("attachment payload expected");
+        };
+        assert_eq!(payload.canonical_guid(), "standalone-attachment-guid");
+        assert_eq!(payload.owner_part(), None);
+        assert!(mutation.envelope().parent_logical_key_hash().is_none());
+    }
+
+    #[test]
+    fn malformed_required_identity_is_quarantined() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut presence = message_presence();
+        presence.fields.remove("guid");
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-message", None),
+                &presence,
+                &normal_message(Some("hello")),
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRequiredIdentity
+            )
+        );
+    }
+
+    #[test]
+    fn unsupported_service_and_message_type_are_typed_quarantines() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut service = normal_message(Some("hello"));
+        service.service = "SMS".to_owned();
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-message", None),
+                &message_presence(),
+                &service,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::UnsupportedService
+            )
+        );
+        let mut message_type = normal_message(Some("hello"));
+        message_type.r#type = 99;
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-message", None),
+                &message_presence(),
+                &message_type,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::UnsupportedMessageType
+            )
+        );
+    }
+
+    #[test]
+    fn malformed_edits_are_quarantined_and_media_credentials_are_deferred() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut message = normal_message(Some("hello"));
+        message.msg_proto.0.message_summary_info = Some(vec![1, 2, 3]);
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-message", None),
+                &message_presence(),
+                &message,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedMessageSummary
+            )
+        );
+        message.msg_proto.0.message_summary_info = Some(vec![0; MAX_MESSAGE_SUMMARY_BYTES + 1]);
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-message-oversized-summary", None),
+                &message_presence(),
+                &message,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::OversizedContent
+            )
+        );
+        let mut attachment = AttachmentMeta {
+            guid: "standalone-attachment-guid".to_owned(),
+            total_bytes: 42,
+            ..Default::default()
+        };
+        attachment.user_info = Some(Default::default());
+        assert_eq!(
+            convert_attachment(
+                &context(&hasher, "server-attachment", None),
+                &attachment_presence(),
+                &attachment,
+            ),
+            CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::UnsupportedMediaCredentials
+            )
+        );
+    }
+
+    #[test]
+    fn tombstone_supports_present_or_missing_server_time() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        for expected in [Some(1_720_000_000_999), None] {
+            let outcome = convert_tombstone(
+                &context(&hasher, "server-message-tombstone", expected),
+                CloudCanonicalEntityKind::Message,
+                hash('d'),
+            );
+            let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+                panic!("server-confirmed tombstone should convert");
+            };
+            assert_eq!(
+                mutation
+                    .tombstone()
+                    .expect("tombstone payload")
+                    .deleted_at_millis(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn debug_and_errors_never_expose_secret_material() {
+        let hasher = CloudSemanticIdentifierHasher::new(SECRET.as_bytes()).unwrap();
+        let mut message = normal_message(Some(SECRET));
+        message.guid = format!("message-{SECRET}");
+        let outcome = convert_message(
+            &context(&hasher, SECRET, None),
+            &message_presence(),
+            &message,
+        );
+        let rendered = format!(
+            "{outcome:?} {:?} {}",
+            message_presence(),
+            CloudRawPresenceFailure::MalformedNestedPlist
+        );
+        assert!(!rendered.contains(SECRET));
+        assert!(!format!("{:?}", context(&hasher, SECRET, None)).contains(SECRET));
+    }
+
+    #[test]
+    fn presence_extractor_rejects_duplicate_or_value_less_fields() {
+        let duplicate = Record {
+            record_field: vec![
+                Field {
+                    identifier: Some(field::Identifier {
+                        name: Some("guid".to_owned()),
+                    }),
+                    value: Some(field::Value::default()),
+                },
+                Field {
+                    identifier: Some(field::Identifier {
+                        name: Some("guid".to_owned()),
+                    }),
+                    value: None,
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            CloudRawRecordPresence::extract(&duplicate),
+            Err(CloudRawPresenceFailure::DuplicateFieldIdentifier)
+        );
+
+        let value_less = Record {
+            record_field: vec![Field {
+                identifier: Some(field::Identifier {
+                    name: Some("guid".to_owned()),
+                }),
+                value: None,
+            }],
+            ..Default::default()
+        };
+        let presence = CloudRawRecordPresence::extract(&value_less).unwrap();
+        assert_eq!(
+            presence.field("guid"),
+            CloudRawFieldPresence::PresentWithoutValue
+        );
+    }
+
+    #[test]
+    fn source_remains_private_and_unwired() {
+        let source = concat!(
+            include_str!("cloud_sync_canonical_converter.rs"),
+            include_str!("cloud_sync_canonical_dto.rs")
+        );
+        for forbidden in [
+            concat!("flutter_", "rust_bridge::frb"),
+            concat!("#[", "frb"),
+            concat!("ser", "de::Serialize"),
+            concat!("object", "box"),
+            concat!("apply", "FromCloud"),
+            concat!("print", "ln!"),
+            concat!("eprint", "ln!"),
+            concat!("db", "g!"),
+            concat!("log", "::"),
+            concat!("tracing", "::"),
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "private converter must not contain {forbidden}"
+            );
+        }
+    }
+}

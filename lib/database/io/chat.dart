@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:async_task/async_task.dart';
+import 'package:bluebubbles/utils/attachment_guid_utils.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/database.dart';
@@ -33,7 +34,8 @@ class GetChatAttachments extends AsyncTask<List<dynamic>, List<Attachment>> {
   GetChatAttachments(this.stuff);
 
   @override
-  AsyncTask<List<dynamic>, List<Attachment>> instantiate(List<dynamic> parameters,
+  AsyncTask<List<dynamic>, List<Attachment>> instantiate(
+      List<dynamic> parameters,
       [Map<String, SharedData>? sharedData]) {
     return GetChatAttachments(parameters);
   }
@@ -52,8 +54,12 @@ class GetChatAttachments extends AsyncTask<List<dynamic>, List<Attachment>> {
       /// Query the [Database.messageBox] for all the message IDs and order by date
       /// descending
       final query = (Database.messages.query(includeDeleted
-          ? Message_.dateCreated.notNull().and(Message_.dateDeleted.isNull().or(Message_.dateDeleted.notNull()))
-          : Message_.dateDeleted.isNull().and(Message_.dateCreated.notNull()))
+              ? Message_.dateCreated.notNull().and(Message_.dateDeleted
+                  .isNull()
+                  .or(Message_.dateDeleted.notNull()))
+              : Message_.dateDeleted
+                  .isNull()
+                  .and(Message_.dateCreated.notNull()))
             ..link(Message_.chat, Chat_.id.equals(chatId))
             ..order(Message_.dateCreated, flags: Order.descending))
           .build();
@@ -64,7 +70,8 @@ class GetChatAttachments extends AsyncTask<List<dynamic>, List<Attachment>> {
 
       /// Match the attachments to their messages
       for (Message m in messages) {
-        m.attachments = List<Attachment>.from(m.dbAttachments.where((element) => element.mimeType != null));
+        m.attachments = List<Attachment>.from(
+            m.dbAttachments.where((element) => element.mimeType != null));
         actualAttachments.addAll((m.attachments).map((e) => e!));
       }
 
@@ -78,6 +85,172 @@ class GetChatAttachments extends AsyncTask<List<dynamic>, List<Attachment>> {
   }
 }
 
+/// Fetches one bounded page of media attachments without materializing the
+/// chat's complete message or attachment history.
+class GetChatMediaPage extends AsyncTask<List<dynamic>, ChatMediaPage> {
+  final List<dynamic> stuff;
+
+  GetChatMediaPage(this.stuff);
+
+  @override
+  AsyncTask<List<dynamic>, ChatMediaPage> instantiate(List<dynamic> parameters,
+      [Map<String, SharedData>? sharedData]) {
+    return GetChatMediaPage(parameters);
+  }
+
+  @override
+  List<dynamic> parameters() => stuff;
+
+  @override
+  FutureOr<ChatMediaPage> run() {
+    final chatId = stuff[0] as int;
+    final direction = ChatMediaDirection.values[stuff[1] as int];
+    final cursorDate = stuff[2] as int?;
+    final cursorMessageId = stuff[3] as int?;
+    final itemLimit = stuff[4] as int;
+    final scanLimit = stuff[5] as int;
+
+    return Database.runInTransaction(TxMode.read, () {
+      var condition =
+          Message_.dateDeleted.isNull().and(Message_.dateCreated.notNull());
+      if (cursorDate != null && cursorMessageId != null) {
+        final cursorCondition = direction == ChatMediaDirection.older
+            ? Message_.dateCreated.lessThan(cursorDate).or(
+                  Message_.dateCreated.equals(cursorDate).and(
+                        Message_.id.lessThan(cursorMessageId),
+                      ),
+                )
+            : Message_.dateCreated.greaterThan(cursorDate).or(
+                  Message_.dateCreated.equals(cursorDate).and(
+                        Message_.id.greaterThan(cursorMessageId),
+                      ),
+                );
+        condition = condition.and(cursorCondition);
+      }
+
+      final descending = direction == ChatMediaDirection.older;
+      final builder = Database.messages.query(condition)
+        ..link(Message_.chat, Chat_.id.equals(chatId))
+        ..order(
+          Message_.dateCreated,
+          flags: descending ? Order.descending : 0,
+        )
+        ..order(
+          Message_.id,
+          flags: descending ? Order.descending : 0,
+        );
+      final query = builder.build()..limit = scanLimit + 1;
+      final messages = query.find();
+      query.close();
+
+      final groups = <List<Attachment>>[];
+      var itemCount = 0;
+      var processed = 0;
+      Message? lastScanned;
+      for (final message in messages.take(scanLimit)) {
+        processed++;
+        lastScanned = message;
+        if (message.isGroupEvent || message.isInteractive) continue;
+
+        final media = message.dbAttachments
+            .where((attachment) =>
+                attachment.mimeStart == 'image' ||
+                attachment.mimeStart == 'video')
+            .toList();
+        if (media.isEmpty) continue;
+
+        message.attachments = List<Attachment>.from(message.dbAttachments);
+        groups.add(media);
+        itemCount += media.length;
+        // Finish the current message so another page never skips sibling
+        // attachments that share the same message cursor.
+        if (itemCount >= itemLimit) break;
+      }
+
+      final orderedGroups =
+          descending ? groups : groups.reversed.toList(growable: false);
+      final items = orderedGroups.expand((group) => group).toList();
+      final cursor = lastScanned?.dateCreated == null || lastScanned?.id == null
+          ? null
+          : ChatMediaCursor(
+              dateMilliseconds:
+                  lastScanned!.dateCreated!.millisecondsSinceEpoch,
+              messageId: lastScanned.id!,
+            );
+
+      return ChatMediaPage(
+        items: items,
+        nextCursor: cursor,
+        hasMore: processed < messages.length,
+      );
+    });
+  }
+}
+
+/// Fetches the bounded non-media cards shown on conversation details.
+class GetChatAttachmentOverview
+    extends AsyncTask<List<dynamic>, ChatAttachmentOverview> {
+  final List<dynamic> stuff;
+
+  GetChatAttachmentOverview(this.stuff);
+
+  @override
+  AsyncTask<List<dynamic>, ChatAttachmentOverview> instantiate(
+      List<dynamic> parameters,
+      [Map<String, SharedData>? sharedData]) {
+    return GetChatAttachmentOverview(parameters);
+  }
+
+  @override
+  List<dynamic> parameters() => stuff;
+
+  @override
+  FutureOr<ChatAttachmentOverview> run() {
+    final chatId = stuff[0] as int;
+    final documentLimit = stuff[1] as int;
+    final locationLimit = stuff[2] as int;
+    final scanLimit = stuff[3] as int;
+
+    return Database.runInTransaction(TxMode.read, () {
+      final query = (Database.messages.query(
+        Message_.dateDeleted.isNull().and(Message_.dateCreated.notNull()),
+      )
+            ..link(Message_.chat, Chat_.id.equals(chatId))
+            ..order(Message_.dateCreated, flags: Order.descending)
+            ..order(Message_.id, flags: Order.descending))
+          .build()
+        ..limit = scanLimit;
+      final messages = query.find();
+      query.close();
+
+      final documents = <Attachment>[];
+      final locations = <Attachment>[];
+      for (final message in messages) {
+        if (message.isGroupEvent || message.isInteractive) continue;
+        message.attachments = List<Attachment>.from(message.dbAttachments);
+        for (final attachment in message.attachments.whereType<Attachment>()) {
+          final mimeType = attachment.mimeType ?? '';
+          if (mimeType.contains('location')) {
+            if (locations.length < locationLimit) locations.add(attachment);
+          } else if (attachment.mimeStart != 'image' &&
+              attachment.mimeStart != 'video' &&
+              documents.length < documentLimit) {
+            documents.add(attachment);
+          }
+        }
+        if (documents.length >= documentLimit &&
+            locations.length >= locationLimit) {
+          break;
+        }
+      }
+      return ChatAttachmentOverview(
+        documents: documents,
+        locations: locations,
+      );
+    });
+  }
+}
+
 /// Async method to get messages from objectbox
 class GetMessages extends AsyncTask<List<dynamic>, List<Message>> {
   final List<dynamic> stuff;
@@ -85,7 +258,8 @@ class GetMessages extends AsyncTask<List<dynamic>, List<Message>> {
   GetMessages(this.stuff);
 
   @override
-  AsyncTask<List<dynamic>, List<Message>> instantiate(List<dynamic> parameters, [Map<String, SharedData>? sharedData]) {
+  AsyncTask<List<dynamic>, List<Message>> instantiate(List<dynamic> parameters,
+      [Map<String, SharedData>? sharedData]) {
     return GetMessages(parameters);
   }
 
@@ -107,10 +281,14 @@ class GetMessages extends AsyncTask<List<dynamic>, List<Message>> {
       final messages = <Message>[];
       if (searchAround == null) {
         final query = (Database.messages.query(includeDeleted
-            ? Message_.dateCreated.notNull().and(Message_.dateDeleted.isNull().or(Message_.dateDeleted.notNull()))
-            : Message_.dateDeleted.isNull().and(Message_.dateCreated.notNull()))
-          ..link(Message_.chat, Chat_.id.equals(chatId))
-          ..order(Message_.dateCreated, flags: Order.descending))
+                ? Message_.dateCreated.notNull().and(Message_.dateDeleted
+                    .isNull()
+                    .or(Message_.dateDeleted.notNull()))
+                : Message_.dateDeleted
+                    .isNull()
+                    .and(Message_.dateCreated.notNull()))
+              ..link(Message_.chat, Chat_.id.equals(chatId))
+              ..order(Message_.dateCreated, flags: Order.descending))
             .build();
         query
           ..limit = limit
@@ -118,33 +296,52 @@ class GetMessages extends AsyncTask<List<dynamic>, List<Message>> {
         messages.addAll(query.find());
         query.close();
       } else {
-        final beforeQuery = (Database.messages.query(Message_.dateCreated.lessThan(searchAround).and(includeDeleted
-            ? Message_.dateCreated.notNull().and(Message_.dateDeleted.isNull().or(Message_.dateDeleted.notNull()))
-            : Message_.dateDeleted.isNull().and(Message_.dateCreated.notNull())))
-          ..link(Message_.chat, Chat_.id.equals(chatId))
-          ..order(Message_.dateCreated, flags: Order.descending))
+        final beforeQuery = (Database.messages.query(Message_.dateCreated
+                .lessThan(searchAround)
+                .and(includeDeleted
+                    ? Message_.dateCreated.notNull().and(Message_.dateDeleted
+                        .isNull()
+                        .or(Message_.dateDeleted.notNull()))
+                    : Message_.dateDeleted
+                        .isNull()
+                        .and(Message_.dateCreated.notNull())))
+              ..link(Message_.chat, Chat_.id.equals(chatId))
+              ..order(Message_.dateCreated, flags: Order.descending))
             .build();
         beforeQuery.limit = limit;
         final before = beforeQuery.find();
         beforeQuery.close();
-        final afterQuery = (Database.messages.query(Message_.dateCreated.greaterThan(searchAround).and(includeDeleted
-            ? Message_.dateCreated.notNull().and(Message_.dateDeleted.isNull().or(Message_.dateDeleted.notNull()))
-            : Message_.dateDeleted.isNull().and(Message_.dateCreated.notNull())))
-          ..link(Message_.chat, Chat_.id.equals(chatId))
-          ..order(Message_.dateCreated))
+        final afterQuery = (Database.messages.query(Message_.dateCreated
+                .greaterThan(searchAround)
+                .and(includeDeleted
+                    ? Message_.dateCreated.notNull().and(Message_.dateDeleted
+                        .isNull()
+                        .or(Message_.dateDeleted.notNull()))
+                    : Message_.dateDeleted
+                        .isNull()
+                        .and(Message_.dateCreated.notNull())))
+              ..link(Message_.chat, Chat_.id.equals(chatId))
+              ..order(Message_.dateCreated))
             .build();
         afterQuery.limit = limit;
         final after = afterQuery.find();
         afterQuery.close();
-        messages..addAll(before)..addAll(after);
+        messages
+          ..addAll(before)
+          ..addAll(after);
       }
 
       /// Fetch and match handles
       final chat = Database.chats.get(chatId);
       for (int i = 0; i < messages.length; i++) {
         Message message = messages[i];
-        if (chat!.participants.isNotEmpty && !message.isFromMe! && message.handleId != null && message.handleId != 0) {
-          Handle? handle = chat.participants.firstWhereOrNull((e) => e.originalROWID == message.handleId) ?? message.getHandle();
+        if (chat!.participants.isNotEmpty &&
+            !message.isFromMe! &&
+            message.handleId != null &&
+            message.handleId != 0) {
+          Handle? handle = chat.participants.firstWhereOrNull(
+                  (e) => e.originalROWID == message.handleId) ??
+              message.getHandle();
           if (handle == null && message.originalROWID != null) {
             messages.remove(message);
             i--;
@@ -154,18 +351,23 @@ class GetMessages extends AsyncTask<List<dynamic>, List<Message>> {
         }
       }
       final messageGuids = messages.map((e) => e.guid!).toList();
-      final associatedMessagesQuery =
-          (Database.messages.query(Message_.associatedMessageGuid.oneOf(messageGuids))..order(Message_.originalROWID)).build();
+      final associatedMessagesQuery = (Database.messages
+              .query(Message_.associatedMessageGuid.oneOf(messageGuids))
+            ..order(Message_.originalROWID))
+          .build();
       List<Message> associatedMessages = associatedMessagesQuery.find();
       associatedMessagesQuery.close();
-      associatedMessages = MessageHelper.normalizedAssociatedMessages(associatedMessages);
+      associatedMessages =
+          MessageHelper.normalizedAssociatedMessages(associatedMessages);
       for (Message m in associatedMessages) {
         if (m.associatedMessageType != "sticker") continue;
         m.attachments = List<Attachment>.from(m.dbAttachments);
       }
       for (Message m in messages) {
         m.attachments = List<Attachment>.from(m.dbAttachments);
-        m.associatedMessages = associatedMessages.where((e) => e.associatedMessageGuid == m.guid).toList();
+        m.associatedMessages = associatedMessages
+            .where((e) => e.associatedMessageGuid == m.guid)
+            .toList();
       }
       return messages;
     });
@@ -173,21 +375,17 @@ class GetMessages extends AsyncTask<List<dynamic>, List<Message>> {
 }
 
 Future<String> getZenKey(String key) async {
-  return await mcs.invokeMethod("zen-mode-uuid", { "key": key });
+  return await mcs.invokeMethod("zen-mode-uuid", {"key": key});
 }
 
 Future<api.StatusKitPersonalConfig> configForMask(int mask) async {
   bool isStarredContact = ((mask >> 0) & 1) == 1;
   bool isPriority = ((mask >> 1) & 1) == 1;
-  
 
   return api.StatusKitPersonalConfig(allowedModes: [
-    if (isStarredContact)
-    await getZenKey("starred"),
-    if (isPriority)
-    await getZenKey("priority"),
-    if (isStarredContact || isPriority)
-    await getZenKey("starred_priority"),
+    if (isStarredContact) await getZenKey("starred"),
+    if (isPriority) await getZenKey("priority"),
+    if (isStarredContact || isPriority) await getZenKey("starred_priority"),
   ]);
 }
 
@@ -198,7 +396,8 @@ class AddMessages extends AsyncTask<List<dynamic>, List<Message>> {
   AddMessages(this.stuff);
 
   @override
-  AsyncTask<List<dynamic>, List<Message>> instantiate(List<dynamic> parameters, [Map<String, SharedData>? sharedData]) {
+  AsyncTask<List<dynamic>, List<Message>> instantiate(List<dynamic> parameters,
+      [Map<String, SharedData>? sharedData]) {
     return AddMessages(parameters);
   }
 
@@ -210,13 +409,14 @@ class AddMessages extends AsyncTask<List<dynamic>, List<Message>> {
   @override
   FutureOr<List<Message>> run() {
     /// Pull args from input and create new instances of store and boxes
-    List<Message> messages = stuff[0].map((e) => Message.fromMap(e)).toList().cast<Message>();
+    List<Message> messages =
+        stuff[0].map((e) => Message.fromMap(e)).toList().cast<Message>();
 
     /// Save the new messages and their attachments in a write transaction
     final newMessages = Database.runInTransaction(TxMode.write, () {
       List<Message> newMessages = Message.bulkSave(messages);
-      Attachment.bulkSave(
-          Map.fromIterables(newMessages, newMessages.map((e) => (e.attachments).map((e) => e!).toList())));
+      Attachment.bulkSave(Map.fromIterables(newMessages,
+          newMessages.map((e) => (e.attachments).map((e) => e!).toList())));
       return newMessages;
     });
 
@@ -226,11 +426,14 @@ class AddMessages extends AsyncTask<List<dynamic>, List<Message>> {
 
       /// Query the [Database.messageBox] for associated messages (reactions) matching the
       /// message IDs
-      final associatedMessagesQuery =
-          (Database.messages.query(Message_.associatedMessageGuid.oneOf(messageGuids))..order(Message_.originalROWID)).build();
+      final associatedMessagesQuery = (Database.messages
+              .query(Message_.associatedMessageGuid.oneOf(messageGuids))
+            ..order(Message_.originalROWID))
+          .build();
       List<Message> associatedMessages = associatedMessagesQuery.find();
       associatedMessagesQuery.close();
-      associatedMessages = MessageHelper.normalizedAssociatedMessages(associatedMessages);
+      associatedMessages =
+          MessageHelper.normalizedAssociatedMessages(associatedMessages);
 
       /// Assign the relevant attachments and associated messages to the original
       /// messages
@@ -240,7 +443,9 @@ class AddMessages extends AsyncTask<List<dynamic>, List<Message>> {
       }
       for (Message m in newMessages) {
         m.attachments = List<Attachment>.from(m.dbAttachments);
-        m.associatedMessages = associatedMessages.where((e) => e.associatedMessageGuid == m.guid).toList();
+        m.associatedMessages = associatedMessages
+            .where((e) => e.associatedMessageGuid == m.guid)
+            .toList();
       }
       return newMessages;
     });
@@ -254,7 +459,8 @@ class GetChats extends AsyncTask<List<dynamic>, List<Chat>> {
   GetChats(this.stuff);
 
   @override
-  AsyncTask<List<dynamic>, List<Chat>> instantiate(List<dynamic> parameters, [Map<String, SharedData>? sharedData]) {
+  AsyncTask<List<dynamic>, List<Chat>> instantiate(List<dynamic> parameters,
+      [Map<String, SharedData>? sharedData]) {
     return GetChats(parameters);
   }
 
@@ -271,9 +477,13 @@ class GetChats extends AsyncTask<List<dynamic>, List<Chat>> {
       // If the 3rd param is available, it's for an ID query.
       // Otherwise, query without any criteria
       if (stuff.length >= 3 && stuff[2] != null && stuff[2] is List) {
-        queryBuilder = Database.chats.query(Chat_.id.oneOf(stuff[2] as List<int>));
+        queryBuilder =
+            Database.chats.query(Chat_.id.oneOf(stuff[2] as List<int>));
       } else {
-        queryBuilder = Database.chats.query(Chat_.dateDeleted.isNull().and(Chat_.isRoutingStub.equals(false).or(Chat_.isRoutingStub.isNull())));
+        queryBuilder = Database.chats.query(Chat_.dateDeleted.isNull().and(Chat_
+            .isRoutingStub
+            .equals(false)
+            .or(Chat_.isRoutingStub.isNull())));
       }
 
       // Build the query, applying some sorting so we get data in the correct order.
@@ -301,7 +511,6 @@ class GetChats extends AsyncTask<List<dynamic>, List<Chat>> {
   }
 }
 
-
 @Entity()
 class Chat {
   int? id;
@@ -325,6 +534,7 @@ class Chat {
     title ??= getTitle();
     return title!;
   }
+
   String? displayName;
   List<Handle> _participants = [];
   List<Handle> get participants {
@@ -333,6 +543,7 @@ class Chat {
     }
     return _participants;
   }
+
   bool? autoSendReadReceipts;
   bool? autoSendTypingIndicators;
   String? textFieldText;
@@ -341,19 +552,25 @@ class Chat {
   Message? _latestMessage;
   Message get latestMessage {
     if (_latestMessage != null) return _latestMessage!;
-    _latestMessage = Chat.getMessages(this, limit: 1, getDetails: true).firstOrNull ?? Message(
-      dateCreated: DateTime.fromMillisecondsSinceEpoch(0),
-      guid: guid,
-    );
+    _latestMessage =
+        Chat.getMessages(this, limit: 1, getDetails: true).firstOrNull ??
+            Message(
+              dateCreated: DateTime.fromMillisecondsSinceEpoch(0),
+              guid: guid,
+            );
     return _latestMessage!;
   }
+
   Message get dbLatestMessage {
-    _latestMessage = Chat.getMessages(this, limit: 1, getDetails: true).firstOrNull ?? Message(
-      dateCreated: DateTime.fromMillisecondsSinceEpoch(0),
-      guid: guid,
-    );
+    _latestMessage =
+        Chat.getMessages(this, limit: 1, getDetails: true).firstOrNull ??
+            Message(
+              dateCreated: DateTime.fromMillisecondsSinceEpoch(0),
+              guid: guid,
+            );
     return _latestMessage!;
   }
+
   set latestMessage(Message m) => _latestMessage = m;
   @Property(uid: 526293286661780207)
   DateTime? dbOnlyLatestMessageDate;
@@ -372,10 +589,15 @@ class Chat {
 
   Message get sendLastMessage {
     var messages = Chat.getMessages(this, limit: 10, getDetails: true);
-    return messages.firstWhereOrNull((msg) => msg.stagingGuid != null || (msg.guid != null && !msg.guid!.contains("temp") && !msg.guid!.contains("error"))) ?? Message(
-      dateCreated: DateTime.fromMillisecondsSinceEpoch(0),
-      guid: guid,
-    );
+    return messages.firstWhereOrNull((msg) =>
+            msg.stagingGuid != null ||
+            (msg.guid != null &&
+                !msg.guid!.contains("temp") &&
+                !msg.guid!.contains("error"))) ??
+        Message(
+          dateCreated: DateTime.fromMillisecondsSinceEpoch(0),
+          guid: guid,
+        );
   }
 
   final RxnString _customAvatarPath = RxnString();
@@ -462,7 +684,9 @@ class Chat {
   }
 
   factory Chat.fromMap(Map<String, dynamic> json) {
-    final message = json['lastMessage'] != null ? Message.fromMap(json['lastMessage']!.cast<String, Object>()) : null;
+    final message = json['lastMessage'] != null
+        ? Message.fromMap(json['lastMessage']!.cast<String, Object>())
+        : null;
     return Chat(
       id: json["ROWID"] ?? json["id"],
       guid: json["guid"],
@@ -476,7 +700,9 @@ class Chat {
       displayName: json["displayName"],
       customAvatar: json['_customAvatarPath'],
       pinnedIndex: json['_pinIndex'],
-      participants: (json['participants'] as List? ?? []).map((e) => Handle.fromMap(e!.cast<String, Object>())).toList(),
+      participants: (json['participants'] as List? ?? [])
+          .map((e) => Handle.fromMap(e!.cast<String, Object>()))
+          .toList(),
       autoSendReadReceipts: json["autoSendReadReceipts"],
       autoSendTypingIndicators: json["autoSendTypingIndicators"],
       dateDeleted: parseDate(json["dateDeleted"]),
@@ -500,7 +726,8 @@ class Chat {
     if (usingHandle != null && isRpSms) {
       var acceptableHandles = [];
       if (isRoutingStub) {
-        acceptableHandles = await api.getMyPhoneHandles(state: pushService.state!.client);
+        acceptableHandles =
+            await api.getMyPhoneHandles(state: pushService.state!.client);
       } else {
         acceptableHandles = ss.settings.smsForwardingTargets.keys.toList();
       }
@@ -511,7 +738,8 @@ class Chat {
     if (usingHandle == null) {
       if (isRpSms) {
         if (isRoutingStub) {
-          usingHandle = (await api.getMyPhoneHandles(state: pushService.state!.client))[0];
+          usingHandle = (await api.getMyPhoneHandles(
+              state: pushService.state!.client))[0];
         } else {
           usingHandle = ss.settings.smsForwardingTargets.keys.firstOrNull!;
         }
@@ -603,7 +831,8 @@ class Chat {
         ckSyncState = existing?.ckSyncState ?? ckSyncState;
       }
       if (!updateAttachmentGuid) {
-        photoAttachmentGuid = existing?.photoAttachmentGuid ?? photoAttachmentGuid;
+        photoAttachmentGuid =
+            existing?.photoAttachmentGuid ?? photoAttachmentGuid;
       }
       if (!updateHasUnreadMessage) {
         hasUnreadMessage = existing?.hasUnreadMessage ?? hasUnreadMessage;
@@ -621,13 +850,15 @@ class Chat {
         textFieldText = existing?.textFieldText ?? textFieldText;
       }
       if (!updateTextFieldAnnotations) {
-        textFieldAnnotations = existing?.textFieldAnnotations ?? textFieldAnnotations;
+        textFieldAnnotations =
+            existing?.textFieldAnnotations ?? textFieldAnnotations;
       }
       if (!updateAPNTitle) {
         apnTitle = existing?.apnTitle ?? apnTitle;
       }
       if (!updateTextFieldAttachments) {
-        textFieldAttachments = existing?.textFieldAttachments ?? textFieldAttachments;
+        textFieldAttachments =
+            existing?.textFieldAttachments ?? textFieldAttachments;
       }
       if (!updateDisplayName) {
         displayName = existing?.displayName ?? displayName;
@@ -642,7 +873,8 @@ class Chat {
         lockChatIcon = existing?.lockChatIcon ?? false;
       }
       if (!updateLastReadMessageGuid) {
-        lastReadMessageGuid = existing?.lastReadMessageGuid ?? lastReadMessageGuid;
+        lastReadMessageGuid =
+            existing?.lastReadMessageGuid ?? lastReadMessageGuid;
       }
       if (!updateGroupVersion) {
         groupVersion = existing?.groupVersion ?? groupVersion;
@@ -669,16 +901,19 @@ class Chat {
         shareZenMode = existing?.shareZenMode ?? shareZenMode;
       }
       if (!updateDateNotifiedAnyways) {
-        dateNotifiedAnyways = existing?.dateNotifiedAnyways ?? dateNotifiedAnyways;
+        dateNotifiedAnyways =
+            existing?.dateNotifiedAnyways ?? dateNotifiedAnyways;
       }
       if (!updateSenderIsKnown) {
         senderIsKnown = existing?.senderIsKnown ?? senderIsKnown;
       }
       if (!updateTranscriptPosterPath) {
-        transcriptPosterPath = existing?.transcriptPosterPath ?? transcriptPosterPath;
+        transcriptPosterPath =
+            existing?.transcriptPosterPath ?? transcriptPosterPath;
       }
       if (!updateTranscriptBackgroundVersion) {
-        transcriptBackgroundVersion = existing?.transcriptBackgroundVersion ?? transcriptBackgroundVersion;
+        transcriptBackgroundVersion = existing?.transcriptBackgroundVersion ??
+            transcriptBackgroundVersion;
       }
 
       /// Save the chat and add the participants
@@ -704,63 +939,76 @@ class Chat {
   }
 
   Future<int> getPersonalConfig() async {
-    if (participants.length > 1 || participants.isEmpty || !Platform.isAndroid) return 0;
+    if (participants.length > 1 ||
+        participants.isEmpty ||
+        !Platform.isAndroid) {
+      return 0;
+    }
 
     bool isStarredContact = await mcs.invokeMethod("is-conversation-exempt", {
       "mode": "star",
       "contactId": participants.first.contact!.id.toInt(),
     });
 
-    bool isPriority = await mcs.invokeMethod("is-conversation-exempt", {
-      "mode": "priority",
-      "guid": guid
-    });
+    bool isPriority = await mcs.invokeMethod(
+        "is-conversation-exempt", {"mode": "priority", "guid": guid});
 
-    int configMask = 
-      ((isStarredContact ? 1 : 0) << 0) |
-      ((isPriority ? 1 : 0) << 1);
+    int configMask =
+        ((isStarredContact ? 1 : 0) << 0) | ((isPriority ? 1 : 0) << 1);
 
     return configMask;
   }
 
   void fixZenModeShared() async {
     if (!ss.settings.enableShareZen.value) return;
-    bool wantsZenMode = (shareZenMode ?? true) && participants.firstOrNull?.contact?.isShared == false;
+    bool wantsZenMode = (shareZenMode ?? true) &&
+        participants.firstOrNull?.contact?.isShared == false;
     var config = wantsZenMode ? await getPersonalConfig() : null;
     if (config == zenModeIsShared) return;
     var statuskit = pushService.state?.icloudServices?.statuskitClient;
     if (statuskit == null) return;
 
     if (wantsZenMode) {
-      await api.inviteToChannel(status: statuskit, handle: await ensureHandle(), to: {
-        getRustHandlesExcludingMine()[0]: await configForMask(config!)
-      });
+      await api.inviteToChannel(
+          status: statuskit,
+          handle: await ensureHandle(),
+          to: {getRustHandlesExcludingMine()[0]: await configForMask(config!)});
       zenModeIsShared = config;
       save(updateZenModeIsShared: true);
     } else {
       // okay, sooo
       // get everyone who *is* allowed to have my status updates
-      final query = Database.chats.query(Chat_.zenModeIsShared.notNull().and(Chat_.dbOnlyLatestMessageDate.greaterThanDate(DateTime.now().subtract(const Duration(days: 7))))).build();
+      final query = Database.chats
+          .query(Chat_.zenModeIsShared.notNull().and(
+              Chat_.dbOnlyLatestMessageDate.greaterThanDate(
+                  DateTime.now().subtract(const Duration(days: 7)))))
+          .build();
       final results = query.find();
       query.close();
-      
+
       Map<String, Map<String, api.StatusKitPersonalConfig>> sendMap = {};
       for (var result in results) {
         if (result.guid == guid) continue; // no longer share us
         var handle = await result.ensureHandle();
         sendMap.putIfAbsent(handle, () => {});
-        sendMap[handle]![result.getRustHandlesExcludingMine()[0]] = await configForMask(result.zenModeIsShared!);
+        sendMap[handle]![result.getRustHandlesExcludingMine()[0]] =
+            await configForMask(result.zenModeIsShared!);
       }
-      
+
       await api.resetChannelKeys(status: statuskit);
       for (var handle in sendMap.entries) {
-        await api.inviteToChannel(status: statuskit, handle: handle.key, to: handle.value);
+        await api.inviteToChannel(
+            status: statuskit, handle: handle.key, to: handle.value);
       }
       zenModeIsShared = null;
       save(updateZenModeIsShared: true);
 
       // these people sadly fall off
-      final o = Database.chats.query(Chat_.zenModeIsShared.notNull().and(Chat_.dbOnlyLatestMessageDate.lessThanDate(DateTime.now().subtract(const Duration(days: 7))))).build();
+      final o = Database.chats
+          .query(Chat_.zenModeIsShared.notNull().and(Chat_
+              .dbOnlyLatestMessageDate
+              .lessThanDate(DateTime.now().subtract(const Duration(days: 7)))))
+          .build();
       final older = o.find();
       o.close();
       for (var item in older) {
@@ -801,19 +1049,21 @@ class Chat {
     var chat = Chat.findByRustGuid(c.groupId);
     if (chat != null) return chat;
 
-    final query2= Database.chats.query(Chat_.chatIdentifier.equals(c.chatIdentifier)).build();
+    final query2 = Database.chats
+        .query(Chat_.chatIdentifier.equals(c.chatIdentifier))
+        .build();
     final result2 = query2.findFirst();
     query2.close();
     if (result2 != null) return result2;
-
 
     var cond = Chat_.isRoutingStub.equals(false);
     if (c.displayName != null) {
       cond = cond.and(Chat_.apnTitle.equals(c.displayName!));
     }
     final query = (Database.chats.query(cond)
-          ..linkMany(Chat_.handles, Handle_.address.oneOf(c.participants.map((e) => e.uri).toList())))
-            .build();
+          ..linkMany(Chat_.handles,
+              Handle_.address.oneOf(c.participants.map((e) => e.uri).toList())))
+        .build();
     final results = query.find();
     query.close();
 
@@ -831,7 +1081,9 @@ class Chat {
 
     if (result != null) return result;
 
-    chat = await backend.createChat(c.participants.map((p) => p.uri).toList(), null, c.serviceName, existingGuid: c.groupId);
+    chat = await backend.createChat(
+        c.participants.map((p) => p.uri).toList(), null, c.serviceName,
+        existingGuid: c.groupId);
     chat.senderIsKnown = true;
     chat.save(updateSenderIsKnown: true);
     return chat;
@@ -842,27 +1094,35 @@ class Chat {
     if (cloudData != null) {
       existing = api.restoreCloudChat(data: cloudData!);
     } else {
-      chatIdentifier = participants.length == 1 ? participants[0].address : "chat${(Random().nextInt(pow(2, 32).toInt()) << 32) | Random().nextInt(pow(2, 32).toInt())}";
+      chatIdentifier = participants.length == 1
+          ? participants[0].address
+          : "chat${(Random().nextInt(pow(2, 32).toInt()) << 32) | Random().nextInt(pow(2, 32).toInt())}";
       cloudGuid ??= guid;
       existing = api.CloudChat(
-        style: isGroup ? 43 : 45, 
-        isFiltered: 0, 
-        successfulQuery: 1, 
-        state: 3, // seems to be a constant 
-        chatIdentifier: chatIdentifier!, 
-        groupId: cloudGuid!, 
-        serviceName: "iMessage", 
-        originalGroupId: cloudGuid!, 
+        style: isGroup ? 43 : 45,
+        isFiltered: 0,
+        successfulQuery: 1,
+        state: 3, // seems to be a constant
+        chatIdentifier: chatIdentifier!,
+        groupId: cloudGuid!,
+        serviceName: "iMessage",
+        originalGroupId: cloudGuid!,
         properties: api.CloudProp(
           numberOfTimesRespondedtoThread: 3, // always 3?
           shouldForceToSms: false,
           legacyGroupIdentifiers: [],
           messageHandshakeState: 1,
         ),
-        participants: participants.map((p) => api.CloudParticipant(uri: p.address)).toList(), 
-        prop001: const api.CloudProp001(syndicationType: 0), 
-        lastReadMessageTimestamp: dbOnlyLatestMessageDate == null ? 0 : RustPushBBUtils.nsSinceAppleEpoch(dbOnlyLatestMessageDate!), 
-        lastAddressedHandle: (await ensureHandle()).replaceFirst("mailto:", "").replaceFirst("tel:", ""), 
+        participants: participants
+            .map((p) => api.CloudParticipant(uri: p.address))
+            .toList(),
+        prop001: const api.CloudProp001(syndicationType: 0),
+        lastReadMessageTimestamp: dbOnlyLatestMessageDate == null
+            ? 0
+            : RustPushBBUtils.nsSinceAppleEpoch(dbOnlyLatestMessageDate!),
+        lastAddressedHandle: (await ensureHandle())
+            .replaceFirst("mailto:", "")
+            .replaceFirst("tel:", ""),
         guid: "iMessage;${isGroup ? '+' : '-'};$chatIdentifier",
         displayName: displayName,
         proto001: api.encodeChatproto(chat: const api.ChatProto(unk1: 0)),
@@ -870,31 +1130,37 @@ class Chat {
     }
     existing.style = isGroup ? 43 : 45;
     existing.chatIdentifier = chatIdentifier!;
-    existing.participants = participants.map((p) => api.CloudParticipant(uri: p.address)).toList();
-    existing.lastReadMessageTimestamp = dbOnlyLatestMessageDate == null ? 0 : RustPushBBUtils.nsSinceAppleEpoch(dbOnlyLatestMessageDate!);
-    existing.lastAddressedHandle = (await ensureHandle()).replaceFirst("mailto:", "").replaceFirst("tel:", "");
+    existing.participants =
+        participants.map((p) => api.CloudParticipant(uri: p.address)).toList();
+    existing.lastReadMessageTimestamp = dbOnlyLatestMessageDate == null
+        ? 0
+        : RustPushBBUtils.nsSinceAppleEpoch(dbOnlyLatestMessageDate!);
+    existing.lastAddressedHandle = (await ensureHandle())
+        .replaceFirst("mailto:", "")
+        .replaceFirst("tel:", "");
     existing.displayName = displayName;
     if (existing.properties != null) {
       existing.properties!.pv = groupVersion ?? 1;
       // existing.properties!.gpufc = groupVersion ?? 1;
       existing.properties!.lastSeenMessageGuid = lastReadMessageGuid;
       existing.properties!.lastModificationDate = api.dateNow();
-      existing.properties!.groupPhotoGuid = photoAttachmentGuid != null ? unconvertAttachmentGuid(photoAttachmentGuid!) : null;
+      existing.properties!.groupPhotoGuid = photoAttachmentGuid != null
+          ? unconvertAttachmentGuid(photoAttachmentGuid!)
+          : null;
     }
     if (customAvatarPath == null) {
       existing.groupPhoto = null;
       existing.groupPhotoGuid = null;
     } else {
-      existing.groupPhotoGuid = photoAttachmentGuid != null ? unconvertAttachmentGuid(photoAttachmentGuid!) : null;
+      existing.groupPhotoGuid = photoAttachmentGuid != null
+          ? unconvertAttachmentGuid(photoAttachmentGuid!)
+          : null;
     }
     return existing;
   }
 
-  String unconvertAttachmentGuid(String guid) {
-    var items = guid.split("_");
-    if (items.length == 1) return guid;
-    return "at_${items[1]}_${items[0]}";
-  }
+  String unconvertAttachmentGuid(String guid) =>
+      unconvertAppleAttachmentGuid(guid);
 
   bool applyFromCloud(api.CloudChat c, String record) {
     chatIdentifier = c.chatIdentifier;
@@ -912,12 +1178,16 @@ class Chat {
     groupVersion = c.properties?.pv;
     // techincally uri doesn't have mailto: or tel: prefix, but that's fine
     handles.clear();
-    handles.addAll(c.participants.map((i) => RustPushBBUtils.rustHandleToBB(i.uri)));
+    handles.addAll(
+        c.participants.map((i) => RustPushBBUtils.rustHandleToBB(i.uri)));
     handles.applyToDb();
-    
-    usingHandle = c.lastAddressedHandle.isEmail ? "mailto:${c.lastAddressedHandle}" : "tel:${c.lastAddressedHandle}";
+
+    usingHandle = c.lastAddressedHandle.isEmail
+        ? "mailto:${c.lastAddressedHandle}"
+        : "tel:${c.lastAddressedHandle}";
     displayName = c.displayName;
-    dbOnlyLatestMessageDate = RustPushBBUtils.fromNsSinceAppleEpoch(c.lastReadMessageTimestamp);
+    dbOnlyLatestMessageDate =
+        RustPushBBUtils.fromNsSinceAppleEpoch(c.lastReadMessageTimestamp);
     cloudData = api.saveCloudChat(value: c);
     ckSyncState = true;
 
@@ -934,14 +1204,22 @@ class Chat {
   }
 
   static Future<Chat> getChatForTel(int tid, List<String> participants) async {
-    final query3 = Database.chats.query(Chat_.telephonyId.equals(tid).and(Chat_.dateDeleted.isNull()).and(Chat_.isRoutingStub.equals(true))).build();
+    final query3 = Database.chats
+        .query(Chat_.telephonyId
+            .equals(tid)
+            .and(Chat_.dateDeleted.isNull())
+            .and(Chat_.isRoutingStub.equals(true)))
+        .build();
     final result4 = query3.findFirst();
     query3.close();
     if (result4 != null) return result4;
 
-    final query = (Database.chats.query(Chat_.dateDeleted.isNull().and(Chat_.isRpSms.equals(true)).and(Chat_.isRoutingStub.equals(true)))
+    final query = (Database.chats.query(Chat_.dateDeleted
+            .isNull()
+            .and(Chat_.isRpSms.equals(true))
+            .and(Chat_.isRoutingStub.equals(true)))
           ..linkMany(Chat_.handles, Handle_.address.oneOf(participants)))
-            .build();
+        .build();
     final results = query.find();
     query.close();
 
@@ -966,23 +1244,25 @@ class Chat {
     return result;
   }
 
-  Future<void> deliverSMS(String sender, bool fromMe, List<Map<String, dynamic>> parts) async {
+  Future<void> deliverSMS(
+      String sender, bool fromMe, List<Map<String, dynamic>> parts) async {
     if (!ss.settings.isSmsRouter.value) {
       return; // don't deliver if not enabled :)
     }
-    if (sender.isEmail) return; // no one uses this feature anyway, and can't debug it due to TMO's MXRT AUP
+    if (sender.isEmail) {
+      return; // no one uses this feature anyway, and can't debug it due to TMO's MXRT AUP
+    }
 
     if (fromMe && "tel:$sender" != usingHandle) {
-      Logger.info("Chat delivering sms, handle $usingHandle not sms handle $sender");
+      Logger.info(
+          "Chat delivering sms, handle $usingHandle not sms handle $sender");
       usingHandle = "tel:$sender";
       save(updateUsingHandle: true);
     }
 
     var handle = Handle.findOne(addressAndService: Tuple2(sender, "iMessage"));
     if (handle == null) {
-      handle = Handle(
-        address: sender
-      );
+      handle = Handle(address: sender);
       handle.save();
     }
     if (handle.originalROWID == null) {
@@ -990,7 +1270,9 @@ class Chat {
       handle.save();
     }
     for (var part in parts) {
-      var partContent = part["body"] is Uint8List ? part["body"] as Uint8List : Uint8List.fromList(part["body"].cast<int>().toList());
+      var partContent = part["body"] is Uint8List
+          ? part["body"] as Uint8List
+          : Uint8List.fromList(part["body"].cast<int>().toList());
       // smil is for unnessesary
       if (part["contentType"] == "application/smil") continue;
       if (part["contentType"] == "text/plain") {
@@ -1007,24 +1289,28 @@ class Chat {
           handle: handle,
           hasDdResults: true,
           hasBeenForwarded: true,
-          attributedBody: [AttributedBody(string: bodyString, runs: [Run(
-            range: [0, bodyString.length],
-            attributes: Attributes(
-              messagePart: 0,
-            )
-          )])],
+          attributedBody: [
+            AttributedBody(string: bodyString, runs: [
+              Run(
+                  range: [0, bodyString.length],
+                  attributes: Attributes(
+                    messagePart: 0,
+                  ))
+            ])
+          ],
           temp: true,
         );
         await backend.sendMessage(this, _message);
         if (fromMe) {
-          await (backend as RustPushBackend).confirmSmsSent(_message, this, true);
+          await (backend as RustPushBackend)
+              .confirmSmsSent(_message, this, true);
         }
       } else {
         var myUuid = "${part["id"]}_0";
-        String data = await rootBundle.loadString("assets/rustpush/uti-map.json");
+        String data =
+            await rootBundle.loadString("assets/rustpush/uti-map.json");
         final utiMap = jsonDecode(data);
 
-      
         final _message = Message(
           text: " ",
           threadOriginatorPart: "0:0:0",
@@ -1036,31 +1322,34 @@ class Chat {
           handle: handle,
           hasDdResults: true,
           hasBeenForwarded: true,
-          attributedBody: [AttributedBody(string: " ", runs: [Run(
-            range: [0, 1],
-            attributes: Attributes(
-              attachmentGuid: myUuid,
-              messagePart: 0
-            )
-          )])],
+          attributedBody: [
+            AttributedBody(string: " ", runs: [
+              Run(range: [
+                0,
+                1
+              ], attributes: Attributes(attachmentGuid: myUuid, messagePart: 0))
+            ])
+          ],
           attachments: [
             Attachment(
-              guid: myUuid,
-              uti: utiMap[part["contentType"] as String] ?? "public.data",
-              mimeType: part["contentType"] as String,
-              isOutgoing: false,
-              bytes: partContent,
-              totalBytes: partContent.length,
-              transferName: "${part["id"]}.${extensionFromMime(part["contentType"] as String) ?? "bin"}"
-            )
+                guid: myUuid,
+                uti: utiMap[part["contentType"] as String] ?? "public.data",
+                mimeType: part["contentType"] as String,
+                isOutgoing: false,
+                bytes: partContent,
+                totalBytes: partContent.length,
+                transferName:
+                    "${part["id"]}.${extensionFromMime(part["contentType"] as String) ?? "bin"}")
           ],
           temp: true,
         );
         await _message.attachments.first!.writeToDisk();
-        await (backend as RustPushBackend).forwardMMSAttachment(this, _message, _message.attachments.first!);
+        await (backend as RustPushBackend)
+            .forwardMMSAttachment(this, _message, _message.attachments.first!);
         File(_message.attachments.first!.path).deleteSync();
         if (fromMe) {
-          await (backend as RustPushBackend).confirmSmsSent(_message, this, true);
+          await (backend as RustPushBackend)
+              .confirmSmsSent(_message, this, true);
         }
       }
     }
@@ -1075,11 +1364,15 @@ class Chat {
       }
     }).toList();
   }
-  
+
   Future<api.ConversationData> getConversationData() async {
     var handles = getRustHandlesExcludingMine();
     handles.add(await ensureHandle());
-    return api.ConversationData(participants: handles, cvName: apnTitle, senderGuid: guid, afterGuid: sendLastMessage.stagingGuid ?? sendLastMessage.guid);
+    return api.ConversationData(
+        participants: handles,
+        cvName: apnTitle,
+        senderGuid: guid,
+        afterGuid: sendLastMessage.stagingGuid ?? sendLastMessage.guid);
   }
 
   /// Change a chat's display name
@@ -1106,9 +1399,15 @@ class Chat {
   /// Get a chat's title
   String getChatCreatorSubtitle() {
     // generate names for group chats or DMs
-    List<String> titles = participants.map((e) => e.displayName.trim().split(isGroup && e.contact != null ? " " : String.fromCharCode(65532)).first).toList();
+    List<String> titles = participants
+        .map((e) => e.displayName
+            .trim()
+            .split(
+                isGroup && e.contact != null ? " " : String.fromCharCode(65532))
+            .first)
+        .toList();
     if (titles.isEmpty) {
-      if(chatIdentifier != null) {
+      if (chatIdentifier != null) {
         if (chatIdentifier!.startsWith("urn:biz")) {
           return "Business Chat";
         }
@@ -1162,7 +1461,8 @@ class Chat {
       /// Check if the chat is temporarily muted
     } else if (muteType == "temporary_mute") {
       DateTime time = DateTime.parse(muteArgs!);
-      bool shouldMute = DateTime.now().toLocal().difference(time).inSeconds.isNegative;
+      bool shouldMute =
+          DateTime.now().toLocal().difference(time).inSeconds.isNegative;
       if (!shouldMute) {
         toggleMute(false);
       }
@@ -1198,7 +1498,7 @@ class Chat {
     for (Attachment attachment in attachments) {
       try {
         File(attachment.getFile().path!).deleteSync();
-      } catch(e) {
+      } catch (e) {
         Logger.debug("Failed to rm attachment $e");
       }
     }
@@ -1238,12 +1538,17 @@ class Chat {
     if (kIsWeb) return;
     Database.runInTransaction(TxMode.write, () {
       chat.dateDeleted = null;
-      chat.senderIsKnown = chat.handles.any((handle) => !(handle.contact?.isShared ?? true));
+      chat.senderIsKnown =
+          chat.handles.any((handle) => !(handle.contact?.isShared ?? true));
       chat.save(updateDateDeleted: true, updateSenderIsKnown: true);
     });
   }
 
-  Chat toggleHasUnread(bool hasUnread, {bool force = false, bool newOnMessage = false, bool clearLocalNotifications = true, bool privateMark = true}) {
+  Chat toggleHasUnread(bool hasUnread,
+      {bool force = false,
+      bool newOnMessage = false,
+      bool clearLocalNotifications = true,
+      bool privateMark = true}) {
     if (kIsDesktop && !hasUnread) {
       notif.clearDesktopNotificationsForChat(guid);
     }
@@ -1251,7 +1556,8 @@ class Chat {
     if (hasUnreadMessage == hasUnread && !force) return this;
     var changed = false;
     if (!cm.isChatActive(guid) || !hasUnread || force) {
-      changed = Chat.findOne(guid: guid)!.hasUnreadMessage! != hasUnread || newOnMessage;
+      changed = Chat.findOne(guid: guid)!.hasUnreadMessage! != hasUnread ||
+          newOnMessage;
       hasUnreadMessage = hasUnread;
       save(updateHasUnreadMessage: true);
     }
@@ -1262,17 +1568,18 @@ class Chat {
 
     try {
       if (clearLocalNotifications && !hasUnread && !ls.isBubble) {
-        mcs.invokeMethod(
-          "delete-notification",
-          {
-            "notification_id": id,
-            "tag": NotificationsService.NEW_MESSAGE_TAG
-          }
-        );
+        mcs.invokeMethod("delete-notification", {
+          "notification_id": id,
+          "tag": NotificationsService.NEW_MESSAGE_TAG
+        });
       }
       if (privateMark && changed) {
         if (!hasUnread) {
-          backend.markRead(this, ss.settings.enablePrivateAPI.value && (autoSendReadReceipts ?? ss.settings.privateMarkChatAsRead.value));
+          backend.markRead(
+              this,
+              ss.settings.enablePrivateAPI.value &&
+                  (autoSendReadReceipts ??
+                      ss.settings.privateMarkChatAsRead.value));
         } else if (hasUnread) {
           backend.markUnread(this);
         }
@@ -1282,9 +1589,14 @@ class Chat {
     return this;
   }
 
-  Future<Chat> addMessage(Message message, {bool changeUnreadStatus = true, bool checkForMessageText = true, bool clearNotificationsIfFromMe = true}) async {
+  Future<Chat> addMessage(Message message,
+      {bool changeUnreadStatus = true,
+      bool checkForMessageText = true,
+      bool clearNotificationsIfFromMe = true}) async {
     // If this is a message preview and we don't already have metadata for this, get it
-    if (message.fullText.replaceAll("\n", " ").hasUrl && !MetadataHelper.mapIsNotEmpty(message.metadata) && !message.hasApplePayloadData) {
+    if (message.fullText.replaceAll("\n", " ").hasUrl &&
+        !MetadataHelper.mapIsNotEmpty(message.metadata) &&
+        !message.hasApplePayloadData) {
       MetadataHelper.fetchMetadata(message).then((Metadata? meta) async {
         // If the metadata is empty, don't do anything
         if (!MetadataHelper.isNotEmpty(meta)) return;
@@ -1303,7 +1615,10 @@ class Chat {
     } catch (ex, stacktrace) {
       newMessage = Message.findOne(guid: message.guid);
       if (newMessage == null) {
-        Logger.error("Failed to add message (GUID: ${message.guid}) to chat (GUID: $guid)", error: ex, trace: stacktrace);
+        Logger.error(
+            "Failed to add message (GUID: ${message.guid}) to chat (GUID: $guid)",
+            error: ex,
+            trace: stacktrace);
       }
     }
     // Save any attachments
@@ -1315,8 +1630,9 @@ class Chat {
     // If the message was saved correctly, update this chat's latestMessage info,
     // but only if the incoming message's date is newer
     if ((newMessage?.id != null || kIsWeb) && checkForMessageText) {
-      isNewer = message.dateCreated!.isAfter(latest.dateCreated!)
-          || (message.guid != latest.guid && message.dateCreated == latest.dateCreated);
+      isNewer = message.dateCreated!.isAfter(latest.dateCreated!) ||
+          (message.guid != latest.guid &&
+              message.dateCreated == latest.dateCreated);
       if (isNewer) {
         _latestMessage = message;
         if (dateDeleted != null) {
@@ -1324,7 +1640,10 @@ class Chat {
           save(updateDateDeleted: true);
           await chats.addChat(this);
         }
-        if (isArchived! && !_latestMessage!.isFromMe! && ss.settings.unarchiveOnNewMessage.value && !participants.first.isBlocked()) {
+        if (isArchived! &&
+            !_latestMessage!.isFromMe! &&
+            ss.settings.unarchiveOnNewMessage.value &&
+            !participants.first.isBlocked()) {
           toggleArchived(false);
         }
       }
@@ -1347,14 +1666,12 @@ class Chat {
       // If the message is not from the same chat as the current chat, mark unread
       if (message.isFromMe! || cm.isChatActive(guid)) {
         // force if the chat is active to ensure private api mark read
-        toggleHasUnread(
-          false,
-          clearLocalNotifications: clearNotificationsIfFromMe,
-          force: cm.isChatActive(guid),
-          // only private mark if the chat is active
-          privateMark: cm.isChatActive(guid),
-          newOnMessage: !message.isFromMe!
-        );
+        toggleHasUnread(false,
+            clearLocalNotifications: clearNotificationsIfFromMe,
+            force: cm.isChatActive(guid),
+            // only private mark if the chat is active
+            privateMark: cm.isChatActive(guid),
+            newOnMessage: !message.isFromMe!);
       } else if (!cm.isChatActive(guid)) {
         toggleHasUnread(true, privateMark: false);
       }
@@ -1382,21 +1699,66 @@ class Chat {
     return Database.chats.count();
   }
 
-  Future<List<Attachment>> getAttachmentsAsync({bool fetchDeleted = false}) async {
+  Future<List<Attachment>> getAttachmentsAsync(
+      {bool fetchDeleted = false}) async {
     if (kIsWeb || id == null) return [];
 
     final task = GetChatAttachments([id!, fetchDeleted]);
     return (await createAsyncTask<List<Attachment>>(task)) ?? [];
   }
 
+  Future<ChatMediaPage> getMediaPageAsync({
+    required ChatMediaDirection direction,
+    ChatMediaCursor? cursor,
+    int limit = 24,
+    int scanLimit = 500,
+  }) async {
+    if (kIsWeb || id == null) return ChatMediaPage.empty;
+
+    final task = GetChatMediaPage([
+      id,
+      direction.index,
+      cursor?.dateMilliseconds,
+      cursor?.messageId,
+      limit,
+      scanLimit,
+    ]);
+    return (await createAsyncTask<ChatMediaPage>(task)) ?? ChatMediaPage.empty;
+  }
+
+  Future<ChatAttachmentOverview> getAttachmentOverviewAsync({
+    int documentLimit = 24,
+    int locationLimit = 10,
+    int scanLimit = 1000,
+  }) async {
+    if (kIsWeb || id == null) return ChatAttachmentOverview.empty;
+
+    final task = GetChatAttachmentOverview([
+      id,
+      documentLimit,
+      locationLimit,
+      scanLimit,
+    ]);
+    return (await createAsyncTask<ChatAttachmentOverview>(task)) ??
+        ChatAttachmentOverview.empty;
+  }
+
   /// Gets messages synchronously - DO NOT use in performance-sensitive areas,
   /// otherwise prefer [getMessagesAsync]
-  static List<Message> getMessages(Chat chat, {int offset = 0, int limit = 25, bool includeDeleted = false, bool getDetails = false}) {
+  static List<Message> getMessages(Chat chat,
+      {int offset = 0,
+      int limit = 25,
+      bool includeDeleted = false,
+      bool getDetails = false}) {
     if (kIsWeb || chat.id == null) return [];
     return Database.runInTransaction(TxMode.read, () {
       final query = (Database.messages.query(includeDeleted
-              ? Message_.dateCreated.notNull().and(Message_.dateDeleted.isNull().or(Message_.dateDeleted.notNull()))
-              : Message_.dateDeleted.isNull().and(Message_.dateCreated.notNull()))
+              ? Message_.dateCreated.notNull().and(Message_.dateDeleted
+                  .isNull()
+                  .or(Message_.dateDeleted.notNull()))
+              : Message_.dateDeleted
+                  .isNull()
+                  .and(Message_.dateCreated.notNull()))
             ..link(Message_.chat, Chat_.id.equals(chat.id!))
             ..order(Message_.dateCreated, flags: Order.descending))
           .build();
@@ -1407,8 +1769,13 @@ class Chat {
       query.close();
       for (int i = 0; i < messages.length; i++) {
         Message message = messages[i];
-        if (chat.participants.isNotEmpty && !message.isFromMe! && message.handleId != null && message.handleId != 0) {
-          Handle? handle = chat.participants.firstWhereOrNull((e) => e.originalROWID == message.handleId) ?? message.getHandle();
+        if (chat.participants.isNotEmpty &&
+            !message.isFromMe! &&
+            message.handleId != null &&
+            message.handleId != 0) {
+          Handle? handle = chat.participants.firstWhereOrNull(
+                  (e) => e.originalROWID == message.handleId) ??
+              message.getHandle();
           if (handle == null) {
             messages.remove(message);
             i--;
@@ -1420,15 +1787,19 @@ class Chat {
       // fetch attachments and reactions if requested
       if (getDetails) {
         final messageGuids = messages.map((e) => e.guid!).toList();
-        final associatedMessagesQuery = (Database.messages.query(Message_.associatedMessageGuid.oneOf(messageGuids))
+        final associatedMessagesQuery = (Database.messages
+                .query(Message_.associatedMessageGuid.oneOf(messageGuids))
               ..order(Message_.originalROWID))
             .build();
         List<Message> associatedMessages = associatedMessagesQuery.find();
         associatedMessagesQuery.close();
-        associatedMessages = MessageHelper.normalizedAssociatedMessages(associatedMessages);
+        associatedMessages =
+            MessageHelper.normalizedAssociatedMessages(associatedMessages);
         for (Message m in messages) {
           m.attachments = List<Attachment>.from(m.dbAttachments);
-          m.associatedMessages = associatedMessages.where((e) => e.associatedMessageGuid == m.guid).toList();
+          m.associatedMessages = associatedMessages
+              .where((e) => e.associatedMessageGuid == m.guid)
+              .toList();
         }
       }
       return messages;
@@ -1437,10 +1808,14 @@ class Chat {
 
   /// Fetch messages asynchronously
   static Future<List<Message>> getMessagesAsync(Chat chat,
-      {int offset = 0, int limit = 25, bool includeDeleted = false, int? searchAround}) async {
+      {int offset = 0,
+      int limit = 25,
+      bool includeDeleted = false,
+      int? searchAround}) async {
     if (kIsWeb || chat.id == null) return [];
 
-    final task = GetMessages([chat.id, offset, limit, includeDeleted, searchAround]);
+    final task =
+        GetMessages([chat.id, offset, limit, includeDeleted, searchAround]);
     return (await createAsyncTask<List<Message>>(task)) ?? [];
   }
 
@@ -1460,7 +1835,8 @@ class Chat {
   void _deduplicateParticipants() {
     if (_participants.isEmpty) return;
     final ids = _participants.map((e) => e.uniqueAddressAndService).toSet();
-    _participants.retainWhere((element) => ids.remove(element.uniqueAddressAndService));
+    _participants
+        .retainWhere((element) => ids.remove(element.uniqueAddressAndService));
   }
 
   Chat togglePin(bool isPinned) {
@@ -1495,7 +1871,8 @@ class Chat {
     if (id == null) return this;
     this.autoSendReadReceipts = autoSendReadReceipts;
     save(updateAutoSendReadReceipts: true);
-    backend.markRead(this, autoSendReadReceipts ?? ss.settings.privateMarkChatAsRead.value);
+    backend.markRead(
+        this, autoSendReadReceipts ?? ss.settings.privateMarkChatAsRead.value);
     return this;
   }
 
@@ -1503,21 +1880,23 @@ class Chat {
     if (id == null) return this;
     this.autoSendTypingIndicators = autoSendTypingIndicators;
     save(updateAutoSendTypingIndicators: true);
-    if (!(autoSendTypingIndicators ?? ss.settings.privateSendTypingIndicators.value)) {
+    if (!(autoSendTypingIndicators ??
+        ss.settings.privateSendTypingIndicators.value)) {
       backend.stoppedTyping(this);
     }
     return this;
   }
 
   /// Finds a chat - only use this method on Flutter Web!!!
-  static Future<Chat?> findOneWeb({String? guid, String? chatIdentifier}) async {
+  static Future<Chat?> findOneWeb(
+      {String? guid, String? chatIdentifier}) async {
     return null;
   }
 
   static Chat? findByHandle(String handle) {
     final query = (Database.chats.query()
           ..linkMany(Chat_.handles, Handle_.address.oneOf([handle])))
-            .build();
+        .build();
     final results = query.find();
     query.close();
 
@@ -1529,7 +1908,8 @@ class Chat {
     if (direct != null) return direct;
 
     // prioritize finding by related GUID
-    final query = Database.chats.query(Chat_.guidRefs.containsElement(guid)).build();
+    final query =
+        Database.chats.query(Chat_.guidRefs.containsElement(guid)).build();
     final results = query.find();
     query.close();
     if (results.isNotEmpty) {
@@ -1541,7 +1921,8 @@ class Chat {
 
   // if soft is false, return is never null
   // only null if soft is true and no matching chat is found
-  static Future<Chat?> findByRust(api.ConversationData data, String service, {bool soft = false, bool routingStub = false}) async {
+  static Future<Chat?> findByRust(api.ConversationData data, String service,
+      {bool soft = false, bool routingStub = false}) async {
     if (data.participants.isEmpty) {
       throw Exception("empty participants!??");
     }
@@ -1552,7 +1933,9 @@ class Chat {
       if (direct != null) return direct;
 
       // prioritize finding by related GUID
-      final query = Database.chats.query(Chat_.guidRefs.containsElement(data.senderGuid!)).build();
+      final query = Database.chats
+          .query(Chat_.guidRefs.containsElement(data.senderGuid!))
+          .build();
       final results = query.find();
       query.close();
       if (results.isNotEmpty) {
@@ -1561,7 +1944,8 @@ class Chat {
       }
     }
 
-    var (mine, dartParticipants) = await RustPushBBUtils.rustParticipantsToBB(data.participants);
+    var (mine, dartParticipants) =
+        await RustPushBBUtils.rustParticipantsToBB(data.participants);
 
     final name = data.cvName;
 
@@ -1570,28 +1954,41 @@ class Chat {
       cond = cond.and(Chat_.apnTitle.equals(name));
     }
     final query = (Database.chats.query(cond)
-          ..linkMany(Chat_.handles, Handle_.address.oneOf(dartParticipants.map((e) => e.address).toList())))
-            .build();
+          ..linkMany(
+              Chat_.handles,
+              Handle_.address
+                  .oneOf(dartParticipants.map((e) => e.address).toList())))
+        .build();
     final results = query.find();
     query.close();
 
-    Logger.warn("Found ${results.length} candidates");
+    var rejectedAddressMismatch = 0;
+    var rejectedParticipantMismatch = 0;
 
     var result = results.firstWhereOrNull((element) {
       var participantsCopy = [...dartParticipants];
       for (var handle in element.handles) {
         var included = participantsCopy.contains(handle);
         if (!included) {
-          Logger.warn("Bailing on candidate because ${handle.address} ${handle.id} is not ${participantsCopy.map((i) => "${i.address} ${i.id}").join(", ")} .. ${element.handles.map((i) => "${i.address} ${i.id}").join(", ")}");
+          rejectedAddressMismatch++;
           return false;
         }
         participantsCopy.remove(handle);
       }
-      Logger.warn("Bailing on candidate left ${participantsCopy.map((i) => "${i.address} ${i.id}").join(", ")} .. ${element.handles.map((i) => "${i.address} ${i.id}").join(", ")}");
+      if (participantsCopy.isNotEmpty) {
+        rejectedParticipantMismatch++;
+      }
       return participantsCopy.isEmpty;
     });
+    Logger.debug(
+        "Rust conversation candidate scan: candidates=${results.length}, "
+        "addressMismatch=$rejectedAddressMismatch, "
+        "participantMismatch=$rejectedParticipantMismatch, "
+        "matched=${result != null}");
     if (result == null && !soft) {
-      result = await backend.createChat(dartParticipants.map((e) => e.address).toList(), null, service, existingGuid: data.senderGuid);
+      result = await backend.createChat(
+          dartParticipants.map((e) => e.address).toList(), null, service,
+          existingGuid: data.senderGuid);
       result.displayName = data.cvName;
       result.isRoutingStub = routingStub;
       result.apnTitle = data.cvName;
@@ -1611,7 +2008,9 @@ class Chat {
       query.close();
       return result;
     } else if (chatIdentifier != null) {
-      final query = Database.chats.query(Chat_.chatIdentifier.equals(chatIdentifier)).build();
+      final query = Database.chats
+          .query(Chat_.chatIdentifier.equals(chatIdentifier))
+          .build();
       final result = query.findFirst();
       query.close();
       return result;
@@ -1619,14 +2018,16 @@ class Chat {
     return null;
   }
 
-  static Future<List<Chat>> getChats({int limit = 15, int offset = 0, List<int> ids = const []}) async {
+  static Future<List<Chat>> getChats(
+      {int limit = 15, int offset = 0, List<int> ids = const []}) async {
     if (kIsWeb) throw Exception("Use socket to get chats on Web!");
 
     final task = GetChats([limit, offset, ids.isEmpty ? null : ids]);
     return (await createAsyncTask<List<Chat>>(task)) ?? [];
   }
 
-  static Future<List<Chat>> syncLatestMessages(List<Chat> chats, bool toggleUnread) async {
+  static Future<List<Chat>> syncLatestMessages(
+      List<Chat> chats, bool toggleUnread) async {
     if (kIsWeb) throw Exception("Use socket to sync the last message on Web!");
 
     final task = SyncLastMessages([chats, toggleUnread]);
@@ -1641,7 +2042,8 @@ class Chat {
     return (await createAsyncTask<List<Chat>>(task)) ?? [];
   }
 
-  static Future<List<Message>> bulkSyncMessages(Chat chat, List<Message> messages) async {
+  static Future<List<Message>> bulkSyncMessages(
+      Chat chat, List<Message> messages) async {
     if (kIsWeb) throw Exception("Web does not support saving messages!");
     if (messages.isEmpty) return [];
 
@@ -1708,21 +2110,29 @@ class Chat {
 
   static int sort(Chat? a, Chat? b) {
     // If they both are pinned & ordered, reflect the order
-    if (a!.isPinned! && b!.isPinned! && a.pinIndex != null && b.pinIndex != null) {
+    if (a!.isPinned! &&
+        b!.isPinned! &&
+        a.pinIndex != null &&
+        b.pinIndex != null) {
       return a.pinIndex!.compareTo(b.pinIndex!);
     }
 
     // If b is pinned & ordered, but a isn't either pinned or ordered, return accordingly
-    if (b!.isPinned! && b.pinIndex != null && (!a.isPinned! || a.pinIndex == null)) return 1;
+    if (b!.isPinned! &&
+        b.pinIndex != null &&
+        (!a.isPinned! || a.pinIndex == null)) return 1;
     // If a is pinned & ordered, but b isn't either pinned or ordered, return accordingly
-    if (a.isPinned! && a.pinIndex != null && (!b.isPinned! || b.pinIndex == null)) return -1;
+    if (a.isPinned! &&
+        a.pinIndex != null &&
+        (!b.isPinned! || b.pinIndex == null)) return -1;
 
     // Compare when one is pinned and the other isn't
     if (!a.isPinned! && b.isPinned!) return 1;
     if (a.isPinned! && !b.isPinned!) return -1;
 
     // Compare the last message dates
-    return -(a.latestMessage.dateCreated)!.compareTo(b.latestMessage.dateCreated!);
+    return -(a.latestMessage.dateCreated)!
+        .compareTo(b.latestMessage.dateCreated!);
   }
 
   String getIconPath(int responseLength) {
@@ -1730,10 +2140,17 @@ class Chat {
   }
 
   static Future<void> getIcon(Chat c, {bool force = false}) async {
-    if ((!force && c.lockChatIcon) || backend.getRemoteService() == null) return;
-    final response = await backend.getRemoteService()!.getChatIcon(c.guid).catchError((err, stack) async {
-      Logger.error("Failed to get chat icon for chat ${c.getTitle()}", error: err, trace: stack);
-      return Response(statusCode: 500, requestOptions: RequestOptions(path: ""));
+    if ((!force && c.lockChatIcon) || backend.getRemoteService() == null) {
+      return;
+    }
+    final response = await backend
+        .getRemoteService()!
+        .getChatIcon(c.guid)
+        .catchError((err, stack) async {
+      Logger.error("Failed to get chat icon for chat ${c.getTitle()}",
+          error: err, trace: stack);
+      return Response(
+          statusCode: 500, requestOptions: RequestOptions(path: ""));
     });
     if (response.statusCode != 200 || isNullOrEmpty(response.data)) {
       if (c.customAvatarPath != null) {
@@ -1757,35 +2174,35 @@ class Chat {
   }
 
   Map<String, dynamic> toMap() => {
-    "ROWID": id,
-    "guid": guid,
-    "chatIdentifier": chatIdentifier,
-    "isArchived": isArchived!,
-    "muteType": muteType,
-    "muteArgs": muteArgs,
-    "isPinned": isPinned!,
-    "displayName": displayName,
-    "participants": participants.map((item) => item.toMap()).toList(),
-    "hasUnreadMessage": hasUnreadMessage!,
-    "_customAvatarPath": _customAvatarPath.value,
-    "_pinIndex": _pinIndex.value,
-    "autoSendReadReceipts": autoSendReadReceipts,
-    "autoSendTypingIndicators": autoSendTypingIndicators,
-    "dateDeleted": dateDeleted?.millisecondsSinceEpoch,
-    "style": style,
-    "lockChatName": lockChatName,
-    "lockChatIcon": lockChatIcon,
-    "lastReadMessageGuid": lastReadMessageGuid,
-    "isRpSms": isRpSms,
-    "guidRefs": guidRefs,
-    "telephonyId": telephonyId,
-    // intentionally not [from] for debugging,
-    "textFieldText": textFieldText,
-    "textFieldAnnotations": textFieldAnnotations,
-    "notifsSilenced": notifsSilenced,
-    "zenModeIsShared": zenModeIsShared,
-    "shareZenMode": shareZenMode,
-    "dateNotifiedAnyways": dateNotifiedAnyways?.millisecondsSinceEpoch,
-    "isRoutingStub": isRoutingStub,
-  };
+        "ROWID": id,
+        "guid": guid,
+        "chatIdentifier": chatIdentifier,
+        "isArchived": isArchived!,
+        "muteType": muteType,
+        "muteArgs": muteArgs,
+        "isPinned": isPinned!,
+        "displayName": displayName,
+        "participants": participants.map((item) => item.toMap()).toList(),
+        "hasUnreadMessage": hasUnreadMessage!,
+        "_customAvatarPath": _customAvatarPath.value,
+        "_pinIndex": _pinIndex.value,
+        "autoSendReadReceipts": autoSendReadReceipts,
+        "autoSendTypingIndicators": autoSendTypingIndicators,
+        "dateDeleted": dateDeleted?.millisecondsSinceEpoch,
+        "style": style,
+        "lockChatName": lockChatName,
+        "lockChatIcon": lockChatIcon,
+        "lastReadMessageGuid": lastReadMessageGuid,
+        "isRpSms": isRpSms,
+        "guidRefs": guidRefs,
+        "telephonyId": telephonyId,
+        // intentionally not [from] for debugging,
+        "textFieldText": textFieldText,
+        "textFieldAnnotations": textFieldAnnotations,
+        "notifsSilenced": notifsSilenced,
+        "zenModeIsShared": zenModeIsShared,
+        "shareZenMode": shareZenMode,
+        "dateNotifiedAnyways": dateNotifiedAnyways?.millisecondsSinceEpoch,
+        "isRoutingStub": isRoutingStub,
+      };
 }

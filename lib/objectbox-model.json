@@ -5,7 +5,7 @@
   "entities": [
     {
       "id": "1:2065429213543838585",
-      "lastPropertyId": "20:4318192841720051066",
+      "lastPropertyId": "21:3774502131190190769",
       "name": "Attachment",
       "properties": [
         {
@@ -22,9 +22,9 @@
         {
           "id": "3:895699641082029197",
           "name": "guid",
+          "indexId": "1:1274831956298930522",
           "type": 9,
-          "flags": 40,
-          "indexId": "1:1274831956298930522"
+          "flags": 40
         },
         {
           "id": "4:6047065591027683672",
@@ -69,9 +69,9 @@
         {
           "id": "17:5777776419087046056",
           "name": "messageId",
+          "indexId": "8:2010461783272999439",
           "type": 11,
           "flags": 520,
-          "indexId": "8:2010461783272999439",
           "relationTarget": "Message"
         },
         {
@@ -88,6 +88,11 @@
           "id": "20:4318192841720051066",
           "name": "ckRecordId",
           "type": 9
+        },
+        {
+          "id": "21:3774502131190190769",
+          "name": "metadata",
+          "type": 13
         }
       ],
       "relations": []
@@ -106,9 +111,9 @@
         {
           "id": "3:318412581013308394",
           "name": "guid",
+          "indexId": "2:4712841847590882583",
           "type": 9,
-          "flags": 40,
-          "indexId": "2:4712841847590882583"
+          "flags": 40
         },
         {
           "id": "5:9099706644901956287",
@@ -412,17 +417,17 @@
         {
           "id": "11:6784884866959942259",
           "name": "contactRelationId",
+          "indexId": "14:1213475652575340910",
           "type": 11,
           "flags": 520,
-          "indexId": "14:1213475652575340910",
           "relationTarget": "Contact"
         },
         {
           "id": "12:7288262795934250307",
           "name": "uniqueAddressAndService",
+          "indexId": "15:2647319022047266708",
           "type": 9,
-          "flags": 2080,
-          "indexId": "15:2647319022047266708"
+          "flags": 2080
         },
         {
           "id": "13:2987973275926761435",
@@ -486,9 +491,9 @@
         {
           "id": "8:4809686302323910258",
           "name": "themeObjectId",
+          "indexId": "10:9160679880876705382",
           "type": 11,
           "flags": 520,
-          "indexId": "10:9160679880876705382",
           "relationTarget": "ThemeObject"
         }
       ],
@@ -496,7 +501,7 @@
     },
     {
       "id": "13:4148278195232901830",
-      "lastPropertyId": "59:8549583242275112644",
+      "lastPropertyId": "60:2236183729631725046",
       "name": "Message",
       "properties": [
         {
@@ -513,9 +518,9 @@
         {
           "id": "3:8669586978455730639",
           "name": "guid",
+          "indexId": "6:4451778671291639024",
           "type": 9,
-          "flags": 40,
-          "indexId": "6:4451778671291639024"
+          "flags": 40
         },
         {
           "id": "4:9142895361605464091",
@@ -545,9 +550,9 @@
         {
           "id": "9:5531207057664871058",
           "name": "dateCreated",
+          "indexId": "16:4323200293672047337",
           "type": 10,
-          "flags": 8,
-          "indexId": "16:4323200293672047337"
+          "flags": 8
         },
         {
           "id": "10:3811604236432549817",
@@ -647,9 +652,9 @@
         {
           "id": "39:1372898255926257108",
           "name": "chatId",
+          "indexId": "9:1947853053588120767",
           "type": 11,
           "flags": 520,
-          "indexId": "9:1947853053588120767",
           "relationTarget": "Chat"
         },
         {
@@ -751,6 +756,11 @@
           "id": "59:8549583242275112644",
           "name": "ckSyncState",
           "type": 1
+        },
+        {
+          "id": "60:2236183729631725046",
+          "name": "metadata",
+          "type": 13
         }
       ],
       "relations": []
@@ -769,9 +779,9 @@
         {
           "id": "2:3805851416487185429",
           "name": "name",
+          "indexId": "7:6926665461572101158",
           "type": 9,
-          "flags": 2080,
-          "indexId": "7:6926665461572101158"
+          "flags": 2080
         },
         {
           "id": "3:621312794123477095",
@@ -815,9 +825,9 @@
         {
           "id": "2:6644283342768530799",
           "name": "name",
+          "indexId": "11:8452066780532720626",
           "type": 9,
-          "flags": 2080,
-          "indexId": "11:8452066780532720626"
+          "flags": 2080
         },
         {
           "id": "3:8412087896868925153",
@@ -851,9 +861,9 @@
         {
           "id": "2:708918913606465689",
           "name": "id",
+          "indexId": "12:8665353868334070555",
           "type": 9,
-          "flags": 2048,
-          "indexId": "12:8665353868334070555"
+          "flags": 2048
         },
         {
           "id": "3:3572501485957552445",
@@ -897,10 +907,1070 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "18:6719772093493207335",
+      "lastPropertyId": "25:4451177903685227588",
+      "name": "CloudInboxChangeEntity",
+      "properties": [
+        {
+          "id": "1:1895907410778974924",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:4032652183471247709",
+          "name": "changeKey",
+          "indexId": "17:5174860094616047747",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:5983731795781636076",
+          "name": "accountFingerprint",
+          "indexId": "18:7783959298344182122",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "4:8678544169124423987",
+          "name": "zone",
+          "indexId": "19:821204552706254830",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "5:2136167124009199311",
+          "name": "serverRecordIdHash",
+          "indexId": "20:6843515083576547121",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "6:617092932104382307",
+          "name": "etagHash",
+          "type": 9
+        },
+        {
+          "id": "7:64019184264750896",
+          "name": "changeType",
+          "type": 9
+        },
+        {
+          "id": "8:2328711545206180923",
+          "name": "encryptedPayloadRef",
+          "type": 9
+        },
+        {
+          "id": "9:3676607222232263",
+          "name": "payloadSha256",
+          "type": 9
+        },
+        {
+          "id": "10:1669804813770590457",
+          "name": "fetchSequence",
+          "indexId": "21:2885795424266777500",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "11:5135084822522519610",
+          "name": "status",
+          "indexId": "22:7905330438985774204",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "12:8575275500382195174",
+          "name": "isTombstone",
+          "type": 1
+        },
+        {
+          "id": "13:5224296750110920597",
+          "name": "failureCategory",
+          "type": 9
+        },
+        {
+          "id": "14:9109742928607863948",
+          "name": "retryCount",
+          "type": 6
+        },
+        {
+          "id": "15:2122087258225924885",
+          "name": "createdAtMs",
+          "type": 6
+        },
+        {
+          "id": "16:8310828696055987169",
+          "name": "updatedAtMs",
+          "type": 6
+        },
+        {
+          "id": "17:2385681725155050415",
+          "name": "scopeKey",
+          "indexId": "39:3360430129523727354",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "18:942265256405421186",
+          "name": "encryptedServerRecordId",
+          "type": 9
+        },
+        {
+          "id": "19:1452880395700277269",
+          "name": "protectedSystemFieldsRef",
+          "type": 9
+        },
+        {
+          "id": "20:1370342980241388939",
+          "name": "batchId",
+          "indexId": "40:8891088444757782392",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "21:8085608731784905006",
+          "name": "generation",
+          "type": 6
+        },
+        {
+          "id": "22:7803520175828220783",
+          "name": "nextEligibleAtMs",
+          "type": 6
+        },
+        {
+          "id": "23:2359335986298063461",
+          "name": "serverModifiedAtMs",
+          "type": 6
+        },
+        {
+          "id": "24:5348089514051084893",
+          "name": "completedAtMs",
+          "type": 6
+        },
+        {
+          "id": "25:4451177903685227588",
+          "name": "changeIdHash",
+          "type": 9
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "19:6209808242097333245",
+      "lastPropertyId": "22:1517823970736287654",
+      "name": "CloudOutboxOperationEntity",
+      "properties": [
+        {
+          "id": "1:1453923979681070039",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:5482215586868617465",
+          "name": "operationId",
+          "indexId": "23:2902044484437898756",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:7822186106200261916",
+          "name": "accountFingerprint",
+          "indexId": "24:1438057816700047656",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "4:9073324705939660391",
+          "name": "zone",
+          "indexId": "25:4176121958468359790",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "5:5030438638097882343",
+          "name": "logicalEntityKeyHash",
+          "indexId": "26:1229409407214613375",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "6:3360967592185918908",
+          "name": "action",
+          "type": 6
+        },
+        {
+          "id": "7:8739970205884330074",
+          "name": "dependencyOperationIdsJson",
+          "type": 9
+        },
+        {
+          "id": "8:4164289290106487159",
+          "name": "payloadVersion",
+          "type": 6
+        },
+        {
+          "id": "9:2114718060008374593",
+          "name": "encryptedPayloadRef",
+          "type": 9
+        },
+        {
+          "id": "10:7424732699000879073",
+          "name": "payloadSha256",
+          "type": 9
+        },
+        {
+          "id": "11:6365640570467255843",
+          "name": "state",
+          "indexId": "27:28639336516046221",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "12:8957972381723831102",
+          "name": "attemptCount",
+          "type": 6
+        },
+        {
+          "id": "13:6974379095018398482",
+          "name": "nextEligibleAtMs",
+          "indexId": "28:3434010190981668931",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "14:1713088269741338724",
+          "name": "lastErrorCategory",
+          "type": 9
+        },
+        {
+          "id": "15:3023724616636969011",
+          "name": "serverRecordIdHash",
+          "type": 9
+        },
+        {
+          "id": "16:908674649408606076",
+          "name": "createdAtMs",
+          "type": 6
+        },
+        {
+          "id": "17:2395909016293033875",
+          "name": "updatedAtMs",
+          "type": 6
+        },
+        {
+          "id": "18:7045932923442181147",
+          "name": "scopeKey",
+          "indexId": "41:7669028522258602254",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "19:8671106639445127584",
+          "name": "mutationRevision",
+          "type": 6
+        },
+        {
+          "id": "20:8829434107583151203",
+          "name": "leaseIdHash",
+          "type": 9
+        },
+        {
+          "id": "21:8352574949953478905",
+          "name": "leaseExpiresAtMs",
+          "type": 6
+        },
+        {
+          "id": "22:1517823970736287654",
+          "name": "confirmedAtMs",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "20:8623084761715763815",
+      "lastPropertyId": "11:6045468503885689678",
+      "name": "CloudRecordMapEntity",
+      "properties": [
+        {
+          "id": "1:9097529941931140001",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:3528403730967002101",
+          "name": "mapKey",
+          "indexId": "29:471127199829308194",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:8031419087023122271",
+          "name": "accountFingerprint",
+          "indexId": "30:6809918130192761355",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "4:596246986889589728",
+          "name": "zone",
+          "indexId": "31:6419846787958831018",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "5:3866959842373768393",
+          "name": "logicalEntityKeyHash",
+          "indexId": "32:5741250032786933729",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "6:1720064144660637343",
+          "name": "serverRecordIdHash",
+          "indexId": "33:2137526312204345044",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "7:7059827757810134893",
+          "name": "encryptedServerRecordId",
+          "type": 9
+        },
+        {
+          "id": "8:6064824751437364913",
+          "name": "etagHash",
+          "type": 9
+        },
+        {
+          "id": "9:3511222388893390366",
+          "name": "encryptedRawRecordRef",
+          "type": 9
+        },
+        {
+          "id": "10:4476992720778999527",
+          "name": "updatedAtMs",
+          "type": 6
+        },
+        {
+          "id": "11:6045468503885689678",
+          "name": "scopeKey",
+          "indexId": "42:8580390230204763517",
+          "type": 9,
+          "flags": 4096
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "21:4610418443336266937",
+      "lastPropertyId": "20:469503483284611167",
+      "name": "CloudSyncCheckpointEntity",
+      "properties": [
+        {
+          "id": "1:1503513831301718558",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:4028596345806531255",
+          "name": "checkpointKey",
+          "indexId": "34:1579181902505607669",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:5485993030475628060",
+          "name": "accountFingerprint",
+          "indexId": "35:4382044364901605135",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "4:575887715290289427",
+          "name": "container",
+          "type": 9
+        },
+        {
+          "id": "5:8918464312948592927",
+          "name": "database",
+          "type": 9
+        },
+        {
+          "id": "6:4967773343283709776",
+          "name": "zone",
+          "indexId": "36:1694676353845812008",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "7:8851160100117306846",
+          "name": "schemaVersion",
+          "type": 6
+        },
+        {
+          "id": "8:8714485857066159220",
+          "name": "fetchedTokenCiphertext",
+          "type": 9
+        },
+        {
+          "id": "9:9039140338019416063",
+          "name": "fetchedSequence",
+          "type": 6
+        },
+        {
+          "id": "10:461883346597482809",
+          "name": "appliedSequence",
+          "type": 6
+        },
+        {
+          "id": "11:7559900551993333666",
+          "name": "lastSuccessfulAtMs",
+          "type": 6
+        },
+        {
+          "id": "12:1542051308030024045",
+          "name": "lastAttemptAtMs",
+          "type": 6
+        },
+        {
+          "id": "13:6338716602832862273",
+          "name": "lastErrorCategory",
+          "type": 9
+        },
+        {
+          "id": "14:4946610067634546596",
+          "name": "backoffAttempt",
+          "type": 6
+        },
+        {
+          "id": "15:3803599633056384253",
+          "name": "nextEligibleAtMs",
+          "type": 6
+        },
+        {
+          "id": "16:3893748363581671178",
+          "name": "updatedAtMs",
+          "type": 6
+        },
+        {
+          "id": "17:7898159843947289985",
+          "name": "streamKind",
+          "type": 9
+        },
+        {
+          "id": "18:5644534535062464011",
+          "name": "generation",
+          "type": 6
+        },
+        {
+          "id": "19:3704484740564181784",
+          "name": "lastBatchId",
+          "type": 9
+        },
+        {
+          "id": "20:469503483284611167",
+          "name": "mutationRevisionCounter",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "22:259334693033865836",
+      "lastPropertyId": "16:6257537762912465363",
+      "name": "CloudSyncRunEntity",
+      "properties": [
+        {
+          "id": "1:1782232589038116265",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:2420496326771660332",
+          "name": "runId",
+          "indexId": "37:5579835729402978725",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:5578798528327770139",
+          "name": "accountFingerprint",
+          "indexId": "38:1353148650192326406",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "4:7951416976844075650",
+          "name": "trigger",
+          "type": 9
+        },
+        {
+          "id": "5:1210921649776027278",
+          "name": "architecture",
+          "type": 9
+        },
+        {
+          "id": "6:2764764522538084616",
+          "name": "mode",
+          "type": 9
+        },
+        {
+          "id": "7:2688680483849660813",
+          "name": "fetchedCount",
+          "type": 6
+        },
+        {
+          "id": "8:6162153589821911026",
+          "name": "appliedCount",
+          "type": 6
+        },
+        {
+          "id": "9:791556381302722054",
+          "name": "quarantinedCount",
+          "type": 6
+        },
+        {
+          "id": "10:1390082525507774243",
+          "name": "confirmedCount",
+          "type": 6
+        },
+        {
+          "id": "11:4541580426093217663",
+          "name": "retriedCount",
+          "type": 6
+        },
+        {
+          "id": "12:857320526491939146",
+          "name": "startedAtMs",
+          "type": 6
+        },
+        {
+          "id": "13:3056229026698237423",
+          "name": "finishedAtMs",
+          "type": 6
+        },
+        {
+          "id": "14:9083894370969100067",
+          "name": "failureCategory",
+          "type": 9
+        },
+        {
+          "id": "15:1232110106438769869",
+          "name": "scopeKey",
+          "indexId": "47:3060485928735691412",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "16:6257537762912465363",
+          "name": "deferredCount",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "23:4070283325319950409",
+      "lastPropertyId": "8:5690477582462752090",
+      "name": "CloudSyncLeaseEntity",
+      "properties": [
+        {
+          "id": "1:2729282918387786382",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:2769029684737707461",
+          "name": "leaseKey",
+          "indexId": "43:637443236713783532",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:8190732138318068473",
+          "name": "scopeKey",
+          "indexId": "44:9151336404221461594",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "4:8073672003493449321",
+          "name": "accountFingerprint",
+          "indexId": "45:5155866284077893836",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "5:8728846936974993304",
+          "name": "ownerIdHash",
+          "type": 9
+        },
+        {
+          "id": "6:772462836942356017",
+          "name": "generation",
+          "type": 6
+        },
+        {
+          "id": "7:2572401958863969816",
+          "name": "acquiredAtMs",
+          "type": 6
+        },
+        {
+          "id": "8:5690477582462752090",
+          "name": "expiresAtMs",
+          "indexId": "46:649461146512244572",
+          "type": 6,
+          "flags": 8
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "24:6298856735630642402",
+      "lastPropertyId": "16:115530251783195004",
+      "name": "CloudAttachmentMaterializationEntity",
+      "properties": [
+        {
+          "id": "1:1733707656886255486",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:2829480575482014625",
+          "name": "transferKey",
+          "indexId": "48:8511204723626225136",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:3054457580958471772",
+          "name": "scopeKey",
+          "indexId": "49:3868889113762672438",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "4:7527309380540369961",
+          "name": "accountFingerprint",
+          "indexId": "50:9057833165170278504",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "5:5122274897448961713",
+          "name": "zone",
+          "indexId": "51:8904544591634042596",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "6:8957933126875551600",
+          "name": "generation",
+          "type": 6
+        },
+        {
+          "id": "7:4815227610925886891",
+          "name": "logicalEntityKeyHash",
+          "indexId": "52:8064650573204067089",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "8:350444312191614898",
+          "name": "expectedBytes",
+          "type": 6
+        },
+        {
+          "id": "9:4652270939056213993",
+          "name": "expectedIntegrityTagHash",
+          "type": 9
+        },
+        {
+          "id": "10:6314008561402639966",
+          "name": "stage",
+          "indexId": "53:3559574499631432073",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "11:3947295453349546213",
+          "name": "verifiedBytes",
+          "type": 6
+        },
+        {
+          "id": "12:4286934476255007712",
+          "name": "protectedTempReference",
+          "type": 9
+        },
+        {
+          "id": "13:6102671074598874882",
+          "name": "protectedResumeManifestReference",
+          "type": 9
+        },
+        {
+          "id": "14:5110684721177215462",
+          "name": "protectedContentVerificationReference",
+          "type": 9
+        },
+        {
+          "id": "15:531054111286031189",
+          "name": "protectedFinalReference",
+          "type": 9
+        },
+        {
+          "id": "16:115530251783195004",
+          "name": "updatedAtMs",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "25:2707792941267997758",
+      "lastPropertyId": "24:6134120491357238156",
+      "name": "CloudSemanticReplayEntity",
+      "properties": [
+        {
+          "id": "1:3880903860070244039",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:2817476290092230342",
+          "name": "replayKey",
+          "indexId": "54:2661950643500352932",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:5845736057897842633",
+          "name": "scopeGenerationKey",
+          "indexId": "55:6656797492340960508",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "4:1353183097380652891",
+          "name": "scopeKey",
+          "indexId": "56:7550401169650593817",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "5:1580690780664760772",
+          "name": "accountFingerprint",
+          "indexId": "57:1758564168966321462",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "6:7674256512701354196",
+          "name": "container",
+          "type": 9
+        },
+        {
+          "id": "7:3735485937229566834",
+          "name": "database",
+          "type": 9
+        },
+        {
+          "id": "8:1239116557652113152",
+          "name": "zone",
+          "indexId": "58:1437734903549199516",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "9:2503794915196890881",
+          "name": "streamKind",
+          "type": 9
+        },
+        {
+          "id": "10:8528671671014893912",
+          "name": "schemaVersion",
+          "type": 6
+        },
+        {
+          "id": "11:9103596916327534004",
+          "name": "generation",
+          "type": 6
+        },
+        {
+          "id": "12:5062059703884467225",
+          "name": "changeIdHash",
+          "indexId": "59:8454019426905867269",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "16:7486724007131892173",
+          "name": "updatedAtMs",
+          "type": 6
+        },
+        {
+          "id": "17:3765812835902269445",
+          "name": "serverRecordIdHash",
+          "indexId": "66:6913311950121421051",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "18:8462982952394987262",
+          "name": "logicalEntityKeyHash",
+          "indexId": "67:9016942969599814282",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "19:1416321247527772100",
+          "name": "payloadSha256",
+          "type": 9
+        },
+        {
+          "id": "20:1168518400042208803",
+          "name": "protectedPayloadReferenceHash",
+          "type": 9
+        },
+        {
+          "id": "21:2926325749401488941",
+          "name": "inboxSequence",
+          "type": 6
+        },
+        {
+          "id": "22:5443645776082689040",
+          "name": "changeType",
+          "type": 9
+        },
+        {
+          "id": "23:5938564578107542446",
+          "name": "terminalOutcome",
+          "indexId": "68:3019787364371978747",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "24:6134120491357238156",
+          "name": "terminalSafeCode",
+          "type": 9
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "26:7701837625666464233",
+      "lastPropertyId": "24:5035678304275097058",
+      "name": "CloudSemanticSnapshotEntity",
+      "properties": [
+        {
+          "id": "1:8520227360481418389",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:7488477600905998136",
+          "name": "snapshotKey",
+          "indexId": "60:5644677902998818408",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:7329013381340357172",
+          "name": "scopeGenerationKey",
+          "indexId": "61:1226266756750185226",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "4:6401139088990627667",
+          "name": "scopeKey",
+          "indexId": "62:2298928435832767244",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "5:5773934355110739738",
+          "name": "accountFingerprint",
+          "indexId": "63:3017974133359173059",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "6:2192943532550866420",
+          "name": "container",
+          "type": 9
+        },
+        {
+          "id": "7:4243885286916349439",
+          "name": "database",
+          "type": 9
+        },
+        {
+          "id": "8:1122439571203719362",
+          "name": "zone",
+          "indexId": "64:6674403394799987160",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "9:8532578789865062424",
+          "name": "streamKind",
+          "type": 9
+        },
+        {
+          "id": "10:6974539497241102296",
+          "name": "schemaVersion",
+          "type": 6
+        },
+        {
+          "id": "11:1250931896109604799",
+          "name": "generation",
+          "type": 6
+        },
+        {
+          "id": "12:1451806406255824259",
+          "name": "entityKind",
+          "type": 9
+        },
+        {
+          "id": "13:3131079412139954216",
+          "name": "logicalEntityKeyHash",
+          "indexId": "65:7107073535763836024",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "14:9116431593188019474",
+          "name": "parentLogicalKeyHash",
+          "type": 9
+        },
+        {
+          "id": "15:5647270430356373616",
+          "name": "immutableContentDigest",
+          "type": 9
+        },
+        {
+          "id": "16:3489430996458561289",
+          "name": "createdAtMs",
+          "type": 6
+        },
+        {
+          "id": "17:8182786500145730176",
+          "name": "readAtMs",
+          "type": 6
+        },
+        {
+          "id": "18:3348921457693473272",
+          "name": "deliveredAtMs",
+          "type": 6
+        },
+        {
+          "id": "19:2070179914062438898",
+          "name": "editPartsJson",
+          "type": 9
+        },
+        {
+          "id": "20:2837338191269536128",
+          "name": "retractedAtMs",
+          "type": 6
+        },
+        {
+          "id": "21:5535400344419239642",
+          "name": "groupVersion",
+          "type": 6
+        },
+        {
+          "id": "22:236557598042741275",
+          "name": "groupMetadataDigest",
+          "type": 9
+        },
+        {
+          "id": "23:4137057345787739447",
+          "name": "etagHash",
+          "type": 9
+        },
+        {
+          "id": "24:5035678304275097058",
+          "name": "updatedAtMs",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "27:4280538170716883312",
+      "lastPropertyId": "9:7761394260513099254",
+      "name": "CloudProtectedPageLeaseEntity",
+      "properties": [
+        {
+          "id": "1:1759726867224472058",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:3492550884558884121",
+          "name": "leaseReference",
+          "indexId": "69:435771699388467906",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:1803024814487980708",
+          "name": "scopeKey",
+          "indexId": "70:3620302744458223619",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "4:657197473658330316",
+          "name": "accountFingerprint",
+          "indexId": "71:9143856129043954915",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "5:913730073842346540",
+          "name": "generation",
+          "type": 6
+        },
+        {
+          "id": "6:6474542508711130616",
+          "name": "batchIdHash",
+          "type": 9
+        },
+        {
+          "id": "7:5246214786452390887",
+          "name": "adoptedAtMs",
+          "type": 6
+        },
+        {
+          "id": "8:2103033795181318938",
+          "name": "finalizeAttemptCount",
+          "type": 6
+        },
+        {
+          "id": "9:7761394260513099254",
+          "name": "nextFinalizeEligibleAtMs",
+          "type": 6
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "17:2547083341603323785",
-  "lastIndexId": "16:4323200293672047337",
+  "lastEntityId": "27:4280538170716883312",
+  "lastIndexId": "71:9143856129043954915",
   "lastRelationId": "1:7492985733214117623",
   "lastSequenceId": "0:0",
   "modelVersion": 5,
@@ -1010,7 +2080,10 @@
     7997144491374144435,
     1278586999912993922,
     696004914151488398,
-    5516087858141459065
+    5516087858141459065,
+    7269255294897696731,
+    8215014452962792686,
+    1551080847505267540
   ],
   "retiredRelationUids": [],
   "version": 1

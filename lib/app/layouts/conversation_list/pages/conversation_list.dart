@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:bluebubbles/app/layouts/chat_creator/chat_creator.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/widgets/conversation_list_fab.dart';
+import 'package:bluebubbles/app/layouts/conversation_list/widgets/apple_network_banner.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/widgets/footer/samsung_footer.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/widgets/header/material_header.dart';
 import 'package:bluebubbles/app/layouts/conversation_list/widgets/header/samsung_header.dart';
@@ -41,11 +42,11 @@ class ConversationListController extends StatefulController {
   bool showMaterialFABText = true;
   double materialScrollStartPosition = 0;
 
-  ConversationListController({required this.showArchivedChats, required this.showUnknownSenders, this.showDeletedMessages = false}) {
+  ConversationListController(
+      {required this.showArchivedChats, required this.showUnknownSenders, this.showDeletedMessages = false}) {
     if (showDeletedMessages) {
-      var subscription = (Database.chats.query()
-        ..backlink(Message_.chat, Message_.dateDeleted.notNull()))
-        .watch(triggerImmediately: true);
+      var subscription = (Database.chats.query()..backlink(Message_.chat, Message_.dateDeleted.notNull()))
+          .watch(triggerImmediately: true);
 
       sub = subscription.listen((Query<Chat> query) {
         deletedChats.value = query.find();
@@ -121,7 +122,8 @@ class ConversationListController extends StatefulController {
 }
 
 class ConversationList extends CustomStateful<ConversationListController> {
-  ConversationList({super.key, required bool showArchivedChats, required bool showUnknownSenders, showDeletedMessages = false})
+  ConversationList(
+      {super.key, required bool showArchivedChats, required bool showUnknownSenders, showDeletedMessages = false})
       : super(
             parentController: Get.put(
                 ConversationListController(
@@ -150,8 +152,8 @@ class _ConversationListState extends CustomState<ConversationList, void, Convers
         : controller.showUnknownSenders
             ? "Unknown"
             : controller.showDeletedMessages
-              ? "Recently Deleted"
-              : "Messages";
+                ? "Recently Deleted"
+                : "Messages";
 
     if (!ss.settings.reachedConversationList.value) {
       Timer? timer;
@@ -198,17 +200,27 @@ class _ConversationListState extends CustomState<ConversationList, void, Convers
 
   @override
   Widget build(BuildContext context) {
-    final child = ThemeSwitcher(
+    final themedChild = ThemeSwitcher(
       iOSSkin: CupertinoConversationList(parentController: controller),
       materialSkin: MaterialConversationList(parentController: controller),
       samsungSkin: SamsungConversationList(parentController: controller),
     );
 
-    if (controller.showArchivedChats || controller.showUnknownSenders || controller.showDeletedMessages) return child;
+    if (controller.showArchivedChats || controller.showUnknownSenders || controller.showDeletedMessages)
+      return themedChild;
+
+    final child = Column(
+      children: [
+        const AppleNetworkBanner(),
+        Expanded(child: themedChild),
+      ],
+    );
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle(
-        systemNavigationBarColor: ss.settings.immersiveMode.value ? Colors.transparent : context.theme.colorScheme.background, // navigation bar color
+        systemNavigationBarColor: ss.settings.immersiveMode.value
+            ? Colors.transparent
+            : context.theme.colorScheme.background, // navigation bar color
         systemNavigationBarIconBrightness: brightness,
         statusBarColor: Colors.transparent, // status bar color
         statusBarIconBrightness: brightness.opposite,

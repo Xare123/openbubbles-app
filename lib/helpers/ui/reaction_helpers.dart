@@ -20,6 +20,21 @@ class ReactionTypes {
   // ignore: non_constant_identifier_names
   static const String STICKERBACK = "stickerback";
 
+  /// Maps Apple's `associatedMessageType` to a reaction name, or null when this
+  /// build has no name for it.
+  ///
+  /// Apple uses 2000+ for an applied reaction and 3000+ for a removed one, but
+  /// it can send an index beyond the names below. Callers must treat null as
+  /// "not a reaction" rather than indexing [toList] directly, which throws a
+  /// RangeError on an unknown type.
+  static String? fromAssociatedMessageType(int associatedMessageType) {
+    final removed = associatedMessageType >= 3000;
+    final index = associatedMessageType - (removed ? 3000 : 2000);
+    final names = toList();
+    if (index < 0 || index >= names.length) return null;
+    return removed ? "-${names[index]}" : names[index];
+  }
+
   static List<String> toList() {
     return [
       LOVE,

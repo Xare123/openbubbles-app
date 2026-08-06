@@ -4,6 +4,8 @@ import 'package:bluebubbles/app/layouts/settings/widgets/content/next_button.dar
 import 'package:bluebubbles/helpers/backend/settings_helpers.dart';
 import 'package:bluebubbles/main.dart';
 import 'package:bluebubbles/services/backend/sync/chat_sync_manager.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
@@ -36,6 +38,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
   final RxInt logFileCount = 1.obs;
   final RxInt logFileSize = 0.obs;
   final RxBool optimizationsDisabled = false.obs;
+  final RxBool cloudSyncV2Running = false.obs;
   final TextEditingController participantController = TextEditingController();
 
   bool isExportingLogs = false;
@@ -301,6 +304,113 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                             : Icon(Icons.check,
                                 color: context.theme.colorScheme.outline))),
                   ]),
+
+                if (CloudSyncDevGate.manualShadowSamplerEnabled &&
+                    ss.settings.developerEnabled.value &&
+                    (Platform.isAndroid || Platform.isWindows))
+                  SettingsHeader(
+                    iosSubtitle: iosSubtitle,
+                    materialSubtitle: materialSubtitle,
+                    text: "Cloud Sync V2",
+                  ),
+                if (CloudSyncDevGate.manualShadowSamplerEnabled &&
+                    ss.settings.developerEnabled.value &&
+                    (Platform.isAndroid || Platform.isWindows))
+                  SettingsSection(
+                    backgroundColor: tileColor,
+                    children: [
+                      Obx(() => SettingsTile(
+                        leading: const SettingsLeadingIcon(
+                          iosIcon: CupertinoIcons.cloud_download,
+                          materialIcon: Icons.cloud_download_outlined,
+                          containerColor: Colors.indigo,
+                        ),
+                        title: "Run Read-only Shadow Sample",
+                        subtitle: "Developer-only diagnostic. Fetches one bounded page per Messages in iCloud zone without CloudKit writes, semantic applies, or background scheduling. A protected local journal, checkpoint, and redacted report are saved in private app storage.",
+                        trailing: cloudSyncV2Running.value
+                            ? SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 3,
+                                  color: context.theme.colorScheme.primary,
+                                ),
+                              )
+                            : const NextButton(),
+                        onTap: () async {
+                          if (cloudSyncV2Running.value) return;
+                          if (!pushService.cloudSyncV2ManualShadowAvailable) {
+                            showSnackbar(
+                              "Cloud Sync V2 Blocked",
+                              "Finish OpenBubbles setup, enable Developer Mode on Android, turn off legacy Messages in iCloud sync, and wait for active sync or logout work to finish.",
+                            );
+                            return;
+                          }
+                          final confirmed = await showDialog<bool>(
+                            context: context,
+                            builder: (dialogContext) => AlertDialog(
+                              backgroundColor: context.theme.colorScheme.properSurface,
+                              title: Text(
+                                "Run read-only Cloud Sync sample?",
+                                style: context.theme.textTheme.titleLarge,
+                              ),
+                              content: Text(
+                                "This performs one manual, bounded CloudKit read for diagnostics. It will not apply messages, upload or delete records, enable background sync, or replace live IDS delivery.",
+                                style: context.theme.textTheme.bodyLarge,
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                                  child: const Text("Cancel"),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                                  child: const Text("Run Once"),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (confirmed != true) return;
+                          if (cloudSyncV2Running.value) return;
+                          cloudSyncV2Running.value = true;
+                          try {
+                            final report = await pushService.runCloudSyncV2ManualShadowConfirmed();
+                            final fetched = report.zones.fold<int>(
+                              0,
+                              (total, zone) => total + zone.fetched,
+                            );
+                            final journaled = report.zones.fold<int>(
+                              0,
+                              (total, zone) => total + zone.journaled,
+                            );
+                            if (report.isValidReadOnlySuccess) {
+                              showSnackbar(
+                                "Cloud Sync V2 Complete",
+                                "Read-only checks passed. Fetched $fetched and journaled $journaled protected change(s). A redacted report was saved in private app storage.",
+                              );
+                            } else {
+                              showSnackbar(
+                                "Cloud Sync V2 Stopped Safely",
+                                "One or more zones did not pass the read-only checks. No CloudKit writes or semantic applies were enabled.",
+                              );
+                            }
+                          } catch (error) {
+                            final safeCode =
+                                cloudSyncV2SafeFailureCode(error);
+                            Logger.warn(
+                              "Cloud Sync V2 shadow sample stopped safely code=$safeCode",
+                            );
+                            showSnackbar(
+                              "Cloud Sync V2 Stopped Safely",
+                              "Diagnostic code: $safeCode. No CloudKit writes or semantic applies were enabled.",
+                            );
+                          } finally {
+                            cloudSyncV2Running.value = false;
+                          }
+                        },
+                      )),
+                    ],
+                  ),
 
                 
                 SettingsHeader(

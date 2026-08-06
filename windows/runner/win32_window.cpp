@@ -19,6 +19,11 @@ namespace {
 
 constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 
+// A simultaneous second launch can observe the mutex before the first launch
+// has created its window. Retry briefly so app-link forwarding is not lost.
+constexpr int kInstanceWindowLookupAttempts = 100;
+constexpr DWORD kInstanceWindowLookupDelayMilliseconds = 50;
+
 /// Registry key for app theme preference.
 ///
 /// A value of 0 indicates apps should use dark mode. A non-zero or missing
@@ -36,6 +41,17 @@ using EnableNonClientDpiScaling = BOOL __stdcall(HWND hwnd);
 // scale factor
 int Scale(int source, double scale_factor) {
   return static_cast<int>(source * scale_factor);
+}
+
+HWND FindExistingInstanceWindow(const std::wstring& title) {
+  for (int attempt = 0; attempt < kInstanceWindowLookupAttempts; ++attempt) {
+    HWND window = FindWindowW(kWindowClassName, title.c_str());
+    if (window != nullptr) {
+      return window;
+    }
+    Sleep(kInstanceWindowLookupDelayMilliseconds);
+  }
+  return nullptr;
 }
 
 // Dynamically loads the |EnableNonClientDpiScaling| from the User32 module.
@@ -119,6 +135,10 @@ Win32Window::Win32Window() {
 Win32Window::~Win32Window() {
   --g_active_window_count;
   Destroy();
+  if (single_instance_mutex_ != nullptr) {
+    CloseHandle(single_instance_mutex_);
+    single_instance_mutex_ = nullptr;
+  }
 }
 
 bool Win32Window::Create(const std::wstring& title,
@@ -294,28 +314,50 @@ void Win32Window::UpdateTheme(HWND const window) {
 }
 
 bool Win32Window::SendAppLinkToInstance(const std::wstring& title) {
-  HANDLE hMutex = OpenMutex(MUTEX_ALL_ACCESS, 0, title.c_str());
+  if (single_instance_mutex_ != nullptr) {
+    return false;
+  }
 
-  if (!hMutex) {
-    // Mutex doesn't exist. This is
-    // the first instance so create
-    // the mutex.
-    hMutex = CreateMutex(0, 0, title.c_str());
-  } else {
-    // The mutex exists so this is the
-    // the second instance so return.
+  // CreateMutexW atomically creates or opens the named mutex. OpenMutex
+  // followed by CreateMutex leaves a race where two simultaneous processes can
+  // both decide they are first.
+  SetLastError(ERROR_SUCCESS);
+  HANDLE candidate_mutex = CreateMutexW(nullptr, FALSE, title.c_str());
+  const DWORD create_error = GetLastError();
 
-    // Find the window of First Instance
-    HWND hwnd = FindWindow(kWindowClassName, title.c_str());
+  if (candidate_mutex == nullptr) {
+    // Fail closed. Starting without the guard could let two processes open the
+    // same ObjectBox profile.
+    OutputDebugStringW(
+        L"OpenBubbles could not establish its single-instance guard.\n");
+    return true;
+  }
 
-    // Dispatch new link to current window
-    SendAppLink(hwnd);
+  if (create_error != ERROR_ALREADY_EXISTS) {
+    // Retain the first instance's handle until destruction. The kernel mutex
+    // object ceases to be an ownership signal after the last handle closes.
+    single_instance_mutex_ = candidate_mutex;
+    return false;
+  }
 
-    // (Optional) Restore our window to front in same state
-    WINDOWPLACEMENT place = { sizeof(WINDOWPLACEMENT) };
-    GetWindowPlacement(hwnd, &place);
+  // A secondary instance only needs the handle long enough to make the atomic
+  // first/secondary decision.
+  CloseHandle(candidate_mutex);
 
-    switch(place.showCmd) {
+  HWND hwnd = FindExistingInstanceWindow(title);
+  if (hwnd == nullptr) {
+    OutputDebugStringW(
+        L"OpenBubbles found its single-instance guard but not its window.\n");
+    return true;
+  }
+
+  // Dispatch the new link to the first instance.
+  SendAppLink(hwnd);
+
+  // Restore the first instance's window to the foreground in the same state.
+  WINDOWPLACEMENT place = {sizeof(WINDOWPLACEMENT)};
+  if (GetWindowPlacement(hwnd, &place)) {
+    switch (place.showCmd) {
       case SW_SHOWMAXIMIZED:
         ShowWindow(hwnd, SW_SHOWMAXIMIZED);
         break;
@@ -326,12 +368,11 @@ bool Win32Window::SendAppLinkToInstance(const std::wstring& title) {
         ShowWindow(hwnd, SW_NORMAL);
         break;
     }
-
-    SetWindowPos(0, HWND_TOP, 0, 0, 0, 0, SWP_SHOWWINDOW | SWP_NOSIZE | SWP_NOMOVE);
-    SetForegroundWindow(hwnd);
-
-    return true;
   }
 
-  return false;
+  SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0,
+               SWP_SHOWWINDOW | SWP_NOSIZE | SWP_NOMOVE);
+  SetForegroundWindow(hwnd);
+
+  return true;
 }

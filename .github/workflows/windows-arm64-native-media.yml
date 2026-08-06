@@ -1,0 +1,359 @@
+name: Windows native media provenance
+
+on:
+  pull_request:
+    paths:
+      - "packages/media_kit_libs_windows_video/**"
+      - "docs/WINDOWS_ARM64_NATIVE_MEDIA.md"
+      - "pubspec.yaml"
+      - "pubspec.lock"
+      - "tooling/windows/*.ps1"
+      - "windows/CMakeLists.txt"
+      - ".github/workflows/windows-arm64-native-media.yml"
+  push:
+    branches:
+      - rustpush
+    paths:
+      - "packages/media_kit_libs_windows_video/**"
+      - "docs/WINDOWS_ARM64_NATIVE_MEDIA.md"
+      - "pubspec.yaml"
+      - "pubspec.lock"
+      - "tooling/windows/*.ps1"
+      - "windows/CMakeLists.txt"
+      - ".github/workflows/windows-arm64-native-media.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-native-media-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-verification:
+    name: Fail-closed scaffold tests
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - name: Check out reviewed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Test manifests, hashes, PE guards, and rejection paths
+        shell: pwsh
+        run: >-
+          ./packages/media_kit_libs_windows_video/tool/test_native_media_scaffold.ps1
+
+      - name: Verify application dependency and runner packaging contract
+        shell: pwsh
+        run: >-
+          ./tooling/windows/verify_native_media_integration.ps1
+
+  native-source-build:
+    name: Official ANGLE, runner, and runtime (${{ matrix.arch }})
+    if: github.event_name == 'workflow_dispatch'
+    needs: static-verification
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2025
+            rust-target: x86_64-pc-windows-msvc
+          - arch: arm64
+            runner: windows-11-arm
+            rust-target: aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 420
+    steps:
+      - name: Check out reviewed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: recursive
+
+      - name: Record native runner architecture
+        id: runner
+        shell: pwsh
+        run: |
+          $native = $env:PROCESSOR_ARCHITEW6432
+          if (-not $native) {
+            $native = $env:PROCESSOR_ARCHITECTURE
+          }
+          "native_architecture=$native" >> $env:GITHUB_OUTPUT
+          Get-ComputerInfo |
+            Select-Object WindowsProductName, WindowsVersion, OsArchitecture
+
+      - name: Build ANGLE from pinned official Google source
+        shell: pwsh
+        run: |
+          $package = Join-Path $env:GITHUB_WORKSPACE `
+            "packages/media_kit_libs_windows_video"
+          & (Join-Path $package "tool/build_official_angle.ps1") `
+            -Architecture "${{ matrix.arch }}" `
+            -WorkRoot (Join-Path $env:RUNNER_TEMP "official-angle-work") `
+            -OutputRoot (
+              Join-Path $package "windows/native/${{ matrix.arch }}/angle"
+            )
+
+      - name: Resolve pinned libmpv and verify all native inputs
+        shell: pwsh
+        run: |
+          $package = Join-Path $env:GITHUB_WORKSPACE `
+            "packages/media_kit_libs_windows_video"
+          $cache = Join-Path $env:RUNNER_TEMP "native-media"
+          & (Join-Path $package "tool/prepare_native_media.ps1") `
+            -Architecture "${{ matrix.arch }}" `
+            -AngleBundleRoot (
+              Join-Path $package "windows/native/${{ matrix.arch }}/angle"
+            ) `
+            -CacheRoot $cache `
+            -GeneratedCmakePath (Join-Path $cache "native-media.cmake") `
+            -ResolutionPath (Join-Path $cache "native-media-resolution.json")
+
+      - name: Load DLLs and verify required exports natively
+        shell: pwsh
+        run: |
+          $package = Join-Path $env:GITHUB_WORKSPACE `
+            "packages/media_kit_libs_windows_video"
+          & (Join-Path $package "tool/runtime_smoke.ps1") `
+            -ResolutionPath (
+              Join-Path $env:RUNNER_TEMP `
+                "native-media/native-media-resolution.json"
+            )
+
+      - name: Configure and compile the package registration target
+        shell: pwsh
+        run: |
+          $package = Join-Path $env:GITHUB_WORKSPACE `
+            "packages/media_kit_libs_windows_video"
+          $resolution = Get-Content -LiteralPath (
+            Join-Path $env:RUNNER_TEMP `
+              "native-media/native-media-resolution.json"
+          ) -Raw | ConvertFrom-Json
+          if ("${{ matrix.arch }}" -eq "arm64") {
+            & (Join-Path $package "tool/test_native_media_scaffold.ps1") `
+              -Arm64LibmpvArchive $resolution.libmpv.archive_path
+          }
+          else {
+            & (Join-Path $package "tool/test_native_media_scaffold.ps1") `
+              -X64LibmpvArchive $resolution.libmpv.archive_path
+          }
+
+      - name: Set up Flutter 3.44.8
+        id: flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          channel: stable
+          flutter-version: 3.44.8
+          architecture: x64
+          cache: true
+
+      - name: Bootstrap native ARM64 Dart and Flutter engine
+        if: matrix.arch == 'arm64'
+        shell: pwsh
+        run: |
+          $flutterRoot = "${{ steps.flutter.outputs['cache-path'] }}"
+          Remove-Item -Force `
+            "$flutterRoot\bin\cache\engine-dart-sdk.stamp" `
+            -ErrorAction SilentlyContinue
+          & "$flutterRoot\bin\internal\update_dart_sdk.ps1"
+          $dartVersion = & "$flutterRoot\bin\dart.bat" --version 2>&1 |
+            Out-String
+          if ($dartVersion -notmatch "windows_arm64") {
+            throw "Expected native ARM64 Dart; got: $dartVersion"
+          }
+          & "$flutterRoot\bin\flutter.bat" precache --windows
+          if (-not (Test-Path (
+            Join-Path $flutterRoot `
+              "bin/cache/artifacts/engine/windows-arm64-release"
+          ))) {
+            throw "Flutter did not install its Windows ARM64 release engine."
+          }
+
+      - name: Set up Rust target
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: Set up pinned Protocol Buffers compiler
+        shell: pwsh
+        run: |
+          $version = "29.5"
+          $expectedHash = "633d3e555fc97f0a1f55b4adb03256cd94b8059e51e7abbae98ff39e58a9dfa5"
+          $archive = Join-Path $env:RUNNER_TEMP "protoc-$version-win64.zip"
+          $destination = Join-Path $env:RUNNER_TOOL_CACHE "protoc\$version\x64"
+          Invoke-WebRequest `
+            "https://github.com/protocolbuffers/protobuf/releases/download/v$version/protoc-$version-win64.zip" `
+            -OutFile $archive
+          $actualHash = (
+            Get-FileHash $archive -Algorithm SHA256
+          ).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) {
+            throw "protoc archive checksum mismatch."
+          }
+          Expand-Archive -Path $archive -DestinationPath $destination -Force
+          "$destination\bin" |
+            Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & "$destination\bin\protoc.exe" --version
+
+      - name: Set up test FairPlay certificates
+        shell: pwsh
+        run: |
+          $destination = "rustpush\certs\fairplay"
+          New-Item -ItemType Directory -Force -Path $destination | Out-Null
+          $certificateNames = @(
+            "4056631661436364584235346952193",
+            "4056631661436364584235346952194",
+            "4056631661436364584235346952195",
+            "4056631661436364584235346952196",
+            "4056631661436364584235346952197",
+            "4056631661436364584235346952198",
+            "4056631661436364584235346952199",
+            "4056631661436364584235346952200",
+            "4056631661436364584235346952201",
+            "4056631661436364584235346952208"
+          )
+          foreach ($name in $certificateNames) {
+            Copy-Item `
+              "rustpush\certs\legacy-fairplay\fairplay.pem" `
+              "$destination\$name.pem"
+            Copy-Item `
+              "rustpush\certs\legacy-fairplay\fairplay.crt" `
+              "$destination\$name.crt"
+          }
+
+      - name: Build and verify complete native Windows runner
+        shell: pwsh
+        env:
+          CARGO_BUILD_JOBS: "2"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "4"
+          CARGO_TERM_COLOR: never
+        run: |
+          $shortWorkspace = "D:\s"
+          New-Item -ItemType Directory -Force -Path $shortWorkspace |
+            Out-Null
+          robocopy "$env:GITHUB_WORKSPACE" $shortWorkspace /E `
+            /XD `
+              "$env:GITHUB_WORKSPACE\.git" `
+              "$env:GITHUB_WORKSPACE\.dart_tool" `
+              "$env:GITHUB_WORKSPACE\build" `
+              "$env:GITHUB_WORKSPACE\windows\flutter\ephemeral" `
+            /NFL /NDL /NJH /NJS /NP
+          if ($LASTEXITCODE -ge 8) {
+            throw "Failed to stage the short Windows build workspace."
+          }
+
+          $architecture = "${{ matrix.arch }}"
+          $package = Join-Path $env:GITHUB_WORKSPACE `
+            "packages/media_kit_libs_windows_video"
+          $angle = Join-Path $package `
+            "windows/native/$architecture/angle"
+          $resolution = Get-Content -LiteralPath (
+            Join-Path $env:RUNNER_TEMP `
+              "native-media/native-media-resolution.json"
+          ) -Raw | ConvertFrom-Json
+          & (Join-Path $shortWorkspace `
+            "tooling/windows/build_verified_native_media_runner.ps1") `
+            -Architecture $architecture `
+            -AngleBundleRoot $angle `
+            -LibmpvArchivePath $resolution.libmpv.archive_path `
+            -FlutterRoot "${{ steps.flutter.outputs['cache-path'] }}" `
+            -RepoRoot $shortWorkspace `
+            -Configuration release
+          if ($LASTEXITCODE -ne 0) {
+            throw "Verified $architecture runner build failed."
+          }
+
+      - name: Package attested ANGLE engineering evidence
+        id: package
+        shell: pwsh
+        run: |
+          $architecture = "${{ matrix.arch }}"
+          $package = Join-Path $env:GITHUB_WORKSPACE `
+            "packages/media_kit_libs_windows_video"
+          $angle = Join-Path $package "windows/native/$architecture/angle"
+          $resolutionPath = Join-Path $env:RUNNER_TEMP `
+            "native-media/native-media-resolution.json"
+          $resolution = Get-Content -LiteralPath $resolutionPath -Raw |
+            ConvertFrom-Json
+          $stage = Join-Path $env:RUNNER_TEMP `
+            "openbubbles-native-media-$architecture"
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          Copy-Item -LiteralPath $angle -Destination (
+            Join-Path $stage "angle"
+          ) -Recurse
+          Copy-Item -LiteralPath (
+            Join-Path $package "provenance/native-dependencies.json"
+          ) -Destination $stage
+          Copy-Item -LiteralPath (
+            Join-Path $package "THIRD_PARTY_NOTICES.md"
+          ) -Destination $stage
+
+          $evidence = [ordered]@{
+            schema_version = 1
+            architecture = $architecture
+            runner_native_architecture = "${{ steps.runner.outputs.native_architecture }}"
+            source_commit = "${{ github.sha }}"
+            angle_manifest_sha256 = $resolution.angle.manifest_sha256
+            angle_source_commit = $resolution.angle.source_commit
+            depot_tools_commit = $resolution.angle.depot_tools_commit
+            libmpv_archive_sha256 = $resolution.libmpv.archive_sha256
+            libmpv_builder_commit = $resolution.libmpv.builder_commit
+            mpv_commit = $resolution.libmpv.mpv_commit
+            runtime_load_and_export_smoke = "passed"
+            libmpv_binary_in_artifact = $false
+            redistribution_status = $resolution.libmpv.redistribution_status
+          }
+          $evidence | ConvertTo-Json -Depth 8 |
+            Set-Content -LiteralPath (
+              Join-Path $stage "native-verification.json"
+            ) -Encoding utf8NoBOM
+
+          $fileInventory = @(
+            Get-ChildItem -LiteralPath $stage -File -Recurse |
+              Sort-Object FullName |
+              ForEach-Object {
+                [pscustomobject]@{
+                  relative_path = $_.FullName.Substring(
+                    $stage.Length + 1
+                  ).Replace('\', '/')
+                  sha256 = (
+                    Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256
+                  ).Hash.ToLowerInvariant()
+                }
+              }
+          )
+          $fileInventory | ConvertTo-Json -Depth 5 |
+            Set-Content -LiteralPath (
+              Join-Path $stage "artifact-file-inventory.json"
+            ) -Encoding utf8NoBOM
+
+          $archive = Join-Path $env:RUNNER_TEMP `
+            "openbubbles-official-angle-$architecture.zip"
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $archive
+          $archiveHash = (
+            Get-FileHash -LiteralPath $archive -Algorithm SHA256
+          ).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath "$archive.sha256" `
+            -Value "$archiveHash  $([IO.Path]::GetFileName($archive))" `
+            -Encoding ascii
+          "archive=$archive" >> $env:GITHUB_OUTPUT
+
+      - name: Attest official-source ANGLE artifact
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-path: ${{ steps.package.outputs.archive }}
+
+      - name: Upload short-lived engineering artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: official-angle-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.archive }}.sha256
+          if-no-files-found: error
+          retention-days: 7

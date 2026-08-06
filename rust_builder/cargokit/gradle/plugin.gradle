@@ -89,7 +89,14 @@ class CargoKitPlugin implements Plugin<Project> {
    private Plugin _findFlutterPlugin(Map projects) {
         for (project in projects) {
             for (plugin in project.value.getPlugins()) {
-                if (plugin.class.name == "FlutterPlugin") {
+                // Flutter's Groovy Gradle plugin lived in the default package.
+                // The Kotlin rewrite moved it to com.flutter.gradle, so match
+                // the class name itself rather than the fully qualified name.
+                // Getting this wrong silently skips the whole Rust build and
+                // ships a package with no native library in it.
+                def pluginClassName = plugin.class.name
+                if (pluginClassName == "FlutterPlugin" ||
+                        pluginClassName.endsWith(".FlutterPlugin")) {
                     return plugin;
                 }
             }

@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:audio_waveforms/audio_waveforms.dart' as audio;
 import 'package:bluebubbles/app/components/avatars/contact_avatar_group_widget.dart';
+import 'package:bluebubbles/app/layouts/conversation_view/pages/transcript_pagination.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/message_holder.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/typing/typing_indicator.dart';
 import 'package:bluebubbles/database/database.dart';
@@ -375,17 +376,26 @@ class MessagesViewState extends OptimizedState<MessagesView> {
         return;
       }
 
-      final oldLength = _messages.length;
-      _messages = messageService.struct.messages;
-      _messages.sort(Message.sort);
-      _messages.sublist(max(oldLength - 1, 0)).forEachIndexed((i, m) {
-        final c = mwc(m);
+      final previousMessages = List<Message>.from(_messages);
+      final nextMessages = List<Message>.from(messageService.struct.messages)
+        ..sort(Message.sort);
+      final insertions = transcriptInsertions<Message>(
+        previous: previousMessages,
+        next: nextMessages,
+        identityOf: (message) => message.guid!,
+      );
+      _messages = nextMessages;
+      for (final insertion in insertions) {
+        final c = mwc(insertion.item);
         c.cvController = controller;
-        listKey.currentState!.insertItem(i, duration: const Duration(milliseconds: 0));
-      });
+        listKey.currentState?.insertItem(
+          insertion.index,
+          duration: Duration.zero,
+        );
+      }
       _syncBottomMessageFocusNode();
       // should only happen when a reaction is the most recent message
-      if (oldLength == 0) {
+      if (previousMessages.isEmpty) {
         setState(() {});
       }
     } finally {

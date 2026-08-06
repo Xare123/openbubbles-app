@@ -1,0 +1,61 @@
+import 'cloud_sync_shadow_report_file.dart';
+import 'cloudkit_operation_interlock.dart';
+
+const _cloudSyncV2SafeFailureCodes = <String>{
+  'account_changed',
+  'account_unavailable',
+  'cloud_sync_developer_mode_required',
+  'cloud_sync_private_storage_unavailable',
+  'cloud_sync_report_already_exists',
+  'cloud_sync_report_contract_invalid',
+  'cloud_sync_report_directory_changed',
+  'cloud_sync_report_directory_unavailable',
+  'cloud_sync_report_directory_unsafe',
+  'cloud_sync_report_path_invalid',
+  'cloud_sync_report_retention_failed',
+  'cloud_sync_report_run_id_invalid',
+  'cloud_sync_report_storage_unavailable',
+  'cloud_sync_report_too_large',
+  'cloud_sync_report_write_failed',
+  'cloud_sync_sampler_active',
+  'cloud_sync_sampler_disabled',
+  'cloud_sync_shadow_controller_active',
+  'cloud_sync_shadow_controller_disposed',
+  'cloud_sync_shadow_owner_disposed',
+  'cloud_sync_shadow_owner_quiescing',
+  'cloud_sync_shadow_owner_superseded',
+  'cloud_sync_shadow_write_tripwire',
+  'cloudkit_interlock_busy',
+  'cloudkit_interlock_fence_lost',
+  'cloudkit_interlock_mode_violation',
+  'cloudkit_interlock_profile_mismatch',
+  'cloudkit_interlock_storage_unavailable',
+  'cloudkit_interlock_unavailable',
+  'coordinator_active',
+  'legacy_sync_active',
+  'logout_active',
+  'not_ui_isolate',
+  'objectbox_not_ready',
+  'outbox_not_empty',
+  'protector_unavailable',
+  'rustpush_not_ready',
+  'storage_unavailable',
+  'unsupported_cloud_zone',
+  'unsupported_platform',
+};
+
+/// Returns only a fixed diagnostic code safe for logs and user-visible copy.
+///
+/// Exception text is never forwarded. Unknown or newly introduced failures
+/// collapse to one generic code until they receive an explicit review.
+String cloudSyncV2SafeFailureCode(Object error) {
+  final String? candidate = switch (error) {
+    CloudSyncShadowReportFileException() => error.safeCode,
+    CloudKitOperationInterlockException() => error.safeCode,
+    StateError() => error.message.toString(),
+    _ => null,
+  };
+  return _cloudSyncV2SafeFailureCodes.contains(candidate)
+      ? candidate!
+      : 'cloud_sync_unknown_failure';
+}

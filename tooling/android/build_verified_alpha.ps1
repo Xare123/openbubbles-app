@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('profile', 'debug')]
+    [ValidateSet('release', 'profile', 'debug')]
     [string]$Mode = 'profile',
+    [switch]$SplitPerAbi,
     [string]$FlutterCommand = 'flutter',
     [string]$AndroidSdkRoot = $env:ANDROID_SDK_ROOT,
     [string]$CargoHome = $env:CARGO_HOME,
@@ -64,7 +65,12 @@ function Convert-ToPosixUncPath {
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $flutter = Resolve-Tool -Value $FlutterCommand -DisplayName 'Flutter'
-$apk = Join-Path $repositoryRoot "build\app\outputs\flutter-apk\app-alpha-$Mode.apk"
+$apkName = if ($SplitPerAbi) {
+    "app-arm64-v8a-alpha-$Mode.apk"
+} else {
+    "app-alpha-$Mode.apk"
+}
+$apk = Join-Path $repositoryRoot "build\app\outputs\flutter-apk\$apkName"
 
 if ([string]::IsNullOrWhiteSpace($AndroidSdkRoot)) {
     $AndroidSdkRoot = $env:ANDROID_HOME
@@ -127,7 +133,19 @@ if (-not [string]::IsNullOrWhiteSpace($MakeExecutable)) {
 
 Push-Location $repositoryRoot
 try {
-    & $flutter build apk --flavor alpha "--$Mode" --target-platform android-arm64
+    $flutterArguments = @(
+        'build'
+        'apk'
+        '--flavor'
+        'alpha'
+        "--$Mode"
+        '--target-platform'
+        'android-arm64'
+    )
+    if ($SplitPerAbi) {
+        $flutterArguments += '--split-per-abi'
+    }
+    & $flutter @flutterArguments
     if ($LASTEXITCODE -ne 0) {
         throw "Flutter build failed with exit code $LASTEXITCODE"
     }
@@ -143,15 +161,43 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [System.IO.Compression.ZipFile]::OpenRead($apk)
 $verificationError = $null
 try {
-    $requiredEntries = @(
-        'lib/arm64-v8a/libflutter.so'
-        'lib/arm64-v8a/libapp.so'
-        'lib/arm64-v8a/librust_lib_bluebubbles.so'
-    )
+    $requiredEntries = [System.Collections.Generic.List[string]]::new()
+    $requiredEntries.Add('lib/arm64-v8a/libflutter.so')
+    $requiredEntries.Add('lib/arm64-v8a/librust_lib_bluebubbles.so')
+    # libapp.so holds AOT-compiled Dart. A debug package runs the interpreter
+    # from the asset bundle instead, so requiring it there fails a good build.
+    if ($Mode -ne 'debug') {
+        $requiredEntries.Add('lib/arm64-v8a/libapp.so')
+    }
     foreach ($entryName in $requiredEntries) {
         $entry = $archive.GetEntry($entryName)
         if ($null -eq $entry -or $entry.Length -le 0) {
             throw "APK verification failed: missing native entry $entryName"
+        }
+    }
+    if ($SplitPerAbi) {
+        $unexpectedNativeEntries = @(
+            $archive.Entries | Where-Object {
+                $_.FullName.StartsWith(
+                    'lib/',
+                    [System.StringComparison]::Ordinal
+                ) -and
+                -not $_.FullName.StartsWith(
+                    'lib/arm64-v8a/',
+                    [System.StringComparison]::Ordinal
+                )
+            }
+        )
+        if ($unexpectedNativeEntries.Count -gt 0) {
+            $unexpectedArchitectures = @(
+                $unexpectedNativeEntries |
+                    ForEach-Object { $_.FullName.Split('/')[1] } |
+                    Sort-Object -Unique
+            )
+            throw (
+                'APK verification failed: split ARM64 package contains ' +
+                "unexpected native architectures: $($unexpectedArchitectures -join ', ')"
+            )
         }
     }
 } catch {
