@@ -36,6 +36,9 @@ timestamp: 2026-07-31
   dormant WorkManager wake policy and its activation gates.
 - [Cloud Sync V2 native protected fetch](CLOUD_SYNC_V2_NATIVE_PROTECTED_FETCH.md):
   narrow protected-page bridge, adoption leases, and bounded collection.
+- [Cloud Sync V2 path to production](CLOUD_SYNC_V2_PATH_TO_PRODUCTION.md):
+  dependency-ordered remaining sequence, separating code work from work that
+  needs live Apple access, hardware, or a licensing decision.
 - [Windows host build environment](WINDOWS_HOST_BUILD_ENVIRONMENT.md): verified
   Windows-on-ARM toolchain layout and the host constraints for building the
   Rust bridge and running the suites for all three targets.

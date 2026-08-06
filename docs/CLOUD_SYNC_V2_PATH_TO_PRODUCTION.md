@@ -1,0 +1,178 @@
+---
+type: roadmap
+title: OpenBubbles Cloud Sync V2 Path to Production
+description: Dependency-ordered sequence from the current verified state to a production rollout, separating code work from work that needs live Apple access, hardware, or a licensing decision.
+resource: openbubbles-app
+tags: [cloudkit, sync, rollout, validation, android, windows, arm64, x64]
+timestamp: 2026-08-06
+---
+
+# Cloud Sync V2 path to production
+
+## Purpose
+
+The rollout plan in [Cloud Sync V2](CLOUD_SYNC_V2.md) describes phases. The
+gate documents describe conditions. Neither says, in order, what is actually
+left and which parts cannot be finished by writing code. This does.
+
+Every claim below is either measured or labelled as an estimate. Where a
+prior document is stale, this one says so rather than repeating it.
+
+## Where this actually stands
+
+Verified on 2026-08-06:
+
+| Evidence | Result |
+| --- | --- |
+| Dart suite, ARM64 host | 388 tests pass |
+| Cloud Sync suite, ARM64 and x64 hosts | 296 pass on each |
+| Cloud Sync suite in CI on Linux | passes, first time it has ever run there |
+| `cloud_sync_protector_harness`, ARM64 | 39 tests pass |
+| Kotlin unit tests, Alpha variant | 12 tests pass |
+| Windows x64 CI lane | passes |
+| Windows ARM64 CI lane | passes |
+| Release Rust libraries | correct PE ARM64, PE x64, ELF64 AArch64 |
+| `cargo test` on the main crate | blocked by host policy, not by code |
+
+What that evidence does **not** cover: no live CloudKit fetch has ever run, no
+record has been decoded from a real Apple account, and nothing has been written
+to a message table by the V2 path.
+
+## The honest shape of the remaining work
+
+Three categories, and only the first is ours to finish by typing.
+
+1. **Code and tests.** Large but tractable. The dominant item is the semantic
+   apply path, which is not a matter of polishing existing code: no Dart
+   semantic decoder implementation exists, the canonical GUID does not cross
+   the bridge for chats or messages, and the production entity adapter is a
+   set of stubs.
+2. **Live validation.** Cannot be done offline at any effort level. Needs a
+   Mac-activated Apple account with real history, a trusted device for PCS key
+   access, and soak time measured in days.
+3. **Blocked by something other than engineering.** ANGLE from pinned source
+   for the Windows desktop package, a signing keystore for release Android
+   builds, and the licensing question on redistributing libmpv/FFmpeg.
+
+## Sequence
+
+Dependency-ordered. Each step assumes the ones above it.
+
+### Stage 1 — close what CI can prove
+
+Nothing here needs a device or an Apple account.
+
+1. **Land the protocol corrections** from the prior-art review: the reaction
+   parent grammar's bare-UUID case, the integer-typed `filt`/`sqry`/`ste`
+   fields, the removal of `bp`/`bpdi` handling from the record layer where
+   those keys do not exist, and the `MessageSummaryInfo` nesting depth. Each is
+   small, offline-testable, and independently landable.
+2. **Decide the zone set.** We synchronize three Manatee zones.
+   `messageUpdateZone` and `recoverableMessageDeleteZone` also exist and are
+   plausibly where edits and recoverable deletes live. If so, reconciliation
+   built on three zones is incomplete by construction, and that is far cheaper
+   to learn now than after semantic apply is built on the assumption.
+3. **Resolve the `EMPTY_LIST` question.** The CloudKit wire format has a
+   distinct type for "present but empty" and our tri-state depends on it. Prior
+   art collapses it with absent and therefore cannot answer whether Apple emits
+   it. This is a question for the first live fetch, but the transport must be
+   able to *record* the distinction before that run, or the run cannot answer it.
+
+Exit: CI green on all lanes with the corrections landed.
+
+### Stage 2 — first live read-only run
+
+The prerequisites here are the reason this stage is not schedulable purely by us.
+
+Operator inputs, none of which the app can supply: a Mac-activated Apple
+account with Messages in iCloud enabled and real message history; iCloud
+Keychain on with the device admitted to the clique; a trusted device passcode,
+because PCS keys are only available to trusted devices and under Advanced Data
+Protection there is no server-side fallback at all; and local 2FA entry.
+
+4. **Install the sampler build** on a device whose profile is separate from any
+   real account, and verify package identity, UID, native ABI, and data
+   directory before trusting isolation.
+5. **One manual read-only pass, then an immediate replay in the same session.**
+   The replay must be in-session: the journal budget rejects pending entries
+   older than 24 hours, so a next-day replay can be legitimately blocked and
+   will look like a failure.
+6. **Read the result carefully.** A zone that returns `completed` with
+   `fetched: 0` and no failure category is a success, but an empty zone and a
+   never-populated zone are indistinguishable in the report. Confirm upload
+   from the Mac first or this stage proves only that transport works.
+
+Exit: bounded fetch, protected journaling, checkpoint behaviour, and replay
+idempotence demonstrated against a real account. This proves none of the
+message semantics.
+
+### Stage 3 — semantic apply
+
+The largest block of code work, and the first point at which the local message
+database is written by this path.
+
+7. **Widen the bridge once.** The transient DTO carries a narrow subset and no
+   canonical GUID for chats or messages. Widening it is a binding regeneration,
+   which is disruptive, so it should happen once and deliberately rather than
+   incrementally.
+8. **Implement the Dart semantic decoder.** None exists today; the interface
+   has no implementation outside test fakes.
+9. **Expand the production entity adapter** to map onto the real `Chat`,
+   `Message`, `Handle`, and `Attachment` entities. The legacy `applyFromCloud`
+   path is the field-by-field reference implementation and already handles
+   attributed bodies, edits, retractions, and reply parents.
+10. **Respect the transaction boundary.** The gateway already performs the whole
+    multi-box transition in one write transaction. The adapter cannot reuse the
+    entities' own `save()` methods, which open their own transactions, and
+    `Handle.save()` reaches into the contacts service.
+11. **Prove no duplicate rows.** `Message.guid` is unique, and the legacy
+    CloudKit path still ships. A live coexistence test is the only way to show
+    V2 does not create duplicates alongside it.
+
+Exit: deterministic identical projection across replay, restart, ARM64, and
+x64, with zero lost and zero duplicated logical message GUIDs.
+
+### Stage 4 — writes
+
+12. Durable dependency-aware outbox, explicit per-record confirmation, then
+    tombstones behind their own flag. Deletion stays disabled until its own
+    review.
+
+### Stage 5 — rollout
+
+13. Android wake-cost suite under Doze, Battery Saver, locked screen, and 24-hour
+    idle, with paired sync-off and sync-on runs. No credible battery claim can
+    be made before this, and none is made now.
+14. Staged rollout with the alarm thresholds already specified in the
+    production-readiness notes wired as rollback signals.
+
+## What is blocked on something other than code
+
+| Item | Blocker | Consequence if unresolved |
+| --- | --- | --- |
+| Windows desktop package | ANGLE built from pinned official source; the bundled media package deliberately refuses the unlicensed third-party ARM64 bundle | No runnable Windows build; the Rust bridge itself already builds for both architectures |
+| Android release signing | Keystore and `android/key.properties` absent | Debug and profile packages only |
+| Public redistribution | libmpv/FFmpeg transitive licence inventory incomplete | Cannot ship publicly regardless of engineering state |
+| `cargo test` on the main crate | Smart App Control on the development host | Run on CI or another host; do not disable the policy, it cannot be re-enabled |
+| Cross-client provenance | Per-install fingerprints cannot prove the same event reached two clients | Two clients showing the same message proves nothing without explicit cloud provenance |
+
+## Standing constraints
+
+These are invariants, not preferences.
+
+- IDS delivery and CloudKit state stay separate. A CloudKit failure must never
+  delay a send, a receive, local persistence, or the UI.
+- Never automatically reset an iCloud Keychain clique, delete a zone, clear a
+  token after an unknown failure, or discard a pending journal.
+- Never switch an account in place on an existing local profile.
+- rustpush is SSPL-licensed. Protocol facts learned from it are facts; its code,
+  derive macros, and generated protobuf definitions are expression and must not
+  be absorbed into the Apache-2.0 layer. Keep a provenance ledger entry per
+  borrowed idea.
+
+## What would change this plan
+
+Finding that `messageUpdateZone` and `recoverableMessageDeleteZone` carry edits
+and recoverable deletes would move zone coverage ahead of semantic apply,
+because building the adapter against an incomplete zone set would need redoing.
+That question is answerable in the first live run and should be asked then.
