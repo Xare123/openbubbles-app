@@ -278,14 +278,18 @@ jobs:
           # CargoKit silently skipped the Rust build on Flutter 3.44.8 until the
           # plugin-detection fix, producing a package that installs and cannot
           # work. Fail here rather than ship that again.
-          # libirondash_engine_context_native.so is listed because its absence
-          # does not fail the build at all. It produces an APK that installs
-          # cleanly and then hangs on launch, so only an explicit check catches
-          # it.
+          # This is the complete set of CargoKit-built libraries the app loads,
+          # derived from GeneratedPluginRegistrant plus the app's own bridge,
+          # not from whichever one happened to crash last. A missing entry
+          # fails no build: it yields an APK that installs cleanly and dies on
+          # launch, because the loadLibrary throw happens inside
+          # GeneratedPluginRegistrant.registerWith and takes every other plugin
+          # down with it. Only an explicit assertion catches that.
           for entry in \
             lib/arm64-v8a/libflutter.so \
             lib/arm64-v8a/librust_lib_bluebubbles.so \
-            lib/arm64-v8a/libirondash_engine_context_native.so; do
+            lib/arm64-v8a/libirondash_engine_context_native.so \
+            lib/arm64-v8a/libsuper_native_extensions.so; do
             if ! unzip -l "$apk" | grep -q "$entry"; then
               echo "beta APK is missing $entry" >&2
               unzip -l "$apk" | grep 'lib/' >&2 || true
