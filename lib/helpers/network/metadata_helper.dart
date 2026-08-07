@@ -62,10 +62,22 @@ class MetadataHelper {
       data = await MetadataHelper._manuallyGetMetadata(url);
     }
 
-    // If the URL is supposedly to an actual image, set the image to the URL manually
-    RegExp exp = RegExp(r"(.png|.jpg|.gif|.tiff|.jpeg)$");
-    if (data?.image == null && data?.title == null && data!.url != null && exp.hasMatch(data.url!)) {
-      data.image = data.url;
+    // If the URL points at an actual image, use it as the preview image.
+    //
+    // This used to test `data.url`, which is not assigned until the bottom of
+    // this method, so for a bare image link it was still null here and the
+    // check could never fire. A link straight to a .jpg has no HTML metadata
+    // to scrape, so this fallback is the only thing that gives it a preview,
+    // and it rendered as an empty card instead.
+    //
+    // The pattern is matched against the path so a query string does not
+    // defeat the anchor, and the dots are escaped: unescaped `.jpg` matches
+    // any character before "jpg".
+    final urlPath = Uri.tryParse(url)?.path ?? url;
+    final imageExtension = RegExp(r"\.(png|jpe?g|gif|tiff?|webp|heic|bmp)$", caseSensitive: false);
+    if (data?.image == null && data?.title == null && imageExtension.hasMatch(urlPath)) {
+      data ??= Metadata();
+      data.image = url;
       data.title = "Image Preview";
     }
 
