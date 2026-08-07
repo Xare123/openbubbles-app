@@ -84,6 +84,44 @@ Cloud Sync V2 must not write either. Doing so would make the two paths fight
 over the same columns, and the record map exists precisely so V2 does not need
 them.
 
+#### Divergence from upstream on conversion failure
+
+This branch changed how the legacy upload path sets `ckSyncState` when
+`Message.toCloud()` throws, and a reviewer will notice, so the reasoning is
+recorded here rather than left to a diff.
+
+Upstream marks the message synced regardless of outcome:
+
+```dart
+} catch (e, s) {
+  Logger.warn("Failure to convert to cloud", error: e, trace: s);
+  continue;
+} finally {
+  message.ckSyncState = true;
+}
+```
+
+A message that fails to convert is therefore recorded as crawled and is never
+retried. It silently never reaches CloudKit. This branch drops the `finally`,
+leaves `ckSyncState` false, releases any record id that was minted for the
+failed attempt, and counts the message as retryable.
+
+The trade is deliberate: upstream terminates but loses the message, and this
+branch keeps the message but re-attempts it on every future sync. The
+re-attempt is bounded within a pass. `CloudMessageUploadBatchResult.madeProgress`
+is false when nothing converted, and the driver in `rustpush_service.dart`
+breaks out and logs how many messages stayed queued, so a wholly unconvertible
+backlog cannot spin.
+
+What is still missing is persistence. Nothing records that a specific message
+has failed conversion across sessions, so a permanently unconvertible message
+is invisible unless someone reads the logs and correlates by hand. A pass that
+converts some messages and not others never trips the `madeProgress` break, so
+the stuck ones ride along indefinitely without being surfaced. Closing that
+properly needs a durable per-message attempt count, which is an ObjectBox schema
+change and is deliberately not being made ahead of the first live run. This
+affects the upload direction only; the read-only sampler does not exercise it.
+
 ## Chat
 
 **Server-immutable:** `guid`, `chatIdentifier`, `isGroup`, `style`.
