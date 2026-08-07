@@ -147,6 +147,14 @@ jobs:
           unzip -q "$archive" -d "$RUNNER_TEMP/gradle"
           echo "$RUNNER_TEMP/gradle/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH"
 
+      # Same vendored-CargoKit fix as the sampler job below. Without it the
+      # alpha APKs uploaded here install and hang on launch.
+      - name: Patch vendored CargoKit for the Flutter Kotlin plugin
+        run: |
+          set -euo pipefail
+          flutter pub get
+          ./tooling/android/patch_pub_cache_cargokit.sh
+
       # Slower than it used to be: CargoKit now actually applies, so this
       # compile also builds the Rust bridge and vendored OpenSSL. That cost is
       # the price of the APKs below containing a native library at all, since
@@ -236,6 +244,21 @@ jobs:
               cp rustpush/certs/legacy-fairplay/fairplay.crt rustpush/certs/fairplay/$name.crt
           done
 
+      # irondash_engine_context and super_native_extensions each vendor their
+      # own CargoKit, and neither can see Flutter 3.44.8's Kotlin plugin, so
+      # their Rust is never built. The resulting APK installs and then hangs on
+      # launch: the missing libirondash_engine_context_native.so throws
+      # UnsatisfiedLinkError from a static initializer inside
+      # GeneratedPluginRegistrant.registerWith, which aborts registration for
+      # every other plugin, so path_provider has no channel and the app dies
+      # during startup behind an error that names none of this. Those copies
+      # live in the pub cache and cannot be fixed by a committed edit.
+      - name: Patch vendored CargoKit for the Flutter Kotlin plugin
+        run: |
+          set -euo pipefail
+          flutter pub get
+          ./tooling/android/patch_pub_cache_cargokit.sh
+
       # Developer-only build for the first live read-only Cloud Sync V2 run.
       # The beta flavour is a separate applicationId, so it installs alongside
       # alpha without touching its database. Debug rather than release because
@@ -255,7 +278,14 @@ jobs:
           # CargoKit silently skipped the Rust build on Flutter 3.44.8 until the
           # plugin-detection fix, producing a package that installs and cannot
           # work. Fail here rather than ship that again.
-          for entry in lib/arm64-v8a/libflutter.so lib/arm64-v8a/librust_lib_bluebubbles.so; do
+          # libirondash_engine_context_native.so is listed because its absence
+          # does not fail the build at all. It produces an APK that installs
+          # cleanly and then hangs on launch, so only an explicit check catches
+          # it.
+          for entry in \
+            lib/arm64-v8a/libflutter.so \
+            lib/arm64-v8a/librust_lib_bluebubbles.so \
+            lib/arm64-v8a/libirondash_engine_context_native.so; do
             if ! unzip -l "$apk" | grep -q "$entry"; then
               echo "beta APK is missing $entry" >&2
               unzip -l "$apk" | grep 'lib/' >&2 || true
