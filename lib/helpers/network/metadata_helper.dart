@@ -21,22 +21,36 @@ class MetadataHelper {
 
   static final Map<String, Completer<Metadata?>> _metaCache = {};
 
-  static Future<Metadata?> fetchMetadata(Message message) async {
+  /// Fetches link preview metadata for [previewUrl], falling back to the first
+  /// URL in the message when no URL is given.
+  ///
+  /// [previewUrl] exists because a message can carry more than one link. The
+  /// cache used to be keyed by message GUID alone and the URL was always
+  /// `message.url`, which is the *first* URL in the whole message text. A
+  /// message with three links therefore fetched the first link three times and
+  /// shared a single cache entry between all three previews, so the second and
+  /// third rendered as empty boxes.
+  static Future<Metadata?> fetchMetadata(Message message, {String? previewUrl}) async {
     Metadata? data;
+
+    // Get the URL
+    String url = previewUrl ?? message.url!;
+    if (!url.startsWith("http")) {
+      url = "https://$url";
+    }
+
+    // Key on the message and the URL together. Keying on the message alone
+    // made every link in a multi-link message collide.
+    final cacheKey = "${message.guid}|$url";
+
     // If we have a cached item for this already, return that future
-    if (_metaCache.containsKey(message.guid)) {
-      return _metaCache[message.guid]!.future;
+    if (_metaCache.containsKey(cacheKey)) {
+      return _metaCache[cacheKey]!.future;
     }
 
     // Create a new completer for this request
     Completer<Metadata?> completer = Completer();
-    _metaCache[message.guid!] = completer;
-
-    // Get the URL
-    String url = message.url!;
-    if (!url.startsWith("http")) {
-      url = "https://$url";
-    }
+    _metaCache[cacheKey] = completer;
     try {
       data = await MetadataFetch.extract(url);
     } catch (ex, stack) {
@@ -75,9 +89,7 @@ class MetadataHelper {
 
     // Delete from the cache after 15 seconds (arbitrary)
     Future.delayed(const Duration(seconds: 15), () {
-      if (_metaCache.containsKey(message.guid)) {
-        _metaCache.remove(message.guid);
-      }
+      _metaCache.remove(cacheKey);
     });
 
     // Tell everyone that it's complete
