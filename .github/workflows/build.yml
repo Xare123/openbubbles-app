@@ -153,7 +153,7 @@ jobs:
         run: |
           set -euo pipefail
           flutter pub get
-          ./tooling/android/patch_pub_cache_cargokit.sh
+          bash ./tooling/android/patch_pub_cache_cargokit.sh
 
       # Slower than it used to be: CargoKit now actually applies, so this
       # compile also builds the Rust bridge and vendored OpenSSL. That cost is
@@ -257,7 +257,7 @@ jobs:
         run: |
           set -euo pipefail
           flutter pub get
-          ./tooling/android/patch_pub_cache_cargokit.sh
+          bash ./tooling/android/patch_pub_cache_cargokit.sh
 
       # Developer-only build for the first live read-only Cloud Sync V2 run.
       # The beta flavour is a separate applicationId, so it installs alongside
