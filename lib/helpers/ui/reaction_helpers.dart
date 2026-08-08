@@ -95,14 +95,19 @@ List<Message> getUniqueReactionMessages(List<Message> messages) {
   messages.sort(Message.sort);
   // Iterate over the messages and insert the latest reaction for each user
   for (Message msg in messages) {
+    final reactionType = msg.associatedMessageType;
+    // Old databases can contain rows written before unknown CloudKit reaction
+    // types were rejected. They are ordinary messages, not renderable
+    // reactions, and must not crash this view.
+    if (reactionType == null) continue;
     int cache = msg.isFromMe! ? 0 : msg.handleId ?? 0;
     if (!handleCache.contains(cache) && !kIsWeb) {
       handleCache.add(cache);
       // Only add the reaction if it's not a "negative"
-      if (!msg.associatedMessageType!.startsWith("-")) {
+      if (!reactionType.startsWith("-")) {
         output.add(msg);
       }
-    } else if (kIsWeb && !msg.associatedMessageType!.startsWith("-")) {
+    } else if (kIsWeb && !reactionType.startsWith("-")) {
       output.add(msg);
     }
   }

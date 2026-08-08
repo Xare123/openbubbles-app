@@ -114,8 +114,9 @@ done
 echo "cargokit pub-cache patch: ${patched} patched, ${skipped} already current, ${scanned} scanned"
 
 if [ "$scanned" -eq 0 ]; then
-    echo "warning: no vendored CargoKit copies were found." >&2
+    echo "error: no vendored CargoKit copies were found." >&2
     echo "If irondash_engine_context or super_native_extensions are still" >&2
     echo "dependencies, the Android build will produce an APK that hangs on" >&2
     echo "startup. Check that pub get has run." >&2
+    exit 1
 fi

@@ -219,6 +219,15 @@ dependencies:
 
   crypto: any
 dependency_overrides:
+  # 25.9.23 allocates but never installs a larger FlexBuffers buffer, causing
+  # ObjectBox writes with more than 2048 bytes of metadata to throw RangeError.
+  # Pin the upstream fix until it is published on pub.dev.
+  # https://github.com/google/flatbuffers/commit/e7c6874192a643c50b10cb90f81c0ed84fd7f53a
+  flat_buffers:
+    git:
+      url: https://github.com/google/flatbuffers.git
+      ref: e7c6874192a643c50b10cb90f81c0ed84fd7f53a
+      path: dart
   # Architecture-aware, provenance-checked Windows libmpv/ANGLE bundle.
   # Keep the declared dependency above for upstream compatibility; this local
   # fork preserves x64 and adds fail-closed ARM64 native selection.

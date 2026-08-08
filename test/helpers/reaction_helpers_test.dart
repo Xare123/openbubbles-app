@@ -1,4 +1,5 @@
 import 'package:bluebubbles/helpers/ui/reaction_helpers.dart';
+import 'package:bluebubbles/database/io/message.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -52,6 +53,30 @@ void main() {
           reason: 'associatedMessageType $type threw',
         );
       }
+    });
+  });
+
+  group('getUniqueReactionMessages', () {
+    test('ignores legacy rows with an unknown reaction type', () {
+      final messages = <Message>[
+        Message(
+          guid: 'unknown-reaction',
+          dateCreated: DateTime.utc(2026),
+          isFromMe: true,
+        ),
+        Message(
+          guid: 'known-reaction',
+          dateCreated: DateTime.utc(2026, 1, 2),
+          isFromMe: false,
+          handleId: 1,
+          associatedMessageType: ReactionTypes.LIKE,
+        ),
+      ];
+
+      expect(
+        getUniqueReactionMessages(messages).map((message) => message.guid),
+        <String?>['known-reaction'],
+      );
     });
   });
 }

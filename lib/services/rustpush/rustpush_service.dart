@@ -31,6 +31,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.da
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector_health.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_report.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_report_file.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/legacy_cloudkit_page_guard.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_preflight.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:bluebubbles/utils/attachment_guid_utils.dart';
@@ -74,6 +75,13 @@ RustPushService pushService = Get.isRegistered<RustPushService>()
 const rpApiRoot = "https://hw.openbubbles.app/code";
 const registrationRelayHost = "https://registration-relay.beeper.com";
 const registrationRelayAccessToken = "5c175851953ecaf5209185d897591badb6c3e712";
+
+/// The legacy sync path predates the lossless V2 coordinator. Builds are
+/// restore-only unless mutation is explicitly enabled at compile time.
+const bool _legacyCloudKitMutationsEnabled = bool.fromEnvironment(
+  'OPENBUBBLES_LEGACY_CLOUDKIT_MUTATIONS',
+  defaultValue: false,
+);
 
 const clientId =
     '1041242226917-ik21n86fp43e82iu1e5soh6bu6gvuste.apps.googleusercontent.com';
@@ -3171,7 +3179,8 @@ class RustPushService extends GetxService {
       return;
     }
 
-    if (ss.prefs.getStringList("messageDeletionIds-1")?.isNotEmpty ?? false) {
+    if (_legacyCloudKitMutationsEnabled &&
+        (ss.prefs.getStringList("messageDeletionIds-1")?.isNotEmpty ?? false)) {
       await api.deleteMessages(
           cloudMessagesClient:
               pushService.state!.icloudServices!.cloudMessagesClient!,
@@ -3179,8 +3188,9 @@ class RustPushService extends GetxService {
       ss.prefs.remove("messageDeletionIds-1");
     }
 
-    if (ss.prefs.getStringList("attachmentDeletionIds-1")?.isNotEmpty ??
-        false) {
+    if (_legacyCloudKitMutationsEnabled &&
+        (ss.prefs.getStringList("attachmentDeletionIds-1")?.isNotEmpty ??
+            false)) {
       await api.deleteAttachments(
           cloudMessagesClient:
               pushService.state!.icloudServices!.cloudMessagesClient!,
@@ -3188,7 +3198,8 @@ class RustPushService extends GetxService {
       ss.prefs.remove("attachmentDeletionIds-1");
     }
 
-    if (ss.prefs.getStringList("chatDeletionIds-1")?.isNotEmpty ?? false) {
+    if (_legacyCloudKitMutationsEnabled &&
+        (ss.prefs.getStringList("chatDeletionIds-1")?.isNotEmpty ?? false)) {
       await api.deleteChats(
           cloudMessagesClient:
               pushService.state!.icloudServices!.cloudMessagesClient!,
@@ -3202,7 +3213,10 @@ class RustPushService extends GetxService {
 
     List<(String, String)> downloadPfPics = [];
     var currentState = 0;
+    var chatPage = 0;
     while (currentState != 3) {
+      chatPage++;
+      final previousToken = ss.prefs.getString("chatSyncToken");
       var (token, items, state) = await api.syncChats(
           cloudMessagesClient:
               pushService.state!.icloudServices!.cloudMessagesClient!,
@@ -3210,6 +3224,7 @@ class RustPushService extends GetxService {
               ? base64Decode(ss.prefs.getString("chatSyncToken")!)
               : null);
       currentState = state;
+      var pageHadItemFailure = false;
       List<String> dupDeleteChats = [];
       for (var item in items.entries) {
         try {
@@ -3217,11 +3232,14 @@ class RustPushService extends GetxService {
             final query =
                 Database.chats.query(Chat_.ckRecordId.equals(item.key)).build();
             final result = query.findFirst();
-            if (result != null) {
+            if (_legacyCloudKitMutationsEnabled && result != null) {
               syncStopDelete = true;
-              chats.removeChat(result);
-              Chat.deleteChat(result);
-              syncStopDelete = false;
+              try {
+                chats.removeChat(result);
+                Chat.deleteChat(result);
+              } finally {
+                syncStopDelete = false;
+              }
             }
             var index = downloadPfPics.indexWhere((i) => i.$2 == item.key);
             if (index != -1) {
@@ -3246,11 +3264,14 @@ class RustPushService extends GetxService {
             downloadPfPics.add((chat.customAvatarPath!, item.key));
           }
         } catch (e, s) {
+          pageHadItemFailure = true;
           Logger.error("Failed to sync item ${item.key}", error: e, trace: s);
         }
       }
 
-      if (dupDeleteChats.isNotEmpty) {
+      if (_legacyCloudKitMutationsEnabled &&
+          !pageHadItemFailure &&
+          dupDeleteChats.isNotEmpty) {
         Logger.info("Deleting ${dupDeleteChats.length} duplicate chats");
         try {
           await api.deleteChats(
@@ -3275,7 +3296,17 @@ class RustPushService extends GetxService {
         }
       }
 
-      ss.prefs.setString("chatSyncToken", base64Encode(token));
+      ss.prefs.setString(
+        "chatSyncToken",
+        LegacyCloudKitPageGuard.validate(
+          zone: "chat",
+          previousToken: previousToken,
+          nextToken: token,
+          state: currentState,
+          hadItemFailure: pageHadItemFailure,
+          page: chatPage,
+        ),
+      );
     }
 
     if (downloadPfPics.isNotEmpty) {
@@ -3291,7 +3322,10 @@ class RustPushService extends GetxService {
     var (cutoffTime, cutoffDateTime) = getCutoffTime();
     var attCount = 0;
     currentState = 0;
+    var attachmentPage = 0;
     while (currentState != 3) {
+      attachmentPage++;
+      final previousToken = ss.prefs.getString("attachmentSyncToken");
       var (token3, items3, state3) = await api.syncAttachments(
           cloudMessagesClient:
               pushService.state!.icloudServices!.cloudMessagesClient!,
@@ -3299,6 +3333,7 @@ class RustPushService extends GetxService {
               ? base64Decode(ss.prefs.getString("attachmentSyncToken")!)
               : null);
       currentState = state3;
+      var pageHadItemFailure = false;
       List<String> dupDeleteAttachments = [];
       for (var item in items3.entries) {
         try {
@@ -3307,9 +3342,14 @@ class RustPushService extends GetxService {
                 .query(Attachment_.ckRecordId.equals(item.key))
                 .build();
             final result = query.findFirst();
-            syncStopDelete = true;
-            if (result != null) Attachment.delete(result.guid!);
-            syncStopDelete = false;
+            if (_legacyCloudKitMutationsEnabled && result != null) {
+              syncStopDelete = true;
+              try {
+                Attachment.delete(result.guid!);
+              } finally {
+                syncStopDelete = false;
+              }
+            }
             continue;
           }
           if (dupDeleteAttachments.contains(item.key)) continue;
@@ -3336,12 +3376,15 @@ class RustPushService extends GetxService {
           var attachment = Attachment();
           attachment.applyFromCloud(item.value!, item.key);
         } catch (e, s) {
+          pageHadItemFailure = true;
           Logger.error("Failed to sync attachment ${item.key}",
               error: e, trace: s);
         }
       }
 
-      if (dupDeleteAttachments.isNotEmpty) {
+      if (_legacyCloudKitMutationsEnabled &&
+          !pageHadItemFailure &&
+          dupDeleteAttachments.isNotEmpty) {
         Logger.info(
             "Deleting ${dupDeleteAttachments.length} duplicate attachments");
         try {
@@ -3370,7 +3413,17 @@ class RustPushService extends GetxService {
       attCount += items3.length;
       isSyncing.value = "Downloaded $attCount attachments";
 
-      ss.prefs.setString("attachmentSyncToken", base64Encode(token3));
+      ss.prefs.setString(
+        "attachmentSyncToken",
+        LegacyCloudKitPageGuard.validate(
+          zone: "attachment",
+          previousToken: previousToken,
+          nextToken: token3,
+          state: currentState,
+          hadItemFailure: pageHadItemFailure,
+          page: attachmentPage,
+        ),
+      );
     }
 
     int localUnchanged = 0;
@@ -3383,7 +3436,10 @@ class RustPushService extends GetxService {
     isSyncing.value = "Downloading Messages...";
 
     currentState = 0;
+    var messagePage = 0;
     while (currentState != 3) {
+      messagePage++;
+      final previousToken = ss.prefs.getString("messageSyncToken");
       var (token2, items2, state2) = await api.syncMessages(
           cloudMessagesClient:
               pushService.state!.icloudServices!.cloudMessagesClient!,
@@ -3391,6 +3447,7 @@ class RustPushService extends GetxService {
               ? base64Decode(ss.prefs.getString("messageSyncToken")!)
               : null);
       currentState = state2;
+      var pageHadItemFailure = false;
 
       List<String> dupDeleteMessages = [];
       Logger.info(
@@ -3405,9 +3462,14 @@ class RustPushService extends GetxService {
                 .query(Message_.ckRecordId.equals(item.key))
                 .build();
             final result = query.findFirst();
-            syncStopDelete = true;
-            if (result != null) Message.delete(result.guid!);
-            syncStopDelete = false;
+            if (_legacyCloudKitMutationsEnabled && result != null) {
+              syncStopDelete = true;
+              try {
+                Message.delete(result.guid!);
+              } finally {
+                syncStopDelete = false;
+              }
+            }
             continue;
           }
           if (dupDeleteMessages.contains(item.key)) continue;
@@ -3438,6 +3500,7 @@ class RustPushService extends GetxService {
           message.applyFromCloud(item.value!, item.key);
           remoteNew++;
         } catch (e, s) {
+          pageHadItemFailure = true;
           Logger.error("Failed to sync cloud message", error: e, trace: s);
         } finally {
           processedInBatch++;
@@ -3450,7 +3513,9 @@ class RustPushService extends GetxService {
         }
       }
 
-      if (dupDeleteMessages.isNotEmpty) {
+      if (_legacyCloudKitMutationsEnabled &&
+          !pageHadItemFailure &&
+          dupDeleteMessages.isNotEmpty) {
         Logger.info("Deleting ${dupDeleteMessages.length} duplicate messages");
         try {
           await api.deleteMessages(
@@ -3477,7 +3542,25 @@ class RustPushService extends GetxService {
 
       isSyncing.value = "Downloaded $totalMessages messages";
 
-      ss.prefs.setString("messageSyncToken", base64Encode(token2));
+      ss.prefs.setString(
+        "messageSyncToken",
+        LegacyCloudKitPageGuard.validate(
+          zone: "message",
+          previousToken: previousToken,
+          nextToken: token2,
+          state: currentState,
+          hadItemFailure: pageHadItemFailure,
+          page: messagePage,
+        ),
+      );
+    }
+
+    if (!_legacyCloudKitMutationsEnabled) {
+      ss.prefs.setInt("lastSynced", DateTime.now().millisecondsSinceEpoch);
+      Logger.info(
+        "Legacy CloudKit restore completed with uploads and deletes disabled",
+      );
+      return;
     }
 
     isSyncing.value = "Uploading chats...";

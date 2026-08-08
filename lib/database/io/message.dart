@@ -1179,13 +1179,16 @@ class Message {
     expressiveSendStyleId = proto1.effect;
     dateRead = proto1.dateRead == null || proto1.dateRead == 0 ? null : RustPushBBUtils.fromNsSinceAppleEpoch(proto1.dateRead!);
     dateDelivered = proto1.dateDelivered == null || proto1.dateDelivered == 0 ? null : RustPushBBUtils.fromNsSinceAppleEpoch(proto1.dateDelivered!);
+    var hasKnownAssociation = false;
     if (proto1.associatedMessageType != null) {
       if (proto1.associatedMessageType == 2) {
         associatedMessageType = "sticker";
+        hasKnownAssociation = true;
       } else {
         // An unknown type stays unset so the message still syncs without a
         // reaction row instead of throwing out of the whole download.
         associatedMessageType = ReactionTypes.fromAssociatedMessageType(proto1.associatedMessageType!);
+        hasKnownAssociation = associatedMessageType != null;
       }
     }
     // Apple sends the parent as `p:<part>/<guid>`, or as a bare GUID when the
@@ -1195,7 +1198,7 @@ class Message {
     // derived from the reaction's own attributed body, which the canonical
     // mapping explicitly forbids: the associated range is validation evidence,
     // not the source of the part.
-    final parentWire = proto1.associatedMessageGuid;
+    final parentWire = hasKnownAssociation ? proto1.associatedMessageGuid : null;
     if (parentWire == null) {
       associatedMessageGuid = null;
       associatedMessagePart = null;
