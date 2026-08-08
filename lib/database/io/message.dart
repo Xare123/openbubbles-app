@@ -63,6 +63,65 @@ const IS_PENDING_SATELLITE_SEND = 1 << 41;
 const NEEDS_RELAY               = 1 << 42;
 const SENT_OR_RECEIVED_OFF_GRID = 1 << 43;
 
+enum CloudAssociationImportFailure {
+  unknownType,
+  missingParent,
+  malformedParent,
+}
+
+final class CloudAssociationImportException implements Exception {
+  const CloudAssociationImportException(this.failure);
+
+  final CloudAssociationImportFailure failure;
+
+  @override
+  String toString() => 'CloudAssociationImportException($failure)';
+}
+
+final class CloudAssociationImport {
+  const CloudAssociationImport({
+    required this.type,
+    required this.parent,
+  });
+
+  final String type;
+  final CloudAssociatedMessageParentReference parent;
+}
+
+CloudAssociationImport? parseCloudAssociation({
+  required int? associatedMessageType,
+  required String? associatedMessageGuid,
+}) {
+  if (associatedMessageType == null) return null;
+
+  final type = associatedMessageType == 2
+      ? 'sticker'
+      : ReactionTypes.fromAssociatedMessageType(associatedMessageType);
+  if (type == null) {
+    throw const CloudAssociationImportException(
+      CloudAssociationImportFailure.unknownType,
+    );
+  }
+  if (associatedMessageGuid == null) {
+    throw const CloudAssociationImportException(
+      CloudAssociationImportFailure.missingParent,
+    );
+  }
+
+  try {
+    return CloudAssociationImport(
+      type: type,
+      parent: CloudAssociatedMessageParentReference.parse(
+        associatedMessageGuid,
+      ),
+    );
+  } on CloudAssociatedMessageParentReferenceFormatException {
+    throw const CloudAssociationImportException(
+      CloudAssociationImportFailure.malformedParent,
+    );
+  }
+}
+
 /// Async method to fetch attachments
 class GetMessageAttachments extends AsyncTask<List<dynamic>, Map<String, List<Attachment?>>> {
   final List<dynamic> stuff;
@@ -759,7 +818,12 @@ class Message {
 
   /// Save a single message - prefer [bulkSave] for multiple messages rather
   /// than iterating through them
-  Message save({Chat? chat, bool updateIsBookmarked = false, bool updateSendingServiceId = false}) {
+  Message save({
+    Chat? chat,
+    bool updateIsBookmarked = false,
+    bool updateSendingServiceId = false,
+    bool throwOnUniqueViolation = false,
+  }) {
     if (kIsWeb || temp) return this;
     Database.runInTransaction(TxMode.write, () {
       Message? existing = Message.findOne(guid: guid);
@@ -811,6 +875,7 @@ class Message {
         // already logs this exact constraint below; these two sites did not.
         Logger.error('Failed to save message! This is likely due to a unique constraint being violated.',
             error: ex, trace: stack);
+        if (throwOnUniqueViolation) rethrow;
       }
     });
     return this;
@@ -1119,7 +1184,7 @@ class Message {
     );
   }
 
-  void applyFromCloud(api.CloudMessage c, String cloudkitId) {
+  bool applyFromCloud(api.CloudMessage c, String cloudkitId) {
     Chat? chat;
     if (c.chatId.contains(";")) {
       final query = Database.chats.query(Chat_.chatIdentifier.equals(c.chatId.split(";")[2])).build();
@@ -1133,7 +1198,9 @@ class Message {
       chat ??= Chat.findByRustGuid(c.chatId);
     }
 
-    if (chat?.isRpSms ?? true) return;
+    if (chat == null || chat.isRpSms) {
+      throw StateError('Cloud message has no eligible local iMessage chat');
+    }
 
     ckRecordId = cloudkitId;
     ckSyncState = true;
@@ -1179,18 +1246,11 @@ class Message {
     expressiveSendStyleId = proto1.effect;
     dateRead = proto1.dateRead == null || proto1.dateRead == 0 ? null : RustPushBBUtils.fromNsSinceAppleEpoch(proto1.dateRead!);
     dateDelivered = proto1.dateDelivered == null || proto1.dateDelivered == 0 ? null : RustPushBBUtils.fromNsSinceAppleEpoch(proto1.dateDelivered!);
-    var hasKnownAssociation = false;
-    if (proto1.associatedMessageType != null) {
-      if (proto1.associatedMessageType == 2) {
-        associatedMessageType = "sticker";
-        hasKnownAssociation = true;
-      } else {
-        // An unknown type stays unset so the message still syncs without a
-        // reaction row instead of throwing out of the whole download.
-        associatedMessageType = ReactionTypes.fromAssociatedMessageType(proto1.associatedMessageType!);
-        hasKnownAssociation = associatedMessageType != null;
-      }
-    }
+    final association = parseCloudAssociation(
+      associatedMessageType: proto1.associatedMessageType,
+      associatedMessageGuid: proto1.associatedMessageGuid,
+    );
+    associatedMessageType = association?.type;
     // Apple sends the parent as `p:<part>/<guid>`, or as a bare GUID when the
     // reaction targets no particular part. This previously stored that value
     // verbatim, so a wrapped parent never matched Message_.guid and every
@@ -1198,22 +1258,8 @@ class Message {
     // derived from the reaction's own attributed body, which the canonical
     // mapping explicitly forbids: the associated range is validation evidence,
     // not the source of the part.
-    final parentWire = hasKnownAssociation ? proto1.associatedMessageGuid : null;
-    if (parentWire == null) {
-      associatedMessageGuid = null;
-      associatedMessagePart = null;
-    } else {
-      try {
-        final parent = CloudAssociatedMessageParentReference.parse(parentWire);
-        associatedMessageGuid = parent.localMessageGuid;
-        associatedMessagePart = parent.part;
-      } on CloudAssociatedMessageParentReferenceFormatException {
-        // Keep the message. An unparseable parent leaves the reaction
-        // unassociated rather than aborting the whole download.
-        associatedMessageGuid = null;
-        associatedMessagePart = null;
-      }
-    }
+    associatedMessageGuid = association?.parent.localMessageGuid;
+    associatedMessagePart = association?.parent.part;
     guid = c.guid;
     var bits = c.flags.bits();
     isFromMe = (bits & IS_FROM_ME) != 0;
@@ -1232,7 +1278,8 @@ class Message {
       associatedMessageEmoji = proto4.associatedMessageEmoji;
     }
     
-    save(chat: chat);
+    save(chat: chat, throwOnUniqueViolation: true);
+    return true;
   }
 
   /// Fetch reactions

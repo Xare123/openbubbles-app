@@ -7,6 +7,7 @@ import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/utils/attachment_guid_utils.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:mime_type/mime_type.dart';
@@ -55,7 +56,7 @@ class Attachment {
   set dbMetadata(String? json) => metadata = json == null
       ? null : jsonDecode(json) as Map<String, dynamic>;
   
-  void applyFromCloud(api.CloudAttachment c, String ckRecordId) {
+  bool applyFromCloud(api.CloudAttachment c, String ckRecordId) {
     this.ckRecordId = ckRecordId;
     var decoded = api.decodeAttachmentmeta(wrapped: c.cm);
     uti = decoded.uti;
@@ -70,11 +71,12 @@ class Attachment {
     if (owned != null) {
       var message = Message.findOne(guid: owned.messageGuid);
       guid = "${owned.messageGuid}_${owned.part}";
-      save(message);
+      save(message, throwOnUniqueViolation: true);
     } else {
       guid = decoded.guid;
-      save(null);
+      save(null, throwOnUniqueViolation: true);
     }
+    return true;
   }
 
   String unconvertAttachmentGuid(String guid) =>
@@ -177,7 +179,10 @@ class Attachment {
   /// Save a new attachment or update an existing attachment on disk
   /// [message] is used to create a link between the attachment and message,
   /// when provided
-  Attachment save(Message? message) {
+  Attachment save(
+    Message? message, {
+    bool throwOnUniqueViolation = false,
+  }) {
     if (kIsWeb) return this;
     Database.runInTransaction(TxMode.write, () {
       /// Find an existing attachment and update the attachment ID if applicable
@@ -193,7 +198,14 @@ class Attachment {
         }
 
         id = Database.attachments.put(this);
-      } on UniqueViolationException catch (_) {}
+      } on UniqueViolationException catch (ex, stack) {
+        Logger.error(
+          'Failed to save attachment due to a unique constraint violation',
+          error: ex,
+          trace: stack,
+        );
+        if (throwOnUniqueViolation) rethrow;
+      }
     });
     return this;
   }

@@ -549,6 +549,7 @@ class ConversationViewController extends StatefulController
   }
 
   void close() {
+    if (_isClosed) return;
     eventDispatcher.emit("update-highlight", null);
     cm.setAllInactiveSync();
     Get.delete<ConversationViewController>(tag: tag);

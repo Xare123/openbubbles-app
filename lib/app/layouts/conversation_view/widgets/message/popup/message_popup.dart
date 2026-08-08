@@ -1620,7 +1620,8 @@ class _MessagePopupState extends OptimizedState<MessagePopup>
           action: DetailsMenuAction.ReportIssue,
         ),
       if (message.attachments.isNotEmpty &&
-          ss.settings.cloudSyncingEnabled.value)
+          ss.settings.cloudSyncingEnabled.value &&
+          legacyCloudKitMutationsEnabled)
         DetailsMenuActionWidget(
           onTap: uploadAttachment,
           action: DetailsMenuAction.UploadAttachment,

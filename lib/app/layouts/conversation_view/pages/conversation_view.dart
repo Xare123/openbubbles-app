@@ -62,6 +62,10 @@ class ConversationViewState extends OptimizedState<ConversationView> {
   @override
   void dispose() {
     controller.saveReplyToMessageState(); // P8bda
+    // Keep the controller alive until the route and its scrollable children
+    // have actually been disposed. Deleting it from a back-button callback
+    // leaves the mounted transcript using a disposed scroll controller.
+    controller.close();
     super.dispose();
   }
 
@@ -114,9 +118,9 @@ class ConversationViewState extends OptimizedState<ConversationView> {
             }
             if (ls.isBubble) {
               SystemNavigator.pop();
+              controller.close();
+              return;
             }
-            controller.close();
-            if (ls.isBubble) return;
             return Navigator.of(context).pop();
           },
           child: SafeArea(

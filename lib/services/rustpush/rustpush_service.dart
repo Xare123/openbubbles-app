@@ -83,6 +83,9 @@ const bool _legacyCloudKitMutationsEnabled = bool.fromEnvironment(
   defaultValue: false,
 );
 
+bool get legacyCloudKitMutationsEnabled =>
+    _legacyCloudKitMutationsEnabled;
+
 const clientId =
     '1041242226917-ik21n86fp43e82iu1e5soh6bu6gvuste.apps.googleusercontent.com';
 const clientSecret = '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';
@@ -1432,7 +1435,7 @@ class RustPushBackend implements BackendService {
             api.UnsendMessage(tuuid: msgObj.guid!, editPart: part.part)));
     await sendMsg(msg);
 
-    if (msgObj.ckRecordId != null) {
+    if (_legacyCloudKitMutationsEnabled && msgObj.ckRecordId != null) {
       await pushService._runLegacyCloudKitOperation(
         () => api.saveMessages(
           cloudMessagesClient:
@@ -2937,15 +2940,23 @@ class RustPushService extends GetxService {
     List<(String, String)> uploadAttachments,
     Map<String, Attachment> idToAttachment,
     bool noAttachments,
-  ) =>
-      _runLegacyCloudKitOperation(
-        () => _uploadMessagesUnlocked(
-          messages,
-          uploadAttachments,
-          idToAttachment,
-          noAttachments,
-        ),
-      );
+  ) {
+    if (!_legacyCloudKitMutationsEnabled) {
+      Logger.warn('Legacy CloudKit upload blocked by restore-only build');
+      return Future.value(CloudMessageUploadBatchResult(
+        confirmedCount: 0,
+        retryableCount: messages.length,
+      ));
+    }
+    return _runLegacyCloudKitOperation(
+      () => _uploadMessagesUnlocked(
+        messages,
+        uploadAttachments,
+        idToAttachment,
+        noAttachments,
+      ),
+    );
+  }
 
   Future<CloudMessageUploadBatchResult> _uploadMessagesUnlocked(
     List<Message> messages,
@@ -3128,6 +3139,13 @@ class RustPushService extends GetxService {
   }
 
   Future<void> uploadAttachment(Message message) async {
+    if (!_legacyCloudKitMutationsEnabled) {
+      showSnackbar(
+        'Upload unavailable',
+        'Legacy CloudKit uploads are disabled in this safety build.',
+      );
+      return;
+    }
     message = message.guid == null
         ? message
         : Message.findOne(guid: message.guid!) ?? message;
@@ -3369,12 +3387,14 @@ class RustPushService extends GetxService {
               dupDeleteAttachments.add(existing.ckRecordId!);
             }
             existing.ckRecordId = item.key;
-            existing.save(null);
+            existing.save(null, throwOnUniqueViolation: true);
             continue;
           } // don't overwrite existing
           Logger.info("Syncing new attachment");
           var attachment = Attachment();
-          attachment.applyFromCloud(item.value!, item.key);
+          if (!attachment.applyFromCloud(item.value!, item.key)) {
+            throw StateError('Cloud attachment was not persisted');
+          }
         } catch (e, s) {
           pageHadItemFailure = true;
           Logger.error("Failed to sync attachment ${item.key}",
@@ -3492,12 +3512,14 @@ class RustPushService extends GetxService {
             }
             existing.ckRecordId = item.key;
             existing.ckSyncState = true;
-            existing.save();
+            existing.save(throwOnUniqueViolation: true);
             remoteSaved++;
             continue;
           } // don't overwrite existing
           var message = Message();
-          message.applyFromCloud(item.value!, item.key);
+          if (!message.applyFromCloud(item.value!, item.key)) {
+            throw StateError('Cloud message was not persisted');
+          }
           remoteNew++;
         } catch (e, s) {
           pageHadItemFailure = true;

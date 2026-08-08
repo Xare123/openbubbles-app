@@ -101,8 +101,8 @@ else
 fi
 
 if [ "${#roots[@]}" -eq 0 ]; then
-    echo "no pub cache found; nothing to patch" >&2
-    exit 0
+    echo "error: no pub cache found; CargoKit patch cannot be verified" >&2
+    exit 1
 fi
 
 for root in "${roots[@]}"; do
