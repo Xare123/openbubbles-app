@@ -4668,10 +4668,19 @@ class RustPushService extends GetxService {
           approvedGroup = incomingRingingCallGuid;
           incomingRingingCallGuid = null;
         }
-        await api.answerFtRequest(
-            facetime: pushService.state!.ftClient,
-            request: facetime.field0,
-            approvedGroup: approvedGroup);
+        Logger.info(
+            "FaceTime web admission request: usage=${facetime.field0.usage ?? 'unknown'}, approvedGroupPresent=${approvedGroup != null}");
+        try {
+          await api.answerFtRequest(
+              facetime: pushService.state!.ftClient,
+              request: facetime.field0,
+              approvedGroup: approvedGroup);
+          Logger.info("FaceTime web admission response sent");
+        } catch (error, trace) {
+          Logger.error("FaceTime web admission response failed",
+              error: error, trace: trace);
+          rethrow;
+        }
       }
       return;
     }

@@ -31,6 +31,8 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
     }
 
     val webView = WebView(context)
+    private val callbackHandler = Handler(Looper.getMainLooper())
+    private var mirrorReadyRunnable: Runnable? = null
 
     var mirrorReady = false
     var mirrorReadyCall: (() -> Unit)? = null
@@ -41,6 +43,13 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
 
     val deferredRequests = arrayListOf<PermissionRequest>()
     var deferredRequestsUpdated: () -> Unit = {}
+
+    fun cancelCallbacks() {
+        mirrorReadyRunnable?.let(callbackHandler::removeCallbacks)
+        mirrorReadyRunnable = null
+        mirrorReadyCall = null
+        deferredRequestsUpdated = {}
+    }
 
     private fun safeResourceLabel(requestUrl: String?): String {
         if (requestUrl == null) return "unknown"
@@ -184,17 +193,24 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
         webView.addJavascriptInterface(object {
             @JavascriptInterface
             fun leave() {
-                endTask()
+                callbackHandler.post { endTask() }
             }
             @JavascriptInterface
             fun mirrored() {
+                if (mirrorReady || mirrorReadyRunnable != null) {
+                    Log.i(diagnosticTag, "duplicate Native.mirrored ignored")
+                    return
+                }
                 // takes a second for the mirror to be ready
-                Handler(Looper.getMainLooper()).postDelayed({
+                val runnable = Runnable {
+                    mirrorReadyRunnable = null
                     mirrorReady = true
                     mirrorReadyCall?.let {
                         it()
                     }
-                }, 250)
+                }
+                mirrorReadyRunnable = runnable
+                callbackHandler.postDelayed(runnable, 250)
                 Log.i(diagnosticTag, "Native.mirrored received; mirrorReady scheduled")
             }
         }, "Native")
