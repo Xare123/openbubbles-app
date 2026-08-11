@@ -43,6 +43,12 @@ import com.google.android.material.math.MathUtils
 import kotlin.math.roundToInt
 
 class FaceTimeActivity : Activity() {
+    companion object {
+        private const val diagnosticTag = "FaceTimeDiag"
+        var activeFaceTimeActivity: FaceTimeActivity? = null
+        var cachedWebview: CachedWebview? = null
+    }
+
     private lateinit var binding: ActivityFaceTimeBinding
 
     private var permissionRequests = ArrayList<PermissionRequest>()
@@ -60,9 +66,20 @@ class FaceTimeActivity : Activity() {
     private lateinit var webView: WebView
     private var initialMediaVolume: Int? = null;
 
-    companion object {
-        var activeFaceTimeActivity: FaceTimeActivity? = null
-        var cachedWebview: CachedWebview? = null
+    private fun logJoinButtonState(reason: String) {
+        webView.evaluateJavascript(
+            """(() => { const button = document.getElementById("callcontrols-join-button-session-banner"); return button ? "present:" + (!button.disabled) + ":" + (button.offsetParent !== null) : "missing"; })()"""
+        ) { result ->
+            Log.i(diagnosticTag, "join button state reason=$reason result=$result mirrorReady=$mirrorReady answered=$answered")
+        }
+    }
+
+    private fun clickJoinButton(reason: String) {
+        webView.evaluateJavascript(
+            """(() => { const button = document.getElementById("callcontrols-join-button-session-banner"); if (!button) return "missing"; button.click(); return "clicked"; })()"""
+        ) { result ->
+            Log.i(diagnosticTag, "join button click reason=$reason result=$result mirrorReady=$mirrorReady answered=$answered")
+        }
     }
 
     fun endCall() {
@@ -165,6 +182,8 @@ class FaceTimeActivity : Activity() {
     private fun answerCall() {
         answered = true
 
+        Log.i(diagnosticTag, "answer requested mirrorReady=$mirrorReady deferredPermissions=${cached.deferredRequests.size}")
+
         handlePermissionRequests()
 
         if (notificationId != 0) {
@@ -177,7 +196,8 @@ class FaceTimeActivity : Activity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 window.setBackgroundBlurRadius(0)
             }
-            webView.loadUrl("javascript:document.getElementById(\"callcontrols-join-button-session-banner\").click()")
+            logJoinButtonState("answer-ready")
+            clickJoinButton("answer-ready")
         } else {
             connecting()
         }
@@ -281,6 +301,10 @@ class FaceTimeActivity : Activity() {
 
     fun handlePermissionRequest(request: PermissionRequest) {
         val permissions = request.resources.flatMap { i -> permissionMap[i] ?: listOf() }
+        Log.i(
+            diagnosticTag,
+            "handling WebView permission resources=${request.resources.sorted().joinToString()} androidPermissions=${permissions.joinToString()} alreadyGranted=${permissions.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }}"
+        )
         if (permissions.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) {
             request.grant(request.resources)
             startService()
@@ -325,6 +349,10 @@ class FaceTimeActivity : Activity() {
         grantResults: IntArray
     ) {
         if (requestCode != 1) return
+        Log.i(
+            diagnosticTag,
+            "Android permission result ${permissions.zip(grantResults.toTypedArray()).joinToString { (permission, result) -> "$permission=${result == PackageManager.PERMISSION_GRANTED}" }}"
+        )
         for (request in permissionRequests) {
             request.grant(request.resources.filter { i ->
                 (permissionMap[i] ?: listOf()).all {
@@ -338,9 +366,12 @@ class FaceTimeActivity : Activity() {
     }
 
     private fun connecting() {
+        Log.i(diagnosticTag, "waiting for mirrorReady")
         binding.acceptButtons.visibility = View.GONE
         binding.loadingBanner.text = "Connecting..."
         Handler(Looper.getMainLooper()).postDelayed({
+            Log.w(diagnosticTag, "mirrorReady timeout reached mirrorReady=$mirrorReady answered=$answered")
+            logJoinButtonState("mirror-timeout")
             binding.mainFrame.visibility = View.VISIBLE
             binding.splashLayout.visibility = View.GONE
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -368,13 +399,15 @@ class FaceTimeActivity : Activity() {
         mirrorReady = cached.mirrorReady
         cached.mirrorReadyCall = {
             mirrorReady = true
+            Log.i(diagnosticTag, "mirrorReady callback answered=$answered")
             if (answered) {
                 binding.mainFrame.visibility = View.VISIBLE
                 binding.splashLayout.visibility = View.GONE
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     window.setBackgroundBlurRadius(0)
                 }
-                webView.loadUrl("javascript:document.getElementById(\"callcontrols-join-button-session-banner\").click()")
+                logJoinButtonState("mirror-ready")
+                clickJoinButton("mirror-ready")
             }
         }
 

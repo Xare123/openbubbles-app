@@ -474,7 +474,8 @@ class RustPushBackend implements BackendService {
   static const maxSendTimeoutRetries = 1;
 
   Future<void> sendMsg(api.MessageInst msg,
-      {bool waitForResource = true}) async {
+      {bool waitForResource = true,
+      Future<api.MessageInst> Function()? rebuildForRetry}) async {
     var message = Message.findOne(guid: msg.id);
     if (message != null) {
       message.sendingServiceId = pushService.serviceId;
@@ -504,6 +505,9 @@ class RustPushBackend implements BackendService {
               Logger.warn(
                   "Send confirmation timed out; retrying once after the push connection reload");
               await Future.delayed(sendTimeoutRetryWait);
+              if (rebuildForRetry != null) {
+                msg = await rebuildForRetry();
+              }
               continue;
             }
           }
@@ -515,6 +519,9 @@ class RustPushBackend implements BackendService {
               "Connection isn't ready; retrying ${msg.id} in ${wait.inSeconds}s ($e)");
           await Future.delayed(wait);
           waited += wait;
+          if (rebuildForRetry != null) {
+            msg = await rebuildForRetry();
+          }
         }
       }
     } finally {
@@ -1025,7 +1032,7 @@ class RustPushBackend implements BackendService {
     if (chat.isRpSms && !smsForwardingEnabled()) {
       throw Exception("SMS is not enabled (enable in settings -> user)");
     }
-    api.LinkMeta? linkMeta;
+    Future<api.LinkMeta?> Function()? buildLinkMeta;
     try {
       if (m.fullText.replaceAll("\n", " ").hasUrl &&
           !MetadataHelper.mapIsNotEmpty(m.metadata) &&
@@ -1082,70 +1089,89 @@ class RustPushBackend implements BackendService {
             attachments.add(response.data as Uint8List);
           }
 
-          linkMeta = api.LinkMeta(
-            attachments: attachments,
-            data: api.LPLinkMetadata(
-              imageMetadata: imagemeta,
-              image: image,
-              originalUrl: api.NSURL(base: "\$null", relative: m.url!),
-              url: api.NSURL(base: "\$null", relative: metadata.url!),
-              title: metadata.title,
-              summary: metadata.description,
-              images: imagemeta == null
-                  ? null
-                  : await api.createImageArray(img: imagemeta),
-              iconMetadata: iconmeta,
-              icon: icon,
-              icons: iconmeta == null
-                  ? null
-                  : await api.createIconArray(img: iconmeta),
-              version: 1,
-            ),
-          );
+          final originalUrl = m.url!;
+          final resolvedUrl = metadata.url ?? originalUrl;
+          final title = metadata.title;
+          final summary = metadata.description;
+          final attachmentBytes = attachments
+              .map((bytes) => Uint8List.fromList(bytes))
+              .toList(growable: false);
+
+          // `images` and `icons` are Rust-owned opaque arrays. Encoding a
+          // MessageInst moves them out of Dart, so a transport retry must build
+          // fresh arrays rather than reuse the disposed objects from attempt 1.
+          buildLinkMeta = () async => api.LinkMeta(
+                attachments: attachmentBytes
+                    .map((bytes) => Uint8List.fromList(bytes))
+                    .toList(growable: false),
+                data: api.LPLinkMetadata(
+                  imageMetadata: imagemeta,
+                  image: image,
+                  originalUrl:
+                      api.NSURL(base: "\$null", relative: originalUrl),
+                  url: api.NSURL(base: "\$null", relative: resolvedUrl),
+                  title: title,
+                  summary: summary,
+                  images: imagemeta == null
+                      ? null
+                      : await api.createImageArray(img: imagemeta),
+                  iconMetadata: iconmeta,
+                  icon: icon,
+                  icons: iconmeta == null
+                      ? null
+                      : await api.createIconArray(img: iconmeta),
+                  version: 1,
+                ),
+              );
         }
       }
     } catch (e, s) {
       Logger.error("Failed to generate meta $e $s");
     }
     // await Future.delayed(const Duration(seconds: 15));
-    api.MessageParts parts;
-    if (m.attributedBody.isNotEmpty) {
-      parts = await partsFromBody(m.attributedBody.first);
-    } else {
-      parts = api.MessageParts(field0: [
-        api.IndexedMessagePart(
-            part_: api.MessagePart.text(m.text!, pushService.defaultFormat()))
-      ]);
+    Future<api.MessageInst> buildWireMessage() async {
+      api.MessageParts parts;
+      if (m.attributedBody.isNotEmpty) {
+        parts = await partsFromBody(m.attributedBody.first);
+      } else {
+        parts = api.MessageParts(field0: [
+          api.IndexedMessagePart(
+              part_:
+                  api.MessagePart.text(m.text!, pushService.defaultFormat()))
+        ]);
+      }
+      if (m.payloadData?.appData?.first.ldText != null) {
+        parts.field0.add(api.IndexedMessagePart(
+            part_:
+                api.MessagePart.object(m.payloadData!.appData!.first.ldText!)));
+      }
+      return api.newMsg(
+        conversation: await chat.getConversationData(),
+        sender: await chat.ensureHandle(),
+        message: api.Message.message(api.NormalMessage(
+          parts: parts,
+          replyGuid: m.threadOriginatorGuid,
+          replyPart:
+              m.threadOriginatorGuid == null ? null : m.threadOriginatorPart,
+          effect: m.expressiveSendStyleId,
+          service: await getService(chat, forMessage: m),
+          subject: m.subject == "" ? null : m.subject,
+          app: m.payloadData == null
+              ? null
+              : pushService.dataToApp(m.payloadData!),
+          linkMeta: buildLinkMeta == null ? null : await buildLinkMeta(),
+          voice: false,
+          scheduled: m.dateScheduled != null
+              ? api.ScheduleMode(
+                  ms: m.dateScheduled!.millisecondsSinceEpoch, schedule: true)
+              : null,
+          embeddedProfile:
+              await pushService.getShareProfileMessageFor(chat.participants),
+        )),
+      );
     }
-    if (m.payloadData?.appData?.first.ldText != null) {
-      parts.field0.add(api.IndexedMessagePart(
-          part_:
-              api.MessagePart.object(m.payloadData!.appData!.first.ldText!)));
-    }
-    var msg = await api.newMsg(
-      conversation: await chat.getConversationData(),
-      sender: await chat.ensureHandle(),
-      message: api.Message.message(api.NormalMessage(
-        parts: parts,
-        replyGuid: m.threadOriginatorGuid,
-        replyPart:
-            m.threadOriginatorGuid == null ? null : m.threadOriginatorPart,
-        effect: m.expressiveSendStyleId,
-        service: await getService(chat, forMessage: m),
-        subject: m.subject == "" ? null : m.subject,
-        app: m.payloadData == null
-            ? null
-            : pushService.dataToApp(m.payloadData!),
-        linkMeta: linkMeta,
-        voice: false,
-        scheduled: m.dateScheduled != null
-            ? api.ScheduleMode(
-                ms: m.dateScheduled!.millisecondsSinceEpoch, schedule: true)
-            : null,
-        embeddedProfile:
-            await pushService.getShareProfileMessageFor(chat.participants),
-      )),
-    );
+
+    var msg = await buildWireMessage();
     Logger.info("sending ${msg.id}");
     if (m.stagingGuid != null ||
         (m.dateScheduled != null &&
@@ -1161,11 +1187,20 @@ class RustPushBackend implements BackendService {
     if (chat.isRpSms) {
       msg.target = await getSMSTargets(msg.sender!);
     }
+    final stableMessageId = msg.id;
+    Future<api.MessageInst> rebuildWireMessage() async {
+      final rebuilt = await buildWireMessage();
+      rebuilt.id = stableMessageId;
+      if (chat.isRpSms) {
+        rebuilt.target = await getSMSTargets(rebuilt.sender!);
+      }
+      return rebuilt;
+    }
     m.stagingGuid = msg
         .id; // in case delivered comes in before sending "finishes" (also for retries, duh)
     m.save(chat: chat);
     try {
-      await sendMsg(msg);
+      await sendMsg(msg, rebuildForRetry: rebuildWireMessage);
     } catch (e) {
       Logger.error(e);
       if (!chat.isRpSms || !ss.settings.isSmsRouter.value) {

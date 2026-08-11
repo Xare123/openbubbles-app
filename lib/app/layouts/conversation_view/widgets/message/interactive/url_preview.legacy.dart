@@ -35,7 +35,7 @@ class _LegacyUrlPreviewState extends OptimizedState<LegacyUrlPreview> with Autom
   Message get message => widget.message;
 
   /// The URL this preview should resolve and open.
-  String? get effectiveUrl => widget.previewUrl ?? message.url ?? message.text;
+  String? get effectiveUrl => widget.previewUrl ?? message.url;
 
   /// `message.metadata` is a single blob per message, so it can only ever
   /// describe one link. Only the message's primary URL may read or write it;

@@ -34,10 +34,8 @@ class MetadataHelper {
     Metadata? data;
 
     // Get the URL
-    String url = previewUrl ?? message.url!;
-    if (!url.startsWith("http")) {
-      url = "https://$url";
-    }
+    final url = _resolveUrl(previewUrl) ?? _resolveUrl(message.url);
+    if (url == null) return null;
 
     // Key on the message and the URL together. Keying on the message alone
     // made every link in a multi-link message collide.
@@ -107,6 +105,22 @@ class MetadataHelper {
     // Tell everyone that it's complete
     completer.complete(data);
     return completer.future;
+  }
+
+  static String? _resolveUrl(String? candidate) {
+    final value = candidate?.trim();
+    if (value == null || value.isEmpty || value.contains(RegExp(r"\s")) || !value.hasUrl) {
+      return null;
+    }
+
+    final parsed = Uri.tryParse(value);
+    final normalized = parsed?.hasScheme == true ? value : "https://$value";
+    final normalizedUri = Uri.tryParse(normalized);
+    if (normalizedUri == null || normalizedUri.host.isEmpty ||
+        !["http", "https"].contains(normalizedUri.scheme.toLowerCase())) {
+      return null;
+    }
+    return normalized;
   }
 
   /// Manually tries to parse out metadata from a given [url]

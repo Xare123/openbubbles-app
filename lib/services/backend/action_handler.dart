@@ -664,7 +664,7 @@ class ActionHandler extends GetxService {
       }
     }
     Logger.info(
-        "Updated message: [${m.text}] ${m.getLastUpdate().toLowerCase()} - for chat [${c.guid}]",
+        "Updated message state=${m.getLastUpdate().toLowerCase()} attachments=${m.hasAttachments}",
         tag: "ActionHandler");
 
     // update any attachments

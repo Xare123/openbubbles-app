@@ -59,7 +59,10 @@ class OtherFile extends StatelessWidget {
           launchUrl(Uri.file(_file.path));
         } else {
           try {
-            final res = await OpenFilex.open("${fs.appDocDir.path}/attachments/${attachment.guid!}/${basename(file.path!)}");
+            final res = await OpenFilex.open(
+              file.path!,
+              type: attachment.mimeType ?? mime(file.name) ?? "application/octet-stream",
+            );
             if (res.type == ResultType.noAppToOpen) {
               showSnackbar('Error', "No handler for this file type! Using share menu instead.");
               await Future.delayed(const Duration(seconds: 1));
