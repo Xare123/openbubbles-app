@@ -341,17 +341,42 @@ class ConversationTextFieldState extends CustomState<ConversationTextField, void
             break;
         }
       }
-      await controller.send(
-        controller.pickedApp.value?.$1 != null ? [controller.pickedApp.value!.$1!] : controller.pickedAttachments,
-        controller.textController.getFinalAnnotations(),
-        controller.subjectTextController.text,
-        controller.replyToMessage?.item1.threadOriginatorGuid ?? controller.replyToMessage?.item1.guid,
-        controller.replyToMessage?.item2,
-        effect,
-        controller.pickedApp.value?.$2,
-        false,
-        controller.scheduledDate.value
+      // Persist the draft before handing it to the asynchronous queue. Queue
+      // preparation can fail before a temporary message exists, so clearing the
+      // composer any earlier can permanently discard what the user typed.
+      chat.textFieldText = text;
+      chat.textFieldAnnotations = controller.textController.saveAnnotations();
+      chat.textFieldAttachments = controller.pickedAttachments
+          .where((attachment) => attachment.path != null)
+          .map((attachment) => attachment.path!)
+          .toList();
+      chat.save(
+        updateTextFieldText: true,
+        updateTextFieldAnnotations: true,
+        updateTextFieldAttachments: true,
       );
+
+      try {
+        await controller.send(
+          controller.pickedApp.value?.$1 != null ? [controller.pickedApp.value!.$1!] : controller.pickedAttachments,
+          controller.textController.getFinalAnnotations(),
+          controller.subjectTextController.text,
+          controller.replyToMessage?.item1.threadOriginatorGuid ?? controller.replyToMessage?.item1.guid,
+          controller.replyToMessage?.item2,
+          effect,
+          controller.pickedApp.value?.$2,
+          false,
+          controller.scheduledDate.value
+        );
+      } catch (error, stack) {
+        Logger.error(
+          "Failed to prepare outgoing message; composer preserved",
+          error: error,
+          trace: stack,
+        );
+        showSnackbar("Message not sent", "Your text was preserved. Please try again.");
+        return;
+      }
     controller.pickedApp.value = null;
     controller.pickedAttachments.clear();
     controller.textController.clear();

@@ -399,7 +399,11 @@ class ConversationViewController extends StatefulController
       PayloadData? payload,
       bool isAudioMessage,
       DateTime? scheduledDate) async {
-    sendFunc?.call(
+    final callback = sendFunc;
+    if (callback == null) {
+      throw StateError("Conversation send handler is not ready");
+    }
+    await callback(
         Tuple7(attachments, text, subject, replyGuid, replyPart, effectId,
             payload),
         isAudioMessage,

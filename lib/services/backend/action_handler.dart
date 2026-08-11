@@ -73,7 +73,13 @@ class ActionHandler extends GetxService {
 
     final List<Message> messages = <Message>[];
 
-    if (!(await ss.isMinBigSur) && r == null) {
+    // This workaround belongs only to the legacy Mac-server path. Modern
+    // composers always provide an attributed body; changing only Message.text
+    // would leave its ranges inconsistent and can make queue preparation fail.
+    if (backend is! RustPushBackend &&
+        !(await ss.isMinBigSur) &&
+        r == null &&
+        m.attributedBody.isEmpty) {
       // Split URL messages on OS X to prevent message matching glitches
       String mainText = m.text!;
       String? secondaryText;
