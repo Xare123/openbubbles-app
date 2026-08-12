@@ -72,6 +72,8 @@ class FaceTimeActivity : Activity() {
     private var endFallbackRunnable: Runnable? = null
     private var callEnding = false
 
+    private fun diagnosticsEnabled(): Boolean = FaceTimeDiagnostics.isEnabled(this)
+
     private val joinButtonScript = """
         (() => {
             const visible = (element) => !!element && element.offsetParent !== null;
@@ -265,7 +267,7 @@ class FaceTimeActivity : Activity() {
     private fun answerCall() {
         answered = true
 
-        Log.i(diagnosticTag, "answer requested mirrorReady=$mirrorReady deferredPermissions=${cached.deferredRequests.size}")
+        if (diagnosticsEnabled()) Log.i(diagnosticTag, "answer requested mirrorReady=$mirrorReady deferredPermissions=${cached.deferredRequests.size}")
 
         handlePermissionRequests()
 
@@ -383,10 +385,7 @@ class FaceTimeActivity : Activity() {
 
     fun handlePermissionRequest(request: PermissionRequest) {
         val permissions = request.resources.flatMap { i -> permissionMap[i] ?: listOf() }
-        Log.i(
-            diagnosticTag,
-            "handling WebView permission resources=${request.resources.sorted().joinToString()} androidPermissions=${permissions.joinToString()} alreadyGranted=${permissions.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }}"
-        )
+        if (diagnosticsEnabled()) Log.i(diagnosticTag, "handling WebView permission resources=${request.resources.sorted().joinToString()} androidPermissions=${permissions.joinToString()} alreadyGranted=${permissions.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }}")
         if (permissions.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) {
             request.grant(request.resources)
             startService()
@@ -441,10 +440,10 @@ class FaceTimeActivity : Activity() {
         grantResults: IntArray
     ) {
         if (requestCode != 1) return
-        Log.i(
-            diagnosticTag,
-            "Android permission result ${permissions.zip(grantResults.toTypedArray()).joinToString { (permission, result) -> "$permission=${result == PackageManager.PERMISSION_GRANTED}" }}"
-        )
+        if (diagnosticsEnabled()) {
+            val permissionResults = permissions.zip(grantResults.toTypedArray()).joinToString { (permission, result) -> "$permission=${result == PackageManager.PERMISSION_GRANTED}" }
+            Log.i(diagnosticTag, "Android permission result $permissionResults")
+        }
         for (request in permissionRequests) {
             request.grant(request.resources.filter { i ->
                 (permissionMap[i] ?: listOf()).all {
@@ -458,7 +457,7 @@ class FaceTimeActivity : Activity() {
     }
 
     private fun connecting() {
-        Log.i(diagnosticTag, "waiting for mirrorReady")
+        if (diagnosticsEnabled()) Log.i(diagnosticTag, "waiting for mirrorReady")
         binding.acceptButtons.visibility = View.GONE
         binding.loadingBanner.text = "Connecting..."
         scheduleJoinAttempt("connecting")
@@ -491,7 +490,7 @@ class FaceTimeActivity : Activity() {
         mirrorReady = cached.mirrorReady
         cached.mirrorReadyCall = {
             mirrorReady = true
-            Log.i(diagnosticTag, "mirrorReady callback answered=$answered")
+            if (diagnosticsEnabled()) Log.i(diagnosticTag, "mirrorReady callback answered=$answered")
             if (answered) {
                 logJoinButtonState("mirror-ready")
                 scheduleJoinAttempt("mirror-ready")
@@ -509,7 +508,7 @@ class FaceTimeActivity : Activity() {
             binding.avatarView.setImageBitmap(bitmap)
         }
 
-        Log.i("FaceTime", "started activity for call $callUuid")
+        if (diagnosticsEnabled()) Log.i("FaceTimeDiag", "started activity hasCallUuid=${callUuid != null}")
 
         val poster = extras.getString("poster")
         if (poster != null) {
