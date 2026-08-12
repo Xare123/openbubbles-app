@@ -46,6 +46,21 @@ bool canPlayNearbyFindMySound({required bool isAccessory, required bool isAndroi
   return isAccessory && isAndroid;
 }
 
+@visibleForTesting
+bool canScanNearbyFindMyTrackers({required bool isAndroid}) => isAndroid;
+
+@visibleForTesting
+String findMyCloudFailureMessage(Object error) {
+  final message = error.toString().toLowerCase();
+  if (message.contains("relay device offline")) {
+    return "Your relay device is offline. Cloud Find My will resume when it reconnects.";
+  }
+  if (error is TimeoutException || message.contains("timeoutexception")) {
+    return "Cloud Find My timed out. Check the relay connection and try again.";
+  }
+  return "Cloud Find My is unavailable right now.";
+}
+
 class FindMyPage extends StatefulWidget {
   FindMyPage({super.key, this.defaultFriend});
 
@@ -80,6 +95,10 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   bool isInClique = true;
   final Set<String> soundingDevices = {};
   bool nearbyAccessoryBusy = false;
+  bool locationsRequestInFlight = false;
+  bool currentLocationRequestInFlight = false;
+  String? cloudFindMyError;
+  DateTime? automaticCloudRetryAfter;
   Completer<void>? fmipRequest;
 
   Map<(double, double), Address> cachedAddresses = {};
@@ -166,7 +185,13 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
     final permissions = await [Permission.bluetoothScan, Permission.bluetoothConnect].request();
     if (permissions.values.any((status) => !status.isGranted)) {
       if (mounted) {
-        showSnackbar("Bluetooth required", "Allow nearby-device access to find and play a tracker sound.");
+        final permanentlyDenied = permissions.values.any((status) => status.isPermanentlyDenied);
+        showSnackbar(
+          "Bluetooth required",
+          permanentlyDenied
+              ? "Enable Nearby devices for OpenBubbles in Android settings."
+              : "Allow nearby-device access to find and play a tracker sound.",
+        );
       }
       return;
     }
@@ -295,7 +320,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
     }
     getLocations();
 
-    myTimer = Timer.periodic(const Duration(seconds: 5), (timer) => getLocations());
+    myTimer = Timer.periodic(const Duration(seconds: 30), (timer) => getLocations());
 
     socket.socket.on("new-findmy-location", (data) {
       try {
@@ -333,14 +358,49 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   /// however, the refresh friends endpoint does. The way this was coded assumes that the server
   /// will return the data for both endpoints. A server update will fix this, but for now,
   /// we will "patch" it by only "refreshing" devices when the user manually refreshes the data.
-  void getLocations({bool refreshFriends = true, bool refreshDevices = true}) async {
-    if (!(Platform.isLinux && !kIsWeb)) {
+  Future<void> getLocations({
+    bool refreshFriends = true,
+    bool refreshDevices = true,
+    bool userInitiated = false,
+  }) async {
+    if (locationsRequestInFlight) return;
+    if (!userInitiated && automaticCloudRetryAfter?.isAfter(DateTime.now()) == true) return;
+
+    locationsRequestInFlight = true;
+    unawaited(refreshCurrentLocation(refreshFriends: refreshFriends));
+    try {
+      await getCloudLocations(refreshFriends: refreshFriends, refreshDevices: refreshDevices);
+      automaticCloudRetryAfter = null;
+      if (mounted && cloudFindMyError != null) {
+        setState(() => cloudFindMyError = null);
+      }
+    } catch (e) {
+      automaticCloudRetryAfter = DateTime.now().add(const Duration(minutes: 1));
+      if (mounted) {
+        setState(() {
+          cloudFindMyError = findMyCloudFailureMessage(e);
+          fetching = null;
+          fetching2 = null;
+          refreshing = false;
+          refreshing2 = false;
+        });
+      }
+    } finally {
+      locationsRequestInFlight = false;
+      if (mounted && !canRefresh) setState(() => canRefresh = true);
+    }
+  }
+
+  Future<void> refreshCurrentLocation({required bool refreshFriends}) async {
+    if (currentLocationRequestInFlight || (Platform.isLinux && !kIsWeb)) return;
+    currentLocationRequestInFlight = true;
+    try {
       LocationPermission granted = await Geolocator.checkPermission();
       if (granted == LocationPermission.denied) {
         granted = await Geolocator.requestPermission();
       }
       if (granted == LocationPermission.whileInUse || granted == LocationPermission.always) {
-        Geolocator.getCurrentPosition(locationSettings: const LocationSettings(timeLimit: Duration(seconds: 30))).then((loc) {
+        final loc = await Geolocator.getCurrentPosition(locationSettings: const LocationSettings(timeLimit: Duration(seconds: 30)));
           if (!mounted) return;
           if (ss.settings.lastLocation.value == null) {
             mapController.move(LatLng(loc.latitude, loc.longitude), 10);
@@ -348,23 +408,33 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
           ss.settings.lastLocation.value = "${loc.latitude},${loc.longitude}";
           ss.saveSettings();
           location = loc;
-          buildLocationMarker(location!);
+          setState(() => buildLocationMarker(loc));
           if (!kIsDesktop && locationSub == null) {
             locationSub = Geolocator.getPositionStream().listen((event) {
+              if (!mounted) return;
               ss.settings.lastLocation.value = "${event.latitude},${event.longitude}";
               ss.saveSettings();
               setState(() {
                 buildLocationMarker(event);
               });
+            }, onError: (Object error, StackTrace trace) {
+              Logger.warn("Find My location stream failed", error: error, trace: trace);
             });
           }
           if (!refreshFriends) {
-            mapController.move(LatLng(location!.latitude, location!.longitude), 10);
+            mapController.move(LatLng(loc.latitude, loc.longitude), 10);
           }
-        });
       }
+    } on TimeoutException {
+      Logger.info("Find My current-location request timed out");
+    } catch (e, s) {
+      Logger.warn("Find My current-location request failed", error: e, trace: s);
+    } finally {
+      currentLocationRequestInFlight = false;
     }
+  }
 
+  Future<void> getCloudLocations({bool refreshFriends = true, bool refreshDevices = true}) async {
     var isNew = fmfClient == null;
     fmfClient ??= await api.makeFindMyFriends(
       path: pushService.statePath,
@@ -434,11 +504,13 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       }
     } catch (e, s) {
       Logger.error("Failed to parse FindMy Friends location data!", error: e, trace: s);
-      setState(() {
-        fetching2 = null;
-        refreshing2 = false;
-      });
-      return;
+      if (mounted) {
+        setState(() {
+          fetching2 = null;
+          refreshing2 = false;
+        });
+      }
+      rethrow;
     }
 
     var isNewi = fmipClient == null;
@@ -693,11 +765,13 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       });
     } catch (e, s) {
       Logger.error("Failed to parse FindMy Devices location data!", error: e, trace: s);
-      setState(() {
-        fetching = null;
-        refreshing = false;
-      });
-      return;
+      if (mounted) {
+        setState(() {
+          fetching = null;
+          refreshing = false;
+        });
+      }
+      rethrow;
     }
     
 
@@ -831,17 +905,32 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
     final devicesBodySlivers = [
       SliverList(
         delegate: SliverChildListDelegate([
+          if (canScanNearbyFindMyTrackers(isAndroid: Platform.isAndroid))
+            SettingsHeader(iosSubtitle: iosSubtitle, materialSubtitle: materialSubtitle, text: "Nearby Trackers"),
+          if (canScanNearbyFindMyTrackers(isAndroid: Platform.isAndroid))
+            SettingsSection(
+              backgroundColor: tileColor,
+              children: [
+                SettingsTile(
+                  title: "Scan Nearby Trackers",
+                  subtitle: "Find and play a sound on a nearby compatible tracker. This works without the cloud relay.",
+                  leading: const Icon(Icons.bluetooth_searching),
+                  trailing: nearbyAccessoryBusy ? buildProgressIndicator(context, size: 18) : const NextButton(),
+                  onTap: nearbyAccessoryBusy ? null : playNearbyAccessorySound,
+                ),
+              ],
+            ),
           if (fetching == null || fetching == true || (fetching == false && devices.isEmpty))
             Center(
               child: Padding(
-                padding: const EdgeInsets.only(top: 100),
+                padding: const EdgeInsets.only(top: 32, bottom: 16),
                 child: Column(
                   children: [
                     Padding(
                       padding: const EdgeInsets.all(8.0),
                       child: Text(
                         fetching == null
-                            ? "Something went wrong!"
+                            ? (cloudFindMyError ?? "Cloud Find My is unavailable right now.")
                             : fetching == false
                                 ? "You have no devices."
                                 : "Getting FindMy data...",
@@ -849,6 +938,12 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                       ),
                     ),
                     if (fetching == true) buildProgressIndicator(context, size: 15),
+                    if (fetching == null)
+                      TextButton.icon(
+                        onPressed: locationsRequestInFlight ? null : () => getLocations(userInitiated: true),
+                        icon: const Icon(Icons.refresh),
+                        label: const Text("Retry Cloud Find My"),
+                      ),
                   ],
                 ),
               ),

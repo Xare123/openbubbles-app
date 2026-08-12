@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:bluebubbles/app/layouts/findmy/findmy_page.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -34,6 +36,29 @@ void main() {
       expect(
         canPlayNearbyFindMySound(isAccessory: false, isAndroid: true),
         isFalse,
+      );
+    });
+
+    test('keeps the standalone nearby scan available without a cloud item', () {
+      expect(canScanNearbyFindMyTrackers(isAndroid: true), isTrue);
+      expect(canScanNearbyFindMyTrackers(isAndroid: false), isFalse);
+    });
+
+    test('explains an offline relay without exposing the bridge exception', () {
+      expect(
+        findMyCloudFailureMessage(Exception('Relay device offline!')),
+        'Your relay device is offline. Cloud Find My will resume when it reconnects.',
+      );
+    });
+
+    test('distinguishes cloud timeouts from other failures', () {
+      expect(
+        findMyCloudFailureMessage(TimeoutException('Future not completed')),
+        'Cloud Find My timed out. Check the relay connection and try again.',
+      );
+      expect(
+        findMyCloudFailureMessage(Exception('unexpected')),
+        'Cloud Find My is unavailable right now.',
       );
     });
   });
