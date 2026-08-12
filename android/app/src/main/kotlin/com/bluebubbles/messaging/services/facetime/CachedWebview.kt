@@ -31,6 +31,7 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
     }
 
     val webView = WebView(context)
+    private val applicationContext = context.applicationContext
     private val callbackHandler = Handler(Looper.getMainLooper())
     private var mirrorReadyRunnable: Runnable? = null
 
@@ -67,16 +68,10 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
         }
     }
 
-    private fun safeConsoleText(message: String): String {
-        return message
-            .replace("https?://\\S+".toRegex(), "<url>")
-            .replace("[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}".toRegex(RegexOption.IGNORE_CASE), "<email>")
-            .replace("[A-Za-z0-9_-]{32,}".toRegex(), "<token>")
-            .take(240)
-    }
+    private fun diagnosticsEnabled(): Boolean = FaceTimeDiagnostics.isEnabled(applicationContext)
 
     fun getScriptData(request: WebResourceRequest, client: OkHttpClient, name: String?, desc: String): String {
-        Log.i("FT", "Getting script")
+        if (diagnosticsEnabled()) Log.i(diagnosticTag, "getting main.js")
         // OKHTTP should handle caching for us
         val okhttp = Request.Builder()
             .method(request.method, null)
@@ -97,10 +92,11 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
         val waitingPattern = """"GenericToast\.Waiting": *"Waiting to be let in…",""".toRegex()
         val bannerPattern = """"SessionBanner\.FaceTime": *"FaceTime Call",""".toRegex()
         val submitNamePattern = "(submitName: *([a-zA-Z]+?)[ a-zA-Z,}=:]*?;)".toRegex()
-        val waitingMatches = waitingPattern.findAll(string).count()
-        val bannerMatches = bannerPattern.findAll(string).count()
-        val leaveMatches = "this.onLeave.notifyListeners()".toRegex().findAll(string).count()
-        val submitNameMatches = if (name != null) submitNamePattern.findAll(string).count() else 0
+        val diagnosticsEnabled = diagnosticsEnabled()
+        val waitingMatches = if (diagnosticsEnabled) waitingPattern.findAll(string).count() else 0
+        val bannerMatches = if (diagnosticsEnabled) bannerPattern.findAll(string).count() else 0
+        val leaveMatches = if (diagnosticsEnabled) "this.onLeave.notifyListeners()".toRegex().findAll(string).count() else 0
+        val submitNameMatches = if (diagnosticsEnabled && name != null) submitNamePattern.findAll(string).count() else 0
 
         string = string
             .replace(""""GenericToast\.Waiting": *"Waiting to be let in…",""".toRegex(), """"GenericToast.Waiting":"Connecting…",""")
@@ -111,10 +107,12 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             string = string.replace(submitNamePattern, "$1 $2(\"$name\").then(() => Native.mirrored());")
         }
 
-        Log.i(
-            diagnosticTag,
-            "main.js bytes=${string.length} patches waiting=$waitingMatches banner=$bannerMatches leave=$leaveMatches submitName=$submitNameMatches nameProvided=${name != null}"
-        )
+        if (diagnosticsEnabled) {
+            Log.i(
+                diagnosticTag,
+                "main.js bytes=${string.length} patches waiting=$waitingMatches banner=$bannerMatches leave=$leaveMatches submitName=$submitNameMatches nameProvided=${name != null}"
+            )
+        }
 
         return string
     }
@@ -136,18 +134,22 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             ): WebResourceResponse? {
                 if (request == null) return null
                 if (!request.url.toString().endsWith("main.js")) {
-                    if (request.url.lastPathSegment == "main.js") {
+                    if (diagnosticsEnabled() && request.url.lastPathSegment == "main.js") {
                         Log.w(diagnosticTag, "main.js candidate was not intercepted because its URL has a suffix")
                     }
                     return null
                 }
                 // intercept and patch request
 
-                Log.i(diagnosticTag, "intercepting ${safeResourceLabel(request.url.toString())}")
+                if (diagnosticsEnabled()) {
+                    Log.i(diagnosticTag, "intercepting ${safeResourceLabel(request.url.toString())}")
+                }
                 val scriptData = try {
                     getScriptData(request, client, name, desc)
                 } catch (error: Exception) {
-                    Log.e(diagnosticTag, "main.js interception failed: ${error.javaClass.simpleName}")
+                    if (diagnosticsEnabled()) {
+                        Log.e(diagnosticTag, "main.js interception failed: ${error.javaClass.simpleName}")
+                    }
                     throw error
                 }
 
@@ -159,11 +161,15 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                Log.i(diagnosticTag, "page started ${safeResourceLabel(url)}")
+                if (diagnosticsEnabled()) {
+                    Log.i(diagnosticTag, "page started ${safeResourceLabel(url)}")
+                }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
-                Log.i(diagnosticTag, "page finished ${safeResourceLabel(url)} mirrorReady=$mirrorReady")
+                if (diagnosticsEnabled()) {
+                    Log.i(diagnosticTag, "page finished ${safeResourceLabel(url)} mirrorReady=$mirrorReady")
+                }
             }
 
             override fun onReceivedError(
@@ -171,10 +177,12 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                 request: WebResourceRequest?,
                 error: WebResourceError?
             ) {
-                Log.w(
-                    diagnosticTag,
-                    "resource error mainFrame=${request?.isForMainFrame} code=${error?.errorCode} resource=${safeResourceLabel(request?.url?.toString())}"
-                )
+                if (diagnosticsEnabled()) {
+                    Log.w(
+                        diagnosticTag,
+                        "resource error mainFrame=${request?.isForMainFrame} code=${error?.errorCode} resource=${safeResourceLabel(request?.url?.toString())}"
+                    )
+                }
             }
 
             override fun onReceivedHttpError(
@@ -182,10 +190,12 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                 request: WebResourceRequest?,
                 errorResponse: WebResourceResponse?
             ) {
-                Log.w(
-                    diagnosticTag,
-                    "http error mainFrame=${request?.isForMainFrame} status=${errorResponse?.statusCode} resource=${safeResourceLabel(request?.url?.toString())}"
-                )
+                if (diagnosticsEnabled()) {
+                    Log.w(
+                        diagnosticTag,
+                        "http error mainFrame=${request?.isForMainFrame} status=${errorResponse?.statusCode} resource=${safeResourceLabel(request?.url?.toString())}"
+                    )
+                }
             }
         }
         webView.setBackgroundColor(Color.BLACK)
@@ -198,7 +208,9 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             @JavascriptInterface
             fun mirrored() {
                 if (mirrorReady || mirrorReadyRunnable != null) {
-                    Log.i(diagnosticTag, "duplicate Native.mirrored ignored")
+                    if (diagnosticsEnabled()) {
+                        Log.i(diagnosticTag, "duplicate Native.mirrored ignored")
+                    }
                     return
                 }
                 // takes a second for the mirror to be ready
@@ -211,25 +223,29 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                 }
                 mirrorReadyRunnable = runnable
                 callbackHandler.postDelayed(runnable, 250)
-                Log.i(diagnosticTag, "Native.mirrored received; mirrorReady scheduled")
+                if (diagnosticsEnabled()) {
+                    Log.i(diagnosticTag, "Native.mirrored received; mirrorReady scheduled")
+                }
             }
         }, "Native")
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest?) {
                 if (request == null) return
-                Log.i(diagnosticTag, "WebView permission request resources=${request.resources.sorted().joinToString()}")
+                if (diagnosticsEnabled()) {
+                    Log.i(diagnosticTag, "WebView permission request resources=${request.resources.sorted().joinToString()}")
+                }
                 deferredRequests.add(request)
                 deferredRequestsUpdated()
             }
 
             override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
-                if (consoleMessage == null) return false
+                if (!diagnosticsEnabled() || consoleMessage == null) return false
                 if (consoleMessage.messageLevel() == ConsoleMessage.MessageLevel.ERROR ||
                     consoleMessage.messageLevel() == ConsoleMessage.MessageLevel.WARNING) {
                     Log.w(
                         diagnosticTag,
-                        "console ${consoleMessage.messageLevel()} line=${consoleMessage.lineNumber()} source=${safeResourceLabel(consoleMessage.sourceId())} message=${safeConsoleText(consoleMessage.message())}"
+                        "console ${consoleMessage.messageLevel()} line=${consoleMessage.lineNumber()} source=${safeResourceLabel(consoleMessage.sourceId())} message=<omitted>"
                     )
                 }
                 return false
