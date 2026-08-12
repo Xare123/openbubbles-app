@@ -203,6 +203,10 @@ class _MessageHolderState
   @override
   Widget build(BuildContext context) {
     controller.built = true;
+    // Gesture callbacks can run while their element is being deactivated.
+    // Cache this inherited-state lookup during build instead of consulting a
+    // stale BuildContext from drag update/end/cancel callbacks.
+    final isInReplyScope = ReplyScope.maybeOf(context) != null;
     final stickers = message.associatedMessages
         .where((e) => e.associatedMessageType == "sticker");
     final reactions = message.associatedMessages.where((e) =>
@@ -728,8 +732,9 @@ class _MessageHolderState
                                                                       onHorizontalDragUpdate: !canSwipeToReply || isEditing(e.part)
                                                                           ? null
                                                                           : (details) {
-                                                                              if (ReplyScope.maybeOf(context) != null)
+                                                                              if (isInReplyScope) {
                                                                                 return;
+                                                                              }
                                                                               final offset = replyOffsets[index];
                                                                               offset.value += details.delta.dx * 0.5;
                                                                               if (message.isFromMe!) {
@@ -747,8 +752,9 @@ class _MessageHolderState
                                                                       onHorizontalDragEnd: !canSwipeToReply || isEditing(e.part)
                                                                           ? null
                                                                           : (details) {
-                                                                              if (ReplyScope.maybeOf(context) != null)
+                                                                              if (isInReplyScope) {
                                                                                 return;
+                                                                              }
                                                                               final offset = replyOffsets[index];
                                                                               if (offset.value.abs() >= SlideToReply.replyThreshold) {
                                                                                 widget.cvController.replyToMessage = Tuple2(message, index);
@@ -758,8 +764,9 @@ class _MessageHolderState
                                                                       onHorizontalDragCancel: !canSwipeToReply || isEditing(e.part)
                                                                           ? null
                                                                           : () {
-                                                                              if (ReplyScope.maybeOf(context) != null)
+                                                                              if (isInReplyScope) {
                                                                                 return;
+                                                                              }
                                                                               replyOffsets[index].value = 0;
                                                                             },
                                                                       child: Builder(builder: (context) {
