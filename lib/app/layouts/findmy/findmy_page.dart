@@ -29,6 +29,7 @@ import 'package:flutter_map_marker_popup/flutter_map_marker_popup.dart';
 import 'package:get/get.dart' hide Response;
 import 'package:latlong2/latlong.dart';
 import 'package:maps_launcher/maps_launcher.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:sliding_up_panel2/sliding_up_panel2.dart';
 import 'package:tuple/tuple.dart';
 import 'package:universal_io/io.dart';
@@ -38,6 +39,11 @@ import 'package:url_launcher/url_launcher.dart';
 @visibleForTesting
 bool canPlayFindMySound({required String? deviceId, required bool isAccessory}) {
   return deviceId != null && deviceId.isNotEmpty && !isAccessory;
+}
+
+@visibleForTesting
+bool canPlayNearbyFindMySound({required bool isAccessory, required bool isAndroid}) {
+  return isAccessory && isAndroid;
 }
 
 class FindMyPage extends StatefulWidget {
@@ -73,6 +79,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   bool canRefresh = false;
   bool isInClique = true;
   final Set<String> soundingDevices = {};
+  bool nearbyAccessoryBusy = false;
   Completer<void>? fmipRequest;
 
   Map<(double, double), Address> cachedAddresses = {};
@@ -140,6 +147,109 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
     }
   }
 
+  String nearbyTrackerLabel(String protocol) {
+    switch (protocol) {
+      case "dult":
+        return "Compatible tracker";
+      case "find_my":
+        return "Find My accessory";
+      case "airtag":
+        return "AirTag";
+      default:
+        return "Nearby tracker";
+    }
+  }
+
+  Future<void> playNearbyAccessorySound() async {
+    if (nearbyAccessoryBusy || !Platform.isAndroid) return;
+
+    final permissions = await [Permission.bluetoothScan, Permission.bluetoothConnect].request();
+    if (permissions.values.any((status) => !status.isGranted)) {
+      if (mounted) {
+        showSnackbar("Bluetooth required", "Allow nearby-device access to find and play a tracker sound.");
+      }
+      return;
+    }
+
+    if (mounted) setState(() => nearbyAccessoryBusy = true);
+    try {
+      final raw = await mcs.invokeMethod("scanNearbyFindMyAccessories", {"scanDurationMs": 8000});
+      final trackers = (raw as List?)
+              ?.whereType<Map>()
+              .map((entry) => entry.cast<String, dynamic>())
+              .where((entry) => entry["token"] is String)
+              .toList() ??
+          <Map<String, dynamic>>[];
+      if (!mounted) return;
+      if (trackers.isEmpty) {
+        showSnackbar("No tracker found", "Keep the accessory close to this phone and try again.");
+        return;
+      }
+
+      final selected = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text("Play a nearby tracker sound"),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  "Choose a tracker near this phone. Apple rotates Bluetooth identifiers, so Android cannot prove which iCloud item is selected on the map.",
+                ),
+                const SizedBox(height: 12),
+                Flexible(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: trackers.length,
+                    itemBuilder: (context, index) {
+                      final tracker = trackers[index];
+                      final protocol = tracker["protocol"]?.toString() ?? "unknown";
+                      final signal = tracker["signal"]?.toString() ?? "unknown";
+                      return ListTile(
+                        leading: const Icon(Icons.bluetooth_searching),
+                        title: Text(nearbyTrackerLabel(protocol)),
+                        subtitle: Text(signal.isEmpty
+                            ? "Unknown signal"
+                            : "${signal[0].toUpperCase()}${signal.substring(1)} signal"),
+                        trailing: const Icon(Icons.volume_up),
+                        onTap: () => Navigator.of(context).pop(tracker),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text("Cancel")),
+          ],
+        ),
+      );
+      if (selected == null || !mounted) return;
+
+      await mcs.invokeMethod("playNearbyFindMyAccessorySound", {"token": selected["token"]});
+      if (mounted) showSnackbar("Find My", "Nearby sound command sent.");
+    } on PlatformException catch (e) {
+      Logger.warn("Nearby Find My sound failed (${e.code})");
+      if (mounted) {
+        final message = e.code == "BLUETOOTH_DISABLED"
+            ? "Turn on Bluetooth and try again."
+            : e.code == "TOKEN_EXPIRED" || e.code == "TRACKER_EXPIRED"
+                ? "That nearby tracker expired. Scan again."
+                : "Could not play a sound on the nearby tracker.";
+        showSnackbar("Find My", message);
+      }
+    } catch (e, s) {
+      Logger.warn("Nearby Find My sound failed", error: e, trace: s);
+      if (mounted) showSnackbar("Find My", "Could not play a sound on the nearby tracker.");
+    } finally {
+      if (mounted) setState(() => nearbyAccessoryBusy = false);
+    }
+  }
+
   Widget deviceActions(FindMyDevice item) {
     final deviceId = item.id;
     return Row(
@@ -152,6 +262,14 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
             icon: soundingDevices.contains(deviceId)
                 ? buildProgressIndicator(context, size: 18)
                 : const Icon(Icons.volume_up, size: 20),
+          ),
+        if (canPlayNearbyFindMySound(isAccessory: item.isConsideredAccessory, isAndroid: Platform.isAndroid))
+          IconButton(
+            tooltip: "Play Nearby Tracker Sound",
+            onPressed: nearbyAccessoryBusy ? null : playNearbyAccessorySound,
+            icon: nearbyAccessoryBusy
+                ? buildProgressIndicator(context, size: 18)
+                : const Icon(Icons.bluetooth_searching, size: 20),
           ),
         if (item.location?.latitude != null && item.location?.longitude != null)
           TextButton(

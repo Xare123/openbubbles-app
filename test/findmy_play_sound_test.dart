@@ -15,9 +15,24 @@ void main() {
       expect(canPlayFindMySound(deviceId: '', isAccessory: false), isFalse);
     });
 
-    test('keeps accessories disabled until their protocol is implemented', () {
+    test('keeps accessories out of the remote Apple-account command', () {
       expect(
         canPlayFindMySound(deviceId: 'airtag-id', isAccessory: true),
+        isFalse,
+      );
+    });
+
+    test('allows nearby accessory sound only on Android', () {
+      expect(
+        canPlayNearbyFindMySound(isAccessory: true, isAndroid: true),
+        isTrue,
+      );
+      expect(
+        canPlayNearbyFindMySound(isAccessory: true, isAndroid: false),
+        isFalse,
+      );
+      expect(
+        canPlayNearbyFindMySound(isAccessory: false, isAndroid: true),
         isFalse,
       );
     });
