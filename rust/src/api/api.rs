@@ -4260,6 +4260,15 @@ pub async fn refresh_devices(
     Ok(client.devices.clone())
 }
 
+pub async fn play_find_my_sound(
+    config: &JoinedOSConfig,
+    client: &mut FindMyPhoneClient<DefaultAnisetteProvider>,
+    device_id: String,
+) -> anyhow::Result<()> {
+    client.play_sound(&*config.config(), &device_id).await?;
+    Ok(())
+}
+
 pub async fn make_find_my_friends(
     path: String,
     config: &JoinedOSConfig,

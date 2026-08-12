@@ -35,6 +35,11 @@ import 'package:universal_io/io.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:url_launcher/url_launcher.dart';
 
+@visibleForTesting
+bool canPlayFindMySound({required String? deviceId, required bool isAccessory}) {
+  return deviceId != null && deviceId.isNotEmpty && !isAccessory;
+}
+
 class FindMyPage extends StatefulWidget {
   FindMyPage({super.key, this.defaultFriend});
 
@@ -67,6 +72,8 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   bool refreshing2 = false;
   bool canRefresh = false;
   bool isInClique = true;
+  final Set<String> soundingDevices = {};
+  Completer<void>? fmipRequest;
 
   Map<(double, double), Address> cachedAddresses = {};
 
@@ -77,6 +84,89 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
 
   api.FindMyFriendsClientDefaultAnisetteProvider? fmfClient;
   api.FindMyPhoneClientDefaultAnisetteProvider? fmipClient;
+
+  Future<T> withFmipLock<T>(Future<T> Function() operation) async {
+    while (fmipRequest != null) {
+      await fmipRequest!.future;
+    }
+    final request = Completer<void>();
+    fmipRequest = request;
+    try {
+      return await operation();
+    } finally {
+      request.complete();
+      if (identical(fmipRequest, request)) fmipRequest = null;
+    }
+  }
+
+  Future<void> playSound(FindMyDevice device) async {
+    final deviceId = device.id;
+    if (deviceId == null || deviceId.isEmpty || fmipClient == null || soundingDevices.contains(deviceId)) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Play Sound?"),
+        content: Text(
+          "${ss.settings.redactedMode.value ? "This device" : (device.name ?? "This device")} will play a Find My alert.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text("Play Sound"),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => soundingDevices.add(deviceId));
+    try {
+      await withFmipLock(() => api.playFindMySound(
+            config: pushService.state!.osConfig,
+            client: fmipClient!,
+            deviceId: deviceId,
+          ));
+      if (mounted) showSnackbar("Find My", "Sound request sent.");
+    } catch (_) {
+      Logger.warn("Find My Play Sound request failed");
+      if (mounted) showSnackbar("Error", "Could not play sound on this device.");
+    } finally {
+      if (mounted) setState(() => soundingDevices.remove(deviceId));
+    }
+  }
+
+  Widget deviceActions(FindMyDevice item) {
+    final deviceId = item.id;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (canPlayFindMySound(deviceId: deviceId, isAccessory: item.isConsideredAccessory))
+          IconButton(
+            tooltip: "Play Sound",
+            onPressed: soundingDevices.contains(deviceId) ? null : () => playSound(item),
+            icon: soundingDevices.contains(deviceId)
+                ? buildProgressIndicator(context, size: 18)
+                : const Icon(Icons.volume_up, size: 20),
+          ),
+        if (item.location?.latitude != null && item.location?.longitude != null)
+          TextButton(
+            style: TextButton.styleFrom(
+              shape: const CircleBorder(),
+              backgroundColor: context.theme.colorScheme.primaryContainer,
+            ),
+            onPressed: () async {
+              await MapsLauncher.launchCoordinates(item.location!.latitude!, item.location!.longitude!);
+            },
+            child: const Icon(Icons.directions, size: 20),
+          ),
+      ],
+    );
+  }
 
   @override
   void initState() {
@@ -245,7 +335,10 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
 
     try {
       if (refreshDevices && !isNewi) {
-        await api.refreshDevices(config: pushService.state!.osConfig, client: fmipClient!);
+        await withFmipLock(() => api.refreshDevices(
+              config: pushService.state!.osConfig,
+              client: fmipClient!,
+            ));
       }
 
       var following = await api.getDevices(client: fmipClient!);
@@ -674,22 +767,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                                 mapController.move(LatLng(item.location!.latitude!, item.location!.longitude!), 10);
                               }
                             : null,
-                        trailing: item.location?.latitude != null && item.location?.longitude != null ? ButtonTheme(
-                          minWidth: 1,
-                          child: TextButton(
-                            style: TextButton.styleFrom(
-                              shape: const CircleBorder(),
-                              backgroundColor: context.theme.colorScheme.primaryContainer,
-                            ),
-                            onPressed: () async {
-                              await MapsLauncher.launchCoordinates(item.location!.latitude!, item.location!.longitude!);
-                            },
-                            child: const Icon(
-                                Icons.directions,
-                                size: 20
-                            ),
-                          ),
-                        ) : null,
+                        trailing: deviceActions(item),
                         onLongPress: () async {
                           const encoder = JsonEncoder.withIndent("     ");
                           final str = encoder.convert(item.toJson());
@@ -904,6 +982,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                             var tile = ListTile(
                                 title: Text(ss.settings.redactedMode.value ? "Device" : (item.name ?? "Unknown Device")),
                                 subtitle: Text(ss.settings.redactedMode.value ? "Location" : (item.address?.label ?? item.address?.mapItemFullAddress ?? "No location found")),
+                                trailing: deviceActions(item),
                                 onTap: item.location?.latitude != null && item.location?.longitude != null
                                     ? () async {
                                         if (context.isPhone) {

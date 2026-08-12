@@ -1182,6 +1182,16 @@ Future<List<FoundDevice>> refreshDevices({
   client: client,
 );
 
+Future<void> playFindMySound({
+  required JoinedOsConfig config,
+  required FindMyPhoneClientDefaultAnisetteProvider client,
+  required String deviceId,
+}) => RustLib.instance.api.crateApiApiPlayFindMySound(
+  config: config,
+  client: client,
+  deviceId: deviceId,
+);
+
 Future<FindMyFriendsClientDefaultAnisetteProvider> makeFindMyFriends({
   required String path,
   required JoinedOsConfig config,
