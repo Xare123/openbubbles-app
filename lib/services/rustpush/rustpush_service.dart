@@ -856,7 +856,9 @@ class RustPushBackend implements BackendService {
       String suffix = "";
       if (state.retryWait != null) {
         var data = state.retryWait!.toInt();
-        suffix = "(waiting ${formatDuration(data)}; error: ${state.error})";
+        final displayError = state.error.replaceAll(
+            "Relay device offline!", "Relay service unavailable!");
+        suffix = "(waiting ${formatDuration(data)}; error: $displayError)";
       }
       stateStr = "Deregistered $suffix";
     }
@@ -1877,6 +1879,20 @@ class RustPushService extends GetxService {
         relayLastSuccess.value = checkedAt;
         await ss.prefs.setInt(
             "relay-health-last-success", checkedAt.millisecondsSinceEpoch);
+
+        // A successful manual probe is explicit evidence that the relay has
+        // returned. Wake a failed IDS registration immediately instead of
+        // leaving it asleep in the ten-minute resource backoff.
+        try {
+          final registrationState =
+              await api.getRegstate(state: currentState.client);
+          if (registrationState is api.RegisterState_Failed) {
+            await api.doReregister(state: currentState.client);
+          }
+        } catch (e, s) {
+          Logger.warn("Relay reachable but registration retry failed",
+              error: e, trace: s);
+        }
       }
 
       return reachable;
