@@ -376,6 +376,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       }
     } catch (e) {
       automaticCloudRetryAfter = DateTime.now().add(const Duration(minutes: 1));
+      locationsRequestInFlight = false;
       if (mounted) {
         setState(() {
           cloudFindMyError = findMyCloudFailureMessage(e);
