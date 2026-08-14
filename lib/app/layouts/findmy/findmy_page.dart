@@ -37,8 +37,8 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:url_launcher/url_launcher.dart';
 
 @visibleForTesting
-bool canPlayFindMySound({required String? deviceId, required bool isAccessory}) {
-  return deviceId != null && deviceId.isNotEmpty && !isAccessory;
+bool canPlayFindMySound({required String? deviceId, required bool isCloudManaged}) {
+  return deviceId != null && deviceId.isNotEmpty && isCloudManaged;
 }
 
 @visibleForTesting
@@ -158,8 +158,8 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
             deviceId: deviceId,
           ));
       if (mounted) showSnackbar("Find My", "Sound request sent.");
-    } catch (_) {
-      Logger.warn("Find My Play Sound request failed");
+    } catch (e, s) {
+      Logger.warn("Find My Play Sound request failed", error: e, trace: s);
       if (mounted) showSnackbar("Error", "Could not play sound on this device.");
     } finally {
       if (mounted) setState(() => soundingDevices.remove(deviceId));
@@ -277,10 +277,14 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
 
   Widget deviceActions(FindMyDevice item) {
     final deviceId = item.id;
+    // FMIP devices, including AirPods, are returned without a beacon role and
+    // are accepted by the cloud playSound endpoint. Beacon-backed accessories
+    // (AirTags and compatible trackers) use the separate nearby BLE action.
+    final isCloudManaged = item.role == null;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (canPlayFindMySound(deviceId: deviceId, isAccessory: item.isConsideredAccessory))
+        if (canPlayFindMySound(deviceId: deviceId, isCloudManaged: isCloudManaged))
           IconButton(
             tooltip: "Play Sound",
             onPressed: soundingDevices.contains(deviceId) ? null : () => playSound(item),

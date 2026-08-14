@@ -7,20 +7,27 @@ void main() {
   group('Find My Play Sound eligibility', () {
     test('allows Apple-account devices with a non-empty identifier', () {
       expect(
-        canPlayFindMySound(deviceId: 'device-id', isAccessory: false),
+        canPlayFindMySound(deviceId: 'device-id', isCloudManaged: true),
         isTrue,
       );
     });
 
     test('rejects missing and empty identifiers', () {
-      expect(canPlayFindMySound(deviceId: null, isAccessory: false), isFalse);
-      expect(canPlayFindMySound(deviceId: '', isAccessory: false), isFalse);
+      expect(canPlayFindMySound(deviceId: null, isCloudManaged: true), isFalse);
+      expect(canPlayFindMySound(deviceId: '', isCloudManaged: true), isFalse);
     });
 
-    test('keeps accessories out of the remote Apple-account command', () {
+    test('keeps beacon-backed accessories out of the cloud command', () {
       expect(
-        canPlayFindMySound(deviceId: 'airtag-id', isAccessory: true),
+        canPlayFindMySound(deviceId: 'airtag-id', isCloudManaged: false),
         isFalse,
+      );
+    });
+
+    test('allows cloud-managed accessories such as AirPods', () {
+      expect(
+        canPlayFindMySound(deviceId: 'airpods-id', isCloudManaged: true),
+        isTrue,
       );
     });
 
