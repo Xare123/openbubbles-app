@@ -84,7 +84,11 @@ class ChatMessages {
   }
 
   void _attachReaction(Message parent, Message reaction) {
-    if (!parent.associatedMessages.any((item) => item.guid == reaction.guid)) {
+    final existingIndex = parent.associatedMessages
+        .indexWhere((item) => item.guid == reaction.guid);
+    if (existingIndex >= 0) {
+      parent.associatedMessages[existingIndex] = reaction;
+    } else {
       parent.associatedMessages.add(reaction);
     }
     parent.hasReactions = true;

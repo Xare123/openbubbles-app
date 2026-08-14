@@ -34,6 +34,28 @@ void main() {
     expect(base.associatedMessages.single, same(reaction));
   });
 
+  test('replaces the cached reaction when an updated event is replayed', () {
+    final messages = ChatMessages();
+    final base = Message(guid: 'base-updated-reaction', text: 'hello');
+    final original = Message(
+      guid: 'reaction-update',
+      associatedMessageGuid: base.guid,
+      associatedMessageType: 'like',
+    );
+    final updated = Message(
+      guid: original.guid,
+      associatedMessageGuid: base.guid,
+      associatedMessageType: '-like',
+    );
+
+    messages.addMessages([base, original]);
+    messages.addMessages([updated]);
+
+    expect(base.associatedMessages, hasLength(1));
+    expect(base.associatedMessages.single, same(updated));
+    expect(base.associatedMessages.single.associatedMessageType, '-like');
+  });
+
   test('includes the originator when it is loaded before its replies', () {
     final messages = ChatMessages();
     final originator = Message(guid: 'thread-1', text: 'originator');
