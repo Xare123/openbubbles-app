@@ -499,8 +499,9 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
 
           if (friend.latitude != null) {
 
-            final marker = markers.values.firstWhere(
+            final marker = markers.values.firstWhereOrNull(
                 (e) => (e.key as ValueKey?)?.value == "friend-${friend.handle?.uniqueAddressAndService}");
+            if (marker == null) return;
             popupController.showPopupsOnlyFor([marker]);
             mapController.move(LatLng(friend.latitude!, friend.longitude!), 10);
 
@@ -978,9 +979,10 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                                   await panelController.close();
                                 }
                                 await completer.future;
-                                final marker = markers.values.firstWhere((e) =>
+                                final marker = markers.values.firstWhereOrNull((e) =>
                                     e.point.latitude == item.location?.latitude &&
                                     e.point.longitude == item.location?.longitude);
+                                if (marker == null) return;
                                 popupController.showPopupsOnlyFor([marker]);
                                 mapController.move(LatLng(item.location!.latitude!, item.location!.longitude!), 10);
                               }
@@ -1128,9 +1130,10 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                                   await panelController.close();
                                 }
                                 await completer.future;
-                                final marker = markers.values.firstWhere((e) =>
+                                final marker = markers.values.firstWhereOrNull((e) =>
                                       e.point.latitude == item.location?.latitude &&
                                       e.point.longitude == item.location?.longitude);
+                                  if (marker == null) return;
                                   popupController.showPopupsOnlyFor([marker]);
                                 mapController.move(LatLng(item.location!.latitude!, item.location!.longitude!), 10);
                               }
@@ -1207,9 +1210,10 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                                           await panelController.close();
                                         }
                                         await completer.future;
-                                        final marker = markers.values.firstWhere((e) =>
+                                        final marker = markers.values.firstWhereOrNull((e) =>
                                             e.point.latitude == item.location?.latitude &&
                                             e.point.longitude == item.location?.longitude);
+                                        if (marker == null) return;
                                         popupController.showPopupsOnlyFor([marker]);
                                         mapController.move(
                                             LatLng(item.location!.latitude!, item.location!.longitude!), 10);
@@ -1342,8 +1346,9 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                             await panelController.close();
                           }
                           await completer.future;
-                          final marker = markers.values.firstWhere(
+                          final marker = markers.values.firstWhereOrNull(
                               (e) => e.point.latitude == item.latitude && e.point.longitude == item.longitude);
+                          if (marker == null) return;
                           popupController.showPopupsOnlyFor([marker]);
                           mapController.move(LatLng(item.latitude!, item.longitude!), 10);
                         },
@@ -1751,6 +1756,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                       if (ss.settings.skin.value != Skins.Samsung || kIsWeb || kIsDesktop) return false;
                       final scrollDistance = context.height / 3 - 57;
 
+                      if (!controller1.hasClients) return false;
                       if (controller1.offset > 0 && controller1.offset < scrollDistance) {
                         final double snapOffset = controller1.offset / scrollDistance > 0.5 ? scrollDistance : 0;
 
@@ -1795,6 +1801,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                       if (ss.settings.skin.value != Skins.Samsung || kIsWeb || kIsDesktop) return false;
                       final scrollDistance = context.height / 3 - 57;
 
+                      if (!controller2.hasClients) return false;
                       if (controller2.offset > 0 && controller2.offset < scrollDistance) {
                         final double snapOffset = controller2.offset / scrollDistance > 0.5 ? scrollDistance : 0;
 
@@ -2067,9 +2074,14 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
         PopupMarkerLayer(
           options: PopupMarkerLayerOptions(
             onPopupEvent: (ev, m) async {
-              final item = m.isEmpty ? null : friends
-                      .firstWhere((e) => e.latitude == m[0].point.latitude && e.longitude == m[0].point.longitude).id;
-              await api.selectFriend(config: pushService.state!.osConfig, client: fmfClient!, friend: item);
+              final friend = m.isEmpty
+                  ? null
+                  : friends.firstWhereOrNull(
+                      (e) => e.latitude == m[0].point.latitude && e.longitude == m[0].point.longitude);
+              if (fmfClient != null) {
+                await api.selectFriend(
+                    config: pushService.state!.osConfig, client: fmfClient!, friend: friend?.id);
+              }
             },
             popupController: popupController,
             markers: markers.values.toList(),
@@ -2079,7 +2091,8 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                 if (key?.value == "current") return const SizedBox();
                 if (key?.value.contains("device")) {
                   String prefix = key!.value.replaceFirst("device-", "");
-                  final item = devices.firstWhere((e) => e.id == prefix);
+                  final item = devices.firstWhereOrNull((e) => e.id == prefix);
+                  if (item == null) return const SizedBox();
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 5.0),
                     child: Container(
@@ -2123,7 +2136,8 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                   );
                 } else {
                   String prefix = key!.value.replaceFirst("friend-", "");
-                  final item = friends.firstWhere((e) => e.handle?.uniqueAddressAndService == prefix);
+                  final item = friends.firstWhereOrNull((e) => e.handle?.uniqueAddressAndService == prefix);
+                  if (item == null) return const SizedBox();
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 5.0),
                     child: Container(
