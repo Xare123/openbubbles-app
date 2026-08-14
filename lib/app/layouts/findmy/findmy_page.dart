@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:ui';
 
 import 'package:bitsdojo_window/bitsdojo_window.dart';
+import 'package:collection/collection.dart';
 import 'package:bluebubbles/app/components/avatars/contact_avatar_widget.dart';
 import 'package:bluebubbles/app/layouts/findmy/findmy_location_clipper.dart';
 import 'package:bluebubbles/app/layouts/findmy/findmy_pin_clipper.dart';
