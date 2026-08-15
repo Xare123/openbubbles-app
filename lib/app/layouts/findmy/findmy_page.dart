@@ -1726,6 +1726,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
           children: [
             SlidingUpPanel(
               controller: panelController,
+              scrollController: controller1,
               color: Theme.of(context).colorScheme.surface,
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(25.0),
