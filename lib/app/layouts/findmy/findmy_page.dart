@@ -51,6 +51,14 @@ bool canPlayNearbyFindMySound({required bool isAccessory, required bool isAndroi
 bool canScanNearbyFindMyTrackers({required bool isAndroid}) => isAndroid;
 
 @visibleForTesting
+String nearbyTrackerSignalLabel(Map<String, dynamic> tracker) {
+  final signal = tracker["signal"]?.toString() ?? "unknown";
+  final rssi = tracker["rssi"];
+  final readableSignal = signal.isEmpty ? "Unknown" : "${signal[0].toUpperCase()}${signal.substring(1)}";
+  return rssi is num ? "$readableSignal signal (${rssi.toInt()} dBm)" : "$readableSignal signal";
+}
+
+@visibleForTesting
 String findMyCloudFailureMessage(Object error) {
   final message = error.toString().toLowerCase();
   if (message.contains("relay device offline")) {
@@ -233,13 +241,12 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                     itemBuilder: (context, index) {
                       final tracker = trackers[index];
                       final protocol = tracker["protocol"]?.toString() ?? "unknown";
-                      final signal = tracker["signal"]?.toString() ?? "unknown";
                       return ListTile(
                         leading: const Icon(Icons.bluetooth_searching),
-                        title: Text(nearbyTrackerLabel(protocol)),
-                        subtitle: Text(signal.isEmpty
-                            ? "Unknown signal"
-                            : "${signal[0].toUpperCase()}${signal.substring(1)} signal"),
+                        title: Text("${nearbyTrackerLabel(protocol)} candidate ${index + 1}"),
+                        subtitle: Text(index == 0
+                            ? "Closest detected • ${nearbyTrackerSignalLabel(tracker)}"
+                            : nearbyTrackerSignalLabel(tracker)),
                         trailing: const Icon(Icons.volume_up),
                         onTap: () => Navigator.of(context).pop(tracker),
                       );

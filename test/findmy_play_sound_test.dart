@@ -51,6 +51,14 @@ void main() {
       expect(canScanNearbyFindMyTrackers(isAndroid: false), isFalse);
     });
 
+    test('shows exact signal strength when the Android scan provides RSSI', () {
+      expect(
+        nearbyTrackerSignalLabel({'signal': 'strong', 'rssi': -47}),
+        'Strong signal (-47 dBm)',
+      );
+      expect(nearbyTrackerSignalLabel({'signal': 'weak'}), 'Weak signal');
+    });
+
     test('explains an offline relay without exposing the bridge exception', () {
       expect(
         findMyCloudFailureMessage(Exception('Relay device offline!')),

@@ -279,6 +279,7 @@ class NearbyFindMyAccessoryHandler private constructor() : MethodCallHandlerImpl
                         "token" to token,
                         "protocol" to discovered.protocol.wireName,
                         "signal" to signalFor(discovered.rssi),
+                        "rssi" to discovered.rssi,
                     )
                 }
             }
