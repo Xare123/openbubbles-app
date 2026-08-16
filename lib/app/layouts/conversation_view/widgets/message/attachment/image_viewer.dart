@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
+import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/attachment/image_viewer_decode_dimensions.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/cupertino.dart';
@@ -78,28 +79,20 @@ class _ImageViewerState extends OptimizedState<ImageViewer> with AutomaticKeepAl
         height: min((attachment.height?.toDouble() ?? ns.width(context) * 0.5 / attachment.aspectRatio), ns.width(context) * 0.5 / attachment.aspectRatio),
       );
     }
-    final maximumDisplayWidth = ns.width(context) * 0.5;
-    final sourceWidth = attachment.width?.toDouble();
-    final sourceHeight = attachment.height?.toDouble();
-    final displayWidth = min(
-      sourceWidth != null && sourceWidth > 0 ? sourceWidth : maximumDisplayWidth,
-      maximumDisplayWidth,
+    final decodeDimensions = calculateImageViewerDecodeDimensions(
+      maximumDisplayWidth: ns.width(context) * 0.5,
+      pixelRatio: Get.pixelRatio,
+      sourceWidth: attachment.width,
+      sourceHeight: attachment.height,
+      aspectRatio: attachment.aspectRatio,
     );
-    final fallbackHeight = maximumDisplayWidth /
-        (attachment.aspectRatio.isFinite && attachment.aspectRatio > 0 ? attachment.aspectRatio : 1);
-    final displayHeight = min(
-      sourceHeight != null && sourceHeight > 0 ? sourceHeight : fallbackHeight,
-      fallbackHeight,
-    );
-    final cacheWidth = (displayWidth * Get.pixelRatio / 2).round().clamp(1, 1024).toInt();
-    final cacheHeight = (displayHeight * Get.pixelRatio / 2).round().clamp(1, 1024).toInt();
     return Image.memory(
       data!,
       // prevents the image widget from "refreshing" when the provider changes
       gaplessPlayback: true,
       filterQuality: FilterQuality.none,
-      cacheWidth: cacheWidth,
-      cacheHeight: cacheHeight,
+      cacheWidth: decodeDimensions.width,
+      cacheHeight: decodeDimensions.height,
       fit: BoxFit.cover,
       frameBuilder: (context, w, frame, wasSyncLoaded) {
         return AnimatedCrossFade(
