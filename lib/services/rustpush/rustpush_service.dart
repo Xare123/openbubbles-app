@@ -19,6 +19,7 @@ import 'package:bluebubbles/src/rust/lib.dart' as lib;
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/services/rustpush/send_retry_policy.dart';
 import 'package:bluebubbles/utils/crypto_utils.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:collection/collection.dart';
@@ -342,6 +343,8 @@ class RustPushBBUtils {
 }
 
 class RustPushBackend implements BackendService {
+  final InFlightSendRegistry _inFlightSends = InFlightSendRegistry();
+
   Future<String> getDefaultHandle() async {
     var myHandles = await api.getHandles(state: pushService.state!.client);
     var setHandle = ss.settings.defaultHandle.value;
@@ -398,22 +401,33 @@ class RustPushBackend implements BackendService {
     return const api.MessageType.iMessage();
   }
 
-  Future<void> sendMsg(api.MessageInst msg) async {
+  Future<void> sendMsg(api.MessageInst msg, {bool waitForResource = true}) {
+    return _inFlightSends.run(msg.id, () => _sendMsgWithRetry(msg, waitForResource: waitForResource));
+  }
+
+  Future<void> _sendMsgWithRetry(api.MessageInst msg, {required bool waitForResource}) async {
     var message = Message.findOne(guid: msg.id);
     if (message != null) {
       message.sendingServiceId = pushService.serviceId;
       message.save(updateSendingServiceId: true);
     }
     var stillRunning = false;
+    final retryPolicy = SendRetryPolicy();
     try {
-      stillRunning = await api.send(state: pushService.state!.client, local: pushService.state!.localBroadcast, msg: msg);
-    } catch (e) {
-      if (e is AnyhowException) {
-        if (e.message.contains("Failed to generate resource") && e.message.contains("not retrying")) {
-          pushService.markFailedToLogin();
+      while (true) {
+        try {
+          stillRunning = await api.send(state: pushService.state!.client, local: pushService.state!.localBroadcast, msg: msg);
+          break;
+        } catch (e) {
+          final decision = retryPolicy.next(e, waitForResource: waitForResource);
+          if (decision.markFailedLogin) {
+            pushService.markFailedToLogin();
+          }
+          if (!decision.retry) rethrow;
+          Logger.warn("Retrying send ${msg.id} in ${decision.delay.inSeconds}s (${decision.kind.name})");
+          await Future.delayed(decision.delay);
         }
       }
-      rethrow;
     } finally {
       if (!stillRunning) {
         message = Message.findOne(guid: msg.id);
@@ -1279,7 +1293,7 @@ class RustPushBackend implements BackendService {
         icon: base64Decode(appdata.appIcon!),
       ) : null)
     );
-    await sendMsg(msg);
+    await sendMsg(msg, waitForResource: false); // typing state is stale after a reconnect
   }
 
   @override
@@ -1290,7 +1304,7 @@ class RustPushBackend implements BackendService {
       sender: await c.ensureHandle(),
       message: const api.Message.typing(false)
     );
-    await sendMsg(msg);
+    await sendMsg(msg, waitForResource: false);
   }
 
   @override
