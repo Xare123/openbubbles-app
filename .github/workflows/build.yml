@@ -70,7 +70,7 @@ jobs:
         run: |
           set -euo pipefail
           flutter pub get
-          ./tooling/android/patch_pub_cache_cargokit.sh
+          bash ./tooling/android/patch_pub_cache_cargokit.sh
 
       - name: Run focused message helper tests
         run: flutter test test/helpers/message_helper_test.dart
