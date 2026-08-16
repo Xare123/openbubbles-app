@@ -64,6 +64,14 @@ jobs:
               cp rustpush/certs/legacy-fairplay/fairplay.crt rustpush/certs/fairplay/$name.crt
           done
 
+      # pub get restores the two vendored CargoKit copies, so patch them after
+      # dependency resolution and before the Android build.
+      - name: Patch vendored CargoKit for the Flutter Kotlin plugin
+        run: |
+          set -euo pipefail
+          flutter pub get
+          ./tooling/android/patch_pub_cache_cargokit.sh
+
       - name: Run focused message helper tests
         run: flutter test test/helpers/message_helper_test.dart
 
