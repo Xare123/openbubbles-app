@@ -20,6 +20,7 @@ import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/services/rustpush/send_retry_policy.dart';
+import 'package:bluebubbles/services/rustpush/profile_retry_policy.dart';
 import 'package:bluebubbles/utils/crypto_utils.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:collection/collection.dart';
@@ -2841,8 +2842,86 @@ class RustPushService extends GetxService {
     return null;
   }
 
-  List<String> profilesDownloading = [];
-  Future handleSharedProfile(api.ShareProfileMessage shared, String sender, List<Handle> targets) async {
+  final Set<String> profilesDownloading = {};
+  final Map<String, Timer> _profileRetryTimers = {};
+  final ProfileRetryPolicy _profileRetryPolicy = ProfileRetryPolicy();
+
+  String _profileFailureCategory(Object error) {
+    final description = error.toString().toLowerCase();
+    if (description.contains("profile service unavailable")) return "service_unavailable";
+    if (description.contains("timeout")) return "timeout";
+    if (description.contains("connection") ||
+        description.contains("network") ||
+        description.contains("socket") ||
+        description.contains("dns")) {
+      return "network";
+    }
+    if (description.contains("record") && description.contains("not found")) return "record_not_found";
+    if (description.contains("plist") || description.contains("serde")) return "plist";
+    if (description.contains("decrypt") ||
+        description.contains("hmac") ||
+        description.contains("crypto")) {
+      return "crypto";
+    }
+    if (description.contains("asset")) return "asset";
+    if (description.contains("panic")) return "panic";
+    return error.runtimeType.toString();
+  }
+
+  void _clearProfileRetry(String profileKey) {
+    _profileRetryTimers.remove(profileKey)?.cancel();
+    _profileRetryPolicy.complete(profileKey);
+  }
+
+  void _scheduleProfileRetry(
+    api.ShareProfileMessage shared,
+    String sender,
+    List<Handle> targets,
+    String category,
+  ) {
+    final profileKey = shared.cloudKitRecordKey;
+    final delay = _profileRetryPolicy.schedule(profileKey);
+    if (delay == null) {
+      Logger.warn("Shared profile fetch exhausted or already scheduled category=$category");
+      return;
+    }
+
+    Logger.warn(
+      "Shared profile fetch deferred category=$category "
+      "retry_in_seconds=${delay.inSeconds}",
+    );
+    _profileRetryTimers[profileKey] = Timer(delay, () {
+      _profileRetryTimers.remove(profileKey);
+      _profileRetryPolicy.timerFired(profileKey);
+      unawaited(handleSharedProfile(shared, sender, targets));
+    });
+  }
+
+  Future<void> handleSharedProfile(api.ShareProfileMessage shared, String sender, List<Handle> targets) async {
+    final profileKey = shared.cloudKitRecordKey;
+    if (_profileRetryPolicy.isScheduled(profileKey) || !profilesDownloading.add(profileKey)) return;
+
+    try {
+      await _handleSharedProfile(shared, sender, targets);
+      _clearProfileRetry(profileKey);
+    } catch (error) {
+      // Shared profile payloads are optional message metadata. A malformed
+      // CloudKit plist must not escape an unawaited profile task and disturb
+      // message delivery. Retry independently so the contact image can recover
+      // after transient CloudKit, network, or service-initialization failures.
+      final category = _profileFailureCategory(error);
+      if (_profileRetryPolicy.classify(error) == ProfileFailureKind.transient) {
+        _scheduleProfileRetry(shared, sender, targets, category);
+      } else {
+        Logger.warn("Shared profile fetch permanently failed category=$category");
+        _profileRetryPolicy.complete(profileKey);
+      }
+    } finally {
+      profilesDownloading.remove(profileKey);
+    }
+  }
+
+  Future<void> _handleSharedProfile(api.ShareProfileMessage shared, String sender, List<Handle> targets) async {
     var myHandles = await api.getHandles(state: pushService.state!.client);
     if (myHandles.contains(sender)) {
       for (var target in targets) {
@@ -5050,6 +5129,11 @@ class RustPushService extends GetxService {
 
   @override
   void onClose() {
+    for (final timer in _profileRetryTimers.values) {
+      timer.cancel();
+    }
+    _profileRetryTimers.clear();
+    _profileRetryPolicy.clear();
     if (state != null) disposeState(state!, true, false);
     super.onClose();
   }
