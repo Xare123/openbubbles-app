@@ -70,7 +70,7 @@ jobs:
         run: |
           set -euo pipefail
           flutter pub get
-          ./tooling/android/patch_pub_cache_cargokit.sh
+          bash ./tooling/android/patch_pub_cache_cargokit.sh
 
       # First run is expected to fail until ffmpeg_kit_flutter_new is fixed.
       - name: Run Build Script
