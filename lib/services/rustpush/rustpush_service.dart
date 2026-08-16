@@ -19,6 +19,7 @@ import 'package:bluebubbles/src/rust/lib.dart' as lib;
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/services/rustpush/profile_retry_policy.dart';
 import 'package:bluebubbles/utils/crypto_utils.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:collection/collection.dart';
@@ -2829,12 +2830,7 @@ class RustPushService extends GetxService {
 
   final Set<String> profilesDownloading = {};
   final Map<String, Timer> _profileRetryTimers = {};
-  final Map<String, int> _profileRetryAttempts = {};
-  static const List<Duration> _profileRetryDelays = [
-    Duration(seconds: 5),
-    Duration(seconds: 30),
-    Duration(minutes: 2),
-  ];
+  final ProfileRetryPolicy _profileRetryPolicy = ProfileRetryPolicy();
 
   String _profileFailureCategory(Object error) {
     final description = error.toString().toLowerCase();
@@ -2860,7 +2856,7 @@ class RustPushService extends GetxService {
 
   void _clearProfileRetry(String profileKey) {
     _profileRetryTimers.remove(profileKey)?.cancel();
-    _profileRetryAttempts.remove(profileKey);
+    _profileRetryPolicy.complete(profileKey);
   }
 
   void _scheduleProfileRetry(
@@ -2870,30 +2866,26 @@ class RustPushService extends GetxService {
     String category,
   ) {
     final profileKey = shared.cloudKitRecordKey;
-    if (_profileRetryTimers.containsKey(profileKey)) return;
-
-    final attempt = _profileRetryAttempts[profileKey] ?? 0;
-    if (attempt >= _profileRetryDelays.length) {
-      _profileRetryAttempts.remove(profileKey);
-      Logger.warn("Shared profile fetch exhausted category=$category attempts=$attempt");
+    final delay = _profileRetryPolicy.schedule(profileKey);
+    if (delay == null) {
+      Logger.warn("Shared profile fetch exhausted or already scheduled category=$category");
       return;
     }
 
-    final delay = _profileRetryDelays[attempt];
-    _profileRetryAttempts[profileKey] = attempt + 1;
     Logger.warn(
       "Shared profile fetch deferred category=$category "
-      "attempt=${attempt + 1} retry_in_seconds=${delay.inSeconds}",
+      "retry_in_seconds=${delay.inSeconds}",
     );
     _profileRetryTimers[profileKey] = Timer(delay, () {
       _profileRetryTimers.remove(profileKey);
+      _profileRetryPolicy.timerFired(profileKey);
       unawaited(handleSharedProfile(shared, sender, targets));
     });
   }
 
   Future<void> handleSharedProfile(api.ShareProfileMessage shared, String sender, List<Handle> targets) async {
     final profileKey = shared.cloudKitRecordKey;
-    if (_profileRetryTimers.containsKey(profileKey) || !profilesDownloading.add(profileKey)) return;
+    if (_profileRetryPolicy.isScheduled(profileKey) || !profilesDownloading.add(profileKey)) return;
 
     try {
       await _handleSharedProfile(shared, sender, targets);
@@ -2903,7 +2895,13 @@ class RustPushService extends GetxService {
       // CloudKit plist must not escape an unawaited profile task and disturb
       // message delivery. Retry independently so the contact image can recover
       // after transient CloudKit, network, or service-initialization failures.
-      _scheduleProfileRetry(shared, sender, targets, _profileFailureCategory(error));
+      final category = _profileFailureCategory(error);
+      if (_profileRetryPolicy.classify(error) == ProfileFailureKind.transient) {
+        _scheduleProfileRetry(shared, sender, targets, category);
+      } else {
+        Logger.warn("Shared profile fetch permanently failed category=$category");
+        _profileRetryPolicy.complete(profileKey);
+      }
     } finally {
       profilesDownloading.remove(profileKey);
     }
@@ -5125,7 +5123,7 @@ class RustPushService extends GetxService {
       timer.cancel();
     }
     _profileRetryTimers.clear();
-    _profileRetryAttempts.clear();
+    _profileRetryPolicy.clear();
     if (state != null) disposeState(state!, true, false);
     super.onClose();
   }
