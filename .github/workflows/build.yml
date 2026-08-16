@@ -68,7 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           flutter pub get
-          ./tooling/android/patch_pub_cache_cargokit.sh
+          bash ./tooling/android/patch_pub_cache_cargokit.sh
 
       # Keep the test gate whole rather than maintaining a hand-curated file
       # list. This upstream base has no test/ directory yet, so the guard is
