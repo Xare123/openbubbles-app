@@ -1,6 +1,7 @@
 package com.bluebubbles.messaging.services.facetime
 
 import android.content.Context
+import java.net.URI
 
 internal object FaceTimeDiagnostics {
     private const val preferencesName = "FlutterSharedPreferences"
@@ -19,4 +20,19 @@ internal object FaceTimeDiagnostics {
         developerModeEnabled: Boolean,
         diagnosticsEnabled: Boolean,
     ): Boolean = developerModeEnabled && diagnosticsEnabled
+    internal fun safeResourceLabel(requestUrl: String?): String {
+        if (requestUrl == null) return "unknown"
+        return try {
+            val uri = URI(requestUrl)
+            val segment = uri.path.orEmpty().substringAfterLast('/')
+            val resource = when {
+                segment.endsWith(".js", ignoreCase = true) -> segment
+                segment.endsWith(".css", ignoreCase = true) -> segment
+                else -> "page-or-media"
+            }
+            "${uri.host ?: "unknown"}/$resource"
+        } catch (_: Exception) {
+            "unparseable"
+        }
+    }
 }
