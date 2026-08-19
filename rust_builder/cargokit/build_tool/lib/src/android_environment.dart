@@ -52,14 +52,6 @@ class AndroidEnvironment {
   /// Target being built.
   final Target target;
 
-  // OpenSSL's vendored build runs these values through a POSIX make shell.
-  // Backslashes in Windows paths are treated as escapes there, turning
-  // `C:\path\clang.exe` into `C:pathclang.exe`. Forward slashes remain valid
-  // Windows paths and survive both Cargo and make unchanged.
-  String _buildScriptPath(String value) {
-    return Platform.isWindows ? value.replaceAll(r'\', '/') : value;
-  }
-
   bool ndkIsInstalled() {
     final ndkPath = path.join(sdkPath, 'ndk', ndkVersion);
     final ndkPackageXml = File(path.join(ndkPath, 'package.xml'));
@@ -115,19 +107,35 @@ class AndroidEnvironment {
     final targetArg = '--target=${target.rust}$minSdkVersion';
 
     final ccKey = 'CC_${target.rust}';
-    final ccValue = _buildScriptPath(path.join(toolchainPath, 'clang$exe'));
+    // Vendored native builds such as OpenSSL execute these values through a
+    // POSIX make shell. On Windows that shell strips the backslashes from an
+    // absolute compiler path. Resolve the tools through PATH there instead.
+    final ccValue = Platform.isWindows
+        ? 'clang$exe'
+        : path.join(toolchainPath, 'clang$exe');
     final cfFlagsKey = 'CFLAGS_${target.rust}';
     final cFlagsValue = targetArg;
 
     final cxxKey = 'CXX_${target.rust}';
-    final cxxValue = _buildScriptPath(path.join(toolchainPath, 'clang++$exe'));
+    final cxxValue = Platform.isWindows
+        ? 'clang++$exe'
+        : path.join(toolchainPath, 'clang++$exe');
     final cxxfFlagsKey = 'CXXFLAGS_${target.rust}';
     final cxxFlagsValue = targetArg;
 
     final linkerKey = 'cargo_target_${target.rust.replaceAll('-', '_')}_linker'.toUpperCase();
 
     final ranlibKey = 'RANLIB_${target.rust}';
-    final ranlibValue = _buildScriptPath(path.join(toolchainPath, 'llvm-ranlib$exe'));
+    final ranlibValue = Platform.isWindows
+        ? 'llvm-ranlib$exe'
+        : path.join(toolchainPath, 'llvm-ranlib$exe');
+
+    final inheritedPath =
+        Platform.environment['PATH'] ?? Platform.environment['Path'] ?? '';
+    final pathSeparator = Platform.isWindows ? ';' : ':';
+    final buildPath = inheritedPath.isEmpty
+        ? toolchainPath
+        : '$toolchainPath$pathSeparator$inheritedPath';
 
     final ndkVersionParsed = Version.parse(ndkVersion);
     final rustFlagsKey = 'CARGO_ENCODED_RUSTFLAGS';
@@ -149,12 +157,13 @@ class AndroidEnvironment {
     final toolTempDir = Platform.environment['CARGOKIT_TOOL_TEMP_DIR'] ?? targetTempDir;
 
     return {
-      arKey: _buildScriptPath(arValue),
+      arKey: Platform.isWindows ? path.basename(arValue) : arValue,
       ccKey: ccValue,
       cfFlagsKey: cFlagsValue,
       cxxKey: cxxValue,
       cxxfFlagsKey: cxxFlagsValue,
       ranlibKey: ranlibValue,
+      'PATH': buildPath,
       rustFlagsKey: rustFlagsValue,
       linkerKey: selfPath,
       // Recognized by main() so we know when we're acting as a wrapper
