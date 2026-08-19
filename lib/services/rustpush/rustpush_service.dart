@@ -84,8 +84,7 @@ const bool _legacyCloudKitMutationsEnabled = bool.fromEnvironment(
   defaultValue: false,
 );
 
-bool get legacyCloudKitMutationsEnabled =>
-    _legacyCloudKitMutationsEnabled;
+bool get legacyCloudKitMutationsEnabled => _legacyCloudKitMutationsEnabled;
 
 const clientId =
     '1041242226917-ik21n86fp43e82iu1e5soh6bu6gvuste.apps.googleusercontent.com';
@@ -99,8 +98,9 @@ String _durationMs(Stopwatch stopwatch) =>
 
 class SyncIsolate {
   static void initialize() {
-    ui.CallbackHandle callbackHandle =
-        ui.PluginUtilities.getCallbackHandle(backgroundSyncIsolate)!;
+    ui.CallbackHandle callbackHandle = ui.PluginUtilities.getCallbackHandle(
+      backgroundSyncIsolate,
+    )!;
     ss.prefs.setInt("backgroundSyncIsolate", callbackHandle.toRawHandle());
   }
 }
@@ -154,11 +154,13 @@ Future<void> backgroundSyncIsolate() async {
 class RustPushBBUtils {
   static Handle rustHandleToBB(String handle) {
     var address = handle.replaceAll("tel:", "").replaceAll("mailto:", "");
-    var mHandle =
-        Handle.findOne(addressAndService: Tuple2(address, "iMessage"));
+    var mHandle = Handle.findOne(
+      addressAndService: Tuple2(address, "iMessage"),
+    );
     if (mHandle == null) {
       mHandle = Handle(
-          address: handle.replaceAll("tel:", "").replaceAll("mailto:", ""));
+        address: handle.replaceAll("tel:", "").replaceAll("mailto:", ""),
+      );
       mHandle.save();
     }
     if (mHandle.originalROWID == null) {
@@ -188,8 +190,9 @@ class RustPushBBUtils {
   static DateTime fromNsSinceAppleEpoch(int ns) {
     const coreDataEpochOffsetSeconds = 978307200;
     return DateTime.fromMicrosecondsSinceEpoch(
-        (ns ~/ 1000) + coreDataEpochOffsetSeconds * 1000000,
-        isUtc: true);
+      (ns ~/ 1000) + coreDataEpochOffsetSeconds * 1000000,
+      isUtc: true,
+    );
   }
 
   static int nsSinceAppleEpoch(DateTime time) {
@@ -209,7 +212,8 @@ class RustPushBBUtils {
   }
 
   static Future<(List<String>, List<Handle>)> rustParticipantsToBB(
-      List<String> participants) async {
+    List<String> participants,
+  ) async {
     var myHandles = (await api.getHandles(state: pushService.state!.client));
     var mine = myHandles.filter((e) => participants.contains(e)).toList();
     return (
@@ -217,7 +221,7 @@ class RustPushBBUtils {
       participants
           .filter((e) => !myHandles.contains(e))
           .map((e) => rustHandleToBB(e))
-          .toList()
+          .toList(),
     );
   }
 
@@ -439,9 +443,10 @@ class RustPushBackend implements BackendService {
         }
       }
       return api.MessageType.sms(
-          isPhone: await chat.shouldRoute(),
-          usingNumber: await chat.ensureHandle(),
-          fromHandle: fromHandle);
+        isPhone: await chat.shouldRoute(),
+        usingNumber: await chat.ensureHandle(),
+        fromHandle: fromHandle,
+      );
     }
     return const api.MessageType.iMessage();
   }
@@ -461,8 +466,9 @@ class RustPushBackend implements BackendService {
     // lookup) already burned its own immediate retries, the resource itself is still coming back.
     if (!e.message.contains("Failed to generate resource")) return null;
     if (e.message.contains("not retrying")) return null;
-    var seconds =
-        int.tryParse(resourceRetryRegex.firstMatch(e.message)?.group(1) ?? "");
+    var seconds = int.tryParse(
+      resourceRetryRegex.firstMatch(e.message)?.group(1) ?? "",
+    );
     if (seconds == null) return null;
     var wait = Duration(seconds: seconds);
     return wait > maxResourceWait ? maxResourceWait : wait;
@@ -474,9 +480,11 @@ class RustPushBackend implements BackendService {
   static const sendTimeoutRetryWait = Duration(seconds: 2);
   static const maxSendTimeoutRetries = 1;
 
-  Future<void> sendMsg(api.MessageInst msg,
-      {bool waitForResource = true,
-      Future<api.MessageInst> Function()? rebuildForRetry}) async {
+  Future<void> sendMsg(
+    api.MessageInst msg, {
+    bool waitForResource = true,
+    Future<api.MessageInst> Function()? rebuildForRetry,
+  }) async {
     final attemptId = uuid.v4();
     final sendOwner = encodeSendOwner(
       serviceId: pushService.serviceId,
@@ -511,7 +519,8 @@ class RustPushBackend implements BackendService {
                 sendTimeoutRetries < maxSendTimeoutRetries) {
               sendTimeoutRetries++;
               Logger.warn(
-                  "Send confirmation timed out; retrying once after the push connection reload");
+                "Send confirmation timed out; retrying once after the push connection reload",
+              );
               await Future.delayed(sendTimeoutRetryWait);
               if (rebuildForRetry != null) {
                 msg = await rebuildForRetry();
@@ -524,7 +533,8 @@ class RustPushBackend implements BackendService {
           if (wait != null) wait += const Duration(seconds: 1);
           if (wait == null || waited + wait > sendRetryBudget) rethrow;
           Logger.warn(
-              "Connection isn't ready; retrying ${msg.id} in ${wait.inSeconds}s ($e)");
+            "Connection isn't ready; retrying ${msg.id} in ${wait.inSeconds}s ($e)",
+          );
           await Future.delayed(wait);
           waited += wait;
           if (rebuildForRetry != null) {
@@ -546,33 +556,43 @@ class RustPushBackend implements BackendService {
 
   @override
   Future<Chat> createChat(
-      List<String> addresses, AttributedBody? message, String service,
-      {CancelToken? cancelToken, String? existingGuid}) async {
+    List<String> addresses,
+    AttributedBody? message,
+    String service, {
+    CancelToken? cancelToken,
+    String? existingGuid,
+  }) async {
     var handle = service == "SMS"
         ? await getDefaultSMSHandle()
         : await getDefaultHandle();
-    var formattedHandles =
-        addresses.map((e) => RustPushBBUtils.rustHandleToBB(e)).toList();
+    var formattedHandles = addresses
+        .map((e) => RustPushBBUtils.rustHandleToBB(e))
+        .toList();
     var chat = Chat(
       guid: existingGuid ?? uuid.v4(),
       participants: formattedHandles,
       usingHandle: handle,
       isRpSms: service == "SMS",
-      senderIsKnown:
-          formattedHandles.any((handle) => !(handle.contact?.isShared ?? true)),
+      senderIsKnown: formattedHandles.any(
+        (handle) => !(handle.contact?.isShared ?? true),
+      ),
     );
     chat.save(); //save for reflectMessage
     if (message != null) {
       var msg = await api.newMsg(
-          conversation: await chat.getConversationData(),
-          message: api.Message.message(api.NormalMessage(
+        conversation: await chat.getConversationData(),
+        message: api.Message.message(
+          api.NormalMessage(
             parts: await partsFromBody(message),
             service: await getService(chat),
             voice: false,
-            embeddedProfile:
-                await pushService.getShareProfileMessageFor(chat.participants),
-          )),
-          sender: handle);
+            embeddedProfile: await pushService.getShareProfileMessageFor(
+              chat.participants,
+            ),
+          ),
+        ),
+        sender: handle,
+      );
       if (chat.isRpSms) {
         msg.target = await getSMSTargets(handle);
       }
@@ -589,23 +609,28 @@ class RustPushBackend implements BackendService {
   }
 
   @override
-  Future<PlatformFile> downloadAttachment(Attachment attachment,
-      {void Function(int p1, int p2)? onReceiveProgress,
-      bool original = false,
-      CancelToken? cancelToken}) async {
+  Future<PlatformFile> downloadAttachment(
+    Attachment attachment, {
+    void Function(int p1, int p2)? onReceiveProgress,
+    bool original = false,
+    CancelToken? cancelToken,
+  }) async {
     if (attachment.metadata!.containsKey("cloud")) {
       await api.downloadCloudAttachments(
-          cloudMessagesClient:
-              pushService.state!.icloudServices!.cloudMessagesClient!,
-          files: [(attachment.path, attachment.metadata!["cloud"])]);
+        cloudMessagesClient:
+            pushService.state!.icloudServices!.cloudMessagesClient!,
+        files: [(attachment.path, attachment.metadata!["cloud"])],
+      );
       return attachment.getFile();
     }
-    var rustAttachment =
-        api.restoreAttachment(data: attachment.metadata!["rustpush"]);
+    var rustAttachment = api.restoreAttachment(
+      data: attachment.metadata!["rustpush"],
+    );
     var stream = api.downloadAttachment(
-        aps: pushService.state!.conn,
-        attachment: rustAttachment,
-        path: attachment.path);
+      aps: pushService.state!.conn,
+      attachment: rustAttachment,
+      path: attachment.path,
+    );
     await for (final event in stream) {
       if (onReceiveProgress != null) {
         onReceiveProgress(event.prog, event.total);
@@ -616,7 +641,8 @@ class RustPushBackend implements BackendService {
     if (attachment.uti == "com.apple.coreaudio-format" && Platform.isAndroid) {
       await File(attachment.path).rename("${attachment.directory}/encode.caf");
       var session = await FFmpegKit.execute(
-          "-i \"${attachment.directory}/encode.caf\" \"${attachment.directory}/encode.m4a\"");
+        "-i \"${attachment.directory}/encode.caf\" \"${attachment.directory}/encode.m4a\"",
+      );
 
       var output = (await session.getOutput())!;
       while (output.isNotEmpty) {
@@ -632,8 +658,9 @@ class RustPushBackend implements BackendService {
 
   Future<List<api.MessageTarget>> getSMSTargets(String handle) async {
     if (ss.settings.isSmsRouter.value) {
-      var registered =
-          await api.getMyPhoneHandles(state: pushService.state!.client);
+      var registered = await api.getMyPhoneHandles(
+        state: pushService.state!.client,
+      );
       if (registered.contains(handle)) {
         return ss.settings.smsRoutingTargets
             .map((element) => api.MessageTarget.uuid(element))
@@ -647,18 +674,23 @@ class RustPushBackend implements BackendService {
 
   @override
   Future<Message> sendAttachment(
-      Chat chat, Message m, bool isAudioMessage, Attachment att,
-      {void Function(int p1, int p2)? onSendProgress,
-      CancelToken? cancelToken}) async {
+    Chat chat,
+    Message m,
+    bool isAudioMessage,
+    Attachment att, {
+    void Function(int p1, int p2)? onSendProgress,
+    CancelToken? cancelToken,
+  }) async {
     if (chat.isRpSms && !smsForwardingEnabled()) {
       throw Exception("SMS is not enabled (enable in settings -> user)");
     }
     var stream = api.uploadAttachment(
-        aps: pushService.state!.conn,
-        path: att.getFile().path!,
-        mime: att.mimeType ?? "application/octet-stream",
-        uti: att.uti ?? "public.data",
-        name: att.transferName!);
+      aps: pushService.state!.conn,
+      path: att.getFile().path!,
+      mime: att.mimeType ?? "application/octet-stream",
+      uti: att.uti ?? "public.data",
+      name: att.transferName!,
+    );
     api.Attachment? attachment;
     await for (final event in stream) {
       if (event.attachment != null) {
@@ -673,20 +705,27 @@ class RustPushBackend implements BackendService {
     }
     Logger.info("uploaded");
     var msg = await api.newMsg(
-        conversation: await chat.getConversationData(),
-        sender: await chat.ensureHandle(),
-        message: api.Message.message(api.NormalMessage(
-          parts: api.MessageParts(field0: [
-            if (m.payloadData?.appData?.first.ldText != null)
-              api.IndexedMessagePart(
+      conversation: await chat.getConversationData(),
+      sender: await chat.ensureHandle(),
+      message: api.Message.message(
+        api.NormalMessage(
+          parts: api.MessageParts(
+            field0: [
+              if (m.payloadData?.appData?.first.ldText != null)
+                api.IndexedMessagePart(
                   part_: api.MessagePart.object(
-                      m.payloadData!.appData!.first.ldText!)),
-            api.IndexedMessagePart(
-                part_: api.MessagePart.attachment(attachment!))
-          ]),
+                    m.payloadData!.appData!.first.ldText!,
+                  ),
+                ),
+              api.IndexedMessagePart(
+                part_: api.MessagePart.attachment(attachment!),
+              ),
+            ],
+          ),
           replyGuid: m.threadOriginatorGuid,
-          replyPart:
-              m.threadOriginatorGuid == null ? null : m.threadOriginatorPart,
+          replyPart: m.threadOriginatorGuid == null
+              ? null
+              : m.threadOriginatorPart,
           effect: m.expressiveSendStyleId,
           service: await getService(chat, forMessage: m),
           subject: m.subject,
@@ -696,11 +735,16 @@ class RustPushBackend implements BackendService {
           voice: isAudioMessage,
           scheduled: m.dateScheduled != null
               ? api.ScheduleMode(
-                  ms: m.dateScheduled!.millisecondsSinceEpoch, schedule: true)
+                  ms: m.dateScheduled!.millisecondsSinceEpoch,
+                  schedule: true,
+                )
               : null,
-          embeddedProfile:
-              await pushService.getShareProfileMessageFor(chat.participants),
-        )));
+          embeddedProfile: await pushService.getShareProfileMessageFor(
+            chat.participants,
+          ),
+        ),
+      ),
+    );
     if (m.stagingGuid != null) {
       msg.id = m.stagingGuid!;
     }
@@ -722,15 +766,19 @@ class RustPushBackend implements BackendService {
   }
 
   Future<Message> forwardMMSAttachment(
-      Chat chat, Message m, Attachment att) async {
+    Chat chat,
+    Message m,
+    Attachment att,
+  ) async {
     // 300 kb
     api.Attachment? attachment;
     var stream = api.uploadAttachment(
-        aps: pushService.state!.conn,
-        path: att.getFile().path!,
-        mime: att.mimeType ?? "application/octet-stream",
-        uti: att.uti ?? "public.data",
-        name: att.transferName!);
+      aps: pushService.state!.conn,
+      path: att.getFile().path!,
+      mime: att.mimeType ?? "application/octet-stream",
+      uti: att.uti ?? "public.data",
+      name: att.transferName!,
+    );
     if (att.getFile().size > 300000) {
       await for (final event in stream) {
         if (event.attachment != null) {
@@ -751,19 +799,27 @@ class RustPushBackend implements BackendService {
     Logger.info("uploaded");
     var service = await getService(chat, forMessage: m);
     var msg = await api.newMsg(
-        conversation: await chat.getConversationData(),
-        sender: await chat.ensureHandle(),
-        message: api.Message.message(api.NormalMessage(
-            parts: api.MessageParts(field0: [
+      conversation: await chat.getConversationData(),
+      sender: await chat.ensureHandle(),
+      message: api.Message.message(
+        api.NormalMessage(
+          parts: api.MessageParts(
+            field0: [
               api.IndexedMessagePart(
-                  part_: api.MessagePart.attachment(attachment!))
-            ]),
-            replyGuid: m.threadOriginatorGuid,
-            replyPart:
-                m.threadOriginatorGuid == null ? null : m.threadOriginatorPart,
-            effect: m.expressiveSendStyleId,
-            service: service,
-            voice: false)));
+                part_: api.MessagePart.attachment(attachment!),
+              ),
+            ],
+          ),
+          replyGuid: m.threadOriginatorGuid,
+          replyPart: m.threadOriginatorGuid == null
+              ? null
+              : m.threadOriginatorPart,
+          effect: m.expressiveSendStyleId,
+          service: service,
+          voice: false,
+        ),
+      ),
+    );
     if (m.stagingGuid != null ||
         (m.guid != null &&
             m.guid!.contains("error") &&
@@ -782,14 +838,19 @@ class RustPushBackend implements BackendService {
   }
 
   Future<void> broadcastSmsForwardingState(
-      bool state, List<String> uuids) async {
+    bool state,
+    List<String> uuids,
+  ) async {
     var handles = await api.getHandles(state: pushService.state!.client);
     var useHandle =
         handles.firstWhereOrNull((handle) => handle.contains("tel:")) ??
-            handles.first;
+        handles.first;
     var msg = await api.newMsg(
       conversation: api.ConversationData(
-          participants: [useHandle], cvName: null, senderGuid: null),
+        participants: [useHandle],
+        cvName: null,
+        senderGuid: null,
+      ),
       sender: useHandle,
       message: api.Message.enableSmsActivation(state),
     );
@@ -821,7 +882,8 @@ class RustPushBackend implements BackendService {
       conversation: await chat.getConversationData(),
       sender: await chat.ensureHandle(),
       message: api.Message.iconChange(
-          api.IconChangeMessage(groupVersion: chat.groupVersion!)),
+        api.IconChangeMessage(groupVersion: chat.groupVersion!),
+      ),
     );
     await sendMsg(msg);
     Attachment.delete(chat.photoAttachmentGuid!);
@@ -850,8 +912,9 @@ class RustPushBackend implements BackendService {
     var detail = await pushService.checkPurchaseState();
     var handles = await api.getHandles(state: pushService.state!.client);
     var state = await api.getRegstate(state: pushService.state!.client);
-    var deviceState =
-        await api.getDeviceInfo(config: pushService.state!.osConfig);
+    var deviceState = await api.getDeviceInfo(
+      config: pushService.state!.osConfig,
+    );
     var stateStr = "";
     if (!detail &&
         ss.settings.deviceIsHosted.value &&
@@ -866,7 +929,9 @@ class RustPushBackend implements BackendService {
       if (state.retryWait != null) {
         var data = state.retryWait!.toInt();
         final displayError = state.error.replaceAll(
-            "Relay device offline!", "Relay service unavailable!");
+          "Relay device offline!",
+          "Relay service unavailable!",
+        );
         suffix = "(waiting ${formatDuration(data)}; error: $displayError)";
       }
       stateStr = "Deregistered $suffix";
@@ -876,30 +941,35 @@ class RustPushBackend implements BackendService {
       "apple_id": ss.settings.iCloudAccount.value,
       "login_status_message": stateStr,
       "vetted_aliases": handles
-          .map((e) => {
-                "Alias": e.replaceFirst("tel:", "").replaceFirst("mailto:", ""),
-                "Status": state is api.RegisterState_Registered ? 3 : 0,
-              })
+          .map(
+            (e) => {
+              "Alias": e.replaceFirst("tel:", "").replaceFirst("mailto:", ""),
+              "Status": state is api.RegisterState_Registered ? 3 : 0,
+            },
+          )
           .toList(),
       "active_alias": (await getDefaultHandle())
           .replaceFirst("tel:", "")
           .replaceFirst("mailto:", ""),
       "sms_forwarding_capable": true,
       "sms_forwarding_enabled": smsForwardingEnabled(),
-      "can_pnr": deviceState.name.contains("iPhone") ||
+      "can_pnr":
+          deviceState.name.contains("iPhone") ||
           deviceState.name.contains("iPod") ||
           deviceState.name.contains("iPad"),
       "can_forward":
-          (await api.getMyPhoneHandles(state: pushService.state!.client))
-                  .isNotEmpty ||
-              ss.settings.isTester.value,
+          (await api.getMyPhoneHandles(
+            state: pushService.state!.client,
+          )).isNotEmpty ||
+          ss.settings.isTester.value,
     };
   }
 
   @override
   Future<void> setDefaultHandle(String defaultHandle) async {
-    ss.settings.defaultHandle.value =
-        await RustPushBBUtils.formatAndAddPrefix(defaultHandle);
+    ss.settings.defaultHandle.value = await RustPushBBUtils.formatAndAddPrefix(
+      defaultHandle,
+    );
     ss.saveSettings();
   }
 
@@ -909,9 +979,12 @@ class RustPushBackend implements BackendService {
   }
 
   @override
-  Future<bool> setChatIcon(Chat chat, String path,
-      {void Function(int p1, int p2)? onSendProgress,
-      CancelToken? cancelToken}) async {
+  Future<bool> setChatIcon(
+    Chat chat,
+    String path, {
+    void Function(int p1, int p2)? onSendProgress,
+    CancelToken? cancelToken,
+  }) async {
     chat.groupVersion = (chat.groupVersion ?? -1) + 1;
     var mmcsStream = api.uploadMmcs(aps: pushService.state!.conn, path: path);
     api.MMCSFile? mmcs;
@@ -929,7 +1002,8 @@ class RustPushBackend implements BackendService {
       conversation: await chat.getConversationData(),
       sender: await chat.ensureHandle(),
       message: api.Message.iconChange(
-          api.IconChangeMessage(groupVersion: chat.groupVersion!, file: mmcs!)),
+        api.IconChangeMessage(groupVersion: chat.groupVersion!, file: mmcs!),
+      ),
     );
 
     await sendMsg(msg);
@@ -937,16 +1011,20 @@ class RustPushBackend implements BackendService {
     chat.updateAttachmentGuid(msg.id);
     chat.ckSyncState = false;
     chat.save(
-        updateAttachmentGuid: true,
-        updateCustomAvatarPath: true,
-        updateGroupVersion: true,
-        updateCkSyncState: true);
+      updateAttachmentGuid: true,
+      updateCustomAvatarPath: true,
+      updateGroupVersion: true,
+      updateCkSyncState: true,
+    );
 
     msg.sentTimestamp = DateTime.now().millisecondsSinceEpoch;
-    inq.queue(IncomingItem(
+    inq.queue(
+      IncomingItem(
         chat: chat,
         message: (await pushService.reflectMessageDyn(msg))!,
-        type: QueueType.newMessage));
+        type: QueueType.newMessage,
+      ),
+    );
     return true;
   }
 
@@ -968,17 +1046,21 @@ class RustPushBackend implements BackendService {
   Future<void> moveToRecycleBin(Chat c, Message? message) async {
     var handle = await c.ensureHandle();
     var msg = await api.newMsg(
-        conversation: message?.dateScheduled != null
-            ? await c.getConversationData()
-            : api.ConversationData(participants: [handle]),
-        sender: handle,
-        message: message?.dateScheduled != null
-            ? const api.Message.unschedule()
-            : api.Message.moveToRecycleBin(api.MoveToRecycleBinMessage(
+      conversation: message?.dateScheduled != null
+          ? await c.getConversationData()
+          : api.ConversationData(participants: [handle]),
+      sender: handle,
+      message: message?.dateScheduled != null
+          ? const api.Message.unschedule()
+          : api.Message.moveToRecycleBin(
+              api.MoveToRecycleBinMessage(
                 target: message != null
                     ? api.DeleteTarget.messages([message.guid!])
                     : api.DeleteTarget.chat(await getOperatedChat(c)),
-                recoverableDeleteDate: DateTime.now().millisecondsSinceEpoch)));
+                recoverableDeleteDate: DateTime.now().millisecondsSinceEpoch,
+              ),
+            ),
+    );
     if (message?.dateScheduled != null) {
       msg.id = message!.guid!;
     }
@@ -989,9 +1071,10 @@ class RustPushBackend implements BackendService {
   Future<void> restoreChat(Chat c) async {
     var handle = await c.ensureHandle();
     var msg = await api.newMsg(
-        conversation: api.ConversationData(participants: [handle]),
-        sender: handle,
-        message: api.Message.recoverChat(await getOperatedChat(c)));
+      conversation: api.ConversationData(participants: [handle]),
+      sender: handle,
+      message: api.Message.recoverChat(await getOperatedChat(c)),
+    );
     await sendMsg(msg);
   }
 
@@ -999,11 +1082,15 @@ class RustPushBackend implements BackendService {
   Future<void> permanentlyDeleteChat(Chat c) async {
     var handle = await c.ensureHandle();
     var msg = await api.newMsg(
-        conversation: api.ConversationData(participants: [handle]),
-        sender: handle,
-        message: api.Message.permanentDelete(api.PermanentDeleteMessage(
-            target: api.DeleteTarget.chat(await getOperatedChat(c)),
-            isScheduled: false)));
+      conversation: api.ConversationData(participants: [handle]),
+      sender: handle,
+      message: api.Message.permanentDelete(
+        api.PermanentDeleteMessage(
+          target: api.DeleteTarget.chat(await getOperatedChat(c)),
+          isScheduled: false,
+        ),
+      ),
+    );
     await sendMsg(msg);
   }
 
@@ -1018,28 +1105,42 @@ class RustPushBackend implements BackendService {
       if (e.isAttachment) {
         var attachment = Attachment.findOne(e.attributes!.attachmentGuid!);
         if (attachment == null) continue;
-        var rustAttachment =
-            api.restoreAttachment(data: attachment.metadata!["rustpush"]);
-        parts.add(api.IndexedMessagePart(
-            part_: api.MessagePart.attachment(rustAttachment)));
+        var rustAttachment = api.restoreAttachment(
+          data: attachment.metadata!["rustpush"],
+        );
+        parts.add(
+          api.IndexedMessagePart(
+            part_: api.MessagePart.attachment(rustAttachment),
+          ),
+        );
         continue;
       }
 
-      var text =
-          body.string.substring(e.range.first, e.range.first + e.range.last);
-      parts.add(api.IndexedMessagePart(
+      var text = body.string.substring(
+        e.range.first,
+        e.range.first + e.range.last,
+      );
+      parts.add(
+        api.IndexedMessagePart(
           part_: e.hasMention
               ? api.MessagePart.mention(e.attributes!.mention!, text)
               : api.MessagePart.text(
-                  text, pushService.fromAttributes(e.attributes!))));
+                  text,
+                  pushService.fromAttributes(e.attributes!),
+                ),
+        ),
+      );
     }
 
     return api.MessageParts(field0: parts);
   }
 
   @override
-  Future<Message> sendMessage(Chat chat, Message m,
-      {CancelToken? cancelToken}) async {
+  Future<Message> sendMessage(
+    Chat chat,
+    Message m, {
+    CancelToken? cancelToken,
+  }) async {
     if (chat.isRpSms && !smsForwardingEnabled()) {
       throw Exception("SMS is not enabled (enable in settings -> user)");
     }
@@ -1048,8 +1149,9 @@ class RustPushBackend implements BackendService {
       if (m.fullText.replaceAll("\n", " ").hasUrl &&
           !MetadataHelper.mapIsNotEmpty(m.metadata) &&
           !m.hasApplePayloadData) {
-        var metadata = await MetadataHelper.fetchMetadata(m)
-            .timeout(const Duration(seconds: 15));
+        var metadata = await MetadataHelper.fetchMetadata(
+          m,
+        ).timeout(const Duration(seconds: 15));
 
         if (MetadataHelper.isNotEmpty(metadata)) {
           m.metadata = metadata!.toJson();
@@ -1061,42 +1163,54 @@ class RustPushBackend implements BackendService {
 
           var uri = Uri.parse(m.url!).replace(path: "/favicon.ico");
           var iconUrl = uri.toString();
-          final response = await http.dio.get(iconUrl,
-              options: Options(
-                  responseType: ResponseType.bytes,
-                  receiveTimeout: const Duration(seconds: 15)));
+          final response = await http.dio.get(
+            iconUrl,
+            options: Options(
+              responseType: ResponseType.bytes,
+              receiveTimeout: const Duration(seconds: 15),
+            ),
+          );
           if (response.statusCode == 200) {
             var contentType = response.headers.value('content-type')!;
             // some sites don't send favicons for the favicon
             if (contentType.startsWith("image/")) {
               iconmeta = api.LPIconMetadata(
-                  url: api.NSURL(base: "\$null", relative: iconUrl),
-                  version: 1);
+                url: api.NSURL(base: "\$null", relative: iconUrl),
+                version: 1,
+              );
 
               icon = api.RichLinkImageAttachmentSubstitute(
-                  mimeType: contentType,
-                  richLinkImageAttachmentSubstituteIndex:
-                      BigInt.from(attachments.length));
+                mimeType: contentType,
+                richLinkImageAttachmentSubstituteIndex: BigInt.from(
+                  attachments.length,
+                ),
+              );
               attachments.add(response.data as Uint8List);
             }
           }
 
           if (metadata.image != null) {
             imagemeta = api.LPImageMetadata(
-                size: "{0, 0}",
-                url: api.NSURL(base: "\$null", relative: metadata.image!),
-                version: 1);
+              size: "{0, 0}",
+              url: api.NSURL(base: "\$null", relative: metadata.image!),
+              version: 1,
+            );
 
-            final response = await http.dio.get(metadata.image!,
-                options: Options(
-                    responseType: ResponseType.bytes,
-                    receiveTimeout: const Duration(seconds: 15)));
+            final response = await http.dio.get(
+              metadata.image!,
+              options: Options(
+                responseType: ResponseType.bytes,
+                receiveTimeout: const Duration(seconds: 15),
+              ),
+            );
             var contentType = response.headers.value('content-type')!;
 
             image = api.RichLinkImageAttachmentSubstitute(
-                mimeType: contentType,
-                richLinkImageAttachmentSubstituteIndex:
-                    BigInt.from(attachments.length));
+              mimeType: contentType,
+              richLinkImageAttachmentSubstituteIndex: BigInt.from(
+                attachments.length,
+              ),
+            );
             attachments.add(response.data as Uint8List);
           }
 
@@ -1112,28 +1226,27 @@ class RustPushBackend implements BackendService {
           // MessageInst moves them out of Dart, so a transport retry must build
           // fresh arrays rather than reuse the disposed objects from attempt 1.
           buildLinkMeta = () async => api.LinkMeta(
-                attachments: attachmentBytes
-                    .map((bytes) => Uint8List.fromList(bytes))
-                    .toList(growable: false),
-                data: api.LPLinkMetadata(
-                  imageMetadata: imagemeta,
-                  image: image,
-                  originalUrl:
-                      api.NSURL(base: "\$null", relative: originalUrl),
-                  url: api.NSURL(base: "\$null", relative: resolvedUrl),
-                  title: title,
-                  summary: summary,
-                  images: imagemeta == null
-                      ? null
-                      : await api.createImageArray(img: imagemeta),
-                  iconMetadata: iconmeta,
-                  icon: icon,
-                  icons: iconmeta == null
-                      ? null
-                      : await api.createIconArray(img: iconmeta),
-                  version: 1,
-                ),
-              );
+            attachments: attachmentBytes
+                .map((bytes) => Uint8List.fromList(bytes))
+                .toList(growable: false),
+            data: api.LPLinkMetadata(
+              imageMetadata: imagemeta,
+              image: image,
+              originalUrl: api.NSURL(base: "\$null", relative: originalUrl),
+              url: api.NSURL(base: "\$null", relative: resolvedUrl),
+              title: title,
+              summary: summary,
+              images: imagemeta == null
+                  ? null
+                  : await api.createImageArray(img: imagemeta),
+              iconMetadata: iconmeta,
+              icon: icon,
+              icons: iconmeta == null
+                  ? null
+                  : await api.createIconArray(img: iconmeta),
+              version: 1,
+            ),
+          );
         }
       }
     } catch (e, s) {
@@ -1145,42 +1258,55 @@ class RustPushBackend implements BackendService {
       if (m.attributedBody.isNotEmpty) {
         parts = await partsFromBody(m.attributedBody.first);
       } else {
-        parts = api.MessageParts(field0: [
-          api.IndexedMessagePart(
-              part_:
-                  api.MessagePart.text(m.text!, pushService.defaultFormat()))
-        ]);
+        parts = api.MessageParts(
+          field0: [
+            api.IndexedMessagePart(
+              part_: api.MessagePart.text(m.text!, pushService.defaultFormat()),
+            ),
+          ],
+        );
       }
       if (m.payloadData?.appData?.first.ldText != null) {
-        parts.field0.add(api.IndexedMessagePart(
-            part_:
-                api.MessagePart.object(m.payloadData!.appData!.first.ldText!)));
+        parts.field0.add(
+          api.IndexedMessagePart(
+            part_: api.MessagePart.object(
+              m.payloadData!.appData!.first.ldText!,
+            ),
+          ),
+        );
       }
       return api.newMsg(
         conversation: await chat.getConversationData(),
         sender: await chat.ensureHandle(),
-        message: api.Message.message(api.NormalMessage(
-          parts: parts,
-          replyGuid: m.threadOriginatorGuid,
-          replyPart:
-              m.threadOriginatorGuid == null ? null : m.threadOriginatorPart,
-          effect: m.expressiveSendStyleId,
-          service: await getService(chat, forMessage: m),
-          subject: m.subject == "" ? null : m.subject,
-          app: m.payloadData == null
-              ? null
-              : pushService.dataToApp(m.payloadData!),
-          linkMeta: buildLinkMeta == null ? null : await buildLinkMeta(),
-          voice: false,
-          scheduled: m.dateScheduled != null
-              ? api.ScheduleMode(
-                  ms: m.dateScheduled!.millisecondsSinceEpoch, schedule: true)
-              : null,
-          embeddedProfile:
-              await pushService.getShareProfileMessageFor(chat.participants),
-        )),
+        message: api.Message.message(
+          api.NormalMessage(
+            parts: parts,
+            replyGuid: m.threadOriginatorGuid,
+            replyPart: m.threadOriginatorGuid == null
+                ? null
+                : m.threadOriginatorPart,
+            effect: m.expressiveSendStyleId,
+            service: await getService(chat, forMessage: m),
+            subject: m.subject == "" ? null : m.subject,
+            app: m.payloadData == null
+                ? null
+                : pushService.dataToApp(m.payloadData!),
+            linkMeta: buildLinkMeta == null ? null : await buildLinkMeta(),
+            voice: false,
+            scheduled: m.dateScheduled != null
+                ? api.ScheduleMode(
+                    ms: m.dateScheduled!.millisecondsSinceEpoch,
+                    schedule: true,
+                  )
+                : null,
+            embeddedProfile: await pushService.getShareProfileMessageFor(
+              chat.participants,
+            ),
+          ),
+        ),
       );
     }
+
     var msg = await buildWireMessage();
     if (m.stagingGuid != null ||
         (m.dateScheduled != null &&
@@ -1190,7 +1316,8 @@ class RustPushBackend implements BackendService {
             m.guid != null &&
             m.guid!.contains("error") &&
             m.guid!.contains("temp"))) {
-      msg.id = m.stagingGuid ??
+      msg.id =
+          m.stagingGuid ??
           m.guid!; // make sure we pass forwarded messages's original GUID so it doesn't get overwritten and marked as a different msg
     }
     Logger.info(
@@ -1209,6 +1336,7 @@ class RustPushBackend implements BackendService {
       }
       return rebuilt;
     }
+
     m.stagingGuid = msg
         .id; // in case delivered comes in before sending "finishes" (also for retries, duh)
     m.save(chat: chat);
@@ -1250,9 +1378,10 @@ class RustPushBackend implements BackendService {
       data.participants = [await chat.ensureHandle()];
     }
     var msg = await api.newMsg(
-        conversation: data,
-        sender: await chat.ensureHandle(),
-        message: const api.Message.read());
+      conversation: data,
+      sender: await chat.ensureHandle(),
+      message: const api.Message.read(),
+    );
 
     msg.id = latestMsg!;
     if (msg.id.contains("temp") || msg.id.contains("error")) {
@@ -1268,9 +1397,10 @@ class RustPushBackend implements BackendService {
     var data = await chat.getConversationData();
     data.participants = [await chat.ensureHandle()];
     var msg = await api.newMsg(
-        conversation: data,
-        sender: await chat.ensureHandle(),
-        message: const api.Message.markUnread());
+      conversation: data,
+      sender: await chat.ensureHandle(),
+      message: const api.Message.markUnread(),
+    );
     msg.id = latestMsg!;
     if (msg.id.contains("temp") || msg.id.contains("error")) {
       return true;
@@ -1286,35 +1416,41 @@ class RustPushBackend implements BackendService {
   Future<bool> renameChat(Chat chat, String newName) async {
     var data = await chat.getConversationData();
     var msg = await api.newMsg(
-        conversation: data,
-        sender: await chat.ensureHandle(),
-        message:
-            api.Message.renameMessage(api.RenameMessage(newName: newName)));
+      conversation: data,
+      sender: await chat.ensureHandle(),
+      message: api.Message.renameMessage(api.RenameMessage(newName: newName)),
+    );
     await sendMsg(msg);
     msg.sentTimestamp = DateTime.now().millisecondsSinceEpoch;
     chat.apnTitle = newName;
     chat.ckSyncState = false;
     chat.save(updateAPNTitle: true, updateCkSyncState: true);
-    inq.queue(IncomingItem(
+    inq.queue(
+      IncomingItem(
         chat: chat,
         message: (await pushService.reflectMessageDyn(msg))!,
-        type: QueueType.newMessage));
+        type: QueueType.newMessage,
+      ),
+    );
     return true;
   }
 
   @override
   Future<bool> chatParticipant(
-      ParticipantOp method, Chat chat, String newName) async {
+    ParticipantOp method,
+    Chat chat,
+    String newName,
+  ) async {
     chat.groupVersion = (chat.groupVersion ?? -1) + 1;
     var data = await chat.getConversationData();
     var newParticipants = data.participants.copy();
     if (method == ParticipantOp.Add) {
       var target = await RustPushBBUtils.formatAndAddPrefix(newName);
       var valid = (await api.validateTargets(
-              state: pushService.state!.client,
-              targets: [target],
-              sender: await chat.ensureHandle()))
-          .isNotEmpty;
+        state: pushService.state!.client,
+        targets: [target],
+        sender: await chat.ensureHandle(),
+      )).isNotEmpty;
       if (!valid) {
         return false;
       }
@@ -1323,11 +1459,15 @@ class RustPushBackend implements BackendService {
       newParticipants.remove(await RustPushBBUtils.formatAndAddPrefix(newName));
     }
     var msg = await api.newMsg(
-        conversation: data,
-        sender: await chat.ensureHandle(),
-        message: api.Message.changeParticipants(api.ChangeParticipantMessage(
-            groupVersion: chat.groupVersion!,
-            newParticipants: newParticipants)));
+      conversation: data,
+      sender: await chat.ensureHandle(),
+      message: api.Message.changeParticipants(
+        api.ChangeParticipantMessage(
+          groupVersion: chat.groupVersion!,
+          newParticipants: newParticipants,
+        ),
+      ),
+    );
     await sendMsg(msg);
     msg.sentTimestamp = DateTime.now().millisecondsSinceEpoch;
     await pushService.reflectMessageDyn(msg); // change participants does itself
@@ -1351,7 +1491,11 @@ class RustPushBackend implements BackendService {
 
   @override
   Future<Message> sendTapback(
-      Chat chat, Message selected, String reaction, int? repPart) async {
+    Chat chat,
+    Message selected,
+    String reaction,
+    int? repPart,
+  ) async {
     if (!chat.isIMessage) {
       String text;
       if (ReactionTypes.reactionToVerb.containsKey(reaction)) {
@@ -1373,16 +1517,16 @@ class RustPushBackend implements BackendService {
         associatedMessagePart: 0,
         associatedMessageType:
             ReactionTypes.reactionToVerb.containsKey(reaction)
-                ? reaction
-                : reaction.startsWith("-")
-                    ? "-${ReactionTypes.EMOJI}"
-                    : ReactionTypes.EMOJI,
+            ? reaction
+            : reaction.startsWith("-")
+            ? "-${ReactionTypes.EMOJI}"
+            : ReactionTypes.EMOJI,
         associatedMessageEmoji:
             ReactionTypes.reactionToVerb.containsKey(reaction)
-                ? null
-                : reaction.startsWith("-")
-                    ? reaction.substring(1)
-                    : reaction,
+            ? null
+            : reaction.startsWith("-")
+            ? reaction.substring(1)
+            : reaction,
         handleId: 0,
         hasDdResults: true,
         attributedBody: [if (annotations.string.isNotEmpty) annotations],
@@ -1393,30 +1537,43 @@ class RustPushBackend implements BackendService {
     var enabled = !reaction.startsWith("-");
     reaction = enabled ? reaction : reaction.substring(1);
     var msg = await api.newMsg(
-        conversation: await chat.getConversationData(),
-        sender: await chat.ensureHandle(),
-        message: api.Message.react(api.ReactMessage(
-            toUuid: selected.guid!,
-            toPart: repPart ?? 0,
-            embeddedProfile:
-                await pushService.getShareProfileMessageFor(chat.participants),
-            toText: selected.text ?? "",
-            reaction: api.ReactMessageType.react(
-                reaction: reactionMap[reaction]?.call() ??
-                    api.Reaction.emoji(reaction),
-                enable: enabled))));
+      conversation: await chat.getConversationData(),
+      sender: await chat.ensureHandle(),
+      message: api.Message.react(
+        api.ReactMessage(
+          toUuid: selected.guid!,
+          toPart: repPart ?? 0,
+          embeddedProfile: await pushService.getShareProfileMessageFor(
+            chat.participants,
+          ),
+          toText: selected.text ?? "",
+          reaction: api.ReactMessageType.react(
+            reaction:
+                reactionMap[reaction]?.call() ?? api.Reaction.emoji(reaction),
+            enable: enabled,
+          ),
+        ),
+      ),
+    );
     await sendMsg(msg);
     msg.sentTimestamp = DateTime.now().millisecondsSinceEpoch;
     return (await pushService.reflectMessageDyn(msg))!;
   }
 
   @override
-  Future<Message> updateMessage(Chat chat, Message old, PayloadData newData,
-      PlatformFile? newImage, bool isMeta, String? notifText) async {
+  Future<Message> updateMessage(
+    Chat chat,
+    Message old,
+    PayloadData newData,
+    PlatformFile? newImage,
+    bool isMeta,
+    String? notifText,
+  ) async {
     api.Attachment? attachment;
     if (newImage != null) {
-      String data = await DefaultAssetBundle.of(Get.context!)
-          .loadString("assets/rustpush/uti-map.json");
+      String data = await DefaultAssetBundle.of(
+        Get.context!,
+      ).loadString("assets/rustpush/uti-map.json");
       final utiMap = jsonDecode(data);
       var att = Attachment(
         isOutgoing: true,
@@ -1430,17 +1587,18 @@ class RustPushBackend implements BackendService {
       );
       await att.writeToDisk();
       var stream = api.uploadAttachment(
-          aps: pushService.state!.conn,
-          path: att.getFile().path!,
-          mime: att.mimeType ?? "application/octet-stream",
-          uti: att.uti ?? "public.data",
-          name: att.transferName!);
+        aps: pushService.state!.conn,
+        path: att.getFile().path!,
+        mime: att.mimeType ?? "application/octet-stream",
+        uti: att.uti ?? "public.data",
+        name: att.transferName!,
+      );
       await for (final event in stream) {
         if (event.attachment != null) {
           Logger.info("upload finish");
           attachment = event.attachment;
           att.metadata = {
-            "rustpush": await api.saveAttachment(att: attachment!)
+            "rustpush": await api.saveAttachment(att: attachment!),
           };
         } else {
           Logger.info("upload progress ${event.prog} of ${event.total}");
@@ -1450,25 +1608,35 @@ class RustPushBackend implements BackendService {
     }
 
     var msg = await api.newMsg(
-        conversation: await chat.getConversationData(),
-        sender: await chat.ensureHandle(),
-        message: api.Message.react(api.ReactMessage(
-            toUuid: isMeta ? old.guid! : old.amkSessionId!,
-            toText: notifText ?? "",
-            embeddedProfile:
-                await pushService.getShareProfileMessageFor(chat.participants),
-            reaction: api.ReactMessageType.extension_(
-              spec: pushService.dataToApp(newData),
-              body: api.MessageParts(field0: [
+      conversation: await chat.getConversationData(),
+      sender: await chat.ensureHandle(),
+      message: api.Message.react(
+        api.ReactMessage(
+          toUuid: isMeta ? old.guid! : old.amkSessionId!,
+          toText: notifText ?? "",
+          embeddedProfile: await pushService.getShareProfileMessageFor(
+            chat.participants,
+          ),
+          reaction: api.ReactMessageType.extension_(
+            spec: pushService.dataToApp(newData),
+            body: api.MessageParts(
+              field0: [
                 api.IndexedMessagePart(
-                    part_: api.MessagePart.object(
-                        newData.appData![0].ldText ?? "")),
+                  part_: api.MessagePart.object(
+                    newData.appData![0].ldText ?? "",
+                  ),
+                ),
                 if (attachment != null)
                   api.IndexedMessagePart(
-                      part_: api.MessagePart.attachment(attachment)),
-              ]),
-              isMeta: isMeta,
-            ))));
+                    part_: api.MessagePart.attachment(attachment),
+                  ),
+              ],
+            ),
+            isMeta: isMeta,
+          ),
+        ),
+      ),
+    );
     await sendMsg(msg);
     msg.sentTimestamp = DateTime.now().millisecondsSinceEpoch;
     return (await pushService.reflectMessageDyn(msg))!;
@@ -1477,10 +1645,12 @@ class RustPushBackend implements BackendService {
   @override
   Future<Message?> unsend(Message msgObj, MessagePart part) async {
     var msg = await api.newMsg(
-        sender: await msgObj.chat.target!.ensureHandle(),
-        conversation: await msgObj.chat.target!.getConversationData(),
-        message: api.Message.unsend(
-            api.UnsendMessage(tuuid: msgObj.guid!, editPart: part.part)));
+      sender: await msgObj.chat.target!.ensureHandle(),
+      conversation: await msgObj.chat.target!.getConversationData(),
+      message: api.Message.unsend(
+        api.UnsendMessage(tuuid: msgObj.guid!, editPart: part.part),
+      ),
+    );
     await sendMsg(msg);
 
     if (_legacyCloudKitMutationsEnabled && msgObj.ckRecordId != null) {
@@ -1505,12 +1675,16 @@ class RustPushBackend implements BackendService {
     }
 
     var msg = await api.newMsg(
-        conversation: await msgObj.chat.target!.getConversationData(),
-        sender: await msgObj.chat.target!.ensureHandle(),
-        message: api.Message.edit(api.EditMessage(
-            tuuid: msgObj.guid!,
-            editPart: part,
-            newParts: await partsFromBody(text))));
+      conversation: await msgObj.chat.target!.getConversationData(),
+      sender: await msgObj.chat.target!.ensureHandle(),
+      message: api.Message.edit(
+        api.EditMessage(
+          tuuid: msgObj.guid!,
+          editPart: part,
+          newParts: await partsFromBody(text),
+        ),
+      ),
+    );
     await sendMsg(msg);
 
     if (msgObj.ckRecordId != null) {
@@ -1537,29 +1711,36 @@ class RustPushBackend implements BackendService {
   }
 
   @override
-  Future<bool> downloadLivePhoto(Attachment attachment, String target,
-      {void Function(int p1, int p2)? onReceiveProgress,
-      CancelToken? cancelToken}) async {
-    var rustAttachment =
-        api.restoreAttachment(data: attachment.metadata!["myIris"]);
+  Future<bool> downloadLivePhoto(
+    Attachment attachment,
+    String target, {
+    void Function(int p1, int p2)? onReceiveProgress,
+    CancelToken? cancelToken,
+  }) async {
+    var rustAttachment = api.restoreAttachment(
+      data: attachment.metadata!["myIris"],
+    );
     var filePath = "${attachment.directory}/$target";
-    if (!canonicalize(filePath)
-        .startsWith(canonicalize(attachment.directory))) {
+    if (!canonicalize(
+      filePath,
+    ).startsWith(canonicalize(attachment.directory))) {
       throw Exception("Path traversal detected, are we under attack??");
     }
     var stream = api.downloadAttachment(
-        aps: pushService.state!.conn,
-        attachment: rustAttachment,
-        path: filePath);
+      aps: pushService.state!.conn,
+      attachment: rustAttachment,
+      path: filePath,
+    );
     await for (final event in stream) {
       if (onReceiveProgress != null) {
         onReceiveProgress(event.prog, event.total);
       }
     }
     final file = PlatformFile(
-        name: target,
-        size: await rustAttachment.getSize(),
-        path: "${attachment.directory}/$target");
+      name: target,
+      size: await rustAttachment.getSize(),
+      path: "${attachment.directory}/$target",
+    );
     await as.saveToDisk(file);
 
     return true;
@@ -1579,28 +1760,32 @@ class RustPushBackend implements BackendService {
   void startedTyping(Chat c, [iMessageAppData? appdata]) async {
     if (c.isRpSms) return;
     var msg = await api.newMsg(
-        conversation: await c.getConversationData(),
-        sender: await c.ensureHandle(),
-        message: api.Message.typing(
-            true,
-            appdata?.appIcon != null
-                ? api.TypingApp(
-                    bundleId: appdata!.bundleId,
-                    icon: base64Decode(appdata.appIcon!),
-                  )
-                : null));
-    await sendMsg(msg,
-        waitForResource:
-            false); // a typing indicator is worthless by the time we reconnect
+      conversation: await c.getConversationData(),
+      sender: await c.ensureHandle(),
+      message: api.Message.typing(
+        true,
+        appdata?.appIcon != null
+            ? api.TypingApp(
+                bundleId: appdata!.bundleId,
+                icon: base64Decode(appdata.appIcon!),
+              )
+            : null,
+      ),
+    );
+    await sendMsg(
+      msg,
+      waitForResource: false,
+    ); // a typing indicator is worthless by the time we reconnect
   }
 
   @override
   void stoppedTyping(Chat c) async {
     if (c.isRpSms) return;
     var msg = await api.newMsg(
-        conversation: await c.getConversationData(),
-        sender: await c.ensureHandle(),
-        message: const api.Message.typing(false));
+      conversation: await c.getConversationData(),
+      sender: await c.ensureHandle(),
+      message: const api.Message.typing(false),
+    );
     await sendMsg(msg, waitForResource: false);
   }
 
@@ -1611,8 +1796,9 @@ class RustPushBackend implements BackendService {
   Future<bool> handleiMessageState(String address) async {
     var handle = await getDefaultHandle();
     var formatted = await RustPushBBUtils.formatAndAddPrefix(address);
-    List<String> available =
-        await pushService.doValidateTargets([formatted], handle);
+    List<String> available = await pushService.doValidateTargets([
+      formatted,
+    ], handle);
     return available.isNotEmpty;
   }
 }
@@ -1628,8 +1814,9 @@ class RustPushService extends GetxService {
   int _networkRefreshGeneration = 0;
 
   void _watchNetworkChanges() {
-    _networkSubscription ??=
-        Connectivity().onConnectivityChanged.listen((results) {
+    _networkSubscription ??= Connectivity().onConnectivityChanged.listen((
+      results,
+    ) {
       if (results.contains(ConnectivityResult.none)) {
         _networkRefreshGeneration++;
         appleNetworkHealth.value = AppleNetworkHealth.offline;
@@ -1733,8 +1920,9 @@ class RustPushService extends GetxService {
   String? _relayHealthFingerprint;
   final Lock _relayReminderLock = Lock();
 
-  Future<api.DeviceInfo?> getUserManagedIPhoneRelayDevice(
-      {api.SharedPushState? fromState}) async {
+  Future<api.DeviceInfo?> getUserManagedIPhoneRelayDevice({
+    api.SharedPushState? fromState,
+  }) async {
     final currentState = fromState ?? state;
     if (currentState == null || ss.settings.deviceIsHosted.value) {
       return null;
@@ -1834,8 +2022,9 @@ class RustPushService extends GetxService {
 
     api.DeviceInfo? relayDevice;
     try {
-      relayDevice =
-          await getUserManagedIPhoneRelayDevice(fromState: currentState);
+      relayDevice = await getUserManagedIPhoneRelayDevice(
+        fromState: currentState,
+      );
     } catch (e, s) {
       Logger.warn("Failed to identify iPhone relay", error: e, trace: s);
       return null;
@@ -1856,15 +2045,19 @@ class RustPushService extends GetxService {
     relayHealthChecking.value = true;
     final checkedAt = DateTime.now();
     relayLastChecked.value = checkedAt;
-    await ss.prefs
-        .setInt("relay-health-last-checked", checkedAt.millisecondsSinceEpoch);
+    await ss.prefs.setInt(
+      "relay-health-last-checked",
+      checkedAt.millisecondsSinceEpoch,
+    );
 
     try {
-      final relayCode =
-          await api.validateRelay(configRef: currentState.osConfig);
+      final relayCode = await api.validateRelay(
+        configRef: currentState.osConfig,
+      );
       var reachable = false;
       if (relayCode != null) {
-        final relayHost = ss.prefs.getString("registration-relay-host") ??
+        final relayHost =
+            ss.prefs.getString("registration-relay-host") ??
             registrationRelayHost;
         final response = await http.dio.post(
           "$relayHost/api/v1/bridge/get-version-info",
@@ -1878,7 +2071,8 @@ class RustPushService extends GetxService {
         );
         final responseData = response.data;
         final versions = responseData is Map ? responseData["versions"] : null;
-        reachable = response.statusCode == 200 &&
+        reachable =
+            response.statusCode == 200 &&
             versions is Map &&
             versions["software_name"] == "iPhone OS";
       }
@@ -1889,20 +2083,26 @@ class RustPushService extends GetxService {
       if (reachable) {
         relayLastSuccess.value = checkedAt;
         await ss.prefs.setInt(
-            "relay-health-last-success", checkedAt.millisecondsSinceEpoch);
+          "relay-health-last-success",
+          checkedAt.millisecondsSinceEpoch,
+        );
 
         // A successful manual probe is explicit evidence that the relay has
         // returned. Wake a failed IDS registration immediately instead of
         // leaving it asleep in the ten-minute resource backoff.
         try {
-          final registrationState =
-              await api.getRegstate(state: currentState.client);
+          final registrationState = await api.getRegstate(
+            state: currentState.client,
+          );
           if (registrationState is api.RegisterState_Failed) {
             await api.doReregister(state: currentState.client);
           }
         } catch (e, s) {
-          Logger.warn("Relay reachable but registration retry failed",
-              error: e, trace: s);
+          Logger.warn(
+            "Relay reachable but registration retry failed",
+            error: e,
+            trace: s,
+          );
         }
       }
 
@@ -1933,8 +2133,11 @@ class RustPushService extends GetxService {
           return;
         }
       } catch (e, s) {
-        Logger.warn("Failed to schedule iPhone relay reminder",
-            error: e, trace: s);
+        Logger.warn(
+          "Failed to schedule iPhone relay reminder",
+          error: e,
+          trace: s,
+        );
         return;
       }
       if (!identical(state, currentState)) {
@@ -1942,26 +2145,35 @@ class RustPushService extends GetxService {
       }
 
       const warningLeadTime = Duration(minutes: 15);
-      final delaySeconds =
-          max(10, secondsUntilRenewal - warningLeadTime.inSeconds);
+      final delaySeconds = max(
+        10,
+        secondsUntilRenewal - warningLeadTime.inSeconds,
+      );
       await notif.scheduleRelayCheckReminder(
-          DateTime.now().add(Duration(seconds: delaySeconds)));
+        DateTime.now().add(Duration(seconds: delaySeconds)),
+      );
     });
   }
 
   Future<void> cancelRelayHealthReminder() async {
-    await _relayReminderLock
-        .synchronized(() => notif.cancelRelayCheckReminder());
+    await _relayReminderLock.synchronized(
+      () => notif.cancelRelayCheckReminder(),
+    );
   }
 
   Map<String, api.Attachment> attachments = {};
 
   Future<List<String>> doValidateTargets(
-      List<String> targets, String handle) async {
+    List<String> targets,
+    String handle,
+  ) async {
     List<String> available;
     try {
       available = await api.validateTargets(
-          state: pushService.state!.client, targets: targets, sender: handle);
+        state: pushService.state!.client,
+        targets: targets,
+        sender: handle,
+      );
     } catch (e) {
       if (e is AnyhowException) {
         if (e.message.contains("Failed to generate resource") &&
@@ -1976,36 +2188,43 @@ class RustPushService extends GetxService {
 
   StickerData stickerFromDart(api.PartExtension_Sticker ext) {
     return StickerData(
-        msgWidth: ext.msgWidth,
-        rotation: ext.rotation,
-        sai: ext.sai.toInt(),
-        scale: ext.scale,
-        update: ext.update,
-        sli: ext.sli.toInt(),
-        normalizedX: ext.normalizedX,
-        normalizedY: ext.normalizedY,
-        version: ext.version.toInt(),
-        hash: ext.hash,
-        safi: ext.safi.toInt(),
-        effectType: ext.effectType,
-        stickerId: ext.stickerId);
+      msgWidth: ext.msgWidth,
+      rotation: ext.rotation,
+      sai: ext.sai.toInt(),
+      scale: ext.scale,
+      update: ext.update,
+      sli: ext.sli.toInt(),
+      normalizedX: ext.normalizedX,
+      normalizedY: ext.normalizedY,
+      version: ext.version.toInt(),
+      hash: ext.hash,
+      safi: ext.safi.toInt(),
+      effectType: ext.effectType,
+      stickerId: ext.stickerId,
+    );
   }
 
-  Future<void> updateChatParticipants(Chat c, api.MessageInst myMsg,
-      List<String> oldParticipants, List<String> newParticipants) async {
+  Future<void> updateChatParticipants(
+    Chat c,
+    api.MessageInst myMsg,
+    List<String> oldParticipants,
+    List<String> newParticipants,
+  ) async {
     final sender = myMsg.sender;
     if (sender == null || sender.isEmpty) {
       Logger.warn("Ignoring participant update without a sender");
       return;
     }
     var myHandles = await api.getHandles(state: pushService.state!.client);
-    var newP = newParticipants
-        .filter((p) => !oldParticipants.contains(p) && !myHandles.contains(p));
+    var newP = newParticipants.filter(
+      (p) => !oldParticipants.contains(p) && !myHandles.contains(p),
+    );
     var delP = oldParticipants.filter((p) => !newParticipants.contains(p));
     if (newP.isEmpty && delP.isEmpty) return; // nothing to do
     c.handles.clear();
-    var (_, participantHandles) =
-        await RustPushBBUtils.rustParticipantsToBB(newParticipants);
+    var (_, participantHandles) = await RustPushBBUtils.rustParticipantsToBB(
+      newParticipants,
+    );
     c.handles.addAll(participantHandles);
     c.handles.applyToDb();
     c.handlesChanged();
@@ -2017,38 +2236,45 @@ class RustPushService extends GetxService {
     for (var item in newP) {
       var bb = RustPushBBUtils.rustHandleToBB(item);
       var msg = Message(
-          guid: useId ? myMsg.id : uuid.v4(),
-          isFromMe: myHandles.contains(sender),
-          handleId: RustPushBBUtils.rustHandleToBB(sender).originalROWID!,
-          dateCreated: DateTime.fromMillisecondsSinceEpoch(myMsg.sentTimestamp),
-          itemType: 1,
-          groupActionType: 0,
-          otherHandle: bb.originalROWID);
+        guid: useId ? myMsg.id : uuid.v4(),
+        isFromMe: myHandles.contains(sender),
+        handleId: RustPushBBUtils.rustHandleToBB(sender).originalROWID!,
+        dateCreated: DateTime.fromMillisecondsSinceEpoch(myMsg.sentTimestamp),
+        itemType: 1,
+        groupActionType: 0,
+        otherHandle: bb.originalROWID,
+      );
 
       inq.queue(
-          IncomingItem(chat: c, message: msg, type: QueueType.newMessage));
+        IncomingItem(chat: c, message: msg, type: QueueType.newMessage),
+      );
     }
 
     for (var item in delP) {
       var bb = RustPushBBUtils.rustHandleToBB(item);
       var personDidLeave = item == sender;
       var msg = Message(
-          guid: useId ? myMsg.id : uuid.v4(),
-          isFromMe: myHandles.contains(sender),
-          handleId: RustPushBBUtils.rustHandleToBB(sender).originalROWID!,
-          dateCreated: DateTime.fromMillisecondsSinceEpoch(myMsg.sentTimestamp),
-          itemType: personDidLeave ? 3 : 1,
-          groupActionType: personDidLeave ? 0 : 1,
-          otherHandle: bb.originalROWID);
+        guid: useId ? myMsg.id : uuid.v4(),
+        isFromMe: myHandles.contains(sender),
+        handleId: RustPushBBUtils.rustHandleToBB(sender).originalROWID!,
+        dateCreated: DateTime.fromMillisecondsSinceEpoch(myMsg.sentTimestamp),
+        itemType: personDidLeave ? 3 : 1,
+        groupActionType: personDidLeave ? 0 : 1,
+        otherHandle: bb.originalROWID,
+      );
 
       inq.queue(
-          IncomingItem(chat: c, message: msg, type: QueueType.newMessage));
+        IncomingItem(chat: c, message: msg, type: QueueType.newMessage),
+      );
     }
   }
 
   Future<(AttributedBody, String, List<Attachment?>)>
-      indexedPartsToAttributedBodyDyn(List<api.IndexedMessagePart> parts,
-          String msgId, AttributedBody? existingBody) async {
+  indexedPartsToAttributedBodyDyn(
+    List<api.IndexedMessagePart> parts,
+    String msgId,
+    AttributedBody? existingBody,
+  ) async {
     var bodyString = "";
     List<Run> body = existingBody?.runs.copy() ?? [];
     List<Attachment> attachments = [];
@@ -2057,14 +2283,16 @@ class RustPushService extends GetxService {
     for (var indexedParts in parts) {
       index += 1;
       var part = indexedParts.part_;
-      var fieldIdx = indexedParts.idx ??
-          body.count((i) =>
-              i.attributes?.attachmentGuid !=
-              null); // only count attachments increment parts by default
+      var fieldIdx =
+          indexedParts.idx ??
+          body.count(
+            (i) => i.attributes?.attachmentGuid != null,
+          ); // only count attachments increment parts by default
       // remove old elements
       if (!addedIndicies.contains(fieldIdx)) {
         body.removeWhere(
-            (element) => element.attributes?.messagePart == fieldIdx);
+          (element) => element.attributes?.messagePart == fieldIdx,
+        );
         addedIndicies.add(fieldIdx);
       }
       if (part is api.MessagePart_Text) {
@@ -2086,7 +2314,8 @@ class RustPushService extends GetxService {
           };
           textEffect = invertedEffectMap[effect.field0];
         }
-        body.add(Run(
+        body.add(
+          Run(
             range: [bodyString.length, part.field0.length],
             attributes: Attributes(
               messagePart: fieldIdx,
@@ -2095,13 +2324,17 @@ class RustPushService extends GetxService {
               italic: flags?.italic,
               strikethrough: flags?.strikethrough,
               underline: flags?.underline,
-            )));
+            ),
+          ),
+        );
         bodyString += part.field0;
       } else if (part is api.MessagePart_Mention) {
-        body.add(Run(
+        body.add(
+          Run(
             range: [bodyString.length, part.field1.length],
-            attributes:
-                Attributes(messagePart: fieldIdx, mention: part.field0)));
+            attributes: Attributes(messagePart: fieldIdx, mention: part.field0),
+          ),
+        );
         bodyString += part.field1;
       } else if (part is api.MessagePart_Attachment) {
         if (part.field0.iris) {
@@ -2127,104 +2360,112 @@ class RustPushService extends GetxService {
         }
 
         var myUuid = "${msgId}_$fieldIdx";
-        attachments.add(Attachment(
-          guid: myUuid,
-          uti: part.field0.utiType,
-          mimeType: part.field0.mime,
-          isOutgoing: false,
-          transferName: part.field0.name
-              .replaceAll(RegExp(r'/'), "_")
-              .replaceAll(RegExp(r'\\'), "_"),
-          totalBytes: await part.field0.getSize(),
-          hasLivePhoto: myIris != null,
-          metadata: {
-            "rustpush": await api.saveAttachment(att: part.field0),
-            "myIris":
-                myIris != null ? await api.saveAttachment(att: myIris) : null
-          },
-        ));
-        body.add(Run(
+        attachments.add(
+          Attachment(
+            guid: myUuid,
+            uti: part.field0.utiType,
+            mimeType: part.field0.mime,
+            isOutgoing: false,
+            transferName: part.field0.name
+                .replaceAll(RegExp(r'/'), "_")
+                .replaceAll(RegExp(r'\\'), "_"),
+            totalBytes: await part.field0.getSize(),
+            hasLivePhoto: myIris != null,
+            metadata: {
+              "rustpush": await api.saveAttachment(att: part.field0),
+              "myIris": myIris != null
+                  ? await api.saveAttachment(att: myIris)
+                  : null,
+            },
+          ),
+        );
+        body.add(
+          Run(
             range: [bodyString.length, 1],
             attributes: Attributes(
               attachmentGuid: myUuid,
               messagePart: body.length,
               stickerData: stickerData,
-            )));
+            ),
+          ),
+        );
         bodyString += " ";
       }
     }
     return (
       AttributedBody(string: bodyString, runs: body),
       bodyString,
-      attachments
+      attachments,
     );
   }
 
   api.ExtensionApp dataToApp(PayloadData data) {
     var appData = data.appData!.first;
     return api.ExtensionApp(
-        name: appData.appName!,
-        appId: appData.appId,
-        bundleId: appData.bundleId,
-        balloon: api.Balloon(
-          icon: appData.appIcon != null && appData.appIcon!.length < 100000
-              ? base64Decode(appData.appIcon!)
-              : null,
-          url: appData.url!,
-          session: appData.session,
-          ldText: appData.ldText,
-          isLive: appData.isLive ?? false,
-          layout: appData.userInfo != null
-              ? api.BalloonLayout.templateLayout(
-                  imageSubtitle: appData.userInfo!.imageSubtitle ?? "",
-                  imageTitle: appData.userInfo!.imageTitle ?? "",
-                  caption: appData.userInfo!.caption ?? "",
-                  secondarySubcaption:
-                      appData.userInfo!.secondarySubcaption ?? "",
-                  tertiarySubcaption:
-                      appData.userInfo!.tertiarySubcaption ?? "",
-                  subcaption: appData.userInfo!.subcaption ?? "",
-                  class_: api.NSDictionaryClass.nsDictionary,
-                )
-              : null,
-        ));
+      name: appData.appName!,
+      appId: appData.appId,
+      bundleId: appData.bundleId,
+      balloon: api.Balloon(
+        icon: appData.appIcon != null && appData.appIcon!.length < 100000
+            ? base64Decode(appData.appIcon!)
+            : null,
+        url: appData.url!,
+        session: appData.session,
+        ldText: appData.ldText,
+        isLive: appData.isLive ?? false,
+        layout: appData.userInfo != null
+            ? api.BalloonLayout.templateLayout(
+                imageSubtitle: appData.userInfo!.imageSubtitle ?? "",
+                imageTitle: appData.userInfo!.imageTitle ?? "",
+                caption: appData.userInfo!.caption ?? "",
+                secondarySubcaption:
+                    appData.userInfo!.secondarySubcaption ?? "",
+                tertiarySubcaption: appData.userInfo!.tertiarySubcaption ?? "",
+                subcaption: appData.userInfo!.subcaption ?? "",
+                class_: api.NSDictionaryClass.nsDictionary,
+              )
+            : null,
+      ),
+    );
   }
 
   PayloadData appToData(api.ExtensionApp app) {
     var layout = app.balloon!.layout as api.BalloonLayout_TemplateLayout?;
     return PayloadData(
-        type: constants.PayloadType.app,
-        urlData: null,
-        appData: [
-          iMessageAppData(
-            appName: app.name,
-            ldText: app.balloon?.ldText,
-            url: app.balloon?.url,
-            session: app.balloon?.session,
-            appIcon: app.balloon?.icon != null
-                ? base64Encode(app.balloon!.icon!)
-                : null,
-            appId: app.appId,
-            isLive: app.balloon?.isLive ?? false,
-            userInfo: layout != null
-                ? UserInfo(
-                    imageSubtitle: layout.imageSubtitle,
-                    imageTitle: layout.imageTitle,
-                    caption: layout.caption,
-                    secondarySubcaption: layout.secondarySubcaption,
-                    subcaption: layout.subcaption,
-                    tertiarySubcaption: layout.tertiarySubcaption,
-                  )
-                : null,
-          )
-        ]);
+      type: constants.PayloadType.app,
+      urlData: null,
+      appData: [
+        iMessageAppData(
+          appName: app.name,
+          ldText: app.balloon?.ldText,
+          url: app.balloon?.url,
+          session: app.balloon?.session,
+          appIcon: app.balloon?.icon != null
+              ? base64Encode(app.balloon!.icon!)
+              : null,
+          appId: app.appId,
+          isLive: app.balloon?.isLive ?? false,
+          userInfo: layout != null
+              ? UserInfo(
+                  imageSubtitle: layout.imageSubtitle,
+                  imageTitle: layout.imageTitle,
+                  caption: layout.caption,
+                  secondarySubcaption: layout.secondarySubcaption,
+                  subcaption: layout.subcaption,
+                  tertiarySubcaption: layout.tertiarySubcaption,
+                )
+              : null,
+        ),
+      ],
+    );
   }
 
   MediaMetadata? rpToMedia(api.LPImageMetadata? imagemeta) {
     if (imagemeta == null) return null;
     var data = Size(
-        double.parse(imagemeta.size.split(",").first.toString().numericOnly()),
-        double.parse(imagemeta.size.split(",").last.toString().numericOnly()));
+      double.parse(imagemeta.size.split(",").first.toString().numericOnly()),
+      double.parse(imagemeta.size.split(",").last.toString().numericOnly()),
+    );
     return MediaMetadata(size: data, url: imagemeta.url.relative);
   }
 
@@ -2244,8 +2485,9 @@ class RustPushService extends GetxService {
   PayloadData linkToData(api.LinkMeta link) {
     if (link.data.specialization2
         is api.LPSpecializationMetadata_LPPasswordsInviteMetadata) {
-      var data = link.data.specialization2
-          as api.LPSpecializationMetadata_LPPasswordsInviteMetadata;
+      var data =
+          link.data.specialization2
+              as api.LPSpecializationMetadata_LPPasswordsInviteMetadata;
       return PayloadData(
         type: constants.PayloadType.app,
         urlData: null,
@@ -2255,7 +2497,7 @@ class RustPushService extends GetxService {
             ldText:
                 "You have been invited to join the group “${data.groupName}”.",
             url: data.urlParameters,
-          )
+          ),
         ],
       );
     }
@@ -2271,7 +2513,7 @@ class RustPushService extends GetxService {
           title: link.data.title,
           summary: link.data.summary,
           siteName: link.data.title,
-        )
+        ),
       ],
       appData: null,
     );
@@ -2285,13 +2527,20 @@ class RustPushService extends GetxService {
       var msgObj = Message.findOne(guid: myMsg.id)!;
       msgObj.wasDeliveredQuietly = false;
       Logger.info("Got notify anyways message");
-      MessageHelper.handleNotification(msgObj, msgObj.chat.target!,
-          findExisting: false, notifyAnyways: true);
+      MessageHelper.handleNotification(
+        msgObj,
+        msgObj.chat.target!,
+        findExisting: false,
+        notifyAnyways: true,
+      );
       return msgObj;
     } else if (myMsg.message is api.Message_Message) {
       var innerMsg = myMsg.message as api.Message_Message;
       var attributedBodyData = await indexedPartsToAttributedBodyDyn(
-          innerMsg.field0.parts.field0, myMsg.id, null);
+        innerMsg.field0.parts.field0,
+        myMsg.id,
+        null,
+      );
       var sender = myMsg.sender;
 
       bool hasBeenForwarded = false;
@@ -2303,8 +2552,9 @@ class RustPushService extends GetxService {
           sender = smsServ.fromHandle;
         }
         staging = myHandles.contains(sender);
-        var myPhoneHandles =
-            await api.getMyPhoneHandles(state: pushService.state!.client);
+        var myPhoneHandles = await api.getMyPhoneHandles(
+          state: pushService.state!.client,
+        );
         if (!myPhoneHandles.contains(smsServ.usingNumber)) {
           // this is a forwarded message from someone else
           hasBeenForwarded = true;
@@ -2337,13 +2587,13 @@ class RustPushService extends GetxService {
         balloonBundleId: innerMsg.field0.app?.balloon != null
             ? innerMsg.field0.app?.bundleId
             : innerMsg.field0.linkMeta != null
-                ? linkToBalloonBundleId(innerMsg.field0.linkMeta!)
-                : null,
+            ? linkToBalloonBundleId(innerMsg.field0.linkMeta!)
+            : null,
         payloadData: innerMsg.field0.app?.balloon != null
             ? appToData(innerMsg.field0.app!)
             : innerMsg.field0.linkMeta != null
-                ? linkToData(innerMsg.field0.linkMeta!)
-                : null,
+            ? linkToData(innerMsg.field0.linkMeta!)
+            : null,
         amkSessionId: innerMsg.field0.app?.balloon != null ? myMsg.id : null,
         verificationFailed: myMsg.verificationFailed,
         hasApplePayloadData: innerMsg.field0.app?.balloon != null,
@@ -2360,7 +2610,8 @@ class RustPushService extends GetxService {
       if (myMsg.verificationFailed ||
           chat == null ||
           sender == null ||
-          sender.isEmpty) return null;
+          sender.isEmpty)
+        return null;
 
       chat.ckSyncState = false;
       chat.save(updateCkSyncState: true);
@@ -2380,9 +2631,14 @@ class RustPushService extends GetxService {
       if (myMsg.verificationFailed ||
           chat == null ||
           conversation == null ||
-          myMsg.sender == null) return null;
+          myMsg.sender == null)
+        return null;
       await updateChatParticipants(
-          chat, myMsg, conversation.participants, msg.field0.newParticipants);
+        chat,
+        myMsg,
+        conversation.participants,
+        msg.field0.newParticipants,
+      );
       chat.groupVersion = msg.field0.groupVersion;
       chat.ckSyncState = false;
       chat.save(updateGroupVersion: true, updateCkSyncState: true);
@@ -2399,10 +2655,14 @@ class RustPushService extends GetxService {
         if (file != null) {
           var path = chat.getIconPath(file.size);
           var stream = api.downloadMmcs(
-              aps: pushService.state!.conn, attachment: file, path: path);
+            aps: pushService.state!.conn,
+            attachment: file,
+            path: path,
+          );
           await for (final event in stream) {
             Logger.info(
-                "Downloaded attachment ${event.prog} bytes of ${event.total}");
+              "Downloaded attachment ${event.prog} bytes of ${event.total}",
+            );
           }
           chat.customAvatarPath = path;
         } else {
@@ -2410,10 +2670,11 @@ class RustPushService extends GetxService {
         }
         chat.updateAttachmentGuid(myMsg.id);
         chat.save(
-            updateCustomAvatarPath: true,
-            updateGroupVersion: true,
-            updateCkSyncState: true,
-            updateAttachmentGuid: true);
+          updateCustomAvatarPath: true,
+          updateGroupVersion: true,
+          updateCkSyncState: true,
+          updateAttachmentGuid: true,
+        );
       }
       return Message(
         guid: myMsg.id,
@@ -2432,7 +2693,10 @@ class RustPushService extends GetxService {
       }
       if (msg.field0.embeddedProfile != null) {
         handleSharedProfile(
-            msg.field0.embeddedProfile!, sender, chat?.participants ?? []);
+          msg.field0.embeddedProfile!,
+          sender,
+          chat?.participants ?? [],
+        );
       }
 
       String? reaction;
@@ -2460,7 +2724,10 @@ class RustPushService extends GetxService {
           var sticker = msgType.reaction as api.Reaction_Sticker;
           app = sticker.spec;
           attributedBodyData = await indexedPartsToAttributedBodyDyn(
-              sticker.body.field0, myMsg.id, null);
+            sticker.body.field0,
+            myMsg.id,
+            null,
+          );
           reaction = ReactionTypes.STICKERBACK;
         }
         if (!msgType.enable) {
@@ -2470,7 +2737,10 @@ class RustPushService extends GetxService {
         var msgType = msg.field0.reaction as api.ReactMessageType_Extension;
         app = msgType.spec;
         attributedBodyData = await indexedPartsToAttributedBodyDyn(
-            msgType.body.field0, myMsg.id, null);
+          msgType.body.field0,
+          myMsg.id,
+          null,
+        );
         if (msgType.isMeta) {
           reaction = "meta";
         }
@@ -2478,17 +2748,17 @@ class RustPushService extends GetxService {
           // copy over assets
           reaction = null;
 
-          final query = (Database.messages
-                  .query(Message_.amkSessionId.equals(msg.field0.toUuid))
-                ..order(Message_.dateCreated, flags: Order.descending))
-              .build();
+          final query = (Database.messages.query(
+            Message_.amkSessionId.equals(msg.field0.toUuid),
+          )..order(Message_.dateCreated, flags: Order.descending)).build();
           query.limit = 2;
 
           final messages = query.find();
           query.close();
 
           final original = messages.firstWhereOrNull(
-              (msg) => (msg.stagingGuid ?? msg.guid) != myMsg.id);
+            (msg) => (msg.stagingGuid ?? msg.guid) != myMsg.id,
+          );
           if (original == null) {
             Logger.warn("Ignoring extension update without a base message");
             return null;
@@ -2516,7 +2786,7 @@ class RustPushService extends GetxService {
             original.text ?? "",
             attributedBodyData.$3.isEmpty
                 ? original.dbAttachments
-                : attributedBodyData.$3
+                : attributedBodyData.$3,
           );
           var tag = es.getLatest(msg.field0.toUuid);
           // updates cached value; we are latest
@@ -2547,14 +2817,16 @@ class RustPushService extends GetxService {
         associatedMessageType: reaction == "meta" ? null : reaction,
         associatedMessageEmoji: emoji,
         text: attributedBodyData?.$2,
-        attributedBody:
-            attributedBodyData != null ? [attributedBodyData.$1] : [],
+        attributedBody: attributedBodyData != null
+            ? [attributedBodyData.$1]
+            : [],
         attachments: attributedBodyData?.$3 ?? [],
         hasAttachments: attributedBodyData?.$3.isNotEmpty ?? false,
         balloonBundleId: app?.bundleId,
         payloadData: app?.balloon != null ? appToData(app!) : null,
-        amkSessionId:
-            app?.balloon != null && reaction == null ? msg.field0.toUuid : null,
+        amkSessionId: app?.balloon != null && reaction == null
+            ? msg.field0.toUuid
+            : null,
         verificationFailed: myMsg.verificationFailed,
         hasApplePayloadData: app?.balloon != null,
       );
@@ -2590,11 +2862,15 @@ class RustPushService extends GetxService {
       msgObj.verificationFailed = myMsg.verificationFailed;
 
       var attributedBodyDataInclusive = await indexedPartsToAttributedBodyDyn(
-          msg.field0.newParts.field0,
-          myMsg.id,
-          msgObj.attributedBody.firstOrNull);
+        msg.field0.newParts.field0,
+        myMsg.id,
+        msgObj.attributedBody.firstOrNull,
+      );
       var attributedBodyEdited = await indexedPartsToAttributedBodyDyn(
-          msg.field0.newParts.field0, myMsg.id, null);
+        msg.field0.newParts.field0,
+        myMsg.id,
+        null,
+      );
       msgObj.text = attributedBodyDataInclusive.$2;
       msgObj.dateEdited = DateTime.now();
 
@@ -2611,15 +2887,18 @@ class RustPushService extends GetxService {
       if (contentMap[msg.field0.editPart.toString()] == null) {
         contentMap[msg.field0.editPart.toString()] = [
           EditedContent(
-              date:
-                  (msgObj.dateCreated?.millisecondsSinceEpoch ?? 0).toDouble(),
-              text: Content(values: msgObj.attributedBody))
+            date: (msgObj.dateCreated?.millisecondsSinceEpoch ?? 0).toDouble(),
+            text: Content(values: msgObj.attributedBody),
+          ),
         ];
       }
 
-      contentMap[msg.field0.editPart.toString()]!.add(EditedContent(
+      contentMap[msg.field0.editPart.toString()]!.add(
+        EditedContent(
           date: myMsg.sentTimestamp.toDouble(),
-          text: Content(values: [attributedBodyEdited.$1])));
+          text: Content(values: [attributedBodyEdited.$1]),
+        ),
+      );
 
       msgObj.attributedBody = [attributedBodyDataInclusive.$1];
       return msgObj;
@@ -2627,8 +2906,12 @@ class RustPushService extends GetxService {
     throw Exception("bad message type! ${myMsg.message}");
   }
 
-  File fileForAsset(String path, api.PosterAsset asset, String n,
-      {bool friendly = false}) {
+  File fileForAsset(
+    String path,
+    api.PosterAsset asset,
+    String n, {
+    bool friendly = false,
+  }) {
     var name = "${asset.uuid}_$n";
     if (friendly) {
       File f2 = File("$path/${sha256.convert(name.codeUnits).toString()}.png");
@@ -2651,8 +2934,10 @@ class RustPushService extends GetxService {
 
   // finds chat for message. Use over `Chat.findByRust` for incoming messages
   // to handle after conversation changes (renames, participants)
-  Future<Chat> chatForMessageInner(api.MessageInst myMsg,
-      {bool routingStub = false}) async {
+  Future<Chat> chatForMessageInner(
+    api.MessageInst myMsg, {
+    bool routingStub = false,
+  }) async {
     // find existing saved message and use that chat if we're getting a replay
     var existing = Message.findOne(guid: myMsg.id);
     if (myMsg.message is api.Message_Edit) {
@@ -2670,15 +2955,19 @@ class RustPushService extends GetxService {
       if (existing?.getChat() != null) {
         var result = existing!.getChat()!;
         if (myMsg.sender == null ||
-            result.participants
-                .contains(RustPushBBUtils.rustHandleToBB(myMsg.sender!))) {
+            result.participants.contains(
+              RustPushBBUtils.rustHandleToBB(myMsg.sender!),
+            )) {
           return existing.getChat()!;
         }
       }
     }
     if (myMsg.message is api.Message_RenameMessage) {
-      var found = (await Chat.findByRust(myMsg.conversation!, getService(myMsg),
-          soft: true));
+      var found = (await Chat.findByRust(
+        myMsg.conversation!,
+        getService(myMsg),
+        soft: true,
+      ));
       if (found == null) {
         // try using the new name
         var msg = myMsg.message as api.Message_RenameMessage;
@@ -2689,8 +2978,11 @@ class RustPushService extends GetxService {
       }
     }
     if (myMsg.message is api.Message_ChangeParticipants) {
-      var found = (await Chat.findByRust(myMsg.conversation!, getService(myMsg),
-          soft: true));
+      var found = (await Chat.findByRust(
+        myMsg.conversation!,
+        getService(myMsg),
+        soft: true,
+      ));
       if (found == null) {
         // try using the new participants
         var msg = myMsg.message as api.Message_ChangeParticipants;
@@ -2708,8 +3000,11 @@ class RustPushService extends GetxService {
         myMsg.conversation?.participants.remove(service.usingNumber);
       }
     }
-    return (await Chat.findByRust(myMsg.conversation!, getService(myMsg),
-        routingStub: routingStub))!;
+    return (await Chat.findByRust(
+      myMsg.conversation!,
+      getService(myMsg),
+      routingStub: routingStub,
+    ))!;
   }
 
   Future<Chat> chatForMessage(api.MessageInst myMsg) async {
@@ -2717,8 +3012,9 @@ class RustPushService extends GetxService {
     if (myMsg.message is api.Message_Message) {
       var message = myMsg.message as api.Message_Message;
       var service = message.field0.service;
-      var myNumbers =
-          await api.getMyPhoneHandles(state: pushService.state!.client);
+      var myNumbers = await api.getMyPhoneHandles(
+        state: pushService.state!.client,
+      );
       if (service is api.MessageType_SMS) {
         if (myNumbers.contains(service.usingNumber)) {
           routingStub =
@@ -2735,7 +3031,8 @@ class RustPushService extends GetxService {
         result.save(updateGuidRefs: true);
       }
       var (mine, _) = await RustPushBBUtils.rustParticipantsToBB(
-          myMsg.conversation!.participants);
+        myMsg.conversation!.participants,
+      );
       if (mine.isNotEmpty && !mine.contains(result.usingHandle)) {
         result.usingHandle = mine[0];
         result.save(updateUsingHandle: true);
@@ -2746,7 +3043,8 @@ class RustPushService extends GetxService {
         if (service is api.MessageType_SMS) {
           if (service.usingNumber != result.usingHandle) {
             Logger.info(
-                "Mismatch between chat handle ${result.usingHandle} and incoming handle ${service.usingNumber}, updating chat handle!");
+              "Mismatch between chat handle ${result.usingHandle} and incoming handle ${service.usingNumber}, updating chat handle!",
+            );
             result.usingHandle = service.usingNumber;
             result.save(updateUsingHandle: true);
           }
@@ -2754,14 +3052,19 @@ class RustPushService extends GetxService {
       }
       if (myMsg.message is! api.Message_ChangeParticipants) {
         var isNormal = myMsg.message is api.Message_Message;
-        var isSms = isNormal &&
+        var isSms =
+            isNormal &&
             (myMsg.message as api.Message_Message).field0.service
                 is api.MessageType_SMS;
         if (!isSms) {
           var data = await result.getConversationData();
           // make sure we are in consensus
-          await updateChatParticipants(result, myMsg, data.participants,
-              myMsg.conversation!.participants);
+          await updateChatParticipants(
+            result,
+            myMsg,
+            data.participants,
+            myMsg.conversation!.participants,
+          );
         }
       }
       if (myMsg.message is! api.Message_RenameMessage &&
@@ -2778,16 +3081,18 @@ class RustPushService extends GetxService {
         var msg = Message(
           guid: uuid.v4(),
           isFromMe: myHandles.contains(myMsg.sender),
-          handleId:
-              RustPushBBUtils.rustHandleToBB(myMsg.sender!).originalROWID!,
+          handleId: RustPushBBUtils.rustHandleToBB(
+            myMsg.sender!,
+          ).originalROWID!,
           dateCreated: DateTime.fromMillisecondsSinceEpoch(myMsg.sentTimestamp),
           itemType: 2,
           groupActionType: 2,
           groupTitle: myMsg.conversation!.cvName,
         );
 
-        inq.queue(IncomingItem(
-            chat: result, message: msg, type: QueueType.newMessage));
+        inq.queue(
+          IncomingItem(chat: result, message: msg, type: QueueType.newMessage),
+        );
       }
     }
     if (result.dateDeleted != null) {
@@ -2804,8 +3109,10 @@ class RustPushService extends GetxService {
       mistakeFor.stagingGuid = mistakeFor.guid;
     }
     mistakeFor.generateTempGuid();
-    mistakeFor.guid =
-        mistakeFor.guid!.replaceAll("temp", "error-protocol: $error");
+    mistakeFor.guid = mistakeFor.guid!.replaceAll(
+      "temp",
+      "error-protocol: $error",
+    );
     var chat = mistakeFor.chat.target!;
     if (!ls.isAlive || !(cm.getChatController(chat.guid)?.isAlive ?? false)) {
       await notif.createFailedToSend(chat);
@@ -2815,12 +3122,15 @@ class RustPushService extends GetxService {
 
   Future<Chat?> findOperatedChat(api.OperatedChat chat) async {
     var conversation = api.ConversationData(
-        participants: chat.participants
-            .map((p) => p.isEmail ? "mailto:$p" : "tel:$p")
-            .toList(),
-        senderGuid: chat.groupId);
+      participants: chat.participants
+          .map((p) => p.isEmail ? "mailto:$p" : "tel:$p")
+          .toList(),
+      senderGuid: chat.groupId,
+    );
     return await Chat.findByRust(
-        conversation, chat.guid.startsWith("iMessage") ? "iMessage" : "SMS");
+      conversation,
+      chat.guid.startsWith("iMessage") ? "iMessage" : "SMS",
+    );
   }
 
   bool isSessionActive(api.FTSession session) {
@@ -2833,10 +3143,9 @@ class RustPushService extends GetxService {
   RxList<api.FTSession> sessions = <api.FTSession>[].obs;
   RxList<api.FTSession> activeSessions = <api.FTSession>[].obs;
   Future<void> updateState() async {
-    var ftSessions =
-        (await api.ftSessions(facetime: pushService.state!.ftClient))
-            .filter((a) => a.startTime != null)
-            .toList();
+    var ftSessions = (await api.ftSessions(
+      facetime: pushService.state!.ftClient,
+    )).filter((a) => a.startTime != null).toList();
     ftSessions.sort((a, b) {
       return b.startTime! - a.startTime!;
     });
@@ -3005,10 +3314,12 @@ class RustPushService extends GetxService {
   ) {
     if (!_legacyCloudKitMutationsEnabled) {
       Logger.warn('Legacy CloudKit upload blocked by restore-only build');
-      return Future.value(CloudMessageUploadBatchResult(
-        confirmedCount: 0,
-        retryableCount: messages.length,
-      ));
+      return Future.value(
+        CloudMessageUploadBatchResult(
+          confirmedCount: 0,
+          retryableCount: messages.length,
+        ),
+      );
     }
     return _runLegacyCloudKitOperation(
       () => _uploadMessagesUnlocked(
@@ -3027,7 +3338,8 @@ class RustPushService extends GetxService {
     bool noAttachments,
   ) async {
     var availableSize = await api.getQuotaInfo(
-        info: pushService.state!.icloudServices!.tokenProvider);
+      info: pushService.state!.icloudServices!.tokenProvider,
+    );
     Map<String, api.CloudMessage> saveMessages = {};
     var totalSize = uploadAttachments.fold<int>(
       0,
@@ -3059,11 +3371,13 @@ class RustPushService extends GetxService {
       // remember: other invocations
       final createdRecordId = message.ckRecordId == null;
       message.ckRecordId ??= createNewCloudKitId();
-      var saveMessageAttachments = !noAttachments ||
+      var saveMessageAttachments =
+          !noAttachments ||
           message.attachments.every((a) => a!.ckRecordId != null);
       try {
-        saveMessages[message.ckRecordId!] =
-            message.toCloud(!saveMessageAttachments);
+        saveMessages[message.ckRecordId!] = message.toCloud(
+          !saveMessageAttachments,
+        );
       } catch (e, s) {
         if (createdRecordId) message.ckRecordId = null;
         message.ckSyncState = false;
@@ -3076,7 +3390,8 @@ class RustPushService extends GetxService {
         for (var attachment in message.attachments) {
           if (!attachment!.getFile().exists() ||
               File(attachment.path).lengthSync() == 0 ||
-              attachment.ckRecordId != null) continue;
+              attachment.ckRecordId != null)
+            continue;
           totalSize += File(attachment.path).lengthSync();
           attachment.ckRecordId ??= createNewCloudKitId();
           uploadAttachments.add((attachment.path, attachment.ckRecordId!));
@@ -3091,25 +3406,29 @@ class RustPushService extends GetxService {
     if (totalSize != 0 &&
         totalSize > availableSize.availableBytes - (25 * 1024 * 1024)) {
       throw Exception(
-          "Not enough space for attachments, needed ${formatBytes(totalSize)}!");
+        "Not enough space for attachments, needed ${formatBytes(totalSize)}!",
+      );
     }
 
     Logger.info("Attachment total size $totalSize!");
 
     if (uploadAttachments.isNotEmpty) {
-      final attemptedAttachmentRecordIds =
-          uploadAttachments.map((item) => item.$2).toSet();
+      final attemptedAttachmentRecordIds = uploadAttachments
+          .map((item) => item.$2)
+          .toSet();
       Map<String, api.CloudAttachment> saveAttachments = {};
       var results = await api.uploadCloudAttachments(
-          cloudMessagesClient:
-              pushService.state!.icloudServices!.cloudMessagesClient!,
-          files: uploadAttachments);
+        cloudMessagesClient:
+            pushService.state!.icloudServices!.cloudMessagesClient!,
+        files: uploadAttachments,
+      );
       for (var result in results.entries) {
         var attachment = idToAttachment[result.key];
         if (attachment == null) continue;
         saveAttachments[attachment.ckRecordId!] = api.CloudAttachment(
           cm: api.encodeAttachmentmeta(
-              attachmentmeta: await attachment.getAttachmentMeta()),
+            attachmentmeta: await attachment.getAttachmentMeta(),
+          ),
           lqa: result.value,
         );
       }
@@ -3118,7 +3437,8 @@ class RustPushService extends GetxService {
           : await api.saveAttachments(
               cloudMessagesClient:
                   pushService.state!.icloudServices!.cloudMessagesClient!,
-              attachments: saveAttachments);
+              attachments: saveAttachments,
+            );
       final attachmentOutcome = CloudAttachmentSaveOutcome.fromResponse(
         attemptedRecordIds: attemptedAttachmentRecordIds,
         response: saveResult,
@@ -3139,7 +3459,8 @@ class RustPushService extends GetxService {
           in attachmentOutcome.retryableMessageRecordIds) {
         saveMessages.remove(messageRecordId);
         final failedMessage = messages.firstWhereOrNull(
-            (message) => message.ckRecordId == messageRecordId);
+          (message) => message.ckRecordId == messageRecordId,
+        );
         if (failedMessage == null) continue;
         if (newCloudKitIds.contains(messageRecordId)) {
           failedMessage.ckRecordId = null;
@@ -3161,9 +3482,10 @@ class RustPushService extends GetxService {
 
     if (saveMessages.isNotEmpty) {
       var result = await api.saveMessages(
-          cloudMessagesClient:
-              pushService.state!.icloudServices!.cloudMessagesClient!,
-          messages: saveMessages);
+        cloudMessagesClient:
+            pushService.state!.icloudServices!.cloudMessagesClient!,
+        messages: saveMessages,
+      );
 
       final outcome = CloudMessageSaveOutcome.fromResponse(
         attemptedRecordIds: saveMessages.keys,
@@ -3171,15 +3493,17 @@ class RustPushService extends GetxService {
       );
 
       for (final recordId in outcome.confirmedRecordIds) {
-        final savedMessage =
-            messages.firstWhere((message) => message.ckRecordId == recordId);
+        final savedMessage = messages.firstWhere(
+          (message) => message.ckRecordId == recordId,
+        );
         savedMessage.ckSyncState = true;
         confirmedCount++;
       }
 
       for (final recordId in outcome.retryableRecordIds) {
-        var failedMessage =
-            messages.firstWhere((message) => message.ckRecordId == recordId);
+        var failedMessage = messages.firstWhere(
+          (message) => message.ckRecordId == recordId,
+        );
         if (newCloudKitIds.contains(failedMessage.ckRecordId!)) {
           failedMessage.ckRecordId = null;
         }
@@ -3237,8 +3561,10 @@ class RustPushService extends GetxService {
       return;
     }
     if (result.retryableCount > 0) {
-      showSnackbar("Upload pending",
-          "iCloud did not confirm the upload. OpenBubbles will retry it.");
+      showSnackbar(
+        "Upload pending",
+        "iCloud did not confirm the upload. OpenBubbles will retry it.",
+      );
       return;
     }
     showSnackbar("Success", "Attachment uploaded");
@@ -3251,7 +3577,8 @@ class RustPushService extends GetxService {
     isSyncing.value = "Syncing Now...";
 
     var isInClique = await api.isInClique(
-        keychain: pushService.state!.icloudServices!.keychain!);
+      keychain: pushService.state!.icloudServices!.keychain!,
+    );
     if (!isInClique) {
       Logger.warn("Skipping sync because we are no longer in the clique!");
       ss.settings.cloudSyncingEnabled.value = false;
@@ -3262,9 +3589,10 @@ class RustPushService extends GetxService {
     if (_legacyCloudKitMutationsEnabled &&
         (ss.prefs.getStringList("messageDeletionIds-1")?.isNotEmpty ?? false)) {
       await api.deleteMessages(
-          cloudMessagesClient:
-              pushService.state!.icloudServices!.cloudMessagesClient!,
-          messages: ss.prefs.getStringList("messageDeletionIds-1")!);
+        cloudMessagesClient:
+            pushService.state!.icloudServices!.cloudMessagesClient!,
+        messages: ss.prefs.getStringList("messageDeletionIds-1")!,
+      );
       ss.prefs.remove("messageDeletionIds-1");
     }
 
@@ -3272,18 +3600,20 @@ class RustPushService extends GetxService {
         (ss.prefs.getStringList("attachmentDeletionIds-1")?.isNotEmpty ??
             false)) {
       await api.deleteAttachments(
-          cloudMessagesClient:
-              pushService.state!.icloudServices!.cloudMessagesClient!,
-          attachments: ss.prefs.getStringList("attachmentDeletionIds-1")!);
+        cloudMessagesClient:
+            pushService.state!.icloudServices!.cloudMessagesClient!,
+        attachments: ss.prefs.getStringList("attachmentDeletionIds-1")!,
+      );
       ss.prefs.remove("attachmentDeletionIds-1");
     }
 
     if (_legacyCloudKitMutationsEnabled &&
         (ss.prefs.getStringList("chatDeletionIds-1")?.isNotEmpty ?? false)) {
       await api.deleteChats(
-          cloudMessagesClient:
-              pushService.state!.icloudServices!.cloudMessagesClient!,
-          chats: ss.prefs.getStringList("chatDeletionIds-1")!);
+        cloudMessagesClient:
+            pushService.state!.icloudServices!.cloudMessagesClient!,
+        chats: ss.prefs.getStringList("chatDeletionIds-1")!,
+      );
       ss.prefs.remove("chatDeletionIds-1");
     }
 
@@ -3298,19 +3628,21 @@ class RustPushService extends GetxService {
       chatPage++;
       final previousToken = ss.prefs.getString("chatSyncToken");
       var (token, items, state) = await api.syncChats(
-          cloudMessagesClient:
-              pushService.state!.icloudServices!.cloudMessagesClient!,
-          continuationToken: ss.prefs.getString("chatSyncToken") != null
-              ? base64Decode(ss.prefs.getString("chatSyncToken")!)
-              : null);
+        cloudMessagesClient:
+            pushService.state!.icloudServices!.cloudMessagesClient!,
+        continuationToken: ss.prefs.getString("chatSyncToken") != null
+            ? base64Decode(ss.prefs.getString("chatSyncToken")!)
+            : null,
+      );
       currentState = state;
       var pageHadItemFailure = false;
       List<String> dupDeleteChats = [];
       for (var item in items.entries) {
         try {
           if (item.value == null) {
-            final query =
-                Database.chats.query(Chat_.ckRecordId.equals(item.key)).build();
+            final query = Database.chats
+                .query(Chat_.ckRecordId.equals(item.key))
+                .build();
             final result = query.findFirst();
             if (_legacyCloudKitMutationsEnabled && result != null) {
               syncStopDelete = true;
@@ -3355,18 +3687,20 @@ class RustPushService extends GetxService {
         Logger.info("Deleting ${dupDeleteChats.length} duplicate chats");
         try {
           await api.deleteChats(
-              cloudMessagesClient:
-                  pushService.state!.icloudServices!.cloudMessagesClient!,
-              chats: dupDeleteChats);
+            cloudMessagesClient:
+                pushService.state!.icloudServices!.cloudMessagesClient!,
+            chats: dupDeleteChats,
+          );
         } catch (e) {
           if (e is AnyhowException) {
             if (e.message.contains("Too many requests")) {
               Logger.warn("Too many requests, waiting 10s");
               await Future.delayed(const Duration(seconds: 10));
               await api.deleteChats(
-                  cloudMessagesClient:
-                      pushService.state!.icloudServices!.cloudMessagesClient!,
-                  chats: dupDeleteChats);
+                cloudMessagesClient:
+                    pushService.state!.icloudServices!.cloudMessagesClient!,
+                chats: dupDeleteChats,
+              );
             } else {
               rethrow;
             }
@@ -3391,9 +3725,10 @@ class RustPushService extends GetxService {
 
     if (downloadPfPics.isNotEmpty) {
       await api.downloadCloudGroupPhotos(
-          cloudMessagesClient:
-              pushService.state!.icloudServices!.cloudMessagesClient!,
-          files: downloadPfPics);
+        cloudMessagesClient:
+            pushService.state!.icloudServices!.cloudMessagesClient!,
+        files: downloadPfPics,
+      );
     }
 
     isSyncing.value = "Downloading Attachments...";
@@ -3407,11 +3742,12 @@ class RustPushService extends GetxService {
       attachmentPage++;
       final previousToken = ss.prefs.getString("attachmentSyncToken");
       var (token3, items3, state3) = await api.syncAttachments(
-          cloudMessagesClient:
-              pushService.state!.icloudServices!.cloudMessagesClient!,
-          continuationToken: ss.prefs.getString("attachmentSyncToken") != null
-              ? base64Decode(ss.prefs.getString("attachmentSyncToken")!)
-              : null);
+        cloudMessagesClient:
+            pushService.state!.icloudServices!.cloudMessagesClient!,
+        continuationToken: ss.prefs.getString("attachmentSyncToken") != null
+            ? base64Decode(ss.prefs.getString("attachmentSyncToken")!)
+            : null,
+      );
       currentState = state3;
       var pageHadItemFailure = false;
       List<String> dupDeleteAttachments = [];
@@ -3440,8 +3776,9 @@ class RustPushService extends GetxService {
             currentState = 3;
           }
 
-          var existing =
-              Attachment.findOne(convertAttachmentGuid(decoded.guid));
+          var existing = Attachment.findOne(
+            convertAttachmentGuid(decoded.guid),
+          );
           if (existing != null) {
             if (existing.ckRecordId != null &&
                 existing.ckRecordId != item.key) {
@@ -3459,8 +3796,11 @@ class RustPushService extends GetxService {
           }
         } catch (e, s) {
           pageHadItemFailure = true;
-          Logger.error("Failed to sync attachment ${item.key}",
-              error: e, trace: s);
+          Logger.error(
+            "Failed to sync attachment ${item.key}",
+            error: e,
+            trace: s,
+          );
         }
       }
 
@@ -3468,21 +3808,24 @@ class RustPushService extends GetxService {
           !pageHadItemFailure &&
           dupDeleteAttachments.isNotEmpty) {
         Logger.info(
-            "Deleting ${dupDeleteAttachments.length} duplicate attachments");
+          "Deleting ${dupDeleteAttachments.length} duplicate attachments",
+        );
         try {
           await api.deleteAttachments(
-              cloudMessagesClient:
-                  pushService.state!.icloudServices!.cloudMessagesClient!,
-              attachments: dupDeleteAttachments);
+            cloudMessagesClient:
+                pushService.state!.icloudServices!.cloudMessagesClient!,
+            attachments: dupDeleteAttachments,
+          );
         } catch (e) {
           if (e is AnyhowException) {
             if (e.message.contains("Too many requests")) {
               Logger.warn("Too many requests, waiting 10s");
               await Future.delayed(const Duration(seconds: 10));
               await api.deleteAttachments(
-                  cloudMessagesClient:
-                      pushService.state!.icloudServices!.cloudMessagesClient!,
-                  attachments: dupDeleteAttachments);
+                cloudMessagesClient:
+                    pushService.state!.icloudServices!.cloudMessagesClient!,
+                attachments: dupDeleteAttachments,
+              );
             } else {
               rethrow;
             }
@@ -3523,17 +3866,19 @@ class RustPushService extends GetxService {
       messagePage++;
       final previousToken = ss.prefs.getString("messageSyncToken");
       var (token2, items2, state2) = await api.syncMessages(
-          cloudMessagesClient:
-              pushService.state!.icloudServices!.cloudMessagesClient!,
-          continuationToken: ss.prefs.getString("messageSyncToken") != null
-              ? base64Decode(ss.prefs.getString("messageSyncToken")!)
-              : null);
+        cloudMessagesClient:
+            pushService.state!.icloudServices!.cloudMessagesClient!,
+        continuationToken: ss.prefs.getString("messageSyncToken") != null
+            ? base64Decode(ss.prefs.getString("messageSyncToken")!)
+            : null,
+      );
       currentState = state2;
       var pageHadItemFailure = false;
 
       List<String> dupDeleteMessages = [];
       Logger.info(
-          "Syncing group of ${items2.length} messages, total $totalMessages");
+        "Syncing group of ${items2.length} messages, total $totalMessages",
+      );
       totalMessages += items2.length;
 
       var processedInBatch = 0;
@@ -3603,18 +3948,20 @@ class RustPushService extends GetxService {
         Logger.info("Deleting ${dupDeleteMessages.length} duplicate messages");
         try {
           await api.deleteMessages(
-              cloudMessagesClient:
-                  pushService.state!.icloudServices!.cloudMessagesClient!,
-              messages: dupDeleteMessages);
+            cloudMessagesClient:
+                pushService.state!.icloudServices!.cloudMessagesClient!,
+            messages: dupDeleteMessages,
+          );
         } catch (e) {
           if (e is AnyhowException) {
             if (e.message.contains("Too many requests")) {
               Logger.warn("Too many requests, waiting 10s");
               await Future.delayed(const Duration(seconds: 10));
               await api.deleteMessages(
-                  cloudMessagesClient:
-                      pushService.state!.icloudServices!.cloudMessagesClient!,
-                  messages: dupDeleteMessages);
+                cloudMessagesClient:
+                    pushService.state!.icloudServices!.cloudMessagesClient!,
+                messages: dupDeleteMessages,
+              );
             } else {
               rethrow;
             }
@@ -3655,10 +4002,12 @@ class RustPushService extends GetxService {
     Map<String, Attachment> idToAttachment = {};
 
     var unsyncedChats = Database.chats
-        .query(Chat_.ckSyncState
-            .equals(false)
-            .and(Chat_.dateDeleted.isNull())
-            .and(Chat_.isRpSms.equals(false)))
+        .query(
+          Chat_.ckSyncState
+              .equals(false)
+              .and(Chat_.dateDeleted.isNull())
+              .and(Chat_.isRpSms.equals(false)),
+        )
         .build();
     var useChats = unsyncedChats.find();
     Logger.info("Out2");
@@ -3694,9 +4043,10 @@ class RustPushService extends GetxService {
     if (saveChats.isNotEmpty) {
       if (uploadPhotos.isNotEmpty) {
         var results = await api.uploadGroupPhoto(
-            cloudMessagesClient:
-                pushService.state!.icloudServices!.cloudMessagesClient!,
-            files: uploadPhotos);
+          cloudMessagesClient:
+              pushService.state!.icloudServices!.cloudMessagesClient!,
+          files: uploadPhotos,
+        );
         for (var result in results.entries) {
           saveChats[result.key]!.groupPhoto = result.value;
         }
@@ -3705,9 +4055,10 @@ class RustPushService extends GetxService {
       totalSavedChats += saveChats.length;
 
       var result = await api.saveChats(
-          cloudMessagesClient:
-              pushService.state!.icloudServices!.cloudMessagesClient!,
-          chats: saveChats);
+        cloudMessagesClient:
+            pushService.state!.icloudServices!.cloudMessagesClient!,
+        chats: saveChats,
+      );
       for (var result in result.entries) {
         if (result.value) continue; // success
         var failedChat = useChats.firstWhere((c) => c.ckRecordId == result.key);
@@ -3725,39 +4076,57 @@ class RustPushService extends GetxService {
     // that batch even when there are no unsynced messages to drive the loop.
     if (uploadAttachments.isNotEmpty) {
       await uploadMessages(
-          const <Message>[], uploadAttachments, idToAttachment, false);
+        const <Message>[],
+        uploadAttachments,
+        idToAttachment,
+        false,
+      );
     }
 
     Logger.info("Syncing messages");
     bool noAttachments = !ss.settings.attachmentSyncEnabled.value;
 
-    var unsyncedMessages = Database.messages
-        .query(Message_.itemType
-            .equals(0)
-            .and(Message_.ckSyncState
-                .equals(false)
-                .or(Message_.ckSyncState.isNull()))
-            .and(Message_.dateCreated.greaterThanDate(cutoffDateTime)))
-        .build()
-      ..limit = 3000;
+    var unsyncedMessages =
+        Database.messages
+            .query(
+              Message_.itemType
+                  .equals(0)
+                  .and(
+                    Message_.ckSyncState
+                        .equals(false)
+                        .or(Message_.ckSyncState.isNull()),
+                  )
+                  .and(Message_.dateCreated.greaterThanDate(cutoffDateTime)),
+            )
+            .build()
+          ..limit = 3000;
     var messages = unsyncedMessages.find();
     int localUpload = 0;
 
     while (messages.isNotEmpty) {
       Logger.info("Syncing batch ${messages.length}");
       final batchResult = await uploadMessages(
-          messages, uploadAttachments, idToAttachment, noAttachments);
+        messages,
+        uploadAttachments,
+        idToAttachment,
+        noAttachments,
+      );
       localUpload += batchResult.confirmedCount;
 
-      var unsyncedMessages = Database.messages
-          .query(Message_.itemType
-              .equals(0)
-              .and(Message_.ckSyncState
-                  .equals(false)
-                  .or(Message_.ckSyncState.isNull()))
-              .and(Message_.dateCreated.greaterThanDate(cutoffDateTime)))
-          .build()
-        ..limit = 3000;
+      var unsyncedMessages =
+          Database.messages
+              .query(
+                Message_.itemType
+                    .equals(0)
+                    .and(
+                      Message_.ckSyncState
+                          .equals(false)
+                          .or(Message_.ckSyncState.isNull()),
+                    )
+                    .and(Message_.dateCreated.greaterThanDate(cutoffDateTime)),
+              )
+              .build()
+            ..limit = 3000;
       messages = unsyncedMessages.find();
       isSyncing.value = "Uploaded $localUpload messages";
 
@@ -3773,14 +4142,16 @@ class RustPushService extends GetxService {
     ss.prefs.setInt("lastSynced", DateTime.now().millisecondsSinceEpoch);
     Logger.info("Syncing completed");
     Logger.info(
-        "Sync stats: $localUnchanged $localChanged $localSet $remoteSaved $localUpload $totalMessages $remoteNew");
+      "Sync stats: $localUnchanged $localChanged $localSet $remoteSaved $localUpload $totalMessages $remoteNew",
+    );
   }
 
   Future<PurchaseWrapper?> getPurchaseDetails() async {
     if (!Platform.isAndroid) return null;
     try {
-      var purchases = await pushService.client
-          .runWithClient((client) => client.queryPurchases(ProductType.subs));
+      var purchases = await pushService.client.runWithClient(
+        (client) => client.queryPurchases(ProductType.subs),
+      );
       var token = purchases.purchasesList.firstOrNull?.purchaseToken;
       if (token != null && ss.settings.deviceIsHosted.value) {
         ss.settings.hostedToken.value = token;
@@ -3814,114 +4185,190 @@ class RustPushService extends GetxService {
 
       if (!detail.isAcknowledged) {
         await pushService.client.runWithClient(
-            (client) => client.acknowledgePurchase(detail.purchaseToken));
+          (client) => client.acknowledgePurchase(detail.purchaseToken),
+        );
       }
     }
   }
 
   Future<void> rotateIncomingLink() async {
     await api.useLinkFor(
-        facetime: pushService.state!.ftClient,
-        oldUsage: "incomingcall",
-        usage: "incomingcall-old");
+      facetime: pushService.state!.ftClient,
+      oldUsage: "incomingcall",
+      usage: "incomingcall-old",
+    );
     await api.useLinkFor(
-        facetime: pushService.state!.ftClient,
-        oldUsage: "nextincomingcall",
-        usage: "incomingcall");
+      facetime: pushService.state!.ftClient,
+      oldUsage: "nextincomingcall",
+      usage: "incomingcall",
+    );
     await api.getFtLink(
-        facetime: pushService.state!.ftClient, usage: "nextincomingcall");
+      facetime: pushService.state!.ftClient,
+      usage: "nextincomingcall",
+    );
   }
 
   Future<void> rotateLink() async {
     await api.useLinkFor(
-        facetime: pushService.state!.ftClient,
-        oldUsage: "current",
-        usage: "current-old");
+      facetime: pushService.state!.ftClient,
+      oldUsage: "current",
+      usage: "current-old",
+    );
     await api.useLinkFor(
-        facetime: pushService.state!.ftClient,
-        oldUsage: "next",
-        usage: "current");
+      facetime: pushService.state!.ftClient,
+      oldUsage: "next",
+      usage: "current",
+    );
     await api.getFtLink(facetime: pushService.state!.ftClient, usage: "next");
   }
 
   Timer? outgoingCallTimer;
   Map<String, dynamic> outgoingCallMeta = {};
   RxString? currentOutgoingCall;
+  String? currentOutgoingCallGuid;
+  bool _outgoingCallSetupInProgress = false;
+
+  void _clearOutgoingCall(String guid, {String? finalState}) {
+    if (currentOutgoingCallGuid != guid) return;
+    outgoingCallTimer?.cancel();
+    outgoingCallTimer = null;
+    if (finalState != null) currentOutgoingCall?.value = finalState;
+    currentOutgoingCall = null;
+    currentOutgoingCallGuid = null;
+    outgoingCallMeta = {};
+  }
+
+  void handleNativeFaceTimeCallEnded(String guid) {
+    if (currentOutgoingCallGuid != guid) return;
+    if (chosenFTRoomGuid == guid) chosenFTRoomGuid = null;
+    _clearOutgoingCall(guid, finalState: "ended");
+    hideFaceTimeOverlay(guid, timeout: true);
+  }
+
   Future<void> placeOutgoingCall(String caller, List<String> targets) async {
-    var outgoingguid = uuid.v4().toUpperCase();
-
-    var link = await api.getFtLink(
-        facetime: pushService.state!.ftClient, usage: "next");
-    var desc = targets
-        .map((p) => RustPushBBUtils.rustHandleToBB(p).displayName)
-        .join(" & ");
-    // rotate link
+    if (_outgoingCallSetupInProgress || currentOutgoingCallGuid != null) {
+      Logger.warn(
+        "Ignoring duplicate FaceTime call request while another call is being set up",
+      );
+      return;
+    }
+    _outgoingCallSetupInProgress = true;
+    final outgoingguid = uuid.v4().toUpperCase();
     try {
-      await pushService.rotateLink();
-    } catch (error) {
-      // The link fetched above remains valid under the "next" usage. Keep the
-      // call usable if rotating it into the current slot fails transiently.
-      Logger.warn("Failed to rotate outgoing FaceTime link; continuing with the next slot (${error.runtimeType})");
-    }
+      var link = await api.getFtLink(
+        facetime: pushService.state!.ftClient,
+        usage: "next",
+      );
+      var desc = targets
+          .map((p) => RustPushBBUtils.rustHandleToBB(p).displayName)
+          .join(" & ");
+      // rotate link
+      try {
+        await pushService.rotateLink();
+      } catch (error) {
+        // The link fetched above remains valid under the "next" usage. Keep the
+        // call usable if rotating it into the current slot fails transiently.
+        Logger.warn(
+          "Failed to rotate outgoing FaceTime link; continuing with the next slot (${error.runtimeType})",
+        );
+      }
 
-    // preload
-    mcs.invokeMethod("update-call-state", {
-      "name": ss.settings.userName.value == "You"
-          ? (await api.getHandles(state: pushService.state!.client))
-              .first
-              .replaceFirst("tel:", "")
-              .replaceFirst("mailto:", "")
-          : ss.settings.userName.value,
-      "desc": desc,
-      "url": link,
-      "callUuid": outgoingguid,
-      "state": "ringing",
-    });
-
-    outgoingCallMeta = {
-      'link': link,
-      'callUuid': outgoingguid,
-      'desc': desc,
-      'name': ss.settings.userName.value == "You"
-          ? (await api.getHandles(state: pushService.state!.client))
-              .first
-              .replaceFirst("tel:", "")
-              .replaceFirst("mailto:", "")
-          : ss.settings.userName.value,
-      'answer': true
-    };
-
-    outgoingCallTimer = Timer(const Duration(seconds: 30), () async {
-      currentOutgoingCall?.value = "timeout";
-
-      await api.cancelFacetime(
-          facetime: pushService.state!.ftClient, guid: outgoingguid);
-
-      // destroy webview
+      // preload
       mcs.invokeMethod("update-call-state", {
+        "name": ss.settings.userName.value == "You"
+            ? (await api.getHandles(
+                state: pushService.state!.client,
+              )).first.replaceFirst("tel:", "").replaceFirst("mailto:", "")
+            : ss.settings.userName.value,
+        "desc": desc,
+        "url": link,
         "callUuid": outgoingguid,
-        "state": "timeout",
+        "state": "ringing",
       });
-      currentOutgoingCall = null;
-    });
 
-    currentOutgoingCall = outgoingguid.obs;
+      outgoingCallMeta = {
+        'link': link,
+        'callUuid': outgoingguid,
+        'desc': desc,
+        'name': ss.settings.userName.value == "You"
+            ? (await api.getHandles(
+                state: pushService.state!.client,
+              )).first.replaceFirst("tel:", "").replaceFirst("mailto:", "")
+            : ss.settings.userName.value,
+        'answer': true,
+      };
 
-    Uint8List? icon;
-    String? poster;
-    if (targets.length == 1) {
-      var handle = RustPushBBUtils.rustHandleToBB(targets[0]);
-      icon = handle.contact?.avatar;
-      poster = handle.getPoster();
-    }
+      final callState = outgoingguid.obs;
+      currentOutgoingCall = callState;
+      currentOutgoingCallGuid = outgoingguid;
+      outgoingCallTimer = Timer(const Duration(seconds: 30), () async {
+        if (currentOutgoingCallGuid != outgoingguid ||
+            !identical(currentOutgoingCall, callState)) {
+          Logger.info("Ignoring stale FaceTime timeout for a superseded call");
+          return;
+        }
+        callState.value = "timeout";
 
-    showOutgoingFaceTimeOverlay(
-        currentOutgoingCall!, desc, caller, targets, icon, link, poster);
-    await api.createFacetime(
+        try {
+          await api.cancelFacetime(
+            facetime: pushService.state!.ftClient,
+            guid: outgoingguid,
+          );
+        } catch (error) {
+          Logger.warn(
+            "Unable to cancel timed-out FaceTime call (${error.runtimeType})",
+          );
+        } finally {
+          // Destroy only the webview associated with this call.
+          mcs.invokeMethod("update-call-state", {
+            "callUuid": outgoingguid,
+            "state": "timeout",
+          });
+          _clearOutgoingCall(outgoingguid);
+        }
+      });
+
+      Uint8List? icon;
+      String? poster;
+      if (targets.length == 1) {
+        var handle = RustPushBBUtils.rustHandleToBB(targets[0]);
+        icon = handle.contact?.avatar;
+        poster = handle.getPoster();
+      }
+
+      showOutgoingFaceTimeOverlay(
+        callState,
+        desc,
+        caller,
+        targets,
+        icon,
+        link,
+        poster,
+      );
+      await api.createFacetime(
         facetime: pushService.state!.ftClient,
         uuid: outgoingguid,
         handle: caller,
-        participants: targets);
+        participants: targets,
+      );
+    } catch (error) {
+      if (currentOutgoingCallGuid == outgoingguid) {
+        try {
+          await mcs.invokeMethod("update-call-state", {
+            "callUuid": outgoingguid,
+            "state": "timeout",
+          });
+        } catch (nativeError) {
+          Logger.warn(
+            "Unable to close failed FaceTime preload (${nativeError.runtimeType})",
+          );
+        }
+        _clearOutgoingCall(outgoingguid, finalState: "failed");
+      }
+      rethrow;
+    } finally {
+      _outgoingCallSetupInProgress = false;
+    }
   }
 
   // returns handle to show poster of
@@ -3954,12 +4401,13 @@ class RustPushService extends GetxService {
     var participants = session.members
         .where((a) => !session!.myHandles.contains(a.handle))
         .map((a) {
-      if (a.nickname != null) {
-        return Handle(address: "Maybe: ${a.nickname}");
-      } else {
-        return RustPushBBUtils.rustHandleToBB(a.handle);
-      }
-    }).toList();
+          if (a.nickname != null) {
+            return Handle(address: "Maybe: ${a.nickname}");
+          } else {
+            return RustPushBBUtils.rustHandleToBB(a.handle);
+          }
+        })
+        .toList();
     return participants.map((p) => p.displayName).join(" & ");
   }
 
@@ -3969,38 +4417,46 @@ class RustPushService extends GetxService {
     var msg = await api.newMsg(
       conversation: api.ConversationData(participants: [handle]),
       sender: handle,
-      message: api.Message.updateProfileSharing(api.UpdateProfileSharingMessage(
-        sharedAll: ss.settings.sharedContacts.toList(),
-        sharedDismissed: ss.settings.dismissedContacts.toList(),
-        version: ss.settings.shareVersion.value,
-      )),
+      message: api.Message.updateProfileSharing(
+        api.UpdateProfileSharingMessage(
+          sharedAll: ss.settings.sharedContacts.toList(),
+          sharedDismissed: ss.settings.dismissedContacts.toList(),
+          version: ss.settings.shareVersion.value,
+        ),
+      ),
     );
     await (backend as RustPushBackend).sendMsg(msg);
     ss.saveSettings();
   }
 
   Future<api.ShareProfileMessage?> getShareProfileMessageFor(
-      List<Handle> targets) async {
+    List<Handle> targets,
+  ) async {
     if (targets.length != 1) {
       Logger.info(
-          "Profile share not attached reason=not_one_to_one targets=${targets.length}");
+        "Profile share not attached reason=not_one_to_one targets=${targets.length}",
+      );
       return null; // only share in 1-1 chats atm
     }
     if (ss.settings.shareProfileMessage.value == null ||
         !ss.settings.shareContactAutomatically.value ||
         !ss.settings.nameAndPhotoSharing.value) {
       Logger.info(
-          "Profile share not attached reason=settings profileConfigured=${ss.settings.shareProfileMessage.value != null} automatic=${ss.settings.shareContactAutomatically.value} enabled=${ss.settings.nameAndPhotoSharing.value}");
+        "Profile share not attached reason=settings profileConfigured=${ss.settings.shareProfileMessage.value != null} automatic=${ss.settings.shareContactAutomatically.value} enabled=${ss.settings.nameAndPhotoSharing.value}",
+      );
       return null;
     }
-    if (targets.every((t) =>
-        !(t.contact?.isShared ?? true) &&
-        !ss.settings.sharedContacts.contains(t.address))) {
+    if (targets.every(
+      (t) =>
+          !(t.contact?.isShared ?? true) &&
+          !ss.settings.sharedContacts.contains(t.address),
+    )) {
       ss.settings.sharedContacts.addAll(targets.map((t) => t.address));
       ss.saveSettings();
       Logger.info("Profile share attached mode=embedded targets=1");
       return api.decodeProfileMessage(
-          s: ss.settings.shareProfileMessage.value!);
+        s: ss.settings.shareProfileMessage.value!,
+      );
     }
     Logger.info("Profile share not attached reason=already_shared targets=1");
     return null;
@@ -4064,7 +4520,8 @@ class RustPushService extends GetxService {
     if (!_isTransientProfileFailure(category)) {
       _profileRetryAttempts.remove(profileKey);
       Logger.warn(
-          "Shared profile fetch skipped retry category=$category transient=false");
+        "Shared profile fetch skipped retry category=$category transient=false",
+      );
       return;
     }
 
@@ -4072,7 +4529,8 @@ class RustPushService extends GetxService {
     if (attempt >= _profileRetryDelays.length) {
       _profileRetryAttempts.remove(profileKey);
       Logger.warn(
-          "Shared profile fetch exhausted category=$category attempts=$attempt");
+        "Shared profile fetch exhausted category=$category attempts=$attempt",
+      );
       return;
     }
 
@@ -4088,8 +4546,11 @@ class RustPushService extends GetxService {
     });
   }
 
-  Future<void> handleSharedProfile(api.ShareProfileMessage shared,
-      String sender, List<Handle> targets) async {
+  Future<void> handleSharedProfile(
+    api.ShareProfileMessage shared,
+    String sender,
+    List<Handle> targets,
+  ) async {
     final profileKey = shared.cloudKitRecordKey;
     if (_profileRetryTimers.containsKey(profileKey)) {
       Logger.info("Shared profile deferred reason=retry_pending");
@@ -4102,7 +4563,8 @@ class RustPushService extends GetxService {
 
     try {
       Logger.info(
-          "Shared profile processing started poster=${shared.poster != null} targets=${targets.length}");
+        "Shared profile processing started poster=${shared.poster != null} targets=${targets.length}",
+      );
       await _handleSharedProfile(shared, sender, targets);
       _clearProfileRetry(profileKey);
       Logger.info("Shared profile processing completed");
@@ -4112,18 +4574,26 @@ class RustPushService extends GetxService {
       // message delivery. Retry independently so the contact image can recover
       // after transient CloudKit, network, or service-initialization failures.
       _scheduleProfileRetry(
-          shared, sender, targets, _profileFailureCategory(error));
+        shared,
+        sender,
+        targets,
+        _profileFailureCategory(error),
+      );
     } finally {
       profilesDownloading.remove(profileKey);
     }
   }
 
-  Future<void> _handleSharedProfile(api.ShareProfileMessage shared,
-      String sender, List<Handle> targets) async {
+  Future<void> _handleSharedProfile(
+    api.ShareProfileMessage shared,
+    String sender,
+    List<Handle> targets,
+  ) async {
     var myHandles = await api.getHandles(state: pushService.state!.client);
     if (myHandles.contains(sender)) {
       Logger.info(
-          "Shared profile treated as self-sent targets=${targets.length}");
+        "Shared profile treated as self-sent targets=${targets.length}",
+      );
       for (var target in targets) {
         if (ss.settings.sharedContacts.contains(target.address)) {
           continue;
@@ -4145,7 +4615,8 @@ class RustPushService extends GetxService {
     Logger.info("Shared profile CloudKit fetch started");
     var fetch = await api.fetchProfile(profiles: profiles, message: shared);
     Logger.info(
-        "Shared profile CloudKit fetch completed image=${fetch.image?.isNotEmpty ?? false} poster=${fetch.poster != null}");
+      "Shared profile CloudKit fetch completed image=${fetch.image?.isNotEmpty ?? false} poster=${fetch.poster != null}",
+    );
     var otherHandle = RustPushBBUtils.rustHandleToBB(sender);
 
     String? posterPath;
@@ -4166,8 +4637,10 @@ class RustPushService extends GetxService {
       }
     }
 
-    var existingShared =
-        Contact.findOne(address: otherHandle.address, wantShared: true);
+    var existingShared = Contact.findOne(
+      address: otherHandle.address,
+      wantShared: true,
+    );
     if (existingShared != null) {
       if (otherHandle.contactRelation.targetId == existingShared.dbId) {
         otherHandle.contactRelation.target = null;
@@ -4175,7 +4648,9 @@ class RustPushService extends GetxService {
       if (existingShared.posterPath != null) {
         try {
           await deletePoster(existingShared.posterPath!);
-        } catch (e) {/* */}
+        } catch (e) {
+          /* */
+        }
       }
       Database.contacts.remove(existingShared.dbId!);
     }
@@ -4183,41 +4658,51 @@ class RustPushService extends GetxService {
       otherHandle.setPoster(posterPath);
       posterPath = "alreadyset";
     }
-    var newId = Database.contacts.put(Contact(
-      id: shared.cloudKitRecordKey,
-      displayName: "Maybe: ${fetch.name.name}",
-      structuredName: StructuredName(
-        namePrefix: "",
-        nameSuffix: "",
-        givenName: fetch.name.first,
-        middleName: "",
-        familyName: fetch.name.last,
+    var newId = Database.contacts.put(
+      Contact(
+        id: shared.cloudKitRecordKey,
+        displayName: "Maybe: ${fetch.name.name}",
+        structuredName: StructuredName(
+          namePrefix: "",
+          nameSuffix: "",
+          givenName: fetch.name.first,
+          middleName: "",
+          familyName: fetch.name.last,
+        ),
+        avatar: avatar,
+        isShared: true,
+        phones:
+            otherHandle.contact?.phones ??
+            (otherHandle.address.isEmail ? [] : [otherHandle.address]),
+        emails:
+            otherHandle.contact?.emails ??
+            (otherHandle.address.isEmail ? [otherHandle.address] : []),
+        posterPath: posterPath,
       ),
-      avatar: avatar,
-      isShared: true,
-      phones: otherHandle.contact?.phones ??
-          (otherHandle.address.isEmail ? [] : [otherHandle.address]),
-      emails: otherHandle.contact?.emails ??
-          (otherHandle.address.isEmail ? [otherHandle.address] : []),
-      posterPath: posterPath,
-    ));
+    );
     Logger.info(
-        "Shared profile persisted sharedContact=true image=${avatar?.isNotEmpty ?? false}");
+      "Shared profile persisted sharedContact=true image=${avatar?.isNotEmpty ?? false}",
+    );
     if (otherHandle.contactRelation.target == null) {
       otherHandle.contactRelation.targetId = newId;
       Database.handles.put(otherHandle);
     }
-    eventDispatcher
-        .emit("refresh-avatar", [otherHandle.address, otherHandle.color]);
+    eventDispatcher.emit("refresh-avatar", [
+      otherHandle.address,
+      otherHandle.color,
+    ]);
     final result = (await Chat.findByRust(
-        api.ConversationData(participants: [sender]), "iMessage",
-        soft: true));
+      api.ConversationData(participants: [sender]),
+      "iMessage",
+      soft: true,
+    ));
     if (result != null) {
       cvc(result).updateContactInfo();
       Logger.info("Shared profile prompt refresh requested oneToOne=true");
     } else {
       Logger.info(
-          "Shared profile stored without prompt reason=chat_not_loaded");
+        "Shared profile stored without prompt reason=chat_not_loaded",
+      );
     }
   }
 
@@ -4241,15 +4726,20 @@ class RustPushService extends GetxService {
         Map<String, Uint8List> entries = {};
         for (var file in asset.files.entries) {
           File f = fileForAsset(
-              "$appDocPath/avatars/you/poster-$number", asset, file.key);
+            "$appDocPath/avatars/you/poster-$number",
+            asset,
+            file.key,
+          );
           if (!(await f.exists())) {
             await f.create(recursive: true);
           }
           await f.writeAsBytes(file.value);
 
           if (file.key.endsWith("HEIC")) {
-            await mcs.invokeMethod(
-                "decode-heif", {"file": f.path, "output": "${f.path}.png"});
+            await mcs.invokeMethod("decode-heif", {
+              "file": f.path,
+              "output": "${f.path}.png",
+            });
           }
 
           entries[file.key] = Uint8List(0);
@@ -4268,7 +4758,7 @@ class RustPushService extends GetxService {
 
       await mcs.invokeMethod("decode-heif", {
         "file": f.path,
-        "output": "$appDocPath/avatars/you/poster-$number/memoji.png"
+        "output": "$appDocPath/avatars/you/poster-$number/memoji.png",
       });
       memoji.data.avatarImageData = Uint8List(0);
     }
@@ -4294,7 +4784,8 @@ class RustPushService extends GetxService {
   }
 
   Future<String> saveTranscriptPoster(
-      api.SimplifiedTranscriptPoster decoded) async {
+    api.SimplifiedTranscriptPoster decoded,
+  ) async {
     int number = Random().nextInt(9999999);
 
     String appDocPath = fs.appDocDir.path;
@@ -4317,10 +4808,15 @@ class RustPushService extends GetxService {
     var myHandles = (await api.getHandles(state: pushService.state!.client));
     // loop through recent chats (1 day or newer)
     Query<Chat> query = Database.chats
-        .query(Chat_.dateDeleted.isNull().and(Chat_.dbOnlyLatestMessageDate
-            .greaterThan(DateTime.now()
-                .subtract(const Duration(hours: 12))
-                .millisecondsSinceEpoch)))
+        .query(
+          Chat_.dateDeleted.isNull().and(
+            Chat_.dbOnlyLatestMessageDate.greaterThan(
+              DateTime.now()
+                  .subtract(const Duration(hours: 12))
+                  .millisecondsSinceEpoch,
+            ),
+          ),
+        )
         .build();
 
     // Execute the query, then close the DB connection
@@ -4345,8 +4841,9 @@ class RustPushService extends GetxService {
         continue; // if it's just us, we're good.
       }
       var msg = await api.newMsg(
-        conversation:
-            api.ConversationData(participants: handleChats[handle]!.toList()),
+        conversation: api.ConversationData(
+          participants: handleChats[handle]!.toList(),
+        ),
         sender: handle,
         message: const api.Message.peerCacheInvalidate(),
       );
@@ -4367,36 +4864,47 @@ class RustPushService extends GetxService {
         ),
         backgroundColor: context.theme.colorScheme.properSurface,
         content: Text(
-            "Try hosted for a just-works, paid, hosted solution. Or, jailbreak your own to self-host.",
-            style: context.theme.textTheme.bodyLarge),
+          "Try hosted for a just-works, paid, hosted solution. Or, jailbreak your own to self-host.",
+          style: context.theme.textTheme.bodyLarge,
+        ),
         actions: [
           TextButton(
-            child: Text("Close",
-                style: context.theme.textTheme.bodyLarge!
-                    .copyWith(color: context.theme.colorScheme.primary)),
+            child: Text(
+              "Close",
+              style: context.theme.textTheme.bodyLarge!.copyWith(
+                color: context.theme.colorScheme.primary,
+              ),
+            ),
             onPressed: () => Navigator.of(context).pop(),
           ),
           TextButton(
-              child: Text("Learn to Self-host",
-                  style: context.theme.textTheme.bodyLarge!
-                      .copyWith(color: context.theme.colorScheme.primary)),
-              onPressed: () {
-                Navigator.of(context).pop();
-                launchUrl(Uri.parse("https://openbubbles.app/docs/pnr.html"));
-              }),
+            child: Text(
+              "Learn to Self-host",
+              style: context.theme.textTheme.bodyLarge!.copyWith(
+                color: context.theme.colorScheme.primary,
+              ),
+            ),
+            onPressed: () {
+              Navigator.of(context).pop();
+              launchUrl(Uri.parse("https://openbubbles.app/docs/pnr.html"));
+            },
+          ),
           TextButton(
-              child: Text("Switch to Hosted",
-                  style: context.theme.textTheme.bodyLarge!
-                      .copyWith(color: context.theme.colorScheme.primary)),
-              onPressed: () async {
-                Navigator.of(context).pop();
-                if (await status) {
-                  pushService.markFailedToLogin(
-                      hw: true, logout: true, ui: true);
-                } else {
-                  launchUrl(Uri.parse("https://openbubbles.app/#hosted"));
-                }
-              }),
+            child: Text(
+              "Switch to Hosted",
+              style: context.theme.textTheme.bodyLarge!.copyWith(
+                color: context.theme.colorScheme.primary,
+              ),
+            ),
+            onPressed: () async {
+              Navigator.of(context).pop();
+              if (await status) {
+                pushService.markFailedToLogin(hw: true, logout: true, ui: true);
+              } else {
+                launchUrl(Uri.parse("https://openbubbles.app/#hosted"));
+              }
+            },
+          ),
         ],
       ),
     );
@@ -4421,16 +4929,19 @@ class RustPushService extends GetxService {
       if (chat.isRpSms) {
         sendDelivered = false; // no delivery recipts :)
       }
-    } catch (e) {/* sending a receipt is more important */}
+    } catch (e) {
+      /* sending a receipt is more important */
+    }
     if (push.field0.certifiedContext == null) {
       if (sendDelivered) {
         var chat = await pushService.chatForMessage(push.field0);
         var message = push.field0;
         var msg = await api.newMsg(
           conversation: api.ConversationData(
-              participants: [message.sender!],
-              cvName: message.conversation!.cvName,
-              senderGuid: message.conversation!.senderGuid),
+            participants: [message.sender!],
+            cvName: message.conversation!.cvName,
+            senderGuid: message.conversation!.senderGuid,
+          ),
           sender: await chat.ensureHandle(),
           message: const api.Message.delivered(),
         );
@@ -4445,9 +4956,10 @@ class RustPushService extends GetxService {
       return;
     }
     await api.certifyDelivery(
-        state: pushService.state!.client,
-        context: push.field0.certifiedContext!,
-        notify: sendDelivered);
+      state: pushService.state!.client,
+      context: push.field0.certifiedContext!,
+      notify: sendDelivered,
+    );
   }
 
   Future markAsSpam(Chat chat) async {
@@ -4456,29 +4968,38 @@ class RustPushService extends GetxService {
     for (var message in chatMessages) {
       api.MessageParts parts;
       if (message.attributedBody.isNotEmpty) {
-        parts = await (backend as RustPushBackend)
-            .partsFromBody(message.attributedBody.first);
+        parts = await (backend as RustPushBackend).partsFromBody(
+          message.attributedBody.first,
+        );
       } else {
-        parts = api.MessageParts(field0: [
-          api.IndexedMessagePart(
+        parts = api.MessageParts(
+          field0: [
+            api.IndexedMessagePart(
               part_: api.MessagePart.text(
-                  message.text!, pushService.defaultFormat()))
-        ]);
+                message.text!,
+                pushService.defaultFormat(),
+              ),
+            ),
+          ],
+        );
       }
       if (message.isFromMe!) continue;
-      messages.add(api.ReportMessage(
+      messages.add(
+        api.ReportMessage(
           guid: message.guid!,
           sender: RustPushBBUtils.bbHandleToRust(message.handle!),
           conversationSize: chat.participants.length,
           parts: parts,
           timeOfMessage:
-              message.dateCreated!.microsecondsSinceEpoch.toDouble() /
-                  1000000));
+              message.dateCreated!.microsecondsSinceEpoch.toDouble() / 1000000,
+        ),
+      );
     }
     await api.reportMessages(
-        state: pushService.state!.client,
-        handle: await chat.ensureHandle(),
-        messages: messages);
+      state: pushService.state!.client,
+      handle: await chat.ensureHandle(),
+      messages: messages,
+    );
     Chat.softDelete(chat);
   }
 
@@ -4492,7 +5013,8 @@ class RustPushService extends GetxService {
   Future handleMsgInner(api.PushMessage push) async {
     if (push is api.PushMessage_CircleFinishEvent) {
       if (await api.isInClique(
-          keychain: pushService.state!.icloudServices!.keychain!)) {
+        keychain: pushService.state!.icloudServices!.keychain!,
+      )) {
         cachedInClique = true;
         // enable after battle testing
 
@@ -4507,8 +5029,10 @@ class RustPushService extends GetxService {
     if (push is api.PushMessage_StatusUpdate) {
       var status = push.field0;
       final result = (await Chat.findByRust(
-          api.ConversationData(participants: [status.user]), "iMessage",
-          soft: true));
+        api.ConversationData(participants: [status.user]),
+        "iMessage",
+        soft: true,
+      ));
       if (result == null) return;
       result.notifsSilenced = !status.allowed;
       result.save(updateNotifsSilenced: true);
@@ -4552,18 +5076,41 @@ class RustPushService extends GetxService {
         if (facetime.ring) {
           ring = facetime.guid;
         }
-        if (facetime.guid == currentOutgoingCall?.value) {
+        if (facetime.guid == currentOutgoingCallGuid) {
           currentOutgoingCall?.value = "accepted";
           hideFaceTimeOverlay(facetime.guid);
 
           outgoingCallTimer?.cancel();
           chosenFTRoomGuid = facetime.guid;
 
-          if (Platform.isAndroid) {
-            await mcs.invokeMethod("launch-facetime", outgoingCallMeta);
-          } else {
-            await launchUrl(Uri.parse(outgoingCallMeta['link']),
-                mode: LaunchMode.externalApplication);
+          try {
+            if (Platform.isAndroid) {
+              await mcs.invokeMethod("launch-facetime", outgoingCallMeta);
+            } else {
+              await launchUrl(
+                Uri.parse(outgoingCallMeta['link']),
+                mode: LaunchMode.externalApplication,
+              );
+            }
+          } catch (error) {
+            Logger.warn(
+              "Unable to launch accepted FaceTime call (${error.runtimeType})",
+            );
+            try {
+              await api.cancelFacetime(
+                facetime: pushService.state!.ftClient,
+                guid: facetime.guid,
+              );
+            } catch (cancelError) {
+              Logger.warn(
+                "Unable to cancel unlaunched FaceTime call (${cancelError.runtimeType})",
+              );
+            }
+            await mcs.invokeMethod("update-call-state", {
+              "callUuid": facetime.guid,
+              "state": "timeout",
+            });
+            _clearOutgoingCall(facetime.guid, finalState: "failed");
           }
         }
       } else if (facetime is api.FTMessage_AddMembers) {
@@ -4575,26 +5122,27 @@ class RustPushService extends GetxService {
       }
 
       if (facetime is api.FTMessage_Decline) {
-        if (currentOutgoingCall?.value == facetime.guid) {
-          currentOutgoingCall?.value = "declined";
-
-          outgoingCallTimer?.cancel();
-
+        if (currentOutgoingCallGuid == facetime.guid) {
           // destroy webview
           mcs.invokeMethod("update-call-state", {
             "callUuid": facetime.guid,
             "state": "timeout",
           });
-          currentOutgoingCall = null;
+          _clearOutgoingCall(facetime.guid, finalState: "declined");
         }
       }
 
       if (ring != null) {
+        if (incomingRingingCallGuid == ring) {
+          Logger.info("Ignoring duplicate incoming FaceTime ring for $ring");
+          return;
+        }
         String? existingCall = await mcs.invokeMethod("get-active-call");
         if (existingCall == ring) {
           // we already answered this call
           Logger.info(
-              "Not ringing call $ring because we have already answered it!");
+            "Not ringing call $ring because we have already answered it!",
+          );
           return;
         }
 
@@ -4603,98 +5151,129 @@ class RustPushService extends GetxService {
           Logger.warn("Rung call $ring not found in active sessions!");
           return;
         }
-        var link = await api.getFtLink(
-            facetime: pushService.state!.ftClient, usage: "nextincomingcall");
-        try {
-          await rotateIncomingLink();
-        } catch (error) {
-          // LetMeInRequest accepts nextincomingcall as well as incomingcall.
-          Logger.warn(
-              "Failed to rotate incoming FaceTime link; continuing with the next slot (${error.runtimeType})");
-        }
         incomingRingingCallGuid = ring;
+        try {
+          var link = await api.getFtLink(
+            facetime: pushService.state!.ftClient,
+            usage: "nextincomingcall",
+          );
+          try {
+            await rotateIncomingLink();
+          } catch (error) {
+            // LetMeInRequest accepts nextincomingcall as well as incomingcall.
+            Logger.warn(
+              "Failed to rotate incoming FaceTime link; continuing with the next slot (${error.runtimeType})",
+            );
+          }
 
-        String? myPoster;
-        Uint8List? icon;
-        var identity = getSessionIdentity(ring, true);
-        if (identity != null) {
-          var handle = RustPushBBUtils.rustHandleToBB(identity);
-          if (handle.isBlocked()) {
+          String? myPoster;
+          Uint8List? icon;
+          var identity = getSessionIdentity(ring, true);
+          if (identity != null) {
+            var handle = RustPushBBUtils.rustHandleToBB(identity);
+            if (handle.isBlocked()) {
+              incomingRingingCallGuid = null;
+              Logger.info("Dropping call from blocked handle $handle");
+              return;
+            }
+            icon = handle.contact?.avatar;
+            var poster = handle.getPoster();
+            if (poster != null && !kIsDesktop) {
+              try {
+                var loaded = await api.fromPosterSave(
+                  poster: await File("$poster.jpg").readAsBytes(),
+                );
+                var images = await loadPosterImages(poster, loaded.poster);
+
+                var recorder = ui.PictureRecorder();
+                var canvas = Canvas(recorder);
+
+                var painter = PosterPainter(
+                  poster: loaded.poster,
+                  images: images,
+                  name: handle.displayName,
+                );
+
+                Map<dynamic, dynamic> results = await mcs.invokeMethod(
+                  "get-full-resolution",
+                );
+
+                var size = Size(
+                  (results["width"]! as int).toDouble(),
+                  (results["height"]! as int).toDouble(),
+                );
+                canvas.scale(results["ratio"]! as double);
+                painter.paint(canvas, size / (results["ratio"]! as double));
+
+                ui.Picture picture = recorder.endRecording();
+                ui.Image image = await picture.toImage(
+                  size.width.toInt(),
+                  size.height.toInt(),
+                );
+
+                Uint8List bytes = (await image.toByteData(
+                  format: ui.ImageByteFormat.png,
+                ))!.buffer.asUint8List();
+                File file = File("$poster-preview.png");
+                await file.writeAsBytes(bytes);
+                myPoster = file.path;
+              } catch (error) {
+                Logger.warn(
+                  "Unable to render optional incoming FaceTime poster (${error.runtimeType})",
+                );
+              }
+            }
+          }
+
+          await ah.handleIncomingFaceTimeCall({
+            "uuid": ring,
+            "address": session,
+            "link": link,
+            "icon": icon,
+            "poster": myPoster,
+          });
+        } catch (error) {
+          if (incomingRingingCallGuid == ring) {
             incomingRingingCallGuid = null;
-            Logger.info("Dropping call from blocked handle $handle");
-            return;
           }
-          icon = handle.contact?.avatar;
-          var poster = handle.getPoster();
-          if (poster != null && !kIsDesktop) {
-            var loaded = await api.fromPosterSave(
-                poster: await File("$poster.jpg").readAsBytes());
-            var images = await loadPosterImages(poster, loaded.poster);
-
-            var recorder = ui.PictureRecorder();
-            var canvas = Canvas(recorder);
-
-            var painter = PosterPainter(
-                poster: loaded.poster,
-                images: images,
-                name: handle.displayName);
-
-            Map<dynamic, dynamic> results =
-                await mcs.invokeMethod("get-full-resolution");
-
-            var size = Size((results["width"]! as int).toDouble(),
-                (results["height"]! as int).toDouble());
-            canvas.scale(results["ratio"]! as double);
-            painter.paint(canvas, size / (results["ratio"]! as double));
-
-            ui.Picture picture = recorder.endRecording();
-            ui.Image image =
-                await picture.toImage(size.width.toInt(), size.height.toInt());
-
-            Uint8List bytes =
-                (await image.toByteData(format: ui.ImageByteFormat.png))!
-                    .buffer
-                    .asUint8List();
-            File file = File("$poster-preview.png");
-            await file.writeAsBytes(bytes);
-            myPoster = file.path;
-          }
+          Logger.warn(
+            "Unable to prepare incoming FaceTime call (${error.runtimeType})",
+          );
         }
-
-        await ah.handleIncomingFaceTimeCall({
-          "uuid": ring,
-          "address": session,
-          "link": link,
-          "icon": icon,
-          "poster": myPoster,
-        });
       }
 
       if (facetime is api.FTMessage_LeaveEvent) {
-        var nonActive =
-            sessions.firstWhereOrNull((a) => a.groupId == facetime.guid);
-        final callStillActive =
-            activeSessions.any((session) => session.groupId == facetime.guid);
+        var nonActive = sessions.firstWhereOrNull(
+          (a) => a.groupId == facetime.guid,
+        );
+        final callStillActive = activeSessions.any(
+          (session) => session.groupId == facetime.guid,
+        );
         if (incomingRingingCallGuid == facetime.guid) {
           if (nonActive != null) {
             var session = getSessionName(facetime.guid, false);
             if (session != null) {
               await notif.createMissedCallNotification(session, facetime.guid);
             } else {
-              Logger.warn("Missed call ${facetime.guid} not found in known sessions");
+              Logger.warn(
+                "Missed call ${facetime.guid} not found in known sessions",
+              );
             }
           }
           incomingRingingCallGuid = null;
         }
         if (!callStillActive) {
           if (chosenFTRoomGuid == facetime.guid) chosenFTRoomGuid = null;
+          _clearOutgoingCall(facetime.guid, finalState: "ended");
           hideFaceTimeOverlay(facetime.guid, timeout: true);
         }
       }
 
       if (facetime is api.FTMessage_RespondedElsewhere) {
-        hideFaceTimeOverlay(facetime.guid,
-            timeout: true); // they have given up the ringing
+        hideFaceTimeOverlay(
+          facetime.guid,
+          timeout: true,
+        ); // they have given up the ringing
         if (incomingRingingCallGuid == facetime.guid) {
           incomingRingingCallGuid = null;
         }
@@ -4704,25 +5283,38 @@ class RustPushService extends GetxService {
         var approvedGroup = chosenFTRoomGuid;
         final incomingAdmission =
             facetime.field0.usage == "incomingcall" ||
-                facetime.field0.usage == "nextincomingcall";
+            facetime.field0.usage == "nextincomingcall";
         if (incomingAdmission) {
           approvedGroup = incomingRingingCallGuid;
         }
+        if (approvedGroup != null &&
+            !activeSessions.any(
+              (session) => session.groupId == approvedGroup,
+            )) {
+          Logger.warn(
+            "Refusing stale FaceTime admission for a session that is no longer present",
+          );
+          approvedGroup = null;
+        }
         Logger.info(
-            "FaceTime web admission request: usage=${facetime.field0.usage ?? 'unknown'}, approvedGroupPresent=${approvedGroup != null}");
+          "FaceTime web admission request: usage=${facetime.field0.usage ?? 'unknown'}, approvedGroupPresent=${approvedGroup != null}",
+        );
         try {
           await api.answerFtRequest(
-              facetime: pushService.state!.ftClient,
-              request: facetime.field0,
-              approvedGroup: approvedGroup);
+            facetime: pushService.state!.ftClient,
+            request: facetime.field0,
+            approvedGroup: approvedGroup,
+          );
           Logger.info("FaceTime web admission response sent");
-          if (incomingAdmission &&
-              incomingRingingCallGuid == approvedGroup) {
+          if (incomingAdmission && incomingRingingCallGuid == approvedGroup) {
             incomingRingingCallGuid = null;
           }
         } catch (error, trace) {
-          Logger.error("FaceTime web admission response failed",
-              error: error, trace: trace);
+          Logger.error(
+            "FaceTime web admission response failed",
+            error: error,
+            trace: trace,
+          );
           rethrow;
         }
       }
@@ -4758,7 +5350,9 @@ class RustPushService extends GetxService {
 
     if (push is api.PushMessage_BeaconShared) {
       notif.createBeaconInvitation(
-          RustPushBBUtils.rustHandleToBB(push.sender), push.attributes);
+        RustPushBBUtils.rustHandleToBB(push.sender),
+        push.attributes,
+      );
       return;
     }
 
@@ -4788,12 +5382,16 @@ class RustPushService extends GetxService {
         error: sendError,
         isDelivered: message.isDelivered,
       )) {
-        Logger.warn("Send confirmation reported a failure",
-            tag: "RustPushSend");
+        Logger.warn(
+          "Send confirmation reported a failure",
+          tag: "RustPushSend",
+        );
         await markFailed(message, "Send confirmation failed: $sendError");
       } else if (sendError != null) {
-        Logger.warn("Late send confirmation error ignored after delivery",
-            tag: "RustPushSend");
+        Logger.warn(
+          "Late send confirmation error ignored after delivery",
+          tag: "RustPushSend",
+        );
       } else {
         Logger.info("SendFinished");
       }
@@ -4807,9 +5405,10 @@ class RustPushService extends GetxService {
       var message = myMsg.message as api.Message_EnableSmsActivation;
       try {
         var peerUuid = await api.convertTokenToUuid(
-            state: pushService.state!.client,
-            handle: myMsg.sender!,
-            token: (myMsg.target!.first as api.MessageTarget_Token).field0);
+          state: pushService.state!.client,
+          handle: myMsg.sender!,
+          token: (myMsg.target!.first as api.MessageTarget_Token).field0,
+        );
         if (message.field0) {
           ss.settings.smsForwardingTargets[myMsg.sender!] = peerUuid;
         } else {
@@ -4838,7 +5437,8 @@ class RustPushService extends GetxService {
         }
       } else {
         chat = Chat.findByHandle(
-            RustPushBBUtils.rustHandleToBB(myMsg.sender!).address);
+          RustPushBBUtils.rustHandleToBB(myMsg.sender!).address,
+        );
       }
 
       if (chat == null) return null;
@@ -4849,19 +5449,21 @@ class RustPushService extends GetxService {
         var path =
             "${(await getApplicationCacheDirectory()).path}/${Random().nextInt(9999999)}";
         var stream = api.downloadMmcs(
-            aps: pushService.state!.conn,
-            attachment: api.MMCSFile(
-              signature: base64.decode(value.signature),
-              object: value.objectId,
-              url: value.url,
-              key: base64.decode(value.key).sublist(1),
-              size: 0,
-            ),
-            path: path);
+          aps: pushService.state!.conn,
+          attachment: api.MMCSFile(
+            signature: base64.decode(value.signature),
+            object: value.objectId,
+            url: value.url,
+            key: base64.decode(value.key).sublist(1),
+            size: 0,
+          ),
+          path: path,
+        );
         try {
           await for (final event in stream) {
             Logger.info(
-                "Downloaded transcript ${event.prog} bytes of ${event.total}");
+              "Downloaded transcript ${event.prog} bytes of ${event.total}",
+            );
           }
         } catch (e) {
           try {
@@ -4882,8 +5484,9 @@ class RustPushService extends GetxService {
             chat.transcriptPosterPath = null;
             chat.transcriptBackgroundVersion = innerMsg.field0.bid.toInt();
             chat.save(
-                updateTranscriptPosterPath: true,
-                updateTranscriptBackgroundVersion: true);
+              updateTranscriptPosterPath: true,
+              updateTranscriptBackgroundVersion: true,
+            );
           }
         } else {
           var saved = await saveTranscriptPoster(poster);
@@ -4895,8 +5498,9 @@ class RustPushService extends GetxService {
           chat.transcriptBackgroundVersion = value.bid.toInt();
           chat.transcriptPosterPath = saved;
           chat.save(
-              updateTranscriptPosterPath: true,
-              updateTranscriptBackgroundVersion: true);
+            updateTranscriptPosterPath: true,
+            updateTranscriptBackgroundVersion: true,
+          );
         }
       } else {
         if (chat.transcriptPosterPath != null) {
@@ -4904,8 +5508,9 @@ class RustPushService extends GetxService {
           chat.transcriptPosterPath = null;
           chat.transcriptBackgroundVersion = innerMsg.field0.bid.toInt();
           chat.save(
-              updateTranscriptPosterPath: true,
-              updateTranscriptBackgroundVersion: true);
+            updateTranscriptPosterPath: true,
+            updateTranscriptBackgroundVersion: true,
+          );
         }
       }
       cvc(chat).chat.transcriptPosterPath = chat.transcriptPosterPath;
@@ -4931,19 +5536,24 @@ class RustPushService extends GetxService {
       var message = myMsg.message as api.Message_UpdateProfile;
       ss.settings.nameAndPhotoSharing.value = message.field0.profile != null;
       if (message.field0.profile != null) {
-        ss.settings.shareProfileMessage.value =
-            await api.encodeProfileMessage(p: message.field0.profile!);
+        ss.settings.shareProfileMessage.value = await api.encodeProfileMessage(
+          p: message.field0.profile!,
+        );
         // delete old data
         if (ss.settings.userAvatarPath.value != null) {
           try {
             await File(ss.settings.userAvatarPath.value!).delete();
-          } catch (e) {/*pass*/}
+          } catch (e) {
+            /*pass*/
+          }
           ss.settings.userAvatarPath.value = null;
         }
         if (ss.settings.userPosterPath.value != null) {
           try {
             await deletePoster(ss.settings.userPosterPath.value!);
-          } catch (e) {/*pass*/}
+          } catch (e) {
+            /*pass*/
+          }
           ss.settings.userPosterPath.value = null;
         }
         ss.settings.shareContactAutomatically.value =
@@ -4953,12 +5563,15 @@ class RustPushService extends GetxService {
         var profile = pushService.state?.icloudServices?.profilesClient;
         if (profile == null) return;
         var result = await api.fetchProfile(
-            profiles: profile, message: message.field0.profile!);
+          profiles: profile,
+          message: message.field0.profile!,
+        );
 
         if (result.image != null) {
           String appDocPath = fs.appDocDir.path;
           File file = File(
-              "$appDocPath/avatars/you/avatar-${result.image!.length}.jpg");
+            "$appDocPath/avatars/you/avatar-${result.image!.length}.jpg",
+          );
           if (!(await file.exists())) {
             await file.create(recursive: true);
           }
@@ -5006,8 +5619,9 @@ class RustPushService extends GetxService {
       var data = message.field0.ext;
       if (data is! api.PartExtension_Sticker) return;
       var body = subject.attributedBody.first.toMap();
-      body["runs"].first["attributes"]["sticker"] =
-          stickerFromDart(data).toMap();
+      body["runs"].first["attributes"]["sticker"] = stickerFromDart(
+        data,
+      ).toMap();
       subject.attributedBody = [AttributedBody.fromMap(body)];
       subject.save();
       return;
@@ -5035,8 +5649,9 @@ class RustPushService extends GetxService {
           await notif.createFailedToSend(c);
         }
         await Message.replaceMessage(lastGuid, m);
-        ah.attachmentProgress
-            .removeWhere((e) => e.item1 == lastGuid || e.item2 >= 1);
+        ah.attachmentProgress.removeWhere(
+          (e) => e.item1 == lastGuid || e.item2 >= 1,
+        );
       }
       return;
     }
@@ -5048,8 +5663,9 @@ class RustPushService extends GetxService {
           var msg2 = Message.findOne(guid: message);
           if (msg2 == null) continue;
           ms(msg2.getChat()!.guid).removeMessage(msg2);
-          msg2.dateDeleted =
-              DateTime.fromMillisecondsSinceEpoch(msg.recoverableDeleteDate);
+          msg2.dateDeleted = DateTime.fromMillisecondsSinceEpoch(
+            msg.recoverableDeleteDate,
+          );
           msg2.save();
         }
       } else if (target is api.DeleteTarget_Chat) {
@@ -5081,9 +5697,9 @@ class RustPushService extends GetxService {
           Chat.deleteChat(msg2); // perma delete
         } else {
           // some messages are deleted
-          final query = (Database.messages.query(Message_.dateDeleted.notNull())
-                ..link(Message_.chat, Chat_.id.equals(msg2.id!)))
-              .build();
+          final query = (Database.messages.query(
+            Message_.dateDeleted.notNull(),
+          )..link(Message_.chat, Chat_.id.equals(msg2.id!))).build();
           for (var message in query.find()) {
             for (var attachment in (message.fetchAttachments() ?? [])) {
               if (attachment == null) continue;
@@ -5138,16 +5754,20 @@ class RustPushService extends GetxService {
       }
       if (message.chat.target!.notifsSilenced) {
         var lastNotifiedAnyways = message.chat.target!.dateNotifiedAnyways;
-        message.wasDeliveredQuietly = lastNotifiedAnyways == null ||
+        message.wasDeliveredQuietly =
+            lastNotifiedAnyways == null ||
             DateTime.now().difference(lastNotifiedAnyways).inMinutes > 5;
       }
       message.save(
         updateSendingServiceId: myMsg.message is api.Message_Delivered,
       );
-      inq.queue(IncomingItem(
+      inq.queue(
+        IncomingItem(
           chat: message.chat.target!,
           message: message,
-          type: QueueType.updatedMessage));
+          type: QueueType.updatedMessage,
+        ),
+      );
       return;
     }
     var chat = await chatForMessage(myMsg);
@@ -5178,8 +5798,9 @@ class RustPushService extends GetxService {
 
       var typing = myMsg.message as api.Message_Typing;
       if (typing.field0) {
-        if (!controller.showTypingIndicatorFor
-            .any((h) => handle.address == h.address)) {
+        if (!controller.showTypingIndicatorFor.any(
+          (h) => handle.address == h.address,
+        )) {
           controller.showTypingIndicatorFor.add(handle);
         }
         var future = Future.delayed(const Duration(minutes: 1));
@@ -5191,7 +5812,8 @@ class RustPushService extends GetxService {
         if (typing.field1 != null) {
           String? i = es.cachedStatus
               .firstWhereOrNull(
-                  (i) => i.madridBundleId == typing.field1!.bundleId)
+                (i) => i.madridBundleId == typing.field1!.bundleId,
+              )
               ?.available
               ?.icon;
           if (i != null) {
@@ -5202,8 +5824,9 @@ class RustPushService extends GetxService {
         }
         controller.typingIndicatorData[handle.address] = (subscription, icon);
       } else {
-        var existing = controller.showTypingIndicatorFor
-            .firstWhereOrNull((h) => handle.address == h.address);
+        var existing = controller.showTypingIndicatorFor.firstWhereOrNull(
+          (h) => handle.address == h.address,
+        );
         if (existing != null) {
           controller.showTypingIndicatorFor.remove(existing);
         }
@@ -5214,8 +5837,9 @@ class RustPushService extends GetxService {
       final controller = cvc(chat);
 
       var handle = RustPushBBUtils.rustHandleToBB(myMsg.sender!);
-      var existing = controller.showTypingIndicatorFor
-          .firstWhereOrNull((h) => handle.address == h.address);
+      var existing = controller.showTypingIndicatorFor.firstWhereOrNull(
+        (h) => handle.address == h.address,
+      );
       if (existing != null) {
         controller.showTypingIndicatorFor.remove(existing);
       }
@@ -5225,17 +5849,19 @@ class RustPushService extends GetxService {
       }
 
       if (chat.isRpSms && !myMsg.verificationFailed) {
-        var myHandles =
-            await api.getMyPhoneHandles(state: pushService.state!.client);
+        var myHandles = await api.getMyPhoneHandles(
+          state: pushService.state!.client,
+        );
         var service = (myMsg.message as api.Message_Message).field0.service;
         if (service is api.MessageType_SMS &&
             myHandles.contains(service.usingNumber)) {
           var otherIds = ss.settings.smsRoutingTargets.copy();
           var myToken = (myMsg.target!.first as api.MessageTarget_Token).field0;
           var myId = await api.convertTokenToUuid(
-              state: pushService.state!.client,
-              handle: myMsg.sender!,
-              token: myToken);
+            state: pushService.state!.client,
+            handle: myMsg.sender!,
+            token: myToken,
+          );
           otherIds.remove(myId);
           if (otherIds.isNotEmpty) {
             myMsg.target = otherIds
@@ -5254,11 +5880,15 @@ class RustPushService extends GetxService {
       var msg = myMsg.message as api.Message_Message;
       if (msg.field0.embeddedProfile != null) {
         handleSharedProfile(
-            msg.field0.embeddedProfile!, myMsg.sender!, chat.participants);
+          msg.field0.embeddedProfile!,
+          myMsg.sender!,
+          chat.participants,
+        );
       }
       if ((await msg.field0.parts.rawText()) == "" &&
-          msg.field0.parts.field0
-              .none((p0) => p0.part_ is api.MessagePart_Attachment)) {
+          msg.field0.parts.field0.none(
+            (p0) => p0.part_ is api.MessagePart_Attachment,
+          )) {
         return;
       }
     }
@@ -5267,21 +5897,26 @@ class RustPushService extends GetxService {
     Logger.info("rustpush_receive reflection_start id=$receiveId");
     var reflected = await pushService.reflectMessageDyn(myMsg);
     Logger.info(
-        "rustpush_receive reflection_complete id=$receiveId duration_ms=${_durationMs(receiveStopwatch)} reflected=${reflected != null}");
+      "rustpush_receive reflection_complete id=$receiveId duration_ms=${_durationMs(receiveStopwatch)} reflected=${reflected != null}",
+    );
     if (reflected != null) {
       final queueStopwatch = Stopwatch()..start();
       final queueCompletion = Completer<void>();
       Logger.info(
-          "rustpush_receive incoming_queue_enqueue id=$receiveId pending_count=${inq.items.length}");
-      await inq.queue(IncomingItem(
-        chat: chat,
-        message: reflected,
-        type: QueueType.newMessage,
-        completer: queueCompletion,
-      ));
+        "rustpush_receive incoming_queue_enqueue id=$receiveId pending_count=${inq.items.length}",
+      );
+      await inq.queue(
+        IncomingItem(
+          chat: chat,
+          message: reflected,
+          type: QueueType.newMessage,
+          completer: queueCompletion,
+        ),
+      );
       await queueCompletion.future;
       Logger.info(
-          "rustpush_receive incoming_queue_complete id=$receiveId duration_ms=${_durationMs(queueStopwatch)} pending_count=${inq.items.length}");
+        "rustpush_receive incoming_queue_complete id=$receiveId duration_ms=${_durationMs(queueStopwatch)} pending_count=${inq.items.length}",
+      );
     }
   }
 
@@ -5290,11 +5925,15 @@ class RustPushService extends GetxService {
       var result = await placemarkFromCoordinates(lat, lng);
       return result.firstOrNull;
     } catch (e, s) {
-      Logger.warn("failed to native geocode, falling back to nominatim",
-          error: e, trace: s);
+      Logger.warn(
+        "failed to native geocode, falling back to nominatim",
+        error: e,
+        trace: s,
+      );
       var request = await http.dio.get(
-          "https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lng&format=jsonv2&zoom=10",
-          options: Options(headers: {"User-Agent": "OpenBubbles"}));
+        "https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lng&format=jsonv2&zoom=10",
+        options: Options(headers: {"User-Agent": "OpenBubbles"}),
+      );
       // Logger.info("Got location $request");
       return Placemark(
         name: request.data["name"],
@@ -5313,8 +5952,9 @@ class RustPushService extends GetxService {
   Function subscribeToLocationUpdates(Function subscribe) {
     var timer = ((timer) async {
       var subs = await api.refreshBackgroundFollowing(
-          state: pushService.state!.icloudServices!.fmfd!,
-          config: pushService.state!.osConfig);
+        state: pushService.state!.icloudServices!.fmfd!,
+        config: pushService.state!.osConfig,
+      );
       for (var sub in subscriptions) {
         sub(subs);
       }
@@ -5336,10 +5976,12 @@ class RustPushService extends GetxService {
   Future updateChatPoster(Chat chat) async {
     api.SetTranscriptBackgroundMessage Function(String? chat) message;
     if (chat.transcriptPosterPath != null) {
-      api.SimplifiedTranscriptPoster poster =
-          await api.fromTranscriptPosterSave(
-              poster: await File("${chat.transcriptPosterPath!}.jpg")
-                  .readAsBytes());
+      api.SimplifiedTranscriptPoster poster = await api
+          .fromTranscriptPosterSave(
+            poster: await File(
+              "${chat.transcriptPosterPath!}.jpg",
+            ).readAsBytes(),
+          );
       await restorePoster(poster.poster, chat.transcriptPosterPath!);
       var result = await api.packTranscriptPoster(payload: poster);
 
@@ -5366,53 +6008,57 @@ class RustPushService extends GetxService {
       chat.save(updateTranscriptBackgroundVersion: true);
 
       message = (c) => api.SetTranscriptBackgroundMessage.set_(
-            aid: 1,
-            bid: BigInt.from(chat.transcriptBackgroundVersion),
-            objectId: mmcs!.object,
-            payloadVersion: 1,
-            backgroundId: uuid.v4().toUpperCase(),
-            url: mmcs.url,
-            signature: base64Encode(mmcs.signature),
-            key: base64Encode([0, ...mmcs.key]),
-            fileSize: BigInt.from(mmcs.size),
-            chatId: c,
-          );
+        aid: 1,
+        bid: BigInt.from(chat.transcriptBackgroundVersion),
+        objectId: mmcs!.object,
+        payloadVersion: 1,
+        backgroundId: uuid.v4().toUpperCase(),
+        url: mmcs.url,
+        signature: base64Encode(mmcs.signature),
+        key: base64Encode([0, ...mmcs.key]),
+        fileSize: BigInt.from(mmcs.size),
+        chatId: c,
+      );
     } else {
       chat.transcriptBackgroundVersion++;
       chat.save(updateTranscriptBackgroundVersion: true);
 
       message = (c) => api.SetTranscriptBackgroundMessage.remove(
-            aid: 1,
-            bid: BigInt.from(chat.transcriptBackgroundVersion),
-            remove: true,
-            chatId: c,
-          );
+        aid: 1,
+        bid: BigInt.from(chat.transcriptBackgroundVersion),
+        remove: true,
+        chatId: c,
+      );
     }
 
     var myhandle = await chat.ensureHandle();
     if (chat.participants.length > 1) {
       var m = message(chat.guid);
       var msg = await api.newMsg(
-          conversation: await chat.getConversationData(),
-          message: api.Message.setTranscriptBackground(m),
-          sender: myhandle);
+        conversation: await chat.getConversationData(),
+        message: api.Message.setTranscriptBackground(m),
+        sender: myhandle,
+      );
       await (backend as RustPushBackend).sendMsg(msg);
     } else {
       var cv = await chat.getConversationData();
       cv.participants.remove(myhandle);
 
       var msg = await api.newMsg(
-          conversation: cv,
-          message: api.Message.setTranscriptBackground(message(null)),
-          sender: myhandle);
+        conversation: cv,
+        message: api.Message.setTranscriptBackground(message(null)),
+        sender: myhandle,
+      );
       await (backend as RustPushBackend).sendMsg(msg);
 
       cv.participants = [myhandle];
       var msg2 = await api.newMsg(
-          conversation: cv,
-          message: api.Message.setTranscriptBackground(
-              message(chat.participants[0].address)),
-          sender: myhandle);
+        conversation: cv,
+        message: api.Message.setTranscriptBackground(
+          message(chat.participants[0].address),
+        ),
+        sender: myhandle,
+      );
       await (backend as RustPushBackend).sendMsg(msg2);
     }
 
@@ -5437,203 +6083,224 @@ class RustPushService extends GetxService {
     }
 
     await showDialog(
-        context: Get.context!,
-        builder: (_) {
-          return AlertDialog(
-            actions: [
-              TextButton(
-                child: Text("Cancel",
-                    style: Get.context!.theme.textTheme.bodyLarge!.copyWith(
-                        color: Get.context!.theme.colorScheme.primary)),
-                onPressed: () => Get.back(),
+      context: Get.context!,
+      builder: (_) {
+        return AlertDialog(
+          actions: [
+            TextButton(
+              child: Text(
+                "Cancel",
+                style: Get.context!.theme.textTheme.bodyLarge!.copyWith(
+                  color: Get.context!.theme.colorScheme.primary,
+                ),
               ),
-              TextButton(
-                child: Text("OK",
-                    style: Get.context!.theme.textTheme.bodyLarge!.copyWith(
-                        color: Get.context!.theme.colorScheme.primary)),
-                onPressed: () async {
-                  done.call();
-                },
+              onPressed: () => Get.back(),
+            ),
+            TextButton(
+              child: Text(
+                "OK",
+                style: Get.context!.theme.textTheme.bodyLarge!.copyWith(
+                  color: Get.context!.theme.colorScheme.primary,
+                ),
+              ),
+              onPressed: () async {
+                done.call();
+              },
+            ),
+          ],
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: server,
+                autofocus: true,
+                textInputAction: TextInputAction.next,
+                decoration: const InputDecoration(
+                  labelText: "Server URL",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: user,
+                textInputAction: TextInputAction.next,
+                decoration: const InputDecoration(
+                  labelText: "Username",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: pass,
+                onSubmitted: (_) => done.call(),
+                decoration: const InputDecoration(
+                  labelText: "Password",
+                  border: OutlineInputBorder(),
+                ),
               ),
             ],
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: server,
-                  autofocus: true,
-                  textInputAction: TextInputAction.next,
-                  decoration: const InputDecoration(
-                    labelText: "Server URL",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(
-                  height: 16,
-                ),
-                TextField(
-                  controller: user,
-                  textInputAction: TextInputAction.next,
-                  decoration: const InputDecoration(
-                    labelText: "Username",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(
-                  height: 16,
-                ),
-                TextField(
-                  controller: pass,
-                  onSubmitted: (_) => done.call(),
-                  decoration: const InputDecoration(
-                    labelText: "Password",
-                    border: OutlineInputBorder(),
-                  ),
-                )
-              ],
-            ),
-            title: Text("Set CardDav details",
-                style: Get.context!.theme.textTheme.titleLarge),
-            backgroundColor: Get.context!.theme.colorScheme.properSurface,
-          );
-        });
+          ),
+          title: Text(
+            "Set CardDav details",
+            style: Get.context!.theme.textTheme.titleLarge,
+          ),
+          backgroundColor: Get.context!.theme.colorScheme.properSurface,
+        );
+      },
+    );
   }
 
   Future<(bool, String?)> promptPassword(
-      api.ViableBottle bottle, String desc) async {
+    api.ViableBottle bottle,
+    String desc,
+  ) async {
     var context = Get.context!;
     bool change = false;
     bool obscureText = true;
     String? text;
     var codeController = TextEditingController();
     await showDialog(
-        context: context,
-        builder: (_) {
-          return AlertDialog(
-            actions: [
-              TextButton(
-                child: Text("Choose Device",
-                    style: context.theme.textTheme.bodyLarge!
-                        .copyWith(color: context.theme.colorScheme.primary)),
-                onPressed: () {
-                  text = null;
-                  change = true;
-                  Get.back();
-                },
-              ),
-              TextButton(
-                child: Text("OK",
-                    style: context.theme.textTheme.bodyLarge!
-                        .copyWith(color: context.theme.colorScheme.primary)),
-                onPressed: () async {
-                  text = codeController.text;
-                  Get.back();
-                },
-              ),
-            ],
-            title: Text(
-                "Enter the ${bottle.numericLength > 0 ? "passcode" : "password"} for “${bottle.deviceName}”",
-                style: context.theme.textTheme.titleLarge),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(desc),
-                const SizedBox(
-                  height: 20,
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          actions: [
+            TextButton(
+              child: Text(
+                "Choose Device",
+                style: context.theme.textTheme.bodyLarge!.copyWith(
+                  color: context.theme.colorScheme.primary,
                 ),
-                bottle.numericLength > 0
-                    ? StatefulBuilder(
-                        builder: (context, state) => Stack(
-                              children: [
-                                Row(
-                                  children: List.generate(bottle.numericLength,
-                                      (index) {
-                                    var text =
-                                        index < codeController.text.length
-                                            ? "•"
-                                            : "";
-                                    return Expanded(
-                                        child: Container(
-                                            decoration: index ==
-                                                    codeController.text.length
-                                                ? BoxDecoration(
-                                                    border: Border.all(
-                                                        color: context
-                                                            .theme
-                                                            .colorScheme
-                                                            .primary,
-                                                        width: 2),
-                                                    borderRadius:
-                                                        const BorderRadius.all(
-                                                            Radius.circular(
-                                                                10)),
-                                                  )
-                                                : BoxDecoration(
-                                                    border: Border.all(
-                                                      color: context.theme
-                                                          .colorScheme.outline,
-                                                    ),
-                                                    borderRadius:
-                                                        const BorderRadius.all(
-                                                            Radius.circular(
-                                                                10)),
-                                                  ),
-                                            margin: const EdgeInsets.all(3),
-                                            height: 50,
-                                            child: Center(
-                                              child: Text(text,
-                                                  style: context.theme.textTheme
-                                                      .titleLarge
-                                                      ?.copyWith(
-                                                          fontSize: 40,
-                                                          fontWeight:
-                                                              FontWeight.bold)),
-                                            )));
-                                  }),
-                                ),
-                                Opacity(
-                                    opacity: 0,
-                                    child: TextField(
-                                      cursorColor:
-                                          context.theme.colorScheme.primary,
-                                      autocorrect: false,
-                                      autofocus: true,
-                                      controller: codeController,
-                                      textInputAction: TextInputAction.next,
-                                      keyboardType: TextInputType.number,
-                                      onChanged: (v) {
-                                        state(() {});
-                                      },
-                                    )),
-                              ],
-                            ))
-                    : StatefulBuilder(
-                        builder: (context, update) => TextField(
-                              controller: codeController,
-                              decoration: InputDecoration(
-                                labelText: "Password",
-                                border: const OutlineInputBorder(),
-                                suffixIcon: IconButton(
-                                  icon: Icon(obscureText
-                                      ? Icons.visibility_off
-                                      : Icons.visibility),
-                                  color: context.theme.colorScheme.outline,
-                                  onPressed: () {
-                                    update(() {
-                                      obscureText = !obscureText;
-                                    });
-                                  },
-                                ),
-                              ),
-                              autofocus: true,
-                              obscureText: obscureText,
-                            ))
-              ],
+              ),
+              onPressed: () {
+                text = null;
+                change = true;
+                Get.back();
+              },
             ),
-            backgroundColor: context.theme.colorScheme.properSurface,
-          );
-        });
+            TextButton(
+              child: Text(
+                "OK",
+                style: context.theme.textTheme.bodyLarge!.copyWith(
+                  color: context.theme.colorScheme.primary,
+                ),
+              ),
+              onPressed: () async {
+                text = codeController.text;
+                Get.back();
+              },
+            ),
+          ],
+          title: Text(
+            "Enter the ${bottle.numericLength > 0 ? "passcode" : "password"} for “${bottle.deviceName}”",
+            style: context.theme.textTheme.titleLarge,
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(desc),
+              const SizedBox(height: 20),
+              bottle.numericLength > 0
+                  ? StatefulBuilder(
+                      builder: (context, state) => Stack(
+                        children: [
+                          Row(
+                            children: List.generate(bottle.numericLength, (
+                              index,
+                            ) {
+                              var text = index < codeController.text.length
+                                  ? "•"
+                                  : "";
+                              return Expanded(
+                                child: Container(
+                                  decoration:
+                                      index == codeController.text.length
+                                      ? BoxDecoration(
+                                          border: Border.all(
+                                            color: context
+                                                .theme
+                                                .colorScheme
+                                                .primary,
+                                            width: 2,
+                                          ),
+                                          borderRadius: const BorderRadius.all(
+                                            Radius.circular(10),
+                                          ),
+                                        )
+                                      : BoxDecoration(
+                                          border: Border.all(
+                                            color: context
+                                                .theme
+                                                .colorScheme
+                                                .outline,
+                                          ),
+                                          borderRadius: const BorderRadius.all(
+                                            Radius.circular(10),
+                                          ),
+                                        ),
+                                  margin: const EdgeInsets.all(3),
+                                  height: 50,
+                                  child: Center(
+                                    child: Text(
+                                      text,
+                                      style: context.theme.textTheme.titleLarge
+                                          ?.copyWith(
+                                            fontSize: 40,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }),
+                          ),
+                          Opacity(
+                            opacity: 0,
+                            child: TextField(
+                              cursorColor: context.theme.colorScheme.primary,
+                              autocorrect: false,
+                              autofocus: true,
+                              controller: codeController,
+                              textInputAction: TextInputAction.next,
+                              keyboardType: TextInputType.number,
+                              onChanged: (v) {
+                                state(() {});
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : StatefulBuilder(
+                      builder: (context, update) => TextField(
+                        controller: codeController,
+                        decoration: InputDecoration(
+                          labelText: "Password",
+                          border: const OutlineInputBorder(),
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              obscureText
+                                  ? Icons.visibility_off
+                                  : Icons.visibility,
+                            ),
+                            color: context.theme.colorScheme.outline,
+                            onPressed: () {
+                              update(() {
+                                obscureText = !obscureText;
+                              });
+                            },
+                          ),
+                        ),
+                        autofocus: true,
+                        obscureText: obscureText,
+                      ),
+                    ),
+            ],
+          ),
+          backgroundColor: context.theme.colorScheme.properSurface,
+        );
+      },
+    );
     return (change, text);
   }
 
@@ -5652,50 +6319,58 @@ class RustPushService extends GetxService {
     api.ViableBottle? newBottle;
     var promptReset = false;
     await showDialog(
-        context: context,
-        builder: (_) {
-          return AlertDialog(
-            actions: [
-              TextButton(
-                child: Text("Don't know any passwords",
-                    style: context.theme.textTheme.bodyLarge!
-                        .copyWith(color: context.theme.colorScheme.primary)),
-                onPressed: () {
-                  promptReset = true;
-                  Get.back();
-                },
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          actions: [
+            TextButton(
+              child: Text(
+                "Don't know any passwords",
+                style: context.theme.textTheme.bodyLarge!.copyWith(
+                  color: context.theme.colorScheme.primary,
+                ),
               ),
-            ],
-            title: Text("Choose a device",
-                style: context.theme.textTheme.titleLarge),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: bottles
-                    .map((bottle) => Material(
-                          // provides a Material ancestor for the ripple
-                          color: Colors.transparent,
-                          child: InkWell(
-                            onTap: () {
-                              newBottle = bottle;
-                              Get.back();
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              child: Text(
-                                bottle.deviceName,
-                                style: Theme.of(context).textTheme.titleMedium,
-                              ),
-                            ),
-                          ),
-                        ))
-                    .toList(),
-              ),
+              onPressed: () {
+                promptReset = true;
+                Get.back();
+              },
             ),
-            backgroundColor: context.theme.colorScheme.properSurface,
-          );
-        });
+          ],
+          title: Text(
+            "Choose a device",
+            style: context.theme.textTheme.titleLarge,
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: bottles
+                  .map(
+                    (bottle) => Material(
+                      // provides a Material ancestor for the ripple
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () {
+                          newBottle = bottle;
+                          Get.back();
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Text(
+                            bottle.deviceName,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+          backgroundColor: context.theme.colorScheme.properSurface,
+        );
+      },
+    );
     if (promptReset) {
       await promptResetData(false);
     }
@@ -5705,101 +6380,113 @@ class RustPushService extends GetxService {
   Future<void> promptResetData(bool mandatory) async {
     var context = Get.context!;
     await showDialog(
-        context: context,
-        builder: (_) {
-          return AlertDialog(
-            actions: [
-              TextButton(
-                child: Text("Cancel",
-                    style: context.theme.textTheme.bodyLarge!
-                        .copyWith(color: context.theme.colorScheme.primary)),
-                onPressed: () {
-                  Get.back();
-                },
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          actions: [
+            TextButton(
+              child: Text(
+                "Cancel",
+                style: context.theme.textTheme.bodyLarge!.copyWith(
+                  color: context.theme.colorScheme.primary,
+                ),
               ),
-              TextButton(
-                child: Text("Reset encrypted data",
-                    style: context.theme.textTheme.bodyLarge!
-                        .copyWith(color: context.theme.colorScheme.primary)),
-                onPressed: () async {
-                  var defaultPassword = Random.secure()
-                      .nextInt(1000000)
-                      .toString()
-                      .padLeft(6, '0');
-                  ss.settings.keychainDefaultPassword.value = defaultPassword;
-                  ss.saveSettings();
+              onPressed: () {
+                Get.back();
+              },
+            ),
+            TextButton(
+              child: Text(
+                "Reset encrypted data",
+                style: context.theme.textTheme.bodyLarge!.copyWith(
+                  color: context.theme.colorScheme.primary,
+                ),
+              ),
+              onPressed: () async {
+                var defaultPassword = Random.secure()
+                    .nextInt(1000000)
+                    .toString()
+                    .padLeft(6, '0');
+                ss.settings.keychainDefaultPassword.value = defaultPassword;
+                ss.saveSettings();
 
-                  Get.back();
-                  await wrapPromise(
-                      api.resetClique(
-                          keychain:
-                              pushService.state!.icloudServices!.keychain!,
-                          cloudMessages: pushService
-                              .state!.icloudServices!.cloudMessagesClient!,
-                          devicePassword: defaultPassword),
-                      "Resetting clique...");
+                Get.back();
+                await wrapPromise(
+                  api.resetClique(
+                    keychain: pushService.state!.icloudServices!.keychain!,
+                    cloudMessages:
+                        pushService.state!.icloudServices!.cloudMessagesClient!,
+                    devicePassword: defaultPassword,
+                  ),
+                  "Resetting clique...",
+                );
 
-                  showDialog(
-                      context: Get.context!,
-                      builder: (_) {
-                        return AlertDialog(
-                          actions: [
-                            TextButton(
-                              child: Text("Ok",
-                                  style: Get.context!.theme.textTheme.bodyLarge!
-                                      .copyWith(
-                                          color: Get.context!.theme.colorScheme
-                                              .primary)),
-                              onPressed: () async {
-                                Get.back();
-                              },
+                showDialog(
+                  context: Get.context!,
+                  builder: (_) {
+                    return AlertDialog(
+                      actions: [
+                        TextButton(
+                          child: Text(
+                            "Ok",
+                            style: Get.context!.theme.textTheme.bodyLarge!
+                                .copyWith(
+                                  color: Get.context!.theme.colorScheme.primary,
+                                ),
+                          ),
+                          onPressed: () async {
+                            Get.back();
+                          },
+                        ),
+                      ],
+                      title: Text(
+                        "Encrypted data reset",
+                        style: Get.context!.theme.textTheme.titleLarge,
+                      ),
+                      content: Text.rich(
+                        TextSpan(
+                          text: "This device's iCloud Keychain code is ",
+                          style: Get.context!.theme.textTheme.bodyLarge,
+                          children: <TextSpan>[
+                            TextSpan(
+                              text:
+                                  '${ss.settings.keychainDefaultPassword.value}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const TextSpan(text: '.'),
+                            const TextSpan(
+                              text:
+                                  '\n\nYou will need this code to sync iCloud data on other devices. ',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            const TextSpan(
+                              text:
+                                  'This code can be found again in Settings -> Device.',
                             ),
                           ],
-                          title: Text("Encrypted data reset",
-                              style: Get.context!.theme.textTheme.titleLarge),
-                          content: Text.rich(
-                            TextSpan(
-                              text: "This device's iCloud Keychain code is ",
-                              style: Get.context!.theme.textTheme.bodyLarge,
-                              children: <TextSpan>[
-                                TextSpan(
-                                  text:
-                                      '${ss.settings.keychainDefaultPassword.value}',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold),
-                                ),
-                                const TextSpan(
-                                  text: '.',
-                                ),
-                                const TextSpan(
-                                  text:
-                                      '\n\nYou will need this code to sync iCloud data on other devices. ',
-                                  style: TextStyle(fontWeight: FontWeight.bold),
-                                ),
-                                const TextSpan(
-                                  text:
-                                      'This code can be found again in Settings -> Device.',
-                                ),
-                              ],
-                            ),
-                          ),
-                          backgroundColor:
-                              Get.context!.theme.colorScheme.properSurface,
-                        );
-                      });
-                },
-              ),
-            ],
-            title:
-                Text("Reset data?", style: context.theme.textTheme.titleLarge),
-            content: Text(
-                mandatory
-                    ? "Your encrypted data needs to be reset."
-                    : "If you can't remember the credentials to any of your devices, you won't be able to recover your data.",
-                style: context.theme.textTheme.bodyLarge),
-            backgroundColor: context.theme.colorScheme.properSurface,
-          );
-        });
+                        ),
+                      ),
+                      backgroundColor:
+                          Get.context!.theme.colorScheme.properSurface,
+                    );
+                  },
+                );
+              },
+            ),
+          ],
+          title: Text("Reset data?", style: context.theme.textTheme.titleLarge),
+          content: Text(
+            mandatory
+                ? "Your encrypted data needs to be reset."
+                : "If you can't remember the credentials to any of your devices, you won't be able to recover your data.",
+            style: context.theme.textTheme.bodyLarge,
+          ),
+          backgroundColor: context.theme.colorScheme.properSurface,
+        );
+      },
+    );
   }
 
   Future<int> attemptBottle(api.ViableBottle bottle) async {
@@ -5810,29 +6497,35 @@ class RustPushService extends GetxService {
       if (change) return 2;
       if (password == null) return 1;
 
-      var defaultPassword =
-          Random.secure().nextInt(1000000).toString().padLeft(6, '0');
+      var defaultPassword = Random.secure()
+          .nextInt(1000000)
+          .toString()
+          .padLeft(6, '0');
       ss.settings.keychainDefaultPassword.value = defaultPassword;
       ss.saveSettings();
 
-      if (!await wrapPromise((() async {
-        try {
-          await api.joinCliqueWithBottle(
+      if (!await wrapPromise(
+        (() async {
+          try {
+            await api.joinCliqueWithBottle(
               keychain: pushService.state!.icloudServices!.keychain!,
               bottle: bottle.escrow,
               password: password,
-              devicePassword: defaultPassword);
-        } catch (e) {
-          if (e is AnyhowException) {
-            if (e.message.contains("Credential is not verified.")) {
-              desc = "Invalid Credential";
-              return false;
+              devicePassword: defaultPassword,
+            );
+          } catch (e) {
+            if (e is AnyhowException) {
+              if (e.message.contains("Credential is not verified.")) {
+                desc = "Invalid Credential";
+                return false;
+              }
             }
+            rethrow;
           }
-          rethrow;
-        }
-        return true;
-      })(), "Opening bottle...")) {
+          return true;
+        })(),
+        "Opening bottle...",
+      )) {
         continue;
       }
       break;
@@ -5843,26 +6536,25 @@ class RustPushService extends GetxService {
 
   Future<T> wrapPromise<T>(Future<T> inner, String text) async {
     showDialog(
-        context: Get.context!,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            backgroundColor: context.theme.colorScheme.properSurface,
-            title: Text(
-              text,
-              style: context.theme.textTheme.titleLarge,
-            ),
-            content: Container(
-              height: 70,
-              child: Center(
-                child: CircularProgressIndicator(
-                  backgroundColor: context.theme.colorScheme.properSurface,
-                  valueColor: AlwaysStoppedAnimation<Color>(
-                      context.theme.colorScheme.primary),
+      context: Get.context!,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: context.theme.colorScheme.properSurface,
+          title: Text(text, style: context.theme.textTheme.titleLarge),
+          content: Container(
+            height: 70,
+            child: Center(
+              child: CircularProgressIndicator(
+                backgroundColor: context.theme.colorScheme.properSurface,
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  context.theme.colorScheme.primary,
                 ),
               ),
             ),
-          );
-        });
+          ),
+        );
+      },
+    );
     T result;
     try {
       result = await inner;
@@ -5877,7 +6569,8 @@ class RustPushService extends GetxService {
 
   Future<bool> checkClique() async {
     var isInClique = await api.isInClique(
-        keychain: pushService.state!.icloudServices!.keychain!);
+      keychain: pushService.state!.icloudServices!.keychain!,
+    );
     cachedInClique = isInClique;
     return isInClique;
   }
@@ -5926,12 +6619,19 @@ class RustPushService extends GetxService {
     );
 
     inq.queue(
-        IncomingItem(chat: chat, message: msg, type: QueueType.newMessage));
+      IncomingItem(chat: chat, message: msg, type: QueueType.newMessage),
+    );
   }
 
   api.TextFormat defaultFormat() {
-    return const api.TextFormat.flags(api.TextFlags(
-        bold: false, italic: false, underline: false, strikethrough: false));
+    return const api.TextFormat.flags(
+      api.TextFlags(
+        bold: false,
+        italic: false,
+        underline: false,
+        strikethrough: false,
+      ),
+    );
   }
 
   api.TextFormat fromAttributes(Attributes attributes) {
@@ -5948,12 +6648,14 @@ class RustPushService extends GetxService {
       };
       return api.TextFormat.effect(effectMap[attributes.textEffect!]!);
     }
-    return api.TextFormat.flags(api.TextFlags(
-      bold: attributes.bold ?? false,
-      italic: attributes.italic ?? false,
-      underline: attributes.underline ?? false,
-      strikethrough: attributes.strikethrough ?? false,
-    ));
+    return api.TextFormat.flags(
+      api.TextFlags(
+        bold: attributes.bold ?? false,
+        italic: attributes.italic ?? false,
+        underline: attributes.underline ?? false,
+        strikethrough: attributes.strikethrough ?? false,
+      ),
+    );
   }
 
   Uint8List getQrInfo(bool allowSharing, Uint8List data) {
@@ -5968,7 +6670,9 @@ class RustPushService extends GetxService {
   }
 
   Future<String> uploadCode(
-      bool allowSharing, api.DeviceInfo deviceInfo) async {
+    bool allowSharing,
+    api.DeviceInfo deviceInfo,
+  ) async {
     var data = getQrInfo(allowSharing, deviceInfo.encodedData!);
     if (allowSharing) {
       return base64Encode(data);
@@ -5978,8 +6682,12 @@ class RustPushService extends GetxService {
     Random _rnd = Random.secure();
     String code = "MB";
     for (var i = 0; i < 4; i++) {
-      code += String.fromCharCodes(Iterable.generate(
-          4, (_) => _chars.codeUnitAt(_rnd.nextInt(_chars.length))));
+      code += String.fromCharCodes(
+        Iterable.generate(
+          4,
+          (_) => _chars.codeUnitAt(_rnd.nextInt(_chars.length)),
+        ),
+      );
       if (i != 3) {
         code += "-";
       }
@@ -5989,32 +6697,34 @@ class RustPushService extends GetxService {
 
     var encrypted = encryptAESCryptoJS(data, code);
     showDialog(
-        context: Get.context!,
-        barrierDismissible: false,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            backgroundColor: context.theme.colorScheme.properSurface,
-            title: Text(
-              "Creating code...",
-              style: context.theme.textTheme.titleLarge,
-            ),
-            content: Container(
-              height: 70,
-              child: Center(
-                child: CircularProgressIndicator(
-                  backgroundColor: context.theme.colorScheme.properSurface,
-                  valueColor: AlwaysStoppedAnimation<Color>(
-                      context.theme.colorScheme.primary),
+      context: Get.context!,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: context.theme.colorScheme.properSurface,
+          title: Text(
+            "Creating code...",
+            style: context.theme.textTheme.titleLarge,
+          ),
+          content: Container(
+            height: 70,
+            child: Center(
+              child: CircularProgressIndicator(
+                backgroundColor: context.theme.colorScheme.properSurface,
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  context.theme.colorScheme.primary,
                 ),
               ),
             ),
-          );
-        });
+          ),
+        );
+      },
+    );
     try {
-      final response = await http.dio.post(rpApiRoot, data: {
-        "data": encrypted,
-        "id": hash,
-      });
+      final response = await http.dio.post(
+        rpApiRoot,
+        data: {"data": encrypted, "id": hash},
+      );
       if (response.statusCode != 200) {
         throw Exception("bad!");
       }
@@ -6027,17 +6737,22 @@ class RustPushService extends GetxService {
     }
   }
 
-  Future<void> markAsHandledAfter(String ptr,
-      {required String eventId, required int retry}) async {
+  Future<void> markAsHandledAfter(
+    String ptr, {
+    required String eventId,
+    required int retry,
+  }) async {
     final ackStopwatch = Stopwatch()..start();
     // handleMsg awaits the completion for this pointer's queue item. Do not
     // wait for unrelated incoming work before acknowledging this message.
     Logger.info(
-        "rustpush_receive durable_work_complete id=$eventId retry=$retry pending_count=${inq.items.length}");
+      "rustpush_receive durable_work_complete id=$eventId retry=$retry pending_count=${inq.items.length}",
+    );
     Logger.info("rustpush_receive ack_commit id=$eventId retry=$retry");
     await api.completeMsg(ptr: ptr);
     Logger.info(
-        "rustpush_receive ack_complete id=$eventId retry=$retry duration_ms=${_durationMs(ackStopwatch)}");
+      "rustpush_receive ack_complete id=$eventId retry=$retry duration_ms=${_durationMs(ackStopwatch)}",
+    );
   }
 
   Future recievedMsgPointer(String pointer, String retry) async {
@@ -6047,22 +6762,27 @@ class RustPushService extends GetxService {
     var message = await api.ptrToDart(ptr: pointer);
     if (message == null) {
       Logger.info(
-          "rustpush_receive pointer_missing id=$eventId retry=$retryCount");
+        "rustpush_receive pointer_missing id=$eventId retry=$retryCount",
+      );
       return;
     }
     final initStopwatch = Stopwatch()..start();
     Logger.info(
-        "rustpush_receive aps_init_wait_start id=$eventId retry=$retryCount");
+      "rustpush_receive aps_init_wait_start id=$eventId retry=$retryCount",
+    );
     await initFuture;
     Logger.info(
-        "rustpush_receive aps_init_wait_complete id=$eventId retry=$retryCount duration_ms=${_durationMs(initStopwatch)} total_ms=${_durationMs(receiveStopwatch)}");
+      "rustpush_receive aps_init_wait_complete id=$eventId retry=$retryCount duration_ms=${_durationMs(initStopwatch)} total_ms=${_durationMs(receiveStopwatch)}",
+    );
     try {
       final handlingStopwatch = Stopwatch()..start();
       Logger.info(
-          "rustpush_receive handle_start id=$eventId retry=$retryCount");
+        "rustpush_receive handle_start id=$eventId retry=$retryCount",
+      );
       await handleMsg(message);
       Logger.info(
-          "rustpush_receive handle_complete id=$eventId retry=$retryCount duration_ms=${_durationMs(handlingStopwatch)} total_ms=${_durationMs(receiveStopwatch)}");
+        "rustpush_receive handle_complete id=$eventId retry=$retryCount duration_ms=${_durationMs(handlingStopwatch)} total_ms=${_durationMs(receiveStopwatch)}",
+      );
       await markAsHandledAfter(pointer, eventId: eventId, retry: retryCount);
     } catch (e, s) {
       Logger.error("Handle failed", error: e, trace: s);
@@ -6073,11 +6793,15 @@ class RustPushService extends GetxService {
   }
 
   void doPoll(
-      api.ApsWatcher watcher, lib.ArcSharedPushState sharedPushState) async {
+    api.ApsWatcher watcher,
+    lib.ArcSharedPushState sharedPushState,
+  ) async {
     while (true) {
       try {
-        var msgRaw =
-            await api.recvWait(state: sharedPushState, watcher: watcher);
+        var msgRaw = await api.recvWait(
+          state: sharedPushState,
+          watcher: watcher,
+        );
         if (msgRaw is api.PollResult_Stop) {
           break;
         }
@@ -6109,16 +6833,19 @@ class RustPushService extends GetxService {
   Future<bool> setupZenMode(bool val) async {
     if (val) {
       if (pushService.state?.icloudServices?.statuskitClient == null) {
-        showSnackbar("Relog Required",
-            "Re-log in Settings -> Reconfigure to use zen modes");
+        showSnackbar(
+          "Relog Required",
+          "Re-log in Settings -> Reconfigure to use zen modes",
+        );
         ss.settings.zenModeAware.value = false;
         ss.saveSettings();
         return false;
       }
       if (!await mcs.invokeMethod("zen-mode-setup")) return false;
     }
-    await mcs
-        .invokeMethod("zen-mode-uuid", {"key": val ? "enable" : "disable"});
+    await mcs.invokeMethod("zen-mode-uuid", {
+      "key": val ? "enable" : "disable",
+    });
     ss.settings.enableShareZen.value = val;
     ss.settings.zenModeAware.value = true;
     ss.saveSettings();
@@ -6135,77 +6862,100 @@ class RustPushService extends GetxService {
     ss.saveSettings();
     // TODO support onboarding without permissions
     await showDialog(
-        context: Get.context!,
-        barrierDismissible: false,
-        builder: (context) => AlertDialog(
-              backgroundColor: Get.theme.colorScheme.properSurface,
-              title: Text(
-                  "Allow OpenBubbles to share that you have notifications silenced?",
-                  style: Get.textTheme.titleLarge),
-              content: Text(
-                "When you're using Do Not Disturb or other modes, OpenBubbles will share with your contacts that you have notifications silenced. Focus sharing on other devices will be turned off.",
-                style: Get.textTheme.bodyLarge,
+      context: Get.context!,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: Get.theme.colorScheme.properSurface,
+        title: Text(
+          "Allow OpenBubbles to share that you have notifications silenced?",
+          style: Get.textTheme.titleLarge,
+        ),
+        content: Text(
+          "When you're using Do Not Disturb or other modes, OpenBubbles will share with your contacts that you have notifications silenced. Focus sharing on other devices will be turned off.",
+          style: Get.textTheme.bodyLarge,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(),
+            child: Text(
+              "Don't allow",
+              style: Get.textTheme.bodyLarge!.copyWith(
+                color: Get.theme.colorScheme.primary,
               ),
-              actions: [
-                TextButton(
-                    onPressed: () => Get.back(),
-                    child: Text("Don't allow",
-                        style: Get.textTheme.bodyLarge!
-                            .copyWith(color: Get.theme.colorScheme.primary))),
-                TextButton(
-                    onPressed: () async {
-                      if (await setupZenMode(true)) {
-                        Get.back();
-                      }
-                    },
-                    child: Text("Allow",
-                        style: Get.textTheme.bodyLarge!
-                            .copyWith(color: Get.theme.colorScheme.primary)))
-              ],
-            ));
+            ),
+          ),
+          TextButton(
+            onPressed: () async {
+              if (await setupZenMode(true)) {
+                Get.back();
+              }
+            },
+            child: Text(
+              "Allow",
+              style: Get.textTheme.bodyLarge!.copyWith(
+                color: Get.theme.colorScheme.primary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void offerHostedRefund(bool revoke) async {
     await showDialog(
-        context: Get.context!,
-        barrierDismissible: false,
-        builder: (context) => AlertDialog(
-              backgroundColor: Get.theme.colorScheme.properSurface,
-              title: Text("Get a refund?", style: Get.textTheme.titleLarge),
-              content: Text(
-                revoke
-                    ? "You're subscribed but we don't have a device for you at this time. You can come back later, or, get a refund here. After your refund, your subscription will be cancelled."
-                    : "You're subscribed but we don't have a device for you at this time. This is on us. We usually keep devices in reserve for customers in good standing, however, for some reason, all of them are offline. If you choose to take a refund, you will get the month free and can still use OpenBubbles when we have gotten our affairs in order.",
-                style: Get.textTheme.bodyLarge,
+      context: Get.context!,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: Get.theme.colorScheme.properSurface,
+        title: Text("Get a refund?", style: Get.textTheme.titleLarge),
+        content: Text(
+          revoke
+              ? "You're subscribed but we don't have a device for you at this time. You can come back later, or, get a refund here. After your refund, your subscription will be cancelled."
+              : "You're subscribed but we don't have a device for you at this time. This is on us. We usually keep devices in reserve for customers in good standing, however, for some reason, all of them are offline. If you choose to take a refund, you will get the month free and can still use OpenBubbles when we have gotten our affairs in order.",
+          style: Get.textTheme.bodyLarge,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(),
+            child: Text(
+              "Cancel",
+              style: Get.textTheme.bodyLarge!.copyWith(
+                color: Get.theme.colorScheme.primary,
               ),
-              actions: [
-                TextButton(
-                    onPressed: () => Get.back(),
-                    child: Text("Cancel",
-                        style: Get.textTheme.bodyLarge!
-                            .copyWith(color: Get.theme.colorScheme.primary))),
-                TextButton(
-                    onPressed: () async {
-                      Get.back();
-                      await wrapPromise((() async {
-                        var details = (await pushService.getPurchaseDetails())
-                            ?.purchaseToken;
-                        details ??= ss.settings.hostedToken.value;
+            ),
+          ),
+          TextButton(
+            onPressed: () async {
+              Get.back();
+              await wrapPromise(
+                (() async {
+                  var details =
+                      (await pushService.getPurchaseDetails())?.purchaseToken;
+                  details ??= ss.settings.hostedToken.value;
 
-                        var activated = await http.dio.post(
-                            "https://hw.openbubbles.app/refund-token",
-                            data: {"purchase_token": details});
-                        if (activated.statusCode != 200) {
-                          throw Exception("Failed to refund ${activated.data}");
-                        }
-                      })(), "Refunding...");
-                      showSnackbar("Success", "Refund succeded!");
-                    },
-                    child: Text("Refund",
-                        style: Get.textTheme.bodyLarge!
-                            .copyWith(color: Get.theme.colorScheme.primary)))
-              ],
-            ));
+                  var activated = await http.dio.post(
+                    "https://hw.openbubbles.app/refund-token",
+                    data: {"purchase_token": details},
+                  );
+                  if (activated.statusCode != 200) {
+                    throw Exception("Failed to refund ${activated.data}");
+                  }
+                })(),
+                "Refunding...",
+              );
+              showSnackbar("Success", "Refund succeded!");
+            },
+            child: Text(
+              "Refund",
+              style: Get.textTheme.bodyLarge!.copyWith(
+                color: Get.theme.colorScheme.primary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void tryWarnVpn() async {
@@ -6214,23 +6964,28 @@ class RustPushService extends GetxService {
       ss.settings.vpnWarned.value = true;
       await ss.saveSettings();
       await showDialog(
-          context: Get.context!,
-          barrierDismissible: false,
-          builder: (context) => AlertDialog(
-                backgroundColor: Get.theme.colorScheme.properSurface,
-                title: Text("VPN warning", style: Get.textTheme.titleLarge),
-                content: Text(
-                  "It appears you may be using a VPN. Apple blocks some VPN servers from using iMessage as real iDevices bypass them. Exclude OpenBubbles from your VPN app if you have trouble sending messages.",
-                  style: Get.textTheme.bodyLarge,
+        context: Get.context!,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          backgroundColor: Get.theme.colorScheme.properSurface,
+          title: Text("VPN warning", style: Get.textTheme.titleLarge),
+          content: Text(
+            "It appears you may be using a VPN. Apple blocks some VPN servers from using iMessage as real iDevices bypass them. Exclude OpenBubbles from your VPN app if you have trouble sending messages.",
+            style: Get.textTheme.bodyLarge,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Get.back(),
+              child: Text(
+                "Got it",
+                style: Get.textTheme.bodyLarge!.copyWith(
+                  color: Get.theme.colorScheme.primary,
                 ),
-                actions: [
-                  TextButton(
-                      onPressed: () => Get.back(),
-                      child: Text("Got it",
-                          style: Get.textTheme.bodyLarge!
-                              .copyWith(color: Get.theme.colorScheme.primary)))
-                ],
-              ));
+              ),
+            ),
+          ],
+        ),
+      );
       Logger.info("VPN connected.");
     }
   }
@@ -6259,20 +7014,27 @@ class RustPushService extends GetxService {
             backgroundColor: context.theme.colorScheme.properSurface,
             actions: <Widget>[
               TextButton(
-                child: Text("Not yet",
-                    style: context.theme.textTheme.bodyLarge!
-                        .copyWith(color: context.theme.colorScheme.primary)),
+                child: Text(
+                  "Not yet",
+                  style: context.theme.textTheme.bodyLarge!.copyWith(
+                    color: context.theme.colorScheme.primary,
+                  ),
+                ),
                 onPressed: () {
                   Navigator.of(context).pop();
                 },
               ),
               TextButton(
-                  child: Text("Continue",
-                      style: context.theme.textTheme.bodyLarge!
-                          .copyWith(color: context.theme.colorScheme.primary)),
-                  onPressed: () async {
-                    pushService.markFailedToLogin(hw: true, ui: true);
-                  }),
+                child: Text(
+                  "Continue",
+                  style: context.theme.textTheme.bodyLarge!.copyWith(
+                    color: context.theme.colorScheme.primary,
+                  ),
+                ),
+                onPressed: () async {
+                  pushService.markFailedToLogin(hw: true, ui: true);
+                },
+              ),
             ],
           );
         },
@@ -6287,35 +7049,39 @@ class RustPushService extends GetxService {
     if (subscribing) return;
     subscribing = true;
     showDialog(
-        context: Get.context!,
-        barrierDismissible: false,
-        builder: (BuildContext context) {
-          return AlertDialog(
-            backgroundColor: context.theme.colorScheme.properSurface,
-            title: Text(
-              "Subscribing...",
-              style: context.theme.textTheme.titleLarge,
-            ),
-            content: Container(
-              height: 70,
-              child: Center(child: buildProgressIndicator(context)),
-            ),
-          );
-        });
+      context: Get.context!,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: context.theme.colorScheme.properSurface,
+          title: Text(
+            "Subscribing...",
+            style: context.theme.textTheme.titleLarge,
+          ),
+          content: Container(
+            height: 70,
+            child: Center(child: buildProgressIndicator(context)),
+          ),
+        );
+      },
+    );
     try {
       try {
         await api.subscribeToken(
-            lock: pushService.state!.icloudServices!.sharedstreams!,
-            token: invitationId);
+          lock: pushService.state!.icloudServices!.sharedstreams!,
+          token: invitationId,
+        );
       } catch (e) {
         // sometimes first one can give 500, try again
         await api.subscribeToken(
-            lock: pushService.state!.icloudServices!.sharedstreams!,
-            token: invitationId);
+          lock: pushService.state!.icloudServices!.sharedstreams!,
+          token: invitationId,
+        );
       }
       await api.getAlbums(
-          lock: pushService.state!.icloudServices!.sharedstreams!,
-          refresh: true);
+        lock: pushService.state!.icloudServices!.sharedstreams!,
+        refresh: true,
+      );
     } catch (e, stack) {
       Logger.error("Failed to subscribe!!", error: e, trace: stack);
       Get.back();
@@ -6344,7 +7110,8 @@ class RustPushService extends GetxService {
       return;
     }
     if (!ss.settings.deviceIsHosted.value ||
-        ss.settings.hostedToken.value == null) return;
+        ss.settings.hostedToken.value == null)
+      return;
     var detail = await checkPurchaseState();
     if (!detail) {
       if (!notifiedSubFailed) {
@@ -6410,17 +7177,19 @@ class RustPushService extends GetxService {
         ss.saveSettings();
         try {
           Get.offAll(
-              () => PopScope(
-                    canPop: false,
-                    child: TitleBarWrapper(child: SetupView()),
-                  ),
-              duration: Duration.zero,
-              transition: Transition.noTransition);
+            () => PopScope(
+              canPop: false,
+              child: TitleBarWrapper(child: SetupView()),
+            ),
+            duration: Duration.zero,
+            transition: Transition.noTransition,
+          );
         } catch (e, s) {
           Logger.warn(
-              "Failed to return to setup after registration state changed",
-              error: e,
-              trace: s);
+            "Failed to return to setup after registration state changed",
+            error: e,
+            trace: s,
+          );
         }
       }
       if (state != null && !ss.settings.finishedSetup.value) {
@@ -6429,17 +7198,21 @@ class RustPushService extends GetxService {
         ss.saveSettings();
         try {
           Get.offAll(
-              () => ConversationList(
-                    showArchivedChats: false,
-                    showUnknownSenders: false,
-                  ),
-              routeName: "",
-              duration: Duration.zero,
-              transition: Transition.noTransition);
+            () => ConversationList(
+              showArchivedChats: false,
+              showUnknownSenders: false,
+            ),
+            routeName: "",
+            duration: Duration.zero,
+            transition: Transition.noTransition,
+          );
           Get.delete<SetupViewController>(force: true);
         } catch (e, s) {
-          Logger.warn("Failed to show the conversation list after registration",
-              error: e, trace: s);
+          Logger.warn(
+            "Failed to show the conversation list after registration",
+            error: e,
+            trace: s,
+          );
         }
       }
       Timer.periodic(const Duration(days: 1), (timer) => validateSubState());
@@ -6454,7 +7227,9 @@ class RustPushService extends GetxService {
             final passwords = currentState.icloudServices?.passwords;
             if (passwords != null) {
               await api.syncPasswords(
-                  passwords: passwords, conn: currentState.conn);
+                passwords: passwords,
+                conn: currentState.conn,
+              );
             }
             if (!ss.settings.cloudSyncingEnabled.value) {
               return;
@@ -6462,8 +7237,11 @@ class RustPushService extends GetxService {
             Logger.info("Doing scheduled CloudKit sync");
             await pushService.doCloudKitSync();
           } catch (e, stackTrace) {
-            Logger.warn("Scheduled CloudKit maintenance failed",
-                error: e, trace: stackTrace);
+            Logger.warn(
+              "Scheduled CloudKit maintenance failed",
+              error: e,
+              trace: stackTrace,
+            );
           }
         });
         if (state != null) {
@@ -6472,15 +7250,21 @@ class RustPushService extends GetxService {
             try {
               await api.syncPasswords(passwords: passwords, conn: state!.conn);
             } catch (e, stackTrace) {
-              Logger.warn("Initial iCloud Passwords sync failed",
-                  error: e, trace: stackTrace);
+              Logger.warn(
+                "Initial iCloud Passwords sync failed",
+                error: e,
+                trace: stackTrace,
+              );
             }
           }
           if (ss.settings.cloudSyncingEnabled.value) {
             Logger.info("Doing cloudkit sync!");
             pushService.doCloudKitSync().catchError((error, stackTrace) {
-              Logger.warn("Initial CloudKit sync failed",
-                  error: error, trace: stackTrace);
+              Logger.warn(
+                "Initial CloudKit sync failed",
+                error: error,
+                trace: stackTrace,
+              );
             });
           }
         }
@@ -6490,8 +7274,11 @@ class RustPushService extends GetxService {
             cachedInClique = await api.isInClique(keychain: keychain);
           } catch (e, stackTrace) {
             cachedInClique = false;
-            Logger.warn("Unable to read initial iCloud clique state",
-                error: e, trace: stackTrace);
+            Logger.warn(
+              "Unable to read initial iCloud clique state",
+              error: e,
+              trace: stackTrace,
+            );
           }
         }
       }
@@ -6506,8 +7293,11 @@ class RustPushService extends GetxService {
           await api.getApsConnectionStatus(aps: state!.conn),
         );
       } catch (e, s) {
-        Logger.warn("Failed to read initial Apple Push status",
-            error: e, trace: s);
+        Logger.warn(
+          "Failed to read initial Apple Push status",
+          error: e,
+          trace: s,
+        );
       }
     }
     try {
@@ -6523,8 +7313,11 @@ class RustPushService extends GetxService {
           await scheduleRelayHealthReminder(registrationState.nextS);
         }
       } catch (e, s) {
-        Logger.warn("Failed to schedule iPhone relay health check",
-            error: e, trace: s);
+        Logger.warn(
+          "Failed to schedule iPhone relay health check",
+          error: e,
+          trace: s,
+        );
       }
     }
     Timer(const Duration(seconds: 2), checkIncident);
@@ -6532,10 +7325,16 @@ class RustPushService extends GetxService {
     if (pushService.state != null) {
       api
           .getFtLink(facetime: pushService.state!.ftClient, usage: "next")
-          .then<void>((_) {}, onError: (Object error, StackTrace stackTrace) {
-        Logger.warn("Failed to pre-cache FaceTime link",
-            error: error, trace: stackTrace);
-      });
+          .then<void>(
+            (_) {},
+            onError: (Object error, StackTrace stackTrace) {
+              Logger.warn(
+                "Failed to pre-cache FaceTime link",
+                error: error,
+                trace: stackTrace,
+              );
+            },
+          );
     }
     Logger.info("initDone");
     final sendingProgress = Database.messages
@@ -6562,7 +7361,8 @@ class RustPushService extends GetxService {
       }
       item.sendingServiceId = null;
       item = item.save(updateSendingServiceId: true);
-      final failure = item.dateScheduled != null &&
+      final failure =
+          item.dateScheduled != null &&
               isScheduledSendOverdue(item.dateScheduled, now: recoveryNow)
           ? "Scheduled delivery was not confirmed"
           : "Crashed while still sending";
@@ -6583,24 +7383,32 @@ class RustPushService extends GetxService {
         ),
         backgroundColor: context.theme.colorScheme.properSurface,
         content: Text(
-            "There's an issue with a recent update. A software bug corrupted part of the app's internal state and needs to be fixed before messaging can continue. You won't be able to send messages until you take action.\n\nYour data was not compromised, and this was not a security issue.\nWe recommend backing up any important messages before proceeding. Have your apple device and account authentication credentials ready.",
-            style: context.theme.textTheme.bodyLarge),
+          "There's an issue with a recent update. A software bug corrupted part of the app's internal state and needs to be fixed before messaging can continue. You won't be able to send messages until you take action.\n\nYour data was not compromised, and this was not a security issue.\nWe recommend backing up any important messages before proceeding. Have your apple device and account authentication credentials ready.",
+          style: context.theme.textTheme.bodyLarge,
+        ),
         actions: [
           TextButton(
-            child: Text("Dismiss for now",
-                style: context.theme.textTheme.bodyLarge!
-                    .copyWith(color: context.theme.colorScheme.primary)),
+            child: Text(
+              "Dismiss for now",
+              style: context.theme.textTheme.bodyLarge!.copyWith(
+                color: context.theme.colorScheme.primary,
+              ),
+            ),
             onPressed: () => Navigator.of(context).pop(),
           ),
           TextButton(
-              child: Text("Fix",
-                  style: context.theme.textTheme.bodyLarge!
-                      .copyWith(color: context.theme.colorScheme.primary)),
-              onPressed: () async {
-                Navigator.of(context).pop();
-                pushService.markFailedToLogin(hw: true, logout: true, ui: true);
-                File("$statePath/incident_affected").deleteSync();
-              }),
+            child: Text(
+              "Fix",
+              style: context.theme.textTheme.bodyLarge!.copyWith(
+                color: context.theme.colorScheme.primary,
+              ),
+            ),
+            onPressed: () async {
+              Navigator.of(context).pop();
+              pushService.markFailedToLogin(hw: true, logout: true, ui: true);
+              File("$statePath/incident_affected").deleteSync();
+            },
+          ),
         ],
       ),
     );
@@ -6610,8 +7418,10 @@ class RustPushService extends GetxService {
     if (ss.settings.finishedSetup.value && !ss.settings.deviceIsHosted.value) {
       return;
     }
-    mixpanel = await Mixpanel.init("d66dc2d8f2ad649fac2640ff059dc9f4",
-        trackAutomaticEvents: false);
+    mixpanel = await Mixpanel.init(
+      "d66dc2d8f2ad649fac2640ff059dc9f4",
+      trackAutomaticEvents: false,
+    );
   }
 
   String statePath = "";
@@ -6674,8 +7484,7 @@ class RustPushService extends GetxService {
             abi == ffi.Abi.windowsX64;
       },
       uiIsolate: () => ls.isUiThread,
-      rustPushReady: () =>
-          state?.icloudServices?.cloudMessagesClient != null,
+      rustPushReady: () => state?.icloudServices?.cloudMessagesClient != null,
       localState: ObjectBoxCloudSyncPreflightReader.fromDatabase().read,
       privateStorageExists: () =>
           statePath.isNotEmpty && Directory(statePath).existsSync(),
@@ -6683,12 +7492,12 @@ class RustPushService extends GetxService {
           loggingOut || (_cloudSyncV2ShadowOwner?.isQuiescing ?? false),
       legacySyncEnabled: () => ss.settings.cloudSyncingEnabled.value,
       legacySyncActive: () => isSyncing.value != null,
-      protectorSentinelValid:
-          CloudSyncProtectorHealthProbe(protector: protector).read,
+      protectorSentinelValid: CloudSyncProtectorHealthProbe(
+        protector: protector,
+      ).read,
     );
     final adapter = CloudSyncProductionSamplerAdapter(
-      readActiveClient: () =>
-          state?.icloudServices?.cloudMessagesClient,
+      readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
       readPreflight: preflight.read,
       privateStorageDirectory: statePath,
       platform: Platform.operatingSystem,
@@ -6698,11 +7507,7 @@ class RustPushService extends GetxService {
     return CloudSyncManualShadowController.production(
       sampler: adapter.sampler,
       reportWriter: CloudSyncShadowReportFileWriter(
-        privateReportDirectory: join(
-          statePath,
-          'cloud-sync-v2',
-          'reports',
-        ),
+        privateReportDirectory: join(statePath, 'cloud-sync-v2', 'reports'),
         trustedStorageRoot: statePath,
       ),
     );
@@ -6723,30 +7528,26 @@ class RustPushService extends GetxService {
         : 'local-build';
   }
 
-  Future<T> _runLegacyCloudKitOperation<T>(
-    Future<T> Function() action,
-  ) {
+  Future<T> _runLegacyCloudKitOperation<T>(Future<T> Function() action) {
     if (statePath.isEmpty) {
       throw StateError('cloudkit_interlock_storage_unavailable');
     }
-    final protector = RustCloudSyncProtector(
-      storageDirectory: statePath,
-    );
+    final protector = RustCloudSyncProtector(storageDirectory: statePath);
     final fenceStore = ObjectBoxCloudSyncStore.fromDatabase(
       protector: protector,
     );
     return CloudKitOperationInterlock(
       privateStorageDirectory: statePath,
       fenceStore: fenceStore,
-    ).runExclusive(
-      kind: CloudKitOperationKind.legacyReadWrite,
-      action: action,
-    );
+    ).runExclusive(kind: CloudKitOperationKind.legacyReadWrite, action: action);
   }
 
   bool loggingOut = false;
-  Future<void> markFailedToLogin(
-      {bool hw = false, bool logout = false, bool ui = false}) async {
+  Future<void> markFailedToLogin({
+    bool hw = false,
+    bool logout = false,
+    bool ui = false,
+  }) async {
     Logger.error("markingfailed");
     if (loggingOut) return;
     try {
@@ -6784,13 +7585,14 @@ class RustPushService extends GetxService {
         ss.saveSettings();
       }
       await api.resetState(
-          cancel: thisState.cancelPoll,
-          path: statePath,
-          config: thisState.osConfig,
-          aps: thisState.conn,
-          account: thisState.icloudServices?.account,
-          resetHw: hw,
-          logout: logout);
+        cancel: thisState.cancelPoll,
+        path: statePath,
+        config: thisState.osConfig,
+        aps: thisState.conn,
+        account: thisState.icloudServices?.account,
+        resetHw: hw,
+        logout: logout,
+      );
       disposeState(thisState, hw, setup);
     } finally {
       await shadowOwner?.resumeAfterAccountTransition();
@@ -6825,8 +7627,9 @@ class RustPushService extends GetxService {
       lib.ApsState,
       api.JoinedOsConfig,
       api.IdsngmIdentity,
-      lib.ArcAnisetteClientDefaultAnisetteProvider
-    )? prefix;
+      lib.ArcAnisetteClientDefaultAnisetteProvider,
+    )?
+    prefix;
     if (hw || !setup) {
       api.closeAps(aps: state.conn);
       state.conn.dispose();
@@ -6839,7 +7642,7 @@ class RustPushService extends GetxService {
         restored.push,
         state.osConfig,
         api.decodeIdentity(identity: restored.identity),
-        state.anisette
+        state.anisette,
       );
     }
 
@@ -6849,17 +7652,19 @@ class RustPushService extends GetxService {
       if (ls.isUiThread) {
         try {
           Get.offAll(
-              () => PopScope(
-                    canPop: false,
-                    child: TitleBarWrapper(child: SetupView(prefix: prefix)),
-                  ),
-              duration: Duration.zero,
-              transition: Transition.noTransition);
+            () => PopScope(
+              canPop: false,
+              child: TitleBarWrapper(child: SetupView(prefix: prefix)),
+            ),
+            duration: Duration.zero,
+            transition: Transition.noTransition,
+          );
         } catch (e, s) {
           Logger.warn(
-              "Failed to show setup for the requested registration route",
-              error: e,
-              trace: s);
+            "Failed to show setup for the requested registration route",
+            error: e,
+            trace: s,
+          );
         }
       }
     }
