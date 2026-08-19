@@ -114,7 +114,7 @@ class FaceTimeActivity : Activity() {
     }
 
     private fun scheduleJoinAttempt(reason: String, delayMillis: Long = 0) {
-        if (!answered || callEnding || joinPolicy.joined || isFinishing || isDestroyed) return
+        if (!answered || !mirrorReady || callEnding || joinPolicy.joined || isFinishing || isDestroyed) return
         joinRetryRunnable?.let(mainHandler::removeCallbacks)
         val runnable = Runnable { attemptJoin(reason) }
         joinRetryRunnable = runnable
@@ -133,6 +133,9 @@ class FaceTimeActivity : Activity() {
             if (decision.joined) {
                 showCallUi(joined = true)
                 return@evaluateJavascript
+            }
+            if (decision.outcome == FaceTimeJoinOutcome.CLICKED) {
+                showCallUi(joined = false)
             }
             if (decision.revealManualRecovery) {
                 showCallUi(joined = false)
@@ -384,10 +387,16 @@ class FaceTimeActivity : Activity() {
     }
 
     fun handlePermissionRequest(request: PermissionRequest) {
-        val permissions = request.resources.flatMap { i -> permissionMap[i] ?: listOf() }
+        val recognizedResources = request.resources.filter(permissionMap::containsKey)
+        if (recognizedResources.isEmpty()) {
+            Log.w(diagnosticTag, "denying unsupported WebView permission resources=${request.resources.sorted().joinToString()}")
+            request.deny()
+            return
+        }
+        val permissions = recognizedResources.flatMap { permissionMap[it] ?: emptyList() }.distinct()
         if (diagnosticsEnabled()) Log.i(diagnosticTag, "handling WebView permission resources=${request.resources.sorted().joinToString()} androidPermissions=${permissions.joinToString()} alreadyGranted=${permissions.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }}")
         if (permissions.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) {
-            request.grant(request.resources)
+            request.grant(recognizedResources.toTypedArray())
             startService()
             return
         }
@@ -444,23 +453,31 @@ class FaceTimeActivity : Activity() {
             val permissionResults = permissions.zip(grantResults.toTypedArray()).joinToString { (permission, result) -> "$permission=${result == PackageManager.PERMISSION_GRANTED}" }
             Log.i(diagnosticTag, "Android permission result $permissionResults")
         }
+        var grantedAnyResource = false
         for (request in permissionRequests) {
-            request.grant(request.resources.filter { i ->
-                (permissionMap[i] ?: listOf()).all {
-                    val permissionIdx = permissions.indexOf(it)
-                    grantResults[permissionIdx] == PackageManager.PERMISSION_GRANTED
+            val grantedResources = request.resources.filter { resource ->
+                val requiredPermissions = permissionMap[resource] ?: return@filter false
+                requiredPermissions.all { permission ->
+                    val permissionIdx = permissions.indexOf(permission)
+                    permissionIdx >= 0 && permissionIdx < grantResults.size &&
+                        grantResults[permissionIdx] == PackageManager.PERMISSION_GRANTED
                 }
-            }.toTypedArray())
+            }.toTypedArray()
+            if (grantedResources.isNotEmpty()) {
+                request.grant(grantedResources)
+                grantedAnyResource = true
+            } else {
+                request.deny()
+            }
         }
         permissionRequests = arrayListOf()
-        startService()
+        if (grantedAnyResource) startService()
     }
 
     private fun connecting() {
         if (diagnosticsEnabled()) Log.i(diagnosticTag, "waiting for mirrorReady")
         binding.acceptButtons.visibility = View.GONE
         binding.loadingBanner.text = "Connecting..."
-        scheduleJoinAttempt("connecting")
         val recoveryRunnable = Runnable {
             if (callEnding || isFinishing || isDestroyed || joinPolicy.joined) return@Runnable
             Log.w(diagnosticTag, "mirrorReady timeout reached mirrorReady=$mirrorReady answered=$answered")

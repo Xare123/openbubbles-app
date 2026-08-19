@@ -29,7 +29,9 @@ internal class FaceTimeJoinPolicy(
     fun record(rawResult: String?): FaceTimeJoinDecision {
         attempts += 1
         val outcome = parseOutcome(rawResult)
-        if (outcome == FaceTimeJoinOutcome.CLICKED || outcome == FaceTimeJoinOutcome.ALREADY_JOINED) {
+        // A DOM click only starts the asynchronous join. The leave button is the
+        // first reliable page state proving that the call was actually joined.
+        if (outcome == FaceTimeJoinOutcome.ALREADY_JOINED) {
             joined = true
         }
 

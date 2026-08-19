@@ -148,6 +148,7 @@ configurations.all {
 }
 
 dependencies {
+    testImplementation 'junit:junit:4.13.2'
     // Android native functions
     implementation "androidx.core:core-ktx:1.13.1"
     implementation "androidx.sharetarget:sharetarget:1.2.0"

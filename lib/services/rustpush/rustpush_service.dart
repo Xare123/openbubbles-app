@@ -3038,9 +3038,7 @@ class RustPushService extends GetxService {
     var link = await api.getFtLink(facetime: pushService.state!.ftClient, usage: "next");
     var desc = targets.map((p) => RustPushBBUtils.rustHandleToBB(p).displayName).join(" & ");
     // rotate link
-    pushService.rotateLink().catchError((e, s) {
-      Logger.error("Failed to rotate link", error: e, trace: s);
-    });
+    await pushService.rotateLink();
 
     // preload
     mcs.invokeMethod("update-call-state", {
@@ -3637,7 +3635,6 @@ class RustPushService extends GetxService {
             );
           }
           
-          incomingRingingCallGuid = null;
         }
       } else if (facetime is api.FTMessage_AddMembers) {
         if (facetime.ring) {
@@ -3676,7 +3673,7 @@ class RustPushService extends GetxService {
           return;
         }
         var link = await api.getFtLink(facetime: pushService.state!.ftClient, usage: "nextincomingcall");
-        rotateIncomingLink();
+        await rotateIncomingLink();
         incomingRingingCallGuid = ring;
 
         String? myPoster;
@@ -3716,7 +3713,7 @@ class RustPushService extends GetxService {
           }
         }
 
-        ah.handleIncomingFaceTimeCall({
+        await ah.handleIncomingFaceTimeCall({
           "uuid": ring,
           "address": session,
           "link": link,
@@ -3727,34 +3724,39 @@ class RustPushService extends GetxService {
 
       if (facetime is api.FTMessage_LeaveEvent) {
         var nonActive = sessions.firstWhereOrNull((a) => a.groupId == facetime.guid);
-        if (nonActive != null) {
-          if (incomingRingingCallGuid != null) {
+        final callStillActive = activeSessions.any((session) => session.groupId == facetime.guid);
+        if (incomingRingingCallGuid == facetime.guid) {
+          if (nonActive != null) {
             var session = getSessionName(facetime.guid, false);
-            if (session == null) {
-              Logger.warn("Missed call $ring not found in active sessions!");
-              return;
+            if (session != null) {
+              await notif.createMissedCallNotification(session, facetime.guid);
+            } else {
+              Logger.warn("Missed call ${facetime.guid} not found in known sessions");
             }
-            // this is a missed call
-            notif.createMissedCallNotification(session, facetime.guid);
-            incomingRingingCallGuid = null;
           }
-
-          hideFaceTimeOverlay(facetime.guid, timeout: true); // they have given up the ringing
+          incomingRingingCallGuid = null;
+        }
+        if (!callStillActive) {
+          if (chosenFTRoomGuid == facetime.guid) chosenFTRoomGuid = null;
+          hideFaceTimeOverlay(facetime.guid, timeout: true);
         }
       }
 
       if (facetime is api.FTMessage_RespondedElsewhere) {
         hideFaceTimeOverlay(facetime.guid, timeout: true); // they have given up the ringing
-        incomingRingingCallGuid = null;
+        if (incomingRingingCallGuid == facetime.guid) incomingRingingCallGuid = null;
       }
 
       if (facetime is api.FTMessage_LetMeInRequest) {
         var approvedGroup = chosenFTRoomGuid;
-        if (facetime.field0.usage == "incomingcall" || facetime.field0.usage == "nextincomingcall") {
+        final incomingAdmission = facetime.field0.usage == "incomingcall" || facetime.field0.usage == "nextincomingcall";
+        if (incomingAdmission) {
           approvedGroup = incomingRingingCallGuid;
-          incomingRingingCallGuid = null;
         }
         await api.answerFtRequest(facetime: pushService.state!.ftClient, request: facetime.field0, approvedGroup: approvedGroup);
+        if (incomingAdmission && incomingRingingCallGuid == approvedGroup) {
+          incomingRingingCallGuid = null;
+        }
       }
       return;
     }

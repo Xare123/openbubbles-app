@@ -69,8 +69,9 @@ void main() {
     expect(endEnd, greaterThan(endStart));
     expect(
       activity.substring(joinStart, joinEnd),
-      contains('callcontrols-join-button-session-banner'),
+      contains('scheduleJoinAttempt("answer-ready")'),
     );
+    expect(activity, contains('callcontrols-join-button-session-banner'));
     expect(
       activity.substring(endStart, endEnd),
       contains('callcontrols-leave-button-session-banner'),

@@ -22,20 +22,24 @@ fun AudioManager.getStreamMinVolumeCompat(stream: Int): Int {
 }
 
 object Utils {
-    fun getAdaptiveIconFromByteArray(data: ByteArray): IconCompat {
-        val bitmap = BitmapFactory.decodeByteArray(data, 0, data.size)
+    internal fun calculateScaledDimensions(width: Int, height: Int, targetSize: Int): Pair<Int, Int>? {
+        if (width <= 0 || height <= 0 || targetSize <= 0) return null
+
+        val scale = targetSize.toFloat() / maxOf(width, height).toFloat()
+        return Pair(
+            (width * scale).toInt().coerceAtLeast(1),
+            (height * scale).toInt().coerceAtLeast(1),
+        )
+    }
+
+    fun getAdaptiveIconFromByteArray(data: ByteArray): IconCompat? {
+        if (data.isEmpty()) return null
+        val bitmap = BitmapFactory.decodeByteArray(data, 0, data.size) ?: return null
         // Scale the bitmap to 108x108dp to comply with adaptive icon guidelines
         // Start by scaling the inner image to 72x72dp
-        var width = bitmap.width
-        var height = bitmap.height
-        val aspectRatio = width / height
-        if (aspectRatio > 1) {
-            width = (72 * Resources.getSystem().displayMetrics.density).toInt()
-            height = width / aspectRatio
-        } else {
-            height = (72 * Resources.getSystem().displayMetrics.density).toInt()
-            width = height / aspectRatio
-        }
+        val targetSize = (72 * Resources.getSystem().displayMetrics.density).toInt().coerceAtLeast(1)
+        val (width, height) = calculateScaledDimensions(bitmap.width, bitmap.height, targetSize)
+            ?: return null
         val scaledBitmap = Bitmap.createScaledBitmap(bitmap, width, height, true)
         // Add transparent padding to achieve 108x108dp
         val padding = ((108 - 72) * Resources.getSystem().displayMetrics.density).toInt();
