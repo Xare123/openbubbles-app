@@ -3856,7 +3856,13 @@ class RustPushService extends GetxService {
         .map((p) => RustPushBBUtils.rustHandleToBB(p).displayName)
         .join(" & ");
     // rotate link
-    await pushService.rotateLink();
+    try {
+      await pushService.rotateLink();
+    } catch (error) {
+      // The link fetched above remains valid under the "next" usage. Keep the
+      // call usable if rotating it into the current slot fails transiently.
+      Logger.warn("Failed to rotate outgoing FaceTime link; continuing with the next slot (${error.runtimeType})");
+    }
 
     // preload
     mcs.invokeMethod("update-call-state", {
@@ -4599,7 +4605,13 @@ class RustPushService extends GetxService {
         }
         var link = await api.getFtLink(
             facetime: pushService.state!.ftClient, usage: "nextincomingcall");
-        await rotateIncomingLink();
+        try {
+          await rotateIncomingLink();
+        } catch (error) {
+          // LetMeInRequest accepts nextincomingcall as well as incomingcall.
+          Logger.warn(
+              "Failed to rotate incoming FaceTime link; continuing with the next slot (${error.runtimeType})");
+        }
         incomingRingingCallGuid = ring;
 
         String? myPoster;
