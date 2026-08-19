@@ -11,6 +11,7 @@ import android.view.View
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -133,10 +134,7 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                 request: WebResourceRequest?
             ): WebResourceResponse? {
                 if (request == null) return null
-                if (!request.url.toString().endsWith("main.js")) {
-                    if (diagnosticsEnabled() && request.url.lastPathSegment == "main.js") {
-                        Log.w(diagnosticTag, "main.js candidate was not intercepted because its URL has a suffix")
-                    }
+                if (request.url.lastPathSegment != "main.js") {
                     return null
                 }
                 // intercept and patch request
@@ -196,6 +194,12 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                         "http error mainFrame=${request?.isForMainFrame} status=${errorResponse?.statusCode} resource=${safeResourceLabel(request?.url?.toString())}"
                     )
                 }
+            }
+
+            override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                Log.e(diagnosticTag, "WebView render process gone crashed=${detail?.didCrash()} priority=${detail?.rendererPriorityAtExit()}")
+                callbackHandler.post { endTask() }
+                return true
             }
         }
         webView.setBackgroundColor(Color.BLACK)

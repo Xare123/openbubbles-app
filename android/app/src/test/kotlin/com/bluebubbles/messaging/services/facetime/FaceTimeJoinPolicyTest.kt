@@ -7,13 +7,13 @@ import org.junit.Test
 
 class FaceTimeJoinPolicyTest {
     @Test
-    fun clickedStopsRetryAndRevealsCall() {
+    fun clickedKeepsRetryingUntilJoinedStateIsObserved() {
         val decision = FaceTimeJoinPolicy().record("\"clicked\"")
 
         assertEquals(FaceTimeJoinOutcome.CLICKED, decision.outcome)
-        assertTrue(decision.joined)
-        assertTrue(decision.revealManualRecovery)
-        assertFalse(decision.retry)
+        assertFalse(decision.joined)
+        assertFalse(decision.revealManualRecovery)
+        assertTrue(decision.retry)
     }
 
     @Test

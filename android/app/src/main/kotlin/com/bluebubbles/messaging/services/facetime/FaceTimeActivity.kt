@@ -137,7 +137,7 @@ class FaceTimeActivity : Activity() {
     }
 
     private fun scheduleJoinAttempt(reason: String, delayMillis: Long = 0) {
-        if (!answered || callEnding || joinPolicy.joined || isFinishing || isDestroyed) return
+        if (!answered || !mirrorReady || callEnding || joinPolicy.joined || isFinishing || isDestroyed) return
         joinRetryRunnable?.let(mainHandler::removeCallbacks)
         val runnable = Runnable { attemptJoin(reason) }
         joinRetryRunnable = runnable
@@ -159,6 +159,9 @@ class FaceTimeActivity : Activity() {
                 showCallUi(joined = true)
                 scheduleConnectionProbe(1000)
                 return@evaluateJavascript
+            }
+            if (decision.outcome == FaceTimeJoinOutcome.CLICKED) {
+                showCallUi(joined = false)
             }
             if (decision.revealManualRecovery) {
                 showCallUi(joined = false)
@@ -418,7 +421,13 @@ class FaceTimeActivity : Activity() {
     }
 
     fun handlePermissionRequest(request: PermissionRequest) {
-        val permissions = request.resources.flatMap { i -> permissionMap[i] ?: listOf() }
+        val recognizedResources = request.resources.filter(permissionMap::containsKey)
+        if (recognizedResources.isEmpty()) {
+            Log.w(diagnosticTag, "denying unsupported WebView permission resources=${request.resources.sorted().joinToString()}")
+            request.deny()
+            return
+        }
+        val permissions = recognizedResources.flatMap { permissionMap[it] ?: emptyList() }.distinct()
         if (diagnosticsEnabled()) {
             Log.i(
                 diagnosticTag,
@@ -426,7 +435,7 @@ class FaceTimeActivity : Activity() {
             )
         }
         if (permissions.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) {
-            request.grant(request.resources)
+            request.grant(recognizedResources.toTypedArray())
             startService()
             return
         }
@@ -486,16 +495,25 @@ class FaceTimeActivity : Activity() {
                 "Android permission result ${permissions.zip(grantResults.toTypedArray()).joinToString { (permission, result) -> "$permission=${result == PackageManager.PERMISSION_GRANTED}" }}"
             )
         }
+        var grantedAnyResource = false
         for (request in permissionRequests) {
-            request.grant(request.resources.filter { i ->
-                (permissionMap[i] ?: listOf()).all {
-                    val permissionIdx = permissions.indexOf(it)
-                    grantResults[permissionIdx] == PackageManager.PERMISSION_GRANTED
+            val grantedResources = request.resources.filter { resource ->
+                val requiredPermissions = permissionMap[resource] ?: return@filter false
+                requiredPermissions.all { permission ->
+                    val permissionIdx = permissions.indexOf(permission)
+                    permissionIdx >= 0 && permissionIdx < grantResults.size &&
+                        grantResults[permissionIdx] == PackageManager.PERMISSION_GRANTED
                 }
-            }.toTypedArray())
+            }.toTypedArray()
+            if (grantedResources.isNotEmpty()) {
+                request.grant(grantedResources)
+                grantedAnyResource = true
+            } else {
+                request.deny()
+            }
         }
         permissionRequests = arrayListOf()
-        startService()
+        if (grantedAnyResource) startService()
     }
 
     private fun connecting() {
@@ -504,7 +522,6 @@ class FaceTimeActivity : Activity() {
         }
         binding.acceptButtons.visibility = View.GONE
         binding.loadingBanner.text = "Connecting..."
-        scheduleJoinAttempt("connecting")
         val recoveryRunnable = Runnable {
             if (callEnding || isFinishing || isDestroyed || joinPolicy.joined) return@Runnable
             if (diagnosticsEnabled()) {

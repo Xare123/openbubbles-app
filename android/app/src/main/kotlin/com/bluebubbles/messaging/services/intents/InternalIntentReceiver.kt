@@ -96,7 +96,9 @@ class InternalIntentReceiver: BroadcastReceiver() {
                             val bis = BufferedInputStream(FileInputStream(file))
                             val dis = DataInputStream(bis)
                             dis.readFully(bytes)
-                            sender.setIcon(Utils.getAdaptiveIconFromByteArray(bytes).toIcon(context))
+                            Utils.getAdaptiveIconFromByteArray(bytes)?.let {
+                                sender.setIcon(it.toIcon(context))
+                            }
                         } catch (e: IOException) {
                             e.printStackTrace()
                         }

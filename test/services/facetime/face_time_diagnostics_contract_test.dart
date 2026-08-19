@@ -69,8 +69,9 @@ void main() {
     expect(endEnd, greaterThan(endStart));
     expect(
       activity.substring(joinStart, joinEnd),
-      contains('webView.evaluateJavascript(joinButtonScript)'),
+      contains('scheduleJoinAttempt("answer-ready")'),
     );
+    expect(activity, contains('callcontrols-join-button-session-banner'));
     expect(
       activity.substring(endStart, endEnd),
       contains('webView.evaluateJavascript('),
