@@ -18,27 +18,42 @@ class FaceTimeCallStateHandler: MethodCallHandlerImpl() {
         context: Context
     ) {
         val state = call.argument<String>("state")
+        val callUuid = call.argument<String>("callUuid")
 
         if (state == "ringing") {
-            if (FaceTimeActivity.activeFaceTimeActivity == null && FaceTimeActivity.cachedWebview == null) {
+            if (FaceTimeActivity.activeFaceTimeActivity == null) {
                 val name = call.argument<String>("name")
                 val desc = call.argument<String>("desc")!!
                 val url = call.argument<String>("url")!!
-                // start preloading the FT web UI now so if they pick up the call we're ready
-                FaceTimeActivity.cachedWebview = CachedWebview(context, name, desc, url)
+                if (FaceTimeActivity.cachedWebview != null && FaceTimeActivity.cachedCallUuid != callUuid) {
+                    FaceTimeActivity.cachedWebview?.let { stale ->
+                        stale.cancelCallbacks()
+                        stale.webView.destroy()
+                    }
+                    FaceTimeActivity.cachedWebview = null
+                    FaceTimeActivity.cachedCallUuid = null
+                }
+                if (FaceTimeActivity.cachedWebview == null) {
+                    // Keep the preloaded page tied to the call/link that created it.
+                    FaceTimeActivity.cachedWebview = CachedWebview(context, name, desc, url)
+                    FaceTimeActivity.cachedCallUuid = callUuid
+                }
             }
         } else if (state == "timeout") {
             // finish any still ringing activity
             FaceTimeActivity.activeFaceTimeActivity?.let {
-                if (!it.answered && it.isCall) {
+                if (!it.answered && it.isCall && it.callUuid == callUuid) {
                     it.finishAndRemoveTask()
                 }
             }
-            // cancel any unused webview
-            FaceTimeActivity.cachedWebview?.let {
-                it.cancelCallbacks()
-                it.webView.destroy()
-                FaceTimeActivity.cachedWebview = null
+            // A stale timer from another call must not destroy the current cache.
+            if (FaceTimeActivity.cachedCallUuid == callUuid) {
+                FaceTimeActivity.cachedWebview?.let {
+                    it.cancelCallbacks()
+                    it.webView.destroy()
+                    FaceTimeActivity.cachedWebview = null
+                    FaceTimeActivity.cachedCallUuid = null
+                }
             }
         }
 

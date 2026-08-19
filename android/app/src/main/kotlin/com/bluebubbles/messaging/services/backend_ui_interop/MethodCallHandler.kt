@@ -76,6 +76,31 @@ class MethodCallHandler {
             }
         }
 
+        fun invokeMethodOrWorker(context: Context, method: String, arguments: Map<String, Any>) {
+            val enqueueWorker = {
+                DartWorkManager.createWorker(
+                    context.applicationContext,
+                    method,
+                    HashMap(arguments),
+                ) {}
+            }
+            val mainEngine = engine
+            if (mainEngine != null) {
+                MethodChannel(mainEngine.dartExecutor.binaryMessenger, Constants.methodChannel)
+                    .invokeMethod(method, arguments, object : MethodChannel.Result {
+                        override fun success(result: Any?) = Unit
+                        override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+                            enqueueWorker()
+                        }
+                        override fun notImplemented() {
+                            enqueueWorker()
+                        }
+                    })
+                return
+            }
+            enqueueWorker()
+        }
+
         fun invokeMethodCb(method: String, arguments: Map<String, Any>, callback: MethodChannel.Result) {
             if (engine != null) {
                 MethodChannel(engine!!.dartExecutor.binaryMessenger, Constants.methodChannel).invokeMethod(method, arguments, callback)

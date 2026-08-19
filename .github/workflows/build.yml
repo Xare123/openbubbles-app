@@ -93,6 +93,7 @@ jobs:
           bash ./gradlew testAlphaDebugUnitTest \
             --tests 'com.bluebubbles.messaging.services.facetime.FaceTimeJoinPolicyTest' \
             --tests 'com.bluebubbles.messaging.services.facetime.FaceTimeDiagnosticsTest' \
+            --tests 'com.bluebubbles.messaging.services.facetime.FaceTimeWebPolicyTest' \
             --tests 'com.bluebubbles.messaging.utils.UtilsTest'
 
       - name: Assert required native libraries are in the APK

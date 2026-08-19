@@ -7,7 +7,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -15,6 +14,11 @@ import androidx.annotation.RequiresApi
 import com.bluebubbles.messaging.R
 
 class FaceTimeInCallService: Service() {
+
+    companion object {
+        const val ACTION_REFRESH_FOREGROUND_TYPES =
+            "com.bluebubbles.messaging.facetime.REFRESH_FOREGROUND_TYPES"
+    }
 
     @RequiresApi(Build.VERSION_CODES.O)
     fun createNotificationChannel() {
@@ -37,14 +41,14 @@ class FaceTimeInCallService: Service() {
             .setSmallIcon(R.mipmap.ic_stat_icon)
             .build()
 
-        var type: Int = 0
+        var type = 0
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-            }
-            if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-            }
+            type = faceTimeForegroundServiceType(
+                hasCameraPermission = checkSelfPermission(android.Manifest.permission.CAMERA) ==
+                    PackageManager.PERMISSION_GRANTED,
+                hasMicrophonePermission = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
+                    PackageManager.PERMISSION_GRANTED,
+            )
         }
 
         // Notification ID cannot be 0.
@@ -52,12 +56,19 @@ class FaceTimeInCallService: Service() {
     }
 
     override fun onCreate() {
+        super.onCreate()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             notifyForeground()
         }
-        super.onCreate()
     }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            intent?.action == ACTION_REFRESH_FOREGROUND_TYPES) {
+            notifyForeground()
+        }
+        return START_NOT_STICKY
+    }
 
     override fun onBind(intent: Intent?): IBinder? {
         return null

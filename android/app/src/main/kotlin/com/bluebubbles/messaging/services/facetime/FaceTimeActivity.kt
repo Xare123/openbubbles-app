@@ -34,6 +34,7 @@ import androidx.core.view.updateLayoutParams
 import com.bluebubbles.messaging.Constants
 import com.bluebubbles.messaging.R
 import com.bluebubbles.messaging.databinding.ActivityFaceTimeBinding
+import com.bluebubbles.messaging.services.backend_ui_interop.MethodCallHandler
 import com.bluebubbles.messaging.services.notifications.CreateIncomingFaceTimeNotification
 import com.bluebubbles.messaging.services.notifications.DeleteNotificationHandler
 import com.bluebubbles.messaging.services.rustpush.APNClient
@@ -47,11 +48,14 @@ class FaceTimeActivity : Activity() {
         private const val diagnosticTag = "FaceTimeDiag"
         var activeFaceTimeActivity: FaceTimeActivity? = null
         var cachedWebview: CachedWebview? = null
+        var cachedCallUuid: String? = null
     }
 
     private lateinit var binding: ActivityFaceTimeBinding
 
     private var permissionRequests = ArrayList<PermissionRequest>()
+    private var permissionRequestInFlight = false
+    private val deniedAndroidPermissions = mutableSetOf<String>()
     private val permissionMap = mapOf(
         PermissionRequest.RESOURCE_VIDEO_CAPTURE to listOf(Manifest.permission.CAMERA),
         PermissionRequest.RESOURCE_AUDIO_CAPTURE to listOf(Manifest.permission.RECORD_AUDIO),
@@ -71,6 +75,7 @@ class FaceTimeActivity : Activity() {
     private var manualRecoveryRunnable: Runnable? = null
     private var endFallbackRunnable: Runnable? = null
     private var callEnding = false
+    private var localEndReported = false
 
     private fun diagnosticsEnabled(): Boolean = FaceTimeDiagnostics.isEnabled(this)
 
@@ -153,6 +158,7 @@ class FaceTimeActivity : Activity() {
     fun endCall() {
         if (callEnding) return
         callEnding = true
+        reportLocalCallEnded()
         joinRetryRunnable?.let(mainHandler::removeCallbacks)
         binding.connectionStatus.text = "Ending FaceTime..."
         binding.connectionStatus.visibility = View.VISIBLE
@@ -236,12 +242,15 @@ class FaceTimeActivity : Activity() {
     var contentObserver: ContentObserver? = null
 
     private fun handlePermissionRequests() {
-        for (request in cached.deferredRequests) {
+        cached.deferredRequestCanceled = { request ->
+            permissionRequests.remove(request)
+        }
+        for (request in cached.deferredRequests.toList()) {
             handlePermissionRequest(request)
         }
         cached.deferredRequests.clear()
         cached.deferredRequestsUpdated = {
-            for (request in cached.deferredRequests) {
+            for (request in cached.deferredRequests.toList()) {
                 handlePermissionRequest(request)
             }
             cached.deferredRequests.clear()
@@ -376,38 +385,104 @@ class FaceTimeActivity : Activity() {
 
     var serviceStarted: Boolean = false
 
-    fun startService() {
-        if (serviceStarted) return
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val intent = Intent(this, FaceTimeInCallService::class.java)
-            startForegroundService(intent)
+    fun startOrRefreshService() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val intent = Intent(this, FaceTimeInCallService::class.java).apply {
+                    action = FaceTimeInCallService.ACTION_REFRESH_FOREGROUND_TYPES
+                }
+                startForegroundService(intent)
+            }
+            serviceStarted = true
+        } catch (error: RuntimeException) {
+            serviceStarted = false
+            Log.e(diagnosticTag, "unable to start FaceTime foreground service: ${error.javaClass.simpleName}")
         }
-        serviceStarted = true
+    }
+
+    private fun reportLocalCallEnded() {
+        if (localEndReported) return
+        val endedCallUuid = callUuid ?: return
+        localEndReported = true
+        MethodCallHandler.invokeMethodOrWorker(
+            applicationContext,
+            "facetime-call-ended",
+            mapOf("callUuid" to endedCallUuid),
+        )
     }
 
     fun handlePermissionRequest(request: PermissionRequest) {
         val recognizedResources = request.resources.filter(permissionMap::containsKey)
-        if (recognizedResources.isEmpty()) {
+        if (recognizedResources.isEmpty() || recognizedResources.size != request.resources.size) {
             Log.w(diagnosticTag, "denying unsupported WebView permission resources=${request.resources.sorted().joinToString()}")
             request.deny()
             return
         }
-        val permissions = recognizedResources.flatMap { permissionMap[it] ?: emptyList() }.distinct()
-        if (diagnosticsEnabled()) Log.i(diagnosticTag, "handling WebView permission resources=${request.resources.sorted().joinToString()} androidPermissions=${permissions.joinToString()} alreadyGranted=${permissions.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }}")
-        if (permissions.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) {
-            request.grant(recognizedResources.toTypedArray())
-            startService()
+        if (!permissionRequests.contains(request)) {
+            permissionRequests.add(request)
+        }
+        processPermissionRequests()
+    }
+
+    private fun processPermissionRequests() {
+        val grantedPermissions = permissionMap.values.flatten().filterTo(mutableSetOf()) {
+            checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+        }
+        var grantedAnyResource = false
+        val iterator = permissionRequests.iterator()
+        while (iterator.hasNext()) {
+            val request = iterator.next()
+            val recognizedResources = request.resources.filter(permissionMap::containsKey)
+            val requiredPermissions = recognizedResources
+                .flatMap { permissionMap[it] ?: emptyList() }
+                .toSet()
+            when (faceTimePermissionDecision(requiredPermissions, grantedPermissions, deniedAndroidPermissions)) {
+                FaceTimePermissionDecision.GRANT -> {
+                    val grantSucceeded = runCatching { request.grant(recognizedResources.toTypedArray()) }
+                        .onFailure { Log.w(diagnosticTag, "WebView permission grant was canceled") }
+                        .isSuccess
+                    iterator.remove()
+                    grantedAnyResource = grantedAnyResource || grantSucceeded
+                }
+                FaceTimePermissionDecision.DENY -> {
+                    runCatching { request.deny() }
+                    iterator.remove()
+                }
+                FaceTimePermissionDecision.WAIT -> Unit
+            }
+        }
+        // A later microphone or camera grant must upgrade the running
+        // foreground-service type, not merely start the service once.
+        if (grantedAnyResource) startOrRefreshService()
+        if (permissionRequestInFlight || permissionRequests.isEmpty()) return
+
+        val missingPermissions = permissionRequests
+            .flatMap { request -> request.resources.flatMap { permissionMap[it] ?: emptyList() } }
+            .filter { it !in grantedPermissions && it !in deniedAndroidPermissions }
+            .distinct()
+        if (missingPermissions.isEmpty()) {
+            permissionRequests.toList().forEach { runCatching { it.deny() } }
+            permissionRequests.clear()
             return
         }
-        permissionRequests.add(request)
-        requestPermissions(permissions.toTypedArray(), 1)
+        permissionRequestInFlight = true
+        try {
+            requestPermissions(missingPermissions.toTypedArray(), 1)
+        } catch (error: RuntimeException) {
+            permissionRequestInFlight = false
+            deniedAndroidPermissions.addAll(missingPermissions)
+            Log.e(diagnosticTag, "unable to request FaceTime media permissions: ${error.javaClass.simpleName}")
+            processPermissionRequests()
+        }
     }
 
     override fun onDestroy() {
         joinRetryRunnable?.let(mainHandler::removeCallbacks)
         manualRecoveryRunnable?.let(mainHandler::removeCallbacks)
         endFallbackRunnable?.let(mainHandler::removeCallbacks)
+        permissionRequests.toList().forEach { runCatching { it.deny() } }
+        permissionRequests.clear()
+        permissionRequestInFlight = false
         if (::cached.isInitialized) {
             cached.cancelCallbacks()
         }
@@ -448,35 +523,31 @@ class FaceTimeActivity : Activity() {
         permissions: Array<out String>,
         grantResults: IntArray
     ) {
-        if (requestCode != 1) return
+        if (requestCode != 1) {
+            super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+            return
+        }
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (diagnosticsEnabled()) {
             val permissionResults = permissions.zip(grantResults.toTypedArray()).joinToString { (permission, result) -> "$permission=${result == PackageManager.PERMISSION_GRANTED}" }
             Log.i(diagnosticTag, "Android permission result $permissionResults")
         }
-        var grantedAnyResource = false
-        for (request in permissionRequests) {
-            val grantedResources = request.resources.filter { resource ->
-                val requiredPermissions = permissionMap[resource] ?: return@filter false
-                requiredPermissions.all { permission ->
-                    val permissionIdx = permissions.indexOf(permission)
-                    permissionIdx >= 0 && permissionIdx < grantResults.size &&
-                        grantResults[permissionIdx] == PackageManager.PERMISSION_GRANTED
-                }
-            }.toTypedArray()
-            if (grantedResources.isNotEmpty()) {
-                request.grant(grantedResources)
-                grantedAnyResource = true
+        permissions.forEachIndexed { index, permission ->
+            if (index < grantResults.size && grantResults[index] == PackageManager.PERMISSION_GRANTED) {
+                deniedAndroidPermissions.remove(permission)
             } else {
-                request.deny()
+                deniedAndroidPermissions.add(permission)
             }
         }
-        permissionRequests = arrayListOf()
-        if (grantedAnyResource) startService()
+        permissionRequestInFlight = false
+        processPermissionRequests()
     }
 
     private fun connecting() {
         if (diagnosticsEnabled()) Log.i(diagnosticTag, "waiting for mirrorReady")
         binding.acceptButtons.visibility = View.GONE
+        binding.nativeCallControls.visibility = View.VISIBLE
+        binding.endCall.isEnabled = true
         binding.loadingBanner.text = "Connecting..."
         val recoveryRunnable = Runnable {
             if (callEnding || isFinishing || isDestroyed || joinPolicy.joined) return@Runnable
@@ -491,17 +562,27 @@ class FaceTimeActivity : Activity() {
     private fun handleConfig(extras: Bundle) {
         val link = extras.getString("link")!!
         val name = extras.getString("name")
+        val requestedCallUuid = extras.getString("callUuid")
+        callUuid = requestedCallUuid
         // sanitize desc
         val desc = extras.getString("desc")?.replace("[^a-zA-Z0-9, +.@:&]+".toRegex(), "") ?: "FaceTime Call"
-        if (cachedWebview != null) {
+        if (cachedWebview != null && cachedCallUuid == requestedCallUuid) {
             // take control of a pre-rendered webview
             cached = cachedWebview!!
             cachedWebview = null
+            cachedCallUuid = null
         } else {
+            cachedWebview?.let { stale ->
+                stale.cancelCallbacks()
+                stale.webView.destroy()
+            }
+            cachedWebview = null
+            cachedCallUuid = null
             cached = CachedWebview(this, name, desc, link)
         }
 
         cached.endTask = {
+            reportLocalCallEnded()
             finishAndRemoveTask()
         }
         mirrorReady = cached.mirrorReady
@@ -518,7 +599,6 @@ class FaceTimeActivity : Activity() {
 
         val isAnsweringCall = extras.containsKey("answer")
         notificationId = extras.getString("notificationId")?.toInt() ?: 0
-        callUuid = extras.getString("callUuid")
 
         if (CreateIncomingFaceTimeNotification.avatarCache.containsKey(callUuid)) {
             val bitmap = CreateIncomingFaceTimeNotification.avatarCache.remove(callUuid)!!

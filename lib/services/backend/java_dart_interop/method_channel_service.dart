@@ -58,6 +58,11 @@ class MethodChannelService extends GetxService {
     // Future.value(true) will have the engine stop trying to call the method
     
     switch (call.method) {
+      case "facetime-call-ended":
+        final callUuid = arguments?["callUuid"];
+        if (callUuid is! String || callUuid.isEmpty) return false;
+        pushService.handleNativeFaceTimeCallEnded(callUuid);
+        return true;
       case "SMSMsg":
         try {
           if (!ss.settings.isSmsRouter.value) return true;

@@ -33,6 +33,7 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
 
     val webView = WebView(context)
     private val applicationContext = context.applicationContext
+    private val allowedOrigin = secureWebOrigin(url)
     private val callbackHandler = Handler(Looper.getMainLooper())
     private var mirrorReadyRunnable: Runnable? = null
 
@@ -40,17 +41,30 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
     var mirrorReadyCall: (() -> Unit)? = null
     var endTask: () -> Unit = {
         webView.destroy()
-        FaceTimeActivity.cachedWebview = null
+        if (FaceTimeActivity.cachedWebview === this) {
+            FaceTimeActivity.cachedWebview = null
+            FaceTimeActivity.cachedCallUuid = null
+        }
     }
 
     val deferredRequests = arrayListOf<PermissionRequest>()
     var deferredRequestsUpdated: () -> Unit = {}
+    var deferredRequestCanceled: (PermissionRequest) -> Unit = {}
 
     fun cancelCallbacks() {
         mirrorReadyRunnable?.let(callbackHandler::removeCallbacks)
         mirrorReadyRunnable = null
         mirrorReadyCall = null
         deferredRequestsUpdated = {}
+        deferredRequestCanceled = {}
+        cancelDeferredPermissions()
+    }
+
+    fun cancelDeferredPermissions() {
+        deferredRequests.toList().forEach { request ->
+            runCatching { request.deny() }
+        }
+        deferredRequests.clear()
     }
 
     private fun diagnosticsEnabled(): Boolean = FaceTimeDiagnostics.isEnabled(applicationContext)
@@ -86,11 +100,18 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
 
         string = string
             .replace(""""GenericToast\.Waiting": *"Waiting to be let in…",""".toRegex(), """"GenericToast.Waiting":"Connecting…",""")
-            .replace(""""SessionBanner\.FaceTime": *"FaceTime Call",""".toRegex(), """"SessionBanner.FaceTime":"$desc",""")
+            .replace(""""SessionBanner\.FaceTime": *"FaceTime Call",""".toRegex(), """"SessionBanner.FaceTime":${javascriptStringLiteral(desc)},""")
             .replace("this.onLeave.notifyListeners()", "Native.leave(), this.onLeave.notifyListeners()")
 
         if (name != null) {
-            string = string.replace(submitNamePattern, "$1 $2(\"$name\").then(() => Native.mirrored());")
+            string = string.replace(submitNamePattern, "$1 $2(${javascriptStringLiteral(name)}).then(() => Native.mirrored());")
+        }
+
+        if (leaveMatches == 0 || (name != null && submitNameMatches == 0)) {
+            Log.e(
+                diagnosticTag,
+                "FaceTime web compatibility patch missing leave=$leaveMatches submitName=$submitNameMatches nameProvided=${name != null}",
+            )
         }
 
         Log.i(
@@ -190,8 +211,21 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             override fun onPermissionRequest(request: PermissionRequest?) {
                 if (request == null) return
                 if (diagnosticsEnabled()) Log.i(diagnosticTag, "WebView permission request resources=${request.resources.sorted().joinToString()}")
+                if (!matchesWebOrigin(allowedOrigin, request.origin.toString()) ||
+                    request.resources.any { it != PermissionRequest.RESOURCE_AUDIO_CAPTURE && it != PermissionRequest.RESOURCE_VIDEO_CAPTURE }
+                ) {
+                    Log.w(diagnosticTag, "denying WebView permission request from unexpected origin or resource")
+                    request.deny()
+                    return
+                }
                 deferredRequests.add(request)
                 deferredRequestsUpdated()
+            }
+
+            override fun onPermissionRequestCanceled(request: PermissionRequest?) {
+                if (request == null) return
+                deferredRequests.remove(request)
+                deferredRequestCanceled(request)
             }
 
             override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {

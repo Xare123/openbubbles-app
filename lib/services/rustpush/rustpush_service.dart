@@ -3031,63 +3031,136 @@ class RustPushService extends GetxService {
   Timer? outgoingCallTimer;
   Map<String, dynamic> outgoingCallMeta = {};
   RxString? currentOutgoingCall;
+  String? currentOutgoingCallGuid;
+  bool _outgoingCallSetupInProgress = false;
+
+  void _clearOutgoingCall(String guid, {String? finalState}) {
+    if (currentOutgoingCallGuid != guid) return;
+    outgoingCallTimer?.cancel();
+    outgoingCallTimer = null;
+    if (finalState != null) currentOutgoingCall?.value = finalState;
+    currentOutgoingCall = null;
+    currentOutgoingCallGuid = null;
+    outgoingCallMeta = {};
+  }
+
+  void handleNativeFaceTimeCallEnded(String guid) {
+    if (currentOutgoingCallGuid != guid) return;
+    if (chosenFTRoomGuid == guid) chosenFTRoomGuid = null;
+    _clearOutgoingCall(guid, finalState: "ended");
+    hideFaceTimeOverlay(guid, timeout: true);
+  }
+
   Future<void> placeOutgoingCall(String caller, List<String> targets) async {
-
-    var outgoingguid = uuid.v4().toUpperCase();
-
-    var link = await api.getFtLink(facetime: pushService.state!.ftClient, usage: "next");
-    var desc = targets.map((p) => RustPushBBUtils.rustHandleToBB(p).displayName).join(" & ");
-    // rotate link
+    if (_outgoingCallSetupInProgress || currentOutgoingCallGuid != null) {
+      Logger.warn(
+          "Ignoring duplicate FaceTime call request while another call is being set up");
+      return;
+    }
+    _outgoingCallSetupInProgress = true;
+    final outgoingguid = uuid.v4().toUpperCase();
     try {
-      await pushService.rotateLink();
-    } catch (error) {
-      // The link fetched above remains valid under the "next" usage. Keep the
-      // call usable if rotating it into the current slot fails transiently.
-      Logger.warn("Failed to rotate outgoing FaceTime link; continuing with the next slot (${error.runtimeType})");
-    }
+      var link = await api.getFtLink(
+          facetime: pushService.state!.ftClient, usage: "next");
+      var desc = targets
+          .map((p) => RustPushBBUtils.rustHandleToBB(p).displayName)
+          .join(" & ");
+      // rotate link
+      try {
+        await pushService.rotateLink();
+      } catch (error) {
+        // The link fetched above remains valid under the "next" usage. Keep the
+        // call usable if rotating it into the current slot fails transiently.
+        Logger.warn(
+            "Failed to rotate outgoing FaceTime link; continuing with the next slot (${error.runtimeType})");
+      }
 
-    // preload
-    mcs.invokeMethod("update-call-state", {
-      "name": ss.settings.userName.value == "You" ? (await api.getHandles(state: pushService.state!.client)).first.replaceFirst("tel:", "").replaceFirst("mailto:", "") : ss.settings.userName.value,
-      "desc": desc,
-      "url": link,
-      "callUuid": outgoingguid,
-      "state": "ringing",
-    });
-
-    outgoingCallMeta = {
-      'link': link, 
-      'callUuid': outgoingguid, 
-      'desc': desc, 
-      'name': ss.settings.userName.value == "You" ? (await api.getHandles(state: pushService.state!.client)).first.replaceFirst("tel:", "").replaceFirst("mailto:", "") : ss.settings.userName.value, 
-      'answer': true
-    };
-
-    outgoingCallTimer = Timer(const Duration(seconds: 30), () async {
-      currentOutgoingCall?.value = "timeout";
-
-      await api.cancelFacetime(facetime: pushService.state!.ftClient, guid: outgoingguid);
-
-      // destroy webview
+      // preload
       mcs.invokeMethod("update-call-state", {
+        "name": ss.settings.userName.value == "You"
+            ? (await api.getHandles(state: pushService.state!.client))
+                .first
+                .replaceFirst("tel:", "")
+                .replaceFirst("mailto:", "")
+            : ss.settings.userName.value,
+        "desc": desc,
+        "url": link,
         "callUuid": outgoingguid,
-        "state": "timeout",
+        "state": "ringing",
       });
-      currentOutgoingCall = null;
-    });
 
-    currentOutgoingCall = outgoingguid.obs;
+      outgoingCallMeta = {
+        'link': link,
+        'callUuid': outgoingguid,
+        'desc': desc,
+        'name': ss.settings.userName.value == "You"
+            ? (await api.getHandles(state: pushService.state!.client))
+                .first
+                .replaceFirst("tel:", "")
+                .replaceFirst("mailto:", "")
+            : ss.settings.userName.value,
+        'answer': true
+      };
 
-    Uint8List? icon;
-    String? poster;
-    if (targets.length == 1) {
-      var handle = RustPushBBUtils.rustHandleToBB(targets[0]);
-      icon = handle.contact?.avatar;
-      poster = handle.getPoster();
+      final callState = outgoingguid.obs;
+      currentOutgoingCall = callState;
+      currentOutgoingCallGuid = outgoingguid;
+      outgoingCallTimer = Timer(const Duration(seconds: 30), () async {
+        if (currentOutgoingCallGuid != outgoingguid ||
+            !identical(currentOutgoingCall, callState)) {
+          Logger.info("Ignoring stale FaceTime timeout for a superseded call");
+          return;
+        }
+        callState.value = "timeout";
+
+        try {
+          await api.cancelFacetime(
+              facetime: pushService.state!.ftClient, guid: outgoingguid);
+        } catch (error) {
+          Logger.warn(
+              "Unable to cancel timed-out FaceTime call (${error.runtimeType})");
+        } finally {
+          // Destroy only the webview associated with this call.
+          mcs.invokeMethod("update-call-state", {
+            "callUuid": outgoingguid,
+            "state": "timeout",
+          });
+          _clearOutgoingCall(outgoingguid);
+        }
+      });
+
+      Uint8List? icon;
+      String? poster;
+      if (targets.length == 1) {
+        var handle = RustPushBBUtils.rustHandleToBB(targets[0]);
+        icon = handle.contact?.avatar;
+        poster = handle.getPoster();
+      }
+
+      showOutgoingFaceTimeOverlay(
+          callState, desc, caller, targets, icon, link, poster);
+      await api.createFacetime(
+          facetime: pushService.state!.ftClient,
+          uuid: outgoingguid,
+          handle: caller,
+          participants: targets);
+    } catch (error) {
+      if (currentOutgoingCallGuid == outgoingguid) {
+        try {
+          await mcs.invokeMethod("update-call-state", {
+            "callUuid": outgoingguid,
+            "state": "timeout",
+          });
+        } catch (nativeError) {
+          Logger.warn(
+              "Unable to close failed FaceTime preload (${nativeError.runtimeType})");
+        }
+        _clearOutgoingCall(outgoingguid, finalState: "failed");
+      }
+      rethrow;
+    } finally {
+      _outgoingCallSetupInProgress = false;
     }
-
-    showOutgoingFaceTimeOverlay(currentOutgoingCall!, desc, caller, targets, icon, link, poster);
-    await api.createFacetime(facetime: pushService.state!.ftClient, uuid: outgoingguid, handle: caller, participants: targets);
   }
 
   // returns handle to show poster of
@@ -3625,22 +3698,39 @@ class RustPushService extends GetxService {
         if (facetime.ring) {
           ring = facetime.guid;
         }
-        if (facetime.guid == currentOutgoingCall?.value) {
+        if (facetime.guid == currentOutgoingCallGuid) {
           currentOutgoingCall?.value = "accepted";
           hideFaceTimeOverlay(facetime.guid);
 
           outgoingCallTimer?.cancel();
           chosenFTRoomGuid = facetime.guid;
 
-          if (Platform.isAndroid) {
-            await mcs.invokeMethod("launch-facetime", outgoingCallMeta);
-          } else {
-            await launchUrl(
-                Uri.parse(outgoingCallMeta['link']),
-                mode: LaunchMode.externalApplication
-            );
+          try {
+            if (Platform.isAndroid) {
+              await mcs.invokeMethod("launch-facetime", outgoingCallMeta);
+            } else {
+              await launchUrl(Uri.parse(outgoingCallMeta['link']),
+                  mode: LaunchMode.externalApplication);
+            }
+          } catch (error) {
+            Logger.warn(
+                "Unable to launch accepted FaceTime call (${error.runtimeType})");
+            try {
+              await api.cancelFacetime(
+                facetime: pushService.state!.ftClient,
+                guid: facetime.guid,
+              );
+            } catch (cancelError) {
+              Logger.warn(
+                  "Unable to cancel unlaunched FaceTime call (${cancelError.runtimeType})");
+            }
+            await mcs.invokeMethod("update-call-state", {
+              "callUuid": facetime.guid,
+              "state": "timeout",
+            });
+            _clearOutgoingCall(facetime.guid, finalState: "failed");
           }
-          
+
         }
       } else if (facetime is api.FTMessage_AddMembers) {
         if (facetime.ring) {
@@ -3651,21 +3741,21 @@ class RustPushService extends GetxService {
       }
 
       if (facetime is api.FTMessage_Decline) {
-        if (currentOutgoingCall?.value == facetime.guid) {
-          currentOutgoingCall?.value = "declined";
-          
-          outgoingCallTimer?.cancel();
-
+        if (currentOutgoingCallGuid == facetime.guid) {
           // destroy webview
           mcs.invokeMethod("update-call-state", {
             "callUuid": facetime.guid,
             "state": "timeout",
           });
-          currentOutgoingCall = null;
+          _clearOutgoingCall(facetime.guid, finalState: "declined");
         }
       }
 
       if (ring != null) {
+        if (incomingRingingCallGuid == ring) {
+          Logger.info("Ignoring duplicate incoming FaceTime ring for $ring");
+          return;
+        }
         String? existingCall = await mcs.invokeMethod("get-active-call");
         if (existingCall == ring) {
           // we already answered this call
@@ -3678,59 +3768,84 @@ class RustPushService extends GetxService {
           Logger.warn("Rung call $ring not found in active sessions!");
           return;
         }
-        var link = await api.getFtLink(facetime: pushService.state!.ftClient, usage: "nextincomingcall");
-        try {
-          await rotateIncomingLink();
-        } catch (error) {
-          // LetMeInRequest accepts nextincomingcall as well as incomingcall.
-          Logger.warn("Failed to rotate incoming FaceTime link; continuing with the next slot (${error.runtimeType})");
-        }
         incomingRingingCallGuid = ring;
+        try {
+          var link = await api.getFtLink(
+              facetime: pushService.state!.ftClient, usage: "nextincomingcall");
+          try {
+            await rotateIncomingLink();
+          } catch (error) {
+            // LetMeInRequest accepts nextincomingcall as well as incomingcall.
+            Logger.warn(
+                "Failed to rotate incoming FaceTime link; continuing with the next slot (${error.runtimeType})");
+          }
 
-        String? myPoster;
-        Uint8List? icon;
-        var identity = getSessionIdentity(ring, true);
-        if (identity != null) {
-          var handle = RustPushBBUtils.rustHandleToBB(identity);
-          if (handle.isBlocked()) {
+          String? myPoster;
+          Uint8List? icon;
+          var identity = getSessionIdentity(ring, true);
+          if (identity != null) {
+            var handle = RustPushBBUtils.rustHandleToBB(identity);
+            if (handle.isBlocked()) {
+              incomingRingingCallGuid = null;
+              Logger.info("Dropping call from blocked handle $handle");
+              return;
+            }
+            icon = handle.contact?.avatar;
+            var poster = handle.getPoster();
+            if (poster != null && !kIsDesktop) {
+              try {
+                var loaded = await api.fromPosterSave(
+                    poster: await File("$poster.jpg").readAsBytes());
+                var images = await loadPosterImages(poster, loaded.poster);
+
+                var recorder = ui.PictureRecorder();
+                var canvas = Canvas(recorder);
+
+                var painter = PosterPainter(
+                    poster: loaded.poster,
+                    images: images,
+                    name: handle.displayName);
+
+                Map<dynamic, dynamic> results =
+                    await mcs.invokeMethod("get-full-resolution");
+
+                var size = Size((results["width"]! as int).toDouble(),
+                    (results["height"]! as int).toDouble());
+                canvas.scale(results["ratio"]! as double);
+                painter.paint(canvas, size / (results["ratio"]! as double));
+
+                ui.Picture picture = recorder.endRecording();
+                ui.Image image = await picture.toImage(
+                    size.width.toInt(), size.height.toInt());
+
+                Uint8List bytes =
+                    (await image.toByteData(format: ui.ImageByteFormat.png))!
+                        .buffer
+                        .asUint8List();
+                File file = File("$poster-preview.png");
+                await file.writeAsBytes(bytes);
+                myPoster = file.path;
+              } catch (error) {
+                Logger.warn(
+                    "Unable to render optional incoming FaceTime poster (${error.runtimeType})");
+              }
+            }
+          }
+
+          await ah.handleIncomingFaceTimeCall({
+            "uuid": ring,
+            "address": session,
+            "link": link,
+            "icon": icon,
+            "poster": myPoster,
+          });
+        } catch (error) {
+          if (incomingRingingCallGuid == ring) {
             incomingRingingCallGuid = null;
-            Logger.info("Dropping call from blocked handle $handle");
-            return;
           }
-          icon = handle.contact?.avatar;
-          var poster = handle.getPoster();
-          if (poster != null && !kIsDesktop) {
-            var loaded = await api.fromPosterSave(poster: await File("$poster.jpg").readAsBytes());
-            var images = await loadPosterImages(poster, loaded.poster);
-
-            var recorder = ui.PictureRecorder();
-            var canvas = Canvas(recorder);
-
-            var painter = PosterPainter(poster: loaded.poster, images: images, name: handle.displayName);
-
-            Map<dynamic, dynamic> results = await mcs.invokeMethod("get-full-resolution");
-
-            var size = Size((results["width"]! as int).toDouble(), (results["height"]! as int).toDouble());
-            canvas.scale(results["ratio"]! as double);
-            painter.paint(canvas, size / (results["ratio"]! as double));
-
-            ui.Picture picture = recorder.endRecording();
-            ui.Image image = await picture.toImage(size.width.toInt(), size.height.toInt());
-
-            Uint8List bytes = (await image.toByteData(format: ui.ImageByteFormat.png))!.buffer.asUint8List();
-            File file = File("$poster-preview.png");
-            await file.writeAsBytes(bytes);
-            myPoster = file.path;
-          }
+          Logger.warn(
+              "Unable to prepare incoming FaceTime call (${error.runtimeType})");
         }
-
-        await ah.handleIncomingFaceTimeCall({
-          "uuid": ring,
-          "address": session,
-          "link": link,
-          "icon": icon,
-          "poster": myPoster,
-        });
       }
 
       if (facetime is api.FTMessage_LeaveEvent) {
@@ -3749,6 +3864,7 @@ class RustPushService extends GetxService {
         }
         if (!callStillActive) {
           if (chosenFTRoomGuid == facetime.guid) chosenFTRoomGuid = null;
+          _clearOutgoingCall(facetime.guid, finalState: "ended");
           hideFaceTimeOverlay(facetime.guid, timeout: true);
         }
       }
@@ -3764,7 +3880,17 @@ class RustPushService extends GetxService {
         if (incomingAdmission) {
           approvedGroup = incomingRingingCallGuid;
         }
-        await api.answerFtRequest(facetime: pushService.state!.ftClient, request: facetime.field0, approvedGroup: approvedGroup);
+        if (approvedGroup != null &&
+            !activeSessions
+                .any((session) => session.groupId == approvedGroup)) {
+          Logger.warn(
+              "Refusing stale FaceTime admission for a session that is no longer present");
+          approvedGroup = null;
+        }
+        await api.answerFtRequest(
+            facetime: pushService.state!.ftClient,
+            request: facetime.field0,
+            approvedGroup: approvedGroup);
         if (incomingAdmission && incomingRingingCallGuid == approvedGroup) {
           incomingRingingCallGuid = null;
         }
