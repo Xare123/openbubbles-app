@@ -56,9 +56,9 @@ void main() {
       'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/CachedWebview.kt',
     ).readAsStringSync();
 
-    final joinStart = activity.indexOf('private fun attemptJoin(');
-    final joinEnd = activity.indexOf('fun endCall()', joinStart);
-    final endStart = joinEnd;
+    final joinStart = activity.indexOf('private fun answerCall()');
+    final joinEnd = activity.indexOf('override fun onNewIntent(', joinStart);
+    final endStart = activity.indexOf('fun endCall()');
     final endEnd = activity.indexOf(
       'private fun hideControlsForPIP()',
       endStart,
@@ -74,7 +74,7 @@ void main() {
     expect(activity, contains('callcontrols-join-button-session-banner'));
     expect(
       activity.substring(endStart, endEnd),
-      contains('webView.evaluateJavascript('),
+      contains('callcontrols-leave-button-session-banner'),
     );
     expect(cachedWebview, contains('message=<omitted>'));
     expect(cachedWebview, isNot(contains('consoleMessage.message()')));
