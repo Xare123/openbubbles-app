@@ -3,8 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('FaceTime diagnostics default off and persist through settings maps',
-      () {
+  test('FaceTime diagnostics default off and persist through settings maps', () {
     final source = File('lib/database/global/settings.dart').readAsStringSync();
 
     expect(
@@ -86,10 +85,7 @@ void main() {
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsStringSync();
     final ringGuard = source.indexOf('incomingRingingCallGuid == ring');
-    final incomingLink = source.indexOf(
-      'usage: "nextincomingcall"',
-      ringGuard,
-    );
+    final incomingLink = source.indexOf('usage: "nextincomingcall"', ringGuard);
 
     expect(ringGuard, greaterThanOrEqualTo(0));
     expect(incomingLink, greaterThan(ringGuard));
@@ -100,7 +96,8 @@ void main() {
     expect(
       source,
       contains(
-          'Refusing stale FaceTime admission for a session that is no longer present'),
+        'Refusing stale FaceTime admission for a session that is no longer present',
+      ),
     );
   });
 
@@ -111,10 +108,7 @@ void main() {
 
     expect(source, contains('_outgoingCallSetupInProgress'));
     expect(source, contains('currentOutgoingCallGuid'));
-    expect(
-      source,
-      contains('!identical(currentOutgoingCall, callState)'),
-    );
+    expect(source, contains('!identical(currentOutgoingCall, callState)'));
     expect(
       source,
       contains('Ignoring stale FaceTime timeout for a superseded call'),
