@@ -17611,7 +17611,8 @@ mixin _$PushMessage {
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
     required TResult Function(MessageInst field0) iMessage,
-    required TResult Function(String uuid, String? error) sendConfirm,
+    required TResult Function(String uuid, String attemptId, String? error)
+        sendConfirm,
     required TResult Function(RegisterState field0) registrationState,
     required TResult Function(SharedAlbum field0) newPhotostream,
     required TResult Function(FTMessage field0) faceTime,
@@ -17627,7 +17628,8 @@ mixin _$PushMessage {
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(MessageInst field0)? iMessage,
-    TResult? Function(String uuid, String? error)? sendConfirm,
+    TResult? Function(String uuid, String attemptId, String? error)?
+        sendConfirm,
     TResult? Function(RegisterState field0)? registrationState,
     TResult? Function(SharedAlbum field0)? newPhotostream,
     TResult? Function(FTMessage field0)? faceTime,
@@ -17643,7 +17645,7 @@ mixin _$PushMessage {
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(MessageInst field0)? iMessage,
-    TResult Function(String uuid, String? error)? sendConfirm,
+    TResult Function(String uuid, String attemptId, String? error)? sendConfirm,
     TResult Function(RegisterState field0)? registrationState,
     TResult Function(SharedAlbum field0)? newPhotostream,
     TResult Function(FTMessage field0)? faceTime,
@@ -17795,7 +17797,8 @@ class _$PushMessage_IMessageImpl extends PushMessage_IMessage {
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
     required TResult Function(MessageInst field0) iMessage,
-    required TResult Function(String uuid, String? error) sendConfirm,
+    required TResult Function(String uuid, String attemptId, String? error)
+        sendConfirm,
     required TResult Function(RegisterState field0) registrationState,
     required TResult Function(SharedAlbum field0) newPhotostream,
     required TResult Function(FTMessage field0) faceTime,
@@ -17814,7 +17817,8 @@ class _$PushMessage_IMessageImpl extends PushMessage_IMessage {
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(MessageInst field0)? iMessage,
-    TResult? Function(String uuid, String? error)? sendConfirm,
+    TResult? Function(String uuid, String attemptId, String? error)?
+        sendConfirm,
     TResult? Function(RegisterState field0)? registrationState,
     TResult? Function(SharedAlbum field0)? newPhotostream,
     TResult? Function(FTMessage field0)? faceTime,
@@ -17833,7 +17837,7 @@ class _$PushMessage_IMessageImpl extends PushMessage_IMessage {
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(MessageInst field0)? iMessage,
-    TResult Function(String uuid, String? error)? sendConfirm,
+    TResult Function(String uuid, String attemptId, String? error)? sendConfirm,
     TResult Function(RegisterState field0)? registrationState,
     TResult Function(SharedAlbum field0)? newPhotostream,
     TResult Function(FTMessage field0)? faceTime,
@@ -17930,7 +17934,7 @@ abstract class _$$PushMessage_SendConfirmImplCopyWith<$Res> {
           $Res Function(_$PushMessage_SendConfirmImpl) then) =
       __$$PushMessage_SendConfirmImplCopyWithImpl<$Res>;
   @useResult
-  $Res call({String uuid, String? error});
+  $Res call({String uuid, String attemptId, String? error});
 }
 
 /// @nodoc
@@ -17948,12 +17952,17 @@ class __$$PushMessage_SendConfirmImplCopyWithImpl<$Res>
   @override
   $Res call({
     Object? uuid = null,
+    Object? attemptId = null,
     Object? error = freezed,
   }) {
     return _then(_$PushMessage_SendConfirmImpl(
       uuid: null == uuid
           ? _value.uuid
           : uuid // ignore: cast_nullable_to_non_nullable
+              as String,
+      attemptId: null == attemptId
+          ? _value.attemptId
+          : attemptId // ignore: cast_nullable_to_non_nullable
               as String,
       error: freezed == error
           ? _value.error
@@ -17966,17 +17975,20 @@ class __$$PushMessage_SendConfirmImplCopyWithImpl<$Res>
 /// @nodoc
 
 class _$PushMessage_SendConfirmImpl extends PushMessage_SendConfirm {
-  const _$PushMessage_SendConfirmImpl({required this.uuid, this.error})
+  const _$PushMessage_SendConfirmImpl(
+      {required this.uuid, required this.attemptId, this.error})
       : super._();
 
   @override
   final String uuid;
   @override
+  final String attemptId;
+  @override
   final String? error;
 
   @override
   String toString() {
-    return 'PushMessage.sendConfirm(uuid: $uuid, error: $error)';
+    return 'PushMessage.sendConfirm(uuid: $uuid, attemptId: $attemptId, error: $error)';
   }
 
   @override
@@ -17985,11 +17997,13 @@ class _$PushMessage_SendConfirmImpl extends PushMessage_SendConfirm {
         (other.runtimeType == runtimeType &&
             other is _$PushMessage_SendConfirmImpl &&
             (identical(other.uuid, uuid) || other.uuid == uuid) &&
+            (identical(other.attemptId, attemptId) ||
+                other.attemptId == attemptId) &&
             (identical(other.error, error) || other.error == error));
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, uuid, error);
+  int get hashCode => Object.hash(runtimeType, uuid, attemptId, error);
 
   /// Create a copy of PushMessage
   /// with the given fields replaced by the non-null parameter values.
@@ -18004,7 +18018,8 @@ class _$PushMessage_SendConfirmImpl extends PushMessage_SendConfirm {
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
     required TResult Function(MessageInst field0) iMessage,
-    required TResult Function(String uuid, String? error) sendConfirm,
+    required TResult Function(String uuid, String attemptId, String? error)
+        sendConfirm,
     required TResult Function(RegisterState field0) registrationState,
     required TResult Function(SharedAlbum field0) newPhotostream,
     required TResult Function(FTMessage field0) faceTime,
@@ -18016,14 +18031,15 @@ class _$PushMessage_SendConfirmImpl extends PushMessage_SendConfirm {
             String sender, String beacon, BeaconAttributes attributes)
         beaconShared,
   }) {
-    return sendConfirm(uuid, error);
+    return sendConfirm(uuid, attemptId, error);
   }
 
   @override
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(MessageInst field0)? iMessage,
-    TResult? Function(String uuid, String? error)? sendConfirm,
+    TResult? Function(String uuid, String attemptId, String? error)?
+        sendConfirm,
     TResult? Function(RegisterState field0)? registrationState,
     TResult? Function(SharedAlbum field0)? newPhotostream,
     TResult? Function(FTMessage field0)? faceTime,
@@ -18035,14 +18051,14 @@ class _$PushMessage_SendConfirmImpl extends PushMessage_SendConfirm {
             String sender, String beacon, BeaconAttributes attributes)?
         beaconShared,
   }) {
-    return sendConfirm?.call(uuid, error);
+    return sendConfirm?.call(uuid, attemptId, error);
   }
 
   @override
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(MessageInst field0)? iMessage,
-    TResult Function(String uuid, String? error)? sendConfirm,
+    TResult Function(String uuid, String attemptId, String? error)? sendConfirm,
     TResult Function(RegisterState field0)? registrationState,
     TResult Function(SharedAlbum field0)? newPhotostream,
     TResult Function(FTMessage field0)? faceTime,
@@ -18055,7 +18071,7 @@ class _$PushMessage_SendConfirmImpl extends PushMessage_SendConfirm {
     required TResult orElse(),
   }) {
     if (sendConfirm != null) {
-      return sendConfirm(uuid, error);
+      return sendConfirm(uuid, attemptId, error);
     }
     return orElse();
   }
@@ -18121,10 +18137,12 @@ class _$PushMessage_SendConfirmImpl extends PushMessage_SendConfirm {
 abstract class PushMessage_SendConfirm extends PushMessage {
   const factory PushMessage_SendConfirm(
       {required final String uuid,
+      required final String attemptId,
       final String? error}) = _$PushMessage_SendConfirmImpl;
   const PushMessage_SendConfirm._() : super._();
 
   String get uuid;
+  String get attemptId;
   String? get error;
 
   /// Create a copy of PushMessage
@@ -18220,7 +18238,8 @@ class _$PushMessage_RegistrationStateImpl
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
     required TResult Function(MessageInst field0) iMessage,
-    required TResult Function(String uuid, String? error) sendConfirm,
+    required TResult Function(String uuid, String attemptId, String? error)
+        sendConfirm,
     required TResult Function(RegisterState field0) registrationState,
     required TResult Function(SharedAlbum field0) newPhotostream,
     required TResult Function(FTMessage field0) faceTime,
@@ -18239,7 +18258,8 @@ class _$PushMessage_RegistrationStateImpl
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(MessageInst field0)? iMessage,
-    TResult? Function(String uuid, String? error)? sendConfirm,
+    TResult? Function(String uuid, String attemptId, String? error)?
+        sendConfirm,
     TResult? Function(RegisterState field0)? registrationState,
     TResult? Function(SharedAlbum field0)? newPhotostream,
     TResult? Function(FTMessage field0)? faceTime,
@@ -18258,7 +18278,7 @@ class _$PushMessage_RegistrationStateImpl
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(MessageInst field0)? iMessage,
-    TResult Function(String uuid, String? error)? sendConfirm,
+    TResult Function(String uuid, String attemptId, String? error)? sendConfirm,
     TResult Function(RegisterState field0)? registrationState,
     TResult Function(SharedAlbum field0)? newPhotostream,
     TResult Function(FTMessage field0)? faceTime,
@@ -18421,7 +18441,8 @@ class _$PushMessage_NewPhotostreamImpl extends PushMessage_NewPhotostream {
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
     required TResult Function(MessageInst field0) iMessage,
-    required TResult Function(String uuid, String? error) sendConfirm,
+    required TResult Function(String uuid, String attemptId, String? error)
+        sendConfirm,
     required TResult Function(RegisterState field0) registrationState,
     required TResult Function(SharedAlbum field0) newPhotostream,
     required TResult Function(FTMessage field0) faceTime,
@@ -18440,7 +18461,8 @@ class _$PushMessage_NewPhotostreamImpl extends PushMessage_NewPhotostream {
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(MessageInst field0)? iMessage,
-    TResult? Function(String uuid, String? error)? sendConfirm,
+    TResult? Function(String uuid, String attemptId, String? error)?
+        sendConfirm,
     TResult? Function(RegisterState field0)? registrationState,
     TResult? Function(SharedAlbum field0)? newPhotostream,
     TResult? Function(FTMessage field0)? faceTime,
@@ -18459,7 +18481,7 @@ class _$PushMessage_NewPhotostreamImpl extends PushMessage_NewPhotostream {
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(MessageInst field0)? iMessage,
-    TResult Function(String uuid, String? error)? sendConfirm,
+    TResult Function(String uuid, String attemptId, String? error)? sendConfirm,
     TResult Function(RegisterState field0)? registrationState,
     TResult Function(SharedAlbum field0)? newPhotostream,
     TResult Function(FTMessage field0)? faceTime,
@@ -18632,7 +18654,8 @@ class _$PushMessage_FaceTimeImpl extends PushMessage_FaceTime {
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
     required TResult Function(MessageInst field0) iMessage,
-    required TResult Function(String uuid, String? error) sendConfirm,
+    required TResult Function(String uuid, String attemptId, String? error)
+        sendConfirm,
     required TResult Function(RegisterState field0) registrationState,
     required TResult Function(SharedAlbum field0) newPhotostream,
     required TResult Function(FTMessage field0) faceTime,
@@ -18651,7 +18674,8 @@ class _$PushMessage_FaceTimeImpl extends PushMessage_FaceTime {
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(MessageInst field0)? iMessage,
-    TResult? Function(String uuid, String? error)? sendConfirm,
+    TResult? Function(String uuid, String attemptId, String? error)?
+        sendConfirm,
     TResult? Function(RegisterState field0)? registrationState,
     TResult? Function(SharedAlbum field0)? newPhotostream,
     TResult? Function(FTMessage field0)? faceTime,
@@ -18670,7 +18694,7 @@ class _$PushMessage_FaceTimeImpl extends PushMessage_FaceTime {
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(MessageInst field0)? iMessage,
-    TResult Function(String uuid, String? error)? sendConfirm,
+    TResult Function(String uuid, String attemptId, String? error)? sendConfirm,
     TResult Function(RegisterState field0)? registrationState,
     TResult Function(SharedAlbum field0)? newPhotostream,
     TResult Function(FTMessage field0)? faceTime,
@@ -18844,7 +18868,8 @@ class _$PushMessage_StatusUpdateImpl extends PushMessage_StatusUpdate {
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
     required TResult Function(MessageInst field0) iMessage,
-    required TResult Function(String uuid, String? error) sendConfirm,
+    required TResult Function(String uuid, String attemptId, String? error)
+        sendConfirm,
     required TResult Function(RegisterState field0) registrationState,
     required TResult Function(SharedAlbum field0) newPhotostream,
     required TResult Function(FTMessage field0) faceTime,
@@ -18863,7 +18888,8 @@ class _$PushMessage_StatusUpdateImpl extends PushMessage_StatusUpdate {
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(MessageInst field0)? iMessage,
-    TResult? Function(String uuid, String? error)? sendConfirm,
+    TResult? Function(String uuid, String attemptId, String? error)?
+        sendConfirm,
     TResult? Function(RegisterState field0)? registrationState,
     TResult? Function(SharedAlbum field0)? newPhotostream,
     TResult? Function(FTMessage field0)? faceTime,
@@ -18882,7 +18908,7 @@ class _$PushMessage_StatusUpdateImpl extends PushMessage_StatusUpdate {
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(MessageInst field0)? iMessage,
-    TResult Function(String uuid, String? error)? sendConfirm,
+    TResult Function(String uuid, String attemptId, String? error)? sendConfirm,
     TResult Function(RegisterState field0)? registrationState,
     TResult Function(SharedAlbum field0)? newPhotostream,
     TResult Function(FTMessage field0)? faceTime,
@@ -19054,7 +19080,8 @@ class _$PushMessage_IdmsImpl extends PushMessage_Idms {
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
     required TResult Function(MessageInst field0) iMessage,
-    required TResult Function(String uuid, String? error) sendConfirm,
+    required TResult Function(String uuid, String attemptId, String? error)
+        sendConfirm,
     required TResult Function(RegisterState field0) registrationState,
     required TResult Function(SharedAlbum field0) newPhotostream,
     required TResult Function(FTMessage field0) faceTime,
@@ -19073,7 +19100,8 @@ class _$PushMessage_IdmsImpl extends PushMessage_Idms {
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(MessageInst field0)? iMessage,
-    TResult? Function(String uuid, String? error)? sendConfirm,
+    TResult? Function(String uuid, String attemptId, String? error)?
+        sendConfirm,
     TResult? Function(RegisterState field0)? registrationState,
     TResult? Function(SharedAlbum field0)? newPhotostream,
     TResult? Function(FTMessage field0)? faceTime,
@@ -19092,7 +19120,7 @@ class _$PushMessage_IdmsImpl extends PushMessage_Idms {
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(MessageInst field0)? iMessage,
-    TResult Function(String uuid, String? error)? sendConfirm,
+    TResult Function(String uuid, String attemptId, String? error)? sendConfirm,
     TResult Function(RegisterState field0)? registrationState,
     TResult Function(SharedAlbum field0)? newPhotostream,
     TResult Function(FTMessage field0)? faceTime,
@@ -19254,7 +19282,8 @@ class _$PushMessage_TwoFaAuthEventImpl extends PushMessage_TwoFaAuthEvent {
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
     required TResult Function(MessageInst field0) iMessage,
-    required TResult Function(String uuid, String? error) sendConfirm,
+    required TResult Function(String uuid, String attemptId, String? error)
+        sendConfirm,
     required TResult Function(RegisterState field0) registrationState,
     required TResult Function(SharedAlbum field0) newPhotostream,
     required TResult Function(FTMessage field0) faceTime,
@@ -19273,7 +19302,8 @@ class _$PushMessage_TwoFaAuthEventImpl extends PushMessage_TwoFaAuthEvent {
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(MessageInst field0)? iMessage,
-    TResult? Function(String uuid, String? error)? sendConfirm,
+    TResult? Function(String uuid, String attemptId, String? error)?
+        sendConfirm,
     TResult? Function(RegisterState field0)? registrationState,
     TResult? Function(SharedAlbum field0)? newPhotostream,
     TResult? Function(FTMessage field0)? faceTime,
@@ -19292,7 +19322,7 @@ class _$PushMessage_TwoFaAuthEventImpl extends PushMessage_TwoFaAuthEvent {
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(MessageInst field0)? iMessage,
-    TResult Function(String uuid, String? error)? sendConfirm,
+    TResult Function(String uuid, String attemptId, String? error)? sendConfirm,
     TResult Function(RegisterState field0)? registrationState,
     TResult Function(SharedAlbum field0)? newPhotostream,
     TResult Function(FTMessage field0)? faceTime,
@@ -19428,7 +19458,8 @@ class _$PushMessage_CircleFinishEventImpl
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
     required TResult Function(MessageInst field0) iMessage,
-    required TResult Function(String uuid, String? error) sendConfirm,
+    required TResult Function(String uuid, String attemptId, String? error)
+        sendConfirm,
     required TResult Function(RegisterState field0) registrationState,
     required TResult Function(SharedAlbum field0) newPhotostream,
     required TResult Function(FTMessage field0) faceTime,
@@ -19447,7 +19478,8 @@ class _$PushMessage_CircleFinishEventImpl
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(MessageInst field0)? iMessage,
-    TResult? Function(String uuid, String? error)? sendConfirm,
+    TResult? Function(String uuid, String attemptId, String? error)?
+        sendConfirm,
     TResult? Function(RegisterState field0)? registrationState,
     TResult? Function(SharedAlbum field0)? newPhotostream,
     TResult? Function(FTMessage field0)? faceTime,
@@ -19466,7 +19498,7 @@ class _$PushMessage_CircleFinishEventImpl
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(MessageInst field0)? iMessage,
-    TResult Function(String uuid, String? error)? sendConfirm,
+    TResult Function(String uuid, String attemptId, String? error)? sendConfirm,
     TResult Function(RegisterState field0)? registrationState,
     TResult Function(SharedAlbum field0)? newPhotostream,
     TResult Function(FTMessage field0)? faceTime,
@@ -19639,7 +19671,8 @@ class _$PushMessage_BeaconSharedImpl extends PushMessage_BeaconShared {
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
     required TResult Function(MessageInst field0) iMessage,
-    required TResult Function(String uuid, String? error) sendConfirm,
+    required TResult Function(String uuid, String attemptId, String? error)
+        sendConfirm,
     required TResult Function(RegisterState field0) registrationState,
     required TResult Function(SharedAlbum field0) newPhotostream,
     required TResult Function(FTMessage field0) faceTime,
@@ -19658,7 +19691,8 @@ class _$PushMessage_BeaconSharedImpl extends PushMessage_BeaconShared {
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(MessageInst field0)? iMessage,
-    TResult? Function(String uuid, String? error)? sendConfirm,
+    TResult? Function(String uuid, String attemptId, String? error)?
+        sendConfirm,
     TResult? Function(RegisterState field0)? registrationState,
     TResult? Function(SharedAlbum field0)? newPhotostream,
     TResult? Function(FTMessage field0)? faceTime,
@@ -19677,7 +19711,7 @@ class _$PushMessage_BeaconSharedImpl extends PushMessage_BeaconShared {
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(MessageInst field0)? iMessage,
-    TResult Function(String uuid, String? error)? sendConfirm,
+    TResult Function(String uuid, String attemptId, String? error)? sendConfirm,
     TResult Function(RegisterState field0)? registrationState,
     TResult Function(SharedAlbum field0)? newPhotostream,
     TResult Function(FTMessage field0)? faceTime,

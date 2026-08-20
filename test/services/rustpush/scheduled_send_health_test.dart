@@ -2,12 +2,65 @@ import 'package:bluebubbles/services/rustpush/scheduled_send_health.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  group('send attempt ownership', () {
+    test('round trips service and attempt IDs', () {
+      final owner = encodeSendOwner(
+        serviceId: 'service-1',
+        attemptId: 'attempt-2',
+      );
+
+      expect(sendOwnerServiceId(owner), 'service-1');
+      expect(sendOwnerAttemptId(owner), 'attempt-2');
+      expect(
+        isCurrentSendConfirmation(
+          recordedOwner: owner,
+          attemptId: 'attempt-2',
+        ),
+        isTrue,
+      );
+      expect(
+        isCurrentSendConfirmation(
+          recordedOwner: owner,
+          attemptId: 'attempt-1',
+        ),
+        isFalse,
+      );
+    });
+
+    test('rejects legacy and unowned confirmations', () {
+      expect(
+        isCurrentSendConfirmation(
+          recordedOwner: 'legacy-service',
+          attemptId: 'attempt-1',
+        ),
+        isFalse,
+      );
+      expect(
+        isCurrentSendConfirmation(
+          recordedOwner: '',
+          attemptId: 'attempt-1',
+        ),
+        isFalse,
+      );
+      expect(
+        isCurrentSendConfirmation(
+          recordedOwner: null,
+          attemptId: 'attempt-1',
+        ),
+        isFalse,
+      );
+    });
+  });
+
   final now = DateTime.utc(2026, 8, 19, 12);
 
   test('future scheduled sends remain in flight on the active service', () {
     expect(
       shouldFailInterruptedSend(
-        recordedServiceId: 'active',
+        recordedServiceId: encodeSendOwner(
+          serviceId: 'active',
+          attemptId: 'future-attempt',
+        ),
         activeServiceId: 'active',
         scheduledFor: now.add(const Duration(hours: 1)),
         now: now,
@@ -60,7 +113,10 @@ void main() {
   test('overdue scheduled sends do not remain in flight forever', () {
     expect(
       shouldFailInterruptedSend(
-        recordedServiceId: 'active',
+        recordedServiceId: encodeSendOwner(
+          serviceId: 'active',
+          attemptId: 'overdue-attempt',
+        ),
         activeServiceId: 'active',
         scheduledFor: now.subtract(const Duration(days: 2)),
         now: now,
@@ -72,7 +128,10 @@ void main() {
   test('work owned by a replaced native service is interrupted', () {
     expect(
       shouldFailInterruptedSend(
-        recordedServiceId: 'old',
+        recordedServiceId: encodeSendOwner(
+          serviceId: 'old',
+          attemptId: 'old-attempt',
+        ),
         activeServiceId: 'active',
         scheduledFor: now.add(const Duration(hours: 1)),
         now: now,

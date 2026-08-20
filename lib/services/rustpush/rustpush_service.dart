@@ -435,9 +435,14 @@ class RustPushBackend implements BackendService {
   static const maxSendTimeoutRetries = 1;
 
   Future<void> sendMsg(api.MessageInst msg, {bool waitForResource = true}) async {
+    final attemptId = uuid.v4();
+    final sendOwner = encodeSendOwner(
+      serviceId: pushService.serviceId,
+      attemptId: attemptId,
+    );
     var message = Message.findOne(guid: msg.id);
     if (message != null) {
-      message.sendingServiceId = pushService.serviceId;
+      message.sendingServiceId = sendOwner;
       message.save(updateSendingServiceId: true);
     }
     var stillRunning = false;
@@ -446,7 +451,12 @@ class RustPushBackend implements BackendService {
     try {
       while (true) {
         try {
-          stillRunning = await api.send(state: pushService.state!.client, local: pushService.state!.localBroadcast, msg: msg);
+          stillRunning = await api.send(
+            state: pushService.state!.client,
+            local: pushService.state!.localBroadcast,
+            msg: msg,
+            attemptId: attemptId,
+          );
           break;
         } catch (e) {
           if (e is AnyhowException) {
@@ -473,7 +483,8 @@ class RustPushBackend implements BackendService {
     } finally {
       if (!stillRunning) {
         message = Message.findOne(guid: msg.id);
-        if (message != null) {
+        if (message != null &&
+            sendOwnerAttemptId(message.sendingServiceId) == attemptId) {
           message.sendingServiceId = null;
           message.save(updateSendingServiceId: true);
         }
@@ -989,10 +1000,13 @@ class RustPushBackend implements BackendService {
         embeddedProfile: await pushService.getShareProfileMessageFor(chat.participants),
       )),
     );
-    Logger.info("sending ${msg.id}");
     if (m.stagingGuid != null || (m.dateScheduled != null && !m.guid!.contains("temp") && !m.guid!.contains("error")) || (chat.isRpSms && m.guid != null && m.guid!.contains("error") && m.guid!.contains("temp"))) {
       msg.id = m.stagingGuid ?? m.guid!; // make sure we pass forwarded messages's original GUID so it doesn't get overwritten and marked as a different msg
     }
+    Logger.info(
+      "sending ${m.dateScheduled == null ? 'message' : 'scheduled create/update'} id=${_diagnosticHash(msg.id)}",
+      tag: "RustPushSend",
+    );
     if (chat.isRpSms) {
       msg.target = await getSMSTargets(msg.sender!);
     }
@@ -3940,6 +3954,16 @@ class RustPushService extends GetxService {
     if (push is api.PushMessage_SendConfirm) {
       var message = Message.findOne(guid: push.uuid);
       if (message == null) return;
+      if (!isCurrentSendConfirmation(
+        recordedOwner: message.sendingServiceId,
+        attemptId: push.attemptId,
+      )) {
+        Logger.info(
+          "Ignoring stale send confirmation id=${_diagnosticHash(push.uuid)}",
+          tag: "RustPushSend",
+        );
+        return;
+      }
       final sendError = push.error;
       message.sendingServiceId = null;
       message.save(updateSendingServiceId: true);

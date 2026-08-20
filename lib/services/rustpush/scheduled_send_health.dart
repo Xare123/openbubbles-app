@@ -1,4 +1,32 @@
 const Duration scheduledSendConfirmationGrace = Duration(minutes: 5);
+const String sendOwnerAttemptSeparator = '::attempt::';
+
+String encodeSendOwner({
+  required String serviceId,
+  required String attemptId,
+}) =>
+    '$serviceId$sendOwnerAttemptSeparator$attemptId';
+
+String sendOwnerServiceId(String recordedOwner) =>
+    recordedOwner.split(sendOwnerAttemptSeparator).first;
+
+String? sendOwnerAttemptId(String? recordedOwner) {
+  if (recordedOwner == null) return null;
+  final separatorIndex = recordedOwner.indexOf(sendOwnerAttemptSeparator);
+  if (separatorIndex == -1) return null;
+  return recordedOwner.substring(
+    separatorIndex + sendOwnerAttemptSeparator.length,
+  );
+}
+
+bool isCurrentSendConfirmation({
+  required String? recordedOwner,
+  required String attemptId,
+}) {
+  if (recordedOwner == null) return false;
+  final recordedAttemptId = sendOwnerAttemptId(recordedOwner);
+  return recordedAttemptId != null && recordedAttemptId == attemptId;
+}
 
 bool isPendingScheduledSend({
   required DateTime? scheduledFor,
@@ -35,7 +63,7 @@ bool shouldFailInterruptedSend({
   Duration grace = scheduledSendConfirmationGrace,
 }) {
   if (recordedServiceId == null) return false;
-  if (recordedServiceId != activeServiceId) return true;
+  if (sendOwnerServiceId(recordedServiceId) != activeServiceId) return true;
   return isScheduledSendOverdue(
     scheduledFor,
     now: now,

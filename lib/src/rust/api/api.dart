@@ -715,8 +715,10 @@ Future<PollResult> recvWait(
 Future<bool> send(
         {required ArcImClient state,
         required ArcSenderPushMessage local,
-        required MessageInst msg}) =>
-    RustLib.instance.api.crateApiApiSend(state: state, local: local, msg: msg);
+        required MessageInst msg,
+        required String attemptId}) =>
+    RustLib.instance.api.crateApiApiSend(
+        state: state, local: local, msg: msg, attemptId: attemptId);
 
 Future<List<String>> getHandles({required ArcImClient state}) =>
     RustLib.instance.api.crateApiApiGetHandles(state: state);
@@ -5119,6 +5121,7 @@ sealed class PushMessage with _$PushMessage {
   ) = PushMessage_IMessage;
   const factory PushMessage.sendConfirm({
     required String uuid,
+    required String attemptId,
     String? error,
   }) = PushMessage_SendConfirm;
   const factory PushMessage.registrationState(

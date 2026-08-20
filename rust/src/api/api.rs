@@ -1225,6 +1225,7 @@ pub enum PushMessage {
     IMessage(MessageInst),
     SendConfirm {
         uuid: String,
+        attempt_id: String,
         error: Option<String>,
     },
     RegistrationState(RegisterState),
@@ -1839,7 +1840,7 @@ pub async fn recv_wait(watcher: &mut APSWatcher, state: &Arc<SharedPushState>) -
     }
 }
 
-pub async fn send(state: &Arc<IMClient>, local: &Arc<mpsc::Sender<PushMessage>>, mut msg: MessageInst) -> anyhow::Result<bool> {
+pub async fn send(state: &Arc<IMClient>, local: &Arc<mpsc::Sender<PushMessage>>, mut msg: MessageInst, attempt_id: String) -> anyhow::Result<bool> {
     let result = state.send(&mut msg).await?;
     info!("send_finish");
 
@@ -1850,7 +1851,7 @@ pub async fn send(state: &Arc<IMClient>, local: &Arc<mpsc::Sender<PushMessage>>,
             let result = handle.await.unwrap();
             info!("Finished handle {}", uuid);
             let maybeerr = result.err().map(|err| format!("{}", err));
-            let _ = local.send(PushMessage::SendConfirm { uuid, error: maybeerr }).await;
+            let _ = local.send(PushMessage::SendConfirm { uuid, attempt_id, error: maybeerr }).await;
         });
         Ok(true)
     } else {
