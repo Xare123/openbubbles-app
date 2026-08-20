@@ -176,7 +176,7 @@ return mmcs(_that.field0);case _:
 
 class AttachmentType_Inline extends AttachmentType {
   const AttachmentType_Inline(this.field0): super._();
-
+  
 
 @override final  Uint8List field0;
 
@@ -242,7 +242,7 @@ as Uint8List,
 
 class AttachmentType_MMCS extends AttachmentType {
   const AttachmentType_MMCS(this.field0): super._();
-
+  
 
 @override final  MMCSFile field0;
 
@@ -499,7 +499,7 @@ return templateLayout(_that.imageSubtitle,_that.imageTitle,_that.caption,_that.s
 
 class BalloonLayout_TemplateLayout extends BalloonLayout {
   const BalloonLayout_TemplateLayout({required this.imageSubtitle, required this.imageTitle, required this.caption, required this.secondarySubcaption, required this.tertiarySubcaption, required this.subcaption, required this.class_}): super._();
-
+  
 
 @override final  String imageSubtitle;
 @override final  String imageTitle;
@@ -737,7 +737,7 @@ return messages(_that.field0);case _:
 
 class DeleteTarget_Chat extends DeleteTarget {
   const DeleteTarget_Chat(this.field0): super._();
-
+  
 
 @override final  OperatedChat field0;
 
@@ -803,7 +803,7 @@ as OperatedChat,
 
 class DeleteTarget_Messages extends DeleteTarget {
   const DeleteTarget_Messages(final  List<String> field0): _field0 = field0,super._();
-
+  
 
  final  List<String> _field0;
 @override List<String> get field0 {
@@ -1077,7 +1077,7 @@ return respondedElsewhere(_that.guid);case _:
 
 class FTMessage_LetMeInRequest extends FTMessage {
   const FTMessage_LetMeInRequest(this.field0): super._();
-
+  
 
  final  LetMeInRequest field0;
 
@@ -1143,7 +1143,7 @@ as LetMeInRequest,
 
 class FTMessage_LinkChanged extends FTMessage {
   const FTMessage_LinkChanged({required this.guid}): super._();
-
+  
 
  final  String guid;
 
@@ -1209,7 +1209,7 @@ as String,
 
 class FTMessage_JoinEvent extends FTMessage {
   const FTMessage_JoinEvent({required this.guid, required this.participant, required this.handle, required this.ring}): super._();
-
+  
 
  final  String guid;
  final  BigInt participant;
@@ -1281,7 +1281,7 @@ as bool,
 
 class FTMessage_AddMembers extends FTMessage {
   const FTMessage_AddMembers({required this.guid, required final  Set<FTMember> members, required this.ring}): _members = members,super._();
-
+  
 
  final  String guid;
  final  Set<FTMember> _members;
@@ -1357,7 +1357,7 @@ as bool,
 
 class FTMessage_RemoveMembers extends FTMessage {
   const FTMessage_RemoveMembers({required this.guid, required final  Set<FTMember> members}): _members = members,super._();
-
+  
 
  final  String guid;
  final  Set<FTMember> _members;
@@ -1431,7 +1431,7 @@ as Set<FTMember>,
 
 class FTMessage_LeaveEvent extends FTMessage {
   const FTMessage_LeaveEvent({required this.guid, required this.participant, required this.handle}): super._();
-
+  
 
  final  String guid;
  final  BigInt participant;
@@ -1501,7 +1501,7 @@ as String,
 
 class FTMessage_Ring extends FTMessage {
   const FTMessage_Ring({required this.guid}): super._();
-
+  
 
  final  String guid;
 
@@ -1567,7 +1567,7 @@ as String,
 
 class FTMessage_Decline extends FTMessage {
   const FTMessage_Decline({required this.guid}): super._();
-
+  
 
  final  String guid;
 
@@ -1633,7 +1633,7 @@ as String,
 
 class FTMessage_RespondedElsewhere extends FTMessage {
   const FTMessage_RespondedElsewhere({required this.guid}): super._();
-
+  
 
  final  String guid;
 
@@ -1865,7 +1865,7 @@ return circleRequest(_that.field0,_that.field1);case _:
 
 class IdmsMessage_RequestedSignIn extends IdmsMessage {
   const IdmsMessage_RequestedSignIn(this.field0): super._();
-
+  
 
 @override final  IdmsRequestedSignIn field0;
 
@@ -1931,7 +1931,7 @@ as IdmsRequestedSignIn,
 
 class IdmsMessage_TeardownSignIn extends IdmsMessage {
   const IdmsMessage_TeardownSignIn(this.field0): super._();
-
+  
 
 @override final  TeardownSignIn field0;
 
@@ -1997,7 +1997,7 @@ as TeardownSignIn,
 
 class IdmsMessage_CircleRequest extends IdmsMessage {
   const IdmsMessage_CircleRequest(this.field0, [this.field1]): super._();
-
+  
 
 @override final  IdmsCircleMessage field0;
  final  IdmsRequestedSignIn? field1;
@@ -2255,7 +2255,7 @@ return needsLogin();case _:
 
 class LoginState_LoggedIn extends LoginState {
   const LoginState_LoggedIn(): super._();
-
+  
 
 
 
@@ -2287,7 +2287,7 @@ String toString() {
 
 class LoginState_NeedsDevice2FA extends LoginState {
   const LoginState_NeedsDevice2FA(): super._();
-
+  
 
 
 
@@ -2319,7 +2319,7 @@ String toString() {
 
 class LoginState_Needs2FAVerification extends LoginState {
   const LoginState_Needs2FAVerification(): super._();
-
+  
 
 
 
@@ -2351,7 +2351,7 @@ String toString() {
 
 class LoginState_NeedsSMS2FA extends LoginState {
   const LoginState_NeedsSMS2FA(): super._();
-
+  
 
 
 
@@ -2383,7 +2383,7 @@ String toString() {
 
 class LoginState_NeedsSMS2FAVerification extends LoginState {
   const LoginState_NeedsSMS2FAVerification(this.field0): super._();
-
+  
 
  final  VerifyBody field0;
 
@@ -2449,7 +2449,7 @@ as VerifyBody,
 
 class LoginState_NeedsExtraStep extends LoginState {
   const LoginState_NeedsExtraStep(this.field0): super._();
-
+  
 
  final  String field0;
 
@@ -2515,7 +2515,7 @@ as String,
 
 class LoginState_NeedsLogin extends LoginState {
   const LoginState_NeedsLogin(): super._();
-
+  
 
 
 
@@ -2733,7 +2733,7 @@ return lpPasswordsInviteMetadata(_that.groupName,_that.urlParameters);case _:
 
 class LPSpecializationMetadata_LPPasswordsInviteMetadata extends LPSpecializationMetadata {
   const LPSpecializationMetadata_LPPasswordsInviteMetadata({required this.groupName, required this.urlParameters}): super._();
-
+  
 
 @override final  String groupName;
 @override final  String urlParameters;
@@ -3105,7 +3105,7 @@ return setTranscriptBackground(_that.field0);case _:
 
 class Message_Message extends Message {
   const Message_Message(this.field0): super._();
-
+  
 
  final  NormalMessage field0;
 
@@ -3171,7 +3171,7 @@ as NormalMessage,
 
 class Message_RenameMessage extends Message {
   const Message_RenameMessage(this.field0): super._();
-
+  
 
  final  RenameMessage field0;
 
@@ -3237,7 +3237,7 @@ as RenameMessage,
 
 class Message_ChangeParticipants extends Message {
   const Message_ChangeParticipants(this.field0): super._();
-
+  
 
  final  ChangeParticipantMessage field0;
 
@@ -3303,7 +3303,7 @@ as ChangeParticipantMessage,
 
 class Message_React extends Message {
   const Message_React(this.field0): super._();
-
+  
 
  final  ReactMessage field0;
 
@@ -3369,7 +3369,7 @@ as ReactMessage,
 
 class Message_Delivered extends Message {
   const Message_Delivered(): super._();
-
+  
 
 
 
@@ -3401,7 +3401,7 @@ String toString() {
 
 class Message_Read extends Message {
   const Message_Read(): super._();
-
+  
 
 
 
@@ -3433,7 +3433,7 @@ String toString() {
 
 class Message_Typing extends Message {
   const Message_Typing(this.field0, [this.field1]): super._();
-
+  
 
  final  bool field0;
  final  TypingApp? field1;
@@ -3501,7 +3501,7 @@ as TypingApp?,
 
 class Message_Unsend extends Message {
   const Message_Unsend(this.field0): super._();
-
+  
 
  final  UnsendMessage field0;
 
@@ -3567,7 +3567,7 @@ as UnsendMessage,
 
 class Message_Edit extends Message {
   const Message_Edit(this.field0): super._();
-
+  
 
  final  EditMessage field0;
 
@@ -3633,7 +3633,7 @@ as EditMessage,
 
 class Message_IconChange extends Message {
   const Message_IconChange(this.field0): super._();
-
+  
 
  final  IconChangeMessage field0;
 
@@ -3699,7 +3699,7 @@ as IconChangeMessage,
 
 class Message_EnableSmsActivation extends Message {
   const Message_EnableSmsActivation(this.field0): super._();
-
+  
 
  final  bool field0;
 
@@ -3765,7 +3765,7 @@ as bool,
 
 class Message_MessageReadOnDevice extends Message {
   const Message_MessageReadOnDevice(): super._();
-
+  
 
 
 
@@ -3797,7 +3797,7 @@ String toString() {
 
 class Message_SmsConfirmSent extends Message {
   const Message_SmsConfirmSent(this.field0): super._();
-
+  
 
  final  bool field0;
 
@@ -3863,7 +3863,7 @@ as bool,
 
 class Message_MarkUnread extends Message {
   const Message_MarkUnread(): super._();
-
+  
 
 
 
@@ -3895,7 +3895,7 @@ String toString() {
 
 class Message_PeerCacheInvalidate extends Message {
   const Message_PeerCacheInvalidate(): super._();
-
+  
 
 
 
@@ -3927,7 +3927,7 @@ String toString() {
 
 class Message_UpdateExtension extends Message {
   const Message_UpdateExtension(this.field0): super._();
-
+  
 
  final  UpdateExtensionMessage field0;
 
@@ -3993,7 +3993,7 @@ as UpdateExtensionMessage,
 
 class Message_Error extends Message {
   const Message_Error(this.field0): super._();
-
+  
 
  final  ErrorMessage field0;
 
@@ -4059,7 +4059,7 @@ as ErrorMessage,
 
 class Message_MoveToRecycleBin extends Message {
   const Message_MoveToRecycleBin(this.field0): super._();
-
+  
 
  final  MoveToRecycleBinMessage field0;
 
@@ -4125,7 +4125,7 @@ as MoveToRecycleBinMessage,
 
 class Message_RecoverChat extends Message {
   const Message_RecoverChat(this.field0): super._();
-
+  
 
  final  OperatedChat field0;
 
@@ -4191,7 +4191,7 @@ as OperatedChat,
 
 class Message_PermanentDelete extends Message {
   const Message_PermanentDelete(this.field0): super._();
-
+  
 
  final  PermanentDeleteMessage field0;
 
@@ -4257,7 +4257,7 @@ as PermanentDeleteMessage,
 
 class Message_Unschedule extends Message {
   const Message_Unschedule(): super._();
-
+  
 
 
 
@@ -4289,7 +4289,7 @@ String toString() {
 
 class Message_UpdateProfile extends Message {
   const Message_UpdateProfile(this.field0): super._();
-
+  
 
  final  UpdateProfileMessage field0;
 
@@ -4355,7 +4355,7 @@ as UpdateProfileMessage,
 
 class Message_UpdateProfileSharing extends Message {
   const Message_UpdateProfileSharing(this.field0): super._();
-
+  
 
  final  UpdateProfileSharingMessage field0;
 
@@ -4421,7 +4421,7 @@ as UpdateProfileSharingMessage,
 
 class Message_ShareProfile extends Message {
   const Message_ShareProfile(this.field0): super._();
-
+  
 
  final  ShareProfileMessage field0;
 
@@ -4487,7 +4487,7 @@ as ShareProfileMessage,
 
 class Message_NotifyAnyways extends Message {
   const Message_NotifyAnyways(): super._();
-
+  
 
 
 
@@ -4519,7 +4519,7 @@ String toString() {
 
 class Message_SetTranscriptBackground extends Message {
   const Message_SetTranscriptBackground(this.field0): super._();
-
+  
 
  final  SetTranscriptBackgroundMessage field0;
 
@@ -4582,7 +4582,7 @@ as SetTranscriptBackgroundMessage,
 @override
 @pragma('vm:prefer-inline')
 $SetTranscriptBackgroundMessageCopyWith<$Res> get field0 {
-
+  
   return $SetTranscriptBackgroundMessageCopyWith<$Res>(_self.field0, (value) {
     return _then(_self.copyWith(field0: value));
   });
@@ -4766,7 +4766,7 @@ return object(_that.field0);case _:
 
 class MessagePart_Text extends MessagePart {
   const MessagePart_Text(this.field0, this.field1): super._();
-
+  
 
 @override final  String field0;
  final  TextFormat field1;
@@ -4831,7 +4831,7 @@ as TextFormat,
 @override
 @pragma('vm:prefer-inline')
 $TextFormatCopyWith<$Res> get field1 {
-
+  
   return $TextFormatCopyWith<$Res>(_self.field1, (value) {
     return _then(_self.copyWith(field1: value));
   });
@@ -4843,7 +4843,7 @@ $TextFormatCopyWith<$Res> get field1 {
 
 class MessagePart_Attachment extends MessagePart {
   const MessagePart_Attachment(this.field0): super._();
-
+  
 
 @override final  Attachment field0;
 
@@ -4909,7 +4909,7 @@ as Attachment,
 
 class MessagePart_Mention extends MessagePart {
   const MessagePart_Mention(this.field0, this.field1): super._();
-
+  
 
 @override final  String field0;
  final  String field1;
@@ -4977,7 +4977,7 @@ as String,
 
 class MessagePart_Object extends MessagePart {
   const MessagePart_Object(this.field0): super._();
-
+  
 
 @override final  String field0;
 
@@ -5203,7 +5203,7 @@ return uuid(_that.field0);case _:
 
 class MessageTarget_Token extends MessageTarget {
   const MessageTarget_Token(this.field0): super._();
-
+  
 
 @override final  Uint8List field0;
 
@@ -5269,7 +5269,7 @@ as Uint8List,
 
 class MessageTarget_Uuid extends MessageTarget {
   const MessageTarget_Uuid(this.field0): super._();
-
+  
 
 @override final  String field0;
 
@@ -5495,7 +5495,7 @@ return sms(_that.isPhone,_that.usingNumber,_that.fromHandle);case _:
 
 class MessageType_IMessage extends MessageType {
   const MessageType_IMessage(): super._();
-
+  
 
 
 
@@ -5527,7 +5527,7 @@ String toString() {
 
 class MessageType_SMS extends MessageType {
   const MessageType_SMS({required this.isPhone, required this.usingNumber, this.fromHandle}): super._();
-
+  
 
  final  bool isPhone;
  final  String usingNumber;
@@ -5763,7 +5763,7 @@ return bool(_that.field0);case _:
 
 class NumOrString_Num extends NumOrString {
   const NumOrString_Num(this.field0): super._();
-
+  
 
 @override final  int field0;
 
@@ -5829,7 +5829,7 @@ as int,
 
 class NumOrString_String extends NumOrString {
   const NumOrString_String(this.field0): super._();
-
+  
 
 @override final  String field0;
 
@@ -5895,7 +5895,7 @@ as String,
 
 class NumOrString_Bool extends NumOrString {
   const NumOrString_Bool(this.field0): super._();
-
+  
 
 @override final  bool field0;
 
@@ -6158,7 +6158,7 @@ return sticker(_that.msgWidth,_that.rotation,_that.sai,_that.scale,_that.update,
 
 class PartExtension_Sticker extends PartExtension {
   const PartExtension_Sticker({required this.msgWidth, required this.rotation, required this.sai, required this.scale, this.update, required this.sli, required this.normalizedX, required this.normalizedY, required this.version, required this.hash, required this.safi, required this.effectType, required this.stickerId}): super._();
-
+  
 
 @override final  double msgWidth;
 @override final  double rotation;
@@ -6408,7 +6408,7 @@ return cont(_that.field0);case _:
 
 class PollResult_Stop extends PollResult {
   const PollResult_Stop(): super._();
-
+  
 
 
 
@@ -6440,7 +6440,7 @@ String toString() {
 
 class PollResult_Cont extends PollResult {
   const PollResult_Cont([this.field0]): super._();
-
+  
 
  final  PushMessage? field0;
 
@@ -6696,7 +6696,7 @@ return transcriptGradient(_that.colors);case _:
 
 class PosterType_Photo extends PosterType {
   const PosterType_Photo({required final  List<PosterAsset> assets}): _assets = assets,super._();
-
+  
 
  final  List<PosterAsset> _assets;
  List<PosterAsset> get assets {
@@ -6768,7 +6768,7 @@ as List<PosterAsset>,
 
 class PosterType_Monogram extends PosterType {
   const PosterType_Monogram({required this.data, required this.background}): super._();
-
+  
 
  final  MonogramData data;
  final  PosterColor background;
@@ -6836,7 +6836,7 @@ as PosterColor,
 
 class PosterType_Memoji extends PosterType {
   const PosterType_Memoji({required this.data, required this.background}): super._();
-
+  
 
  final  MemojiData data;
  final  PosterColor background;
@@ -6904,7 +6904,7 @@ as PosterColor,
 
 class PosterType_TranscriptDynamic extends PosterType {
   const PosterType_TranscriptDynamic({required this.data}): super._();
-
+  
 
  final  TranscriptDynamicUserData data;
 
@@ -6970,7 +6970,7 @@ as TranscriptDynamicUserData,
 
 class PosterType_TranscriptGradient extends PosterType {
   const PosterType_TranscriptGradient({required final  List<PosterColor> colors}): _colors = colors,super._();
-
+  
 
  final  List<PosterColor> _colors;
  List<PosterColor> get colors {
@@ -7208,7 +7208,7 @@ return prPosterContentGradientStyle(_that.gradientType,_that.colors,_that.startP
 
 class PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle extends PRPosterContentMaterialStyle {
   const PRPosterContentMaterialStyle_PRPosterContentDiscreteColorsStyle({required this.variation, required final  List<UIColor> colors, required this.vibrant, required this.supportsVariation, required this.needsToResolveVariation}): _colors = colors,super._();
-
+  
 
  final  double variation;
  final  List<UIColor> _colors;
@@ -7288,7 +7288,7 @@ as bool,
 
 class PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle extends PRPosterContentMaterialStyle {
   const PRPosterContentMaterialStyle_PRPosterContentVibrantMaterialStyle(): super._();
-
+  
 
 
 
@@ -7320,7 +7320,7 @@ String toString() {
 
 class PRPosterContentMaterialStyle_PRPosterContentGradientStyle extends PRPosterContentMaterialStyle {
   const PRPosterContentMaterialStyle_PRPosterContentGradientStyle({required this.gradientType, required final  List<UIColor> colors, required this.startPoint, required this.locations, required this.endPoint}): _colors = colors,super._();
-
+  
 
  final  int gradientType;
  final  List<UIColor> _colors;
@@ -7527,11 +7527,11 @@ return beaconShared(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( MessageInst field0)?  iMessage,TResult Function( String uuid,  String? error)?  sendConfirm,TResult Function( RegisterState field0)?  registrationState,TResult Function( SharedAlbum field0)?  newPhotostream,TResult Function( FTMessage field0)?  faceTime,TResult Function( StatusKitMessage field0)?  statusUpdate,TResult Function( IdmsMessage field0)?  idms,TResult Function( bool field0)?  twoFaAuthEvent,TResult Function()?  circleFinishEvent,TResult Function( String sender,  String beacon,  BeaconAttributes attributes)?  beaconShared,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( MessageInst field0)?  iMessage,TResult Function( String uuid,  String attemptId,  String? error)?  sendConfirm,TResult Function( RegisterState field0)?  registrationState,TResult Function( SharedAlbum field0)?  newPhotostream,TResult Function( FTMessage field0)?  faceTime,TResult Function( StatusKitMessage field0)?  statusUpdate,TResult Function( IdmsMessage field0)?  idms,TResult Function( bool field0)?  twoFaAuthEvent,TResult Function()?  circleFinishEvent,TResult Function( String sender,  String beacon,  BeaconAttributes attributes)?  beaconShared,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case PushMessage_IMessage() when iMessage != null:
 return iMessage(_that.field0);case PushMessage_SendConfirm() when sendConfirm != null:
-return sendConfirm(_that.uuid,_that.error);case PushMessage_RegistrationState() when registrationState != null:
+return sendConfirm(_that.uuid,_that.attemptId,_that.error);case PushMessage_RegistrationState() when registrationState != null:
 return registrationState(_that.field0);case PushMessage_NewPhotostream() when newPhotostream != null:
 return newPhotostream(_that.field0);case PushMessage_FaceTime() when faceTime != null:
 return faceTime(_that.field0);case PushMessage_StatusUpdate() when statusUpdate != null:
@@ -7557,11 +7557,11 @@ return beaconShared(_that.sender,_that.beacon,_that.attributes);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( MessageInst field0)  iMessage,required TResult Function( String uuid,  String? error)  sendConfirm,required TResult Function( RegisterState field0)  registrationState,required TResult Function( SharedAlbum field0)  newPhotostream,required TResult Function( FTMessage field0)  faceTime,required TResult Function( StatusKitMessage field0)  statusUpdate,required TResult Function( IdmsMessage field0)  idms,required TResult Function( bool field0)  twoFaAuthEvent,required TResult Function()  circleFinishEvent,required TResult Function( String sender,  String beacon,  BeaconAttributes attributes)  beaconShared,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( MessageInst field0)  iMessage,required TResult Function( String uuid,  String attemptId,  String? error)  sendConfirm,required TResult Function( RegisterState field0)  registrationState,required TResult Function( SharedAlbum field0)  newPhotostream,required TResult Function( FTMessage field0)  faceTime,required TResult Function( StatusKitMessage field0)  statusUpdate,required TResult Function( IdmsMessage field0)  idms,required TResult Function( bool field0)  twoFaAuthEvent,required TResult Function()  circleFinishEvent,required TResult Function( String sender,  String beacon,  BeaconAttributes attributes)  beaconShared,}) {final _that = this;
 switch (_that) {
 case PushMessage_IMessage():
 return iMessage(_that.field0);case PushMessage_SendConfirm():
-return sendConfirm(_that.uuid,_that.error);case PushMessage_RegistrationState():
+return sendConfirm(_that.uuid,_that.attemptId,_that.error);case PushMessage_RegistrationState():
 return registrationState(_that.field0);case PushMessage_NewPhotostream():
 return newPhotostream(_that.field0);case PushMessage_FaceTime():
 return faceTime(_that.field0);case PushMessage_StatusUpdate():
@@ -7583,11 +7583,11 @@ return beaconShared(_that.sender,_that.beacon,_that.attributes);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( MessageInst field0)?  iMessage,TResult? Function( String uuid,  String? error)?  sendConfirm,TResult? Function( RegisterState field0)?  registrationState,TResult? Function( SharedAlbum field0)?  newPhotostream,TResult? Function( FTMessage field0)?  faceTime,TResult? Function( StatusKitMessage field0)?  statusUpdate,TResult? Function( IdmsMessage field0)?  idms,TResult? Function( bool field0)?  twoFaAuthEvent,TResult? Function()?  circleFinishEvent,TResult? Function( String sender,  String beacon,  BeaconAttributes attributes)?  beaconShared,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( MessageInst field0)?  iMessage,TResult? Function( String uuid,  String attemptId,  String? error)?  sendConfirm,TResult? Function( RegisterState field0)?  registrationState,TResult? Function( SharedAlbum field0)?  newPhotostream,TResult? Function( FTMessage field0)?  faceTime,TResult? Function( StatusKitMessage field0)?  statusUpdate,TResult? Function( IdmsMessage field0)?  idms,TResult? Function( bool field0)?  twoFaAuthEvent,TResult? Function()?  circleFinishEvent,TResult? Function( String sender,  String beacon,  BeaconAttributes attributes)?  beaconShared,}) {final _that = this;
 switch (_that) {
 case PushMessage_IMessage() when iMessage != null:
 return iMessage(_that.field0);case PushMessage_SendConfirm() when sendConfirm != null:
-return sendConfirm(_that.uuid,_that.error);case PushMessage_RegistrationState() when registrationState != null:
+return sendConfirm(_that.uuid,_that.attemptId,_that.error);case PushMessage_RegistrationState() when registrationState != null:
 return registrationState(_that.field0);case PushMessage_NewPhotostream() when newPhotostream != null:
 return newPhotostream(_that.field0);case PushMessage_FaceTime() when faceTime != null:
 return faceTime(_that.field0);case PushMessage_StatusUpdate() when statusUpdate != null:
@@ -7608,7 +7608,7 @@ return beaconShared(_that.sender,_that.beacon,_that.attributes);case _:
 
 class PushMessage_IMessage extends PushMessage {
   const PushMessage_IMessage(this.field0): super._();
-
+  
 
  final  MessageInst field0;
 
@@ -7673,10 +7673,11 @@ as MessageInst,
 
 
 class PushMessage_SendConfirm extends PushMessage {
-  const PushMessage_SendConfirm({required this.uuid, this.error}): super._();
-
+  const PushMessage_SendConfirm({required this.uuid, required this.attemptId, this.error}): super._();
+  
 
  final  String uuid;
+ final  String attemptId;
  final  String? error;
 
 /// Create a copy of PushMessage
@@ -7689,16 +7690,16 @@ $PushMessage_SendConfirmCopyWith<PushMessage_SendConfirm> get copyWith => _$Push
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is PushMessage_SendConfirm&&(identical(other.uuid, uuid) || other.uuid == uuid)&&(identical(other.error, error) || other.error == error));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is PushMessage_SendConfirm&&(identical(other.uuid, uuid) || other.uuid == uuid)&&(identical(other.attemptId, attemptId) || other.attemptId == attemptId)&&(identical(other.error, error) || other.error == error));
 }
 
 
 @override
-int get hashCode => Object.hash(runtimeType,uuid,error);
+int get hashCode => Object.hash(runtimeType,uuid,attemptId,error);
 
 @override
 String toString() {
-  return 'PushMessage.sendConfirm(uuid: $uuid, error: $error)';
+  return 'PushMessage.sendConfirm(uuid: $uuid, attemptId: $attemptId, error: $error)';
 }
 
 
@@ -7709,7 +7710,7 @@ abstract mixin class $PushMessage_SendConfirmCopyWith<$Res> implements $PushMess
   factory $PushMessage_SendConfirmCopyWith(PushMessage_SendConfirm value, $Res Function(PushMessage_SendConfirm) _then) = _$PushMessage_SendConfirmCopyWithImpl;
 @useResult
 $Res call({
- String uuid, String? error
+ String uuid, String attemptId, String? error
 });
 
 
@@ -7726,9 +7727,10 @@ class _$PushMessage_SendConfirmCopyWithImpl<$Res>
 
 /// Create a copy of PushMessage
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') $Res call({Object? uuid = null,Object? error = freezed,}) {
+@pragma('vm:prefer-inline') $Res call({Object? uuid = null,Object? attemptId = null,Object? error = freezed,}) {
   return _then(PushMessage_SendConfirm(
 uuid: null == uuid ? _self.uuid : uuid // ignore: cast_nullable_to_non_nullable
+as String,attemptId: null == attemptId ? _self.attemptId : attemptId // ignore: cast_nullable_to_non_nullable
 as String,error: freezed == error ? _self.error : error // ignore: cast_nullable_to_non_nullable
 as String?,
   ));
@@ -7742,7 +7744,7 @@ as String?,
 
 class PushMessage_RegistrationState extends PushMessage {
   const PushMessage_RegistrationState(this.field0): super._();
-
+  
 
  final  RegisterState field0;
 
@@ -7805,7 +7807,7 @@ as RegisterState,
 @override
 @pragma('vm:prefer-inline')
 $RegisterStateCopyWith<$Res> get field0 {
-
+  
   return $RegisterStateCopyWith<$Res>(_self.field0, (value) {
     return _then(_self.copyWith(field0: value));
   });
@@ -7817,7 +7819,7 @@ $RegisterStateCopyWith<$Res> get field0 {
 
 class PushMessage_NewPhotostream extends PushMessage {
   const PushMessage_NewPhotostream(this.field0): super._();
-
+  
 
  final  SharedAlbum field0;
 
@@ -7883,7 +7885,7 @@ as SharedAlbum,
 
 class PushMessage_FaceTime extends PushMessage {
   const PushMessage_FaceTime(this.field0): super._();
-
+  
 
  final  FTMessage field0;
 
@@ -7946,7 +7948,7 @@ as FTMessage,
 @override
 @pragma('vm:prefer-inline')
 $FTMessageCopyWith<$Res> get field0 {
-
+  
   return $FTMessageCopyWith<$Res>(_self.field0, (value) {
     return _then(_self.copyWith(field0: value));
   });
@@ -7958,7 +7960,7 @@ $FTMessageCopyWith<$Res> get field0 {
 
 class PushMessage_StatusUpdate extends PushMessage {
   const PushMessage_StatusUpdate(this.field0): super._();
-
+  
 
  final  StatusKitMessage field0;
 
@@ -8021,7 +8023,7 @@ as StatusKitMessage,
 @override
 @pragma('vm:prefer-inline')
 $StatusKitMessageCopyWith<$Res> get field0 {
-
+  
   return $StatusKitMessageCopyWith<$Res>(_self.field0, (value) {
     return _then(_self.copyWith(field0: value));
   });
@@ -8033,7 +8035,7 @@ $StatusKitMessageCopyWith<$Res> get field0 {
 
 class PushMessage_Idms extends PushMessage {
   const PushMessage_Idms(this.field0): super._();
-
+  
 
  final  IdmsMessage field0;
 
@@ -8096,7 +8098,7 @@ as IdmsMessage,
 @override
 @pragma('vm:prefer-inline')
 $IdmsMessageCopyWith<$Res> get field0 {
-
+  
   return $IdmsMessageCopyWith<$Res>(_self.field0, (value) {
     return _then(_self.copyWith(field0: value));
   });
@@ -8108,7 +8110,7 @@ $IdmsMessageCopyWith<$Res> get field0 {
 
 class PushMessage_TwoFaAuthEvent extends PushMessage {
   const PushMessage_TwoFaAuthEvent(this.field0): super._();
-
+  
 
  final  bool field0;
 
@@ -8174,7 +8176,7 @@ as bool,
 
 class PushMessage_CircleFinishEvent extends PushMessage {
   const PushMessage_CircleFinishEvent(): super._();
-
+  
 
 
 
@@ -8206,7 +8208,7 @@ String toString() {
 
 class PushMessage_BeaconShared extends PushMessage {
   const PushMessage_BeaconShared({required this.sender, required this.beacon, required this.attributes}): super._();
-
+  
 
  final  String sender;
  final  String beacon;
@@ -8436,7 +8438,7 @@ return extension_(_that.spec,_that.body,_that.isMeta);case _:
 
 class ReactMessageType_React extends ReactMessageType {
   const ReactMessageType_React({required this.reaction, required this.enable}): super._();
-
+  
 
  final  Reaction reaction;
  final  bool enable;
@@ -8501,7 +8503,7 @@ as bool,
 @override
 @pragma('vm:prefer-inline')
 $ReactionCopyWith<$Res> get reaction {
-
+  
   return $ReactionCopyWith<$Res>(_self.reaction, (value) {
     return _then(_self.copyWith(reaction: value));
   });
@@ -8513,7 +8515,7 @@ $ReactionCopyWith<$Res> get reaction {
 
 class ReactMessageType_Extension extends ReactMessageType {
   const ReactMessageType_Extension({required this.spec, required this.body, required this.isMeta}): super._();
-
+  
 
  final  ExtensionApp spec;
  final  MessageParts body;
@@ -8779,7 +8781,7 @@ return sticker(_that.spec,_that.body);case _:
 
 class Reaction_Heart extends Reaction {
   const Reaction_Heart(): super._();
-
+  
 
 
 
@@ -8811,7 +8813,7 @@ String toString() {
 
 class Reaction_Like extends Reaction {
   const Reaction_Like(): super._();
-
+  
 
 
 
@@ -8843,7 +8845,7 @@ String toString() {
 
 class Reaction_Dislike extends Reaction {
   const Reaction_Dislike(): super._();
-
+  
 
 
 
@@ -8875,7 +8877,7 @@ String toString() {
 
 class Reaction_Laugh extends Reaction {
   const Reaction_Laugh(): super._();
-
+  
 
 
 
@@ -8907,7 +8909,7 @@ String toString() {
 
 class Reaction_Emphasize extends Reaction {
   const Reaction_Emphasize(): super._();
-
+  
 
 
 
@@ -8939,7 +8941,7 @@ String toString() {
 
 class Reaction_Question extends Reaction {
   const Reaction_Question(): super._();
-
+  
 
 
 
@@ -8971,7 +8973,7 @@ String toString() {
 
 class Reaction_Emoji extends Reaction {
   const Reaction_Emoji(this.field0): super._();
-
+  
 
  final  String field0;
 
@@ -9037,7 +9039,7 @@ as String,
 
 class Reaction_Sticker extends Reaction {
   const Reaction_Sticker({this.spec, required this.body}): super._();
-
+  
 
  final  ExtensionApp? spec;
  final  MessageParts body;
@@ -9271,7 +9273,7 @@ return failed(_that.retryWait,_that.error);case _:
 
 class RegisterState_Registered extends RegisterState {
   const RegisterState_Registered({required this.nextS}): super._();
-
+  
 
  final  PlatformInt64 nextS;
 
@@ -9337,7 +9339,7 @@ as PlatformInt64,
 
 class RegisterState_Registering extends RegisterState {
   const RegisterState_Registering(): super._();
-
+  
 
 
 
@@ -9369,7 +9371,7 @@ String toString() {
 
 class RegisterState_Failed extends RegisterState {
   const RegisterState_Failed({this.retryWait, required this.error}): super._();
-
+  
 
  final  BigInt? retryWait;
  final  String error;
@@ -9630,7 +9632,7 @@ return set_(_that.aid,_that.bid,_that.chatId,_that.objectId,_that.payloadVersion
 
 class SetTranscriptBackgroundMessage_Remove extends SetTranscriptBackgroundMessage {
   const SetTranscriptBackgroundMessage_Remove({required this.aid, required this.bid, this.chatId, required this.remove}): super._();
-
+  
 
 @override final  int aid;
 @override final  BigInt bid;
@@ -9702,7 +9704,7 @@ as bool,
 
 class SetTranscriptBackgroundMessage_Set extends SetTranscriptBackgroundMessage {
   const SetTranscriptBackgroundMessage_Set({required this.aid, required this.bid, this.chatId, required this.objectId, required this.payloadVersion, required this.backgroundId, required this.url, required this.signature, required this.key, required this.fileSize}): super._();
-
+  
 
 @override final  int aid;
 @override final  BigInt bid;
@@ -9973,7 +9975,7 @@ return statusChanged(_that.user,_that.mode,_that.allowed);case _:
 
 class StatusKitMessage_StatusChanged extends StatusKitMessage {
   const StatusKitMessage_StatusChanged({required this.user, this.mode, required this.allowed}): super._();
-
+  
 
 @override final  String user;
 @override final  String? mode;
@@ -10215,7 +10217,7 @@ return syncing();case _:
 
 class SyncStatus_Synced extends SyncStatus {
   const SyncStatus_Synced(): super._();
-
+  
 
 
 
@@ -10247,7 +10249,7 @@ String toString() {
 
 class SyncStatus_Downloading extends SyncStatus {
   const SyncStatus_Downloading({required this.progress, required this.total}): super._();
-
+  
 
  final  BigInt progress;
  final  BigInt total;
@@ -10315,7 +10317,7 @@ as BigInt,
 
 class SyncStatus_Uploading extends SyncStatus {
   const SyncStatus_Uploading({required this.progress, required this.total}): super._();
-
+  
 
  final  BigInt progress;
  final  BigInt total;
@@ -10383,7 +10385,7 @@ as BigInt,
 
 class SyncStatus_Syncing extends SyncStatus {
   const SyncStatus_Syncing(): super._();
-
+  
 
 
 
@@ -10575,7 +10577,7 @@ return effect(_that.field0);case _:
 
 class TextFormat_Flags extends TextFormat {
   const TextFormat_Flags(this.field0): super._();
-
+  
 
 @override final  TextFlags field0;
 
@@ -10641,7 +10643,7 @@ as TextFlags,
 
 class TextFormat_Effect extends TextFormat {
   const TextFormat_Effect(this.field0): super._();
-
+  
 
 @override final  TextEffect field0;
 
@@ -10901,7 +10903,7 @@ return grayscaleAlphaColorSpace(_that.colorComponents,_that.white,_that.alpha,_t
 
 class UIColor_RGBAColorSpace extends UIColor {
   const UIColor_RGBAColorSpace({required this.colorComponents, required this.green, required this.blue, required this.red, this.greenDbl, this.blueDbl, this.redDbl, this.alphaDbl, required this.alpha, required this.rgb, required this.colorSpace, required this.class_}): super._();
-
+  
 
 @override final  int colorComponents;
  final  double green;
@@ -10989,7 +10991,7 @@ as String,
 
 class UIColor_GrayscaleAlphaColorSpace extends UIColor {
   const UIColor_GrayscaleAlphaColorSpace({required this.colorComponents, required this.white, required this.alpha, required this.bin, required this.colorSpace, required this.class_}): super._();
-
+  
 
 @override final  int colorComponents;
  final  double white;
@@ -11225,7 +11227,7 @@ return ios(_that.url);case _:
 
 class UpdateAccountFinish_MacOS extends UpdateAccountFinish {
   const UpdateAccountFinish_MacOS(): super._();
-
+  
 
 
 
@@ -11257,7 +11259,7 @@ String toString() {
 
 class UpdateAccountFinish_IOS extends UpdateAccountFinish {
   const UpdateAccountFinish_IOS({required this.url}): super._();
-
+  
 
  final  String url;
 

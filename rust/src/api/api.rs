@@ -3079,6 +3079,7 @@ pub enum PushMessage {
     IMessage(MessageInst),
     SendConfirm {
         uuid: String,
+        attempt_id: String,
         error: Option<String>,
     },
     RegistrationState(RegisterState),
@@ -4019,6 +4020,7 @@ pub async fn send(
     state: &Arc<IMClient>,
     local: &Arc<mpsc::Sender<PushMessage>>,
     mut msg: MessageInst,
+    attempt_id: String,
 ) -> anyhow::Result<bool> {
     let result = state.send(&mut msg).await?;
     info!("send_finish");
@@ -4033,6 +4035,7 @@ pub async fn send(
             let _ = local
                 .send(PushMessage::SendConfirm {
                     uuid,
+                    attempt_id,
                     error: maybeerr,
                 })
                 .await;

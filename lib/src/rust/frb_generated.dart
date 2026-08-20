@@ -1168,6 +1168,7 @@ abstract class RustLibApi extends BaseApi {
     required ArcImClient state,
     required ArcSenderPushMessage local,
     required MessageInst msg,
+    required String attemptId,
   });
 
   Future<LoginState> crateApiApiSend2FaSms({
@@ -10303,6 +10304,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required ArcImClient state,
     required ArcSenderPushMessage local,
     required MessageInst msg,
+    required String attemptId,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -10317,6 +10319,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             serializer,
           );
           sse_encode_box_autoadd_message_inst(msg, serializer);
+          sse_encode_String(attemptId, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -10329,7 +10332,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_AnyhowException,
         ),
         constMeta: kCrateApiApiSendConstMeta,
-        argValues: [state, local, msg],
+        argValues: [state, local, msg, attemptId],
         apiImpl: this,
       ),
     );
@@ -10337,7 +10340,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiApiSendConstMeta => const TaskConstMeta(
     debugName: "send",
-    argNames: ["state", "local", "msg"],
+    argNames: ["state", "local", "msg", "attemptId"],
   );
 
   @override
@@ -19148,7 +19151,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 1:
         return PushMessage_SendConfirm(
           uuid: dco_decode_String(raw[1]),
-          error: dco_decode_opt_String(raw[2]),
+          attemptId: dco_decode_String(raw[2]),
+          error: dco_decode_opt_String(raw[3]),
         );
       case 2:
         return PushMessage_RegistrationState(
@@ -29331,8 +29335,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         return PushMessage_IMessage(var_field0);
       case 1:
         var var_uuid = sse_decode_String(deserializer);
+        var var_attemptId = sse_decode_String(deserializer);
         var var_error = sse_decode_opt_String(deserializer);
-        return PushMessage_SendConfirm(uuid: var_uuid, error: var_error);
+        return PushMessage_SendConfirm(
+          uuid: var_uuid,
+          attemptId: var_attemptId,
+          error: var_error,
+        );
       case 2:
         var var_field0 = sse_decode_box_autoadd_register_state(deserializer);
         return PushMessage_RegistrationState(var_field0);
@@ -39053,9 +39062,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case PushMessage_IMessage(field0: final field0):
         sse_encode_i_32(0, serializer);
         sse_encode_box_autoadd_message_inst(field0, serializer);
-      case PushMessage_SendConfirm(uuid: final uuid, error: final error):
+      case PushMessage_SendConfirm(
+        uuid: final uuid,
+        attemptId: final attemptId,
+        error: final error,
+      ):
         sse_encode_i_32(1, serializer);
         sse_encode_String(uuid, serializer);
+        sse_encode_String(attemptId, serializer);
         sse_encode_opt_String(error, serializer);
       case PushMessage_RegistrationState(field0: final field0):
         sse_encode_i_32(2, serializer);

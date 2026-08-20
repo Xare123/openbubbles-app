@@ -12779,6 +12779,7 @@ fn wire__crate__api__api__send_impl(
                 flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc<Sender<PushMessage>>>,
             >>::sse_decode(&mut deserializer);
             let api_msg = <crate::api::api::MessageInst>::sse_decode(&mut deserializer);
+            let api_attempt_id = <String>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
@@ -12811,9 +12812,13 @@ fn wire__crate__api__api__send_impl(
                         }
                         let api_state_guard = api_state_guard.unwrap();
                         let api_local_guard = api_local_guard.unwrap();
-                        let output_ok =
-                            crate::api::api::send(&*api_state_guard, &*api_local_guard, api_msg)
-                                .await?;
+                        let output_ok = crate::api::api::send(
+                            &*api_state_guard,
+                            &*api_local_guard,
+                            api_msg,
+                            api_attempt_id,
+                        )
+                        .await?;
                         Ok(output_ok)
                     })()
                     .await,
@@ -22538,6 +22543,16 @@ impl SseDecode for Option<i32> {
     }
 }
 
+impl SseDecode for Option<i64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<i64>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
 
 impl SseDecode for Option<crate::api::api::IMessagePosterRecord> {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -22913,6 +22928,16 @@ impl SseDecode for Option<u32> {
     }
 }
 
+impl SseDecode for Option<u64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<u64>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
 
 impl SseDecode for Option<crate::api::api::UpdateAccountFinish> {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -23547,9 +23572,11 @@ impl SseDecode for crate::api::api::PushMessage {
             }
             1 => {
                 let mut var_uuid = <String>::sse_decode(deserializer);
+                let mut var_attemptId = <String>::sse_decode(deserializer);
                 let mut var_error = <Option<String>>::sse_decode(deserializer);
                 return crate::api::api::PushMessage::SendConfirm {
                     uuid: var_uuid,
+                    attempt_id: var_attemptId,
                     error: var_error,
                 };
             }
@@ -24189,6 +24216,14 @@ impl SseDecode for (String, crate::api::api::SyncStatus) {
     }
 }
 
+impl SseDecode for (String, u64) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_field0 = <String>::sse_decode(deserializer);
+        let mut var_field1 = <u64>::sse_decode(deserializer);
+        return (var_field0, var_field1);
+    }
+}
 
 impl SseDecode for (String, crate::api::api::UpdateAccountFinish) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -30456,9 +30491,14 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::PushMessage {
             crate::api::api::PushMessage::IMessage(field0) => {
                 [0.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
-            crate::api::api::PushMessage::SendConfirm { uuid, error } => [
+            crate::api::api::PushMessage::SendConfirm {
+                uuid,
+                attempt_id,
+                error,
+            } => [
                 1.into_dart(),
                 uuid.into_into_dart().into_dart(),
+                attempt_id.into_into_dart().into_dart(),
                 error.into_into_dart().into_dart(),
             ]
             .into_dart(),
@@ -36263,6 +36303,15 @@ impl SseEncode for Option<i32> {
     }
 }
 
+impl SseEncode for Option<i64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <i64>::sse_encode(value, serializer);
+        }
+    }
+}
 
 impl SseEncode for Option<crate::api::api::IMessagePosterRecord> {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -36584,6 +36633,15 @@ impl SseEncode for Option<u32> {
     }
 }
 
+impl SseEncode for Option<u64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <u64>::sse_encode(value, serializer);
+        }
+    }
+}
 
 impl SseEncode for Option<crate::api::api::UpdateAccountFinish> {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -37057,9 +37115,14 @@ impl SseEncode for crate::api::api::PushMessage {
                 <i32>::sse_encode(0, serializer);
                 <crate::api::api::MessageInst>::sse_encode(field0, serializer);
             }
-            crate::api::api::PushMessage::SendConfirm { uuid, error } => {
+            crate::api::api::PushMessage::SendConfirm {
+                uuid,
+                attempt_id,
+                error,
+            } => {
                 <i32>::sse_encode(1, serializer);
                 <String>::sse_encode(uuid, serializer);
+                <String>::sse_encode(attempt_id, serializer);
                 <Option<String>>::sse_encode(error, serializer);
             }
             crate::api::api::PushMessage::RegistrationState(field0) => {
@@ -37621,6 +37684,13 @@ impl SseEncode for (String, crate::api::api::SyncStatus) {
     }
 }
 
+impl SseEncode for (String, u64) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.0, serializer);
+        <u64>::sse_encode(self.1, serializer);
+    }
+}
 
 impl SseEncode for (String, crate::api::api::UpdateAccountFinish) {
     // Codec=Sse (Serialization based), see doc to use other codecs
