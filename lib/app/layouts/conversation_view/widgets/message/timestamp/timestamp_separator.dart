@@ -10,7 +10,6 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:pull_down_button/pull_down_button.dart';
 import 'package:tuple/tuple.dart';
-import 'package:flutter/gestures.dart';
 import 'dart:io';
 
 class TimestampSeparator extends StatelessWidget {
@@ -22,10 +21,16 @@ class TimestampSeparator extends StatelessWidget {
   final Message? olderMessage;
   final Message message;
 
-  bool get isOverdue => isScheduledSendOverdue(
-    message.dateScheduled,
-    now: DateTime.now(),
+  bool hasPendingSchedule(Message candidate) => isPendingScheduledSend(
+    scheduledFor: candidate.dateScheduled,
+    isDelivered: candidate.isDelivered,
   );
+
+  bool get isOverdue => hasPendingSchedule(message) &&
+      isScheduledSendOverdue(
+        message.dateScheduled,
+        now: DateTime.now(),
+      );
 
   Future<bool> confirmOverdueAction(BuildContext context, String action) async {
     if (!isOverdue) return true;
@@ -53,8 +58,9 @@ class TimestampSeparator extends StatelessWidget {
   bool withinTimeThreshold(Message first, Message? second) {
     if (second == null) return true;
     var diff = second.chatViewDate!.difference(first.chatViewDate!).inMinutes.abs();
-    return diff > 30 || (first.dateScheduled != null) != (second.dateScheduled != null) 
-      || (diff > 5 && first.dateScheduled != null);
+    return diff > 30 ||
+        hasPendingSchedule(first) != hasPendingSchedule(second) ||
+        (diff > 5 && hasPendingSchedule(first));
   }
 
   Tuple2<String?, String>? buildTimeStamp() {
@@ -85,7 +91,8 @@ class TimestampSeparator extends StatelessWidget {
         text: TextSpan(
           style: context.theme.textTheme.labelSmall!.copyWith(color: context.theme.colorScheme.outline, fontWeight: FontWeight.normal),
           children: [
-            if (message.dateScheduled != null && olderMessage?.dateScheduled == null)
+            if (hasPendingSchedule(message) &&
+                (olderMessage == null || !hasPendingSchedule(olderMessage!)))
               TextSpan(
                 text: isOverdue ? "Send Later - delivery not confirmed\n" : "Send Later\n",
                 style: context.theme.textTheme.labelSmall!.copyWith(
@@ -100,7 +107,7 @@ class TimestampSeparator extends StatelessWidget {
                 style: context.theme.textTheme.labelSmall!.copyWith(fontWeight: FontWeight.w600, color: context.theme.colorScheme.outline),
               ),
             TextSpan(text: timestamp.item2),
-            if (message.dateScheduled != null)
+            if (hasPendingSchedule(message))
               TextSpan(
                 text: " Edit",
                 style: context.theme.textTheme.labelSmall!.copyWith(fontWeight: FontWeight.w600, color: context.theme.primaryColor),
@@ -110,14 +117,15 @@ class TimestampSeparator extends StatelessWidget {
       ),
     ) : const SizedBox.shrink();
 
-    return message.dateScheduled != null ? PullDownButton(
+    return hasPendingSchedule(message) ? PullDownButton(
       routeTheme: PullDownMenuRouteTheme(
         backgroundColor: context.theme.colorScheme.properSurface.withOpacity(0.9)
       ),
       animationAlignmentOverride: Alignment.bottomCenter,
       itemBuilder: (context) {
         final responsibleMessages = ms(message.getChat()!.guid).struct.messages
-        .where((m) => m.dateScheduled != null && m.dateScheduled!.difference(message.dateScheduled!).inMinutes < 5 
+        .where((m) => hasPendingSchedule(m)
+          && m.dateScheduled!.difference(message.dateScheduled!).inMinutes < 5
           && m.dateScheduled!.difference(message.dateScheduled!).inMinutes >= 0).toList();
         responsibleMessages.sort(Message.sort);
         return [

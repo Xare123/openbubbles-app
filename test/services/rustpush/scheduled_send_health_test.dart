@@ -16,6 +16,30 @@ void main() {
     );
   });
 
+  test('delivered messages are no longer pending schedules', () {
+    expect(
+      isPendingScheduledSend(
+        scheduledFor: now.subtract(const Duration(minutes: 1)),
+        isDelivered: true,
+      ),
+      isFalse,
+    );
+    expect(
+      isPendingScheduledSend(
+        scheduledFor: now.add(const Duration(minutes: 1)),
+        isDelivered: false,
+      ),
+      isTrue,
+    );
+    expect(
+      isPendingScheduledSend(
+        scheduledFor: null,
+        isDelivered: false,
+      ),
+      isFalse,
+    );
+  });
+
   test('scheduled sends get a confirmation grace period', () {
     expect(
       isScheduledSendOverdue(
