@@ -19,6 +19,7 @@ import 'package:bluebubbles/src/rust/lib.dart' as lib;
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/services/rustpush/scheduled_send_health.dart';
 import 'package:bluebubbles/utils/crypto_utils.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:collection/collection.dart';
@@ -3939,9 +3940,19 @@ class RustPushService extends GetxService {
     if (push is api.PushMessage_SendConfirm) {
       var message = Message.findOne(guid: push.uuid);
       if (message == null) return;
-      Logger.info("SendFinished");
+      final sendError = push.error;
       message.sendingServiceId = null;
       message.save(updateSendingServiceId: true);
+      if (shouldMarkSendConfirmationFailed(
+        error: sendError,
+        isDelivered: message.isDelivered,
+      )) {
+        Logger.warn("Send confirmation reported a failure",
+            tag: "RustPushSend");
+        await markFailed(message, "Send confirmation failed: $sendError");
+      } else {
+        Logger.info("SendFinished");
+      }
       return;
     }
 
@@ -4251,6 +4262,7 @@ class RustPushService extends GetxService {
       }
       if (myMsg.message is api.Message_Delivered) {
         message.dateDelivered = parseDate(myMsg.sentTimestamp);
+        message.sendingServiceId = null;
       } else {
         message.dateRead = parseDate(myMsg.sentTimestamp);
       }
@@ -4258,7 +4270,9 @@ class RustPushService extends GetxService {
         var lastNotifiedAnyways = message.chat.target!.dateNotifiedAnyways;
         message.wasDeliveredQuietly = lastNotifiedAnyways == null || DateTime.now().difference(lastNotifiedAnyways).inMinutes > 5;
       }
-      message.save();
+      message.save(
+        updateSendingServiceId: myMsg.message is api.Message_Delivered,
+      );
       inq.queue(IncomingItem(
         chat: message.chat.target!,
         message: message,
@@ -5486,12 +5500,31 @@ class RustPushService extends GetxService {
     }
     Logger.info("initDone");
     final sendingProgress = Database.messages.query(Message_.sendingServiceId.notNull()).build().find();
+    final recoveryNow = DateTime.now();
     for (var item in sendingProgress) {
-      // we are still sending
-      if (item.sendingServiceId == serviceId) continue;
+      if (shouldClearCompletedSendOwner(
+        recordedServiceId: item.sendingServiceId,
+        isDelivered: item.isDelivered,
+      )) {
+        item.sendingServiceId = null;
+        item.save(updateSendingServiceId: true);
+        continue;
+      }
+      if (!shouldFailInterruptedSend(
+        recordedServiceId: item.sendingServiceId,
+        activeServiceId: serviceId,
+        scheduledFor: item.dateScheduled,
+        now: recoveryNow,
+      )) {
+        continue;
+      }
       item.sendingServiceId = null;
       item = item.save(updateSendingServiceId: true);
-      markFailed(item, "Crashed while still sending");
+      final failure = item.dateScheduled != null &&
+              isScheduledSendOverdue(item.dateScheduled, now: recoveryNow)
+          ? "Scheduled delivery was not confirmed"
+          : "Crashed while still sending";
+      await markFailed(item, failure);
     }
     if (ls.isUiThread) await cs.refreshContacts();
     Logger.info("finishInit");
