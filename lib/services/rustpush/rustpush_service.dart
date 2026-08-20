@@ -3950,6 +3950,9 @@ class RustPushService extends GetxService {
         Logger.warn("Send confirmation reported a failure",
             tag: "RustPushSend");
         await markFailed(message, "Send confirmation failed: $sendError");
+      } else if (sendError != null) {
+        Logger.warn("Late send confirmation error ignored after delivery",
+            tag: "RustPushSend");
       } else {
         Logger.info("SendFinished");
       }

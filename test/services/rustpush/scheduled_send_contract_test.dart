@@ -27,6 +27,10 @@ void main() {
           .indexOf('await markFailed(message, "Send confirmation failed:')),
     );
     expect(source, contains('isDelivered: message.isDelivered'));
+    expect(
+      source,
+      contains('Late send confirmation error ignored after delivery'),
+    );
     expect(source, contains('shouldFailInterruptedSend('));
     expect(source, contains('shouldClearCompletedSendOwner('));
     expect(
@@ -45,6 +49,7 @@ void main() {
     expect(source, contains('Delivery not confirmed'));
     expect(source, contains('may have sent without a confirmation'));
     expect(source, contains('message.stagingGuid ??= message.guid'));
+    expect(source, contains('return hasPendingSchedule(message) ?'));
   });
 
   test('notification replies are not copied into plaintext logs', () {

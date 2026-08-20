@@ -1,5 +1,11 @@
 const Duration scheduledSendConfirmationGrace = Duration(minutes: 5);
 
+bool isPendingScheduledSend({
+  required DateTime? scheduledFor,
+  required bool isDelivered,
+}) =>
+    scheduledFor != null && !isDelivered;
+
 bool shouldMarkSendConfirmationFailed({
   required String? error,
   required bool isDelivered,
