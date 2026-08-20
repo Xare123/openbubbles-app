@@ -70,6 +70,42 @@ String findMyCloudFailureMessage(Object error) {
   return "Cloud Find My is unavailable right now.";
 }
 
+@visibleForTesting
+String? findMyFriendAddress({
+  required List<String> acceptedHandles,
+  required List<String> invitationFromHandles,
+}) {
+  for (final address in [...acceptedHandles, ...invitationFromHandles]) {
+    final trimmed = address.trim();
+    if (trimmed.isNotEmpty) return trimmed;
+  }
+  return null;
+}
+
+@visibleForTesting
+bool upsertFindMyFriendLocation(List<FindMyFriend> current, FindMyFriend incoming) {
+  final incomingAddress = incoming.handle?.uniqueAddressAndService;
+  final existingIndex = current.indexWhere((friend) {
+    if (incoming.id != null && incoming.id!.isNotEmpty && friend.id == incoming.id) return true;
+    return incomingAddress != null && friend.handle?.uniqueAddressAndService == incomingAddress;
+  });
+  if (existingIndex == -1) {
+    current.add(incoming);
+    return true;
+  }
+
+  final existingStatus = current[existingIndex].status;
+  final incomingStatus = incoming.status ?? LocationStatus.legacy;
+  if (existingStatus != null &&
+      !incoming.locatingInProgress &&
+      LocationStatus.values.indexOf(existingStatus) > LocationStatus.values.indexOf(incomingStatus)) {
+    return false;
+  }
+
+  current[existingIndex] = incoming;
+  return true;
+}
+
 class FindMyPage extends StatefulWidget {
   FindMyPage({super.key, this.defaultFriend});
 
@@ -337,21 +373,18 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
     socket.socket.on("new-findmy-location", (data) {
       try {
         final friend = FindMyFriend.fromJson(data);
-        Logger.info("Received new location for ${friend.handle?.address}");
         if ((friend.latitude ?? 0) == 0 && (friend.longitude ?? 0) == 0) return;
-        final existingFriendIndex = friends.indexWhere((e) => e.handle?.uniqueAddressAndService == friend.handle?.uniqueAddressAndService);
-        final existingFriend = existingFriendIndex == -1 ? null : friends[existingFriendIndex];
-        if (existingFriend == null || existingFriend.status == null || friend.locatingInProgress || LocationStatus.values.indexOf(existingFriend.status!) <= LocationStatus.values.indexOf(friend.status ?? LocationStatus.legacy)) {
-          Logger.info("Updating map for ${friend.handle?.address}");
-          friends[existingFriendIndex] = friend;
-
+        if (upsertFindMyFriendLocation(friends, friend)) {
+          Logger.info("Updated Find My friend location id=${friend.id ?? "unknown"}");
           friendsWithLocation = friends.where((item) => (item.latitude ?? 0) != 0 && (item.longitude ?? 0) != 0).toList();
           friendsWithoutLocation = friends.where((item) => (item.latitude ?? 0) == 0 && (item.longitude ?? 0) == 0).toList();
 
           buildFriendMarker(friend);
           setState(() {});
         }
-      } catch (_) {}
+      } catch (e, s) {
+        Logger.warn("Failed to apply Find My friend location update", error: e, trace: s);
+      }
     });
 
     // // Allow users to refresh after 30sec
@@ -465,21 +498,30 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       var following = await api.getFollowing(client: fmfClient!);
     
       friends = following
-          .map((e) => 
-            FindMyFriend(
+          .map((e) {
+            final address = findMyFriendAddress(
+              acceptedHandles: e.invitationAcceptedHandles,
+              invitationFromHandles: e.invitationFromHandles,
+            );
+            if (address == null) {
+              Logger.warn("Skipping Find My friend with no usable handle id=${e.id}");
+              return null;
+            }
+            return FindMyFriend(
               latitude: e.lastLocation?.latitude,
               longitude: e.lastLocation?.longitude,
               longAddress: e.lastLocation?.address?.formattedAddressLines?.join("\n"), 
               shortAddress: e.lastLocation?.address != null ? "${e.lastLocation?.address?.locality}, ${e.lastLocation?.address?.stateCode ?? e.lastLocation?.address?.countryCode}" : null,
               title: null, 
               subtitle: null, 
-              handle: Handle.findOne(addressAndService: Tuple2(e.invitationAcceptedHandles.first, "iMessage")) ?? Handle(address: e.invitationAcceptedHandles.first), 
+              handle: Handle.findOne(addressAndService: Tuple2(address, "iMessage")) ?? Handle(address: address),
               lastUpdated: e.lastLocation?.timestamp != null ? DateTime.fromMillisecondsSinceEpoch(e.lastLocation!.timestamp) : null,
               status: null, 
               locatingInProgress: false,
               id: e.id,
-            )
-          )
+            );
+          })
+          .whereType<FindMyFriend>()
           .toList()
           .cast<FindMyFriend>();
 
@@ -1292,7 +1334,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                       padding: const EdgeInsets.all(8.0),
                       child: Text(
                         fetching2 == null
-                            ? "Something went wrong!"
+                            ? (cloudFindMyError ?? "Cloud Find My is unavailable right now.")
                             : fetching2 == false
                                 ? "You have no friends."
                                 : "Getting FindMy data...",
@@ -1300,6 +1342,12 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                       ),
                     ),
                     if (fetching2 == true) buildProgressIndicator(context, size: 15),
+                    if (fetching2 == null)
+                      TextButton.icon(
+                        onPressed: locationsRequestInFlight ? null : () => getLocations(userInitiated: true),
+                        icon: const Icon(Icons.refresh),
+                        label: const Text("Retry Cloud Find My"),
+                      ),
                   ],
                 ),
               ),

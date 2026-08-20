@@ -43,9 +43,11 @@ class FindMyFriend {
     lastUpdated: (json["last_updated"] ?? 0) == 0 ? null : DateTime.fromMillisecondsSinceEpoch(json["last_updated"]),
     status: LocationStatus.values.firstWhereOrNull((e) => e.name == json["status"]),
     locatingInProgress: json["is_locating_in_progress"] ?? false,
+    id: json["id"],
   );
 
   Map<String, dynamic> toJson() => {
+    "id": id,
     "coordinates": [latitude, longitude],
     "long_address": longAddress,
     "short_address": shortAddress,
