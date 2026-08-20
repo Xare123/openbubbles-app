@@ -2,6 +2,7 @@ import 'package:bluebubbles/app/layouts/conversation_details/dialogs/timeframe_p
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
+import 'package:bluebubbles/services/rustpush/scheduled_send_health.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter/cupertino.dart';
@@ -20,6 +21,34 @@ class TimestampSeparator extends StatelessWidget {
   });
   final Message? olderMessage;
   final Message message;
+
+  bool get isOverdue => isScheduledSendOverdue(
+    message.dateScheduled,
+    now: DateTime.now(),
+  );
+
+  Future<bool> confirmOverdueAction(BuildContext context, String action) async {
+    if (!isOverdue) return true;
+    return await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Delivery not confirmed"),
+        content: Text(
+          "This scheduled message is overdue. Check the conversation before $action because it may have sent without a confirmation.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text("Continue"),
+          ),
+        ],
+      ),
+    ) ?? false;
+  }
 
   bool withinTimeThreshold(Message first, Message? second) {
     if (second == null) return true;
@@ -58,8 +87,12 @@ class TimestampSeparator extends StatelessWidget {
           children: [
             if (message.dateScheduled != null && olderMessage?.dateScheduled == null)
               TextSpan(
-                text: "Send Later\n",
-                style: context.theme.textTheme.labelSmall!.copyWith(fontWeight: FontWeight.w600, color: context.theme.colorScheme.outline, height: 2.5),
+                text: isOverdue ? "Send Later - delivery not confirmed\n" : "Send Later\n",
+                style: context.theme.textTheme.labelSmall!.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: isOverdue ? context.theme.colorScheme.error : context.theme.colorScheme.outline,
+                  height: 2.5,
+                ),
               ),
             if (timestamp.item1 != null)
               TextSpan(
@@ -92,9 +125,10 @@ class TimestampSeparator extends StatelessWidget {
             title: responsibleMessages.length == 1 ? 'Send Message' : 'Send ${responsibleMessages.length} Messages',
             icon: CupertinoIcons.arrow_up_circle,
             onTap: () async {
+              if (!await confirmOverdueAction(context, "sending it again")) return;
               for (var message in responsibleMessages) {
                 message.dateScheduled = null;
-                message.stagingGuid = message.guid;
+                message.stagingGuid ??= message.guid;
                 message.dateCreated = DateTime.now();
                 message.generateTempGuid();
                 message.save();
@@ -110,6 +144,7 @@ class TimestampSeparator extends StatelessWidget {
             title: 'Edit Time',
             icon: CupertinoIcons.clock,
             onTap: () async {
+              if (!await confirmOverdueAction(context, "rescheduling it")) return;
               final date = await showTimeframePicker("Pick date and time", context, presetsAhead: true);
               if (date == null || !date.isAfter(DateTime.now())) {
                 return;

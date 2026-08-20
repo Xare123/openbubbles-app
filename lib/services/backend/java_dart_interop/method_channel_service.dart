@@ -281,7 +281,7 @@ class MethodChannelService extends GetxService {
         final recentReplyText = ss.prefs.getString("recent-reply")?.split("/").last;
         if (recentReplyGuid == data["messageGuid"] && recentReplyText == data["text"]) return Future.value(false);
         await ss.prefs.setString("recent-reply", "${data["messageGuid"]}/${data["text"]}");
-        Logger.info("Updated recent reply cache to ${ss.prefs.getString("recent-reply")}");
+        Logger.info("Updated recent reply cache");
         Chat? chat = Chat.findOne(guid: data["chatGuid"]);
         if (chat == null) {
           return Future.value(false);
