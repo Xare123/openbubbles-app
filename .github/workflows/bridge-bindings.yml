@@ -45,7 +45,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler
 
-      - name: Set up test FairPlay certificates
+      - name: Set up test certificates
         shell: bash
         run: |
           destination="rustpush/certs/fairplay"
@@ -65,6 +65,13 @@ jobs:
             cp rustpush/certs/legacy-fairplay/fairplay.pem "$destination/$name.pem"
             cp rustpush/certs/legacy-fairplay/fairplay.crt "$destination/$name.crt"
           done
+
+          proxy_destination="rustpush/certs/proxy"
+          mkdir -p "$proxy_destination"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -subj "/CN=localhost" \
+            -keyout "$proxy_destination/push_key.pem" \
+            -out "$proxy_destination/push_certificate_chain.pem"
 
       - name: Compile committed Rust bridge
         run: cargo check --manifest-path rust/Cargo.toml --lib --message-format short
