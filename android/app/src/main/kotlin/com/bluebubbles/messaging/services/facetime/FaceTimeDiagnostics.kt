@@ -1,9 +1,19 @@
 package com.bluebubbles.messaging.services.facetime
 
 import android.content.Context
+import android.util.Log
+import java.io.File
 import java.net.URI
+import java.util.concurrent.Executors
 
 internal object FaceTimeDiagnostics {
+    private const val tag = "FaceTimeDiag"
+    private const val logFileName = "facetime_diagnostics.log"
+    private const val maxLogBytes = 512L * 1024L
+    private val fileLock = Any()
+    private val fileWriter = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "FaceTimeDiagnostics").apply { isDaemon = true }
+    }
     private const val preferencesName = "FlutterSharedPreferences"
     private const val developerModeKey = "flutter.developerEnabled"
     private const val diagnosticsKey = "flutter.faceTimeDiagnosticsEnabled"
@@ -20,6 +30,29 @@ internal object FaceTimeDiagnostics {
         developerModeEnabled: Boolean,
         diagnosticsEnabled: Boolean,
     ): Boolean = developerModeEnabled && diagnosticsEnabled
+
+    fun record(context: Context, message: String) {
+        if (!isEnabled(context)) return
+        val oneLineMessage = message.replace('\n', ' ').replace('\r', ' ')
+        Log.w(tag, oneLineMessage)
+        val filesDirectory = context.applicationContext.filesDir
+        fileWriter.execute {
+            synchronized(fileLock) {
+                runCatching {
+                    val directory = File(filesDirectory, "logs").apply { mkdirs() }
+                    val file = File(directory, logFileName)
+                    if (file.length() >= maxLogBytes) {
+                        File(directory, "$logFileName.previous").delete()
+                        file.renameTo(File(directory, "$logFileName.previous"))
+                    }
+                    file.appendText("${System.currentTimeMillis()} $oneLineMessage\n")
+                }.onFailure { error ->
+                    Log.w(tag, "unable to persist diagnostic event: ${error.javaClass.simpleName}")
+                }
+            }
+        }
+    }
+
     internal fun safeResourceLabel(requestUrl: String?): String {
         if (requestUrl == null) return "unknown"
         return try {

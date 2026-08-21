@@ -35,6 +35,10 @@ class FaceTimeCallStateHandler: MethodCallHandlerImpl() {
         val activeActivity = FaceTimeActivity.activeFaceTimeActivity
 
         if (FaceTimeDiagnostics.isEnabled(context)) {
+            FaceTimeDiagnostics.record(
+                context,
+                "native call_state=$state active=${activeActivity != null} answered=${activeActivity?.answered} uuidMatches=${callUuid != null && activeActivity?.callUuid == callUuid}",
+            )
             Log.w(
                 "FaceTimeDiag",
                 "native call state=$state active=${activeActivity != null} answered=${activeActivity?.answered} uuidMatches=${callUuid != null && activeActivity?.callUuid == callUuid}",

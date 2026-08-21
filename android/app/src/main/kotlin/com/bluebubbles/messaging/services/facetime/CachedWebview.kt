@@ -124,38 +124,27 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             throw Exception("Failed to load resource! $response")
         }
         val body = response.body() ?: throw Exception("Failed to load resource! Empty body!")
-        var string = body.string()
-        val waitingPattern = """"GenericToast\.Waiting": *"Waiting to be let in…",""".toRegex()
-        val bannerPattern = """"SessionBanner\.FaceTime": *"FaceTime Call",""".toRegex()
-        val submitNamePattern = "(submitName: *([a-zA-Z]+?)[ a-zA-Z,}=:]*?;)".toRegex()
-        val diagnosticsEnabled = diagnosticsEnabled()
-        val waitingMatches = if (diagnosticsEnabled) waitingPattern.findAll(string).count() else 0
-        val bannerMatches = if (diagnosticsEnabled) bannerPattern.findAll(string).count() else 0
-        val submitNameMatches = if (diagnosticsEnabled && name != null) submitNamePattern.findAll(string).count() else 0
-
-        string = string
-            .replace(""""GenericToast\.Waiting": *"Waiting to be let in…",""".toRegex(), """"GenericToast.Waiting":"Connecting…",""")
-            .replace(""""SessionBanner\.FaceTime": *"FaceTime Call",""".toRegex(), """"SessionBanner.FaceTime":${javascriptStringLiteral(desc)},""")
-
-        if (name != null) {
-            string = string.replace(submitNamePattern, "$1 $2(${javascriptStringLiteral(name)}).then(() => Native.mirrored());")
-        }
-
-        if (name != null && submitNameMatches == 0) {
+        val patch = FaceTimeWebCompatibility.patchMainScript(body.string(), name, desc)
+        if (!patch.automaticJoinCompatible) {
             Log.e(
                 diagnosticTag,
-                "FaceTime web compatibility patch missing submitName=$submitNameMatches nameProvided=${name != null}",
+                "FaceTime web compatibility preflight failed submitName=${patch.submitNameMatches} nameProvided=${name != null}",
             )
         }
 
-        if (diagnosticsEnabled) {
+        FaceTimeDiagnostics.record(
+            applicationContext,
+            "web preflight bytes=${patch.script.length} waiting=${patch.waitingMatches} banner=${patch.bannerMatches} submitName=${patch.submitNameMatches} compatible=${patch.automaticJoinCompatible}",
+        )
+
+        if (diagnosticsEnabled()) {
             Log.i(
                 diagnosticTag,
-                "main.js bytes=${string.length} patches waiting=$waitingMatches banner=$bannerMatches submitName=$submitNameMatches nameProvided=${name != null}"
+                "main.js bytes=${patch.script.length} patches waiting=${patch.waitingMatches} banner=${patch.bannerMatches} submitName=${patch.submitNameMatches} compatible=${patch.automaticJoinCompatible}"
             )
         }
 
-        return string
+        return patch.script
     }
 
     init {
@@ -205,6 +194,10 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                FaceTimeDiagnostics.record(
+                    applicationContext,
+                    "web page_started resource=${safeResourceLabel(url)}",
+                )
                 if (diagnosticsEnabled()) {
                     Log.i(diagnosticTag, "page started ${safeResourceLabel(url)}")
                 }
@@ -216,6 +209,10 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                         Log.i(diagnosticTag, "leave button bridge result=$result")
                     }
                 }
+                FaceTimeDiagnostics.record(
+                    applicationContext,
+                    "web page_finished resource=${safeResourceLabel(url)} mirrorReady=$mirrorReady",
+                )
                 if (diagnosticsEnabled()) {
                     Log.i(diagnosticTag, "page finished ${safeResourceLabel(url)} mirrorReady=$mirrorReady")
                 }
@@ -248,6 +245,10 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             }
 
             override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                FaceTimeDiagnostics.record(
+                    applicationContext,
+                    "web renderer_gone crashed=${detail?.didCrash()} priority=${detail?.rendererPriorityAtExit()}",
+                )
                 Log.e(diagnosticTag, "WebView render process gone crashed=${detail?.didCrash()} priority=${detail?.rendererPriorityAtExit()}")
                 callbackHandler.post { endTask() }
                 return true
@@ -279,6 +280,10 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                 }
                 mirrorReadyRunnable = runnable
                 callbackHandler.postDelayed(runnable, 250)
+                FaceTimeDiagnostics.record(
+                    applicationContext,
+                    "web mirrored_received ready_scheduled=true",
+                )
                 if (diagnosticsEnabled()) {
                     Log.i(diagnosticTag, "Native.mirrored received; mirrorReady scheduled")
                 }
@@ -288,6 +293,10 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest?) {
                 if (request == null) return
+                FaceTimeDiagnostics.record(
+                    applicationContext,
+                    "web permission_requested count=${request.resources.size} originAllowed=${matchesWebOrigin(allowedOrigin, request.origin.toString())}",
+                )
                 if (diagnosticsEnabled()) {
                     Log.i(diagnosticTag, "WebView permission request resources=${request.resources.sorted().joinToString()}")
                 }

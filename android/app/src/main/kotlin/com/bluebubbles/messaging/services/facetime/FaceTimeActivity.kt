@@ -138,6 +138,10 @@ class FaceTimeActivity : Activity() {
             ) { result ->
                 if (!diagnosticsEnabled()) return@evaluateJavascript
                 connectionProbeCount += 1
+                FaceTimeDiagnostics.record(
+                    this,
+                    "activity media_probe attempt=$connectionProbeCount result=$result",
+                )
                 Log.i(diagnosticTag, "media probe attempt=$connectionProbeCount result=$result")
                 scheduleConnectionProbe(5000)
             }
@@ -160,6 +164,10 @@ class FaceTimeActivity : Activity() {
             if (callEnding || isFinishing || isDestroyed) return@evaluateJavascript
             val decision = joinPolicy.record(result)
             if (diagnosticsEnabled()) {
+                FaceTimeDiagnostics.record(
+                    this,
+                    "activity join_attempt reason=$reason attempt=${joinPolicy.attempts} outcome=${decision.outcome} mirrorReady=$mirrorReady answered=$answered",
+                )
                 Log.i(
                     diagnosticTag,
                     "join attempt reason=$reason attempt=${joinPolicy.attempts} outcome=${decision.outcome} mirrorReady=$mirrorReady answered=$answered"
@@ -671,6 +679,10 @@ class FaceTimeActivity : Activity() {
         }
 
         if (diagnosticsEnabled()) {
+            FaceTimeDiagnostics.record(
+                this,
+                "activity started hasCallUuid=${callUuid != null} answering=$isAnsweringCall",
+            )
             Log.i(diagnosticTag, "started activity hasCallUuid=${callUuid != null} answering=$isAnsweringCall")
         }
 

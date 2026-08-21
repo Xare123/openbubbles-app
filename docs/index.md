@@ -12,6 +12,9 @@ timestamp: 2026-07-31
 - [Development](DEVELOPMENT.md): local development and build guidance.
 - [Diagnostics](DIAGNOSTICS.md): bounded, redacted runtime logging.
 - [Verification](VERIFICATION.md): delivery, routing, and performance gates.
+- [FaceTime reliability testing](FACETIME_RELIABILITY_TESTING.md): signaling
+  replay, Android call-state checks, cached Apple bundle preflight, and the
+  minimal outgoing/incoming live-call gate.
 - [Memory management](MEMORY_MANAGEMENT.md): bounded media and conversation
   resource ownership.
 - [Cloud Sync V2](CLOUD_SYNC_V2.md): guarded Pixel Android and Windows
