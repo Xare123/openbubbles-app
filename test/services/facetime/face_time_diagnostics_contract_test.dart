@@ -131,9 +131,17 @@ void main() {
     expect(source, contains('Ignoring duplicate FaceTime join event'));
     expect(handler, contains('activeCall?.callUuid == requestedCallUuid'));
     expect(handler, contains('ignored duplicate launch for active call'));
+
+    final activity = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeActivity.kt',
+    ).readAsStringSync();
+    expect(
+      activity.indexOf('callUuid = launchExtras.getString("callUuid")'),
+      lessThan(activity.indexOf('activeFaceTimeActivity = this')),
+    );
   });
 
-  test('native end control does not overlap the joined web leave control', () {
+  test('native end control remains available without overlapping web leave', () {
     final activity = File(
       'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeActivity.kt',
     ).readAsStringSync();
@@ -143,9 +151,7 @@ void main() {
 
     expect(
       activity,
-      contains(
-        'binding.nativeCallControls.visibility = if (joined) View.GONE else View.VISIBLE',
-      ),
+      contains('binding.nativeCallControls.visibility = View.VISIBLE'),
     );
     expect(layout, contains('android:layout_gravity="top|start"'));
     expect(layout, isNot(contains('android:layout_gravity="top|end"')));

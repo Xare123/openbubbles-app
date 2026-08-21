@@ -113,9 +113,10 @@ class FaceTimeActivity : Activity() {
     private fun showCallUi(joined: Boolean) {
         binding.mainFrame.visibility = View.VISIBLE
         binding.splashLayout.visibility = View.GONE
-        // Apple's web controls provide Leave once the call is joined. Keep the
-        // native control only as a connection-time fallback so they never overlap.
-        binding.nativeCallControls.visibility = if (joined) View.GONE else View.VISIBLE
+        // Keep an app-owned End control available even if Apple's web Leave
+        // control disappears after joining. It lives at the opposite edge so
+        // the two controls do not overlap.
+        binding.nativeCallControls.visibility = View.VISIBLE
         binding.connectionStatus.visibility = if (joined) View.GONE else View.VISIBLE
         if (!joined) {
             binding.connectionStatus.text = "Finishing FaceTime connection..."
@@ -340,6 +341,10 @@ class FaceTimeActivity : Activity() {
         super.onCreate(savedInstanceState)
         binding = ActivityFaceTimeBinding.inflate(layoutInflater)
 
+        val launchExtras = requireNotNull(intent.extras)
+        // Publish the UUID before the activity becomes visible to the launch
+        // handler so a duplicate event cannot slip through during startup.
+        callUuid = launchExtras.getString("callUuid")
         activeFaceTimeActivity = this
 
         window.statusBarColor = Color.TRANSPARENT
@@ -359,7 +364,7 @@ class FaceTimeActivity : Activity() {
             )
         }
 
-        handleConfig(intent.extras!!)
+        handleConfig(launchExtras)
         binding.mainFrame.addView(webView)
 
         binding.accept.setOnClickListener {
