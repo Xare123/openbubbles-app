@@ -245,5 +245,15 @@ void main() {
       stateHandler,
       contains('FaceTimeActivity.cachedCallUuid == callUuid'),
     );
+    expect(
+      stateHandler,
+      contains(
+        'shouldFinishFaceTimeActivity(state, it.isCall, it.callUuid, callUuid)',
+      ),
+    );
+    expect(
+      stateHandler,
+      isNot(contains('!it.answered && it.isCall && it.callUuid == callUuid')),
+    );
   });
 }

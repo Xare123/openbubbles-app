@@ -6,6 +6,16 @@ import com.bluebubbles.messaging.models.MethodCallHandlerImpl
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
+internal fun shouldFinishFaceTimeActivity(
+    state: String?,
+    isCall: Boolean,
+    activityCallUuid: String?,
+    requestedCallUuid: String?,
+): Boolean = state == "timeout" &&
+    isCall &&
+    requestedCallUuid != null &&
+    activityCallUuid == requestedCallUuid
+
 class FaceTimeCallStateHandler: MethodCallHandlerImpl() {
 
     companion object {
@@ -40,9 +50,11 @@ class FaceTimeCallStateHandler: MethodCallHandlerImpl() {
                 }
             }
         } else if (state == "timeout") {
-            // finish any still ringing activity
+            // A timeout is also the terminal signal Dart sends after the final
+            // remote participant leaves. Close only the matching call, whether
+            // it was still ringing or had already entered the web call UI.
             FaceTimeActivity.activeFaceTimeActivity?.let {
-                if (!it.answered && it.isCall && it.callUuid == callUuid) {
+                if (shouldFinishFaceTimeActivity(state, it.isCall, it.callUuid, callUuid)) {
                     it.finishAndRemoveTask()
                 }
             }
