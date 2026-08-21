@@ -148,7 +148,13 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                 )
             )
             .build()
-        webView.settings.javaScriptEnabled = true
+        webView.settings.apply {
+            javaScriptEnabled = true
+            // Joining is initiated by our JavaScript bridge, which WebView does
+            // not count as a user gesture. Allow the remote call audio/video to
+            // start once FaceTime completes that programmatic join.
+            mediaPlaybackRequiresUserGesture = false
+        }
         webView.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(
                 view: WebView?,

@@ -157,6 +157,17 @@ void main() {
     expect(layout, isNot(contains('android:layout_gravity="top|end"')));
   });
 
+  test('programmatic FaceTime join can start remote media playback', () {
+    final cachedWebView = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/CachedWebview.kt',
+    ).readAsStringSync();
+
+    expect(
+      cachedWebView,
+      contains('mediaPlaybackRequiresUserGesture = false'),
+    );
+  });
+
   test('media permission grants refresh foreground service types', () {
     final activity = File(
       'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeActivity.kt',
