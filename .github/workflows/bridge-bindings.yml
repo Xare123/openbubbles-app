@@ -5,6 +5,11 @@ on:
   push:
     paths:
       - ".github/workflows/bridge-bindings.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust/**"
+      - "rustpush"
+      - "rustpush/**"
       - "rust/src/api/**"
       - "flutter_rust_bridge.yaml"
       - "lib/src/rust/**"
@@ -12,6 +17,11 @@ on:
   pull_request:
     paths:
       - ".github/workflows/bridge-bindings.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust/**"
+      - "rustpush"
+      - "rustpush/**"
       - "rust/src/api/**"
       - "flutter_rust_bridge.yaml"
       - "lib/src/rust/**"
