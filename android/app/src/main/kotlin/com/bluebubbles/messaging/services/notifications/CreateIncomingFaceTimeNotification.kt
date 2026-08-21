@@ -79,7 +79,7 @@ class CreateIncomingFaceTimeNotification: MethodCallHandlerImpl() {
                 .putExtra("notificationId", notificationId.toString())
                 .putExtra("desc", title)
                 .putExtra("poster", poster),
-            PendingIntent.FLAG_IMMUTABLE
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
         // Create intent for answering and opening the facetime link
@@ -94,7 +94,7 @@ class CreateIncomingFaceTimeNotification: MethodCallHandlerImpl() {
                 .putExtra("notificationId", notificationId.toString())
                 .putExtra("desc", title)
                 .putExtra("poster", poster),
-            PendingIntent.FLAG_IMMUTABLE
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
         // Create intent for declining the facetime
@@ -105,7 +105,7 @@ class CreateIncomingFaceTimeNotification: MethodCallHandlerImpl() {
                 .putExtras(extras)
                 .putExtra("notificationId", notificationId.toString())
                 .setType("DeclineFaceTime"),
-            PendingIntent.FLAG_IMMUTABLE
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
         val notificationBuilder = NotificationCompat.Builder(context, channelId)

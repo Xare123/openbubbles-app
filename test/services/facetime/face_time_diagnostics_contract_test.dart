@@ -228,7 +228,7 @@ void main() {
     expect(service, contains('_clearOutgoingCall(guid, finalState: "ended")'));
   });
 
-  test('native call cache and connecting UI are call-specific', () {
+  test('native call cache and timeout handling are call-specific', () {
     final activity = File(
       'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeActivity.kt',
     ).readAsStringSync();
@@ -248,12 +248,16 @@ void main() {
     expect(
       stateHandler,
       contains(
-        'shouldFinishFaceTimeActivity(state, it.isCall, it.callUuid, callUuid)',
+        'shouldFinishFaceTimeActivity(state, it.isCall, it.answered, it.callUuid, callUuid)',
       ),
     );
-    expect(
-      stateHandler,
-      isNot(contains('!it.answered && it.isCall && it.callUuid == callUuid')),
-    );
+    expect(stateHandler, contains('!answered'));
+    expect(activity, contains('hasRequiredFaceTimeLaunchData'));
+    expect(activity, contains('finishAndRemoveTask()'));
+
+    final notification = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/notifications/CreateIncomingFaceTimeNotification.kt',
+    ).readAsStringSync();
+    expect(notification, contains('PendingIntent.FLAG_UPDATE_CURRENT'));
   });
 }

@@ -2,6 +2,7 @@ package com.bluebubbles.messaging.services.facetime
 
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import com.bluebubbles.messaging.models.MethodCallHandlerImpl
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -9,10 +10,12 @@ import io.flutter.plugin.common.MethodChannel
 internal fun shouldFinishFaceTimeActivity(
     state: String?,
     isCall: Boolean,
+    answered: Boolean,
     activityCallUuid: String?,
     requestedCallUuid: String?,
 ): Boolean = state == "timeout" &&
     isCall &&
+    !answered &&
     requestedCallUuid != null &&
     activityCallUuid == requestedCallUuid
 
@@ -29,6 +32,14 @@ class FaceTimeCallStateHandler: MethodCallHandlerImpl() {
     ) {
         val state = call.argument<String>("state")
         val callUuid = call.argument<String>("callUuid")
+        val activeActivity = FaceTimeActivity.activeFaceTimeActivity
+
+        if (FaceTimeDiagnostics.isEnabled(context)) {
+            Log.w(
+                "FaceTimeDiag",
+                "native call state=$state active=${activeActivity != null} answered=${activeActivity?.answered} uuidMatches=${callUuid != null && activeActivity?.callUuid == callUuid}",
+            )
+        }
 
         if (state == "ringing") {
             if (FaceTimeActivity.activeFaceTimeActivity == null) {
@@ -50,11 +61,11 @@ class FaceTimeCallStateHandler: MethodCallHandlerImpl() {
                 }
             }
         } else if (state == "timeout") {
-            // A timeout is also the terminal signal Dart sends after the final
-            // remote participant leaves. Close only the matching call, whether
-            // it was still ringing or had already entered the web call UI.
-            FaceTimeActivity.activeFaceTimeActivity?.let {
-                if (shouldFinishFaceTimeActivity(state, it.isCall, it.callUuid, callUuid)) {
+            // Rust's native participant can leave while Apple's WebRTC guest is
+            // still joining. Treat timeout as terminal only while ringing; the
+            // joined WebView or its explicit End action owns answered-call exit.
+            activeActivity?.let {
+                if (shouldFinishFaceTimeActivity(state, it.isCall, it.answered, it.callUuid, callUuid)) {
                     it.finishAndRemoveTask()
                 }
             }

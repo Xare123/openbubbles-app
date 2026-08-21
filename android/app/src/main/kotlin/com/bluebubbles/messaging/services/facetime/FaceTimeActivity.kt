@@ -43,6 +43,8 @@ import com.bluebubbles.messaging.utils.getStreamMinVolumeCompat
 import com.google.android.material.math.MathUtils
 import kotlin.math.roundToInt
 
+internal fun hasRequiredFaceTimeLaunchData(link: String?): Boolean = !link.isNullOrBlank()
+
 class FaceTimeActivity : Activity() {
     companion object {
         private const val diagnosticTag = "FaceTimeDiag"
@@ -339,9 +341,22 @@ class FaceTimeActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val launchExtras = intent.extras
+        if (launchExtras == null || !hasRequiredFaceTimeLaunchData(launchExtras.getString("link"))) {
+            // Android can restore the dedicated FaceTime task from Recents after
+            // its process or APK has changed. That restored base intent has no
+            // call metadata and cannot safely recreate the WebView session.
+            Log.w(
+                diagnosticTag,
+                "discarding FaceTime launch without current call metadata hasExtras=${launchExtras != null}",
+            )
+            finishAndRemoveTask()
+            return
+        }
+
         binding = ActivityFaceTimeBinding.inflate(layoutInflater)
 
-        val launchExtras = requireNotNull(intent.extras)
         // Publish the UUID before the activity becomes visible to the launch
         // handler so a duplicate event cannot slip through during startup.
         callUuid = launchExtras.getString("callUuid")
