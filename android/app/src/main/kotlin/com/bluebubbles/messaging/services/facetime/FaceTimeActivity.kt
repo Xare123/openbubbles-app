@@ -113,10 +113,10 @@ class FaceTimeActivity : Activity() {
     private fun showCallUi(joined: Boolean) {
         binding.mainFrame.visibility = View.VISIBLE
         binding.splashLayout.visibility = View.GONE
-        // Keep an app-owned End control available even if Apple's web Leave
-        // control disappears after joining. It lives at the opposite edge so
-        // the two controls do not overlap.
-        binding.nativeCallControls.visibility = View.VISIBLE
+        // Apple's joined UI already owns the Leave control. Keep our fallback
+        // only while connecting so the call screen never presents two competing
+        // red controls or obscures participant information.
+        binding.nativeCallControls.visibility = if (joined) View.GONE else View.VISIBLE
         binding.connectionStatus.visibility = if (joined) View.GONE else View.VISIBLE
         if (!joined) {
             binding.connectionStatus.text = "Finishing FaceTime connection..."

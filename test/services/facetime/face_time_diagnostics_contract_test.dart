@@ -141,7 +141,7 @@ void main() {
     );
   });
 
-  test('native end control remains available without overlapping web leave', () {
+  test('joined FaceTime UI uses only the web leave control', () {
     final activity = File(
       'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeActivity.kt',
     ).readAsStringSync();
@@ -151,10 +151,33 @@ void main() {
 
     expect(
       activity,
-      contains('binding.nativeCallControls.visibility = View.VISIBLE'),
+      contains(
+        'binding.nativeCallControls.visibility = if (joined) View.GONE else View.VISIBLE',
+      ),
     );
     expect(layout, contains('android:layout_gravity="top|start"'));
     expect(layout, isNot(contains('android:layout_gravity="top|end"')));
+  });
+
+  test('web leave bridge is scoped to an explicit leave-button tap', () {
+    final cachedWebView = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/CachedWebview.kt',
+    ).readAsStringSync();
+
+    expect(
+      cachedWebView,
+      isNot(
+        contains(
+          '.replace("this.onLeave.notifyListeners()", "Native.leave(), this.onLeave.notifyListeners()")',
+        ),
+      ),
+    );
+    expect(
+      cachedWebView,
+      contains('document.addEventListener("click", (event) => {'),
+    );
+    expect(cachedWebView, contains('callcontrols-leave-button-session-banner'));
+    expect(cachedWebView, contains('setTimeout(() => Native.leave(), 0)'));
   });
 
   test('programmatic FaceTime join can start remote media playback', () {
@@ -162,10 +185,7 @@ void main() {
       'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/CachedWebview.kt',
     ).readAsStringSync();
 
-    expect(
-      cachedWebView,
-      contains('mediaPlaybackRequiresUserGesture = false'),
-    );
+    expect(cachedWebView, contains('mediaPlaybackRequiresUserGesture = false'));
   });
 
   test('media permission grants refresh foreground service types', () {

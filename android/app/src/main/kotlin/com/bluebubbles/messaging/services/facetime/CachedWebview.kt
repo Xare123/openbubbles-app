@@ -29,6 +29,27 @@ import java.io.File
 class CachedWebview(context: Context, name: String?, desc: String, url: String) {
     companion object {
         private const val diagnosticTag = "FaceTimeDiag"
+
+        // Apple's onLeave notifier does not distinguish an explicit button tap
+        // from an internal session transition. Finishing Android from every
+        // notifier occurrence can therefore tear down a call during admission.
+        // Bridge only an explicit tap on the web page's Leave control instead.
+        private val leaveButtonBridgeScript = """
+            (() => {
+                const bridgeKey = "__openBubblesLeaveButtonBridge";
+                if (window[bridgeKey]) return "already-installed";
+                window[bridgeKey] = true;
+                document.addEventListener("click", (event) => {
+                    const button = event.target?.closest?.("button");
+                    if (!button) return;
+                    const label = (button.innerText || button.textContent || button.getAttribute?.("aria-label") || "").trim();
+                    if (button.id === "callcontrols-leave-button-session-banner" || /^(leave|end call)$/i.test(label)) {
+                        setTimeout(() => Native.leave(), 0);
+                    }
+                }, true);
+                return "installed";
+            })()
+        """.trimIndent()
     }
 
     val webView = WebView(context)
@@ -110,29 +131,27 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
         val diagnosticsEnabled = diagnosticsEnabled()
         val waitingMatches = if (diagnosticsEnabled) waitingPattern.findAll(string).count() else 0
         val bannerMatches = if (diagnosticsEnabled) bannerPattern.findAll(string).count() else 0
-        val leaveMatches = if (diagnosticsEnabled) "this.onLeave.notifyListeners()".toRegex().findAll(string).count() else 0
         val submitNameMatches = if (diagnosticsEnabled && name != null) submitNamePattern.findAll(string).count() else 0
 
         string = string
             .replace(""""GenericToast\.Waiting": *"Waiting to be let in…",""".toRegex(), """"GenericToast.Waiting":"Connecting…",""")
             .replace(""""SessionBanner\.FaceTime": *"FaceTime Call",""".toRegex(), """"SessionBanner.FaceTime":${javascriptStringLiteral(desc)},""")
-            .replace("this.onLeave.notifyListeners()", "Native.leave(), this.onLeave.notifyListeners()")
 
         if (name != null) {
             string = string.replace(submitNamePattern, "$1 $2(${javascriptStringLiteral(name)}).then(() => Native.mirrored());")
         }
 
-        if (leaveMatches == 0 || (name != null && submitNameMatches == 0)) {
+        if (name != null && submitNameMatches == 0) {
             Log.e(
                 diagnosticTag,
-                "FaceTime web compatibility patch missing leave=$leaveMatches submitName=$submitNameMatches nameProvided=${name != null}",
+                "FaceTime web compatibility patch missing submitName=$submitNameMatches nameProvided=${name != null}",
             )
         }
 
         if (diagnosticsEnabled) {
             Log.i(
                 diagnosticTag,
-                "main.js bytes=${string.length} patches waiting=$waitingMatches banner=$bannerMatches leave=$leaveMatches submitName=$submitNameMatches nameProvided=${name != null}"
+                "main.js bytes=${string.length} patches waiting=$waitingMatches banner=$bannerMatches submitName=$submitNameMatches nameProvided=${name != null}"
             )
         }
 
@@ -192,6 +211,11 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
+                view?.evaluateJavascript(leaveButtonBridgeScript) { result ->
+                    if (diagnosticsEnabled()) {
+                        Log.i(diagnosticTag, "leave button bridge result=$result")
+                    }
+                }
                 if (diagnosticsEnabled()) {
                     Log.i(diagnosticTag, "page finished ${safeResourceLabel(url)} mirrorReady=$mirrorReady")
                 }
@@ -234,6 +258,7 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
         webView.addJavascriptInterface(object {
             @JavascriptInterface
             fun leave() {
+                Log.i(diagnosticTag, "explicit web leave control invoked")
                 callbackHandler.post { endTask() }
             }
             @JavascriptInterface
