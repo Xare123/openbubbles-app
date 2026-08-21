@@ -119,6 +119,38 @@ void main() {
     );
   });
 
+  test('duplicate outgoing join events cannot relaunch the active call', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final handler = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeLaunchHandler.kt',
+    ).readAsStringSync();
+
+    expect(source, contains('if (chosenFTRoomGuid == facetime.guid)'));
+    expect(source, contains('Ignoring duplicate FaceTime join event'));
+    expect(handler, contains('activeCall?.callUuid == requestedCallUuid'));
+    expect(handler, contains('ignored duplicate launch for active call'));
+  });
+
+  test('native end control does not overlap the joined web leave control', () {
+    final activity = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeActivity.kt',
+    ).readAsStringSync();
+    final layout = File(
+      'android/app/src/main/res/layout/activity_face_time.xml',
+    ).readAsStringSync();
+
+    expect(
+      activity,
+      contains(
+        'binding.nativeCallControls.visibility = if (joined) View.GONE else View.VISIBLE',
+      ),
+    );
+    expect(layout, contains('android:layout_gravity="top|start"'));
+    expect(layout, isNot(contains('android:layout_gravity="top|end"')));
+  });
+
   test('media permission grants refresh foreground service types', () {
     final activity = File(
       'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeActivity.kt',

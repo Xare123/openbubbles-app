@@ -113,7 +113,9 @@ class FaceTimeActivity : Activity() {
     private fun showCallUi(joined: Boolean) {
         binding.mainFrame.visibility = View.VISIBLE
         binding.splashLayout.visibility = View.GONE
-        binding.nativeCallControls.visibility = View.VISIBLE
+        // Apple's web controls provide Leave once the call is joined. Keep the
+        // native control only as a connection-time fallback so they never overlap.
+        binding.nativeCallControls.visibility = if (joined) View.GONE else View.VISIBLE
         binding.connectionStatus.visibility = if (joined) View.GONE else View.VISIBLE
         if (!joined) {
             binding.connectionStatus.text = "Finishing FaceTime connection..."

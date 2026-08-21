@@ -5077,6 +5077,12 @@ class RustPushService extends GetxService {
           ring = facetime.guid;
         }
         if (facetime.guid == currentOutgoingCallGuid) {
+          if (chosenFTRoomGuid == facetime.guid) {
+            Logger.info(
+              "Ignoring duplicate FaceTime join event for the active outgoing call",
+            );
+            return;
+          }
           currentOutgoingCall?.value = "accepted";
           hideFaceTimeOverlay(facetime.guid);
 
