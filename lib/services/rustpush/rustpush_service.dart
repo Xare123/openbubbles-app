@@ -7142,7 +7142,8 @@ class RustPushService extends GetxService {
   // uniquely identify the backend service that is running
   String serviceId = "";
 
-  BillingClientManager client = BillingClientManager();
+  BillingClientManager? _billingClient;
+  BillingClientManager get client => _billingClient ??= BillingClientManager();
   bool cachedInClique = false;
 
   @override
@@ -7415,13 +7416,20 @@ class RustPushService extends GetxService {
   }
 
   void initMixPanel() async {
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      return;
+    }
     if (ss.settings.finishedSetup.value && !ss.settings.deviceIsHosted.value) {
       return;
     }
-    mixpanel = await Mixpanel.init(
-      "d66dc2d8f2ad649fac2640ff059dc9f4",
-      trackAutomaticEvents: false,
-    );
+    try {
+      mixpanel = await Mixpanel.init(
+        "d66dc2d8f2ad649fac2640ff059dc9f4",
+        trackAutomaticEvents: false,
+      );
+    } catch (error, trace) {
+      Logger.warn('Mixpanel initialization unavailable', error: error, trace: trace);
+    }
   }
 
   String statePath = "";

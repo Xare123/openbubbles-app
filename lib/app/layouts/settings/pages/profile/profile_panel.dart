@@ -157,9 +157,11 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
   void initState() {
     super.initState();
     getDetails();
-    subscription = pushService.client.purchasesUpdatedStream.listen((PurchasesResultWrapper details) {
-      handlePurchases(details);
-    });
+    if (Platform.isAndroid) {
+      subscription = pushService.client.purchasesUpdatedStream.listen((PurchasesResultWrapper details) {
+        handlePurchases(details);
+      });
+    }
     if (pushService.state!.icloudServices != null) api.getQuotaInfo(info: pushService.state!.icloudServices!.tokenProvider).then((quota) => quotaInfo.value = quota);
     if (kIsDesktop) {
       pushService.googleSignIn.signInOffline().then((state) {

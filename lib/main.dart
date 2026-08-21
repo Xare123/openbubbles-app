@@ -184,7 +184,7 @@ Future<Null> initApp(bool bubble, List<String> arguments) async {
 
             posX = posX.clamp(0, max(0, primary.size.width - width));
             posY = posY.clamp(0, max(0, primary.size.height - height));
-            await windowManager.setPosition(Offset(posX, posY), animate: true);
+            await windowManager.setPosition(Offset(posX, posY), animate: false);
             await ss.prefs.setDouble("window-x", posX);
             await ss.prefs.setDouble("window-y", posY);
 
@@ -253,16 +253,20 @@ class DesktopWindowListener extends WindowListener {
 
   @override
   void onWindowResized() async {
-    Size size = await windowManager.getSize();
-    await ss.prefs.setDouble("window-width", size.width);
-    await ss.prefs.setDouble("window-height", size.height);
+    EasyDebounce.debounce('desktop-window-size-prefs', const Duration(milliseconds: 250), () async {
+      Size size = await windowManager.getSize();
+      await ss.prefs.setDouble("window-width", size.width);
+      await ss.prefs.setDouble("window-height", size.height);
+    });
   }
 
   @override
   void onWindowMoved() async {
-    Offset offset = await windowManager.getPosition();
-    await ss.prefs.setDouble("window-x", offset.dx);
-    await ss.prefs.setDouble("window-y", offset.dy);
+    EasyDebounce.debounce('desktop-window-position-prefs', const Duration(milliseconds: 250), () async {
+      Offset offset = await windowManager.getPosition();
+      await ss.prefs.setDouble("window-x", offset.dx);
+      await ss.prefs.setDouble("window-y", offset.dy);
+    });
   }
 
   @override
@@ -280,7 +284,7 @@ class DesktopWindowListener extends WindowListener {
   @override
   void onWindowClose() async {
     if (await windowManager.isPreventClose()) {
-      await windowManager.hide();
+      await requestDesktopWindowClose(closeToTray: true);
     }
   }
 }
@@ -585,10 +589,7 @@ class _HomeState extends OptimizedState<Home> with WidgetsBindingObserver, TrayL
         await windowManager.hide();
         break;
       case 'close_app':
-        if (await windowManager.isPreventClose()) {
-          await windowManager.setPreventClose(false);
-        }
-        await windowManager.close();
+        await exitDesktopWindow();
         break;
     }
   }
@@ -720,10 +721,7 @@ Future<void> setSystemTrayContextMenu({bool windowHidden = false}) async {
       st.MenuItemLabel(
         label: 'Close App',
         onClicked: (_) async {
-          if (await windowManager.isPreventClose()) {
-            await windowManager.setPreventClose(false);
-          }
-          await windowManager.close();
+          await exitDesktopWindow();
         },
       ),
     ]);

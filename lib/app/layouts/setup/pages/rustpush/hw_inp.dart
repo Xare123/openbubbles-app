@@ -492,9 +492,11 @@ class HwInpState extends OptimizedState<HwInp> {
   void initState() {
     super.initState();
 
-    subscription = pushService.client.purchasesUpdatedStream.listen((PurchasesResultWrapper details) {
-      handlePurchases(details);
-    });
+    if (Platform.isAndroid) {
+      subscription = pushService.client.purchasesUpdatedStream.listen((PurchasesResultWrapper details) {
+        handlePurchases(details);
+      });
+    }
 
     updateInitial();
 

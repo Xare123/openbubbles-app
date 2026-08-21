@@ -1,4 +1,5 @@
 export 'backend/sync/sync_helpers.dart';
+export 'backend/desktop_window_actions.dart';
 export 'network/metadata_helper.dart';
 export 'network/network_error_handler.dart';
 export 'network/network_helpers.dart';
