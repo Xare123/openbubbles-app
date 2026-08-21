@@ -16,7 +16,10 @@ import 'cloud_sync_store.dart';
 /// outbox operation is synchronous inside one ObjectBox transaction. Network
 /// and platform-keystore work always happen outside the transaction.
 class ObjectBoxCloudSyncStore
-    implements CloudSyncStore, CloudProtectedPageLeaseAdoptionStore {
+    implements
+        CloudSyncStore,
+        CloudSyncInboxFloorReader,
+        CloudProtectedPageLeaseAdoptionStore {
   ObjectBoxCloudSyncStore({
     required Store store,
     required this._protector,
@@ -650,6 +653,52 @@ class ObjectBoxCloudSyncStore
     } finally {
       query.close();
     }
+  }
+
+  @override
+  Future<CloudInboxAppliedFloorState> readInboxAppliedFloorState(
+    CloudSyncScope scope,
+  ) async {
+    return _store.runInTransaction(TxMode.read, () {
+      final checkpointEntity = _findCheckpointByKeyLocked(_scopeKey(scope));
+      if (checkpointEntity == null) {
+        return const CloudInboxAppliedFloorState(
+          fetchedSequence: 0,
+          lastAppliedSequence: 0,
+        );
+      }
+      _validateCheckpointScope(checkpointEntity, scope);
+
+      CloudInboxChangeEntity? blockingEntity;
+      if (checkpointEntity.appliedSequence < checkpointEntity.fetchedSequence) {
+        final entries = _findInboxForScopeLocked(scope)
+          ..sort(
+            (left, right) => left.fetchSequence.compareTo(right.fetchSequence),
+          );
+        for (final entry in entries) {
+          if (entry.fetchSequence <= checkpointEntity.appliedSequence) {
+            continue;
+          }
+          if (entry.fetchSequence > checkpointEntity.fetchedSequence) break;
+          if (_inboxStatusFromInt(entry.status) != CloudInboxStatus.applied) {
+            blockingEntity = entry;
+            break;
+          }
+        }
+      }
+
+      return CloudInboxAppliedFloorState(
+        fetchedSequence: checkpointEntity.fetchedSequence,
+        lastAppliedSequence: checkpointEntity.appliedSequence,
+        blockingStatus: blockingEntity == null
+            ? null
+            : _inboxStatusFromInt(blockingEntity.status),
+        blockingAttemptCount: blockingEntity?.retryCount ?? 0,
+        blockingFailureCategory: blockingEntity == null
+            ? null
+            : _failureOrNull(blockingEntity.failureCategory),
+      );
+    });
   }
 
   @override

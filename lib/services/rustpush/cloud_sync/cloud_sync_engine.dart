@@ -199,6 +199,7 @@ class CloudSyncEngine {
   int _runSerial = 0;
   DateTime? _lastCoordinatorLeaseRenewal;
   CloudCoordinatorLeaseFence? _activeLeaseFence;
+  String? _lastAppliedFloorStallSignature;
 
   Future<CloudSyncRunResult> synchronize({
     required CloudSyncTrigger trigger,
@@ -818,12 +819,46 @@ class CloudSyncEngine {
           break;
       }
     }
+    await _emitAppliedFloorStallIfNeeded();
     _emit(
       CloudSyncEventType.inboxApplied,
       at: _clock(),
       count: counters.applied,
     );
     return counters;
+  }
+
+  Future<void> _emitAppliedFloorStallIfNeeded() async {
+    if (_store is! CloudSyncInboxFloorReader) return;
+    final reader = _store as CloudSyncInboxFloorReader;
+
+    final state = await reader.readInboxAppliedFloorState(scope);
+    if (!state.isStalled || state.blockingStatus == null) {
+      _lastAppliedFloorStallSignature = null;
+      return;
+    }
+
+    final blockReason = switch (state.blockingStatus!) {
+      CloudInboxStatus.pending => CloudSyncAppliedFloorBlockReason.pending,
+      CloudInboxStatus.quarantined =>
+        CloudSyncAppliedFloorBlockReason.quarantined,
+      CloudInboxStatus.applied => null,
+    };
+    if (blockReason == null) return;
+
+    final signature =
+        '${blockReason.name}:${state.blockingAttemptCount}:'
+        '${state.blockingFailureCategory?.name ?? 'none'}';
+    if (_lastAppliedFloorStallSignature == signature) return;
+    _lastAppliedFloorStallSignature = signature;
+    _emit(
+      CloudSyncEventType.inboxAppliedFloorStalled,
+      at: _clock(),
+      failureCategory: state.blockingFailureCategory,
+      appliedFloorBlockReason: blockReason,
+      count: 1,
+      attempt: state.blockingAttemptCount,
+    );
   }
 
   Future<CloudSyncRunCounters> _flushOutbox({
@@ -1415,6 +1450,7 @@ class CloudSyncEngine {
     CloudFailureCategory? failureCategory,
     CloudSyncSkipReason? skipReason,
     CloudShadowJournalBlockReason? shadowJournalBlockReason,
+    CloudSyncAppliedFloorBlockReason? appliedFloorBlockReason,
     int count = 0,
     int estimatedBytes = 0,
     int attempt = 0,
@@ -1429,6 +1465,7 @@ class CloudSyncEngine {
         failureCategory: failureCategory,
         skipReason: skipReason,
         shadowJournalBlockReason: shadowJournalBlockReason,
+        appliedFloorBlockReason: appliedFloorBlockReason,
         count: count,
         estimatedBytes: estimatedBytes,
         attempt: attempt,

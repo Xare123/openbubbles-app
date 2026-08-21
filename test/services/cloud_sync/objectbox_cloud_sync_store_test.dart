@@ -171,6 +171,47 @@ void main() {
     },
   );
 
+  test('reports a redacted applied-floor blocker across reopen', () async {
+    final scope = testScope();
+    await journal(batch(scope, changes: [testChange(1), testChange(2)]));
+    final fence = coordinatorFences[scope.storageKey]!;
+    await store.markInboxApplied(
+      scope,
+      sequence: 2,
+      now: testEpoch,
+      leaseFence: fence,
+    );
+    await store.quarantineInbox(
+      scope,
+      sequence: 1,
+      category: CloudFailureCategory.malformedRecord,
+      now: testEpoch,
+      leaseFence: fence,
+    );
+
+    final beforeReopen = await store.readInboxAppliedFloorState(scope);
+    expect(beforeReopen.fetchedSequence, 2);
+    expect(beforeReopen.lastAppliedSequence, 0);
+    expect(beforeReopen.blockingStatus, CloudInboxStatus.quarantined);
+    expect(beforeReopen.blockingAttemptCount, 1);
+    expect(
+      beforeReopen.blockingFailureCategory,
+      CloudFailureCategory.malformedRecord,
+    );
+
+    await reopen();
+    final afterReopen = await store.readInboxAppliedFloorState(scope);
+    expect(afterReopen.fetchedSequence, 2);
+    expect(afterReopen.lastAppliedSequence, 0);
+    expect(afterReopen.blockingStatus, CloudInboxStatus.quarantined);
+    expect(afterReopen.blockingAttemptCount, 1);
+    expect(
+      afterReopen.blockingFailureCategory,
+      CloudFailureCategory.malformedRecord,
+    );
+    expect((await store.readCheckpoint(scope)).lastAppliedSequence, 0);
+  });
+
   test('duplicate inbox sequence lookup fails closed', () async {
     final scope = testScope();
     await journal(batch(scope, changes: [testChange(1)]));

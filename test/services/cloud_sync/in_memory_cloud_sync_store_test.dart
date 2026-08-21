@@ -130,6 +130,59 @@ void main() {
     expect((await store.readCheckpoint(scope)).lastAppliedSequence, 2);
   });
 
+  test(
+    'reports a redacted applied-floor blocker without changing the floor',
+    () async {
+      await _journal(
+        store,
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1), testChange(2), testChange(3)],
+          batchId: 'floor-diagnostic-page',
+          generation: 1,
+          nextToken: 'floor-diagnostic-token',
+          hasMore: false,
+        ),
+      );
+      final fence = (await store.tryAcquireCoordinatorLease(
+        scope,
+        ownerId: 'floor-diagnostic-owner',
+        now: testEpoch,
+        leaseDuration: const Duration(minutes: 5),
+      ))!;
+
+      await store.markInboxApplied(
+        scope,
+        sequence: 2,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+      await store.quarantineInbox(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.malformedRecord,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+
+      final state = await store.readInboxAppliedFloorState(scope);
+      expect(state.fetchedSequence, 3);
+      expect(state.lastAppliedSequence, 0);
+      expect(state.blockingStatus, CloudInboxStatus.quarantined);
+      expect(state.blockingAttemptCount, 1);
+      expect(
+        state.blockingFailureCategory,
+        CloudFailureCategory.malformedRecord,
+      );
+      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 0);
+      expect((await store.inboxEntries(scope)).map((entry) => entry.sequence), [
+        1,
+        2,
+        3,
+      ]);
+    },
+  );
+
   test('retry fallback is monotonic and idempotent', () async {
     await _journal(
       store,

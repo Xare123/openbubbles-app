@@ -185,6 +185,53 @@ void main() {
   );
 
   test(
+    'emits a redacted event when quarantine blocks the applied floor',
+    () async {
+      final observer = MemoryCloudSyncObserver();
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1)],
+          batchId: 'floor-event-page',
+          generation: 1,
+          nextToken: 'floor-event-token',
+          hasMore: false,
+        ),
+      );
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.quarantined(
+        failureCategory: CloudFailureCategory.malformedRecord,
+      );
+
+      await engine(
+        observer: observer,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      final events = observer.events
+          .where(
+            (event) =>
+                event.type == CloudSyncEventType.inboxAppliedFloorStalled,
+          )
+          .toList();
+      expect(events, hasLength(1));
+      expect(
+        events.single.appliedFloorBlockReason,
+        CloudSyncAppliedFloorBlockReason.quarantined,
+      );
+      expect(
+        events.single.failureCategory,
+        CloudFailureCategory.malformedRecord,
+      );
+      expect(events.single.count, 1);
+      expect(events.single.attempt, 1);
+      final rendered = events.single.toString();
+      expect(rendered, isNot(contains('floor-event-page')));
+      expect(rendered, isNot(contains('floor-event-token')));
+      expect(rendered, isNot(contains('protected:')));
+      expect(rendered, isNot(contains('C000000')));
+    },
+  );
+
+  test(
     'preflight failure quarantines raw record without invoking decoder',
     () async {
       transport.enqueueFetchBatch(

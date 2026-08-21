@@ -87,6 +87,26 @@ enum CloudChangeType { save, delete }
 
 enum CloudInboxStatus { pending, applied, quarantined }
 
+/// Redacted state of the first non-applied inbox row after the contiguous
+/// checkpoint. It intentionally carries no record identifiers or payload.
+class CloudInboxAppliedFloorState {
+  const CloudInboxAppliedFloorState({
+    required this.fetchedSequence,
+    required this.lastAppliedSequence,
+    this.blockingStatus,
+    this.blockingAttemptCount = 0,
+    this.blockingFailureCategory,
+  });
+
+  final int fetchedSequence;
+  final int lastAppliedSequence;
+  final CloudInboxStatus? blockingStatus;
+  final int blockingAttemptCount;
+  final CloudFailureCategory? blockingFailureCategory;
+
+  bool get isStalled => blockingStatus != null;
+}
+
 enum CloudOutboxAction { save, delete }
 
 enum CloudOutboxStatus { pending, leased, confirmed, paused, quarantined }

@@ -12,6 +12,7 @@ enum CloudSyncEventType {
   serverConflictReconciled,
   backoffScheduled,
   shadowJournalBlocked,
+  inboxAppliedFloorStalled,
   runCompleted,
   runFailed,
   runCancelled,
@@ -34,6 +35,8 @@ enum CloudSyncSkipReason {
   featureDisabled,
 }
 
+enum CloudSyncAppliedFloorBlockReason { pending, quarantined }
+
 /// Redacted, bounded event. It has no arbitrary message field by design.
 class CloudSyncEvent {
   const CloudSyncEvent({
@@ -44,6 +47,7 @@ class CloudSyncEvent {
     this.failureCategory,
     this.skipReason,
     this.shadowJournalBlockReason,
+    this.appliedFloorBlockReason,
     this.count = 0,
     this.estimatedBytes = 0,
     this.attempt = 0,
@@ -57,6 +61,7 @@ class CloudSyncEvent {
   final CloudFailureCategory? failureCategory;
   final CloudSyncSkipReason? skipReason;
   final CloudShadowJournalBlockReason? shadowJournalBlockReason;
+  final CloudSyncAppliedFloorBlockReason? appliedFloorBlockReason;
   final int count;
   final int estimatedBytes;
   final int attempt;
@@ -71,6 +76,7 @@ class CloudSyncEvent {
         'failure=${failureCategory?.name ?? 'none'}, '
         'skip=${skipReason?.name ?? 'none'}, '
         'journalBlock=${shadowJournalBlockReason?.name ?? 'none'}, '
+        'floorBlock=${appliedFloorBlockReason?.name ?? 'none'}, '
         'count=$count, estimatedBytes=$estimatedBytes, attempt=$attempt, '
         'elapsedMs=${elapsed.inMilliseconds})';
   }

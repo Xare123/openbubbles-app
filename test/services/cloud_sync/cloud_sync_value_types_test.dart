@@ -114,6 +114,24 @@ void main() {
     expect(rendered, isNot(contains('message-zone')));
   });
 
+  test('applied-floor event exposes only bounded enum and counter fields', () {
+    final event = CloudSyncEvent(
+      type: CloudSyncEventType.inboxAppliedFloorStalled,
+      scopeDiagnosticKey: testScope().diagnosticKey,
+      at: testEpoch,
+      appliedFloorBlockReason: CloudSyncAppliedFloorBlockReason.quarantined,
+      failureCategory: CloudFailureCategory.malformedRecord,
+      count: 1,
+      attempt: 3,
+    );
+
+    expect(event.toString(), contains('inboxAppliedFloorStalled'));
+    expect(event.toString(), contains('floorBlock=quarantined'));
+    expect(event.toString(), isNot(contains('record')));
+    expect(event.toString(), isNot(contains('token')));
+    expect(event.toString(), isNot(contains('payload')));
+  });
+
   test('scope diagnostic form exposes only bounded account prefix', () {
     final scope = testScope(
       account: '12345678AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',

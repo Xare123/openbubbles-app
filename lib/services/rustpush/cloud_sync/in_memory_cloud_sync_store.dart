@@ -9,7 +9,8 @@ import 'cloud_sync_store.dart';
 
 /// Transactional reference implementation used by unit tests and adapter
 /// development. It is not durable across process restarts.
-class InMemoryCloudSyncStore implements CloudSyncStore {
+class InMemoryCloudSyncStore
+    implements CloudSyncStore, CloudSyncInboxFloorReader {
   final Lock _lock = Lock();
   final Map<String, CloudSyncCheckpoint> _checkpoints = {};
   final Map<String, SplayTreeMap<int, CloudInboxEntry>> _inbox = {};
@@ -202,6 +203,34 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
           )
           .take(limit)
           .toList(growable: false);
+    });
+  }
+
+  @override
+  Future<CloudInboxAppliedFloorState> readInboxAppliedFloorState(
+    CloudSyncScope scope,
+  ) {
+    return _lock.synchronized(() async {
+      final checkpoint = _checkpoint(scope);
+      final entries = _inbox[scope.storageKey];
+      CloudInboxEntry? blockingEntry;
+      if (checkpoint.lastAppliedSequence < checkpoint.fetchedSequence) {
+        for (final entry in entries?.values ?? const <CloudInboxEntry>[]) {
+          if (entry.sequence <= checkpoint.lastAppliedSequence) continue;
+          if (entry.sequence > checkpoint.fetchedSequence) break;
+          if (entry.status != CloudInboxStatus.applied) {
+            blockingEntry = entry;
+            break;
+          }
+        }
+      }
+      return CloudInboxAppliedFloorState(
+        fetchedSequence: checkpoint.fetchedSequence,
+        lastAppliedSequence: checkpoint.lastAppliedSequence,
+        blockingStatus: blockingEntry?.status,
+        blockingAttemptCount: blockingEntry?.attemptCount ?? 0,
+        blockingFailureCategory: blockingEntry?.lastFailure,
+      );
     });
   }
 

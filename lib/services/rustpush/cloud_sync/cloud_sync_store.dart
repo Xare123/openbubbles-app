@@ -186,6 +186,17 @@ abstract interface class CloudSyncStore {
   Future<void> recordRun(CloudSyncRunRecord run);
 }
 
+/// Optional aggregate read used to diagnose a blocked applied floor.
+///
+/// This is separate from [CloudSyncStore] so shadow-only and other test stores
+/// do not need to expose journal internals. Implementations must not return
+/// record identifiers, tokens, payload references, or message text.
+abstract interface class CloudSyncInboxFloorReader {
+  Future<CloudInboxAppliedFloorState> readInboxAppliedFloorState(
+    CloudSyncScope scope,
+  );
+}
+
 /// Crash-recovery metadata for native protected page blobs.
 ///
 /// Implementations must never return a truncated set: native recovery treats
