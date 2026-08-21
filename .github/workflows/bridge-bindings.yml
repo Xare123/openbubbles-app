@@ -69,6 +69,7 @@ jobs:
       - name: Verify outgoing FaceTime video metadata
         run: >-
           cargo test --manifest-path rustpush/Cargo.toml --lib
+          --features remote-anisette-v3
           outgoing_video_invitation_sets_consistent_av_metadata
 
       # The protector harness is a separate crate and is deliberately
