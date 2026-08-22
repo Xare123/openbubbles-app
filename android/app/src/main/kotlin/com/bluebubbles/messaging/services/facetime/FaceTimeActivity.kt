@@ -27,7 +27,6 @@ import android.view.WindowInsets
 import android.view.WindowManager
 import android.webkit.PermissionRequest
 import android.webkit.WebView
-import org.json.JSONObject
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -512,7 +511,7 @@ class FaceTimeActivity : Activity() {
                 "handling WebView permission resources=${request.resources.sorted().joinToString()} androidPermissions=${permissions.joinToString()} alreadyGranted=${permissions.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }}"
             )
         }
-        if (permissions.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) {
+        if (permissions.isNotEmpty() && permissions.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) {
             request.grant(request.resources)
             FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.PERMISSIONS_RESULT, state = "granted")
             startService()
@@ -578,19 +577,27 @@ class FaceTimeActivity : Activity() {
         }
         for (request in permissionRequests) {
             request.grant(request.resources.filter { i ->
-                (permissionMap[i] ?: listOf()).all {
+                permissionMap[i]?.takeIf { it.isNotEmpty() }?.all {
                     val permissionIdx = permissions.indexOf(it)
-                    grantResults[permissionIdx] == PackageManager.PERMISSION_GRANTED
-                }
+                    FaceTimePermissionPolicy.isGranted(grantResults, permissionIdx)
+                } == true
             }.toTypedArray())
         }
         permissionRequests = arrayListOf()
         FaceTimeDiagnostics.logStage(
             this,
             FaceTimeDiagnosticStage.PERMISSIONS_RESULT,
-            state = if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) "granted" else "denied",
+            state = if (FaceTimePermissionPolicy.shouldStartInCallService(permissions.size, grantResults)) {
+                "granted"
+            } else {
+                "denied"
+            },
         )
-        startService()
+        if (FaceTimePermissionPolicy.shouldStartInCallService(permissions.size, grantResults)) {
+            startService()
+        } else if (diagnosticsEnabled()) {
+            Log.w(diagnosticTag, "not starting in-call service because camera/microphone permission was denied or incomplete")
+        }
     }
 
     private fun connecting() {
@@ -690,20 +697,6 @@ class FaceTimeActivity : Activity() {
         }
     }
 
-    private fun parseMediaEvidence(rawResult: String?): FaceTimeMediaEvidence? {
-        if (rawResult == null || rawResult == "null") return null
-        return try {
-            val encoded = JSONObject("{\"value\":$rawResult}").getString("value")
-            val json = JSONObject(encoded)
-            FaceTimeMediaEvidence(
-                iceState = FaceTimeIceState.fromWireValue(json.optString("iceState").takeUnless { it.isBlank() || it == "null" }),
-                remoteAudioTracks = json.optInt("remoteAudioTracks", 0),
-                remoteVideoTracks = json.optInt("remoteVideoTracks", 0),
-                mediaBytes = if (json.isNull("mediaBytes")) null else json.optLong("mediaBytes"),
-                webLeaveVisible = json.optBoolean("webLeaveVisible", false),
-            )
-        } catch (_: Exception) {
-            null
-        }
-    }
+    private fun parseMediaEvidence(rawResult: String?): FaceTimeMediaEvidence? =
+        FaceTimeMediaEvidenceParser.parse(rawResult)
 }

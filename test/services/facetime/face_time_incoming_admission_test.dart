@@ -76,6 +76,30 @@ void main() {
     );
   });
 
+  test('releases a failed in-flight response so the same call can retry', () {
+    final admission = pendingCall();
+
+    expect(
+      admission
+          .claim(
+            activeCallUuid: 'incoming-call-uuid',
+            now: receivedAt.add(const Duration(seconds: 10)),
+          )
+          .status,
+      FaceTimeIncomingAdmissionStatus.approved,
+    );
+    admission.release();
+    expect(
+      admission
+          .claim(
+            activeCallUuid: 'incoming-call-uuid',
+            now: receivedAt.add(const Duration(seconds: 11)),
+          )
+          .status,
+      FaceTimeIncomingAdmissionStatus.approved,
+    );
+  });
+
   test('does not consume the pending call when the active UUID is missing', () {
     final admission = pendingCall();
 
