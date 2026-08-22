@@ -13,6 +13,7 @@ import 'cloud_sync_models.dart';
 import 'cloud_sync_observability.dart';
 import 'cloud_sync_store.dart';
 import 'cloud_sync_transport.dart';
+import 'cloud_sync_write_transport.dart';
 import 'cloud_sync_writer_authority.dart';
 import 'cloudkit_operation_interlock.dart';
 
@@ -200,6 +201,9 @@ class CloudSyncEngine {
   }) : config = config ?? CloudSyncEngineConfig(),
        _store = store,
        _transport = transport,
+       _writeTransport = transport is CloudSyncWriteTransport
+           ? transport as CloudSyncWriteTransport
+           : null,
        _nativeOperationQuiescence =
            transport is CloudSyncNativeOperationQuiescence
            ? transport as CloudSyncNativeOperationQuiescence
@@ -236,6 +240,9 @@ class CloudSyncEngine {
     if (this.config.flags.saves && _nativeOperationQuiescence == null) {
       throw ArgumentError('cloud_sync_native_operation_quiescence_required');
     }
+    if (this.config.flags.saves && _writeTransport == null) {
+      throw ArgumentError('cloud_sync_write_preflight_transport_required');
+    }
   }
 
   final CloudSyncScope scope;
@@ -243,6 +250,7 @@ class CloudSyncEngine {
   final String architectureName;
   final CloudSyncStore _store;
   final CloudSyncTransport _transport;
+  final CloudSyncWriteTransport? _writeTransport;
   final CloudSyncNativeOperationQuiescence? _nativeOperationQuiescence;
   final CloudSyncWriterAuthority? _writerAuthority;
   final CloudKitOperationExclusion? _writerExclusion;
@@ -1096,9 +1104,6 @@ class CloudSyncEngine {
       var outcomes = <String, CloudPushOutcome>{};
       if (ready.isNotEmpty) {
         await _verifyWriterPermit();
-        // Persist the ambiguity boundary before the transport can contact
-        // CloudKit. A crash, lost lease, or lost response after this point
-        // must never recover these operations into the ordinary retry queue.
         final submissionIdentity = CloudOutboxSubmissionIdentity(
           requestUuid: _uuidFactory(),
           operationUuids: {
@@ -1106,35 +1111,93 @@ class CloudSyncEngine {
               operation.operationId: _uuidFactory(),
           },
         );
-        ready = await _store.markOutboxSubmissionStarted(
-          scope,
-          leaseId: leaseId,
-          submissionIdentity: submissionIdentity,
-          now: _clock(),
-        );
+        CloudSyncPreparedSubmission? preparedSubmission;
+        List<CloudSyncProtectedWriteOperation>? protectedOperations;
         try {
-          final result = await _withCoordinatorLeaseHeartbeat(
+          protectedOperations = List.unmodifiable(
+            await _protectedWriteOperationsFor(ready),
+          );
+          preparedSubmission = await _withCoordinatorLeaseHeartbeat(
             () => _withWriteOperationTimeout(
-              operationName: 'push',
-              action: () => _transport.pushOperations(scope, operations: ready),
+              operationName: 'write_preflight',
+              action: () => _writeTransport!.prepareSubmission(
+                scope,
+                submissionIdentity: submissionIdentity,
+                operations: protectedOperations!,
+              ),
             ),
           );
-          await _verifyWriterPermitAfterRemote();
-          outcomes = _requireExactPushOutcomes(ready, result);
         } on CloudSyncFailure catch (error) {
           if (_isCoordinatorLeaseFailure(error)) rethrow;
           for (final operation in ready) {
-            outcomes[operation.operationId] = _outcomeForThrownFailure(
-              operation.operationId,
-            );
+            final transition = _transitionForFailure(operation, error);
+            transitions.add(transition);
+            counters = _countOutboxTransition(counters, transition);
           }
         } catch (_) {
           for (final operation in ready) {
-            outcomes[operation.operationId] = CloudPushOutcome(
-              operationId: operation.operationId,
-              disposition: CloudPushDisposition.unknownOutcome,
-              failureCategory: CloudFailureCategory.unknown,
+            final transition = _retryOrQuarantineTransition(
+              operation,
+              category: CloudFailureCategory.unknown,
             );
+            transitions.add(transition);
+            counters = _countOutboxTransition(counters, transition);
+          }
+        }
+
+        if (preparedSubmission == null) {
+          ready = const [];
+        } else {
+          await _verifyWriterPermit();
+          // Persist the ambiguity boundary only after native authentication,
+          // PCS lookup, protected payload compilation, and request creation
+          // have completed without sending a remote mutation.
+          ready = await _store.markOutboxSubmissionStarted(
+            scope,
+            leaseId: leaseId,
+            submissionIdentity: submissionIdentity,
+            now: _clock(),
+          );
+          final persistedIdentity = CloudOutboxSubmissionIdentity(
+            requestUuid: ready.first.appleRequestUuid!,
+            operationUuids: {
+              for (final operation in ready)
+                operation.operationId: operation.appleOperationUuid!,
+            },
+          );
+          try {
+            final result = await _withCoordinatorLeaseHeartbeat(
+              () => _withWriteOperationTimeout(
+                operationName: 'push',
+                action: () async {
+                  await _verifyWriterPermit();
+                  return _writeTransport!.consumePreparedSubmission(
+                    scope,
+                    preparedSubmission: preparedSubmission!,
+                    persistedIdentity: persistedIdentity,
+                    protectedOperations: protectedOperations!,
+                    operations: ready,
+                  );
+                },
+              ),
+            );
+            await _verifyWriterPermitAfterRemote();
+            outcomes = _requireExactPushOutcomes(ready, result);
+          } on CloudSyncFailure catch (error) {
+            if (_isCoordinatorLeaseFailure(error)) rethrow;
+            for (final operation in ready) {
+              outcomes[operation.operationId] = _outcomeForThrownFailure(
+                operation.operationId,
+              );
+            }
+          } catch (_) {
+            for (final operation in ready) {
+              outcomes[operation.operationId] = CloudPushOutcome(
+                operationId: operation.operationId,
+                disposition: CloudPushDisposition.unknownOutcome,
+                failureCategory: CloudFailureCategory.unknown,
+              );
+            }
           }
         }
       }
@@ -1459,6 +1522,32 @@ class CloudSyncEngine {
       }
     }
     return _OutboxPreparation(ready: ready, transitions: transitions);
+  }
+
+  Future<List<CloudSyncProtectedWriteOperation>> _protectedWriteOperationsFor(
+    List<CloudOutboxOperation> operations,
+  ) async {
+    final protected = <CloudSyncProtectedWriteOperation>[];
+    for (final operation in operations) {
+      final mapping = await _store.readRecordMap(
+        scope,
+        logicalEntityKeyHash: operation.logicalEntityKeyHash,
+        generation: operation.checkpointGeneration,
+      );
+      if (mapping == null) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.dependency,
+          safeCode: 'write_preflight_record_mapping_missing',
+        );
+      }
+      protected.add(
+        CloudSyncProtectedWriteOperation.fromOutbox(
+          operation,
+          recordMapping: mapping,
+        ),
+      );
+    }
+    return protected;
   }
 
   CloudOutboxTransition _transitionForFailure(

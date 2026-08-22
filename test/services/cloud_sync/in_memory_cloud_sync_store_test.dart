@@ -221,7 +221,10 @@ void main() {
       final entries = await store.outboxEntries(scope);
       expect(entries, hasLength(1));
       expect(entries.single.operationId, latest.operationId);
-      expect(entries.single.payloadSha256, 'payload-digest-1-2');
+      expect(
+        entries.single.payloadSha256,
+        testOutboxOperation(scope, 1, revision: 2).payloadSha256,
+      );
     },
   );
 

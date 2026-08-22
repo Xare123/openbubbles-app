@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_store.dart';
 import 'cloud_sync_transport.dart';
+import 'cloud_sync_write_transport.dart';
 import 'cloud_sync_writer_authority.dart';
 import 'cloudkit_operation_interlock.dart';
 
@@ -101,13 +102,33 @@ typedef CloudUnknownOutcomeHandler =
 
 typedef CloudNativeOperationQuiescenceHandler = Future<void> Function();
 
+typedef CloudWritePreflightHandler =
+    Future<void> Function(
+      CloudSyncScope scope,
+      CloudOutboxSubmissionIdentity submissionIdentity,
+      List<CloudSyncProtectedWriteOperation> operations,
+    );
+
+typedef CloudPreparedSubmissionHandler =
+    Future<CloudPushBatchResult> Function(
+      CloudSyncScope scope,
+      CloudSyncPreparedSubmission preparedSubmission,
+      CloudOutboxSubmissionIdentity persistedIdentity,
+    );
+
 class FakeCloudSyncTransport
-    implements CloudSyncTransport, CloudSyncNativeOperationQuiescence {
+    implements
+        CloudSyncTransport,
+        CloudSyncWriteTransport,
+        CloudSyncNativeOperationQuiescence {
   final Queue<Object> _fetchResponses = Queue();
   final Queue<Object> _pushResponses = Queue();
+  final Queue<Object> _preparedPushResponses = Queue();
 
   CloudFetchHandler? fetchHandler;
   CloudPushHandler? pushHandler;
+  CloudWritePreflightHandler? writePreflightHandler;
+  CloudPreparedSubmissionHandler? preparedSubmissionHandler;
   CloudAuthenticationRefreshHandler? authenticationRefreshHandler;
   CloudPcsRefreshHandler? pcsRefreshHandler;
   CloudRecordMappingHandler? recordMappingHandler;
@@ -117,6 +138,8 @@ class FakeCloudSyncTransport
 
   int fetchCallCount = 0;
   int pushCallCount = 0;
+  int prepareSubmissionCallCount = 0;
+  int consumePreparedSubmissionCallCount = 0;
   int authenticationRefreshCallCount = 0;
   int pcsRefreshCallCount = 0;
   int recordMappingCallCount = 0;
@@ -127,6 +150,7 @@ class FakeCloudSyncTransport
   final List<List<String>> observedPushOperationIds = [];
   final List<List<String?>> observedAppleRequestUuids = [];
   final List<List<String?>> observedAppleOperationUuids = [];
+  final List<List<String>> observedPreparedOperationIds = [];
   final List<String> observedUnknownOutcomeOperationIds = [];
 
   @override
@@ -145,6 +169,74 @@ class FakeCloudSyncTransport
 
   void enqueuePushFailure(CloudSyncFailure failure) =>
       _pushResponses.add(failure);
+
+  void enqueuePreparedPushResult(CloudPushBatchResult result) =>
+      _preparedPushResponses.add(result);
+
+  void enqueuePreparedPushFailure(CloudSyncFailure failure) =>
+      _preparedPushResponses.add(failure);
+
+  @override
+  Future<CloudSyncPreparedSubmission> prepareSubmission(
+    CloudSyncScope scope, {
+    required CloudOutboxSubmissionIdentity submissionIdentity,
+    required List<CloudSyncProtectedWriteOperation> operations,
+  }) async {
+    prepareSubmissionCallCount++;
+    final operationIds = operations
+        .map((operation) => operation.operationId)
+        .toList(growable: false);
+    if (operationIds.isEmpty ||
+        operationIds.toSet().length != operationIds.length) {
+      throw ArgumentError('cloud_sync_write_operations_invalid');
+    }
+    submissionIdentity.validateOperationIds(operationIds);
+    observedPreparedOperationIds.add(List.unmodifiable(operationIds));
+    await writePreflightHandler?.call(
+      scope,
+      submissionIdentity,
+      List.unmodifiable(operations),
+    );
+    return CloudSyncPreparedSubmission.fromProtectedPreflight(
+      scope: scope,
+      identity: submissionIdentity,
+      operations: operations,
+    );
+  }
+
+  @override
+  Future<CloudPushBatchResult> consumePreparedSubmission(
+    CloudSyncScope scope, {
+    required CloudSyncPreparedSubmission preparedSubmission,
+    required CloudOutboxSubmissionIdentity persistedIdentity,
+    required List<CloudSyncProtectedWriteOperation> protectedOperations,
+    required List<CloudOutboxOperation> operations,
+  }) async {
+    preparedSubmission.claimForConsumption(
+      scope,
+      persistedIdentity: persistedIdentity,
+      protectedOperations: protectedOperations,
+    );
+    consumePreparedSubmissionCallCount++;
+    if (!_sameStringList(
+      preparedSubmission.operationIds,
+      operations.map((operation) => operation.operationId).toList(),
+    )) {
+      throw ArgumentError('cloud_sync_prepared_submission_operations_mismatch');
+    }
+    final handler = preparedSubmissionHandler;
+    if (handler != null) {
+      return handler(scope, preparedSubmission, persistedIdentity);
+    }
+    if (_preparedPushResponses.isNotEmpty) {
+      final response = _preparedPushResponses.removeFirst();
+      if (response is CloudSyncFailure) throw response;
+      return response as CloudPushBatchResult;
+    }
+    // Preserve the existing fake seam and its observations while the engine
+    // migrates to the prepared-submission contract.
+    return pushOperations(scope, operations: operations);
+  }
 
   @override
   Future<CloudFetchBatch> fetchChanges(
@@ -235,12 +327,12 @@ class FakeCloudSyncTransport
     recordMappingCallCount++;
     final handler = recordMappingHandler;
     if (handler != null) return handler(scope, logicalEntityKeyHash);
+    final marker = (recordMappingCallCount % 10).toString();
     return CloudRecordMapEntry(
       scope: scope,
       logicalEntityKeyHash: logicalEntityKeyHash,
-      serverRecordIdHash: 'fake-random-record-hash-$recordMappingCallCount',
-      encryptedServerRecordId:
-          'protected:fake-random-record-$recordMappingCallCount',
+      serverRecordIdHash: List.filled(64, marker).join(),
+      encryptedServerRecordId: 'obcs2.ref.${List.filled(43, marker).join()}',
       updatedAt: DateTime.utc(2026),
     );
   }
@@ -257,6 +349,14 @@ class FakeCloudSyncTransport
       failureCategory: CloudFailureCategory.network,
     );
   }
+}
+
+bool _sameStringList(List<String> left, List<String> right) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
 }
 
 typedef CloudInboxApplyHandler =

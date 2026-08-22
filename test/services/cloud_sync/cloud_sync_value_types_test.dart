@@ -2,6 +2,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_operation_identit
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_backoff.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_write_transport.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'cloud_sync_test_helpers.dart';
@@ -249,6 +250,68 @@ void main() {
     expect(
       () => result.outcomes[operationId] = outcome,
       throwsUnsupportedError,
+    );
+  });
+
+  test('prepared submission is identity-bound and single-use', () {
+    final scope = testScope();
+    final operation = testOutboxOperation(
+      scope,
+      12,
+    ).copyWith(serverRecordIdHash: testSha256('c'));
+    final identity = testSubmissionIdentity([operation.operationId]);
+    final protectedOperation = CloudSyncProtectedWriteOperation.fromOutbox(
+      operation,
+      recordMapping: CloudRecordMapEntry(
+        scope: scope,
+        logicalEntityKeyHash: operation.logicalEntityKeyHash,
+        serverRecordIdHash: operation.serverRecordIdHash!,
+        encryptedServerRecordId: testProtectedReference('R'),
+        updatedAt: testEpoch,
+      ),
+    );
+    final prepared = CloudSyncPreparedSubmission.fromProtectedPreflight(
+      scope: scope,
+      identity: identity,
+      operations: [protectedOperation],
+    );
+
+    final mismatchedOperation = CloudSyncProtectedWriteOperation(
+      operationId: operation.operationId,
+      action: operation.action,
+      protectedServerRecordIdReference:
+          protectedOperation.protectedServerRecordIdReference,
+      serverRecordIdHash: protectedOperation.serverRecordIdHash,
+      protectedPayloadReference: testProtectedReference('S'),
+      payloadSha256: testSha256('d'),
+    );
+    expect(
+      () => prepared.claimForConsumption(
+        scope,
+        persistedIdentity: identity,
+        protectedOperations: [mismatchedOperation],
+      ),
+      throwsArgumentError,
+    );
+
+    prepared.claimForConsumption(
+      scope,
+      persistedIdentity: identity,
+      protectedOperations: [protectedOperation],
+    );
+    expect(
+      () => prepared.claimForConsumption(
+        scope,
+        persistedIdentity: identity,
+        protectedOperations: [protectedOperation],
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'cloud_sync_prepared_submission_already_consumed',
+        ),
+      ),
     );
   });
 }

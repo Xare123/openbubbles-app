@@ -49,8 +49,12 @@ CloudOutboxOperation testOutboxOperation(
 }) {
   final logicalKeyHash = 'logical-key-digest-$index';
   final payloadSha256 = action == CloudOutboxAction.save
-      ? 'payload-digest-$index-$revision'
+      ? '${index.toRadixString(16).padLeft(32, '0')}'
+            '${revision.toRadixString(16).padLeft(32, '0')}'
       : null;
+  final protectedReferenceMarker = String.fromCharCode(
+    65 + ((index + revision) % 26),
+  );
   return CloudOutboxOperation(
     scope: scope,
     operationId: CloudOperationIdentity.forMutation(
@@ -67,7 +71,7 @@ CloudOutboxOperation testOutboxOperation(
     mutationRevision: revision,
     checkpointGeneration: checkpointGeneration,
     encryptedPayloadReference: action == CloudOutboxAction.save
-        ? 'protected:outbox-$index-$revision'
+        ? 'obcs2.ref.${List.filled(43, protectedReferenceMarker).join()}'
         : null,
     payloadSha256: payloadSha256,
     dependencyOperationIds: dependencies,
@@ -88,6 +92,12 @@ CloudOutboxSubmissionIdentity testSubmissionIdentity(
     },
   );
 }
+
+String testSha256(String hexadecimalCharacter) =>
+    List.filled(64, hexadecimalCharacter).join();
+
+String testProtectedReference(String urlSafeCharacter) =>
+    'obcs2.ref.${List.filled(43, urlSafeCharacter).join()}';
 
 class MutableTestClock {
   MutableTestClock(this.value);

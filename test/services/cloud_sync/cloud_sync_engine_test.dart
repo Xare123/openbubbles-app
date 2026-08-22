@@ -551,7 +551,7 @@ void main() {
       final operation = testOutboxOperation(scope, 701);
       await store.enqueueOutbox(operation);
       writerAuthority.verifyHandler = (call) async {
-        if (call == 3) writerAuthority.allowVerify = false;
+        if (call == 5) writerAuthority.allowVerify = false;
       };
       transport.enqueuePushResult(
         CloudPushBatchResult(
@@ -571,7 +571,7 @@ void main() {
 
       expect(result.counters.confirmed, 0);
       expect(transport.pushCallCount, 1);
-      expect(writerAuthority.verifyCallCount, 3);
+      expect(writerAuthority.verifyCallCount, 5);
       expect(
         (await store.outboxEntries(scope)).single.status,
         CloudOutboxStatus.unknownOutcome,
@@ -588,6 +588,74 @@ void main() {
       expect(transport.pushCallCount, 1);
     },
   );
+
+  test('failed write preflight never marks or sends the operation', () async {
+    final operation = testOutboxOperation(scope, 702);
+    await store.enqueueOutbox(operation);
+    transport.writePreflightHandler = (_, _, _) async => throw CloudSyncFailure(
+      category: CloudFailureCategory.authorization,
+      safeCode: 'simulated_write_preflight_failure',
+    );
+
+    final result = await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    final stored = (await store.outboxEntries(scope)).single;
+    expect(result.status, CloudSyncRunStatus.completed);
+    expect(stored.status, CloudOutboxStatus.paused);
+    expect(stored.appleRequestUuid, isNull);
+    expect(stored.appleOperationUuid, isNull);
+    expect(transport.prepareSubmissionCallCount, 1);
+    expect(transport.consumePreparedSubmissionCallCount, 0);
+    expect(transport.pushCallCount, 0);
+  });
+
+  test('permit revocation at consume freezes without sending', () async {
+    final operation = testOutboxOperation(scope, 704);
+    await store.enqueueOutbox(operation);
+    writerAuthority.verifyHandler = (call) async {
+      if (call == 4) writerAuthority.allowVerify = false;
+    };
+
+    final result = await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    final stored = (await store.outboxEntries(scope)).single;
+    expect(result.status, CloudSyncRunStatus.completed);
+    expect(stored.status, CloudOutboxStatus.unknownOutcome);
+    expect(stored.appleRequestUuid, isNotNull);
+    expect(stored.appleOperationUuid, isNotNull);
+    expect(transport.prepareSubmissionCallCount, 1);
+    expect(transport.consumePreparedSubmissionCallCount, 0);
+    expect(transport.pushCallCount, 0);
+  });
+
+  test('failed submission marker drops the prepared request unsent', () async {
+    store = _FailingSubmissionMarkerStore();
+    final operation = testOutboxOperation(scope, 703);
+    await store.enqueueOutbox(operation);
+    transport.writePreflightHandler = (_, _, operations) async {
+      expect(() => operations.clear(), throwsUnsupportedError);
+    };
+
+    final result = await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    final stored = (await store.outboxEntries(scope)).single;
+    expect(result.status, CloudSyncRunStatus.failed);
+    expect(result.failureCategory, CloudFailureCategory.localStorage);
+    expect(stored.appleRequestUuid, isNull);
+    expect(stored.appleOperationUuid, isNull);
+    expect(transport.prepareSubmissionCallCount, 1);
+    expect(transport.consumePreparedSubmissionCallCount, 0);
+    expect(transport.pushCallCount, 0);
+  });
 
   test(
     'terminal quarantine advances the floor without dropping later data',
@@ -1548,8 +1616,8 @@ void main() {
           );
       transport.conflictHandler = (_, leasedOperation) async {
         return CloudServerConflictResolution.mergedForRetry(
-          encryptedPayloadReference: 'protected:ambiguous-merged',
-          payloadSha256: 'ambiguous-merged-digest',
+          encryptedPayloadReference: testProtectedReference('M'),
+          payloadSha256: testSha256('a'),
           serverRecordIdHash: leasedOperation.serverRecordIdHash!,
           encryptedRawRecordReference: 'protected:ambiguous-server-record',
         );
@@ -2037,8 +2105,8 @@ void main() {
     );
     transport.conflictHandler = (requestedScope, leasedOperation) async {
       return CloudServerConflictResolution.mergedForRetry(
-        encryptedPayloadReference: 'protected:merged-payload',
-        payloadSha256: 'merged-payload-digest',
+        encryptedPayloadReference: testProtectedReference('N'),
+        payloadSha256: testSha256('b'),
         serverRecordIdHash: leasedOperation.serverRecordIdHash!,
         encryptedRawRecordReference: 'protected:merged-raw-record',
         etagHash: 'merged-etag-digest',
@@ -2054,7 +2122,7 @@ void main() {
     expect(transport.pushCallCount, 2);
     expect(result.counters.confirmed, 1);
     expect(stored.status, CloudOutboxStatus.confirmed);
-    expect(stored.payloadSha256, 'merged-payload-digest');
+    expect(stored.payloadSha256, testSha256('b'));
     expect(
       (await store.readRecordMap(
         scope,
@@ -2141,12 +2209,27 @@ class _RejectingCoordinatorRenewalStore extends InMemoryCloudSyncStore {
     required Duration leaseDuration,
   }) {
     renewalCalls++;
-    if (renewalCalls > 1) return Future.value(false);
+    if (renewalCalls > 3) return Future.value(false);
     return super.renewCoordinatorLease(
       scope,
       leaseFence: leaseFence,
       now: now,
       leaseDuration: leaseDuration,
+    );
+  }
+}
+
+class _FailingSubmissionMarkerStore extends InMemoryCloudSyncStore {
+  @override
+  Future<List<CloudOutboxOperation>> markOutboxSubmissionStarted(
+    CloudSyncScope scope, {
+    required String leaseId,
+    required CloudOutboxSubmissionIdentity submissionIdentity,
+    required DateTime now,
+  }) {
+    throw CloudSyncFailure(
+      category: CloudFailureCategory.localStorage,
+      safeCode: 'simulated_submission_marker_failure',
     );
   }
 }
