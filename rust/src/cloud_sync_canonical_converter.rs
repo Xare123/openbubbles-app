@@ -2157,6 +2157,7 @@ pub(crate) fn convert_message(
     };
     let payload = match CloudCanonicalMessagePayload::new(
         message.guid.clone(),
+        message.chat_id.clone(),
         chat_alias_hash,
         message.sender.clone(),
         created_at_millis,
@@ -2242,7 +2243,7 @@ pub(crate) fn convert_attachment(
             CloudCanonicalDeferredReason::UnsupportedSticker,
         );
     }
-    let (canonical_guid, logical_identifier, owner_hash, owner_part) =
+    let (canonical_guid, logical_identifier, owner_guid, owner_hash, owner_part) =
         match parse_owned_attachment_guid(&attachment.guid) {
             Ok(owned) => {
                 let owner_hash = match context.hasher.canonical_entity_key_hash(
@@ -2255,6 +2256,7 @@ pub(crate) fn convert_attachment(
                 (
                     owned.canonical_guid().to_owned(),
                     format!("{}\0{}", owned.message_guid(), owned.part()),
+                    Some(owned.message_guid().to_owned()),
                     Some(owner_hash),
                     Some(owned.part()),
                 )
@@ -2264,7 +2266,13 @@ pub(crate) fn convert_attachment(
                     CloudCanonicalQuarantineReason::MalformedParent,
                 )
             }
-            Err(_) => (attachment.guid.clone(), attachment.guid.clone(), None, None),
+            Err(_) => (
+                attachment.guid.clone(),
+                attachment.guid.clone(),
+                None,
+                None,
+                None,
+            ),
         };
     let logical_hash = match context
         .hasher
@@ -2294,6 +2302,7 @@ pub(crate) fn convert_attachment(
     };
     let payload = match CloudCanonicalAttachmentPayload::new(
         canonical_guid,
+        owner_guid,
         owner_hash.clone(),
         owner_part,
         uti,

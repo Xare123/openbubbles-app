@@ -390,6 +390,8 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       logicalEntityKeyHash: _requireExternalDigest(
         payload.logicalEntityKeyHash,
       ),
+      canonicalGuid: payload.canonicalGuid,
+      chatIdentifier: payload.chatIdentifier,
       displayName: payload.displayName,
       participantHandles: payload.participantHandles,
     );
@@ -402,6 +404,8 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     if (payload == null ||
         payload.reactionKind != null ||
         payload.reactionParentLogicalKeyHash != null ||
+        payload.reactionParentCanonicalGuid != null ||
+        payload.reactionParentPart != null ||
         payload.reactionRemoved ||
         payload.bodyState != frb_api.CloudSyncTransientFieldState.value ||
         payload.body == null ||
@@ -415,7 +419,9 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       logicalEntityKeyHash: _requireExternalDigest(
         payload.logicalEntityKeyHash,
       ),
+      canonicalGuid: payload.canonicalGuid,
       chatLogicalKeyHash: _requireExternalDigest(payload.chatLogicalKeyHash),
+      chatIdentifier: payload.chatIdentifier,
       body: payload.body!,
       senderHandle: payload.senderHandle,
     );
@@ -426,9 +432,11 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
   ) {
     final payload = value.message;
     final parent = payload?.reactionParentLogicalKeyHash;
+    final parentGuid = payload?.reactionParentCanonicalGuid;
     final reactionKind = payload?.reactionKind;
     if (payload == null ||
         parent == null ||
+        parentGuid == null ||
         reactionKind == null ||
         !_fieldStateMatches(payload.bodyState, payload.body) ||
         !_fieldStateMatches(
@@ -456,7 +464,10 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       logicalEntityKeyHash: _requireExternalDigest(
         payload.logicalEntityKeyHash,
       ),
+      canonicalGuid: payload.canonicalGuid,
       parentLogicalKeyHash: _requireExternalDigest(parent),
+      parentCanonicalGuid: parentGuid,
+      parentPart: payload.reactionParentPart,
       senderHandle: payload.senderHandle,
       reactionType: type,
       associatedEmoji: payload.associatedEmoji,
@@ -469,6 +480,8 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     final payload = value.attachment;
     if (payload == null ||
         payload.ownerLogicalKeyHash == null ||
+        payload.ownerCanonicalGuid == null ||
+        payload.ownerPart == null ||
         payload.fileNameState != frb_api.CloudSyncTransientFieldState.value ||
         payload.fileName == null ||
         payload.protectedLocalReferenceState !=
@@ -484,7 +497,10 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       logicalEntityKeyHash: _requireExternalDigest(
         payload.logicalEntityKeyHash,
       ),
+      canonicalGuid: payload.canonicalGuid,
       ownerLogicalKeyHash: _requireExternalDigest(payload.ownerLogicalKeyHash!),
+      ownerCanonicalGuid: payload.ownerCanonicalGuid!,
+      ownerPart: payload.ownerPart!,
       fileName: payload.fileName!,
       mimeType: payload.mimeType,
       protectedLocalReference: payload.protectedLocalReference!,
@@ -506,6 +522,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         payload.logicalEntityKeyHash,
       ),
       ownerLogicalKeyHash: _requireExternalDigest(payload.ownerLogicalKeyHash),
+      photoGuid: payload.photoGuid,
       protectedLocalReference: payload.protectedLocalReference,
     );
   }

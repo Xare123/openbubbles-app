@@ -2,6 +2,12 @@ name: Rust bridge validation
 
 on:
   workflow_dispatch:
+    inputs:
+      allow_generated_drift:
+        description: Upload regenerated bindings without failing the manual run
+        required: false
+        default: false
+        type: boolean
   push:
     paths:
       - ".github/workflows/bridge-bindings.yml"
@@ -40,6 +46,12 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up Flutter for bridge generation
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.8"
+          channel: stable
+
       - name: Install native build tools
         run: |
           sudo apt-get update
@@ -65,6 +77,56 @@ jobs:
             cp rustpush/certs/legacy-fairplay/fairplay.pem "$destination/$name.pem"
             cp rustpush/certs/legacy-fairplay/fairplay.crt "$destination/$name.crt"
           done
+
+      - name: Install pinned Flutter Rust Bridge generator
+        shell: bash
+        run: |
+          archive="${RUNNER_TEMP}/flutter_rust_bridge_codegen.tgz"
+          url="https://github.com/fzyzcjy/flutter_rust_bridge/releases/download/v2.3.0/flutter_rust_bridge_codegen-x86_64-unknown-linux-gnu-v2.3.0.tgz"
+          curl --fail --location --silent --show-error "$url" --output "$archive"
+          echo "bb3a5e3d1f17a543e73f8dfff886e883928b95e3a9d19ca5268da40952d80cee  $archive" | sha256sum --check --strict
+          mkdir -p "${RUNNER_TEMP}/frb-codegen"
+          tar -xzf "$archive" -C "${RUNNER_TEMP}/frb-codegen"
+          echo "${RUNNER_TEMP}/frb-codegen" >> "$GITHUB_PATH"
+
+      - name: Regenerate committed bridge bindings
+        shell: bash
+        run: flutter_rust_bridge_codegen generate --config-file flutter_rust_bridge.yaml
+
+      - name: Normalize generated SSE implementations
+        shell: pwsh
+        run: |
+          ./tooling/frb/guard_generated_sse_impls.ps1 -Mode Deduplicate -ExpectedRemovalCount 6
+          ./tooling/frb/guard_generated_sse_impls.ps1 -Mode Verify
+
+      - name: Upload regenerated bridge bindings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regenerated-rust-bridge-bindings
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            lib/src/rust/api/api.dart
+            lib/src/rust/frb_generated.dart
+            lib/src/rust/frb_generated.io.dart
+            lib/src/rust/frb_generated.web.dart
+            rust/src/frb_generated.rs
+            rust/src/frb_generated.io.rs
+            rust/src/frb_generated.web.rs
+
+      - name: Verify committed bridge bindings are reproducible
+        if: github.event_name != 'workflow_dispatch' || inputs.allow_generated_drift != true
+        shell: bash
+        run: |
+          git diff --exit-code -- \
+            lib/src/rust/api/api.dart \
+            lib/src/rust/frb_generated.dart \
+            lib/src/rust/frb_generated.io.dart \
+            lib/src/rust/frb_generated.web.dart \
+            rust/src/frb_generated.rs \
+            rust/src/frb_generated.io.rs \
+            rust/src/frb_generated.web.rs
 
       - name: Compile committed Rust bridge
         run: cargo check --manifest-path rust/Cargo.toml --lib --message-format short

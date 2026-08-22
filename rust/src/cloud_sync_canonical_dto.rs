@@ -777,6 +777,14 @@ impl CloudCanonicalChatPayload {
         self.display_name.state()
     }
 
+    pub(crate) fn guid(&self) -> &str {
+        &self.guid
+    }
+
+    pub(crate) fn chat_identifier(&self) -> &str {
+        &self.chat_identifier
+    }
+
     pub(crate) fn group_version_state(&self) -> CloudCanonicalFieldState {
         self.group_version.state()
     }
@@ -991,6 +999,18 @@ impl CloudCanonicalParentReference {
             range_length,
         })
     }
+
+    pub(crate) fn parent_hash(&self) -> &CloudCanonicalHash {
+        &self.parent_logical_key_hash
+    }
+
+    pub(crate) fn parent_guid(&self) -> &str {
+        &self.parent_guid
+    }
+
+    pub(crate) fn parent_part(&self) -> Option<u32> {
+        self.parent_part
+    }
 }
 
 impl Debug for CloudCanonicalParentReference {
@@ -1074,14 +1094,14 @@ impl CloudCanonicalMessageAssociation {
 
     pub(crate) fn reaction(
         &self,
-    ) -> Option<(CloudCanonicalReactionKind, &CloudCanonicalHash, bool)> {
+    ) -> Option<(
+        CloudCanonicalReactionKind,
+        &CloudCanonicalParentReference,
+        bool,
+    )> {
         match self {
-            Self::ReactionAdd { kind, parent } => {
-                Some((*kind, &parent.parent_logical_key_hash, false))
-            }
-            Self::ReactionRemove { kind, parent } => {
-                Some((*kind, &parent.parent_logical_key_hash, true))
-            }
+            Self::ReactionAdd { kind, parent } => Some((*kind, parent, false)),
+            Self::ReactionRemove { kind, parent } => Some((*kind, parent, true)),
             Self::None | Self::Sticker(_) => None,
         }
     }
@@ -1181,6 +1201,7 @@ impl Debug for CloudCanonicalMessageEdit {
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct CloudCanonicalMessagePayload {
     guid: String,
+    chat_identifier: String,
     chat_alias_key_hash: CloudCanonicalHash,
     sender_handle: String,
     created_at_millis: i64,
@@ -1206,6 +1227,7 @@ impl CloudCanonicalMessagePayload {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         guid: String,
+        chat_identifier: String,
         chat_alias_key_hash: CloudCanonicalHash,
         sender_handle: String,
         created_at_millis: i64,
@@ -1227,6 +1249,7 @@ impl CloudCanonicalMessagePayload {
         associated_emoji: CloudCanonicalField<String>,
     ) -> Result<Self, CloudCanonicalValidationFailure> {
         validate_identifier(&guid)?;
+        validate_identifier(&chat_identifier)?;
         if !sender_handle.is_empty() {
             validate_identifier(&sender_handle)?;
         }
@@ -1290,6 +1313,8 @@ impl CloudCanonicalMessagePayload {
 
         let mut aggregate_bytes = guid
             .len()
+            .checked_add(chat_identifier.len())
+            .ok_or(CloudCanonicalValidationFailure::CollectionLimit)?
             .checked_add(sender_handle.len())
             .ok_or(CloudCanonicalValidationFailure::CollectionLimit)?;
         for field in [
@@ -1341,6 +1366,7 @@ impl CloudCanonicalMessagePayload {
 
         Ok(Self {
             guid,
+            chat_identifier,
             chat_alias_key_hash,
             sender_handle,
             created_at_millis,
@@ -1377,6 +1403,14 @@ impl CloudCanonicalMessagePayload {
 
     pub(crate) fn text_state(&self) -> CloudCanonicalFieldState {
         self.text.state()
+    }
+
+    pub(crate) fn guid(&self) -> &str {
+        &self.guid
+    }
+
+    pub(crate) fn chat_identifier(&self) -> &str {
+        &self.chat_identifier
     }
 
     pub(crate) fn association(&self) -> &CloudCanonicalMessageAssociation {
@@ -1443,6 +1477,7 @@ impl Debug for CloudCanonicalMessagePayload {
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct CloudCanonicalAttachmentPayload {
     canonical_guid: String,
+    owner_message_guid: Option<String>,
     owner_message_key_hash: Option<CloudCanonicalHash>,
     owner_part: Option<u32>,
     uti: CloudCanonicalField<String>,
@@ -1457,6 +1492,7 @@ impl CloudCanonicalAttachmentPayload {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         canonical_guid: String,
+        owner_message_guid: Option<String>,
         owner_message_key_hash: Option<CloudCanonicalHash>,
         owner_part: Option<u32>,
         uti: CloudCanonicalField<String>,
@@ -1467,14 +1503,21 @@ impl CloudCanonicalAttachmentPayload {
         verified_local_file_reference: CloudCanonicalField<CloudCanonicalProtectedReference>,
     ) -> Result<Self, CloudCanonicalValidationFailure> {
         validate_identifier(&canonical_guid)?;
-        if owner_message_key_hash.is_some() != owner_part.is_some() {
+        if owner_message_guid.is_some() != owner_message_key_hash.is_some()
+            || owner_message_key_hash.is_some() != owner_part.is_some()
+        {
             return Err(CloudCanonicalValidationFailure::InvalidPayload);
+        }
+        if let Some(owner_message_guid) = &owner_message_guid {
+            validate_identifier(owner_message_guid)?;
         }
         validate_optional_identifier(&uti)?;
         validate_optional_identifier(&mime_type)?;
         validate_optional_text(&transfer_name)?;
         let aggregate_bytes = canonical_guid
             .len()
+            .checked_add(owner_message_guid.as_ref().map_or(0, String::len))
+            .ok_or(CloudCanonicalValidationFailure::CollectionLimit)?
             .checked_add(uti.value().map_or(0, String::len))
             .and_then(|size| size.checked_add(mime_type.value().map_or(0, String::len)))
             .and_then(|size| size.checked_add(transfer_name.value().map_or(0, String::len)))
@@ -1484,6 +1527,7 @@ impl CloudCanonicalAttachmentPayload {
         }
         Ok(Self {
             canonical_guid,
+            owner_message_guid,
             owner_message_key_hash,
             owner_part,
             uti,
@@ -1505,6 +1549,10 @@ impl CloudCanonicalAttachmentPayload {
 
     pub(crate) fn owner_part(&self) -> Option<u32> {
         self.owner_part
+    }
+
+    pub(crate) fn owner_message_guid(&self) -> Option<&str> {
+        self.owner_message_guid.as_deref()
     }
 
     pub(crate) fn owner_message_key_hash(&self) -> Option<&CloudCanonicalHash> {
@@ -1565,6 +1613,10 @@ impl CloudCanonicalGroupPhotoPayload {
 
     pub(crate) fn chat_key_hash(&self) -> &CloudCanonicalHash {
         &self.chat_key_hash
+    }
+
+    pub(crate) fn photo_guid(&self) -> &str {
+        &self.photo_guid
     }
 
     pub(crate) fn verified_local_file_reference(&self) -> &CloudCanonicalProtectedReference {
@@ -2063,6 +2115,7 @@ mod tests {
     ) -> CloudCanonicalMessagePayload {
         CloudCanonicalMessagePayload::new(
             format!("message-{SENTINEL}"),
+            "iMessage;-;synthetic".to_owned(),
             hash('A'),
             "mailto:synthetic@example.invalid".to_owned(),
             123,
@@ -2103,6 +2156,7 @@ mod tests {
         let maximum_single_field = "x".repeat(MAX_TEXT_BYTES);
         let result = CloudCanonicalMessagePayload::new(
             "message-guid".to_owned(),
+            "iMessage;-;synthetic".to_owned(),
             hash('A'),
             "mailto:synthetic@example.invalid".to_owned(),
             1,
@@ -2545,6 +2599,7 @@ mod tests {
         assert_eq!(
             CloudCanonicalAttachmentPayload::new(
                 "attachment-guid".to_owned(),
+                Some("owner-message-guid".to_owned()),
                 Some(hash('P')),
                 None,
                 CloudCanonicalField::Absent,
@@ -2558,6 +2613,7 @@ mod tests {
         );
         assert!(CloudCanonicalAttachmentPayload::new(
             "attachment-guid".to_owned(),
+            Some("owner-message-guid".to_owned()),
             Some(hash('P')),
             Some(0),
             CloudCanonicalField::Value("public.png".to_owned()),
@@ -2578,6 +2634,7 @@ mod tests {
         };
         let result = CloudCanonicalMessagePayload::new(
             "reaction-guid".to_owned(),
+            "iMessage;-;synthetic".to_owned(),
             hash('A'),
             "mailto:synthetic@example.invalid".to_owned(),
             1,
@@ -2637,6 +2694,7 @@ mod tests {
         };
         let result = CloudCanonicalMessagePayload::new(
             "message-guid".to_owned(),
+            "iMessage;-;synthetic".to_owned(),
             hash('A'),
             String::new(),
             1,
@@ -2666,6 +2724,7 @@ mod tests {
         let message = message_payload(CloudCanonicalMessageAssociation::None);
         let attachment = CloudCanonicalAttachmentPayload::new(
             format!("attachment-{SENTINEL}"),
+            None,
             None,
             None,
             CloudCanonicalField::Absent,

@@ -153,6 +153,8 @@ void main() {
         generation: generation,
         payload: CloudChatEntityPayload(
           logicalEntityKeyHash: chatHash,
+          canonicalGuid: 'chat-guid',
+          chatIdentifier: 'preserve-this',
           displayName: 'Updated name',
           participantHandles: const ['should-not-be-written'],
         ),
@@ -173,6 +175,8 @@ void main() {
       generation: generation,
       payload: CloudChatEntityPayload(
         logicalEntityKeyHash: chatHash,
+        canonicalGuid: 'chat-guid',
+        chatIdentifier: 'preserve-this',
         displayName: 'Must preserve local lock',
         participantHandles: const [],
       ),
@@ -195,7 +199,9 @@ void main() {
         generation: generation,
         payload: CloudMessageEntityPayload(
           logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
           chatLogicalKeyHash: chatHash,
+          chatIdentifier: 'iMessage;-;chat',
           body: 'synthetic body',
           senderHandle: 'synthetic@example.invalid',
         ),
@@ -234,6 +240,8 @@ void main() {
         generation: generation + 1,
         payload: CloudChatEntityPayload(
           logicalEntityKeyHash: chatHash,
+          canonicalGuid: 'chat-guid',
+          chatIdentifier: 'preserve-this',
           displayName: 'Wrong generation',
           participantHandles: const [],
         ),

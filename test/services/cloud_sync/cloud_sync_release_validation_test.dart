@@ -200,7 +200,10 @@ void main() {
     expect(
       () => CloudAttachmentEntityPayload(
         logicalEntityKeyHash: 'attachment-key',
+        canonicalGuid: 'attachment-guid',
         ownerLogicalKeyHash: '',
+        ownerCanonicalGuid: 'owner-message-guid',
+        ownerPart: 0,
         fileName: 'file',
         mimeType: null,
         protectedLocalReference: 'protected-ref',
@@ -214,6 +217,8 @@ void main() {
     );
     final mismatchedPayload = CloudChatEntityPayload(
       logicalEntityKeyHash: 'message-key',
+      canonicalGuid: 'chat-guid',
+      chatIdentifier: 'iMessage;-;chat',
       displayName: null,
       participantHandles: const [],
     );

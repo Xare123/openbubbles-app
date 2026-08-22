@@ -144,7 +144,9 @@ void main() {
         transaction.applyEntity(
           payload: CloudMessageEntityPayload(
             logicalEntityKeyHash: _digestValue('L'),
+            canonicalGuid: 'message-guid',
             chatLogicalKeyHash: _digestValue('H'),
+            chatIdentifier: 'iMessage;-;chat',
             body: secretBody,
             senderHandle: secretSender,
           ),
@@ -679,7 +681,9 @@ void main() {
               _scope(account: _digestValue('B'), zone: 'messageManateeZone'),
               CloudMessageEntityPayload(
                 logicalEntityKeyHash: _digestValue('L'),
+                canonicalGuid: 'message-guid',
                 chatLogicalKeyHash: _digestValue('P'),
+                chatIdentifier: 'iMessage;-;chat',
                 body: 'message',
                 senderHandle: 'sender',
               ),
@@ -693,7 +697,10 @@ void main() {
               _scope(account: _digestValue('C'), zone: 'messageManateeZone'),
               CloudReactionEntityPayload(
                 logicalEntityKeyHash: _digestValue('Y'),
+                canonicalGuid: 'reaction-guid',
                 parentLogicalKeyHash: _digestValue('P'),
+                parentCanonicalGuid: 'parent-message-guid',
+                parentPart: 0,
                 senderHandle: 'sender',
                 reactionType: 'like',
               ),
@@ -706,7 +713,10 @@ void main() {
               _scope(account: _digestValue('D'), zone: 'attachmentManateeZone'),
               CloudAttachmentEntityPayload(
                 logicalEntityKeyHash: _digestValue('T'),
+                canonicalGuid: 'attachment-guid',
                 ownerLogicalKeyHash: _digestValue('P'),
+                ownerCanonicalGuid: 'owner-message-guid',
+                ownerPart: 0,
                 fileName: 'photo.jpg',
                 mimeType: 'image/jpeg',
                 protectedLocalReference: _protectedReference('A'),
@@ -722,6 +732,7 @@ void main() {
               CloudGroupPhotoEntityPayload(
                 logicalEntityKeyHash: _digestValue('G'),
                 ownerLogicalKeyHash: _digestValue('P'),
+                photoGuid: 'group-photo-guid',
                 protectedLocalReference: _protectedReference('G'),
               ),
               CloudSemanticSnapshot(
@@ -946,7 +957,11 @@ void main() {
       CloudInboxStatus.quarantined.index,
     );
     expect(
-      objectBox.box<CloudSyncCheckpointEntity>().getAll().single.appliedSequence,
+      objectBox
+          .box<CloudSyncCheckpointEntity>()
+          .getAll()
+          .single
+          .appliedSequence,
       1,
     );
   });
@@ -1124,7 +1139,9 @@ CloudSemanticSnapshot _snapshot() {
 CloudMessageEntityPayload _payload() {
   return CloudMessageEntityPayload(
     logicalEntityKeyHash: _digestValue('L'),
+    canonicalGuid: 'message-guid',
     chatLogicalKeyHash: _digestValue('H'),
+    chatIdentifier: 'iMessage;-;chat',
     body: 'secret message body',
     senderHandle: 'secret@example.com',
   );

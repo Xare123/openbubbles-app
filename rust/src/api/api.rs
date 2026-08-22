@@ -509,6 +509,10 @@ pub struct CloudSyncTransientSnapshot {
 #[derive(Clone)]
 pub struct CloudSyncTransientChatPayload {
     pub logical_entity_key_hash: String,
+    /// Validated application-level chat GUID. Transient typed memory only.
+    pub canonical_guid: String,
+    /// Validated iMessage chat identifier used to bind message records.
+    pub chat_identifier: String,
     pub participant_handles: Vec<String>,
     pub display_name_state: CloudSyncTransientFieldState,
     pub display_name: Option<String>,
@@ -519,13 +523,18 @@ pub struct CloudSyncTransientChatPayload {
 #[derive(Clone)]
 pub struct CloudSyncTransientMessagePayload {
     pub logical_entity_key_hash: String,
+    /// Validated application-level message/reaction GUID. Transient only.
+    pub canonical_guid: String,
     pub chat_logical_key_hash: String,
+    pub chat_identifier: String,
     pub sender_handle: String,
     pub body_state: CloudSyncTransientFieldState,
     pub body: Option<String>,
     pub reaction_kind: Option<CloudSyncTransientReactionKind>,
     pub reaction_removed: bool,
     pub reaction_parent_logical_key_hash: Option<String>,
+    pub reaction_parent_canonical_guid: Option<String>,
+    pub reaction_parent_part: Option<u32>,
     pub associated_emoji_state: CloudSyncTransientFieldState,
     pub associated_emoji: Option<String>,
 }
@@ -533,7 +542,10 @@ pub struct CloudSyncTransientMessagePayload {
 #[derive(Clone)]
 pub struct CloudSyncTransientAttachmentPayload {
     pub logical_entity_key_hash: String,
+    pub canonical_guid: String,
     pub owner_logical_key_hash: Option<String>,
+    pub owner_canonical_guid: Option<String>,
+    pub owner_part: Option<u32>,
     pub file_name_state: CloudSyncTransientFieldState,
     pub file_name: Option<String>,
     pub mime_type_state: CloudSyncTransientFieldState,
@@ -546,6 +558,7 @@ pub struct CloudSyncTransientAttachmentPayload {
 pub struct CloudSyncTransientGroupPhotoPayload {
     pub logical_entity_key_hash: String,
     pub owner_logical_key_hash: String,
+    pub photo_guid: String,
     pub protected_local_reference: String,
 }
 
@@ -1054,6 +1067,8 @@ fn map_cloud_sync_transient_payload(
         Canonical::Chat(payload) => {
             result.chat = Some(CloudSyncTransientChatPayload {
                 logical_entity_key_hash: logical_entity_key_hash.to_owned(),
+                canonical_guid: payload.guid().to_owned(),
+                chat_identifier: payload.chat_identifier().to_owned(),
                 participant_handles: payload.participant_handles().to_vec(),
                 display_name_state: map_cloud_sync_transient_field_state(
                     payload.display_name_state(),
@@ -1065,24 +1080,35 @@ fn map_cloud_sync_transient_payload(
             if payload.association().is_sticker() {
                 return None;
             }
-            let (reaction_kind, reaction_parent_logical_key_hash, reaction_removed) =
-                match payload.association().reaction() {
-                    Some((kind, parent, removed)) => (
-                        Some(map_cloud_sync_transient_reaction_kind(kind)),
-                        Some(parent.value().to_owned()),
-                        removed,
-                    ),
-                    None => (None, None, false),
-                };
+            let (
+                reaction_kind,
+                reaction_parent_logical_key_hash,
+                reaction_parent_canonical_guid,
+                reaction_parent_part,
+                reaction_removed,
+            ) = match payload.association().reaction() {
+                Some((kind, parent, removed)) => (
+                    Some(map_cloud_sync_transient_reaction_kind(kind)),
+                    Some(parent.parent_hash().value().to_owned()),
+                    Some(parent.parent_guid().to_owned()),
+                    parent.parent_part(),
+                    removed,
+                ),
+                None => (None, None, None, None, false),
+            };
             result.message = Some(CloudSyncTransientMessagePayload {
                 logical_entity_key_hash: logical_entity_key_hash.to_owned(),
+                canonical_guid: payload.guid().to_owned(),
                 chat_logical_key_hash: payload.chat_alias_key_hash().value().to_owned(),
+                chat_identifier: payload.chat_identifier().to_owned(),
                 sender_handle: payload.sender_handle().to_owned(),
                 body_state: map_cloud_sync_transient_field_state(payload.text_state()),
                 body: payload.text().value().cloned(),
                 reaction_kind,
                 reaction_removed,
                 reaction_parent_logical_key_hash,
+                reaction_parent_canonical_guid,
+                reaction_parent_part,
                 associated_emoji_state: map_cloud_sync_transient_field_state(
                     payload.associated_emoji().state(),
                 ),
@@ -1092,9 +1118,12 @@ fn map_cloud_sync_transient_payload(
         Canonical::Attachment(payload) => {
             result.attachment = Some(CloudSyncTransientAttachmentPayload {
                 logical_entity_key_hash: logical_entity_key_hash.to_owned(),
+                canonical_guid: payload.canonical_guid().to_owned(),
                 owner_logical_key_hash: payload
                     .owner_message_key_hash()
                     .map(|value| value.value().to_owned()),
+                owner_canonical_guid: payload.owner_message_guid().map(str::to_owned),
+                owner_part: payload.owner_part(),
                 file_name_state: map_cloud_sync_transient_field_state(
                     payload.transfer_name().state(),
                 ),
@@ -1114,6 +1143,7 @@ fn map_cloud_sync_transient_payload(
             result.group_photo = Some(CloudSyncTransientGroupPhotoPayload {
                 logical_entity_key_hash: logical_entity_key_hash.to_owned(),
                 owner_logical_key_hash: payload.chat_key_hash().value().to_owned(),
+                photo_guid: payload.photo_guid().to_owned(),
                 protected_local_reference: payload
                     .verified_local_file_reference()
                     .value()

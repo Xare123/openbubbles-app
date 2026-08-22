@@ -68,24 +68,34 @@ void main() {
     return switch (snapshot.kind) {
       CloudEntityKind.message => CloudMessageEntityPayload(
         logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
+        canonicalGuid: 'message-guid',
         chatLogicalKeyHash: snapshot.parentLogicalKeyHash!,
+        chatIdentifier: 'iMessage;-;chat',
         body: 'renderable body',
         senderHandle: 'sender@example.invalid',
       ),
       CloudEntityKind.chat => CloudChatEntityPayload(
         logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
+        canonicalGuid: 'chat-guid',
+        chatIdentifier: 'iMessage;-;chat',
         displayName: 'Renderable chat',
         participantHandles: const ['participant@example.invalid'],
       ),
       CloudEntityKind.reaction => CloudReactionEntityPayload(
         logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
+        canonicalGuid: 'reaction-guid',
         parentLogicalKeyHash: snapshot.parentLogicalKeyHash!,
+        parentCanonicalGuid: 'parent-message-guid',
+        parentPart: 0,
         senderHandle: 'sender@example.invalid',
         reactionType: 'like',
       ),
       CloudEntityKind.attachment => CloudAttachmentEntityPayload(
         logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
+        canonicalGuid: 'attachment-guid',
         ownerLogicalKeyHash: snapshot.parentLogicalKeyHash!,
+        ownerCanonicalGuid: 'owner-message-guid',
+        ownerPart: 0,
         fileName: 'attachment.bin',
         mimeType: 'application/octet-stream',
         protectedLocalReference: 'protected:attachment',
@@ -98,6 +108,7 @@ void main() {
       CloudEntityKind.groupPhoto => CloudGroupPhotoEntityPayload(
         logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
         ownerLogicalKeyHash: snapshot.parentLogicalKeyHash!,
+        photoGuid: 'group-photo-guid',
         protectedLocalReference: 'protected:group-photo',
       ),
     };
@@ -630,7 +641,9 @@ void main() {
       final create = entry(1);
       final firstPayload = CloudMessageEntityPayload(
         logicalEntityKeyHash: 'message-key',
+        canonicalGuid: 'message-guid',
         chatLogicalKeyHash: 'chat-key',
+        chatIdentifier: 'iMessage;-;chat',
         body: 'first plaintext body',
         senderHandle: 'first@example.invalid',
       );
@@ -640,7 +653,9 @@ void main() {
       final update = entry(2);
       final secondPayload = CloudMessageEntityPayload(
         logicalEntityKeyHash: 'message-key',
+        canonicalGuid: 'message-guid',
         chatLogicalKeyHash: 'chat-key',
+        chatIdentifier: 'iMessage;-;chat',
         body: 'edited plaintext body',
         senderHandle: 'first@example.invalid',
       );
@@ -671,7 +686,9 @@ void main() {
     const secretHandle = 'private-handle@example.invalid';
     final payload = CloudMessageEntityPayload(
       logicalEntityKeyHash: 'message-key',
+      canonicalGuid: 'private-message-guid',
       chatLogicalKeyHash: 'chat-key',
+      chatIdentifier: 'iMessage;-;private-chat',
       body: secretBody,
       senderHandle: secretHandle,
     );

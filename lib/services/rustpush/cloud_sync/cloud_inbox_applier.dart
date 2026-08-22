@@ -26,12 +26,17 @@ sealed class CloudSemanticEntityPayload {
 final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
   CloudMessageEntityPayload({
     required this.logicalEntityKeyHash,
+    required this.canonicalGuid,
     required this.chatLogicalKeyHash,
+    required this.chatIdentifier,
     required this.body,
     required this.senderHandle,
   }) {
     if (logicalEntityKeyHash.isEmpty) {
       throw ArgumentError('cloud_message_payload_logical_key_invalid');
+    }
+    if (canonicalGuid.isEmpty || chatIdentifier.isEmpty) {
+      throw ArgumentError('cloud_message_payload_canonical_identity_invalid');
     }
     if (chatLogicalKeyHash.isEmpty) {
       throw ArgumentError('cloud_message_payload_chat_key_invalid');
@@ -40,7 +45,9 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
 
   @override
   final String logicalEntityKeyHash;
+  final String canonicalGuid;
   final String chatLogicalKeyHash;
+  final String chatIdentifier;
   final String body;
   final String senderHandle;
 
@@ -51,11 +58,16 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
 final class CloudChatEntityPayload extends CloudSemanticEntityPayload {
   CloudChatEntityPayload({
     required this.logicalEntityKeyHash,
+    required this.canonicalGuid,
+    required this.chatIdentifier,
     required this.displayName,
     required Iterable<String> participantHandles,
   }) : participantHandles = List.unmodifiable(participantHandles) {
     if (logicalEntityKeyHash.isEmpty) {
       throw ArgumentError('cloud_chat_payload_logical_key_invalid');
+    }
+    if (canonicalGuid.isEmpty || chatIdentifier.isEmpty) {
+      throw ArgumentError('cloud_chat_payload_canonical_identity_invalid');
     }
     if (this.participantHandles.any((handle) => handle.isEmpty)) {
       throw ArgumentError('cloud_chat_payload_participant_invalid');
@@ -64,6 +76,8 @@ final class CloudChatEntityPayload extends CloudSemanticEntityPayload {
 
   @override
   final String logicalEntityKeyHash;
+  final String canonicalGuid;
+  final String chatIdentifier;
   final String? displayName;
   final List<String> participantHandles;
 
@@ -74,13 +88,21 @@ final class CloudChatEntityPayload extends CloudSemanticEntityPayload {
 final class CloudAttachmentEntityPayload extends CloudSemanticEntityPayload {
   CloudAttachmentEntityPayload({
     required this.logicalEntityKeyHash,
+    required this.canonicalGuid,
     required this.ownerLogicalKeyHash,
+    required this.ownerCanonicalGuid,
+    required this.ownerPart,
     required this.fileName,
     required this.mimeType,
     required this.protectedLocalReference,
   }) {
     if (logicalEntityKeyHash.isEmpty) {
       throw ArgumentError('cloud_attachment_payload_logical_key_invalid');
+    }
+    if (canonicalGuid.isEmpty || ownerCanonicalGuid.isEmpty || ownerPart < 0) {
+      throw ArgumentError(
+        'cloud_attachment_payload_canonical_identity_invalid',
+      );
     }
     if (ownerLogicalKeyHash.isEmpty) {
       throw ArgumentError('cloud_attachment_payload_owner_key_invalid');
@@ -92,7 +114,10 @@ final class CloudAttachmentEntityPayload extends CloudSemanticEntityPayload {
 
   @override
   final String logicalEntityKeyHash;
+  final String canonicalGuid;
   final String ownerLogicalKeyHash;
+  final String ownerCanonicalGuid;
+  final int ownerPart;
   final String fileName;
   final String? mimeType;
   final String protectedLocalReference;
@@ -104,13 +129,21 @@ final class CloudAttachmentEntityPayload extends CloudSemanticEntityPayload {
 final class CloudReactionEntityPayload extends CloudSemanticEntityPayload {
   CloudReactionEntityPayload({
     required this.logicalEntityKeyHash,
+    required this.canonicalGuid,
     required this.parentLogicalKeyHash,
+    required this.parentCanonicalGuid,
+    required this.parentPart,
     required this.senderHandle,
     required this.reactionType,
     this.associatedEmoji,
   }) {
     if (logicalEntityKeyHash.isEmpty) {
       throw ArgumentError('cloud_reaction_payload_logical_key_invalid');
+    }
+    if (canonicalGuid.isEmpty ||
+        parentCanonicalGuid.isEmpty ||
+        (parentPart != null && parentPart! < 0)) {
+      throw ArgumentError('cloud_reaction_payload_canonical_identity_invalid');
     }
     if (parentLogicalKeyHash.isEmpty) {
       throw ArgumentError('cloud_reaction_payload_parent_key_invalid');
@@ -129,7 +162,10 @@ final class CloudReactionEntityPayload extends CloudSemanticEntityPayload {
 
   @override
   final String logicalEntityKeyHash;
+  final String canonicalGuid;
   final String parentLogicalKeyHash;
+  final String parentCanonicalGuid;
+  final int? parentPart;
   final String senderHandle;
   final String reactionType;
   final String? associatedEmoji;
@@ -169,6 +205,7 @@ final class CloudGroupPhotoEntityPayload extends CloudSemanticEntityPayload {
   CloudGroupPhotoEntityPayload({
     required this.logicalEntityKeyHash,
     required this.ownerLogicalKeyHash,
+    required this.photoGuid,
     required this.protectedLocalReference,
   }) {
     if (logicalEntityKeyHash.isEmpty) {
@@ -176,6 +213,11 @@ final class CloudGroupPhotoEntityPayload extends CloudSemanticEntityPayload {
     }
     if (ownerLogicalKeyHash.isEmpty) {
       throw ArgumentError('cloud_group_photo_payload_owner_key_invalid');
+    }
+    if (photoGuid.isEmpty) {
+      throw ArgumentError(
+        'cloud_group_photo_payload_canonical_identity_invalid',
+      );
     }
     if (protectedLocalReference.isEmpty) {
       throw ArgumentError('cloud_group_photo_payload_reference_invalid');
@@ -185,6 +227,7 @@ final class CloudGroupPhotoEntityPayload extends CloudSemanticEntityPayload {
   @override
   final String logicalEntityKeyHash;
   final String ownerLogicalKeyHash;
+  final String photoGuid;
   final String protectedLocalReference;
 
   @override
