@@ -4,42 +4,45 @@ title: OpenBubbles Cloud Sync V2 Live Validation
 description: Safety-gated two-account validation runbook for Pixel Android, Windows ARM64, Windows x64, and a Mac truth source.
 resource: openbubbles-app
 tags: [android, pixel, windows, arm64, x64, cloudkit, sync, testing, security]
-timestamp: 2026-08-01
+timestamp: 2026-08-22
 ---
 
 # OpenBubbles Cloud Sync V2 live validation
 
 ## Current readiness
 
-The offline foundation is testable, but this checkout is **not ready for a live
-CloudKit fetch**. Cloud Sync V2 has no production composition path, manual
-trigger, fail-closed preflight, or redacted diagnostic export. The existing
-`Messages in iCloud (BETA)` setting invokes the legacy sync engine and must
-remain off throughout V2 Phase 1.
+The bounded Android read-only shadow and semantic-pull canaries now have
+production composition paths, explicit developer-only manual triggers,
+fail-closed preflight, protected persistence, and redacted reports. They remain
+separately compile-gated and are not connected to the legacy `Messages in
+iCloud (BETA)` switch. That legacy switch must remain off throughout these
+canaries.
 
-This document is the gated execution plan after those blockers are closed. It
-must not be interpreted as evidence that a live shadow run is currently
-available.
+Offline evidence on 2026-08-22 at `75e779b2d`: 533 Flutter tests, 130 main
+Rust tests, and 43 standalone protector tests passed. An independent final
+audit found no P0-P2 release blocker for the bounded read-only semantic canary,
+and its 84 focused tests passed. The exact Beta sampler job, Windows x64,
+Windows ARM64, bridge, and fail-closed media-provenance jobs are green. The
+remaining Alpha packaging steps are not prerequisites for installing the
+separate Beta canary.
 
-Offline evidence on 2026-08-01: 85 focused Dart/ObjectBox tests passed, the
-focused Flutter analyzer was clean, and 16 protector tests passed on
-`aarch64-pc-windows-msvc`. The protector harness also compiled for
-`x86_64-pc-windows-msvc`, with non-fatal missing-PDB linker warnings; its test
-executable was not run. The new rustpush/bridge error-semantics tests, packaged
-ABIs, live CloudKit, and devices remain unvalidated.
+This is readiness for the **first controlled live canary**, not evidence that
+CloudKit V2 works with Apple's production service. No real Apple record has yet
+been decoded or projected by V2. Remote saves, remote deletes, local
+tombstones, automatic triggers, and full-history sync remain disabled.
 
 ### Blockers to the first live fetch
 
 | Priority | Blocker | State | Required closure |
 | --- | --- | --- | --- |
-| 1 | No production V2 composition or invocation path | Implemented offline, live run open | The developer-only manual sampler and its gated troubleshoot-panel entry point exist and are unit-tested; `tooling\cloud_sync\verify_foundation.ps1` asserts the composition symbols and passes. Its fail-closed preflight has not been exercised against live CloudKit |
-| 2 | Windows production protection still has a legacy static software-encryption path | Open | Integrate the tested per-install protected-secret migration and make corruption fail closed |
-| 3 | Native retry and protocol failures lost important semantics at the Dart boundary | Implemented; ARM64 compile closed, test run blocked by host policy | `cargo check --locked --all-targets` is clean for `aarch64-pc-windows-msvc` and the standalone protector harness passes 39 tests there. `cargo test` on the main crate is blocked by this host's Smart App Control policy, not by the code; see [Windows host build environment](WINDOWS_HOST_BUILD_ENVIRONMENT.md) |
-| 4 | Runtime disposal could return while old-account work was active | Implemented offline | Keep the idempotent cancel-and-quiesce barrier and account-switch regression tests green |
-| 5 | Raw response bytes were not capped before per-record protection | Implemented offline | Keep the 32 MiB total page admission and its binary, UTF-8 metadata, fixed-overhead, exact-limit, and pre-protection rejection tests green |
-| 6 | Native execution covers ARM64 only; x64 is compile-only | Partially closed | Release libraries now build for `aarch64-pc-windows-msvc`, `x86_64-pc-windows-msvc`, and `aarch64-linux-android` with verified PE/ELF machine types, and the Cloud Sync Dart suite passes on both the ARM64 and x64 Dart test hosts. Still open: execute the x64 harness without triggering Windows Application Control, and inspect the native ABIs inside a packaged Windows bundle |
-| 7 | Current per-install fingerprints cannot prove the same event crossed clients | Open | Add ephemeral test-run event HMACs and explicit `ids` versus `cloud` provenance |
-| 8 | Production FRB facades used dynamic calls that unit-test fakes could not type-check | Implemented offline | Keep the typed `RustLibApi` raw-fetch/protect/unprotect/fingerprint facades and post-generation analysis green |
+| 1 | Authoritative CI and APK provenance | Closed for Beta canary | Exact `75e779b2d` Beta job passed; downloaded artifact package, APK v2 signature, SHA-256, ARM64 ABI, and required native libraries were verified |
+| 2 | Account and app-data isolation | Open on device | Prove Beta has a distinct package, UID, and data directory; use only the Mac-activated test account and never restore Alpha data into Beta |
+| 3 | Live PCS/keychain authorization | Open | The fail-closed preflight must pass on the test account without resetting a clique, zone, token, or trust relationship |
+| 4 | Account-switch disposal race | Closed offline | Keep the idempotent cancel-and-quiesce tests green; reset must abort before client disposal if the bounded 50-second quiescence wait expires |
+| 5 | Raw-page resource bounds | Closed offline | Keep the 32 MiB page admission and one-page/50-change-per-zone semantic limits green before every device build |
+| 6 | Native package architecture and bridge parity | Closed for Beta canary | ARM64 Android libraries plus Windows x64, Windows ARM64, and bridge jobs passed from exact commit `75e779b2d` |
+| 7 | Live Apple record shapes and ordering | Open | Run shadow first, then the bounded semantic pull, then an immediate replay; stop safely on any deferred, quarantined, retried, skipped, duplicate, or remote-write count |
+| 8 | Remote mutation isolation | Closed for read-only canary | Confirm saves, deletes, tombstones, notification hints, profiles, and automatic triggers remain disabled and the outbox count stays zero |
 
 ## Decision
 
@@ -59,10 +62,11 @@ semantic-sync test requires explicit `source=cloud` provenance.
 
 - IDS remains the live send and receive path. CloudKit failure must not delay
   delivery, local persistence, notifications, or UI updates.
-- The first live phase is manual, read-only shadow sync.
+- The first live phase is manual, read-only shadow sync. The semantic pull is a
+  distinct second canary and may project bounded CloudKit records locally.
 - Keep the existing `Messages in iCloud (BETA)` switch off. It is the legacy
   mutating engine, not the V2 shadow sampler.
-- Required flags are:
+- Required shadow flags are:
   - `readOnlyFetch: true`
   - `semanticApply: false`
   - `saves: false`
@@ -70,6 +74,17 @@ semantic-sync test requires explicit `source=cloud` provenance.
   - `profiles: false`
   - `notificationHints: false`
   - `automaticTriggersEnabled: false`
+- Required semantic-canary flags are:
+  - `readOnlyFetch: true`
+  - `semanticApply: true`
+  - `saves: false`
+  - `deletions: false`
+  - `profiles: false`
+  - `notificationHints: false`
+  - `automaticTriggersEnabled: false`
+- The Beta artifact must be compiled with both
+  `OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true` and
+  `OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true`.
 - Never automatically reset an iCloud Keychain clique, delete a CloudKit zone,
   clear a token after an unknown failure, or discard a pending shadow journal.
 - Never copy a database, checkpoint, protected install secret, or Apple account
@@ -104,6 +119,24 @@ Verify each built APK's package, signature, UID, native ABI, and private data
 directory before installing it. Set up Beta fresh for Account B and never
 restore Alpha's backup into it. If that isolation cannot be proven on the
 actual artifacts, use a second Android device rather than an app-cloning tool.
+
+### Verified Beta canary artifact
+
+- Source commit: `75e779b2d86dc3964662a5118e9a58b0d1ffdff1`
+- GitHub Actions run/job: `32583069161` / `Beta Sampler APK`
+- Artifact: `Beta Debug APK (Cloud Sync sampler)`
+- Local file: `C:\Codex\OpenBubblesReview\artifacts\cloud-sync-v2-canary-75e779b2d-run-32583069161\app-beta-debug.apk`
+- Package: `com.bluebubbles.messaging.beta`
+- Version: `1.15.0` (`20002227`)
+- SHA-256: `79F94A0E6456F5EE43BD6164527959709FFBD8712687049AA02BC6DD5B818CBA`
+- APK signature: v2 verified, one Android Debug signer; certificate SHA-256
+  `0c06a6d3d619476917521e75e5c56bd6af81390161217a99419efe48e0577d1c`
+- Required ARM64 libraries present:
+  `libflutter.so`, `libobjectbox-jni.so`, and
+  `librust_lib_bluebubbles.so`
+
+The package/UID/data-directory isolation check remains a live-device gate. Do
+not infer it solely from the distinct package name.
 
 ## Readiness gates
 
@@ -154,13 +187,33 @@ changes, checkpoints, and redacted run metadata. It must not:
 Run the same manual pass again. The second pass must be bounded and
 deterministic, with no duplicate logical changes and no token regression.
 
+### Gate 3B: bounded semantic pull
+
+Proceed only after both shadow passes are clean. Run one manual semantic pull
+in this exact zone order: chats, messages, attachments. Each zone is bounded to
+one page and 50 changes. This canary may project chats, messages, reactions,
+and attachment metadata into the isolated Beta ObjectBox profile. It must not
+download media bodies or apply profiles, display clears, group photos, or
+tombstones.
+
+The UI may report `Cloud Sync V2 Complete` only when all three zones report
+`completed`, no zone is skipped, deferred, quarantined, or retried counts are
+zero, and the remote-write/outbox tripwire remains zero. Any other outcome is
+`Cloud Sync V2 Stopped Safely`; preserve the redacted report and do not repeat
+until the cause is understood.
+
+Immediately run the semantic pull once more in the same account session. The
+replay must create zero duplicate logical records, retain monotonic state, and
+perform zero remote saves or deletes. Confirm the active Apple account scope is
+unchanged immediately before each local transaction.
+
 ### Gate 4: same-account cross-client reconciliation
 
 Keep the Windows Account B client offline. Generate controlled events between
-Accounts A and B, then reconnect Windows and run one manual shadow pass.
-Phase 1 intentionally journals protected raw records and does not yet decode
-message, reaction, edit, retraction, or read-state semantics. Compare only
-bounded transport and journal evidence at this gate. Raw encrypted bytes and
+Accounts A and B, then reconnect Windows and run one manual shadow pass. The
+bounded semantic canary can now decode and locally project selected chat,
+message, reaction, and attachment-metadata lanes, but this has not been proven
+against either platform's live Apple data. Raw encrypted bytes and
 platform-specific protection envelopes may differ.
 
 Before cross-client comparison, add an ephemeral test-run HMAC key used only to
@@ -168,7 +221,7 @@ derive comparable event fingerprints from stable Apple record identity. The
 current per-install account fingerprint cannot correlate Pixel and Windows
 events. Never export the raw record identity or HMAC key.
 
-Semantic comparisons move to Phase 2. For those tests, add a developer-only,
+For cross-client semantic comparisons, first add a developer-only,
 auto-expiring **cloud-only destination mode** on Account B that pauses semantic
 IDS ingestion while leaving manual V2 fetch available. Sends remain disabled.
 Without explicit `source=cloud` provenance, visibility on two clients is only
@@ -271,23 +324,26 @@ Stop immediately and preserve diagnostics if any of these occur:
 
 ### First 30 minutes
 
-Do not begin this section until the production composition, manual sampler,
-preflight, diagnostics, byte cap, protected Windows key path, and durable
-`Retry-After` gates above are implemented and verified.
+Do not begin this section until the authoritative PR-head workflows pass and
+the exact downloaded Beta APK passes package, signature, ABI, and native-library
+verification.
 
 1. Confirm Account B, Mac activation, Messages in iCloud, and iCloud Keychain.
 2. Confirm isolated Android package and Windows user profile.
-3. Run `tooling/cloud_sync/verify_foundation.ps1`.
-4. Back up the Account B test profiles.
-5. Confirm Cloud Sync V2 remains dormant.
+3. Verify Alpha and Beta package IDs, UIDs, and data directories are distinct.
+4. Run `tooling/cloud_sync/verify_foundation.ps1`.
+5. Back up the Account B test profiles.
+6. Confirm the legacy sync switch is off and V2 has no automatic trigger.
 
 ### Next 90 minutes
 
 1. Run the IDS baseline.
 2. Run one manual read-only shadow pass on Pixel.
-3. Replay it.
-4. Repeat on isolated Windows.
-5. Run T01 through T09 and compare redacted counters.
+3. Replay the shadow pass and inspect its redacted report.
+4. Run one bounded semantic pull and inspect all strict pass criteria.
+5. Replay the semantic pull and verify zero duplicates and zero remote writes.
+6. Repeat the shadow phase on isolated Windows only after Pixel is clean.
+7. Run T01 through T09 and compare redacted counters.
 
 ### Soak
 

@@ -193,9 +193,9 @@ database is written by this path.
    inventing content or deletion targets. Fifteen focused tests cover all
    current payload lanes, every native failure code, source/session mismatches,
    mixed dispositions, partial messages, reactions and removals, explicit
-   clears, edit revisions, tombstones, and auxiliary-zone rejection. This
-   closes the decoder boundary only; it does not enable semantic apply or make
-   the missing canonical GUID problem smaller.
+   clears, edit revisions, tombstones, and auxiliary-zone rejection. The
+   separately compile-gated canary now enables bounded local semantic apply;
+   remote mutations and automatic execution remain disabled.
 11. ~~**Expand the production entity adapter.**~~ **Done for the current canary
     lanes.** Supported chat, message, reaction, and attachment metadata records
     map onto the real ObjectBox entities. Display-name clears, profiles, group
@@ -214,16 +214,52 @@ x64, with zero lost and zero duplicated logical message GUIDs.
 
 ### Stage 4 — writes
 
-14. Durable dependency-aware outbox, explicit per-record confirmation, then
-    tombstones behind their own flag. Deletion stays disabled until its own
-    review.
+14. **Enforce one writer per account.** V2 becomes the only CloudKit writer.
+    The legacy path may remain available for read/restore during migration, but
+    its uploads and duplicate-record deletion must be structurally unavailable
+    whenever V2 owns the profile. Today the two paths have separate record maps,
+    and legacy duplicate cleanup can otherwise delete a valid V2-owned record.
+15. **Complete durable record identity.** Store the proven CloudKit change
+    tag/CAS value, record type, owner, generation, server ordering, and deletion
+    fence. Add reverse uniqueness for server record identity. Do not treat a
+    different opaque etag hash as proof that an observation is newer.
+16. **Validate every push result exactly.** Reject duplicate, missing, and
+    unknown operation IDs before durable confirmation, and bind every result to
+    action, logical identity, payload digest, server identity, and expected
+    change tag. Chat saves are atomic in Apple's iOS 26 implementation; message
+    and attachment saves are non-atomic and require per-record outcomes.
+17. **Fence network workers through completion.** An expired outbox lease may
+    never confirm a late result. Add lease generation/expiry CAS, bounded push
+    duration or heartbeat renewal, coordinator renewal during network work, and
+    attempt-plus-age retry/dead-letter policy. The direct expired-lease result
+    race is now fixed in both ObjectBox and the in-memory reference store; the
+    remaining generation and heartbeat work stays open.
+18. **Couple local mutation and outbox admission.** One ObjectBox transaction
+    must perform the canonical local mutation, allocate its monotonic revision,
+    insert/coalesce the outbox operation, update any proven mapping, and
+    revalidate account plus generation. No production caller has this API yet.
+19. **Retain durable tombstone causality.** A delete needs an existing validated
+    mapping, local/outbox revision checks, a durable deletion fence, and tests
+    proving an older save cannot resurrect it. Incoming chat-record deletion
+    must not erase a local conversation merely because CloudKit reported it;
+    Apple's current importer deliberately leaves that action to IDS.
+20. **Build a dedicated V2 Rust writer.** It must expose zone-specific PCS
+    protection, explicit save policy and atomicity, per-record save/delete
+    results, returned server change tags, conflict classification, and
+    read-after-ambiguous-result reconciliation. Do not expose the legacy
+    wrappers as though they satisfy this contract.
+
+Exit: lost-response, duplicate/missing/unknown-result, change-tag conflict,
+lease-expiry, crash-boundary, account-switch, reset-with-outbox,
+save/delete/save, tombstone-replay, and legacy/V2 coexistence tests all pass.
+Only then may a disposable test account run a one-record outbound canary.
 
 ### Stage 5 — rollout
 
-15. Android wake-cost suite under Doze, Battery Saver, locked screen, and 24-hour
+21. Android wake-cost suite under Doze, Battery Saver, locked screen, and 24-hour
     idle, with paired sync-off and sync-on runs. No credible battery claim can
     be made before this, and none is made now.
-16. Staged rollout with the alarm thresholds already specified in the
+22. Staged rollout with the alarm thresholds already specified in the
     production-readiness notes wired as rollback signals.
 
 ## What is blocked on something other than code

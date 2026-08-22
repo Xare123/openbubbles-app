@@ -4,7 +4,7 @@ title: OpenBubbles Cloud Sync V2 Provenance Ledger
 description: Per-idea record of borrowed protocol facts and patterns, their source licence, whether code or only a concept was taken, and the file that implements each one.
 resource: openbubbles-app
 tags: [licensing, provenance, cloudkit, sspl, apache-2.0, compliance]
-timestamp: 2026-08-06
+timestamp: 2026-08-22
 ---
 
 # Cloud Sync V2 provenance ledger
@@ -78,6 +78,22 @@ may be, and each one is listed below.
 | 19 | Two-level fault injection where a call site is armed per run and then fires probabilistically | FoundationDB `BUGGIFY` | Apache-2.0 | Concept only | Not yet implemented |
 | 20 | Incrementing fail-on-Nth-operation loop for crash testing, run in both fail-once and fail-persistently modes | [SQLite testing](https://www.sqlite.org/testing.html) | Public domain | Concept only | Not yet implemented |
 
+### Apple iOS 26 implementation evidence
+
+These entries record protocol and orchestration facts observed in a fixed-commit
+decompilation of Apple's iOS 26.1 Messages implementation. The mirror does not
+grant a source-code licence. No function body, control flow, symbol layout, or
+other expression from it is copied into OpenBubbles. The facts are corroborated
+where possible with Apple's public CloudKit documentation.
+
+| # | Fact taken | Source | Licence | Code or concept | Implemented in |
+| --- | --- | --- | --- | --- | --- |
+| 21 | Chat record saves use an atomic modify-records operation, while message and attachment saves use non-atomic operations with per-record outcomes | [iOS 26.1 chat factory](https://github.com/EthanArbuckle/iPhone18-3_26.1_23B85_Restore/blob/90aa0cfe59d9682b4265e1354c8b19ec3c7823ab/System/Library/PrivateFrameworks/IMDaemonCore.framework/IMDaemonCore/IMDCKChatSyncCKOperationFactory.mm), [message factory](https://github.com/EthanArbuckle/iPhone18-3_26.1_23B85_Restore/blob/90aa0cfe59d9682b4265e1354c8b19ec3c7823ab/System/Library/PrivateFrameworks/IMDaemonCore.framework/IMDaemonCore/IMDCKMessageSyncCKOperationFactory.mm), and [attachment factory](https://github.com/EthanArbuckle/iPhone18-3_26.1_23B85_Restore/blob/90aa0cfe59d9682b4265e1354c8b19ec3c7823ab/System/Library/PrivateFrameworks/IMDaemonCore.framework/IMDaemonCore/IMDCKAttachmentSyncCKOperationFactory.mm); [Apple `isAtomic`](https://developer.apple.com/documentation/cloudkit/ckmodifyrecordsoperation/isatomic) | Binary-derived fact; Apple documentation | Fact only | Not implemented. Binding input to the Stage 4 batch and acknowledgement design. |
+| 22 | Chat and message factories explicitly select raw save policy `1`, which SDK declarations identify as changed-keys. The attachment factory does not override the operation default; Apple's documented default is if-server-record-unchanged | Same fixed factory sources; [Apple `savePolicy`](https://developer.apple.com/documentation/cloudkit/ckmodifyrecordsoperation/savepolicy) | Binary-derived fact; Apple documentation | Fact only | Not implemented. Stage 4 must represent save policy explicitly and test conflict behavior rather than inheriting one generic policy. |
+| 23 | Apple's chat importer deliberately drops incoming chat-record deletions because IDS handles them in real time | [iOS 26.1 `IMDCKChatSyncController`](https://github.com/EthanArbuckle/iPhone18-3_26.1_23B85_Restore/blob/90aa0cfe59d9682b4265e1354c8b19ec3c7823ab/System/Library/PrivateFrameworks/IMDaemonCore.framework/IMDaemonCore/IMDCKChatSyncController.mm) | Binary-derived fact; no source licence | Fact only | The read-only canary already quarantines all tombstones. Stage 4 must keep chat tombstones from deleting local conversations merely because CloudKit reported a deletion. |
+| 24 | Chat, message, and attachment record deletes use non-atomic modify operations; the controllers deduplicate pending record IDs before scheduling deletion | Same fixed factories and controllers | Binary-derived fact; no source licence | Fact only | Not implemented. Stage 4 delete identity, deduplication, partial-result acknowledgement, and retry tests required. |
+| 25 | The update-zone importer treats record deletion as unsupported and routes UT1/UT2 save conflicts through type-specific conflict handlers | [iOS 26.1 `IMDCKUpdateSyncController`](https://github.com/EthanArbuckle/iPhone18-3_26.1_23B85_Restore/blob/90aa0cfe59d9682b4265e1354c8b19ec3c7823ab/System/Library/PrivateFrameworks/IMDaemonCore.framework/IMDaemonCore/IMDCKUpdateSyncController.mm) | Binary-derived fact; no source licence | Fact only | Not implemented. `messageUpdateZone` remains outside the first semantic canary and needs a separate conflict model before activation. |
+
 ## Sources deliberately not used
 
 | Project | Licence | Why excluded |
@@ -86,6 +102,7 @@ may be, and each one is listed below.
 | mautrix/imessage | AGPL-3.0 | Same, and it reads a local database rather than CloudKit |
 | imessage-exporter | GPL-3.0 | Concepts only, as recorded in entry 14 |
 | Apple Security / CKKS mirror | Apple Public Source-style, no licence metadata on the mirror | Concepts only; also predates Advanced Data Protection |
+| Decompiled iOS restoration mirrors | No source-code licence | Protocol and orchestration facts only, as recorded in entries 21-25; no expression copied |
 | InflatableDonkey | MIT | Permissively licensed and reusable, but scoped to iOS 9 backups with no Manatee zones or per-field encryption. Nothing taken so far. |
 
 ## Maintenance
