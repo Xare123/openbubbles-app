@@ -1137,7 +1137,6 @@ CloudSemanticSnapshot _snapshot() {
   return CloudSemanticSnapshot(
     kind: CloudEntityKind.message,
     logicalEntityKeyHash: _digestValue('L'),
-    parentLogicalKeyHash: _digestValue('H'),
     immutableContentDigest: _digestValue('I'),
     createdAt: DateTime.utc(2026, 7, 31, 10),
     readAt: DateTime.utc(2026, 7, 31, 11),

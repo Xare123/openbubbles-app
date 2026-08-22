@@ -19372,7 +19372,7 @@ impl SseDecode for crate::api::api::CloudSyncTransientMessagePayload {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_logicalEntityKeyHash = <String>::sse_decode(deserializer);
         let mut var_canonicalGuid = <String>::sse_decode(deserializer);
-        let mut var_chatLogicalKeyHash = <String>::sse_decode(deserializer);
+        let mut var_chatAliasKeyHash = <String>::sse_decode(deserializer);
         let mut var_chatIdentifier = <String>::sse_decode(deserializer);
         let mut var_senderHandle = <String>::sse_decode(deserializer);
         let mut var_bodyState =
@@ -19390,7 +19390,7 @@ impl SseDecode for crate::api::api::CloudSyncTransientMessagePayload {
         return crate::api::api::CloudSyncTransientMessagePayload {
             logical_entity_key_hash: var_logicalEntityKeyHash,
             canonical_guid: var_canonicalGuid,
-            chat_logical_key_hash: var_chatLogicalKeyHash,
+            chat_alias_key_hash: var_chatAliasKeyHash,
             chat_identifier: var_chatIdentifier,
             sender_handle: var_senderHandle,
             body_state: var_bodyState,
@@ -27810,7 +27810,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientMessag
         [
             self.logical_entity_key_hash.into_into_dart().into_dart(),
             self.canonical_guid.into_into_dart().into_dart(),
-            self.chat_logical_key_hash.into_into_dart().into_dart(),
+            self.chat_alias_key_hash.into_into_dart().into_dart(),
             self.chat_identifier.into_into_dart().into_dart(),
             self.sender_handle.into_into_dart().into_dart(),
             self.body_state.into_into_dart().into_dart(),
@@ -33869,7 +33869,7 @@ impl SseEncode for crate::api::api::CloudSyncTransientMessagePayload {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.logical_entity_key_hash, serializer);
         <String>::sse_encode(self.canonical_guid, serializer);
-        <String>::sse_encode(self.chat_logical_key_hash, serializer);
+        <String>::sse_encode(self.chat_alias_key_hash, serializer);
         <String>::sse_encode(self.chat_identifier, serializer);
         <String>::sse_encode(self.sender_handle, serializer);
         <crate::api::api::CloudSyncTransientFieldState>::sse_encode(self.body_state, serializer);

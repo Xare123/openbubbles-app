@@ -3431,7 +3431,7 @@ class CloudSyncTransientMessagePayload {
 
   /// Validated application-level message/reaction GUID. Transient only.
   final String canonicalGuid;
-  final String chatLogicalKeyHash;
+  final String chatAliasKeyHash;
   final String chatIdentifier;
   final String senderHandle;
   final CloudSyncTransientFieldState bodyState;
@@ -3447,7 +3447,7 @@ class CloudSyncTransientMessagePayload {
   const CloudSyncTransientMessagePayload({
     required this.logicalEntityKeyHash,
     required this.canonicalGuid,
-    required this.chatLogicalKeyHash,
+    required this.chatAliasKeyHash,
     required this.chatIdentifier,
     required this.senderHandle,
     required this.bodyState,
@@ -3465,7 +3465,7 @@ class CloudSyncTransientMessagePayload {
   int get hashCode =>
       logicalEntityKeyHash.hashCode ^
       canonicalGuid.hashCode ^
-      chatLogicalKeyHash.hashCode ^
+      chatAliasKeyHash.hashCode ^
       chatIdentifier.hashCode ^
       senderHandle.hashCode ^
       bodyState.hashCode ^
@@ -3485,7 +3485,7 @@ class CloudSyncTransientMessagePayload {
           runtimeType == other.runtimeType &&
           logicalEntityKeyHash == other.logicalEntityKeyHash &&
           canonicalGuid == other.canonicalGuid &&
-          chatLogicalKeyHash == other.chatLogicalKeyHash &&
+          chatAliasKeyHash == other.chatAliasKeyHash &&
           chatIdentifier == other.chatIdentifier &&
           senderHandle == other.senderHandle &&
           bodyState == other.bodyState &&

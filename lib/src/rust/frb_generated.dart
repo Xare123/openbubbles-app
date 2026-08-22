@@ -16030,7 +16030,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return CloudSyncTransientMessagePayload(
       logicalEntityKeyHash: dco_decode_String(arr[0]),
       canonicalGuid: dco_decode_String(arr[1]),
-      chatLogicalKeyHash: dco_decode_String(arr[2]),
+      chatAliasKeyHash: dco_decode_String(arr[2]),
       chatIdentifier: dco_decode_String(arr[3]),
       senderHandle: dco_decode_String(arr[4]),
       bodyState: dco_decode_cloud_sync_transient_field_state(arr[5]),
@@ -24975,7 +24975,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_logicalEntityKeyHash = sse_decode_String(deserializer);
     var var_canonicalGuid = sse_decode_String(deserializer);
-    var var_chatLogicalKeyHash = sse_decode_String(deserializer);
+    var var_chatAliasKeyHash = sse_decode_String(deserializer);
     var var_chatIdentifier = sse_decode_String(deserializer);
     var var_senderHandle = sse_decode_String(deserializer);
     var var_bodyState = sse_decode_cloud_sync_transient_field_state(
@@ -24997,7 +24997,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return CloudSyncTransientMessagePayload(
       logicalEntityKeyHash: var_logicalEntityKeyHash,
       canonicalGuid: var_canonicalGuid,
-      chatLogicalKeyHash: var_chatLogicalKeyHash,
+      chatAliasKeyHash: var_chatAliasKeyHash,
       chatIdentifier: var_chatIdentifier,
       senderHandle: var_senderHandle,
       bodyState: var_bodyState,
@@ -35338,7 +35338,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.logicalEntityKeyHash, serializer);
     sse_encode_String(self.canonicalGuid, serializer);
-    sse_encode_String(self.chatLogicalKeyHash, serializer);
+    sse_encode_String(self.chatAliasKeyHash, serializer);
     sse_encode_String(self.chatIdentifier, serializer);
     sse_encode_String(self.senderHandle, serializer);
     sse_encode_cloud_sync_transient_field_state(self.bodyState, serializer);
