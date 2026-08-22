@@ -299,9 +299,41 @@ class CloudSyncEngine {
       var pullSucceeded = !config.flags.readOnlyFetch;
       CloudFailureCategory? degradedFailure;
       CloudShadowJournalBlockReason? shadowJournalBlockReason;
+      var remainingInboxEntries = config.maximumInboxEntriesPerRun;
+      var semanticInboxCounters = const CloudSyncRunCounters();
+      var semanticInboxPhaseStarted = false;
+      var pullAttempted = false;
+
+      // A restart may leave semantic rows waiting in the durable inbox. Apply
+      // the contiguous prefix before fetching so local state is repaired as
+      // early as possible, while still allowing the fetch to bring in older
+      // parent records needed by a deferred row.
+      if (config.flags.semanticApply && !_isCancelled(cancellationToken)) {
+        semanticInboxPhaseStarted = true;
+        final startupApply = await _applyInbox(
+          cancellationToken,
+          maximumEntries: remainingInboxEntries,
+          emitEvent: false,
+        );
+        semanticInboxCounters = semanticInboxCounters.add(
+          applied: startupApply.counters.applied,
+          deferred: startupApply.counters.deferred,
+          quarantined: startupApply.counters.quarantined,
+          retried: startupApply.counters.retried,
+        );
+        counters = counters.add(
+          applied: startupApply.counters.applied,
+          deferred: startupApply.counters.deferred,
+          quarantined: startupApply.counters.quarantined,
+          retried: startupApply.counters.retried,
+        );
+        remainingInboxEntries -= startupApply.processedEntries;
+      }
+
       if (config.flags.readOnlyFetch &&
           !_isCancelled(cancellationToken) &&
           _notificationTriggerAllowed(trigger)) {
+        pullAttempted = true;
         final pullResult = await _pullChanges(
           trigger: trigger,
           cancellationToken: cancellationToken,
@@ -317,13 +349,36 @@ class CloudSyncEngine {
         shadowJournalBlockReason = pullResult.journalBlockReason;
       }
 
-      if (config.flags.semanticApply && !_isCancelled(cancellationToken)) {
-        final applyCounters = await _applyInbox(cancellationToken);
+      if (config.flags.semanticApply &&
+          remainingInboxEntries > 0 &&
+          pullAttempted &&
+          !_isCancelled(cancellationToken)) {
+        semanticInboxPhaseStarted = true;
+        final postFetchApply = await _applyInbox(
+          cancellationToken,
+          maximumEntries: remainingInboxEntries,
+          emitEvent: false,
+        );
+        semanticInboxCounters = semanticInboxCounters.add(
+          applied: postFetchApply.counters.applied,
+          deferred: postFetchApply.counters.deferred,
+          quarantined: postFetchApply.counters.quarantined,
+          retried: postFetchApply.counters.retried,
+        );
         counters = counters.add(
-          applied: applyCounters.applied,
-          deferred: applyCounters.deferred,
-          quarantined: applyCounters.quarantined,
-          retried: applyCounters.retried,
+          applied: postFetchApply.counters.applied,
+          deferred: postFetchApply.counters.deferred,
+          quarantined: postFetchApply.counters.quarantined,
+          retried: postFetchApply.counters.retried,
+        );
+        remainingInboxEntries -= postFetchApply.processedEntries;
+      }
+
+      if (semanticInboxPhaseStarted) {
+        _emit(
+          CloudSyncEventType.inboxApplied,
+          at: _clock(),
+          count: semanticInboxCounters.applied,
         );
       }
 
@@ -718,12 +773,14 @@ class CloudSyncEngine {
     );
   }
 
-  Future<CloudSyncRunCounters> _applyInbox(
-    CloudSyncCancellationToken? cancellationToken,
-  ) async {
+  Future<_InboxApplyResult> _applyInbox(
+    CloudSyncCancellationToken? cancellationToken, {
+    required int maximumEntries,
+    required bool emitEvent,
+  }) async {
     var counters = const CloudSyncRunCounters();
     var processedEntries = 0;
-    while (processedEntries < config.maximumInboxEntriesPerRun) {
+    while (processedEntries < maximumEntries) {
       if (_isCancelled(cancellationToken)) break;
       final entries = await _store.readEligibleInbox(
         scope,
@@ -861,12 +918,17 @@ class CloudSyncEngine {
       // Do not let a later journal row mutate canonical state in this run.
       if (!canApplyNextSequence) break;
     }
-    _emit(
-      CloudSyncEventType.inboxApplied,
-      at: _clock(),
-      count: counters.applied,
+    if (emitEvent) {
+      _emit(
+        CloudSyncEventType.inboxApplied,
+        at: _clock(),
+        count: counters.applied,
+      );
+    }
+    return _InboxApplyResult(
+      counters: counters,
+      processedEntries: processedEntries,
     );
-    return counters;
   }
 
   bool _shouldQuarantineDeferredInboxEntry(
@@ -1646,6 +1708,16 @@ class _PullResult {
   final CloudShadowJournalUsage journalUsage;
   final int rejectedEntries;
   final CloudShadowJournalBlockReason? journalBlockReason;
+}
+
+class _InboxApplyResult {
+  const _InboxApplyResult({
+    required this.counters,
+    required this.processedEntries,
+  });
+
+  final CloudSyncRunCounters counters;
+  final int processedEntries;
 }
 
 class _OutboxPreparation {

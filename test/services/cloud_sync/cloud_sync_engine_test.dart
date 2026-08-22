@@ -28,6 +28,7 @@ void main() {
       saves: true,
     ),
     int batchSize = 256,
+    int maximumInboxEntriesPerRun = 512,
     int maximumOutboxBatches = 8,
     Duration fetchOperationTimeout = const Duration(seconds: 45),
     int maximumDeferredAttempts = 8,
@@ -52,6 +53,7 @@ void main() {
       clock: clock.call,
       config: CloudSyncEngineConfig(
         maximumBatchSize: batchSize,
+        maximumInboxEntriesPerRun: maximumInboxEntriesPerRun,
         maximumOutboxBatchesPerRun: maximumOutboxBatches,
         fetchOperationTimeout: fetchOperationTimeout,
         maximumDeferredAttempts: maximumDeferredAttempts,
@@ -150,6 +152,173 @@ void main() {
     expect(store.runs, hasLength(1));
     expect(store.runs.single.architectureName, 'generic');
     expect(store.runs.single.modeName, 'durable-saves/completed');
+  });
+
+  test(
+    'semantic startup applies existing inbox before transport fetch',
+    () async {
+      await seedGeneralJournal(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1)],
+          batchId: 'batch-preexisting',
+          generation: 1,
+          nextToken: 'preexisting-token',
+          hasMore: false,
+        ),
+        now: clock.value,
+      );
+      transport.fetchHandler = (scope, previousToken, generation, limit) async {
+        expect(previousToken, 'preexisting-token');
+        expect(applier.appliedSequences, [1]);
+        return CloudFetchBatch(
+          scope: scope,
+          changes: const [],
+          batchId: 'batch-after-startup-apply',
+          generation: generation,
+          nextToken: 'post-startup-token',
+          hasMore: false,
+        );
+      };
+
+      final result = await engine().synchronize(
+        trigger: CloudSyncTrigger.startup,
+      );
+
+      expect(result.status, CloudSyncRunStatus.completed);
+      expect(result.counters.applied, 1);
+      expect(applier.appliedSequences, [1]);
+      expect(transport.fetchCallCount, 1);
+      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 1);
+    },
+  );
+
+  test(
+    'semantic rows fetched in this run apply after transport fetch',
+    () async {
+      var fetchCompleted = false;
+      transport.fetchHandler = (scope, previousToken, generation, limit) async {
+        expect(applier.appliedSequences, isEmpty);
+        fetchCompleted = true;
+        return CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1)],
+          batchId: 'batch-newly-fetched',
+          generation: generation,
+          nextToken: 'newly-fetched-token',
+          hasMore: false,
+        );
+      };
+      applier.handler = (entry) async {
+        expect(fetchCompleted, isTrue);
+        return const CloudInboxApplyResult.applied();
+      };
+
+      final result = await engine().synchronize(
+        trigger: CloudSyncTrigger.manual,
+      );
+
+      expect(result.status, CloudSyncRunStatus.completed);
+      expect(result.counters.fetched, 1);
+      expect(result.counters.applied, 1);
+      expect(applier.appliedSequences, [1]);
+    },
+  );
+
+  test(
+    'semantic inbox cap is shared across startup and post-fetch phases',
+    () async {
+      await seedGeneralJournal(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1)],
+          batchId: 'batch-cap-preexisting',
+          generation: 1,
+          nextToken: 'cap-preexisting-token',
+          hasMore: false,
+        ),
+        now: clock.value,
+      );
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(2), testChange(3)],
+          batchId: 'batch-cap-new',
+          generation: 1,
+          nextToken: 'cap-new-token',
+          hasMore: false,
+        ),
+      );
+      final observer = MemoryCloudSyncObserver();
+
+      final result = await engine(
+        maximumInboxEntriesPerRun: 2,
+        observer: observer,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.completed);
+      expect(result.counters.applied, 2);
+      expect(applier.appliedSequences, [1, 2]);
+      expect(transport.fetchCallCount, 1);
+      final entries = await store.inboxEntries(scope);
+      expect(entries.map((entry) => entry.status), [
+        CloudInboxStatus.applied,
+        CloudInboxStatus.applied,
+        CloudInboxStatus.pending,
+      ]);
+      final inboxEvents = observer.events
+          .where((event) => event.type == CloudSyncEventType.inboxApplied)
+          .toList();
+      expect(inboxEvents, hasLength(1));
+      expect(inboxEvents.single.count, 2);
+    },
+  );
+
+  test('semanticApply false keeps fetch-only behavior unchanged', () async {
+    await seedGeneralJournal(
+      CloudFetchBatch(
+        scope: scope,
+        changes: [testChange(1)],
+        batchId: 'batch-semantic-disabled-existing',
+        generation: 1,
+        nextToken: 'semantic-disabled-token',
+        hasMore: false,
+      ),
+      now: clock.value,
+    );
+    transport.enqueueFetchBatch(
+      CloudFetchBatch(
+        scope: scope,
+        changes: [testChange(2)],
+        batchId: 'batch-semantic-disabled-new',
+        generation: 1,
+        nextToken: 'semantic-disabled-new-token',
+        hasMore: false,
+      ),
+    );
+    const flags = CloudSyncFeatureFlags(
+      readOnlyFetch: true,
+      semanticApply: false,
+      saves: false,
+      deletions: false,
+      profiles: false,
+      notificationHints: false,
+    );
+
+    final result = await engine(
+      flags: flags,
+    ).synchronize(trigger: CloudSyncTrigger.startup);
+
+    expect(result.status, CloudSyncRunStatus.completed);
+    expect(result.counters.fetched, 1);
+    expect(result.counters.applied, 0);
+    expect(applier.appliedSequences, isEmpty);
+    expect(
+      (await store.inboxEntries(
+        scope,
+      )).every((entry) => entry.status == CloudInboxStatus.pending),
+      isTrue,
+    );
   });
 
   test('read-only shadow does not recover or inspect outbox leases', () async {
