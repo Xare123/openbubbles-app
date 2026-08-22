@@ -78,9 +78,11 @@ jobs:
 
       # Tests inside the rustpush submodule are not executed when rustpush is
       # compiled only as a dependency of the bridge crate. Keep its protocol,
-      # concurrency, and log-redaction tests as an independent gate.
+      # concurrency, and log-redaction tests as an independent gate. Match the
+      # production bridge's non-macOS Anisette provider feature so icloud_auth
+      # exposes the same provider types that the application compiles against.
       - name: Run rustpush tests
-        run: cargo test --manifest-path rustpush/Cargo.toml --lib
+        run: cargo test --manifest-path rustpush/Cargo.toml --lib --features remote-anisette-v3
 
       # The protector harness is a separate crate and is deliberately
       # dependency-light so these security invariants can run on hosts where the
