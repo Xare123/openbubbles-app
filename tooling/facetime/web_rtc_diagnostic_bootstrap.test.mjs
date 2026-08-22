@@ -70,6 +70,30 @@ test("ended remote tracks disappear from later snapshots", async () => {
   assert.equal(snapshot.remoteVideoTracks, 0);
 });
 
+test("remote tracks arriving after the initial snapshot replace by id without stale removal", async () => {
+  const harness = await createWebRtcDiagnosticHarness([
+    { iceConnectionState: "connected", stats: harnessStats(64) },
+  ]);
+
+  assert.equal((await harness.snapshot()).remoteAudioTracks, 0);
+
+  const original = harness.peers[0].addRemoteTrack(
+    harness.createTrack("remote-audio", "audio"),
+  );
+  assert.equal((await harness.snapshot()).remoteAudioTracks, 1);
+
+  const replacement = harness.peers[0].addRemoteTrack(
+    harness.createTrack("remote-audio", "audio"),
+  );
+  assert.equal((await harness.snapshot()).remoteAudioTracks, 1);
+
+  original.end();
+  assert.equal((await harness.snapshot()).remoteAudioTracks, 1);
+
+  replacement.end();
+  assert.equal((await harness.snapshot()).remoteAudioTracks, 0);
+});
+
 test("local outbound bytes are excluded from inbound media evidence", async () => {
   const harness = await createWebRtcDiagnosticHarness([
     {
@@ -153,6 +177,38 @@ test("the DOM diagnostic distinguishes visible, hidden, and disabled Join/Rejoin
     join: { visible: true, enabled: true, count: 1 },
     rejoin: { visible: false, enabled: false, count: 1 },
     leave: { visible: true, enabled: false, count: 2 },
+  });
+});
+
+test("the DOM diagnostic follows Join/Rejoin/Leave mutations between snapshots", async () => {
+  const harness = await createWebRtcDiagnosticHarness([
+    { iceConnectionState: "connected", stats: harnessStats(10) },
+  ]);
+  let buttons = [button("Join", { offsetParent: {} })];
+  harness.window.document.querySelectorAll = () => buttons;
+
+  assert.deepEqual((await harness.snapshot()).webControls, {
+    join: { visible: true, enabled: true, count: 1 },
+    rejoin: { visible: false, enabled: false, count: 0 },
+    leave: { visible: false, enabled: false, count: 0 },
+  });
+
+  buttons = [
+    button("Join", { offsetParent: null }),
+    button("Rejoin", { offsetParent: {} }),
+    button("Leave", { offsetParent: {} }),
+  ];
+  assert.deepEqual((await harness.snapshot()).webControls, {
+    join: { visible: false, enabled: false, count: 1 },
+    rejoin: { visible: true, enabled: true, count: 1 },
+    leave: { visible: true, enabled: true, count: 1 },
+  });
+
+  buttons = [button("Leave", { offsetParent: {}, disabled: true })];
+  assert.deepEqual((await harness.snapshot()).webControls, {
+    join: { visible: false, enabled: false, count: 0 },
+    rejoin: { visible: false, enabled: false, count: 0 },
+    leave: { visible: true, enabled: false, count: 1 },
   });
 });
 
