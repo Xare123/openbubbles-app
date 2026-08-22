@@ -126,9 +126,11 @@ void main() {
     _expectNoSemanticMutation(objectBox, adapter);
   });
 
-  test('durable metadata never stores transient body or sender', () async {
+  test('durable metadata never stores transient payload identity or content', () async {
     const secretBody = 'PRIVATE BODY 97213';
     const secretSender = 'private.sender@example.com';
+    const secretMessageGuid = 'PRIVATE-MESSAGE-GUID-97213';
+    const secretChatIdentifier = 'iMessage;-;PRIVATE-CHAT-97213';
     final entry = _entry(scope: scope);
     _seedDurableFence(
       objectBox,
@@ -144,9 +146,9 @@ void main() {
         transaction.applyEntity(
           payload: CloudMessageEntityPayload(
             logicalEntityKeyHash: _digestValue('L'),
-            canonicalGuid: 'message-guid',
+            canonicalGuid: secretMessageGuid,
             chatLogicalKeyHash: _digestValue('H'),
-            chatIdentifier: 'iMessage;-;chat',
+            chatIdentifier: secretChatIdentifier,
             body: secretBody,
             senderHandle: secretSender,
           ),
@@ -193,6 +195,8 @@ void main() {
     ].join('\n');
     expect(durable, isNot(contains(secretBody)));
     expect(durable, isNot(contains(secretSender)));
+    expect(durable, isNot(contains(secretMessageGuid)));
+    expect(durable, isNot(contains(secretChatIdentifier)));
   });
 
   test('semantic metadata and protected record map survive reopen', () async {

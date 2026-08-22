@@ -19165,7 +19165,10 @@ impl SseDecode for crate::api::api::CloudSyncTransientAttachmentPayload {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_logicalEntityKeyHash = <String>::sse_decode(deserializer);
+        let mut var_canonicalGuid = <String>::sse_decode(deserializer);
         let mut var_ownerLogicalKeyHash = <Option<String>>::sse_decode(deserializer);
+        let mut var_ownerCanonicalGuid = <Option<String>>::sse_decode(deserializer);
+        let mut var_ownerPart = <Option<u32>>::sse_decode(deserializer);
         let mut var_fileNameState =
             <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
         let mut var_fileName = <Option<String>>::sse_decode(deserializer);
@@ -19177,7 +19180,10 @@ impl SseDecode for crate::api::api::CloudSyncTransientAttachmentPayload {
         let mut var_protectedLocalReference = <Option<String>>::sse_decode(deserializer);
         return crate::api::api::CloudSyncTransientAttachmentPayload {
             logical_entity_key_hash: var_logicalEntityKeyHash,
+            canonical_guid: var_canonicalGuid,
             owner_logical_key_hash: var_ownerLogicalKeyHash,
+            owner_canonical_guid: var_ownerCanonicalGuid,
+            owner_part: var_ownerPart,
             file_name_state: var_fileNameState,
             file_name: var_fileName,
             mime_type_state: var_mimeTypeState,
@@ -19192,12 +19198,16 @@ impl SseDecode for crate::api::api::CloudSyncTransientChatPayload {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_logicalEntityKeyHash = <String>::sse_decode(deserializer);
+        let mut var_canonicalGuid = <String>::sse_decode(deserializer);
+        let mut var_chatIdentifier = <String>::sse_decode(deserializer);
         let mut var_participantHandles = <Vec<String>>::sse_decode(deserializer);
         let mut var_displayNameState =
             <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
         let mut var_displayName = <Option<String>>::sse_decode(deserializer);
         return crate::api::api::CloudSyncTransientChatPayload {
             logical_entity_key_hash: var_logicalEntityKeyHash,
+            canonical_guid: var_canonicalGuid,
+            chat_identifier: var_chatIdentifier,
             participant_handles: var_participantHandles,
             display_name_state: var_displayNameState,
             display_name: var_displayName,
@@ -19346,10 +19356,12 @@ impl SseDecode for crate::api::api::CloudSyncTransientGroupPhotoPayload {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_logicalEntityKeyHash = <String>::sse_decode(deserializer);
         let mut var_ownerLogicalKeyHash = <String>::sse_decode(deserializer);
+        let mut var_photoGuid = <String>::sse_decode(deserializer);
         let mut var_protectedLocalReference = <String>::sse_decode(deserializer);
         return crate::api::api::CloudSyncTransientGroupPhotoPayload {
             logical_entity_key_hash: var_logicalEntityKeyHash,
             owner_logical_key_hash: var_ownerLogicalKeyHash,
+            photo_guid: var_photoGuid,
             protected_local_reference: var_protectedLocalReference,
         };
     }
@@ -19359,7 +19371,9 @@ impl SseDecode for crate::api::api::CloudSyncTransientMessagePayload {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_logicalEntityKeyHash = <String>::sse_decode(deserializer);
+        let mut var_canonicalGuid = <String>::sse_decode(deserializer);
         let mut var_chatLogicalKeyHash = <String>::sse_decode(deserializer);
+        let mut var_chatIdentifier = <String>::sse_decode(deserializer);
         let mut var_senderHandle = <String>::sse_decode(deserializer);
         let mut var_bodyState =
             <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
@@ -19368,18 +19382,24 @@ impl SseDecode for crate::api::api::CloudSyncTransientMessagePayload {
             <Option<crate::api::api::CloudSyncTransientReactionKind>>::sse_decode(deserializer);
         let mut var_reactionRemoved = <bool>::sse_decode(deserializer);
         let mut var_reactionParentLogicalKeyHash = <Option<String>>::sse_decode(deserializer);
+        let mut var_reactionParentCanonicalGuid = <Option<String>>::sse_decode(deserializer);
+        let mut var_reactionParentPart = <Option<u32>>::sse_decode(deserializer);
         let mut var_associatedEmojiState =
             <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
         let mut var_associatedEmoji = <Option<String>>::sse_decode(deserializer);
         return crate::api::api::CloudSyncTransientMessagePayload {
             logical_entity_key_hash: var_logicalEntityKeyHash,
+            canonical_guid: var_canonicalGuid,
             chat_logical_key_hash: var_chatLogicalKeyHash,
+            chat_identifier: var_chatIdentifier,
             sender_handle: var_senderHandle,
             body_state: var_bodyState,
             body: var_body,
             reaction_kind: var_reactionKind,
             reaction_removed: var_reactionRemoved,
             reaction_parent_logical_key_hash: var_reactionParentLogicalKeyHash,
+            reaction_parent_canonical_guid: var_reactionParentCanonicalGuid,
+            reaction_parent_part: var_reactionParentPart,
             associated_emoji_state: var_associatedEmojiState,
             associated_emoji: var_associatedEmoji,
         };
@@ -27552,7 +27572,10 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientAttach
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.logical_entity_key_hash.into_into_dart().into_dart(),
+            self.canonical_guid.into_into_dart().into_dart(),
             self.owner_logical_key_hash.into_into_dart().into_dart(),
+            self.owner_canonical_guid.into_into_dart().into_dart(),
+            self.owner_part.into_into_dart().into_dart(),
             self.file_name_state.into_into_dart().into_dart(),
             self.file_name.into_into_dart().into_dart(),
             self.mime_type_state.into_into_dart().into_dart(),
@@ -27581,6 +27604,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientChatPa
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.logical_entity_key_hash.into_into_dart().into_dart(),
+            self.canonical_guid.into_into_dart().into_dart(),
+            self.chat_identifier.into_into_dart().into_dart(),
             self.participant_handles.into_into_dart().into_dart(),
             self.display_name_state.into_into_dart().into_dart(),
             self.display_name.into_into_dart().into_dart(),
@@ -27762,6 +27787,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientGroupP
         [
             self.logical_entity_key_hash.into_into_dart().into_dart(),
             self.owner_logical_key_hash.into_into_dart().into_dart(),
+            self.photo_guid.into_into_dart().into_dart(),
             self.protected_local_reference.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -27783,7 +27809,9 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientMessag
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.logical_entity_key_hash.into_into_dart().into_dart(),
+            self.canonical_guid.into_into_dart().into_dart(),
             self.chat_logical_key_hash.into_into_dart().into_dart(),
+            self.chat_identifier.into_into_dart().into_dart(),
             self.sender_handle.into_into_dart().into_dart(),
             self.body_state.into_into_dart().into_dart(),
             self.body.into_into_dart().into_dart(),
@@ -27792,6 +27820,10 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientMessag
             self.reaction_parent_logical_key_hash
                 .into_into_dart()
                 .into_dart(),
+            self.reaction_parent_canonical_guid
+                .into_into_dart()
+                .into_dart(),
+            self.reaction_parent_part.into_into_dart().into_dart(),
             self.associated_emoji_state.into_into_dart().into_dart(),
             self.associated_emoji.into_into_dart().into_dart(),
         ]
@@ -33660,7 +33692,10 @@ impl SseEncode for crate::api::api::CloudSyncTransientAttachmentPayload {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.logical_entity_key_hash, serializer);
+        <String>::sse_encode(self.canonical_guid, serializer);
         <Option<String>>::sse_encode(self.owner_logical_key_hash, serializer);
+        <Option<String>>::sse_encode(self.owner_canonical_guid, serializer);
+        <Option<u32>>::sse_encode(self.owner_part, serializer);
         <crate::api::api::CloudSyncTransientFieldState>::sse_encode(
             self.file_name_state,
             serializer,
@@ -33683,6 +33718,8 @@ impl SseEncode for crate::api::api::CloudSyncTransientChatPayload {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.logical_entity_key_hash, serializer);
+        <String>::sse_encode(self.canonical_guid, serializer);
+        <String>::sse_encode(self.chat_identifier, serializer);
         <Vec<String>>::sse_encode(self.participant_handles, serializer);
         <crate::api::api::CloudSyncTransientFieldState>::sse_encode(
             self.display_name_state,
@@ -33822,6 +33859,7 @@ impl SseEncode for crate::api::api::CloudSyncTransientGroupPhotoPayload {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.logical_entity_key_hash, serializer);
         <String>::sse_encode(self.owner_logical_key_hash, serializer);
+        <String>::sse_encode(self.photo_guid, serializer);
         <String>::sse_encode(self.protected_local_reference, serializer);
     }
 }
@@ -33830,7 +33868,9 @@ impl SseEncode for crate::api::api::CloudSyncTransientMessagePayload {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.logical_entity_key_hash, serializer);
+        <String>::sse_encode(self.canonical_guid, serializer);
         <String>::sse_encode(self.chat_logical_key_hash, serializer);
+        <String>::sse_encode(self.chat_identifier, serializer);
         <String>::sse_encode(self.sender_handle, serializer);
         <crate::api::api::CloudSyncTransientFieldState>::sse_encode(self.body_state, serializer);
         <Option<String>>::sse_encode(self.body, serializer);
@@ -33840,6 +33880,8 @@ impl SseEncode for crate::api::api::CloudSyncTransientMessagePayload {
         );
         <bool>::sse_encode(self.reaction_removed, serializer);
         <Option<String>>::sse_encode(self.reaction_parent_logical_key_hash, serializer);
+        <Option<String>>::sse_encode(self.reaction_parent_canonical_guid, serializer);
+        <Option<u32>>::sse_encode(self.reaction_parent_part, serializer);
         <crate::api::api::CloudSyncTransientFieldState>::sse_encode(
             self.associated_emoji_state,
             serializer,

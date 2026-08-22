@@ -15883,19 +15883,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   dco_decode_cloud_sync_transient_attachment_payload(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 8)
-      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
+    if (arr.length != 11)
+      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
     return CloudSyncTransientAttachmentPayload(
       logicalEntityKeyHash: dco_decode_String(arr[0]),
-      ownerLogicalKeyHash: dco_decode_opt_String(arr[1]),
-      fileNameState: dco_decode_cloud_sync_transient_field_state(arr[2]),
-      fileName: dco_decode_opt_String(arr[3]),
-      mimeTypeState: dco_decode_cloud_sync_transient_field_state(arr[4]),
-      mimeType: dco_decode_opt_String(arr[5]),
+      canonicalGuid: dco_decode_String(arr[1]),
+      ownerLogicalKeyHash: dco_decode_opt_String(arr[2]),
+      ownerCanonicalGuid: dco_decode_opt_String(arr[3]),
+      ownerPart: dco_decode_opt_box_autoadd_u_32(arr[4]),
+      fileNameState: dco_decode_cloud_sync_transient_field_state(arr[5]),
+      fileName: dco_decode_opt_String(arr[6]),
+      mimeTypeState: dco_decode_cloud_sync_transient_field_state(arr[7]),
+      mimeType: dco_decode_opt_String(arr[8]),
       protectedLocalReferenceState: dco_decode_cloud_sync_transient_field_state(
-        arr[6],
+        arr[9],
       ),
-      protectedLocalReference: dco_decode_opt_String(arr[7]),
+      protectedLocalReference: dco_decode_opt_String(arr[10]),
     );
   }
 
@@ -15905,13 +15908,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 4)
-      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
     return CloudSyncTransientChatPayload(
       logicalEntityKeyHash: dco_decode_String(arr[0]),
-      participantHandles: dco_decode_list_String(arr[1]),
-      displayNameState: dco_decode_cloud_sync_transient_field_state(arr[2]),
-      displayName: dco_decode_opt_String(arr[3]),
+      canonicalGuid: dco_decode_String(arr[1]),
+      chatIdentifier: dco_decode_String(arr[2]),
+      participantHandles: dco_decode_list_String(arr[3]),
+      displayNameState: dco_decode_cloud_sync_transient_field_state(arr[4]),
+      displayName: dco_decode_opt_String(arr[5]),
     );
   }
 
@@ -16005,12 +16010,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   dco_decode_cloud_sync_transient_group_photo_payload(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 3)
-      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
     return CloudSyncTransientGroupPhotoPayload(
       logicalEntityKeyHash: dco_decode_String(arr[0]),
       ownerLogicalKeyHash: dco_decode_String(arr[1]),
-      protectedLocalReference: dco_decode_String(arr[2]),
+      photoGuid: dco_decode_String(arr[2]),
+      protectedLocalReference: dco_decode_String(arr[3]),
     );
   }
 
@@ -16019,20 +16025,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   dco_decode_cloud_sync_transient_message_payload(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 10)
-      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    if (arr.length != 14)
+      throw Exception('unexpected arr length: expect 14 but see ${arr.length}');
     return CloudSyncTransientMessagePayload(
       logicalEntityKeyHash: dco_decode_String(arr[0]),
-      chatLogicalKeyHash: dco_decode_String(arr[1]),
-      senderHandle: dco_decode_String(arr[2]),
-      bodyState: dco_decode_cloud_sync_transient_field_state(arr[3]),
-      body: dco_decode_opt_String(arr[4]),
+      canonicalGuid: dco_decode_String(arr[1]),
+      chatLogicalKeyHash: dco_decode_String(arr[2]),
+      chatIdentifier: dco_decode_String(arr[3]),
+      senderHandle: dco_decode_String(arr[4]),
+      bodyState: dco_decode_cloud_sync_transient_field_state(arr[5]),
+      body: dco_decode_opt_String(arr[6]),
       reactionKind:
-          dco_decode_opt_box_autoadd_cloud_sync_transient_reaction_kind(arr[5]),
-      reactionRemoved: dco_decode_bool(arr[6]),
-      reactionParentLogicalKeyHash: dco_decode_opt_String(arr[7]),
-      associatedEmojiState: dco_decode_cloud_sync_transient_field_state(arr[8]),
-      associatedEmoji: dco_decode_opt_String(arr[9]),
+          dco_decode_opt_box_autoadd_cloud_sync_transient_reaction_kind(arr[7]),
+      reactionRemoved: dco_decode_bool(arr[8]),
+      reactionParentLogicalKeyHash: dco_decode_opt_String(arr[9]),
+      reactionParentCanonicalGuid: dco_decode_opt_String(arr[10]),
+      reactionParentPart: dco_decode_opt_box_autoadd_u_32(arr[11]),
+      associatedEmojiState: dco_decode_cloud_sync_transient_field_state(
+        arr[12],
+      ),
+      associatedEmoji: dco_decode_opt_String(arr[13]),
     );
   }
 
@@ -24779,7 +24791,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_logicalEntityKeyHash = sse_decode_String(deserializer);
+    var var_canonicalGuid = sse_decode_String(deserializer);
     var var_ownerLogicalKeyHash = sse_decode_opt_String(deserializer);
+    var var_ownerCanonicalGuid = sse_decode_opt_String(deserializer);
+    var var_ownerPart = sse_decode_opt_box_autoadd_u_32(deserializer);
     var var_fileNameState = sse_decode_cloud_sync_transient_field_state(
       deserializer,
     );
@@ -24793,7 +24808,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_protectedLocalReference = sse_decode_opt_String(deserializer);
     return CloudSyncTransientAttachmentPayload(
       logicalEntityKeyHash: var_logicalEntityKeyHash,
+      canonicalGuid: var_canonicalGuid,
       ownerLogicalKeyHash: var_ownerLogicalKeyHash,
+      ownerCanonicalGuid: var_ownerCanonicalGuid,
+      ownerPart: var_ownerPart,
       fileNameState: var_fileNameState,
       fileName: var_fileName,
       mimeTypeState: var_mimeTypeState,
@@ -24809,6 +24827,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_logicalEntityKeyHash = sse_decode_String(deserializer);
+    var var_canonicalGuid = sse_decode_String(deserializer);
+    var var_chatIdentifier = sse_decode_String(deserializer);
     var var_participantHandles = sse_decode_list_String(deserializer);
     var var_displayNameState = sse_decode_cloud_sync_transient_field_state(
       deserializer,
@@ -24816,6 +24836,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_displayName = sse_decode_opt_String(deserializer);
     return CloudSyncTransientChatPayload(
       logicalEntityKeyHash: var_logicalEntityKeyHash,
+      canonicalGuid: var_canonicalGuid,
+      chatIdentifier: var_chatIdentifier,
       participantHandles: var_participantHandles,
       displayNameState: var_displayNameState,
       displayName: var_displayName,
@@ -24935,10 +24957,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_logicalEntityKeyHash = sse_decode_String(deserializer);
     var var_ownerLogicalKeyHash = sse_decode_String(deserializer);
+    var var_photoGuid = sse_decode_String(deserializer);
     var var_protectedLocalReference = sse_decode_String(deserializer);
     return CloudSyncTransientGroupPhotoPayload(
       logicalEntityKeyHash: var_logicalEntityKeyHash,
       ownerLogicalKeyHash: var_ownerLogicalKeyHash,
+      photoGuid: var_photoGuid,
       protectedLocalReference: var_protectedLocalReference,
     );
   }
@@ -24950,7 +24974,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_logicalEntityKeyHash = sse_decode_String(deserializer);
+    var var_canonicalGuid = sse_decode_String(deserializer);
     var var_chatLogicalKeyHash = sse_decode_String(deserializer);
+    var var_chatIdentifier = sse_decode_String(deserializer);
     var var_senderHandle = sse_decode_String(deserializer);
     var var_bodyState = sse_decode_cloud_sync_transient_field_state(
       deserializer,
@@ -24962,19 +24988,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         );
     var var_reactionRemoved = sse_decode_bool(deserializer);
     var var_reactionParentLogicalKeyHash = sse_decode_opt_String(deserializer);
+    var var_reactionParentCanonicalGuid = sse_decode_opt_String(deserializer);
+    var var_reactionParentPart = sse_decode_opt_box_autoadd_u_32(deserializer);
     var var_associatedEmojiState = sse_decode_cloud_sync_transient_field_state(
       deserializer,
     );
     var var_associatedEmoji = sse_decode_opt_String(deserializer);
     return CloudSyncTransientMessagePayload(
       logicalEntityKeyHash: var_logicalEntityKeyHash,
+      canonicalGuid: var_canonicalGuid,
       chatLogicalKeyHash: var_chatLogicalKeyHash,
+      chatIdentifier: var_chatIdentifier,
       senderHandle: var_senderHandle,
       bodyState: var_bodyState,
       body: var_body,
       reactionKind: var_reactionKind,
       reactionRemoved: var_reactionRemoved,
       reactionParentLogicalKeyHash: var_reactionParentLogicalKeyHash,
+      reactionParentCanonicalGuid: var_reactionParentCanonicalGuid,
+      reactionParentPart: var_reactionParentPart,
       associatedEmojiState: var_associatedEmojiState,
       associatedEmoji: var_associatedEmoji,
     );
@@ -35163,7 +35195,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.logicalEntityKeyHash, serializer);
+    sse_encode_String(self.canonicalGuid, serializer);
     sse_encode_opt_String(self.ownerLogicalKeyHash, serializer);
+    sse_encode_opt_String(self.ownerCanonicalGuid, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.ownerPart, serializer);
     sse_encode_cloud_sync_transient_field_state(self.fileNameState, serializer);
     sse_encode_opt_String(self.fileName, serializer);
     sse_encode_cloud_sync_transient_field_state(self.mimeTypeState, serializer);
@@ -35182,6 +35217,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.logicalEntityKeyHash, serializer);
+    sse_encode_String(self.canonicalGuid, serializer);
+    sse_encode_String(self.chatIdentifier, serializer);
     sse_encode_list_String(self.participantHandles, serializer);
     sse_encode_cloud_sync_transient_field_state(
       self.displayNameState,
@@ -35289,6 +35326,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.logicalEntityKeyHash, serializer);
     sse_encode_String(self.ownerLogicalKeyHash, serializer);
+    sse_encode_String(self.photoGuid, serializer);
     sse_encode_String(self.protectedLocalReference, serializer);
   }
 
@@ -35299,7 +35337,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.logicalEntityKeyHash, serializer);
+    sse_encode_String(self.canonicalGuid, serializer);
     sse_encode_String(self.chatLogicalKeyHash, serializer);
+    sse_encode_String(self.chatIdentifier, serializer);
     sse_encode_String(self.senderHandle, serializer);
     sse_encode_cloud_sync_transient_field_state(self.bodyState, serializer);
     sse_encode_opt_String(self.body, serializer);
@@ -35309,6 +35349,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     );
     sse_encode_bool(self.reactionRemoved, serializer);
     sse_encode_opt_String(self.reactionParentLogicalKeyHash, serializer);
+    sse_encode_opt_String(self.reactionParentCanonicalGuid, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.reactionParentPart, serializer);
     sse_encode_cloud_sync_transient_field_state(
       self.associatedEmojiState,
       serializer,

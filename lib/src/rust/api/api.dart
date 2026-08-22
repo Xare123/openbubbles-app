@@ -3158,7 +3158,10 @@ class CloudSyncRawSystemFields {
 
 class CloudSyncTransientAttachmentPayload {
   final String logicalEntityKeyHash;
+  final String canonicalGuid;
   final String? ownerLogicalKeyHash;
+  final String? ownerCanonicalGuid;
+  final int? ownerPart;
   final CloudSyncTransientFieldState fileNameState;
   final String? fileName;
   final CloudSyncTransientFieldState mimeTypeState;
@@ -3168,7 +3171,10 @@ class CloudSyncTransientAttachmentPayload {
 
   const CloudSyncTransientAttachmentPayload({
     required this.logicalEntityKeyHash,
+    required this.canonicalGuid,
     this.ownerLogicalKeyHash,
+    this.ownerCanonicalGuid,
+    this.ownerPart,
     required this.fileNameState,
     this.fileName,
     required this.mimeTypeState,
@@ -3180,7 +3186,10 @@ class CloudSyncTransientAttachmentPayload {
   @override
   int get hashCode =>
       logicalEntityKeyHash.hashCode ^
+      canonicalGuid.hashCode ^
       ownerLogicalKeyHash.hashCode ^
+      ownerCanonicalGuid.hashCode ^
+      ownerPart.hashCode ^
       fileNameState.hashCode ^
       fileName.hashCode ^
       mimeTypeState.hashCode ^
@@ -3194,7 +3203,10 @@ class CloudSyncTransientAttachmentPayload {
       other is CloudSyncTransientAttachmentPayload &&
           runtimeType == other.runtimeType &&
           logicalEntityKeyHash == other.logicalEntityKeyHash &&
+          canonicalGuid == other.canonicalGuid &&
           ownerLogicalKeyHash == other.ownerLogicalKeyHash &&
+          ownerCanonicalGuid == other.ownerCanonicalGuid &&
+          ownerPart == other.ownerPart &&
           fileNameState == other.fileNameState &&
           fileName == other.fileName &&
           mimeTypeState == other.mimeTypeState &&
@@ -3207,12 +3219,20 @@ class CloudSyncTransientAttachmentPayload {
 /// representation and must flow directly into the canonical applier.
 class CloudSyncTransientChatPayload {
   final String logicalEntityKeyHash;
+
+  /// Validated application-level chat GUID. Transient typed memory only.
+  final String canonicalGuid;
+
+  /// Validated iMessage chat identifier used to bind message records.
+  final String chatIdentifier;
   final List<String> participantHandles;
   final CloudSyncTransientFieldState displayNameState;
   final String? displayName;
 
   const CloudSyncTransientChatPayload({
     required this.logicalEntityKeyHash,
+    required this.canonicalGuid,
+    required this.chatIdentifier,
     required this.participantHandles,
     required this.displayNameState,
     this.displayName,
@@ -3221,6 +3241,8 @@ class CloudSyncTransientChatPayload {
   @override
   int get hashCode =>
       logicalEntityKeyHash.hashCode ^
+      canonicalGuid.hashCode ^
+      chatIdentifier.hashCode ^
       participantHandles.hashCode ^
       displayNameState.hashCode ^
       displayName.hashCode;
@@ -3231,6 +3253,8 @@ class CloudSyncTransientChatPayload {
       other is CloudSyncTransientChatPayload &&
           runtimeType == other.runtimeType &&
           logicalEntityKeyHash == other.logicalEntityKeyHash &&
+          canonicalGuid == other.canonicalGuid &&
+          chatIdentifier == other.chatIdentifier &&
           participantHandles == other.participantHandles &&
           displayNameState == other.displayNameState &&
           displayName == other.displayName;
@@ -3371,11 +3395,13 @@ enum CloudSyncTransientFieldState { absent, value, explicitClear }
 class CloudSyncTransientGroupPhotoPayload {
   final String logicalEntityKeyHash;
   final String ownerLogicalKeyHash;
+  final String photoGuid;
   final String protectedLocalReference;
 
   const CloudSyncTransientGroupPhotoPayload({
     required this.logicalEntityKeyHash,
     required this.ownerLogicalKeyHash,
+    required this.photoGuid,
     required this.protectedLocalReference,
   });
 
@@ -3383,6 +3409,7 @@ class CloudSyncTransientGroupPhotoPayload {
   int get hashCode =>
       logicalEntityKeyHash.hashCode ^
       ownerLogicalKeyHash.hashCode ^
+      photoGuid.hashCode ^
       protectedLocalReference.hashCode;
 
   @override
@@ -3392,32 +3419,44 @@ class CloudSyncTransientGroupPhotoPayload {
           runtimeType == other.runtimeType &&
           logicalEntityKeyHash == other.logicalEntityKeyHash &&
           ownerLogicalKeyHash == other.ownerLogicalKeyHash &&
+          photoGuid == other.photoGuid &&
           protectedLocalReference == other.protectedLocalReference;
 }
 
-/// Transient message/reaction content. Raw CloudKit and Apple record
-/// identifiers are deliberately absent.
+/// Transient message/reaction content. Raw CloudKit record names and Apple
+/// private identifiers are deliberately absent; validated app canonical
+/// identities may cross this typed in-memory boundary.
 class CloudSyncTransientMessagePayload {
   final String logicalEntityKeyHash;
+
+  /// Validated application-level message/reaction GUID. Transient only.
+  final String canonicalGuid;
   final String chatLogicalKeyHash;
+  final String chatIdentifier;
   final String senderHandle;
   final CloudSyncTransientFieldState bodyState;
   final String? body;
   final CloudSyncTransientReactionKind? reactionKind;
   final bool reactionRemoved;
   final String? reactionParentLogicalKeyHash;
+  final String? reactionParentCanonicalGuid;
+  final int? reactionParentPart;
   final CloudSyncTransientFieldState associatedEmojiState;
   final String? associatedEmoji;
 
   const CloudSyncTransientMessagePayload({
     required this.logicalEntityKeyHash,
+    required this.canonicalGuid,
     required this.chatLogicalKeyHash,
+    required this.chatIdentifier,
     required this.senderHandle,
     required this.bodyState,
     this.body,
     this.reactionKind,
     required this.reactionRemoved,
     this.reactionParentLogicalKeyHash,
+    this.reactionParentCanonicalGuid,
+    this.reactionParentPart,
     required this.associatedEmojiState,
     this.associatedEmoji,
   });
@@ -3425,13 +3464,17 @@ class CloudSyncTransientMessagePayload {
   @override
   int get hashCode =>
       logicalEntityKeyHash.hashCode ^
+      canonicalGuid.hashCode ^
       chatLogicalKeyHash.hashCode ^
+      chatIdentifier.hashCode ^
       senderHandle.hashCode ^
       bodyState.hashCode ^
       body.hashCode ^
       reactionKind.hashCode ^
       reactionRemoved.hashCode ^
       reactionParentLogicalKeyHash.hashCode ^
+      reactionParentCanonicalGuid.hashCode ^
+      reactionParentPart.hashCode ^
       associatedEmojiState.hashCode ^
       associatedEmoji.hashCode;
 
@@ -3441,13 +3484,17 @@ class CloudSyncTransientMessagePayload {
       other is CloudSyncTransientMessagePayload &&
           runtimeType == other.runtimeType &&
           logicalEntityKeyHash == other.logicalEntityKeyHash &&
+          canonicalGuid == other.canonicalGuid &&
           chatLogicalKeyHash == other.chatLogicalKeyHash &&
+          chatIdentifier == other.chatIdentifier &&
           senderHandle == other.senderHandle &&
           bodyState == other.bodyState &&
           body == other.body &&
           reactionKind == other.reactionKind &&
           reactionRemoved == other.reactionRemoved &&
           reactionParentLogicalKeyHash == other.reactionParentLogicalKeyHash &&
+          reactionParentCanonicalGuid == other.reactionParentCanonicalGuid &&
+          reactionParentPart == other.reactionParentPart &&
           associatedEmojiState == other.associatedEmojiState &&
           associatedEmoji == other.associatedEmoji;
 }

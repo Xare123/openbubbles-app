@@ -65,6 +65,8 @@ void main() {
             const frb.CloudSyncTransientPayload(
               chat: frb.CloudSyncTransientChatPayload(
                 logicalEntityKeyHash: _chatHash,
+                canonicalGuid: 'chat-guid',
+                chatIdentifier: 'iMessage;-;chat',
                 participantHandles: ['one@example.invalid'],
                 displayNameState: frb.CloudSyncTransientFieldState.value,
                 displayName: 'Transient title',
@@ -78,12 +80,16 @@ void main() {
             const frb.CloudSyncTransientPayload(
               message: frb.CloudSyncTransientMessagePayload(
                 logicalEntityKeyHash: _reactionHash,
+                canonicalGuid: 'reaction-guid',
                 chatLogicalKeyHash: _chatHash,
+                chatIdentifier: 'iMessage;-;chat',
                 senderHandle: 'sender@example.invalid',
                 bodyState: frb.CloudSyncTransientFieldState.absent,
                 reactionKind: frb.CloudSyncTransientReactionKind.emoji,
                 reactionRemoved: false,
                 reactionParentLogicalKeyHash: _messageHash,
+                reactionParentCanonicalGuid: 'message-guid',
+                reactionParentPart: 0,
                 associatedEmojiState: frb.CloudSyncTransientFieldState.value,
                 associatedEmoji: '👍',
               ),
@@ -96,7 +102,10 @@ void main() {
             const frb.CloudSyncTransientPayload(
               attachment: frb.CloudSyncTransientAttachmentPayload(
                 logicalEntityKeyHash: _attachmentHash,
+                canonicalGuid: 'attachment-guid',
                 ownerLogicalKeyHash: _messageHash,
+                ownerCanonicalGuid: 'message-guid',
+                ownerPart: 0,
                 fileNameState: frb.CloudSyncTransientFieldState.value,
                 fileName: 'document.pdf',
                 mimeTypeState: frb.CloudSyncTransientFieldState.absent,
@@ -114,6 +123,7 @@ void main() {
               groupPhoto: frb.CloudSyncTransientGroupPhotoPayload(
                 logicalEntityKeyHash: _groupPhotoHash,
                 ownerLogicalKeyHash: _chatHash,
+                photoGuid: 'group-photo-guid',
                 protectedLocalReference: _attachmentReference,
               ),
             ),
@@ -256,6 +266,8 @@ void main() {
         message: _messagePayload().message,
         chat: const frb.CloudSyncTransientChatPayload(
           logicalEntityKeyHash: _chatHash,
+          canonicalGuid: 'chat-guid',
+          chatIdentifier: 'iMessage;-;chat',
           participantHandles: [],
           displayNameState: frb.CloudSyncTransientFieldState.absent,
         ),
@@ -275,6 +287,8 @@ void main() {
         message: _messagePayload().message,
         chat: const frb.CloudSyncTransientChatPayload(
           logicalEntityKeyHash: _chatHash,
+          canonicalGuid: 'chat-guid',
+          chatIdentifier: 'iMessage;-;chat',
           participantHandles: [],
           displayNameState: frb.CloudSyncTransientFieldState.absent,
         ),
@@ -293,7 +307,9 @@ void main() {
       payload: const frb.CloudSyncTransientPayload(
         message: frb.CloudSyncTransientMessagePayload(
           logicalEntityKeyHash: _messageHash,
+          canonicalGuid: 'message-guid',
           chatLogicalKeyHash: _chatHash,
+          chatIdentifier: 'iMessage;-;chat',
           senderHandle: 'sender@example.invalid',
           bodyState: frb.CloudSyncTransientFieldState.absent,
           reactionRemoved: false,
@@ -343,6 +359,53 @@ void main() {
     },
   );
 
+  test('defers every incomplete attachment owner identity combination', () async {
+    final entry = _entry();
+    final incompleteOwners = <(String?, String?, int?)>[
+      (null, null, null),
+      (_messageHash, null, null),
+      (null, 'message-guid', null),
+      (null, null, 0),
+      (_messageHash, 'message-guid', null),
+      (_messageHash, null, 0),
+      (null, 'message-guid', 0),
+    ];
+
+    for (final (ownerHash, ownerGuid, ownerPart) in incompleteOwners) {
+      bindings.result = frb.CloudSyncTransientDecodeResult(
+        protectedSourceReference: _sourceReference,
+        generation: BigInt.from(entry.generation),
+        changeId: entry.change.changeId,
+        entityKind: frb.CloudSyncTransientEntityKind.attachment,
+        mutationKind: frb.CloudSyncTransientMutationKind.upsert,
+        snapshot: _snapshotFor(
+          frb.CloudSyncTransientEntityKind.attachment,
+          _attachmentHash,
+        ),
+        payload: frb.CloudSyncTransientPayload(
+          attachment: frb.CloudSyncTransientAttachmentPayload(
+            logicalEntityKeyHash: _attachmentHash,
+            canonicalGuid: 'attachment-guid',
+            ownerLogicalKeyHash: ownerHash,
+            ownerCanonicalGuid: ownerGuid,
+            ownerPart: ownerPart,
+            fileNameState: frb.CloudSyncTransientFieldState.value,
+            fileName: 'document.pdf',
+            mimeTypeState: frb.CloudSyncTransientFieldState.absent,
+            protectedLocalReferenceState:
+                frb.CloudSyncTransientFieldState.value,
+            protectedLocalReference: _attachmentReference,
+          ),
+        ),
+      );
+
+      await _expectFailure(
+        decoder().decode(entry),
+        CloudFailureCategory.dependency,
+      );
+    }
+  });
+
   test(
     'defers explicit clears that current Dart payloads cannot preserve',
     () async {
@@ -360,6 +423,8 @@ void main() {
         payload: const frb.CloudSyncTransientPayload(
           chat: frb.CloudSyncTransientChatPayload(
             logicalEntityKeyHash: _chatHash,
+            canonicalGuid: 'chat-guid',
+            chatIdentifier: 'iMessage;-;chat',
             participantHandles: [],
             displayNameState: frb.CloudSyncTransientFieldState.explicitClear,
           ),
@@ -375,7 +440,9 @@ void main() {
         payload: const frb.CloudSyncTransientPayload(
           message: frb.CloudSyncTransientMessagePayload(
             logicalEntityKeyHash: _messageHash,
+            canonicalGuid: 'message-guid',
             chatLogicalKeyHash: _chatHash,
+            chatIdentifier: 'iMessage;-;chat',
             senderHandle: 'sender@example.invalid',
             bodyState: frb.CloudSyncTransientFieldState.explicitClear,
             reactionRemoved: false,
@@ -655,12 +722,16 @@ frb.CloudSyncTransientDecodeResult _readyReaction(
   payload: frb.CloudSyncTransientPayload(
     message: frb.CloudSyncTransientMessagePayload(
       logicalEntityKeyHash: _reactionHash,
+      canonicalGuid: 'reaction-guid',
       chatLogicalKeyHash: _chatHash,
+      chatIdentifier: 'iMessage;-;chat',
       senderHandle: 'sender@example.invalid',
       bodyState: frb.CloudSyncTransientFieldState.absent,
       reactionKind: reactionKind,
       reactionRemoved: removed,
       reactionParentLogicalKeyHash: _messageHash,
+      reactionParentCanonicalGuid: 'message-guid',
+      reactionParentPart: 0,
       associatedEmojiState: emoji == null
           ? frb.CloudSyncTransientFieldState.absent
           : frb.CloudSyncTransientFieldState.value,
@@ -692,7 +763,9 @@ frb.CloudSyncTransientPayload _messagePayload() =>
     const frb.CloudSyncTransientPayload(
       message: frb.CloudSyncTransientMessagePayload(
         logicalEntityKeyHash: _messageHash,
+        canonicalGuid: 'message-guid',
         chatLogicalKeyHash: _chatHash,
+        chatIdentifier: 'iMessage;-;chat',
         senderHandle: 'sender@example.invalid',
         bodyState: frb.CloudSyncTransientFieldState.value,
         body: 'transient secret body',

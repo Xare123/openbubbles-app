@@ -253,6 +253,69 @@ void main() {
     );
   });
 
+  test('transient canonical identities stay redacted from diagnostics', () {
+    const sentinels = <String>[
+      'message-guid-sensitive',
+      'chat-guid-sensitive',
+      'iMessage;-;sensitive-chat',
+      'attachment-guid-sensitive',
+      'owner-message-guid-sensitive',
+      'reaction-guid-sensitive',
+      'parent-message-guid-sensitive',
+      'group-photo-guid-sensitive',
+    ];
+    final payloads = <CloudSemanticEntityPayload>[
+      CloudMessageEntityPayload(
+        logicalEntityKeyHash: 'message-key',
+        canonicalGuid: sentinels[0],
+        chatLogicalKeyHash: 'chat-key',
+        chatIdentifier: sentinels[2],
+        body: 'body-sensitive',
+        senderHandle: 'sender-sensitive',
+      ),
+      CloudChatEntityPayload(
+        logicalEntityKeyHash: 'chat-key',
+        canonicalGuid: sentinels[1],
+        chatIdentifier: sentinels[2],
+        displayName: 'display-sensitive',
+        participantHandles: const ['participant-sensitive'],
+      ),
+      CloudAttachmentEntityPayload(
+        logicalEntityKeyHash: 'attachment-key',
+        canonicalGuid: sentinels[3],
+        ownerLogicalKeyHash: 'message-key',
+        ownerCanonicalGuid: sentinels[4],
+        ownerPart: 0,
+        fileName: 'file-sensitive.pdf',
+        mimeType: 'application/pdf',
+        protectedLocalReference: 'protected-reference-sensitive',
+      ),
+      CloudReactionEntityPayload(
+        logicalEntityKeyHash: 'reaction-key',
+        canonicalGuid: sentinels[5],
+        parentLogicalKeyHash: 'message-key',
+        parentCanonicalGuid: sentinels[6],
+        parentPart: 0,
+        senderHandle: 'sender-sensitive',
+        reactionType: 'like',
+      ),
+      CloudGroupPhotoEntityPayload(
+        logicalEntityKeyHash: 'group-photo-key',
+        ownerLogicalKeyHash: 'chat-key',
+        photoGuid: sentinels[7],
+        protectedLocalReference: 'group-photo-reference-sensitive',
+      ),
+    ];
+
+    for (final payload in payloads) {
+      final rendered = payload.toString();
+      expect(rendered, contains('redacted'));
+      for (final sentinel in sentinels) {
+        expect(rendered, isNot(contains(sentinel)));
+      }
+    }
+  });
+
   test('engine, observer, and journal budgets validate at construction', () {
     expect(
       () => CloudSyncEngineConfig(maximumBatchSize: 257),

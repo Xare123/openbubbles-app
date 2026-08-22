@@ -518,8 +518,9 @@ pub struct CloudSyncTransientChatPayload {
     pub display_name: Option<String>,
 }
 
-/// Transient message/reaction content. Raw CloudKit and Apple record
-/// identifiers are deliberately absent.
+/// Transient message/reaction content. Raw CloudKit record names and Apple
+/// private identifiers are deliberately absent; validated app canonical
+/// identities may cross this typed in-memory boundary.
 #[derive(Clone)]
 pub struct CloudSyncTransientMessagePayload {
     pub logical_entity_key_hash: String,
