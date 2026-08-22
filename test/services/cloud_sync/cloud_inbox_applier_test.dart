@@ -40,7 +40,7 @@ void main() {
 
   CloudSemanticSnapshot message({
     String key = 'message-key',
-    String chatKey = 'chat-key',
+    String? parentKey,
     String content = 'content-a',
     DateTime? createdAt,
     DateTime? deliveredAt,
@@ -52,7 +52,7 @@ void main() {
     return CloudSemanticSnapshot(
       kind: CloudEntityKind.message,
       logicalEntityKeyHash: key,
-      parentLogicalKeyHash: chatKey,
+      parentLogicalKeyHash: parentKey,
       immutableContentDigest: content,
       createdAt: createdAt,
       deliveredAt: deliveredAt,
@@ -69,7 +69,7 @@ void main() {
       CloudEntityKind.message => CloudMessageEntityPayload(
         logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
         canonicalGuid: 'message-guid',
-        chatAliasKeyHash: snapshot.parentLogicalKeyHash!,
+        chatAliasKeyHash: 'chat-key',
         chatIdentifier: 'iMessage;-;chat',
         body: 'renderable body',
         senderHandle: 'sender@example.invalid',
@@ -307,6 +307,40 @@ void main() {
     expect(store.transaction.entityApplyCount, 0);
   });
 
+  test('reply message requires a message parent, not a chat parent', () async {
+    final inbox = entry(1);
+    final snapshot = message(parentKey: 'reply-parent-key');
+    decodeUpsert(
+      inbox,
+      snapshot,
+      payload: CloudMessageEntityPayload(
+        logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
+        canonicalGuid: 'reply-message-guid',
+        chatAliasKeyHash: 'chat-key',
+        chatIdentifier: 'iMessage;-;chat',
+        body: 'reply body',
+        senderHandle: 'sender@example.invalid',
+        replyParentLogicalKeyHash: 'reply-parent-key',
+        replyParentCanonicalGuid: 'parent-message-guid',
+        replyParentPart: '0',
+      ),
+    );
+
+    expect(
+      (await _apply(applier, inbox)).disposition,
+      CloudInboxApplyDisposition.deferred,
+    );
+
+    store.transaction.existingEntities.add((
+      CloudEntityKind.message,
+      'reply-parent-key',
+    ));
+    expect(
+      (await _apply(applier, inbox)).disposition,
+      CloudInboxApplyDisposition.applied,
+    );
+  });
+
   test('equal group-version conflict retains local server base', () async {
     final inbox = entry(1);
     CloudSemanticSnapshot chat(String metadata, String etag) =>
@@ -441,7 +475,7 @@ void main() {
   });
 
   test(
-    'tombstones remain deferred before any transaction unless enabled',
+    'disabled tombstones quarantine without deleting or opening a transaction',
     () async {
       final inbox = entry(1, tombstone: true);
       decoder.values[inbox.change.changeId] = CloudDecodedMutation.tombstone(
@@ -459,7 +493,7 @@ void main() {
 
       expect(
         (await _apply(applier, inbox)).disposition,
-        CloudInboxApplyDisposition.deferred,
+        CloudInboxApplyDisposition.quarantined,
       );
       expect(store.transactionCount, 0);
       expect(store.transaction.snapshot('message-key'), isNotNull);

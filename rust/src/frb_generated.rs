@@ -19161,6 +19161,23 @@ impl SseDecode for crate::api::api::CloudSyncRawSystemFields {
     }
 }
 
+impl SseDecode for crate::api::api::CloudSyncTransientAssociationKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::api::CloudSyncTransientAssociationKind::None,
+            1 => crate::api::api::CloudSyncTransientAssociationKind::Sticker,
+            2 => crate::api::api::CloudSyncTransientAssociationKind::ReactionAdd,
+            3 => crate::api::api::CloudSyncTransientAssociationKind::ReactionRemove,
+            _ => unreachable!(
+                "Invalid variant for CloudSyncTransientAssociationKind: {}",
+                inner
+            ),
+        };
+    }
+}
+
 impl SseDecode for crate::api::api::CloudSyncTransientAttachmentPayload {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -19169,12 +19186,21 @@ impl SseDecode for crate::api::api::CloudSyncTransientAttachmentPayload {
         let mut var_ownerLogicalKeyHash = <Option<String>>::sse_decode(deserializer);
         let mut var_ownerCanonicalGuid = <Option<String>>::sse_decode(deserializer);
         let mut var_ownerPart = <Option<u32>>::sse_decode(deserializer);
+        let mut var_utiState =
+            <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
+        let mut var_uti = <Option<String>>::sse_decode(deserializer);
         let mut var_fileNameState =
             <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
         let mut var_fileName = <Option<String>>::sse_decode(deserializer);
         let mut var_mimeTypeState =
             <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
         let mut var_mimeType = <Option<String>>::sse_decode(deserializer);
+        let mut var_totalBytesState =
+            <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
+        let mut var_totalBytes = <Option<u64>>::sse_decode(deserializer);
+        let mut var_isOutgoingState =
+            <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
+        let mut var_isOutgoing = <Option<bool>>::sse_decode(deserializer);
         let mut var_protectedLocalReferenceState =
             <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
         let mut var_protectedLocalReference = <Option<String>>::sse_decode(deserializer);
@@ -19184,12 +19210,31 @@ impl SseDecode for crate::api::api::CloudSyncTransientAttachmentPayload {
             owner_logical_key_hash: var_ownerLogicalKeyHash,
             owner_canonical_guid: var_ownerCanonicalGuid,
             owner_part: var_ownerPart,
+            uti_state: var_utiState,
+            uti: var_uti,
             file_name_state: var_fileNameState,
             file_name: var_fileName,
             mime_type_state: var_mimeTypeState,
             mime_type: var_mimeType,
+            total_bytes_state: var_totalBytesState,
+            total_bytes: var_totalBytes,
+            is_outgoing_state: var_isOutgoingState,
+            is_outgoing: var_isOutgoing,
             protected_local_reference_state: var_protectedLocalReferenceState,
             protected_local_reference: var_protectedLocalReference,
+        };
+    }
+}
+
+impl SseDecode for crate::api::api::CloudSyncTransientAttributedBody {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_text = <String>::sse_decode(deserializer);
+        let mut var_runs =
+            <Vec<crate::api::api::CloudSyncTransientTextRun>>::sse_decode(deserializer);
+        return crate::api::api::CloudSyncTransientAttributedBody {
+            text: var_text,
+            runs: var_runs,
         };
     }
 }
@@ -19200,17 +19245,59 @@ impl SseDecode for crate::api::api::CloudSyncTransientChatPayload {
         let mut var_logicalEntityKeyHash = <String>::sse_decode(deserializer);
         let mut var_canonicalGuid = <String>::sse_decode(deserializer);
         let mut var_chatIdentifier = <String>::sse_decode(deserializer);
+        let mut var_groupId = <String>::sse_decode(deserializer);
+        let mut var_originalGroupId = <String>::sse_decode(deserializer);
+        let mut var_service =
+            <crate::api::api::CloudSyncTransientService>::sse_decode(deserializer);
+        let mut var_style =
+            <crate::api::api::CloudSyncTransientChatStyle>::sse_decode(deserializer);
         let mut var_participantHandles = <Vec<String>>::sse_decode(deserializer);
         let mut var_displayNameState =
             <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
         let mut var_displayName = <Option<String>>::sse_decode(deserializer);
+        let mut var_lastAddressedHandleState =
+            <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
+        let mut var_lastAddressedHandle = <Option<String>>::sse_decode(deserializer);
+        let mut var_groupVersionState =
+            <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
+        let mut var_groupVersion = <Option<u32>>::sse_decode(deserializer);
+        let mut var_lastSeenMessageGuidState =
+            <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
+        let mut var_lastSeenMessageGuid = <Option<String>>::sse_decode(deserializer);
+        let mut var_groupPhotoGuidState =
+            <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
+        let mut var_groupPhotoGuid = <Option<String>>::sse_decode(deserializer);
         return crate::api::api::CloudSyncTransientChatPayload {
             logical_entity_key_hash: var_logicalEntityKeyHash,
             canonical_guid: var_canonicalGuid,
             chat_identifier: var_chatIdentifier,
+            group_id: var_groupId,
+            original_group_id: var_originalGroupId,
+            service: var_service,
+            style: var_style,
             participant_handles: var_participantHandles,
             display_name_state: var_displayNameState,
             display_name: var_displayName,
+            last_addressed_handle_state: var_lastAddressedHandleState,
+            last_addressed_handle: var_lastAddressedHandle,
+            group_version_state: var_groupVersionState,
+            group_version: var_groupVersion,
+            last_seen_message_guid_state: var_lastSeenMessageGuidState,
+            last_seen_message_guid: var_lastSeenMessageGuid,
+            group_photo_guid_state: var_groupPhotoGuidState,
+            group_photo_guid: var_groupPhotoGuid,
+        };
+    }
+}
+
+impl SseDecode for crate::api::api::CloudSyncTransientChatStyle {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::api::CloudSyncTransientChatStyle::Direct,
+            1 => crate::api::api::CloudSyncTransientChatStyle::Group,
+            _ => unreachable!("Invalid variant for CloudSyncTransientChatStyle: {}", inner),
         };
     }
 }
@@ -19367,6 +19454,47 @@ impl SseDecode for crate::api::api::CloudSyncTransientGroupPhotoPayload {
     }
 }
 
+impl SseDecode for crate::api::api::CloudSyncTransientKnownMessageFlags {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_fromMe = <bool>::sse_decode(deserializer);
+        let mut var_delivered = <bool>::sse_decode(deserializer);
+        let mut var_read = <bool>::sse_decode(deserializer);
+        let mut var_hasDataDetectorResults = <bool>::sse_decode(deserializer);
+        let mut var_deliveredQuietly = <bool>::sse_decode(deserializer);
+        let mut var_didNotifyRecipient = <bool>::sse_decode(deserializer);
+        return crate::api::api::CloudSyncTransientKnownMessageFlags {
+            from_me: var_fromMe,
+            delivered: var_delivered,
+            read: var_read,
+            has_data_detector_results: var_hasDataDetectorResults,
+            delivered_quietly: var_deliveredQuietly,
+            did_notify_recipient: var_didNotifyRecipient,
+        };
+    }
+}
+
+impl SseDecode for crate::api::api::CloudSyncTransientMessageEdit {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_part_ = <u32>::sse_decode(deserializer);
+        let mut var_revision = <u32>::sse_decode(deserializer);
+        let mut var_bodies =
+            <Vec<crate::api::api::CloudSyncTransientAttributedBody>>::sse_decode(deserializer);
+        let mut var_modifiedAtMillis = <i64>::sse_decode(deserializer);
+        let mut var_originalRangeLocation = <Option<u32>>::sse_decode(deserializer);
+        let mut var_originalRangeLength = <Option<u32>>::sse_decode(deserializer);
+        return crate::api::api::CloudSyncTransientMessageEdit {
+            part: var_part_,
+            revision: var_revision,
+            bodies: var_bodies,
+            modified_at_millis: var_modifiedAtMillis,
+            original_range_location: var_originalRangeLocation,
+            original_range_length: var_originalRangeLength,
+        };
+    }
+}
+
 impl SseDecode for crate::api::api::CloudSyncTransientMessagePayload {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -19375,15 +19503,54 @@ impl SseDecode for crate::api::api::CloudSyncTransientMessagePayload {
         let mut var_chatAliasKeyHash = <String>::sse_decode(deserializer);
         let mut var_chatIdentifier = <String>::sse_decode(deserializer);
         let mut var_senderHandle = <String>::sse_decode(deserializer);
+        let mut var_createdAtMillis = <i64>::sse_decode(deserializer);
+        let mut var_error = <i64>::sse_decode(deserializer);
+        let mut var_service =
+            <crate::api::api::CloudSyncTransientService>::sse_decode(deserializer);
+        let mut var_subjectState =
+            <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
+        let mut var_subject = <Option<String>>::sse_decode(deserializer);
         let mut var_bodyState =
             <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
         let mut var_body = <Option<String>>::sse_decode(deserializer);
+        let mut var_attributedBodiesState =
+            <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
+        let mut var_attributedBodies =
+            <Vec<crate::api::api::CloudSyncTransientAttributedBody>>::sse_decode(deserializer);
+        let mut var_balloonBundleIdState =
+            <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
+        let mut var_balloonBundleId = <Option<String>>::sse_decode(deserializer);
+        let mut var_effectState =
+            <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
+        let mut var_effect = <Option<String>>::sse_decode(deserializer);
+        let mut var_readAtMillisState =
+            <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
+        let mut var_readAtMillis = <Option<i64>>::sse_decode(deserializer);
+        let mut var_deliveredAtMillisState =
+            <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
+        let mut var_deliveredAtMillis = <Option<i64>>::sse_decode(deserializer);
+        let mut var_knownFlags =
+            <crate::api::api::CloudSyncTransientKnownMessageFlags>::sse_decode(deserializer);
+        let mut var_associationKind =
+            <crate::api::api::CloudSyncTransientAssociationKind>::sse_decode(deserializer);
         let mut var_reactionKind =
             <Option<crate::api::api::CloudSyncTransientReactionKind>>::sse_decode(deserializer);
         let mut var_reactionRemoved = <bool>::sse_decode(deserializer);
         let mut var_reactionParentLogicalKeyHash = <Option<String>>::sse_decode(deserializer);
         let mut var_reactionParentCanonicalGuid = <Option<String>>::sse_decode(deserializer);
         let mut var_reactionParentPart = <Option<u32>>::sse_decode(deserializer);
+        let mut var_associatedRangeLocation = <Option<u32>>::sse_decode(deserializer);
+        let mut var_associatedRangeLength = <Option<u32>>::sse_decode(deserializer);
+        let mut var_replyParentLogicalKeyHash = <Option<String>>::sse_decode(deserializer);
+        let mut var_replyParentCanonicalGuid = <Option<String>>::sse_decode(deserializer);
+        let mut var_replyParentPart = <Option<String>>::sse_decode(deserializer);
+        let mut var_editsState =
+            <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
+        let mut var_edits =
+            <Vec<crate::api::api::CloudSyncTransientMessageEdit>>::sse_decode(deserializer);
+        let mut var_retractedPartsState =
+            <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
+        let mut var_retractedParts = <Vec<u32>>::sse_decode(deserializer);
         let mut var_associatedEmojiState =
             <crate::api::api::CloudSyncTransientFieldState>::sse_decode(deserializer);
         let mut var_associatedEmoji = <Option<String>>::sse_decode(deserializer);
@@ -19393,13 +19560,39 @@ impl SseDecode for crate::api::api::CloudSyncTransientMessagePayload {
             chat_alias_key_hash: var_chatAliasKeyHash,
             chat_identifier: var_chatIdentifier,
             sender_handle: var_senderHandle,
+            created_at_millis: var_createdAtMillis,
+            error: var_error,
+            service: var_service,
+            subject_state: var_subjectState,
+            subject: var_subject,
             body_state: var_bodyState,
             body: var_body,
+            attributed_bodies_state: var_attributedBodiesState,
+            attributed_bodies: var_attributedBodies,
+            balloon_bundle_id_state: var_balloonBundleIdState,
+            balloon_bundle_id: var_balloonBundleId,
+            effect_state: var_effectState,
+            effect: var_effect,
+            read_at_millis_state: var_readAtMillisState,
+            read_at_millis: var_readAtMillis,
+            delivered_at_millis_state: var_deliveredAtMillisState,
+            delivered_at_millis: var_deliveredAtMillis,
+            known_flags: var_knownFlags,
+            association_kind: var_associationKind,
             reaction_kind: var_reactionKind,
             reaction_removed: var_reactionRemoved,
             reaction_parent_logical_key_hash: var_reactionParentLogicalKeyHash,
             reaction_parent_canonical_guid: var_reactionParentCanonicalGuid,
             reaction_parent_part: var_reactionParentPart,
+            associated_range_location: var_associatedRangeLocation,
+            associated_range_length: var_associatedRangeLength,
+            reply_parent_logical_key_hash: var_replyParentLogicalKeyHash,
+            reply_parent_canonical_guid: var_replyParentCanonicalGuid,
+            reply_parent_part: var_replyParentPart,
+            edits_state: var_editsState,
+            edits: var_edits,
+            retracted_parts_state: var_retractedPartsState,
+            retracted_parts: var_retractedParts,
             associated_emoji_state: var_associatedEmojiState,
             associated_emoji: var_associatedEmoji,
         };
@@ -19493,6 +19686,17 @@ impl SseDecode for crate::api::api::CloudSyncTransientReactionKind {
     }
 }
 
+impl SseDecode for crate::api::api::CloudSyncTransientService {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::api::CloudSyncTransientService::IMessage,
+            _ => unreachable!("Invalid variant for CloudSyncTransientService: {}", inner),
+        };
+    }
+}
+
 impl SseDecode for crate::api::api::CloudSyncTransientSnapshot {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -19525,6 +19729,38 @@ impl SseDecode for crate::api::api::CloudSyncTransientSnapshot {
             group_metadata_digest: var_groupMetadataDigest,
             etag_hash: var_etagHash,
             protected_source_reference: var_protectedSourceReference,
+        };
+    }
+}
+
+impl SseDecode for crate::api::api::CloudSyncTransientTextRun {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_startUtf16 = <u32>::sse_decode(deserializer);
+        let mut var_lengthUtf16 = <u32>::sse_decode(deserializer);
+        let mut var_messagePart = <Option<u32>>::sse_decode(deserializer);
+        let mut var_attachmentCanonicalGuid = <Option<String>>::sse_decode(deserializer);
+        let mut var_attachmentLogicalKeyHash = <Option<String>>::sse_decode(deserializer);
+        let mut var_mentionHandle = <Option<String>>::sse_decode(deserializer);
+        let mut var_audioTranscript = <Option<String>>::sse_decode(deserializer);
+        let mut var_textEffect = <Option<i64>>::sse_decode(deserializer);
+        let mut var_bold = <Option<bool>>::sse_decode(deserializer);
+        let mut var_italic = <Option<bool>>::sse_decode(deserializer);
+        let mut var_strikethrough = <Option<bool>>::sse_decode(deserializer);
+        let mut var_underline = <Option<bool>>::sse_decode(deserializer);
+        return crate::api::api::CloudSyncTransientTextRun {
+            start_utf16: var_startUtf16,
+            length_utf16: var_lengthUtf16,
+            message_part: var_messagePart,
+            attachment_canonical_guid: var_attachmentCanonicalGuid,
+            attachment_logical_key_hash: var_attachmentLogicalKeyHash,
+            mention_handle: var_mentionHandle,
+            audio_transcript: var_audioTranscript,
+            text_effect: var_textEffect,
+            bold: var_bold,
+            italic: var_italic,
+            strikethrough: var_strikethrough,
+            underline: var_underline,
         };
     }
 }
@@ -20301,6 +20537,20 @@ impl SseDecode for Vec<crate::api::api::CloudSyncRawChange> {
     }
 }
 
+impl SseDecode for Vec<crate::api::api::CloudSyncTransientAttributedBody> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = vec![];
+        for idx_ in 0..len_ {
+            ans_.push(
+                <crate::api::api::CloudSyncTransientAttributedBody>::sse_decode(deserializer),
+            );
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::api::CloudSyncTransientEditPart> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -20308,6 +20558,32 @@ impl SseDecode for Vec<crate::api::api::CloudSyncTransientEditPart> {
         let mut ans_ = vec![];
         for idx_ in 0..len_ {
             ans_.push(<crate::api::api::CloudSyncTransientEditPart>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::api::CloudSyncTransientMessageEdit> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = vec![];
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::api::CloudSyncTransientMessageEdit>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::api::CloudSyncTransientTextRun> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = vec![];
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::api::CloudSyncTransientTextRun>::sse_decode(
                 deserializer,
             ));
         }
@@ -27568,6 +27844,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::api::CloudSyncRawSystemFields
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientAssociationKind {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::None => 0.into_dart(),
+            Self::Sticker => 1.into_dart(),
+            Self::ReactionAdd => 2.into_dart(),
+            Self::ReactionRemove => 3.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::api::CloudSyncTransientAssociationKind
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::api::CloudSyncTransientAssociationKind>
+    for crate::api::api::CloudSyncTransientAssociationKind
+{
+    fn into_into_dart(self) -> crate::api::api::CloudSyncTransientAssociationKind {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientAttachmentPayload {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -27576,10 +27875,16 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientAttach
             self.owner_logical_key_hash.into_into_dart().into_dart(),
             self.owner_canonical_guid.into_into_dart().into_dart(),
             self.owner_part.into_into_dart().into_dart(),
+            self.uti_state.into_into_dart().into_dart(),
+            self.uti.into_into_dart().into_dart(),
             self.file_name_state.into_into_dart().into_dart(),
             self.file_name.into_into_dart().into_dart(),
             self.mime_type_state.into_into_dart().into_dart(),
             self.mime_type.into_into_dart().into_dart(),
+            self.total_bytes_state.into_into_dart().into_dart(),
+            self.total_bytes.into_into_dart().into_dart(),
+            self.is_outgoing_state.into_into_dart().into_dart(),
+            self.is_outgoing.into_into_dart().into_dart(),
             self.protected_local_reference_state
                 .into_into_dart()
                 .into_dart(),
@@ -27600,15 +27905,52 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::api::CloudSyncTransientAttach
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientAttributedBody {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.text.into_into_dart().into_dart(),
+            self.runs.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::api::CloudSyncTransientAttributedBody
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::api::CloudSyncTransientAttributedBody>
+    for crate::api::api::CloudSyncTransientAttributedBody
+{
+    fn into_into_dart(self) -> crate::api::api::CloudSyncTransientAttributedBody {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientChatPayload {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.logical_entity_key_hash.into_into_dart().into_dart(),
             self.canonical_guid.into_into_dart().into_dart(),
             self.chat_identifier.into_into_dart().into_dart(),
+            self.group_id.into_into_dart().into_dart(),
+            self.original_group_id.into_into_dart().into_dart(),
+            self.service.into_into_dart().into_dart(),
+            self.style.into_into_dart().into_dart(),
             self.participant_handles.into_into_dart().into_dart(),
             self.display_name_state.into_into_dart().into_dart(),
             self.display_name.into_into_dart().into_dart(),
+            self.last_addressed_handle_state
+                .into_into_dart()
+                .into_dart(),
+            self.last_addressed_handle.into_into_dart().into_dart(),
+            self.group_version_state.into_into_dart().into_dart(),
+            self.group_version.into_into_dart().into_dart(),
+            self.last_seen_message_guid_state
+                .into_into_dart()
+                .into_dart(),
+            self.last_seen_message_guid.into_into_dart().into_dart(),
+            self.group_photo_guid_state.into_into_dart().into_dart(),
+            self.group_photo_guid.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -27621,6 +27963,27 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::api::CloudSyncTransientChatPa
     for crate::api::api::CloudSyncTransientChatPayload
 {
     fn into_into_dart(self) -> crate::api::api::CloudSyncTransientChatPayload {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientChatStyle {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Direct => 0.into_dart(),
+            Self::Group => 1.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::api::CloudSyncTransientChatStyle
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::api::CloudSyncTransientChatStyle>
+    for crate::api::api::CloudSyncTransientChatStyle
+{
+    fn into_into_dart(self) -> crate::api::api::CloudSyncTransientChatStyle {
         self
     }
 }
@@ -27805,6 +28168,56 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::api::CloudSyncTransientGroupP
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientKnownMessageFlags {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.from_me.into_into_dart().into_dart(),
+            self.delivered.into_into_dart().into_dart(),
+            self.read.into_into_dart().into_dart(),
+            self.has_data_detector_results.into_into_dart().into_dart(),
+            self.delivered_quietly.into_into_dart().into_dart(),
+            self.did_notify_recipient.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::api::CloudSyncTransientKnownMessageFlags
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::api::CloudSyncTransientKnownMessageFlags>
+    for crate::api::api::CloudSyncTransientKnownMessageFlags
+{
+    fn into_into_dart(self) -> crate::api::api::CloudSyncTransientKnownMessageFlags {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientMessageEdit {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.part.into_into_dart().into_dart(),
+            self.revision.into_into_dart().into_dart(),
+            self.bodies.into_into_dart().into_dart(),
+            self.modified_at_millis.into_into_dart().into_dart(),
+            self.original_range_location.into_into_dart().into_dart(),
+            self.original_range_length.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::api::CloudSyncTransientMessageEdit
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::api::CloudSyncTransientMessageEdit>
+    for crate::api::api::CloudSyncTransientMessageEdit
+{
+    fn into_into_dart(self) -> crate::api::api::CloudSyncTransientMessageEdit {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientMessagePayload {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -27813,8 +28226,25 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientMessag
             self.chat_alias_key_hash.into_into_dart().into_dart(),
             self.chat_identifier.into_into_dart().into_dart(),
             self.sender_handle.into_into_dart().into_dart(),
+            self.created_at_millis.into_into_dart().into_dart(),
+            self.error.into_into_dart().into_dart(),
+            self.service.into_into_dart().into_dart(),
+            self.subject_state.into_into_dart().into_dart(),
+            self.subject.into_into_dart().into_dart(),
             self.body_state.into_into_dart().into_dart(),
             self.body.into_into_dart().into_dart(),
+            self.attributed_bodies_state.into_into_dart().into_dart(),
+            self.attributed_bodies.into_into_dart().into_dart(),
+            self.balloon_bundle_id_state.into_into_dart().into_dart(),
+            self.balloon_bundle_id.into_into_dart().into_dart(),
+            self.effect_state.into_into_dart().into_dart(),
+            self.effect.into_into_dart().into_dart(),
+            self.read_at_millis_state.into_into_dart().into_dart(),
+            self.read_at_millis.into_into_dart().into_dart(),
+            self.delivered_at_millis_state.into_into_dart().into_dart(),
+            self.delivered_at_millis.into_into_dart().into_dart(),
+            self.known_flags.into_into_dart().into_dart(),
+            self.association_kind.into_into_dart().into_dart(),
             self.reaction_kind.into_into_dart().into_dart(),
             self.reaction_removed.into_into_dart().into_dart(),
             self.reaction_parent_logical_key_hash
@@ -27824,6 +28254,19 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientMessag
                 .into_into_dart()
                 .into_dart(),
             self.reaction_parent_part.into_into_dart().into_dart(),
+            self.associated_range_location.into_into_dart().into_dart(),
+            self.associated_range_length.into_into_dart().into_dart(),
+            self.reply_parent_logical_key_hash
+                .into_into_dart()
+                .into_dart(),
+            self.reply_parent_canonical_guid
+                .into_into_dart()
+                .into_dart(),
+            self.reply_parent_part.into_into_dart().into_dart(),
+            self.edits_state.into_into_dart().into_dart(),
+            self.edits.into_into_dart().into_dart(),
+            self.retracted_parts_state.into_into_dart().into_dart(),
+            self.retracted_parts.into_into_dart().into_dart(),
             self.associated_emoji_state.into_into_dart().into_dart(),
             self.associated_emoji.into_into_dart().into_dart(),
         ]
@@ -27946,6 +28389,26 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::api::CloudSyncTransientReacti
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientService {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::IMessage => 0.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::api::CloudSyncTransientService
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::api::CloudSyncTransientService>
+    for crate::api::api::CloudSyncTransientService
+{
+    fn into_into_dart(self) -> crate::api::api::CloudSyncTransientService {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientSnapshot {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -27974,6 +28437,39 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::api::CloudSyncTransientSnapsh
     for crate::api::api::CloudSyncTransientSnapshot
 {
     fn into_into_dart(self) -> crate::api::api::CloudSyncTransientSnapshot {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientTextRun {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.start_utf16.into_into_dart().into_dart(),
+            self.length_utf16.into_into_dart().into_dart(),
+            self.message_part.into_into_dart().into_dart(),
+            self.attachment_canonical_guid.into_into_dart().into_dart(),
+            self.attachment_logical_key_hash
+                .into_into_dart()
+                .into_dart(),
+            self.mention_handle.into_into_dart().into_dart(),
+            self.audio_transcript.into_into_dart().into_dart(),
+            self.text_effect.into_into_dart().into_dart(),
+            self.bold.into_into_dart().into_dart(),
+            self.italic.into_into_dart().into_dart(),
+            self.strikethrough.into_into_dart().into_dart(),
+            self.underline.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::api::CloudSyncTransientTextRun
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::api::CloudSyncTransientTextRun>
+    for crate::api::api::CloudSyncTransientTextRun
+{
+    fn into_into_dart(self) -> crate::api::api::CloudSyncTransientTextRun {
         self
     }
 }
@@ -33688,6 +34184,24 @@ impl SseEncode for crate::api::api::CloudSyncRawSystemFields {
     }
 }
 
+impl SseEncode for crate::api::api::CloudSyncTransientAssociationKind {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::api::CloudSyncTransientAssociationKind::None => 0,
+                crate::api::api::CloudSyncTransientAssociationKind::Sticker => 1,
+                crate::api::api::CloudSyncTransientAssociationKind::ReactionAdd => 2,
+                crate::api::api::CloudSyncTransientAssociationKind::ReactionRemove => 3,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
 impl SseEncode for crate::api::api::CloudSyncTransientAttachmentPayload {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -33696,6 +34210,8 @@ impl SseEncode for crate::api::api::CloudSyncTransientAttachmentPayload {
         <Option<String>>::sse_encode(self.owner_logical_key_hash, serializer);
         <Option<String>>::sse_encode(self.owner_canonical_guid, serializer);
         <Option<u32>>::sse_encode(self.owner_part, serializer);
+        <crate::api::api::CloudSyncTransientFieldState>::sse_encode(self.uti_state, serializer);
+        <Option<String>>::sse_encode(self.uti, serializer);
         <crate::api::api::CloudSyncTransientFieldState>::sse_encode(
             self.file_name_state,
             serializer,
@@ -33707,10 +34223,28 @@ impl SseEncode for crate::api::api::CloudSyncTransientAttachmentPayload {
         );
         <Option<String>>::sse_encode(self.mime_type, serializer);
         <crate::api::api::CloudSyncTransientFieldState>::sse_encode(
+            self.total_bytes_state,
+            serializer,
+        );
+        <Option<u64>>::sse_encode(self.total_bytes, serializer);
+        <crate::api::api::CloudSyncTransientFieldState>::sse_encode(
+            self.is_outgoing_state,
+            serializer,
+        );
+        <Option<bool>>::sse_encode(self.is_outgoing, serializer);
+        <crate::api::api::CloudSyncTransientFieldState>::sse_encode(
             self.protected_local_reference_state,
             serializer,
         );
         <Option<String>>::sse_encode(self.protected_local_reference, serializer);
+    }
+}
+
+impl SseEncode for crate::api::api::CloudSyncTransientAttributedBody {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.text, serializer);
+        <Vec<crate::api::api::CloudSyncTransientTextRun>>::sse_encode(self.runs, serializer);
     }
 }
 
@@ -33720,12 +34254,52 @@ impl SseEncode for crate::api::api::CloudSyncTransientChatPayload {
         <String>::sse_encode(self.logical_entity_key_hash, serializer);
         <String>::sse_encode(self.canonical_guid, serializer);
         <String>::sse_encode(self.chat_identifier, serializer);
+        <String>::sse_encode(self.group_id, serializer);
+        <String>::sse_encode(self.original_group_id, serializer);
+        <crate::api::api::CloudSyncTransientService>::sse_encode(self.service, serializer);
+        <crate::api::api::CloudSyncTransientChatStyle>::sse_encode(self.style, serializer);
         <Vec<String>>::sse_encode(self.participant_handles, serializer);
         <crate::api::api::CloudSyncTransientFieldState>::sse_encode(
             self.display_name_state,
             serializer,
         );
         <Option<String>>::sse_encode(self.display_name, serializer);
+        <crate::api::api::CloudSyncTransientFieldState>::sse_encode(
+            self.last_addressed_handle_state,
+            serializer,
+        );
+        <Option<String>>::sse_encode(self.last_addressed_handle, serializer);
+        <crate::api::api::CloudSyncTransientFieldState>::sse_encode(
+            self.group_version_state,
+            serializer,
+        );
+        <Option<u32>>::sse_encode(self.group_version, serializer);
+        <crate::api::api::CloudSyncTransientFieldState>::sse_encode(
+            self.last_seen_message_guid_state,
+            serializer,
+        );
+        <Option<String>>::sse_encode(self.last_seen_message_guid, serializer);
+        <crate::api::api::CloudSyncTransientFieldState>::sse_encode(
+            self.group_photo_guid_state,
+            serializer,
+        );
+        <Option<String>>::sse_encode(self.group_photo_guid, serializer);
+    }
+}
+
+impl SseEncode for crate::api::api::CloudSyncTransientChatStyle {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::api::CloudSyncTransientChatStyle::Direct => 0,
+                crate::api::api::CloudSyncTransientChatStyle::Group => 1,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 
@@ -33864,6 +34438,33 @@ impl SseEncode for crate::api::api::CloudSyncTransientGroupPhotoPayload {
     }
 }
 
+impl SseEncode for crate::api::api::CloudSyncTransientKnownMessageFlags {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.from_me, serializer);
+        <bool>::sse_encode(self.delivered, serializer);
+        <bool>::sse_encode(self.read, serializer);
+        <bool>::sse_encode(self.has_data_detector_results, serializer);
+        <bool>::sse_encode(self.delivered_quietly, serializer);
+        <bool>::sse_encode(self.did_notify_recipient, serializer);
+    }
+}
+
+impl SseEncode for crate::api::api::CloudSyncTransientMessageEdit {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u32>::sse_encode(self.part, serializer);
+        <u32>::sse_encode(self.revision, serializer);
+        <Vec<crate::api::api::CloudSyncTransientAttributedBody>>::sse_encode(
+            self.bodies,
+            serializer,
+        );
+        <i64>::sse_encode(self.modified_at_millis, serializer);
+        <Option<u32>>::sse_encode(self.original_range_location, serializer);
+        <Option<u32>>::sse_encode(self.original_range_length, serializer);
+    }
+}
+
 impl SseEncode for crate::api::api::CloudSyncTransientMessagePayload {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -33872,8 +34473,46 @@ impl SseEncode for crate::api::api::CloudSyncTransientMessagePayload {
         <String>::sse_encode(self.chat_alias_key_hash, serializer);
         <String>::sse_encode(self.chat_identifier, serializer);
         <String>::sse_encode(self.sender_handle, serializer);
+        <i64>::sse_encode(self.created_at_millis, serializer);
+        <i64>::sse_encode(self.error, serializer);
+        <crate::api::api::CloudSyncTransientService>::sse_encode(self.service, serializer);
+        <crate::api::api::CloudSyncTransientFieldState>::sse_encode(self.subject_state, serializer);
+        <Option<String>>::sse_encode(self.subject, serializer);
         <crate::api::api::CloudSyncTransientFieldState>::sse_encode(self.body_state, serializer);
         <Option<String>>::sse_encode(self.body, serializer);
+        <crate::api::api::CloudSyncTransientFieldState>::sse_encode(
+            self.attributed_bodies_state,
+            serializer,
+        );
+        <Vec<crate::api::api::CloudSyncTransientAttributedBody>>::sse_encode(
+            self.attributed_bodies,
+            serializer,
+        );
+        <crate::api::api::CloudSyncTransientFieldState>::sse_encode(
+            self.balloon_bundle_id_state,
+            serializer,
+        );
+        <Option<String>>::sse_encode(self.balloon_bundle_id, serializer);
+        <crate::api::api::CloudSyncTransientFieldState>::sse_encode(self.effect_state, serializer);
+        <Option<String>>::sse_encode(self.effect, serializer);
+        <crate::api::api::CloudSyncTransientFieldState>::sse_encode(
+            self.read_at_millis_state,
+            serializer,
+        );
+        <Option<i64>>::sse_encode(self.read_at_millis, serializer);
+        <crate::api::api::CloudSyncTransientFieldState>::sse_encode(
+            self.delivered_at_millis_state,
+            serializer,
+        );
+        <Option<i64>>::sse_encode(self.delivered_at_millis, serializer);
+        <crate::api::api::CloudSyncTransientKnownMessageFlags>::sse_encode(
+            self.known_flags,
+            serializer,
+        );
+        <crate::api::api::CloudSyncTransientAssociationKind>::sse_encode(
+            self.association_kind,
+            serializer,
+        );
         <Option<crate::api::api::CloudSyncTransientReactionKind>>::sse_encode(
             self.reaction_kind,
             serializer,
@@ -33882,6 +34521,18 @@ impl SseEncode for crate::api::api::CloudSyncTransientMessagePayload {
         <Option<String>>::sse_encode(self.reaction_parent_logical_key_hash, serializer);
         <Option<String>>::sse_encode(self.reaction_parent_canonical_guid, serializer);
         <Option<u32>>::sse_encode(self.reaction_parent_part, serializer);
+        <Option<u32>>::sse_encode(self.associated_range_location, serializer);
+        <Option<u32>>::sse_encode(self.associated_range_length, serializer);
+        <Option<String>>::sse_encode(self.reply_parent_logical_key_hash, serializer);
+        <Option<String>>::sse_encode(self.reply_parent_canonical_guid, serializer);
+        <Option<String>>::sse_encode(self.reply_parent_part, serializer);
+        <crate::api::api::CloudSyncTransientFieldState>::sse_encode(self.edits_state, serializer);
+        <Vec<crate::api::api::CloudSyncTransientMessageEdit>>::sse_encode(self.edits, serializer);
+        <crate::api::api::CloudSyncTransientFieldState>::sse_encode(
+            self.retracted_parts_state,
+            serializer,
+        );
+        <Vec<u32>>::sse_encode(self.retracted_parts, serializer);
         <crate::api::api::CloudSyncTransientFieldState>::sse_encode(
             self.associated_emoji_state,
             serializer,
@@ -33968,6 +34619,21 @@ impl SseEncode for crate::api::api::CloudSyncTransientReactionKind {
     }
 }
 
+impl SseEncode for crate::api::api::CloudSyncTransientService {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::api::CloudSyncTransientService::IMessage => 0,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
 impl SseEncode for crate::api::api::CloudSyncTransientSnapshot {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -33984,6 +34650,24 @@ impl SseEncode for crate::api::api::CloudSyncTransientSnapshot {
         <Option<String>>::sse_encode(self.group_metadata_digest, serializer);
         <Option<String>>::sse_encode(self.etag_hash, serializer);
         <String>::sse_encode(self.protected_source_reference, serializer);
+    }
+}
+
+impl SseEncode for crate::api::api::CloudSyncTransientTextRun {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u32>::sse_encode(self.start_utf16, serializer);
+        <u32>::sse_encode(self.length_utf16, serializer);
+        <Option<u32>>::sse_encode(self.message_part, serializer);
+        <Option<String>>::sse_encode(self.attachment_canonical_guid, serializer);
+        <Option<String>>::sse_encode(self.attachment_logical_key_hash, serializer);
+        <Option<String>>::sse_encode(self.mention_handle, serializer);
+        <Option<String>>::sse_encode(self.audio_transcript, serializer);
+        <Option<i64>>::sse_encode(self.text_effect, serializer);
+        <Option<bool>>::sse_encode(self.bold, serializer);
+        <Option<bool>>::sse_encode(self.italic, serializer);
+        <Option<bool>>::sse_encode(self.strikethrough, serializer);
+        <Option<bool>>::sse_encode(self.underline, serializer);
     }
 }
 
@@ -34529,12 +35213,42 @@ impl SseEncode for Vec<crate::api::api::CloudSyncRawChange> {
     }
 }
 
+impl SseEncode for Vec<crate::api::api::CloudSyncTransientAttributedBody> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::api::CloudSyncTransientAttributedBody>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::api::CloudSyncTransientEditPart> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::api::CloudSyncTransientEditPart>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::api::CloudSyncTransientMessageEdit> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::api::CloudSyncTransientMessageEdit>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::api::CloudSyncTransientTextRun> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::api::CloudSyncTransientTextRun>::sse_encode(item, serializer);
         }
     }
 }

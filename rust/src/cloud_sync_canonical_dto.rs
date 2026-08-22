@@ -805,12 +805,44 @@ impl CloudCanonicalChatPayload {
         &self.original_group_id
     }
 
+    pub(crate) fn service(&self) -> CloudCanonicalService {
+        self.service
+    }
+
+    pub(crate) fn style(&self) -> CloudCanonicalChatStyle {
+        self.style
+    }
+
+    pub(crate) fn last_addressed_handle_state(&self) -> CloudCanonicalFieldState {
+        self.last_addressed_handle.state()
+    }
+
+    pub(crate) fn last_addressed_handle(&self) -> &CloudCanonicalField<String> {
+        &self.last_addressed_handle
+    }
+
     pub(crate) fn group_version_state(&self) -> CloudCanonicalFieldState {
         self.group_version.state()
     }
 
+    pub(crate) fn group_version(&self) -> &CloudCanonicalField<u32> {
+        &self.group_version
+    }
+
+    pub(crate) fn last_seen_message_guid_state(&self) -> CloudCanonicalFieldState {
+        self.last_seen_message_guid.state()
+    }
+
+    pub(crate) fn last_seen_message_guid(&self) -> &CloudCanonicalField<String> {
+        &self.last_seen_message_guid
+    }
+
     pub(crate) fn group_photo_guid_state(&self) -> CloudCanonicalFieldState {
         self.group_photo_guid.state()
+    }
+
+    pub(crate) fn group_photo_guid(&self) -> &CloudCanonicalField<String> {
+        &self.group_photo_guid
     }
 
     pub(crate) fn participant_handles(&self) -> &[String] {
@@ -844,6 +876,14 @@ impl CloudCanonicalAttachmentReference {
             canonical_guid,
             logical_key_hash,
         })
+    }
+
+    pub(crate) fn canonical_guid(&self) -> &str {
+        &self.canonical_guid
+    }
+
+    pub(crate) fn logical_key_hash(&self) -> &CloudCanonicalHash {
+        &self.logical_key_hash
     }
 }
 
@@ -920,6 +960,46 @@ impl CloudCanonicalTextRun {
         self.message_part
     }
 
+    pub(crate) fn start_utf16(&self) -> u32 {
+        self.start_utf16
+    }
+
+    pub(crate) fn length_utf16(&self) -> u32 {
+        self.length_utf16
+    }
+
+    pub(crate) fn attachment(&self) -> Option<&CloudCanonicalAttachmentReference> {
+        self.attachment.as_ref()
+    }
+
+    pub(crate) fn mention(&self) -> Option<&str> {
+        self.mention.as_deref()
+    }
+
+    pub(crate) fn audio_transcript(&self) -> Option<&str> {
+        self.audio_transcript.as_deref()
+    }
+
+    pub(crate) fn text_effect(&self) -> Option<i64> {
+        self.text_effect
+    }
+
+    pub(crate) fn bold(&self) -> Option<bool> {
+        self.bold
+    }
+
+    pub(crate) fn italic(&self) -> Option<bool> {
+        self.italic
+    }
+
+    pub(crate) fn strikethrough(&self) -> Option<bool> {
+        self.strikethrough
+    }
+
+    pub(crate) fn underline(&self) -> Option<bool> {
+        self.underline
+    }
+
     pub(crate) fn has_attachment(&self) -> bool {
         self.attachment.is_some()
     }
@@ -972,6 +1052,10 @@ impl CloudCanonicalAttributedBody {
 
     pub(crate) fn text_utf16_length(&self) -> usize {
         self.text.encode_utf16().count()
+    }
+
+    pub(crate) fn text(&self) -> &str {
+        &self.text
     }
 
     pub(crate) fn runs(&self) -> &[CloudCanonicalTextRun] {
@@ -1031,6 +1115,14 @@ impl CloudCanonicalParentReference {
     pub(crate) fn parent_part(&self) -> Option<u32> {
         self.parent_part
     }
+
+    pub(crate) fn range_location(&self) -> Option<u32> {
+        self.range_location
+    }
+
+    pub(crate) fn range_length(&self) -> Option<u32> {
+        self.range_length
+    }
 }
 
 impl Debug for CloudCanonicalParentReference {
@@ -1070,6 +1162,10 @@ impl CloudCanonicalReplyReference {
 
     pub(crate) fn parent_guid(&self) -> &str {
         &self.parent_guid
+    }
+
+    pub(crate) fn parent_part(&self) -> &str {
+        &self.parent_part
     }
 }
 
@@ -1127,6 +1223,13 @@ impl CloudCanonicalMessageAssociation {
             Self::ReactionAdd { kind, parent } => Some((*kind, parent, false)),
             Self::ReactionRemove { kind, parent } => Some((*kind, parent, true)),
             Self::None | Self::Sticker(_) => None,
+        }
+    }
+
+    pub(crate) fn sticker(&self) -> Option<&CloudCanonicalParentReference> {
+        match self {
+            Self::Sticker(parent) => Some(parent),
+            Self::None | Self::ReactionAdd { .. } | Self::ReactionRemove { .. } => None,
         }
     }
 
@@ -1213,6 +1316,14 @@ impl CloudCanonicalMessageEdit {
 
     pub(crate) fn modified_at_millis(&self) -> i64 {
         self.modified_at_millis
+    }
+
+    pub(crate) fn bodies(&self) -> &[CloudCanonicalAttributedBody] {
+        &self.bodies
+    }
+
+    pub(crate) fn original_range(&self) -> Option<(u32, u32)> {
+        self.original_range
     }
 }
 
@@ -1487,8 +1598,48 @@ impl CloudCanonicalMessagePayload {
         &self.sender_handle
     }
 
+    pub(crate) fn created_at_millis(&self) -> i64 {
+        self.created_at_millis
+    }
+
+    pub(crate) fn error(&self) -> i64 {
+        self.error
+    }
+
+    pub(crate) fn service(&self) -> CloudCanonicalService {
+        self.service
+    }
+
+    pub(crate) fn subject(&self) -> &CloudCanonicalField<String> {
+        &self.subject
+    }
+
     pub(crate) fn text(&self) -> &CloudCanonicalField<String> {
         &self.text
+    }
+
+    pub(crate) fn balloon_bundle_id(&self) -> &CloudCanonicalField<String> {
+        &self.balloon_bundle_id
+    }
+
+    pub(crate) fn decoded_extension_payload(&self) -> &CloudCanonicalField<Vec<u8>> {
+        &self.decoded_extension_payload
+    }
+
+    pub(crate) fn effect(&self) -> &CloudCanonicalField<String> {
+        &self.effect
+    }
+
+    pub(crate) fn read_at_millis(&self) -> &CloudCanonicalField<i64> {
+        &self.read_at_millis
+    }
+
+    pub(crate) fn delivered_at_millis(&self) -> &CloudCanonicalField<i64> {
+        &self.delivered_at_millis
+    }
+
+    pub(crate) fn flags(&self) -> CloudCanonicalKnownMessageFlags {
+        self.flags
     }
 
     pub(crate) fn associated_emoji(&self) -> &CloudCanonicalField<String> {
@@ -1587,12 +1738,24 @@ impl CloudCanonicalAttachmentPayload {
         self.owner_message_key_hash.as_ref()
     }
 
+    pub(crate) fn uti(&self) -> &CloudCanonicalField<String> {
+        &self.uti
+    }
+
     pub(crate) fn mime_type(&self) -> &CloudCanonicalField<String> {
         &self.mime_type
     }
 
     pub(crate) fn transfer_name(&self) -> &CloudCanonicalField<String> {
         &self.transfer_name
+    }
+
+    pub(crate) fn total_bytes(&self) -> &CloudCanonicalField<u64> {
+        &self.total_bytes
+    }
+
+    pub(crate) fn is_outgoing(&self) -> &CloudCanonicalField<bool> {
+        &self.is_outgoing
     }
 
     pub(crate) fn verified_local_file_reference(

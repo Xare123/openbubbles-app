@@ -15879,26 +15879,52 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudSyncTransientAssociationKind
+  dco_decode_cloud_sync_transient_association_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return CloudSyncTransientAssociationKind.values[raw as int];
+  }
+
+  @protected
   CloudSyncTransientAttachmentPayload
   dco_decode_cloud_sync_transient_attachment_payload(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 11)
-      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
+    if (arr.length != 17)
+      throw Exception('unexpected arr length: expect 17 but see ${arr.length}');
     return CloudSyncTransientAttachmentPayload(
       logicalEntityKeyHash: dco_decode_String(arr[0]),
       canonicalGuid: dco_decode_String(arr[1]),
       ownerLogicalKeyHash: dco_decode_opt_String(arr[2]),
       ownerCanonicalGuid: dco_decode_opt_String(arr[3]),
       ownerPart: dco_decode_opt_box_autoadd_u_32(arr[4]),
-      fileNameState: dco_decode_cloud_sync_transient_field_state(arr[5]),
-      fileName: dco_decode_opt_String(arr[6]),
-      mimeTypeState: dco_decode_cloud_sync_transient_field_state(arr[7]),
-      mimeType: dco_decode_opt_String(arr[8]),
+      utiState: dco_decode_cloud_sync_transient_field_state(arr[5]),
+      uti: dco_decode_opt_String(arr[6]),
+      fileNameState: dco_decode_cloud_sync_transient_field_state(arr[7]),
+      fileName: dco_decode_opt_String(arr[8]),
+      mimeTypeState: dco_decode_cloud_sync_transient_field_state(arr[9]),
+      mimeType: dco_decode_opt_String(arr[10]),
+      totalBytesState: dco_decode_cloud_sync_transient_field_state(arr[11]),
+      totalBytes: dco_decode_opt_box_autoadd_u_64(arr[12]),
+      isOutgoingState: dco_decode_cloud_sync_transient_field_state(arr[13]),
+      isOutgoing: dco_decode_opt_box_autoadd_bool(arr[14]),
       protectedLocalReferenceState: dco_decode_cloud_sync_transient_field_state(
-        arr[9],
+        arr[15],
       ),
-      protectedLocalReference: dco_decode_opt_String(arr[10]),
+      protectedLocalReference: dco_decode_opt_String(arr[16]),
+    );
+  }
+
+  @protected
+  CloudSyncTransientAttributedBody
+  dco_decode_cloud_sync_transient_attributed_body(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return CloudSyncTransientAttributedBody(
+      text: dco_decode_String(arr[0]),
+      runs: dco_decode_list_cloud_sync_transient_text_run(arr[1]),
     );
   }
 
@@ -15908,16 +15934,40 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 6)
-      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    if (arr.length != 18)
+      throw Exception('unexpected arr length: expect 18 but see ${arr.length}');
     return CloudSyncTransientChatPayload(
       logicalEntityKeyHash: dco_decode_String(arr[0]),
       canonicalGuid: dco_decode_String(arr[1]),
       chatIdentifier: dco_decode_String(arr[2]),
-      participantHandles: dco_decode_list_String(arr[3]),
-      displayNameState: dco_decode_cloud_sync_transient_field_state(arr[4]),
-      displayName: dco_decode_opt_String(arr[5]),
+      groupId: dco_decode_String(arr[3]),
+      originalGroupId: dco_decode_String(arr[4]),
+      service: dco_decode_cloud_sync_transient_service(arr[5]),
+      style: dco_decode_cloud_sync_transient_chat_style(arr[6]),
+      participantHandles: dco_decode_list_String(arr[7]),
+      displayNameState: dco_decode_cloud_sync_transient_field_state(arr[8]),
+      displayName: dco_decode_opt_String(arr[9]),
+      lastAddressedHandleState: dco_decode_cloud_sync_transient_field_state(
+        arr[10],
+      ),
+      lastAddressedHandle: dco_decode_opt_String(arr[11]),
+      groupVersionState: dco_decode_cloud_sync_transient_field_state(arr[12]),
+      groupVersion: dco_decode_opt_box_autoadd_u_32(arr[13]),
+      lastSeenMessageGuidState: dco_decode_cloud_sync_transient_field_state(
+        arr[14],
+      ),
+      lastSeenMessageGuid: dco_decode_opt_String(arr[15]),
+      groupPhotoGuidState: dco_decode_cloud_sync_transient_field_state(arr[16]),
+      groupPhotoGuid: dco_decode_opt_String(arr[17]),
     );
+  }
+
+  @protected
+  CloudSyncTransientChatStyle dco_decode_cloud_sync_transient_chat_style(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return CloudSyncTransientChatStyle.values[raw as int];
   }
 
   @protected
@@ -16021,30 +16071,103 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudSyncTransientKnownMessageFlags
+  dco_decode_cloud_sync_transient_known_message_flags(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return CloudSyncTransientKnownMessageFlags(
+      fromMe: dco_decode_bool(arr[0]),
+      delivered: dco_decode_bool(arr[1]),
+      read: dco_decode_bool(arr[2]),
+      hasDataDetectorResults: dco_decode_bool(arr[3]),
+      deliveredQuietly: dco_decode_bool(arr[4]),
+      didNotifyRecipient: dco_decode_bool(arr[5]),
+    );
+  }
+
+  @protected
+  CloudSyncTransientMessageEdit dco_decode_cloud_sync_transient_message_edit(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return CloudSyncTransientMessageEdit(
+      part_: dco_decode_u_32(arr[0]),
+      revision: dco_decode_u_32(arr[1]),
+      bodies: dco_decode_list_cloud_sync_transient_attributed_body(arr[2]),
+      modifiedAtMillis: dco_decode_i_64(arr[3]),
+      originalRangeLocation: dco_decode_opt_box_autoadd_u_32(arr[4]),
+      originalRangeLength: dco_decode_opt_box_autoadd_u_32(arr[5]),
+    );
+  }
+
+  @protected
   CloudSyncTransientMessagePayload
   dco_decode_cloud_sync_transient_message_payload(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 14)
-      throw Exception('unexpected arr length: expect 14 but see ${arr.length}');
+    if (arr.length != 40)
+      throw Exception('unexpected arr length: expect 40 but see ${arr.length}');
     return CloudSyncTransientMessagePayload(
       logicalEntityKeyHash: dco_decode_String(arr[0]),
       canonicalGuid: dco_decode_String(arr[1]),
       chatAliasKeyHash: dco_decode_String(arr[2]),
       chatIdentifier: dco_decode_String(arr[3]),
       senderHandle: dco_decode_String(arr[4]),
-      bodyState: dco_decode_cloud_sync_transient_field_state(arr[5]),
-      body: dco_decode_opt_String(arr[6]),
-      reactionKind:
-          dco_decode_opt_box_autoadd_cloud_sync_transient_reaction_kind(arr[7]),
-      reactionRemoved: dco_decode_bool(arr[8]),
-      reactionParentLogicalKeyHash: dco_decode_opt_String(arr[9]),
-      reactionParentCanonicalGuid: dco_decode_opt_String(arr[10]),
-      reactionParentPart: dco_decode_opt_box_autoadd_u_32(arr[11]),
-      associatedEmojiState: dco_decode_cloud_sync_transient_field_state(
+      createdAtMillis: dco_decode_i_64(arr[5]),
+      error: dco_decode_i_64(arr[6]),
+      service: dco_decode_cloud_sync_transient_service(arr[7]),
+      subjectState: dco_decode_cloud_sync_transient_field_state(arr[8]),
+      subject: dco_decode_opt_String(arr[9]),
+      bodyState: dco_decode_cloud_sync_transient_field_state(arr[10]),
+      body: dco_decode_opt_String(arr[11]),
+      attributedBodiesState: dco_decode_cloud_sync_transient_field_state(
         arr[12],
       ),
-      associatedEmoji: dco_decode_opt_String(arr[13]),
+      attributedBodies: dco_decode_list_cloud_sync_transient_attributed_body(
+        arr[13],
+      ),
+      balloonBundleIdState: dco_decode_cloud_sync_transient_field_state(
+        arr[14],
+      ),
+      balloonBundleId: dco_decode_opt_String(arr[15]),
+      effectState: dco_decode_cloud_sync_transient_field_state(arr[16]),
+      effect: dco_decode_opt_String(arr[17]),
+      readAtMillisState: dco_decode_cloud_sync_transient_field_state(arr[18]),
+      readAtMillis: dco_decode_opt_box_autoadd_i_64(arr[19]),
+      deliveredAtMillisState: dco_decode_cloud_sync_transient_field_state(
+        arr[20],
+      ),
+      deliveredAtMillis: dco_decode_opt_box_autoadd_i_64(arr[21]),
+      knownFlags: dco_decode_cloud_sync_transient_known_message_flags(arr[22]),
+      associationKind: dco_decode_cloud_sync_transient_association_kind(
+        arr[23],
+      ),
+      reactionKind:
+          dco_decode_opt_box_autoadd_cloud_sync_transient_reaction_kind(
+            arr[24],
+          ),
+      reactionRemoved: dco_decode_bool(arr[25]),
+      reactionParentLogicalKeyHash: dco_decode_opt_String(arr[26]),
+      reactionParentCanonicalGuid: dco_decode_opt_String(arr[27]),
+      reactionParentPart: dco_decode_opt_box_autoadd_u_32(arr[28]),
+      associatedRangeLocation: dco_decode_opt_box_autoadd_u_32(arr[29]),
+      associatedRangeLength: dco_decode_opt_box_autoadd_u_32(arr[30]),
+      replyParentLogicalKeyHash: dco_decode_opt_String(arr[31]),
+      replyParentCanonicalGuid: dco_decode_opt_String(arr[32]),
+      replyParentPart: dco_decode_opt_String(arr[33]),
+      editsState: dco_decode_cloud_sync_transient_field_state(arr[34]),
+      edits: dco_decode_list_cloud_sync_transient_message_edit(arr[35]),
+      retractedPartsState: dco_decode_cloud_sync_transient_field_state(arr[36]),
+      retractedParts: dco_decode_list_prim_u_32_strict(arr[37]),
+      associatedEmojiState: dco_decode_cloud_sync_transient_field_state(
+        arr[38],
+      ),
+      associatedEmoji: dco_decode_opt_String(arr[39]),
     );
   }
 
@@ -16098,6 +16221,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudSyncTransientService dco_decode_cloud_sync_transient_service(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return CloudSyncTransientService.values[raw as int];
+  }
+
+  @protected
   CloudSyncTransientSnapshot dco_decode_cloud_sync_transient_snapshot(
     dynamic raw,
   ) {
@@ -16119,6 +16250,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       groupMetadataDigest: dco_decode_opt_String(arr[10]),
       etagHash: dco_decode_opt_String(arr[11]),
       protectedSourceReference: dco_decode_String(arr[12]),
+    );
+  }
+
+  @protected
+  CloudSyncTransientTextRun dco_decode_cloud_sync_transient_text_run(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 12)
+      throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
+    return CloudSyncTransientTextRun(
+      startUtf16: dco_decode_u_32(arr[0]),
+      lengthUtf16: dco_decode_u_32(arr[1]),
+      messagePart: dco_decode_opt_box_autoadd_u_32(arr[2]),
+      attachmentCanonicalGuid: dco_decode_opt_String(arr[3]),
+      attachmentLogicalKeyHash: dco_decode_opt_String(arr[4]),
+      mentionHandle: dco_decode_opt_String(arr[5]),
+      audioTranscript: dco_decode_opt_String(arr[6]),
+      textEffect: dco_decode_opt_box_autoadd_i_64(arr[7]),
+      bold: dco_decode_opt_box_autoadd_bool(arr[8]),
+      italic: dco_decode_opt_box_autoadd_bool(arr[9]),
+      strikethrough: dco_decode_opt_box_autoadd_bool(arr[10]),
+      underline: dco_decode_opt_box_autoadd_bool(arr[11]),
     );
   }
 
@@ -16722,11 +16877,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<CloudSyncTransientAttributedBody>
+  dco_decode_list_cloud_sync_transient_attributed_body(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_cloud_sync_transient_attributed_body)
+        .toList();
+  }
+
+  @protected
   List<CloudSyncTransientEditPart>
   dco_decode_list_cloud_sync_transient_edit_part(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>)
         .map(dco_decode_cloud_sync_transient_edit_part)
+        .toList();
+  }
+
+  @protected
+  List<CloudSyncTransientMessageEdit>
+  dco_decode_list_cloud_sync_transient_message_edit(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_cloud_sync_transient_message_edit)
+        .toList();
+  }
+
+  @protected
+  List<CloudSyncTransientTextRun> dco_decode_list_cloud_sync_transient_text_run(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_cloud_sync_transient_text_run)
         .toList();
   }
 
@@ -24785,6 +24968,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudSyncTransientAssociationKind
+  sse_decode_cloud_sync_transient_association_kind(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return CloudSyncTransientAssociationKind.values[inner];
+  }
+
+  @protected
   CloudSyncTransientAttachmentPayload
   sse_decode_cloud_sync_transient_attachment_payload(
     SseDeserializer deserializer,
@@ -24795,6 +24988,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_ownerLogicalKeyHash = sse_decode_opt_String(deserializer);
     var var_ownerCanonicalGuid = sse_decode_opt_String(deserializer);
     var var_ownerPart = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_utiState = sse_decode_cloud_sync_transient_field_state(
+      deserializer,
+    );
+    var var_uti = sse_decode_opt_String(deserializer);
     var var_fileNameState = sse_decode_cloud_sync_transient_field_state(
       deserializer,
     );
@@ -24803,6 +25000,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       deserializer,
     );
     var var_mimeType = sse_decode_opt_String(deserializer);
+    var var_totalBytesState = sse_decode_cloud_sync_transient_field_state(
+      deserializer,
+    );
+    var var_totalBytes = sse_decode_opt_box_autoadd_u_64(deserializer);
+    var var_isOutgoingState = sse_decode_cloud_sync_transient_field_state(
+      deserializer,
+    );
+    var var_isOutgoing = sse_decode_opt_box_autoadd_bool(deserializer);
     var var_protectedLocalReferenceState =
         sse_decode_cloud_sync_transient_field_state(deserializer);
     var var_protectedLocalReference = sse_decode_opt_String(deserializer);
@@ -24812,13 +25017,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       ownerLogicalKeyHash: var_ownerLogicalKeyHash,
       ownerCanonicalGuid: var_ownerCanonicalGuid,
       ownerPart: var_ownerPart,
+      utiState: var_utiState,
+      uti: var_uti,
       fileNameState: var_fileNameState,
       fileName: var_fileName,
       mimeTypeState: var_mimeTypeState,
       mimeType: var_mimeType,
+      totalBytesState: var_totalBytesState,
+      totalBytes: var_totalBytes,
+      isOutgoingState: var_isOutgoingState,
+      isOutgoing: var_isOutgoing,
       protectedLocalReferenceState: var_protectedLocalReferenceState,
       protectedLocalReference: var_protectedLocalReference,
     );
+  }
+
+  @protected
+  CloudSyncTransientAttributedBody
+  sse_decode_cloud_sync_transient_attributed_body(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_text = sse_decode_String(deserializer);
+    var var_runs = sse_decode_list_cloud_sync_transient_text_run(deserializer);
+    return CloudSyncTransientAttributedBody(text: var_text, runs: var_runs);
   }
 
   @protected
@@ -24829,19 +25051,58 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_logicalEntityKeyHash = sse_decode_String(deserializer);
     var var_canonicalGuid = sse_decode_String(deserializer);
     var var_chatIdentifier = sse_decode_String(deserializer);
+    var var_groupId = sse_decode_String(deserializer);
+    var var_originalGroupId = sse_decode_String(deserializer);
+    var var_service = sse_decode_cloud_sync_transient_service(deserializer);
+    var var_style = sse_decode_cloud_sync_transient_chat_style(deserializer);
     var var_participantHandles = sse_decode_list_String(deserializer);
     var var_displayNameState = sse_decode_cloud_sync_transient_field_state(
       deserializer,
     );
     var var_displayName = sse_decode_opt_String(deserializer);
+    var var_lastAddressedHandleState =
+        sse_decode_cloud_sync_transient_field_state(deserializer);
+    var var_lastAddressedHandle = sse_decode_opt_String(deserializer);
+    var var_groupVersionState = sse_decode_cloud_sync_transient_field_state(
+      deserializer,
+    );
+    var var_groupVersion = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_lastSeenMessageGuidState =
+        sse_decode_cloud_sync_transient_field_state(deserializer);
+    var var_lastSeenMessageGuid = sse_decode_opt_String(deserializer);
+    var var_groupPhotoGuidState = sse_decode_cloud_sync_transient_field_state(
+      deserializer,
+    );
+    var var_groupPhotoGuid = sse_decode_opt_String(deserializer);
     return CloudSyncTransientChatPayload(
       logicalEntityKeyHash: var_logicalEntityKeyHash,
       canonicalGuid: var_canonicalGuid,
       chatIdentifier: var_chatIdentifier,
+      groupId: var_groupId,
+      originalGroupId: var_originalGroupId,
+      service: var_service,
+      style: var_style,
       participantHandles: var_participantHandles,
       displayNameState: var_displayNameState,
       displayName: var_displayName,
+      lastAddressedHandleState: var_lastAddressedHandleState,
+      lastAddressedHandle: var_lastAddressedHandle,
+      groupVersionState: var_groupVersionState,
+      groupVersion: var_groupVersion,
+      lastSeenMessageGuidState: var_lastSeenMessageGuidState,
+      lastSeenMessageGuid: var_lastSeenMessageGuid,
+      groupPhotoGuidState: var_groupPhotoGuidState,
+      groupPhotoGuid: var_groupPhotoGuid,
     );
+  }
+
+  @protected
+  CloudSyncTransientChatStyle sse_decode_cloud_sync_transient_chat_style(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return CloudSyncTransientChatStyle.values[inner];
   }
 
   @protected
@@ -24968,6 +25229,53 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudSyncTransientKnownMessageFlags
+  sse_decode_cloud_sync_transient_known_message_flags(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_fromMe = sse_decode_bool(deserializer);
+    var var_delivered = sse_decode_bool(deserializer);
+    var var_read = sse_decode_bool(deserializer);
+    var var_hasDataDetectorResults = sse_decode_bool(deserializer);
+    var var_deliveredQuietly = sse_decode_bool(deserializer);
+    var var_didNotifyRecipient = sse_decode_bool(deserializer);
+    return CloudSyncTransientKnownMessageFlags(
+      fromMe: var_fromMe,
+      delivered: var_delivered,
+      read: var_read,
+      hasDataDetectorResults: var_hasDataDetectorResults,
+      deliveredQuietly: var_deliveredQuietly,
+      didNotifyRecipient: var_didNotifyRecipient,
+    );
+  }
+
+  @protected
+  CloudSyncTransientMessageEdit sse_decode_cloud_sync_transient_message_edit(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_part_ = sse_decode_u_32(deserializer);
+    var var_revision = sse_decode_u_32(deserializer);
+    var var_bodies = sse_decode_list_cloud_sync_transient_attributed_body(
+      deserializer,
+    );
+    var var_modifiedAtMillis = sse_decode_i_64(deserializer);
+    var var_originalRangeLocation = sse_decode_opt_box_autoadd_u_32(
+      deserializer,
+    );
+    var var_originalRangeLength = sse_decode_opt_box_autoadd_u_32(deserializer);
+    return CloudSyncTransientMessageEdit(
+      part_: var_part_,
+      revision: var_revision,
+      bodies: var_bodies,
+      modifiedAtMillis: var_modifiedAtMillis,
+      originalRangeLocation: var_originalRangeLocation,
+      originalRangeLength: var_originalRangeLength,
+    );
+  }
+
+  @protected
   CloudSyncTransientMessagePayload
   sse_decode_cloud_sync_transient_message_payload(
     SseDeserializer deserializer,
@@ -24978,10 +25286,43 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_chatAliasKeyHash = sse_decode_String(deserializer);
     var var_chatIdentifier = sse_decode_String(deserializer);
     var var_senderHandle = sse_decode_String(deserializer);
+    var var_createdAtMillis = sse_decode_i_64(deserializer);
+    var var_error = sse_decode_i_64(deserializer);
+    var var_service = sse_decode_cloud_sync_transient_service(deserializer);
+    var var_subjectState = sse_decode_cloud_sync_transient_field_state(
+      deserializer,
+    );
+    var var_subject = sse_decode_opt_String(deserializer);
     var var_bodyState = sse_decode_cloud_sync_transient_field_state(
       deserializer,
     );
     var var_body = sse_decode_opt_String(deserializer);
+    var var_attributedBodiesState = sse_decode_cloud_sync_transient_field_state(
+      deserializer,
+    );
+    var var_attributedBodies =
+        sse_decode_list_cloud_sync_transient_attributed_body(deserializer);
+    var var_balloonBundleIdState = sse_decode_cloud_sync_transient_field_state(
+      deserializer,
+    );
+    var var_balloonBundleId = sse_decode_opt_String(deserializer);
+    var var_effectState = sse_decode_cloud_sync_transient_field_state(
+      deserializer,
+    );
+    var var_effect = sse_decode_opt_String(deserializer);
+    var var_readAtMillisState = sse_decode_cloud_sync_transient_field_state(
+      deserializer,
+    );
+    var var_readAtMillis = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_deliveredAtMillisState =
+        sse_decode_cloud_sync_transient_field_state(deserializer);
+    var var_deliveredAtMillis = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_knownFlags = sse_decode_cloud_sync_transient_known_message_flags(
+      deserializer,
+    );
+    var var_associationKind = sse_decode_cloud_sync_transient_association_kind(
+      deserializer,
+    );
     var var_reactionKind =
         sse_decode_opt_box_autoadd_cloud_sync_transient_reaction_kind(
           deserializer,
@@ -24990,6 +25331,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_reactionParentLogicalKeyHash = sse_decode_opt_String(deserializer);
     var var_reactionParentCanonicalGuid = sse_decode_opt_String(deserializer);
     var var_reactionParentPart = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_associatedRangeLocation = sse_decode_opt_box_autoadd_u_32(
+      deserializer,
+    );
+    var var_associatedRangeLength = sse_decode_opt_box_autoadd_u_32(
+      deserializer,
+    );
+    var var_replyParentLogicalKeyHash = sse_decode_opt_String(deserializer);
+    var var_replyParentCanonicalGuid = sse_decode_opt_String(deserializer);
+    var var_replyParentPart = sse_decode_opt_String(deserializer);
+    var var_editsState = sse_decode_cloud_sync_transient_field_state(
+      deserializer,
+    );
+    var var_edits = sse_decode_list_cloud_sync_transient_message_edit(
+      deserializer,
+    );
+    var var_retractedPartsState = sse_decode_cloud_sync_transient_field_state(
+      deserializer,
+    );
+    var var_retractedParts = sse_decode_list_prim_u_32_strict(deserializer);
     var var_associatedEmojiState = sse_decode_cloud_sync_transient_field_state(
       deserializer,
     );
@@ -25000,13 +25360,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       chatAliasKeyHash: var_chatAliasKeyHash,
       chatIdentifier: var_chatIdentifier,
       senderHandle: var_senderHandle,
+      createdAtMillis: var_createdAtMillis,
+      error: var_error,
+      service: var_service,
+      subjectState: var_subjectState,
+      subject: var_subject,
       bodyState: var_bodyState,
       body: var_body,
+      attributedBodiesState: var_attributedBodiesState,
+      attributedBodies: var_attributedBodies,
+      balloonBundleIdState: var_balloonBundleIdState,
+      balloonBundleId: var_balloonBundleId,
+      effectState: var_effectState,
+      effect: var_effect,
+      readAtMillisState: var_readAtMillisState,
+      readAtMillis: var_readAtMillis,
+      deliveredAtMillisState: var_deliveredAtMillisState,
+      deliveredAtMillis: var_deliveredAtMillis,
+      knownFlags: var_knownFlags,
+      associationKind: var_associationKind,
       reactionKind: var_reactionKind,
       reactionRemoved: var_reactionRemoved,
       reactionParentLogicalKeyHash: var_reactionParentLogicalKeyHash,
       reactionParentCanonicalGuid: var_reactionParentCanonicalGuid,
       reactionParentPart: var_reactionParentPart,
+      associatedRangeLocation: var_associatedRangeLocation,
+      associatedRangeLength: var_associatedRangeLength,
+      replyParentLogicalKeyHash: var_replyParentLogicalKeyHash,
+      replyParentCanonicalGuid: var_replyParentCanonicalGuid,
+      replyParentPart: var_replyParentPart,
+      editsState: var_editsState,
+      edits: var_edits,
+      retractedPartsState: var_retractedPartsState,
+      retractedParts: var_retractedParts,
       associatedEmojiState: var_associatedEmojiState,
       associatedEmoji: var_associatedEmoji,
     );
@@ -25069,6 +25455,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudSyncTransientService sse_decode_cloud_sync_transient_service(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return CloudSyncTransientService.values[inner];
+  }
+
+  @protected
   CloudSyncTransientSnapshot sse_decode_cloud_sync_transient_snapshot(
     SseDeserializer deserializer,
   ) {
@@ -25104,6 +25499,39 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       groupMetadataDigest: var_groupMetadataDigest,
       etagHash: var_etagHash,
       protectedSourceReference: var_protectedSourceReference,
+    );
+  }
+
+  @protected
+  CloudSyncTransientTextRun sse_decode_cloud_sync_transient_text_run(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_startUtf16 = sse_decode_u_32(deserializer);
+    var var_lengthUtf16 = sse_decode_u_32(deserializer);
+    var var_messagePart = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_attachmentCanonicalGuid = sse_decode_opt_String(deserializer);
+    var var_attachmentLogicalKeyHash = sse_decode_opt_String(deserializer);
+    var var_mentionHandle = sse_decode_opt_String(deserializer);
+    var var_audioTranscript = sse_decode_opt_String(deserializer);
+    var var_textEffect = sse_decode_opt_box_autoadd_i_64(deserializer);
+    var var_bold = sse_decode_opt_box_autoadd_bool(deserializer);
+    var var_italic = sse_decode_opt_box_autoadd_bool(deserializer);
+    var var_strikethrough = sse_decode_opt_box_autoadd_bool(deserializer);
+    var var_underline = sse_decode_opt_box_autoadd_bool(deserializer);
+    return CloudSyncTransientTextRun(
+      startUtf16: var_startUtf16,
+      lengthUtf16: var_lengthUtf16,
+      messagePart: var_messagePart,
+      attachmentCanonicalGuid: var_attachmentCanonicalGuid,
+      attachmentLogicalKeyHash: var_attachmentLogicalKeyHash,
+      mentionHandle: var_mentionHandle,
+      audioTranscript: var_audioTranscript,
+      textEffect: var_textEffect,
+      bold: var_bold,
+      italic: var_italic,
+      strikethrough: var_strikethrough,
+      underline: var_underline,
     );
   }
 
@@ -25859,6 +26287,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  List<CloudSyncTransientAttributedBody>
+  sse_decode_list_cloud_sync_transient_attributed_body(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <CloudSyncTransientAttributedBody>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_cloud_sync_transient_attributed_body(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
   List<CloudSyncTransientEditPart>
   sse_decode_list_cloud_sync_transient_edit_part(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -25867,6 +26310,35 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var ans_ = <CloudSyncTransientEditPart>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_cloud_sync_transient_edit_part(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<CloudSyncTransientMessageEdit>
+  sse_decode_list_cloud_sync_transient_message_edit(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <CloudSyncTransientMessageEdit>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_cloud_sync_transient_message_edit(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<CloudSyncTransientTextRun> sse_decode_list_cloud_sync_transient_text_run(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <CloudSyncTransientTextRun>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_cloud_sync_transient_text_run(deserializer));
     }
     return ans_;
   }
@@ -35189,6 +35661,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_cloud_sync_transient_association_kind(
+    CloudSyncTransientAssociationKind self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
   void sse_encode_cloud_sync_transient_attachment_payload(
     CloudSyncTransientAttachmentPayload self,
     SseSerializer serializer,
@@ -35199,15 +35680,37 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.ownerLogicalKeyHash, serializer);
     sse_encode_opt_String(self.ownerCanonicalGuid, serializer);
     sse_encode_opt_box_autoadd_u_32(self.ownerPart, serializer);
+    sse_encode_cloud_sync_transient_field_state(self.utiState, serializer);
+    sse_encode_opt_String(self.uti, serializer);
     sse_encode_cloud_sync_transient_field_state(self.fileNameState, serializer);
     sse_encode_opt_String(self.fileName, serializer);
     sse_encode_cloud_sync_transient_field_state(self.mimeTypeState, serializer);
     sse_encode_opt_String(self.mimeType, serializer);
     sse_encode_cloud_sync_transient_field_state(
+      self.totalBytesState,
+      serializer,
+    );
+    sse_encode_opt_box_autoadd_u_64(self.totalBytes, serializer);
+    sse_encode_cloud_sync_transient_field_state(
+      self.isOutgoingState,
+      serializer,
+    );
+    sse_encode_opt_box_autoadd_bool(self.isOutgoing, serializer);
+    sse_encode_cloud_sync_transient_field_state(
       self.protectedLocalReferenceState,
       serializer,
     );
     sse_encode_opt_String(self.protectedLocalReference, serializer);
+  }
+
+  @protected
+  void sse_encode_cloud_sync_transient_attributed_body(
+    CloudSyncTransientAttributedBody self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.text, serializer);
+    sse_encode_list_cloud_sync_transient_text_run(self.runs, serializer);
   }
 
   @protected
@@ -35219,12 +35722,45 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.logicalEntityKeyHash, serializer);
     sse_encode_String(self.canonicalGuid, serializer);
     sse_encode_String(self.chatIdentifier, serializer);
+    sse_encode_String(self.groupId, serializer);
+    sse_encode_String(self.originalGroupId, serializer);
+    sse_encode_cloud_sync_transient_service(self.service, serializer);
+    sse_encode_cloud_sync_transient_chat_style(self.style, serializer);
     sse_encode_list_String(self.participantHandles, serializer);
     sse_encode_cloud_sync_transient_field_state(
       self.displayNameState,
       serializer,
     );
     sse_encode_opt_String(self.displayName, serializer);
+    sse_encode_cloud_sync_transient_field_state(
+      self.lastAddressedHandleState,
+      serializer,
+    );
+    sse_encode_opt_String(self.lastAddressedHandle, serializer);
+    sse_encode_cloud_sync_transient_field_state(
+      self.groupVersionState,
+      serializer,
+    );
+    sse_encode_opt_box_autoadd_u_32(self.groupVersion, serializer);
+    sse_encode_cloud_sync_transient_field_state(
+      self.lastSeenMessageGuidState,
+      serializer,
+    );
+    sse_encode_opt_String(self.lastSeenMessageGuid, serializer);
+    sse_encode_cloud_sync_transient_field_state(
+      self.groupPhotoGuidState,
+      serializer,
+    );
+    sse_encode_opt_String(self.groupPhotoGuid, serializer);
+  }
+
+  @protected
+  void sse_encode_cloud_sync_transient_chat_style(
+    CloudSyncTransientChatStyle self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected
@@ -35331,6 +35867,37 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_cloud_sync_transient_known_message_flags(
+    CloudSyncTransientKnownMessageFlags self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bool(self.fromMe, serializer);
+    sse_encode_bool(self.delivered, serializer);
+    sse_encode_bool(self.read, serializer);
+    sse_encode_bool(self.hasDataDetectorResults, serializer);
+    sse_encode_bool(self.deliveredQuietly, serializer);
+    sse_encode_bool(self.didNotifyRecipient, serializer);
+  }
+
+  @protected
+  void sse_encode_cloud_sync_transient_message_edit(
+    CloudSyncTransientMessageEdit self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.part_, serializer);
+    sse_encode_u_32(self.revision, serializer);
+    sse_encode_list_cloud_sync_transient_attributed_body(
+      self.bodies,
+      serializer,
+    );
+    sse_encode_i_64(self.modifiedAtMillis, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.originalRangeLocation, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.originalRangeLength, serializer);
+  }
+
+  @protected
   void sse_encode_cloud_sync_transient_message_payload(
     CloudSyncTransientMessagePayload self,
     SseSerializer serializer,
@@ -35341,8 +35908,46 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.chatAliasKeyHash, serializer);
     sse_encode_String(self.chatIdentifier, serializer);
     sse_encode_String(self.senderHandle, serializer);
+    sse_encode_i_64(self.createdAtMillis, serializer);
+    sse_encode_i_64(self.error, serializer);
+    sse_encode_cloud_sync_transient_service(self.service, serializer);
+    sse_encode_cloud_sync_transient_field_state(self.subjectState, serializer);
+    sse_encode_opt_String(self.subject, serializer);
     sse_encode_cloud_sync_transient_field_state(self.bodyState, serializer);
     sse_encode_opt_String(self.body, serializer);
+    sse_encode_cloud_sync_transient_field_state(
+      self.attributedBodiesState,
+      serializer,
+    );
+    sse_encode_list_cloud_sync_transient_attributed_body(
+      self.attributedBodies,
+      serializer,
+    );
+    sse_encode_cloud_sync_transient_field_state(
+      self.balloonBundleIdState,
+      serializer,
+    );
+    sse_encode_opt_String(self.balloonBundleId, serializer);
+    sse_encode_cloud_sync_transient_field_state(self.effectState, serializer);
+    sse_encode_opt_String(self.effect, serializer);
+    sse_encode_cloud_sync_transient_field_state(
+      self.readAtMillisState,
+      serializer,
+    );
+    sse_encode_opt_box_autoadd_i_64(self.readAtMillis, serializer);
+    sse_encode_cloud_sync_transient_field_state(
+      self.deliveredAtMillisState,
+      serializer,
+    );
+    sse_encode_opt_box_autoadd_i_64(self.deliveredAtMillis, serializer);
+    sse_encode_cloud_sync_transient_known_message_flags(
+      self.knownFlags,
+      serializer,
+    );
+    sse_encode_cloud_sync_transient_association_kind(
+      self.associationKind,
+      serializer,
+    );
     sse_encode_opt_box_autoadd_cloud_sync_transient_reaction_kind(
       self.reactionKind,
       serializer,
@@ -35351,6 +35956,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.reactionParentLogicalKeyHash, serializer);
     sse_encode_opt_String(self.reactionParentCanonicalGuid, serializer);
     sse_encode_opt_box_autoadd_u_32(self.reactionParentPart, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.associatedRangeLocation, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.associatedRangeLength, serializer);
+    sse_encode_opt_String(self.replyParentLogicalKeyHash, serializer);
+    sse_encode_opt_String(self.replyParentCanonicalGuid, serializer);
+    sse_encode_opt_String(self.replyParentPart, serializer);
+    sse_encode_cloud_sync_transient_field_state(self.editsState, serializer);
+    sse_encode_list_cloud_sync_transient_message_edit(self.edits, serializer);
+    sse_encode_cloud_sync_transient_field_state(
+      self.retractedPartsState,
+      serializer,
+    );
+    sse_encode_list_prim_u_32_strict(self.retractedParts, serializer);
     sse_encode_cloud_sync_transient_field_state(
       self.associatedEmojiState,
       serializer,
@@ -35410,6 +36027,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_cloud_sync_transient_service(
+    CloudSyncTransientService self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
   void sse_encode_cloud_sync_transient_snapshot(
     CloudSyncTransientSnapshot self,
     SseSerializer serializer,
@@ -35428,6 +36054,26 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.groupMetadataDigest, serializer);
     sse_encode_opt_String(self.etagHash, serializer);
     sse_encode_String(self.protectedSourceReference, serializer);
+  }
+
+  @protected
+  void sse_encode_cloud_sync_transient_text_run(
+    CloudSyncTransientTextRun self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.startUtf16, serializer);
+    sse_encode_u_32(self.lengthUtf16, serializer);
+    sse_encode_opt_box_autoadd_u_32(self.messagePart, serializer);
+    sse_encode_opt_String(self.attachmentCanonicalGuid, serializer);
+    sse_encode_opt_String(self.attachmentLogicalKeyHash, serializer);
+    sse_encode_opt_String(self.mentionHandle, serializer);
+    sse_encode_opt_String(self.audioTranscript, serializer);
+    sse_encode_opt_box_autoadd_i_64(self.textEffect, serializer);
+    sse_encode_opt_box_autoadd_bool(self.bold, serializer);
+    sse_encode_opt_box_autoadd_bool(self.italic, serializer);
+    sse_encode_opt_box_autoadd_bool(self.strikethrough, serializer);
+    sse_encode_opt_box_autoadd_bool(self.underline, serializer);
   }
 
   @protected
@@ -35979,6 +36625,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_list_cloud_sync_transient_attributed_body(
+    List<CloudSyncTransientAttributedBody> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_cloud_sync_transient_attributed_body(item, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_list_cloud_sync_transient_edit_part(
     List<CloudSyncTransientEditPart> self,
     SseSerializer serializer,
@@ -35987,6 +36645,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_cloud_sync_transient_edit_part(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_cloud_sync_transient_message_edit(
+    List<CloudSyncTransientMessageEdit> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_cloud_sync_transient_message_edit(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_cloud_sync_transient_text_run(
+    List<CloudSyncTransientTextRun> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_cloud_sync_transient_text_run(item, serializer);
     }
   }
 

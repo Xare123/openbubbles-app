@@ -1988,11 +1988,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CloudSyncRawSystemFields dco_decode_cloud_sync_raw_system_fields(dynamic raw);
 
   @protected
+  CloudSyncTransientAssociationKind
+  dco_decode_cloud_sync_transient_association_kind(dynamic raw);
+
+  @protected
   CloudSyncTransientAttachmentPayload
   dco_decode_cloud_sync_transient_attachment_payload(dynamic raw);
 
   @protected
+  CloudSyncTransientAttributedBody
+  dco_decode_cloud_sync_transient_attributed_body(dynamic raw);
+
+  @protected
   CloudSyncTransientChatPayload dco_decode_cloud_sync_transient_chat_payload(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncTransientChatStyle dco_decode_cloud_sync_transient_chat_style(
     dynamic raw,
   );
 
@@ -2030,6 +2043,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_cloud_sync_transient_group_photo_payload(dynamic raw);
 
   @protected
+  CloudSyncTransientKnownMessageFlags
+  dco_decode_cloud_sync_transient_known_message_flags(dynamic raw);
+
+  @protected
+  CloudSyncTransientMessageEdit dco_decode_cloud_sync_transient_message_edit(
+    dynamic raw,
+  );
+
+  @protected
   CloudSyncTransientMessagePayload
   dco_decode_cloud_sync_transient_message_payload(dynamic raw);
 
@@ -2053,7 +2075,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncTransientService dco_decode_cloud_sync_transient_service(
+    dynamic raw,
+  );
+
+  @protected
   CloudSyncTransientSnapshot dco_decode_cloud_sync_transient_snapshot(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncTransientTextRun dco_decode_cloud_sync_transient_text_run(
     dynamic raw,
   );
 
@@ -2194,8 +2226,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<CloudSyncRawChange> dco_decode_list_cloud_sync_raw_change(dynamic raw);
 
   @protected
+  List<CloudSyncTransientAttributedBody>
+  dco_decode_list_cloud_sync_transient_attributed_body(dynamic raw);
+
+  @protected
   List<CloudSyncTransientEditPart>
   dco_decode_list_cloud_sync_transient_edit_part(dynamic raw);
+
+  @protected
+  List<CloudSyncTransientMessageEdit>
+  dco_decode_list_cloud_sync_transient_message_edit(dynamic raw);
+
+  @protected
+  List<CloudSyncTransientTextRun> dco_decode_list_cloud_sync_transient_text_run(
+    dynamic raw,
+  );
 
   @protected
   List<DartBeacon> dco_decode_list_dart_beacon(dynamic raw);
@@ -5386,13 +5431,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncTransientAssociationKind
+  sse_decode_cloud_sync_transient_association_kind(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncTransientAttachmentPayload
   sse_decode_cloud_sync_transient_attachment_payload(
     SseDeserializer deserializer,
   );
 
   @protected
+  CloudSyncTransientAttributedBody
+  sse_decode_cloud_sync_transient_attributed_body(SseDeserializer deserializer);
+
+  @protected
   CloudSyncTransientChatPayload sse_decode_cloud_sync_transient_chat_payload(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncTransientChatStyle sse_decode_cloud_sync_transient_chat_style(
     SseDeserializer deserializer,
   );
 
@@ -5432,6 +5492,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncTransientKnownMessageFlags
+  sse_decode_cloud_sync_transient_known_message_flags(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncTransientMessageEdit sse_decode_cloud_sync_transient_message_edit(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncTransientMessagePayload
   sse_decode_cloud_sync_transient_message_payload(SseDeserializer deserializer);
 
@@ -5457,7 +5528,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncTransientService sse_decode_cloud_sync_transient_service(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncTransientSnapshot sse_decode_cloud_sync_transient_snapshot(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncTransientTextRun sse_decode_cloud_sync_transient_text_run(
     SseDeserializer deserializer,
   );
 
@@ -5620,8 +5701,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<CloudSyncTransientAttributedBody>
+  sse_decode_list_cloud_sync_transient_attributed_body(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<CloudSyncTransientEditPart>
   sse_decode_list_cloud_sync_transient_edit_part(SseDeserializer deserializer);
+
+  @protected
+  List<CloudSyncTransientMessageEdit>
+  sse_decode_list_cloud_sync_transient_message_edit(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<CloudSyncTransientTextRun> sse_decode_list_cloud_sync_transient_text_run(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<DartBeacon> sse_decode_list_dart_beacon(SseDeserializer deserializer);
@@ -9415,14 +9513,32 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_cloud_sync_transient_association_kind(
+    CloudSyncTransientAssociationKind self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cloud_sync_transient_attachment_payload(
     CloudSyncTransientAttachmentPayload self,
     SseSerializer serializer,
   );
 
   @protected
+  void sse_encode_cloud_sync_transient_attributed_body(
+    CloudSyncTransientAttributedBody self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cloud_sync_transient_chat_payload(
     CloudSyncTransientChatPayload self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_transient_chat_style(
+    CloudSyncTransientChatStyle self,
     SseSerializer serializer,
   );
 
@@ -9469,6 +9585,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_cloud_sync_transient_known_message_flags(
+    CloudSyncTransientKnownMessageFlags self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_transient_message_edit(
+    CloudSyncTransientMessageEdit self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cloud_sync_transient_message_payload(
     CloudSyncTransientMessagePayload self,
     SseSerializer serializer,
@@ -9499,8 +9627,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_cloud_sync_transient_service(
+    CloudSyncTransientService self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cloud_sync_transient_snapshot(
     CloudSyncTransientSnapshot self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_transient_text_run(
+    CloudSyncTransientTextRun self,
     SseSerializer serializer,
   );
 
@@ -9688,8 +9828,26 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_cloud_sync_transient_attributed_body(
+    List<CloudSyncTransientAttributedBody> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_cloud_sync_transient_edit_part(
     List<CloudSyncTransientEditPart> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_cloud_sync_transient_message_edit(
+    List<CloudSyncTransientMessageEdit> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_cloud_sync_transient_text_run(
+    List<CloudSyncTransientTextRun> self,
     SseSerializer serializer,
   );
 

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
@@ -62,11 +64,8 @@ void main() {
           (
             frb.CloudSyncTransientEntityKind.chat,
             _chatHash,
-            const frb.CloudSyncTransientPayload(
-              chat: frb.CloudSyncTransientChatPayload(
-                logicalEntityKeyHash: _chatHash,
-                canonicalGuid: 'chat-guid',
-                chatIdentifier: 'iMessage;-;chat',
+            frb.CloudSyncTransientPayload(
+              chat: _chatPayload(
                 participantHandles: ['one@example.invalid'],
                 displayNameState: frb.CloudSyncTransientFieldState.value,
                 displayName: 'Transient title',
@@ -77,19 +76,18 @@ void main() {
           (
             frb.CloudSyncTransientEntityKind.reaction,
             _reactionHash,
-            const frb.CloudSyncTransientPayload(
-              message: frb.CloudSyncTransientMessagePayload(
+            frb.CloudSyncTransientPayload(
+              message: _messagePayload(
                 logicalEntityKeyHash: _reactionHash,
                 canonicalGuid: 'reaction-guid',
-                chatAliasKeyHash: _chatHash,
-                chatIdentifier: 'iMessage;-;chat',
-                senderHandle: 'sender@example.invalid',
-                bodyState: frb.CloudSyncTransientFieldState.absent,
+                associationKind:
+                    frb.CloudSyncTransientAssociationKind.reactionAdd,
                 reactionKind: frb.CloudSyncTransientReactionKind.emoji,
-                reactionRemoved: false,
                 reactionParentLogicalKeyHash: _messageHash,
                 reactionParentCanonicalGuid: 'message-guid',
                 reactionParentPart: 0,
+                bodyState: frb.CloudSyncTransientFieldState.absent,
+                body: null,
                 associatedEmojiState: frb.CloudSyncTransientFieldState.value,
                 associatedEmoji: '👍',
               ),
@@ -99,21 +97,7 @@ void main() {
           (
             frb.CloudSyncTransientEntityKind.attachment,
             _attachmentHash,
-            const frb.CloudSyncTransientPayload(
-              attachment: frb.CloudSyncTransientAttachmentPayload(
-                logicalEntityKeyHash: _attachmentHash,
-                canonicalGuid: 'attachment-guid',
-                ownerLogicalKeyHash: _messageHash,
-                ownerCanonicalGuid: 'message-guid',
-                ownerPart: 0,
-                fileNameState: frb.CloudSyncTransientFieldState.value,
-                fileName: 'document.pdf',
-                mimeTypeState: frb.CloudSyncTransientFieldState.absent,
-                protectedLocalReferenceState:
-                    frb.CloudSyncTransientFieldState.value,
-                protectedLocalReference: _attachmentReference,
-              ),
-            ),
+            frb.CloudSyncTransientPayload(attachment: _attachmentPayload()),
             CloudAttachmentEntityPayload,
           ),
           (
@@ -158,7 +142,7 @@ void main() {
         entityKind: frb.CloudSyncTransientEntityKind.message,
         mutationKind: frb.CloudSyncTransientMutationKind.upsert,
         snapshot: _snapshot(),
-        payload: _messagePayload(),
+        payload: frb.CloudSyncTransientPayload(message: _messagePayload()),
       );
 
       await _expectFailure(
@@ -231,16 +215,17 @@ void main() {
       await _expectFailure(decoder().decode(entry), item.value);
     }
 
-    bindings.result = frb.CloudSyncTransientDecodeResult(
-      protectedSourceReference: _sourceReference,
-      generation: BigInt.from(entry.generation),
-      deferredReason:
-          frb.CloudSyncTransientDeferredReason.unsupportedMediaCredentials,
-    );
-    await _expectFailure(
-      decoder().decode(entry),
-      CloudFailureCategory.dependency,
-    );
+    for (final reason in frb.CloudSyncTransientDeferredReason.values) {
+      bindings.result = frb.CloudSyncTransientDecodeResult(
+        protectedSourceReference: _sourceReference,
+        generation: BigInt.from(entry.generation),
+        deferredReason: reason,
+      );
+      await _expectFailure(
+        decoder().decode(entry),
+        CloudFailureCategory.malformedRecord,
+      );
+    }
 
     bindings.result = frb.CloudSyncTransientDecodeResult(
       protectedSourceReference: _sourceReference,
@@ -263,14 +248,8 @@ void main() {
       mutationKind: frb.CloudSyncTransientMutationKind.upsert,
       snapshot: _snapshot(),
       payload: frb.CloudSyncTransientPayload(
-        message: _messagePayload().message,
-        chat: const frb.CloudSyncTransientChatPayload(
-          logicalEntityKeyHash: _chatHash,
-          canonicalGuid: 'chat-guid',
-          chatIdentifier: 'iMessage;-;chat',
-          participantHandles: [],
-          displayNameState: frb.CloudSyncTransientFieldState.absent,
-        ),
+        message: _messagePayload(),
+        chat: _chatPayload(),
       ),
       deferredReason:
           frb.CloudSyncTransientDeferredReason.nestedPresenceUnavailable,
@@ -284,14 +263,8 @@ void main() {
     bindings.result = _readyMessage(
       entry,
       payload: frb.CloudSyncTransientPayload(
-        message: _messagePayload().message,
-        chat: const frb.CloudSyncTransientChatPayload(
-          logicalEntityKeyHash: _chatHash,
-          canonicalGuid: 'chat-guid',
-          chatIdentifier: 'iMessage;-;chat',
-          participantHandles: [],
-          displayNameState: frb.CloudSyncTransientFieldState.absent,
-        ),
+        message: _messagePayload(),
+        chat: _chatPayload(),
       ),
     );
     await _expectFailure(
@@ -300,28 +273,22 @@ void main() {
     );
   });
 
-  test('defers partial messages rather than inventing an empty body', () async {
+  test('maps absent message bodies without inventing content', () async {
     final entry = _entry();
     bindings.result = _readyMessage(
       entry,
-      payload: const frb.CloudSyncTransientPayload(
-        message: frb.CloudSyncTransientMessagePayload(
-          logicalEntityKeyHash: _messageHash,
-          canonicalGuid: 'message-guid',
-          chatAliasKeyHash: _chatHash,
-          chatIdentifier: 'iMessage;-;chat',
-          senderHandle: 'sender@example.invalid',
+      payload: frb.CloudSyncTransientPayload(
+        message: _messagePayload(
           bodyState: frb.CloudSyncTransientFieldState.absent,
-          reactionRemoved: false,
-          associatedEmojiState: frb.CloudSyncTransientFieldState.absent,
+          body: null,
         ),
       ),
     );
 
-    await _expectFailure(
-      decoder().decode(entry),
-      CloudFailureCategory.dependency,
-    );
+    final payload =
+        (await decoder().decode(entry)).payload! as CloudMessageEntityPayload;
+    expect(payload.bodyState, CloudSemanticFieldState.absent);
+    expect(payload.body, isNull);
   });
 
   test(
@@ -385,80 +352,270 @@ void main() {
             _attachmentHash,
           ),
           payload: frb.CloudSyncTransientPayload(
-            attachment: frb.CloudSyncTransientAttachmentPayload(
-              logicalEntityKeyHash: _attachmentHash,
-              canonicalGuid: 'attachment-guid',
+            attachment: _attachmentPayload(
               ownerLogicalKeyHash: ownerHash,
               ownerCanonicalGuid: ownerGuid,
               ownerPart: ownerPart,
-              fileNameState: frb.CloudSyncTransientFieldState.value,
-              fileName: 'document.pdf',
-              mimeTypeState: frb.CloudSyncTransientFieldState.absent,
-              protectedLocalReferenceState:
-                  frb.CloudSyncTransientFieldState.value,
-              protectedLocalReference: _attachmentReference,
             ),
           ),
         );
 
-        await _expectFailure(
-          decoder().decode(entry),
-          CloudFailureCategory.dependency,
-        );
+        if (ownerHash == null && ownerGuid == null && ownerPart == null) {
+          final payload =
+              (await decoder().decode(entry)).payload!
+                  as CloudAttachmentEntityPayload;
+          expect(payload.ownerLogicalKeyHash, isNull);
+          expect(payload.ownerCanonicalGuid, isNull);
+          expect(payload.ownerPart, isNull);
+        } else {
+          await _expectFailure(
+            decoder().decode(entry),
+            CloudFailureCategory.dependency,
+          );
+        }
       }
     },
   );
 
-  test(
-    'defers explicit clears that current Dart payloads cannot preserve',
-    () async {
-      final entry = _entry();
+  test('preserves chat field states, including explicit clear', () async {
+    final entry = _entry();
+    for (final (state, displayName) in [
+      (frb.CloudSyncTransientFieldState.absent, null),
+      (frb.CloudSyncTransientFieldState.value, 'A title'),
+      (frb.CloudSyncTransientFieldState.explicitClear, null),
+    ]) {
+      bindings.result = _readyChat(
+        entry,
+        payload: frb.CloudSyncTransientPayload(
+          chat: _chatPayload(displayNameState: state, displayName: displayName),
+        ),
+      );
+
+      final payload =
+          (await decoder().decode(entry)).payload! as CloudChatEntityPayload;
+      expect(payload.displayNameState, _chatFieldState(state));
+      expect(payload.displayName, displayName);
+    }
+  });
+
+  test('maps rich message fields into the domain payload', () async {
+    final entry = _entry();
+    const attributedBody = frb.CloudSyncTransientAttributedBody(
+      text: 'hello',
+      runs: [
+        frb.CloudSyncTransientTextRun(
+          startUtf16: 0,
+          lengthUtf16: 5,
+          mentionHandle: 'friend@example.invalid',
+          bold: true,
+          italic: false,
+        ),
+      ],
+    );
+    const edit = frb.CloudSyncTransientMessageEdit(
+      part_: 1,
+      revision: 2,
+      bodies: [attributedBody],
+      modifiedAtMillis: 1787385604000,
+      originalRangeLocation: 3,
+      originalRangeLength: 2,
+    );
+    bindings.result = _readyMessage(
+      entry,
+      payload: frb.CloudSyncTransientPayload(
+        message: _messagePayload(
+          subjectState: frb.CloudSyncTransientFieldState.value,
+          subject: 'Subject',
+          body: 'hello',
+          attributedBodiesState: frb.CloudSyncTransientFieldState.value,
+          attributedBodies: [attributedBody],
+          createdAtMillis: 1787385601000,
+          error: 7,
+          readAtMillisState: frb.CloudSyncTransientFieldState.value,
+          readAtMillis: 1787385602000,
+          deliveredAtMillisState: frb.CloudSyncTransientFieldState.value,
+          deliveredAtMillis: 1787385603000,
+          knownFlags: const frb.CloudSyncTransientKnownMessageFlags(
+            fromMe: true,
+            delivered: true,
+            read: true,
+            hasDataDetectorResults: true,
+            deliveredQuietly: false,
+            didNotifyRecipient: true,
+          ),
+          replyParentLogicalKeyHash: _messageHash,
+          replyParentCanonicalGuid: 'reply-guid',
+          replyParentPart: '0',
+          editsState: frb.CloudSyncTransientFieldState.value,
+          edits: [edit],
+          retractedPartsState: frb.CloudSyncTransientFieldState.value,
+          retractedParts: [2, 4],
+        ),
+      ),
+    );
+
+    final payload =
+        (await decoder().decode(entry)).payload! as CloudMessageEntityPayload;
+    expect(payload.subjectState, CloudSemanticFieldState.value);
+    expect(payload.subject, 'Subject');
+    expect(payload.bodyState, CloudSemanticFieldState.value);
+    expect(payload.body, 'hello');
+    expect(
+      payload.createdAt,
+      DateTime.fromMillisecondsSinceEpoch(1787385601000, isUtc: true),
+    );
+    expect(payload.error, 7);
+    expect(
+      payload.readAt,
+      DateTime.fromMillisecondsSinceEpoch(1787385602000, isUtc: true),
+    );
+    expect(
+      payload.deliveredAt,
+      DateTime.fromMillisecondsSinceEpoch(1787385603000, isUtc: true),
+    );
+    expect(payload.knownFlags?.fromMe, isTrue);
+    expect(payload.knownFlags?.hasDataDetectorResults, isTrue);
+    expect(payload.replyParentCanonicalGuid, 'reply-guid');
+    expect(payload.replyParentLogicalKeyHash, _messageHash);
+    expect(payload.replyParentPart, '0');
+    expect(payload.attributedBodiesState, CloudSemanticFieldState.value);
+    expect(payload.attributedBodies.single.text, 'hello');
+    expect(payload.attributedBodies.single.runs.single.startUtf16, 0);
+    expect(payload.attributedBodies.single.runs.single.lengthUtf16, 5);
+    expect(
+      payload.attributedBodies.single.runs.single.mentionHandle,
+      'friend@example.invalid',
+    );
+    expect(payload.attributedBodies.single.runs.single.bold, isTrue);
+    expect(payload.editsState, CloudSemanticFieldState.value);
+    expect(payload.edits.single.part, 1);
+    expect(payload.edits.single.revision, 2);
+    expect(payload.edits.single.originalRangeLocation, 3);
+    expect(payload.edits.single.originalRangeLength, 2);
+    expect(payload.retractedPartsState, CloudSemanticFieldState.value);
+    expect(payload.retractedParts, [2, 4]);
+  });
+
+  test('rejects malformed field-state and value combinations', () async {
+    final entry = _entry();
+    final cases = <frb.CloudSyncTransientPayload>[
+      frb.CloudSyncTransientPayload(
+        chat: _chatPayload(
+          displayNameState: frb.CloudSyncTransientFieldState.value,
+        ),
+      ),
+      frb.CloudSyncTransientPayload(
+        message: _messagePayload(
+          subjectState: frb.CloudSyncTransientFieldState.value,
+        ),
+      ),
+      frb.CloudSyncTransientPayload(
+        attachment: _attachmentPayload(
+          totalBytesState: frb.CloudSyncTransientFieldState.value,
+        ),
+      ),
+    ];
+    final kinds = [
+      frb.CloudSyncTransientEntityKind.chat,
+      frb.CloudSyncTransientEntityKind.message,
+      frb.CloudSyncTransientEntityKind.attachment,
+    ];
+    final hashes = [_chatHash, _messageHash, _attachmentHash];
+    for (var i = 0; i < cases.length; i++) {
       bindings.result = frb.CloudSyncTransientDecodeResult(
         protectedSourceReference: _sourceReference,
         generation: BigInt.from(entry.generation),
         changeId: entry.change.changeId,
-        entityKind: frb.CloudSyncTransientEntityKind.chat,
+        entityKind: kinds[i],
         mutationKind: frb.CloudSyncTransientMutationKind.upsert,
-        snapshot: _snapshotFor(
-          frb.CloudSyncTransientEntityKind.chat,
-          _chatHash,
-        ),
-        payload: const frb.CloudSyncTransientPayload(
-          chat: frb.CloudSyncTransientChatPayload(
-            logicalEntityKeyHash: _chatHash,
-            canonicalGuid: 'chat-guid',
-            chatIdentifier: 'iMessage;-;chat',
-            participantHandles: [],
-            displayNameState: frb.CloudSyncTransientFieldState.explicitClear,
-          ),
-        ),
+        snapshot: _snapshotFor(kinds[i], hashes[i]),
+        payload: cases[i],
       );
       await _expectFailure(
         decoder().decode(entry),
-        CloudFailureCategory.dependency,
+        i == 0
+            ? CloudFailureCategory.malformedRecord
+            : CloudFailureCategory.dependency,
       );
+    }
+  });
 
-      bindings.result = _readyMessage(
-        entry,
-        payload: const frb.CloudSyncTransientPayload(
-          message: frb.CloudSyncTransientMessagePayload(
-            logicalEntityKeyHash: _messageHash,
-            canonicalGuid: 'message-guid',
-            chatAliasKeyHash: _chatHash,
-            chatIdentifier: 'iMessage;-;chat',
-            senderHandle: 'sender@example.invalid',
-            bodyState: frb.CloudSyncTransientFieldState.explicitClear,
-            reactionRemoved: false,
-            associatedEmojiState: frb.CloudSyncTransientFieldState.absent,
-          ),
+  test('maps attachment states and defers oversized unsigned sizes', () async {
+    final entry = _entry();
+    bindings.result = _readyAttachment(
+      entry,
+      payload: frb.CloudSyncTransientPayload(
+        attachment: _attachmentPayload(
+          utiState: frb.CloudSyncTransientFieldState.value,
+          uti: 'public.data',
+          totalBytesState: frb.CloudSyncTransientFieldState.value,
+          totalBytes: BigInt.from(42),
+          isOutgoingState: frb.CloudSyncTransientFieldState.value,
+          isOutgoing: true,
         ),
-      );
-      await _expectFailure(
-        decoder().decode(entry),
-        CloudFailureCategory.dependency,
-      );
-    },
-  );
+      ),
+    );
+    final payload =
+        (await decoder().decode(entry)).payload!
+            as CloudAttachmentEntityPayload;
+    expect(payload.utiState, CloudSemanticFieldState.value);
+    expect(payload.uti, 'public.data');
+    expect(payload.totalBytesState, CloudSemanticFieldState.value);
+    expect(payload.totalBytes, 42);
+    expect(payload.isOutgoingState, CloudSemanticFieldState.value);
+    expect(payload.isOutgoing, isTrue);
+
+    bindings.result = _readyAttachment(
+      entry,
+      payload: frb.CloudSyncTransientPayload(
+        attachment: _attachmentPayload(
+          totalBytesState: frb.CloudSyncTransientFieldState.value,
+          totalBytes: BigInt.parse('9223372036854775808'),
+        ),
+      ),
+    );
+    await _expectFailure(
+      decoder().decode(entry),
+      CloudFailureCategory.dependency,
+    );
+  });
+
+  test('maps reaction association, range, and timestamps', () async {
+    final entry = _entry();
+    bindings.result = _readyReaction(
+      entry,
+      reactionKind: frb.CloudSyncTransientReactionKind.heart,
+      removed: false,
+      associatedRangeLocation: 4,
+      associatedRangeLength: 2,
+      createdAtMillis: 1787385601000,
+      readAtMillisState: frb.CloudSyncTransientFieldState.value,
+      readAtMillis: 1787385602000,
+      deliveredAtMillisState: frb.CloudSyncTransientFieldState.value,
+      deliveredAtMillis: 1787385603000,
+    );
+    final payload =
+        (await decoder().decode(entry)).payload! as CloudReactionEntityPayload;
+    expect(payload.reactionType, 'love');
+    expect(payload.parentCanonicalGuid, 'message-guid');
+    expect(payload.parentPart, 0);
+    expect(payload.associatedRangeLocation, 4);
+    expect(payload.associatedRangeLength, 2);
+    expect(
+      payload.createdAt,
+      DateTime.fromMillisecondsSinceEpoch(1787385601000, isUtc: true),
+    );
+    expect(payload.readAtState, CloudSemanticFieldState.value);
+    expect(
+      payload.readAt,
+      DateTime.fromMillisecondsSinceEpoch(1787385602000, isUtc: true),
+    );
+    expect(payload.deliveredAtState, CloudSemanticFieldState.value);
+    expect(
+      payload.deliveredAt,
+      DateTime.fromMillisecondsSinceEpoch(1787385603000, isUtc: true),
+    );
+  });
 
   test(
     'reduces edit history to the highest revision and rejects duplicates',
@@ -704,7 +861,38 @@ frb.CloudSyncTransientDecodeResult _readyMessage(
   entityKind: frb.CloudSyncTransientEntityKind.message,
   mutationKind: frb.CloudSyncTransientMutationKind.upsert,
   snapshot: snapshot ?? _snapshot(),
-  payload: payload ?? _messagePayload(),
+  payload: payload ?? frb.CloudSyncTransientPayload(message: _messagePayload()),
+);
+
+frb.CloudSyncTransientDecodeResult _readyChat(
+  CloudInboxEntry entry, {
+  frb.CloudSyncTransientPayload? payload,
+}) => frb.CloudSyncTransientDecodeResult(
+  protectedSourceReference: _sourceReference,
+  generation: BigInt.from(entry.generation),
+  changeId: entry.change.changeId,
+  entityKind: frb.CloudSyncTransientEntityKind.chat,
+  mutationKind: frb.CloudSyncTransientMutationKind.upsert,
+  snapshot: _snapshotFor(frb.CloudSyncTransientEntityKind.chat, _chatHash),
+  payload: payload ?? frb.CloudSyncTransientPayload(chat: _chatPayload()),
+);
+
+frb.CloudSyncTransientDecodeResult _readyAttachment(
+  CloudInboxEntry entry, {
+  frb.CloudSyncTransientPayload? payload,
+}) => frb.CloudSyncTransientDecodeResult(
+  protectedSourceReference: _sourceReference,
+  generation: BigInt.from(entry.generation),
+  changeId: entry.change.changeId,
+  entityKind: frb.CloudSyncTransientEntityKind.attachment,
+  mutationKind: frb.CloudSyncTransientMutationKind.upsert,
+  snapshot: _snapshotFor(
+    frb.CloudSyncTransientEntityKind.attachment,
+    _attachmentHash,
+  ),
+  payload:
+      payload ??
+      frb.CloudSyncTransientPayload(attachment: _attachmentPayload()),
 );
 
 frb.CloudSyncTransientDecodeResult _readyReaction(
@@ -712,6 +900,15 @@ frb.CloudSyncTransientDecodeResult _readyReaction(
   required frb.CloudSyncTransientReactionKind reactionKind,
   required bool removed,
   String? emoji,
+  int? associatedRangeLocation,
+  int? associatedRangeLength,
+  int createdAtMillis = 1787385600000,
+  frb.CloudSyncTransientFieldState readAtMillisState =
+      frb.CloudSyncTransientFieldState.absent,
+  int? readAtMillis,
+  frb.CloudSyncTransientFieldState deliveredAtMillisState =
+      frb.CloudSyncTransientFieldState.absent,
+  int? deliveredAtMillis,
 }) => frb.CloudSyncTransientDecodeResult(
   protectedSourceReference: _sourceReference,
   generation: BigInt.from(entry.generation),
@@ -723,18 +920,26 @@ frb.CloudSyncTransientDecodeResult _readyReaction(
     _reactionHash,
   ),
   payload: frb.CloudSyncTransientPayload(
-    message: frb.CloudSyncTransientMessagePayload(
+    message: _messagePayload(
       logicalEntityKeyHash: _reactionHash,
       canonicalGuid: 'reaction-guid',
-      chatAliasKeyHash: _chatHash,
-      chatIdentifier: 'iMessage;-;chat',
-      senderHandle: 'sender@example.invalid',
+      createdAtMillis: createdAtMillis,
       bodyState: frb.CloudSyncTransientFieldState.absent,
+      body: null,
+      associationKind: removed
+          ? frb.CloudSyncTransientAssociationKind.reactionRemove
+          : frb.CloudSyncTransientAssociationKind.reactionAdd,
       reactionKind: reactionKind,
       reactionRemoved: removed,
       reactionParentLogicalKeyHash: _messageHash,
       reactionParentCanonicalGuid: 'message-guid',
       reactionParentPart: 0,
+      associatedRangeLocation: associatedRangeLocation,
+      associatedRangeLength: associatedRangeLength,
+      readAtMillisState: readAtMillisState,
+      readAtMillis: readAtMillis,
+      deliveredAtMillisState: deliveredAtMillisState,
+      deliveredAtMillis: deliveredAtMillis,
       associatedEmojiState: emoji == null
           ? frb.CloudSyncTransientFieldState.absent
           : frb.CloudSyncTransientFieldState.value,
@@ -762,20 +967,194 @@ frb.CloudSyncTransientSnapshot _snapshotFor(
   protectedSourceReference: sourceReference,
 );
 
-frb.CloudSyncTransientPayload _messagePayload() =>
-    const frb.CloudSyncTransientPayload(
-      message: frb.CloudSyncTransientMessagePayload(
-        logicalEntityKeyHash: _messageHash,
-        canonicalGuid: 'message-guid',
-        chatAliasKeyHash: _chatHash,
-        chatIdentifier: 'iMessage;-;chat',
-        senderHandle: 'sender@example.invalid',
-        bodyState: frb.CloudSyncTransientFieldState.value,
-        body: 'transient secret body',
-        reactionRemoved: false,
-        associatedEmojiState: frb.CloudSyncTransientFieldState.absent,
-      ),
-    );
+frb.CloudSyncTransientMessagePayload _messagePayload({
+  String logicalEntityKeyHash = _messageHash,
+  String canonicalGuid = 'message-guid',
+  int createdAtMillis = 1787385600000,
+  int error = 0,
+  frb.CloudSyncTransientFieldState subjectState =
+      frb.CloudSyncTransientFieldState.absent,
+  String? subject,
+  frb.CloudSyncTransientFieldState bodyState =
+      frb.CloudSyncTransientFieldState.value,
+  String? body = 'transient secret body',
+  frb.CloudSyncTransientFieldState attributedBodiesState =
+      frb.CloudSyncTransientFieldState.absent,
+  List<frb.CloudSyncTransientAttributedBody> attributedBodies = const [],
+  frb.CloudSyncTransientFieldState balloonBundleIdState =
+      frb.CloudSyncTransientFieldState.absent,
+  String? balloonBundleId,
+  frb.CloudSyncTransientFieldState effectState =
+      frb.CloudSyncTransientFieldState.absent,
+  String? effect,
+  frb.CloudSyncTransientFieldState readAtMillisState =
+      frb.CloudSyncTransientFieldState.absent,
+  int? readAtMillis,
+  frb.CloudSyncTransientFieldState deliveredAtMillisState =
+      frb.CloudSyncTransientFieldState.absent,
+  int? deliveredAtMillis,
+  frb.CloudSyncTransientKnownMessageFlags? knownFlags,
+  frb.CloudSyncTransientAssociationKind associationKind =
+      frb.CloudSyncTransientAssociationKind.none,
+  frb.CloudSyncTransientReactionKind? reactionKind,
+  bool reactionRemoved = false,
+  String? reactionParentLogicalKeyHash,
+  String? reactionParentCanonicalGuid,
+  int? reactionParentPart,
+  int? associatedRangeLocation,
+  int? associatedRangeLength,
+  String? replyParentLogicalKeyHash,
+  String? replyParentCanonicalGuid,
+  String? replyParentPart,
+  frb.CloudSyncTransientFieldState editsState =
+      frb.CloudSyncTransientFieldState.absent,
+  List<frb.CloudSyncTransientMessageEdit> edits = const [],
+  frb.CloudSyncTransientFieldState retractedPartsState =
+      frb.CloudSyncTransientFieldState.absent,
+  List<int> retractedParts = const [],
+  frb.CloudSyncTransientFieldState associatedEmojiState =
+      frb.CloudSyncTransientFieldState.absent,
+  String? associatedEmoji,
+}) => frb.CloudSyncTransientMessagePayload(
+  logicalEntityKeyHash: logicalEntityKeyHash,
+  canonicalGuid: canonicalGuid,
+  chatAliasKeyHash: _chatHash,
+  chatIdentifier: 'iMessage;-;chat',
+  senderHandle: 'sender@example.invalid',
+  createdAtMillis: createdAtMillis,
+  error: error,
+  service: frb.CloudSyncTransientService.iMessage,
+  subjectState: subjectState,
+  subject: subject,
+  bodyState: bodyState,
+  body: body,
+  attributedBodiesState: attributedBodiesState,
+  attributedBodies: attributedBodies,
+  balloonBundleIdState: balloonBundleIdState,
+  balloonBundleId: balloonBundleId,
+  effectState: effectState,
+  effect: effect,
+  readAtMillisState: readAtMillisState,
+  readAtMillis: readAtMillis,
+  deliveredAtMillisState: deliveredAtMillisState,
+  deliveredAtMillis: deliveredAtMillis,
+  knownFlags: knownFlags ?? _neutralFlags,
+  associationKind: associationKind,
+  reactionKind: reactionKind,
+  reactionRemoved: reactionRemoved,
+  reactionParentLogicalKeyHash: reactionParentLogicalKeyHash,
+  reactionParentCanonicalGuid: reactionParentCanonicalGuid,
+  reactionParentPart: reactionParentPart,
+  associatedRangeLocation: associatedRangeLocation,
+  associatedRangeLength: associatedRangeLength,
+  replyParentLogicalKeyHash: replyParentLogicalKeyHash,
+  replyParentCanonicalGuid: replyParentCanonicalGuid,
+  replyParentPart: replyParentPart,
+  editsState: editsState,
+  edits: edits,
+  retractedPartsState: retractedPartsState,
+  retractedParts: Uint32List.fromList(retractedParts),
+  associatedEmojiState: associatedEmojiState,
+  associatedEmoji: associatedEmoji,
+);
+
+frb.CloudSyncTransientChatPayload _chatPayload({
+  List<String> participantHandles = const [],
+  frb.CloudSyncTransientFieldState displayNameState =
+      frb.CloudSyncTransientFieldState.absent,
+  String? displayName,
+  frb.CloudSyncTransientFieldState lastAddressedHandleState =
+      frb.CloudSyncTransientFieldState.absent,
+  String? lastAddressedHandle,
+  frb.CloudSyncTransientFieldState groupVersionState =
+      frb.CloudSyncTransientFieldState.absent,
+  int? groupVersion,
+  frb.CloudSyncTransientFieldState lastSeenMessageGuidState =
+      frb.CloudSyncTransientFieldState.absent,
+  String? lastSeenMessageGuid,
+  frb.CloudSyncTransientFieldState groupPhotoGuidState =
+      frb.CloudSyncTransientFieldState.absent,
+  String? groupPhotoGuid,
+}) => frb.CloudSyncTransientChatPayload(
+  logicalEntityKeyHash: _chatHash,
+  canonicalGuid: 'chat-guid',
+  chatIdentifier: 'iMessage;-;chat',
+  groupId: 'group-id',
+  originalGroupId: 'original-group-id',
+  service: frb.CloudSyncTransientService.iMessage,
+  style: frb.CloudSyncTransientChatStyle.direct,
+  participantHandles: participantHandles,
+  displayNameState: displayNameState,
+  displayName: displayName,
+  lastAddressedHandleState: lastAddressedHandleState,
+  lastAddressedHandle: lastAddressedHandle,
+  groupVersionState: groupVersionState,
+  groupVersion: groupVersion,
+  lastSeenMessageGuidState: lastSeenMessageGuidState,
+  lastSeenMessageGuid: lastSeenMessageGuid,
+  groupPhotoGuidState: groupPhotoGuidState,
+  groupPhotoGuid: groupPhotoGuid,
+);
+
+frb.CloudSyncTransientAttachmentPayload _attachmentPayload({
+  String? ownerLogicalKeyHash = _messageHash,
+  String? ownerCanonicalGuid = 'message-guid',
+  int? ownerPart = 0,
+  frb.CloudSyncTransientFieldState utiState =
+      frb.CloudSyncTransientFieldState.absent,
+  String? uti,
+  frb.CloudSyncTransientFieldState fileNameState =
+      frb.CloudSyncTransientFieldState.value,
+  String? fileName = 'document.pdf',
+  frb.CloudSyncTransientFieldState mimeTypeState =
+      frb.CloudSyncTransientFieldState.absent,
+  String? mimeType,
+  frb.CloudSyncTransientFieldState totalBytesState =
+      frb.CloudSyncTransientFieldState.absent,
+  BigInt? totalBytes,
+  frb.CloudSyncTransientFieldState isOutgoingState =
+      frb.CloudSyncTransientFieldState.absent,
+  bool? isOutgoing,
+  frb.CloudSyncTransientFieldState protectedLocalReferenceState =
+      frb.CloudSyncTransientFieldState.value,
+  String? protectedLocalReference = _attachmentReference,
+}) => frb.CloudSyncTransientAttachmentPayload(
+  logicalEntityKeyHash: _attachmentHash,
+  canonicalGuid: 'attachment-guid',
+  ownerLogicalKeyHash: ownerLogicalKeyHash,
+  ownerCanonicalGuid: ownerCanonicalGuid,
+  ownerPart: ownerPart,
+  utiState: utiState,
+  uti: uti,
+  fileNameState: fileNameState,
+  fileName: fileName,
+  mimeTypeState: mimeTypeState,
+  mimeType: mimeType,
+  totalBytesState: totalBytesState,
+  totalBytes: totalBytes,
+  isOutgoingState: isOutgoingState,
+  isOutgoing: isOutgoing,
+  protectedLocalReferenceState: protectedLocalReferenceState,
+  protectedLocalReference: protectedLocalReference,
+);
+
+const _neutralFlags = frb.CloudSyncTransientKnownMessageFlags(
+  fromMe: false,
+  delivered: false,
+  read: false,
+  hasDataDetectorResults: false,
+  deliveredQuietly: false,
+  didNotifyRecipient: false,
+);
+
+CloudSemanticFieldState _chatFieldState(
+  frb.CloudSyncTransientFieldState value,
+) => switch (value) {
+  frb.CloudSyncTransientFieldState.absent => CloudSemanticFieldState.absent,
+  frb.CloudSyncTransientFieldState.value => CloudSemanticFieldState.value,
+  frb.CloudSyncTransientFieldState.explicitClear =>
+    CloudSemanticFieldState.explicitClear,
+};
 
 Future<void> _expectFailure(
   Future<Object?> future,

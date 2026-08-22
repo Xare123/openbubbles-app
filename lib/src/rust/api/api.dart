@@ -9,10 +9,10 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'api.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `bin_deserialize_16`, `cloud_sync_failure_category`, `cloud_sync_retry_after_seconds`, `cloud_sync_transient_empty_result`, `config`, `encrypt`, `get_login_config`, `get_password`, `handle_2fa`, `handle_circle`, `handle_photostream`, `is_cloud_sync_protected_source_reference`, `local_cloud_sync_protected_failure`, `map_cloud_sync_protected_category`, `map_cloud_sync_protected_change`, `map_cloud_sync_protected_failure`, `map_cloud_sync_protected_page`, `map_cloud_sync_protected_safe_code`, `map_cloud_sync_raw_page`, `map_cloud_sync_transient_deferred`, `map_cloud_sync_transient_entity_kind`, `map_cloud_sync_transient_failure`, `map_cloud_sync_transient_field_state`, `map_cloud_sync_transient_payload`, `map_cloud_sync_transient_quarantine`, `map_cloud_sync_transient_reaction_kind`, `map_cloud_sync_transient_snapshot`, `migrate`, `plist_to_bin`, `plist_to_buf`, `plist_to_string`, `reset_user`, `shared_items`, `subscribe_streams`, `unmap_cloud_sync_transient_entity_kind`, `wrap_sink`
+// These functions are ignored because they are not marked as `pub`: `bin_deserialize_16`, `cloud_sync_failure_category`, `cloud_sync_retry_after_seconds`, `cloud_sync_transient_empty_result`, `config`, `encrypt`, `get_login_config`, `get_password`, `handle_2fa`, `handle_circle`, `handle_photostream`, `is_cloud_sync_protected_source_reference`, `local_cloud_sync_protected_failure`, `map_cloud_sync_protected_category`, `map_cloud_sync_protected_change`, `map_cloud_sync_protected_failure`, `map_cloud_sync_protected_page`, `map_cloud_sync_protected_safe_code`, `map_cloud_sync_raw_page`, `map_cloud_sync_transient_attributed_body`, `map_cloud_sync_transient_chat_style`, `map_cloud_sync_transient_deferred`, `map_cloud_sync_transient_entity_kind`, `map_cloud_sync_transient_failure`, `map_cloud_sync_transient_field_state`, `map_cloud_sync_transient_known_flags`, `map_cloud_sync_transient_message_edit`, `map_cloud_sync_transient_payload`, `map_cloud_sync_transient_quarantine`, `map_cloud_sync_transient_reaction_kind`, `map_cloud_sync_transient_service`, `map_cloud_sync_transient_snapshot`, `map_cloud_sync_transient_text_run`, `migrate`, `plist_to_bin`, `plist_to_buf`, `plist_to_string`, `reset_user`, `shared_items`, `subscribe_streams`, `unmap_cloud_sync_transient_entity_kind`, `wrap_sink`
 // These functions are ignored because they have generic arguments: `bin_deserialize`, `bin_serialize`
 // These types are ignored because they are not used by any `pub` functions: `AnisetteState`, `DaemonData`, `FLUTTER_RUST_BRIDGE_HANDLER`, `GSAConfig`, `NSArrayClass`, `NSArrayIconArray`, `NSArrayImageArray`, `ProvisionedAnisette`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `deref`, `deref`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `get_files`, `initialize`, `spawn`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `deref`, `deref`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `get_files`, `initialize`, `spawn`
 
 ChatProto decodeChatproto({required GZipWrapperChatProto wrapped}) =>
     RustLib.instance.api.crateApiApiDecodeChatproto(wrapped: wrapped);
@@ -3156,16 +3156,29 @@ class CloudSyncRawSystemFields {
           permission == other.permission;
 }
 
+enum CloudSyncTransientAssociationKind {
+  none,
+  sticker,
+  reactionAdd,
+  reactionRemove,
+}
+
 class CloudSyncTransientAttachmentPayload {
   final String logicalEntityKeyHash;
   final String canonicalGuid;
   final String? ownerLogicalKeyHash;
   final String? ownerCanonicalGuid;
   final int? ownerPart;
+  final CloudSyncTransientFieldState utiState;
+  final String? uti;
   final CloudSyncTransientFieldState fileNameState;
   final String? fileName;
   final CloudSyncTransientFieldState mimeTypeState;
   final String? mimeType;
+  final CloudSyncTransientFieldState totalBytesState;
+  final BigInt? totalBytes;
+  final CloudSyncTransientFieldState isOutgoingState;
+  final bool? isOutgoing;
   final CloudSyncTransientFieldState protectedLocalReferenceState;
   final String? protectedLocalReference;
 
@@ -3175,10 +3188,16 @@ class CloudSyncTransientAttachmentPayload {
     this.ownerLogicalKeyHash,
     this.ownerCanonicalGuid,
     this.ownerPart,
+    required this.utiState,
+    this.uti,
     required this.fileNameState,
     this.fileName,
     required this.mimeTypeState,
     this.mimeType,
+    required this.totalBytesState,
+    this.totalBytes,
+    required this.isOutgoingState,
+    this.isOutgoing,
     required this.protectedLocalReferenceState,
     this.protectedLocalReference,
   });
@@ -3190,10 +3209,16 @@ class CloudSyncTransientAttachmentPayload {
       ownerLogicalKeyHash.hashCode ^
       ownerCanonicalGuid.hashCode ^
       ownerPart.hashCode ^
+      utiState.hashCode ^
+      uti.hashCode ^
       fileNameState.hashCode ^
       fileName.hashCode ^
       mimeTypeState.hashCode ^
       mimeType.hashCode ^
+      totalBytesState.hashCode ^
+      totalBytes.hashCode ^
+      isOutgoingState.hashCode ^
+      isOutgoing.hashCode ^
       protectedLocalReferenceState.hashCode ^
       protectedLocalReference.hashCode;
 
@@ -3207,12 +3232,39 @@ class CloudSyncTransientAttachmentPayload {
           ownerLogicalKeyHash == other.ownerLogicalKeyHash &&
           ownerCanonicalGuid == other.ownerCanonicalGuid &&
           ownerPart == other.ownerPart &&
+          utiState == other.utiState &&
+          uti == other.uti &&
           fileNameState == other.fileNameState &&
           fileName == other.fileName &&
           mimeTypeState == other.mimeTypeState &&
           mimeType == other.mimeType &&
+          totalBytesState == other.totalBytesState &&
+          totalBytes == other.totalBytes &&
+          isOutgoingState == other.isOutgoingState &&
+          isOutgoing == other.isOutgoing &&
           protectedLocalReferenceState == other.protectedLocalReferenceState &&
           protectedLocalReference == other.protectedLocalReference;
+}
+
+class CloudSyncTransientAttributedBody {
+  final String text;
+  final List<CloudSyncTransientTextRun> runs;
+
+  const CloudSyncTransientAttributedBody({
+    required this.text,
+    required this.runs,
+  });
+
+  @override
+  int get hashCode => text.hashCode ^ runs.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncTransientAttributedBody &&
+          runtimeType == other.runtimeType &&
+          text == other.text &&
+          runs == other.runs;
 }
 
 /// Transient chat content. This type has no Debug, Display, serde, or durable
@@ -3225,17 +3277,41 @@ class CloudSyncTransientChatPayload {
 
   /// Validated iMessage chat identifier used to bind message records.
   final String chatIdentifier;
+  final String groupId;
+  final String originalGroupId;
+  final CloudSyncTransientService service;
+  final CloudSyncTransientChatStyle style;
   final List<String> participantHandles;
   final CloudSyncTransientFieldState displayNameState;
   final String? displayName;
+  final CloudSyncTransientFieldState lastAddressedHandleState;
+  final String? lastAddressedHandle;
+  final CloudSyncTransientFieldState groupVersionState;
+  final int? groupVersion;
+  final CloudSyncTransientFieldState lastSeenMessageGuidState;
+  final String? lastSeenMessageGuid;
+  final CloudSyncTransientFieldState groupPhotoGuidState;
+  final String? groupPhotoGuid;
 
   const CloudSyncTransientChatPayload({
     required this.logicalEntityKeyHash,
     required this.canonicalGuid,
     required this.chatIdentifier,
+    required this.groupId,
+    required this.originalGroupId,
+    required this.service,
+    required this.style,
     required this.participantHandles,
     required this.displayNameState,
     this.displayName,
+    required this.lastAddressedHandleState,
+    this.lastAddressedHandle,
+    required this.groupVersionState,
+    this.groupVersion,
+    required this.lastSeenMessageGuidState,
+    this.lastSeenMessageGuid,
+    required this.groupPhotoGuidState,
+    this.groupPhotoGuid,
   });
 
   @override
@@ -3243,9 +3319,21 @@ class CloudSyncTransientChatPayload {
       logicalEntityKeyHash.hashCode ^
       canonicalGuid.hashCode ^
       chatIdentifier.hashCode ^
+      groupId.hashCode ^
+      originalGroupId.hashCode ^
+      service.hashCode ^
+      style.hashCode ^
       participantHandles.hashCode ^
       displayNameState.hashCode ^
-      displayName.hashCode;
+      displayName.hashCode ^
+      lastAddressedHandleState.hashCode ^
+      lastAddressedHandle.hashCode ^
+      groupVersionState.hashCode ^
+      groupVersion.hashCode ^
+      lastSeenMessageGuidState.hashCode ^
+      lastSeenMessageGuid.hashCode ^
+      groupPhotoGuidState.hashCode ^
+      groupPhotoGuid.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -3255,10 +3343,24 @@ class CloudSyncTransientChatPayload {
           logicalEntityKeyHash == other.logicalEntityKeyHash &&
           canonicalGuid == other.canonicalGuid &&
           chatIdentifier == other.chatIdentifier &&
+          groupId == other.groupId &&
+          originalGroupId == other.originalGroupId &&
+          service == other.service &&
+          style == other.style &&
           participantHandles == other.participantHandles &&
           displayNameState == other.displayNameState &&
-          displayName == other.displayName;
+          displayName == other.displayName &&
+          lastAddressedHandleState == other.lastAddressedHandleState &&
+          lastAddressedHandle == other.lastAddressedHandle &&
+          groupVersionState == other.groupVersionState &&
+          groupVersion == other.groupVersion &&
+          lastSeenMessageGuidState == other.lastSeenMessageGuidState &&
+          lastSeenMessageGuid == other.lastSeenMessageGuid &&
+          groupPhotoGuidState == other.groupPhotoGuidState &&
+          groupPhotoGuid == other.groupPhotoGuid;
 }
+
+enum CloudSyncTransientChatStyle { direct, group }
 
 /// A bounded, single-record D1 result. Exactly one of `mutation`,
 /// `deferred_reason`, `quarantine_reason`, and `failure_code` is populated.
@@ -3423,6 +3525,84 @@ class CloudSyncTransientGroupPhotoPayload {
           protectedLocalReference == other.protectedLocalReference;
 }
 
+class CloudSyncTransientKnownMessageFlags {
+  final bool fromMe;
+  final bool delivered;
+  final bool read;
+  final bool hasDataDetectorResults;
+  final bool deliveredQuietly;
+  final bool didNotifyRecipient;
+
+  const CloudSyncTransientKnownMessageFlags({
+    required this.fromMe,
+    required this.delivered,
+    required this.read,
+    required this.hasDataDetectorResults,
+    required this.deliveredQuietly,
+    required this.didNotifyRecipient,
+  });
+
+  @override
+  int get hashCode =>
+      fromMe.hashCode ^
+      delivered.hashCode ^
+      read.hashCode ^
+      hasDataDetectorResults.hashCode ^
+      deliveredQuietly.hashCode ^
+      didNotifyRecipient.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncTransientKnownMessageFlags &&
+          runtimeType == other.runtimeType &&
+          fromMe == other.fromMe &&
+          delivered == other.delivered &&
+          read == other.read &&
+          hasDataDetectorResults == other.hasDataDetectorResults &&
+          deliveredQuietly == other.deliveredQuietly &&
+          didNotifyRecipient == other.didNotifyRecipient;
+}
+
+class CloudSyncTransientMessageEdit {
+  final int part_;
+  final int revision;
+  final List<CloudSyncTransientAttributedBody> bodies;
+  final PlatformInt64 modifiedAtMillis;
+  final int? originalRangeLocation;
+  final int? originalRangeLength;
+
+  const CloudSyncTransientMessageEdit({
+    required this.part_,
+    required this.revision,
+    required this.bodies,
+    required this.modifiedAtMillis,
+    this.originalRangeLocation,
+    this.originalRangeLength,
+  });
+
+  @override
+  int get hashCode =>
+      part_.hashCode ^
+      revision.hashCode ^
+      bodies.hashCode ^
+      modifiedAtMillis.hashCode ^
+      originalRangeLocation.hashCode ^
+      originalRangeLength.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncTransientMessageEdit &&
+          runtimeType == other.runtimeType &&
+          part_ == other.part_ &&
+          revision == other.revision &&
+          bodies == other.bodies &&
+          modifiedAtMillis == other.modifiedAtMillis &&
+          originalRangeLocation == other.originalRangeLocation &&
+          originalRangeLength == other.originalRangeLength;
+}
+
 /// Transient message/reaction content. Raw CloudKit record names and Apple
 /// private identifiers are deliberately absent; validated app canonical
 /// identities may cross this typed in-memory boundary.
@@ -3434,13 +3614,39 @@ class CloudSyncTransientMessagePayload {
   final String chatAliasKeyHash;
   final String chatIdentifier;
   final String senderHandle;
+  final PlatformInt64 createdAtMillis;
+  final PlatformInt64 error;
+  final CloudSyncTransientService service;
+  final CloudSyncTransientFieldState subjectState;
+  final String? subject;
   final CloudSyncTransientFieldState bodyState;
   final String? body;
+  final CloudSyncTransientFieldState attributedBodiesState;
+  final List<CloudSyncTransientAttributedBody> attributedBodies;
+  final CloudSyncTransientFieldState balloonBundleIdState;
+  final String? balloonBundleId;
+  final CloudSyncTransientFieldState effectState;
+  final String? effect;
+  final CloudSyncTransientFieldState readAtMillisState;
+  final PlatformInt64? readAtMillis;
+  final CloudSyncTransientFieldState deliveredAtMillisState;
+  final PlatformInt64? deliveredAtMillis;
+  final CloudSyncTransientKnownMessageFlags knownFlags;
+  final CloudSyncTransientAssociationKind associationKind;
   final CloudSyncTransientReactionKind? reactionKind;
   final bool reactionRemoved;
   final String? reactionParentLogicalKeyHash;
   final String? reactionParentCanonicalGuid;
   final int? reactionParentPart;
+  final int? associatedRangeLocation;
+  final int? associatedRangeLength;
+  final String? replyParentLogicalKeyHash;
+  final String? replyParentCanonicalGuid;
+  final String? replyParentPart;
+  final CloudSyncTransientFieldState editsState;
+  final List<CloudSyncTransientMessageEdit> edits;
+  final CloudSyncTransientFieldState retractedPartsState;
+  final Uint32List retractedParts;
   final CloudSyncTransientFieldState associatedEmojiState;
   final String? associatedEmoji;
 
@@ -3450,13 +3656,39 @@ class CloudSyncTransientMessagePayload {
     required this.chatAliasKeyHash,
     required this.chatIdentifier,
     required this.senderHandle,
+    required this.createdAtMillis,
+    required this.error,
+    required this.service,
+    required this.subjectState,
+    this.subject,
     required this.bodyState,
     this.body,
+    required this.attributedBodiesState,
+    required this.attributedBodies,
+    required this.balloonBundleIdState,
+    this.balloonBundleId,
+    required this.effectState,
+    this.effect,
+    required this.readAtMillisState,
+    this.readAtMillis,
+    required this.deliveredAtMillisState,
+    this.deliveredAtMillis,
+    required this.knownFlags,
+    required this.associationKind,
     this.reactionKind,
     required this.reactionRemoved,
     this.reactionParentLogicalKeyHash,
     this.reactionParentCanonicalGuid,
     this.reactionParentPart,
+    this.associatedRangeLocation,
+    this.associatedRangeLength,
+    this.replyParentLogicalKeyHash,
+    this.replyParentCanonicalGuid,
+    this.replyParentPart,
+    required this.editsState,
+    required this.edits,
+    required this.retractedPartsState,
+    required this.retractedParts,
     required this.associatedEmojiState,
     this.associatedEmoji,
   });
@@ -3468,13 +3700,39 @@ class CloudSyncTransientMessagePayload {
       chatAliasKeyHash.hashCode ^
       chatIdentifier.hashCode ^
       senderHandle.hashCode ^
+      createdAtMillis.hashCode ^
+      error.hashCode ^
+      service.hashCode ^
+      subjectState.hashCode ^
+      subject.hashCode ^
       bodyState.hashCode ^
       body.hashCode ^
+      attributedBodiesState.hashCode ^
+      attributedBodies.hashCode ^
+      balloonBundleIdState.hashCode ^
+      balloonBundleId.hashCode ^
+      effectState.hashCode ^
+      effect.hashCode ^
+      readAtMillisState.hashCode ^
+      readAtMillis.hashCode ^
+      deliveredAtMillisState.hashCode ^
+      deliveredAtMillis.hashCode ^
+      knownFlags.hashCode ^
+      associationKind.hashCode ^
       reactionKind.hashCode ^
       reactionRemoved.hashCode ^
       reactionParentLogicalKeyHash.hashCode ^
       reactionParentCanonicalGuid.hashCode ^
       reactionParentPart.hashCode ^
+      associatedRangeLocation.hashCode ^
+      associatedRangeLength.hashCode ^
+      replyParentLogicalKeyHash.hashCode ^
+      replyParentCanonicalGuid.hashCode ^
+      replyParentPart.hashCode ^
+      editsState.hashCode ^
+      edits.hashCode ^
+      retractedPartsState.hashCode ^
+      retractedParts.hashCode ^
       associatedEmojiState.hashCode ^
       associatedEmoji.hashCode;
 
@@ -3488,13 +3746,39 @@ class CloudSyncTransientMessagePayload {
           chatAliasKeyHash == other.chatAliasKeyHash &&
           chatIdentifier == other.chatIdentifier &&
           senderHandle == other.senderHandle &&
+          createdAtMillis == other.createdAtMillis &&
+          error == other.error &&
+          service == other.service &&
+          subjectState == other.subjectState &&
+          subject == other.subject &&
           bodyState == other.bodyState &&
           body == other.body &&
+          attributedBodiesState == other.attributedBodiesState &&
+          attributedBodies == other.attributedBodies &&
+          balloonBundleIdState == other.balloonBundleIdState &&
+          balloonBundleId == other.balloonBundleId &&
+          effectState == other.effectState &&
+          effect == other.effect &&
+          readAtMillisState == other.readAtMillisState &&
+          readAtMillis == other.readAtMillis &&
+          deliveredAtMillisState == other.deliveredAtMillisState &&
+          deliveredAtMillis == other.deliveredAtMillis &&
+          knownFlags == other.knownFlags &&
+          associationKind == other.associationKind &&
           reactionKind == other.reactionKind &&
           reactionRemoved == other.reactionRemoved &&
           reactionParentLogicalKeyHash == other.reactionParentLogicalKeyHash &&
           reactionParentCanonicalGuid == other.reactionParentCanonicalGuid &&
           reactionParentPart == other.reactionParentPart &&
+          associatedRangeLocation == other.associatedRangeLocation &&
+          associatedRangeLength == other.associatedRangeLength &&
+          replyParentLogicalKeyHash == other.replyParentLogicalKeyHash &&
+          replyParentCanonicalGuid == other.replyParentCanonicalGuid &&
+          replyParentPart == other.replyParentPart &&
+          editsState == other.editsState &&
+          edits == other.edits &&
+          retractedPartsState == other.retractedPartsState &&
+          retractedParts == other.retractedParts &&
           associatedEmojiState == other.associatedEmojiState &&
           associatedEmoji == other.associatedEmoji;
 }
@@ -3560,6 +3844,8 @@ enum CloudSyncTransientReactionKind {
   emoji,
   stickerBack,
 }
+
+enum CloudSyncTransientService { iMessage }
 
 /// Content-free canonical snapshot. The opaque protected source reference is
 /// retained so unknown semantics can be retried by a later decoder.
@@ -3628,6 +3914,69 @@ class CloudSyncTransientSnapshot {
           groupMetadataDigest == other.groupMetadataDigest &&
           etagHash == other.etagHash &&
           protectedSourceReference == other.protectedSourceReference;
+}
+
+class CloudSyncTransientTextRun {
+  final int startUtf16;
+  final int lengthUtf16;
+  final int? messagePart;
+  final String? attachmentCanonicalGuid;
+  final String? attachmentLogicalKeyHash;
+  final String? mentionHandle;
+  final String? audioTranscript;
+  final PlatformInt64? textEffect;
+  final bool? bold;
+  final bool? italic;
+  final bool? strikethrough;
+  final bool? underline;
+
+  const CloudSyncTransientTextRun({
+    required this.startUtf16,
+    required this.lengthUtf16,
+    this.messagePart,
+    this.attachmentCanonicalGuid,
+    this.attachmentLogicalKeyHash,
+    this.mentionHandle,
+    this.audioTranscript,
+    this.textEffect,
+    this.bold,
+    this.italic,
+    this.strikethrough,
+    this.underline,
+  });
+
+  @override
+  int get hashCode =>
+      startUtf16.hashCode ^
+      lengthUtf16.hashCode ^
+      messagePart.hashCode ^
+      attachmentCanonicalGuid.hashCode ^
+      attachmentLogicalKeyHash.hashCode ^
+      mentionHandle.hashCode ^
+      audioTranscript.hashCode ^
+      textEffect.hashCode ^
+      bold.hashCode ^
+      italic.hashCode ^
+      strikethrough.hashCode ^
+      underline.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncTransientTextRun &&
+          runtimeType == other.runtimeType &&
+          startUtf16 == other.startUtf16 &&
+          lengthUtf16 == other.lengthUtf16 &&
+          messagePart == other.messagePart &&
+          attachmentCanonicalGuid == other.attachmentCanonicalGuid &&
+          attachmentLogicalKeyHash == other.attachmentLogicalKeyHash &&
+          mentionHandle == other.mentionHandle &&
+          audioTranscript == other.audioTranscript &&
+          textEffect == other.textEffect &&
+          bold == other.bold &&
+          italic == other.italic &&
+          strikethrough == other.strikethrough &&
+          underline == other.underline;
 }
 
 class CloudSyncTransientTombstone {

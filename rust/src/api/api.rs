@@ -419,6 +419,17 @@ pub enum CloudSyncTransientFieldState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CloudSyncTransientService {
+    IMessage,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CloudSyncTransientChatStyle {
+    Direct,
+    Group,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CloudSyncTransientReactionKind {
     Heart,
     Like,
@@ -428,6 +439,14 @@ pub enum CloudSyncTransientReactionKind {
     Question,
     Emoji,
     StickerBack,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CloudSyncTransientAssociationKind {
+    None,
+    Sticker,
+    ReactionAdd,
+    ReactionRemove,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -485,6 +504,48 @@ pub struct CloudSyncTransientEditPart {
     pub modified_at_millis: i64,
 }
 
+#[derive(Clone)]
+pub struct CloudSyncTransientKnownMessageFlags {
+    pub from_me: bool,
+    pub delivered: bool,
+    pub read: bool,
+    pub has_data_detector_results: bool,
+    pub delivered_quietly: bool,
+    pub did_notify_recipient: bool,
+}
+
+#[derive(Clone)]
+pub struct CloudSyncTransientTextRun {
+    pub start_utf16: u32,
+    pub length_utf16: u32,
+    pub message_part: Option<u32>,
+    pub attachment_canonical_guid: Option<String>,
+    pub attachment_logical_key_hash: Option<String>,
+    pub mention_handle: Option<String>,
+    pub audio_transcript: Option<String>,
+    pub text_effect: Option<i64>,
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub strikethrough: Option<bool>,
+    pub underline: Option<bool>,
+}
+
+#[derive(Clone)]
+pub struct CloudSyncTransientAttributedBody {
+    pub text: String,
+    pub runs: Vec<CloudSyncTransientTextRun>,
+}
+
+#[derive(Clone)]
+pub struct CloudSyncTransientMessageEdit {
+    pub part: u32,
+    pub revision: u32,
+    pub bodies: Vec<CloudSyncTransientAttributedBody>,
+    pub modified_at_millis: i64,
+    pub original_range_location: Option<u32>,
+    pub original_range_length: Option<u32>,
+}
+
 /// Content-free canonical snapshot. The opaque protected source reference is
 /// retained so unknown semantics can be retried by a later decoder.
 #[derive(Clone)]
@@ -513,9 +574,21 @@ pub struct CloudSyncTransientChatPayload {
     pub canonical_guid: String,
     /// Validated iMessage chat identifier used to bind message records.
     pub chat_identifier: String,
+    pub group_id: String,
+    pub original_group_id: String,
+    pub service: CloudSyncTransientService,
+    pub style: CloudSyncTransientChatStyle,
     pub participant_handles: Vec<String>,
     pub display_name_state: CloudSyncTransientFieldState,
     pub display_name: Option<String>,
+    pub last_addressed_handle_state: CloudSyncTransientFieldState,
+    pub last_addressed_handle: Option<String>,
+    pub group_version_state: CloudSyncTransientFieldState,
+    pub group_version: Option<u32>,
+    pub last_seen_message_guid_state: CloudSyncTransientFieldState,
+    pub last_seen_message_guid: Option<String>,
+    pub group_photo_guid_state: CloudSyncTransientFieldState,
+    pub group_photo_guid: Option<String>,
 }
 
 /// Transient message/reaction content. Raw CloudKit record names and Apple
@@ -529,13 +602,39 @@ pub struct CloudSyncTransientMessagePayload {
     pub chat_alias_key_hash: String,
     pub chat_identifier: String,
     pub sender_handle: String,
+    pub created_at_millis: i64,
+    pub error: i64,
+    pub service: CloudSyncTransientService,
+    pub subject_state: CloudSyncTransientFieldState,
+    pub subject: Option<String>,
     pub body_state: CloudSyncTransientFieldState,
     pub body: Option<String>,
+    pub attributed_bodies_state: CloudSyncTransientFieldState,
+    pub attributed_bodies: Vec<CloudSyncTransientAttributedBody>,
+    pub balloon_bundle_id_state: CloudSyncTransientFieldState,
+    pub balloon_bundle_id: Option<String>,
+    pub effect_state: CloudSyncTransientFieldState,
+    pub effect: Option<String>,
+    pub read_at_millis_state: CloudSyncTransientFieldState,
+    pub read_at_millis: Option<i64>,
+    pub delivered_at_millis_state: CloudSyncTransientFieldState,
+    pub delivered_at_millis: Option<i64>,
+    pub known_flags: CloudSyncTransientKnownMessageFlags,
+    pub association_kind: CloudSyncTransientAssociationKind,
     pub reaction_kind: Option<CloudSyncTransientReactionKind>,
     pub reaction_removed: bool,
     pub reaction_parent_logical_key_hash: Option<String>,
     pub reaction_parent_canonical_guid: Option<String>,
     pub reaction_parent_part: Option<u32>,
+    pub associated_range_location: Option<u32>,
+    pub associated_range_length: Option<u32>,
+    pub reply_parent_logical_key_hash: Option<String>,
+    pub reply_parent_canonical_guid: Option<String>,
+    pub reply_parent_part: Option<String>,
+    pub edits_state: CloudSyncTransientFieldState,
+    pub edits: Vec<CloudSyncTransientMessageEdit>,
+    pub retracted_parts_state: CloudSyncTransientFieldState,
+    pub retracted_parts: Vec<u32>,
     pub associated_emoji_state: CloudSyncTransientFieldState,
     pub associated_emoji: Option<String>,
 }
@@ -547,10 +646,16 @@ pub struct CloudSyncTransientAttachmentPayload {
     pub owner_logical_key_hash: Option<String>,
     pub owner_canonical_guid: Option<String>,
     pub owner_part: Option<u32>,
+    pub uti_state: CloudSyncTransientFieldState,
+    pub uti: Option<String>,
     pub file_name_state: CloudSyncTransientFieldState,
     pub file_name: Option<String>,
     pub mime_type_state: CloudSyncTransientFieldState,
     pub mime_type: Option<String>,
+    pub total_bytes_state: CloudSyncTransientFieldState,
+    pub total_bytes: Option<u64>,
+    pub is_outgoing_state: CloudSyncTransientFieldState,
+    pub is_outgoing: Option<bool>,
     pub protected_local_reference_state: CloudSyncTransientFieldState,
     pub protected_local_reference: Option<String>,
 }
@@ -999,6 +1104,25 @@ fn map_cloud_sync_transient_field_state(
     }
 }
 
+fn map_cloud_sync_transient_service(
+    service: crate::cloud_sync_canonical_dto::CloudCanonicalService,
+) -> CloudSyncTransientService {
+    use crate::cloud_sync_canonical_dto::CloudCanonicalService as Canonical;
+    match service {
+        Canonical::IMessage => CloudSyncTransientService::IMessage,
+    }
+}
+
+fn map_cloud_sync_transient_chat_style(
+    style: crate::cloud_sync_canonical_dto::CloudCanonicalChatStyle,
+) -> CloudSyncTransientChatStyle {
+    use crate::cloud_sync_canonical_dto::CloudCanonicalChatStyle as Canonical;
+    match style {
+        Canonical::Direct => CloudSyncTransientChatStyle::Direct,
+        Canonical::Group => CloudSyncTransientChatStyle::Group,
+    }
+}
+
 fn map_cloud_sync_transient_reaction_kind(
     kind: crate::cloud_sync_canonical_dto::CloudCanonicalReactionKind,
 ) -> CloudSyncTransientReactionKind {
@@ -1012,6 +1136,75 @@ fn map_cloud_sync_transient_reaction_kind(
         Canonical::Question => CloudSyncTransientReactionKind::Question,
         Canonical::Emoji => CloudSyncTransientReactionKind::Emoji,
         Canonical::StickerBack => CloudSyncTransientReactionKind::StickerBack,
+    }
+}
+
+fn map_cloud_sync_transient_text_run(
+    run: &crate::cloud_sync_canonical_dto::CloudCanonicalTextRun,
+) -> CloudSyncTransientTextRun {
+    let attachment = run.attachment();
+    CloudSyncTransientTextRun {
+        start_utf16: run.start_utf16(),
+        length_utf16: run.length_utf16(),
+        message_part: run.message_part(),
+        attachment_canonical_guid: attachment.map(|value| value.canonical_guid().to_owned()),
+        attachment_logical_key_hash: attachment
+            .map(|value| value.logical_key_hash().value().to_owned()),
+        mention_handle: run.mention().map(str::to_owned),
+        audio_transcript: run.audio_transcript().map(str::to_owned),
+        text_effect: run.text_effect(),
+        bold: run.bold(),
+        italic: run.italic(),
+        strikethrough: run.strikethrough(),
+        underline: run.underline(),
+    }
+}
+
+fn map_cloud_sync_transient_attributed_body(
+    body: &crate::cloud_sync_canonical_dto::CloudCanonicalAttributedBody,
+) -> CloudSyncTransientAttributedBody {
+    CloudSyncTransientAttributedBody {
+        text: body.text().to_owned(),
+        runs: body
+            .runs()
+            .iter()
+            .map(map_cloud_sync_transient_text_run)
+            .collect(),
+    }
+}
+
+fn map_cloud_sync_transient_message_edit(
+    edit: &crate::cloud_sync_canonical_dto::CloudCanonicalMessageEdit,
+) -> CloudSyncTransientMessageEdit {
+    let (original_range_location, original_range_length) = edit
+        .original_range()
+        .map_or((None, None), |(location, length)| {
+            (Some(location), Some(length))
+        });
+    CloudSyncTransientMessageEdit {
+        part: edit.part(),
+        revision: edit.revision(),
+        bodies: edit
+            .bodies()
+            .iter()
+            .map(map_cloud_sync_transient_attributed_body)
+            .collect(),
+        modified_at_millis: edit.modified_at_millis(),
+        original_range_location,
+        original_range_length,
+    }
+}
+
+fn map_cloud_sync_transient_known_flags(
+    flags: crate::cloud_sync_canonical_dto::CloudCanonicalKnownMessageFlags,
+) -> CloudSyncTransientKnownMessageFlags {
+    CloudSyncTransientKnownMessageFlags {
+        from_me: flags.from_me,
+        delivered: flags.delivered,
+        read: flags.read,
+        has_data_detector_results: flags.has_data_detector_results,
+        delivered_quietly: flags.delivered_quietly,
+        did_notify_recipient: flags.did_notify_recipient,
     }
 }
 
@@ -1070,46 +1263,119 @@ fn map_cloud_sync_transient_payload(
                 logical_entity_key_hash: logical_entity_key_hash.to_owned(),
                 canonical_guid: payload.guid().to_owned(),
                 chat_identifier: payload.chat_identifier().to_owned(),
+                group_id: payload.group_id().to_owned(),
+                original_group_id: payload.original_group_id().to_owned(),
+                service: map_cloud_sync_transient_service(payload.service()),
+                style: map_cloud_sync_transient_chat_style(payload.style()),
                 participant_handles: payload.participant_handles().to_vec(),
                 display_name_state: map_cloud_sync_transient_field_state(
                     payload.display_name_state(),
                 ),
                 display_name: payload.display_name().value().cloned(),
+                last_addressed_handle_state: map_cloud_sync_transient_field_state(
+                    payload.last_addressed_handle_state(),
+                ),
+                last_addressed_handle: payload.last_addressed_handle().value().cloned(),
+                group_version_state: map_cloud_sync_transient_field_state(
+                    payload.group_version_state(),
+                ),
+                group_version: payload.group_version().value().copied(),
+                last_seen_message_guid_state: map_cloud_sync_transient_field_state(
+                    payload.last_seen_message_guid_state(),
+                ),
+                last_seen_message_guid: payload.last_seen_message_guid().value().cloned(),
+                group_photo_guid_state: map_cloud_sync_transient_field_state(
+                    payload.group_photo_guid_state(),
+                ),
+                group_photo_guid: payload.group_photo_guid().value().cloned(),
             });
         }
         Canonical::Message(payload) => {
-            if payload.association().is_sticker() {
-                return None;
-            }
-            let (
-                reaction_kind,
-                reaction_parent_logical_key_hash,
-                reaction_parent_canonical_guid,
-                reaction_parent_part,
-                reaction_removed,
-            ) = match payload.association().reaction() {
-                Some((kind, parent, removed)) => (
-                    Some(map_cloud_sync_transient_reaction_kind(kind)),
-                    Some(parent.parent_hash().value().to_owned()),
-                    Some(parent.parent_guid().to_owned()),
-                    parent.parent_part(),
-                    removed,
-                ),
-                None => (None, None, None, None, false),
-            };
+            let (association_kind, reaction_kind, association_parent, reaction_removed) =
+                match payload.association().reaction() {
+                    Some((kind, parent, removed)) => (
+                        if removed {
+                            CloudSyncTransientAssociationKind::ReactionRemove
+                        } else {
+                            CloudSyncTransientAssociationKind::ReactionAdd
+                        },
+                        Some(map_cloud_sync_transient_reaction_kind(kind)),
+                        Some(parent),
+                        removed,
+                    ),
+                    None => match payload.association().sticker() {
+                        Some(parent) => (
+                            CloudSyncTransientAssociationKind::Sticker,
+                            None,
+                            Some(parent),
+                            false,
+                        ),
+                        None => (CloudSyncTransientAssociationKind::None, None, None, false),
+                    },
+                };
+            let reply = payload.reply();
             result.message = Some(CloudSyncTransientMessagePayload {
                 logical_entity_key_hash: logical_entity_key_hash.to_owned(),
                 canonical_guid: payload.guid().to_owned(),
                 chat_alias_key_hash: payload.chat_alias_key_hash().value().to_owned(),
                 chat_identifier: payload.chat_identifier().to_owned(),
                 sender_handle: payload.sender_handle().to_owned(),
+                created_at_millis: payload.created_at_millis(),
+                error: payload.error(),
+                service: map_cloud_sync_transient_service(payload.service()),
+                subject_state: map_cloud_sync_transient_field_state(payload.subject().state()),
+                subject: payload.subject().value().cloned(),
                 body_state: map_cloud_sync_transient_field_state(payload.text_state()),
                 body: payload.text().value().cloned(),
+                attributed_bodies_state: map_cloud_sync_transient_field_state(
+                    payload.attributed_bodies_state(),
+                ),
+                attributed_bodies: payload
+                    .attributed_bodies()
+                    .iter()
+                    .map(map_cloud_sync_transient_attributed_body)
+                    .collect(),
+                balloon_bundle_id_state: map_cloud_sync_transient_field_state(
+                    payload.balloon_bundle_id().state(),
+                ),
+                balloon_bundle_id: payload.balloon_bundle_id().value().cloned(),
+                effect_state: map_cloud_sync_transient_field_state(payload.effect().state()),
+                effect: payload.effect().value().cloned(),
+                read_at_millis_state: map_cloud_sync_transient_field_state(
+                    payload.read_at_millis().state(),
+                ),
+                read_at_millis: payload.read_at_millis().value().copied(),
+                delivered_at_millis_state: map_cloud_sync_transient_field_state(
+                    payload.delivered_at_millis().state(),
+                ),
+                delivered_at_millis: payload.delivered_at_millis().value().copied(),
+                known_flags: map_cloud_sync_transient_known_flags(payload.flags()),
+                association_kind,
                 reaction_kind,
                 reaction_removed,
-                reaction_parent_logical_key_hash,
-                reaction_parent_canonical_guid,
-                reaction_parent_part,
+                reaction_parent_logical_key_hash: association_parent
+                    .map(|parent| parent.parent_hash().value().to_owned()),
+                reaction_parent_canonical_guid: association_parent
+                    .map(|parent| parent.parent_guid().to_owned()),
+                reaction_parent_part: association_parent.and_then(|parent| parent.parent_part()),
+                associated_range_location: association_parent
+                    .and_then(|parent| parent.range_location()),
+                associated_range_length: association_parent
+                    .and_then(|parent| parent.range_length()),
+                reply_parent_logical_key_hash: reply
+                    .map(|parent| parent.parent_hash().value().to_owned()),
+                reply_parent_canonical_guid: reply.map(|parent| parent.parent_guid().to_owned()),
+                reply_parent_part: reply.map(|parent| parent.parent_part().to_owned()),
+                edits_state: map_cloud_sync_transient_field_state(payload.edits_state()),
+                edits: payload
+                    .edits()
+                    .iter()
+                    .map(map_cloud_sync_transient_message_edit)
+                    .collect(),
+                retracted_parts_state: map_cloud_sync_transient_field_state(
+                    payload.retracted_parts_state(),
+                ),
+                retracted_parts: payload.retracted_parts().to_vec(),
                 associated_emoji_state: map_cloud_sync_transient_field_state(
                     payload.associated_emoji().state(),
                 ),
@@ -1125,12 +1391,22 @@ fn map_cloud_sync_transient_payload(
                     .map(|value| value.value().to_owned()),
                 owner_canonical_guid: payload.owner_message_guid().map(str::to_owned),
                 owner_part: payload.owner_part(),
+                uti_state: map_cloud_sync_transient_field_state(payload.uti().state()),
+                uti: payload.uti().value().cloned(),
                 file_name_state: map_cloud_sync_transient_field_state(
                     payload.transfer_name().state(),
                 ),
                 file_name: payload.transfer_name().value().cloned(),
                 mime_type_state: map_cloud_sync_transient_field_state(payload.mime_type().state()),
                 mime_type: payload.mime_type().value().cloned(),
+                total_bytes_state: map_cloud_sync_transient_field_state(
+                    payload.total_bytes().state(),
+                ),
+                total_bytes: payload.total_bytes().value().copied(),
+                is_outgoing_state: map_cloud_sync_transient_field_state(
+                    payload.is_outgoing().state(),
+                ),
+                is_outgoing: payload.is_outgoing().value().copied(),
                 protected_local_reference_state: map_cloud_sync_transient_field_state(
                     payload.verified_local_file_reference().state(),
                 ),

@@ -218,7 +218,14 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       throw CloudSemanticDecodeFailure(_failureCategory(failure));
     }
     if (result.deferredReason != null) {
-      throw const CloudSemanticDecodeFailure(CloudFailureCategory.dependency);
+      // Native deferred reasons describe deterministic record shapes that this
+      // build cannot project (stickers, scheduling, extension payloads, etc.).
+      // Retrying the same protected record cannot make those fields supported
+      // and would stall the contiguous replay prefix for days. Preserve the
+      // raw record in quarantine and allow later supported history to proceed.
+      throw const CloudSemanticDecodeFailure(
+        CloudFailureCategory.malformedRecord,
+      );
     }
     if (result.quarantineReason != null) {
       throw const CloudSemanticDecodeFailure(
@@ -374,17 +381,130 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     };
   }
 
-  CloudChatEntityPayload _chatPayload(frb_api.CloudSyncTransientPayload value) {
-    final payload = value.chat;
-    if (payload == null ||
-        !_fieldStateMatches(payload.displayNameState, payload.displayName)) {
+  CloudSemanticFieldState _fieldState(
+    frb_api.CloudSyncTransientFieldState value,
+  ) => switch (value) {
+    frb_api.CloudSyncTransientFieldState.absent =>
+      CloudSemanticFieldState.absent,
+    frb_api.CloudSyncTransientFieldState.value => CloudSemanticFieldState.value,
+    frb_api.CloudSyncTransientFieldState.explicitClear =>
+      CloudSemanticFieldState.explicitClear,
+  };
+
+  CloudSemanticService _service(frb_api.CloudSyncTransientService value) =>
+      switch (value) {
+        frb_api.CloudSyncTransientService.iMessage =>
+          CloudSemanticService.iMessage,
+      };
+
+  CloudSemanticChatStyle _chatStyle(
+    frb_api.CloudSyncTransientChatStyle value,
+  ) => switch (value) {
+    frb_api.CloudSyncTransientChatStyle.direct => CloudSemanticChatStyle.direct,
+    frb_api.CloudSyncTransientChatStyle.group => CloudSemanticChatStyle.group,
+  };
+
+  CloudSemanticAssociationKind _associationKind(
+    frb_api.CloudSyncTransientAssociationKind value,
+  ) => switch (value) {
+    frb_api.CloudSyncTransientAssociationKind.none =>
+      CloudSemanticAssociationKind.none,
+    frb_api.CloudSyncTransientAssociationKind.sticker =>
+      CloudSemanticAssociationKind.sticker,
+    frb_api.CloudSyncTransientAssociationKind.reactionAdd =>
+      CloudSemanticAssociationKind.reactionAdd,
+    frb_api.CloudSyncTransientAssociationKind.reactionRemove =>
+      CloudSemanticAssociationKind.reactionRemove,
+  };
+
+  CloudSemanticKnownMessageFlags _knownFlags(
+    frb_api.CloudSyncTransientKnownMessageFlags value,
+  ) => CloudSemanticKnownMessageFlags(
+    fromMe: value.fromMe,
+    delivered: value.delivered,
+    read: value.read,
+    hasDataDetectorResults: value.hasDataDetectorResults,
+    deliveredQuietly: value.deliveredQuietly,
+    didNotifyRecipient: value.didNotifyRecipient,
+  );
+
+  CloudSemanticTextRun _textRun(frb_api.CloudSyncTransientTextRun value) {
+    if ((value.attachmentCanonicalGuid == null) !=
+        (value.attachmentLogicalKeyHash == null)) {
       throw const CloudSemanticDecodeFailure(
         CloudFailureCategory.malformedRecord,
       );
     }
-    if (payload.displayNameState ==
-        frb_api.CloudSyncTransientFieldState.explicitClear) {
-      throw const CloudSemanticDecodeFailure(CloudFailureCategory.dependency);
+    return CloudSemanticTextRun(
+      startUtf16: value.startUtf16,
+      lengthUtf16: value.lengthUtf16,
+      messagePart: value.messagePart,
+      attachmentCanonicalGuid: value.attachmentCanonicalGuid,
+      attachmentLogicalKeyHash: _optionalExternalDigest(
+        value.attachmentLogicalKeyHash,
+      ),
+      mentionHandle: value.mentionHandle,
+      audioTranscript: value.audioTranscript,
+      textEffect: value.textEffect,
+      bold: value.bold,
+      italic: value.italic,
+      strikethrough: value.strikethrough,
+      underline: value.underline,
+    );
+  }
+
+  CloudSemanticAttributedBody _attributedBody(
+    frb_api.CloudSyncTransientAttributedBody value,
+  ) => CloudSemanticAttributedBody(
+    text: value.text,
+    runs: value.runs.map(_textRun),
+  );
+
+  CloudSemanticMessageEdit _messageEdit(
+    frb_api.CloudSyncTransientMessageEdit value,
+  ) {
+    if ((value.originalRangeLocation == null) !=
+        (value.originalRangeLength == null)) {
+      throw const CloudSemanticDecodeFailure(
+        CloudFailureCategory.malformedRecord,
+      );
+    }
+    final modifiedAt = _dateTime(value.modifiedAtMillis);
+    if (modifiedAt == null) {
+      throw const CloudSemanticDecodeFailure(
+        CloudFailureCategory.malformedRecord,
+      );
+    }
+    return CloudSemanticMessageEdit(
+      part: value.part_,
+      revision: value.revision,
+      bodies: value.bodies.map(_attributedBody),
+      modifiedAt: modifiedAt,
+      originalRangeLocation: value.originalRangeLocation,
+      originalRangeLength: value.originalRangeLength,
+    );
+  }
+
+  CloudChatEntityPayload _chatPayload(frb_api.CloudSyncTransientPayload value) {
+    final payload = value.chat;
+    if (payload == null ||
+        !_fieldStateMatches(payload.displayNameState, payload.displayName) ||
+        !_fieldStateMatches(
+          payload.lastAddressedHandleState,
+          payload.lastAddressedHandle,
+        ) ||
+        !_fieldStateMatches(payload.groupVersionState, payload.groupVersion) ||
+        !_fieldStateMatches(
+          payload.lastSeenMessageGuidState,
+          payload.lastSeenMessageGuid,
+        ) ||
+        !_fieldStateMatches(
+          payload.groupPhotoGuidState,
+          payload.groupPhotoGuid,
+        )) {
+      throw const CloudSemanticDecodeFailure(
+        CloudFailureCategory.malformedRecord,
+      );
     }
     return CloudChatEntityPayload(
       logicalEntityKeyHash: _requireExternalDigest(
@@ -392,8 +512,21 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       ),
       canonicalGuid: payload.canonicalGuid,
       chatIdentifier: payload.chatIdentifier,
+      groupId: payload.groupId,
+      originalGroupId: payload.originalGroupId,
+      service: _service(payload.service),
+      style: _chatStyle(payload.style),
+      displayNameState: _fieldState(payload.displayNameState),
       displayName: payload.displayName,
       participantHandles: payload.participantHandles,
+      lastAddressedHandleState: _fieldState(payload.lastAddressedHandleState),
+      lastAddressedHandle: payload.lastAddressedHandle,
+      groupVersionState: _fieldState(payload.groupVersionState),
+      groupVersion: payload.groupVersion,
+      lastSeenMessageGuidState: _fieldState(payload.lastSeenMessageGuidState),
+      lastSeenMessageGuid: payload.lastSeenMessageGuid,
+      groupPhotoGuidState: _fieldState(payload.groupPhotoGuidState),
+      groupPhotoGuid: payload.groupPhotoGuid,
     );
   }
 
@@ -402,17 +535,41 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
   ) {
     final payload = value.message;
     if (payload == null ||
+        (payload.associationKind !=
+                frb_api.CloudSyncTransientAssociationKind.none &&
+            payload.associationKind !=
+                frb_api.CloudSyncTransientAssociationKind.sticker) ||
         payload.reactionKind != null ||
-        payload.reactionParentLogicalKeyHash != null ||
-        payload.reactionParentCanonicalGuid != null ||
-        payload.reactionParentPart != null ||
         payload.reactionRemoved ||
-        payload.bodyState != frb_api.CloudSyncTransientFieldState.value ||
-        payload.body == null ||
+        !_fieldStateMatches(payload.subjectState, payload.subject) ||
+        !_fieldStateMatches(payload.bodyState, payload.body) ||
+        !_collectionFieldStateMatches(
+          payload.attributedBodiesState,
+          payload.attributedBodies,
+        ) ||
+        !_fieldStateMatches(
+          payload.balloonBundleIdState,
+          payload.balloonBundleId,
+        ) ||
+        !_fieldStateMatches(payload.effectState, payload.effect) ||
+        !_fieldStateMatches(payload.readAtMillisState, payload.readAtMillis) ||
+        !_fieldStateMatches(
+          payload.deliveredAtMillisState,
+          payload.deliveredAtMillis,
+        ) ||
+        !_collectionFieldStateMatches(payload.editsState, payload.edits) ||
+        !_collectionFieldStateMatches(
+          payload.retractedPartsState,
+          payload.retractedParts,
+        ) ||
         !_fieldStateMatches(
           payload.associatedEmojiState,
           payload.associatedEmoji,
-        )) {
+        ) ||
+        payload.associatedEmojiState !=
+            frb_api.CloudSyncTransientFieldState.absent ||
+        !_associationShapeMatches(payload, isReaction: false) ||
+        !_replyShapeMatches(payload)) {
       throw const CloudSemanticDecodeFailure(CloudFailureCategory.dependency);
     }
     return CloudMessageEntityPayload(
@@ -422,8 +579,45 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       canonicalGuid: payload.canonicalGuid,
       chatAliasKeyHash: _requireExternalDigest(payload.chatAliasKeyHash),
       chatIdentifier: payload.chatIdentifier,
-      body: payload.body!,
+      body: payload.body,
       senderHandle: payload.senderHandle,
+      createdAt: _dateTime(payload.createdAtMillis),
+      error: payload.error,
+      service: _service(payload.service),
+      subjectState: _fieldState(payload.subjectState),
+      subject: payload.subject,
+      bodyState: _fieldState(payload.bodyState),
+      attributedBodiesState: _fieldState(payload.attributedBodiesState),
+      attributedBodies: payload.attributedBodies.map(_attributedBody),
+      balloonBundleIdState: _fieldState(payload.balloonBundleIdState),
+      balloonBundleId: payload.balloonBundleId,
+      // Native currently defers any extension payload before this boundary.
+      // Binary extension bytes must never cross the transient FRB contract.
+      decodedExtensionPayloadState: CloudSemanticFieldState.absent,
+      effectState: _fieldState(payload.effectState),
+      effect: payload.effect,
+      readAtState: _fieldState(payload.readAtMillisState),
+      readAt: _dateTime(payload.readAtMillis),
+      deliveredAtState: _fieldState(payload.deliveredAtMillisState),
+      deliveredAt: _dateTime(payload.deliveredAtMillis),
+      knownFlags: _knownFlags(payload.knownFlags),
+      associationKind: _associationKind(payload.associationKind),
+      associationParentLogicalKeyHash: _optionalExternalDigest(
+        payload.reactionParentLogicalKeyHash,
+      ),
+      associationParentCanonicalGuid: payload.reactionParentCanonicalGuid,
+      associationParentPart: payload.reactionParentPart,
+      associatedRangeLocation: payload.associatedRangeLocation,
+      associatedRangeLength: payload.associatedRangeLength,
+      replyParentLogicalKeyHash: _optionalExternalDigest(
+        payload.replyParentLogicalKeyHash,
+      ),
+      replyParentCanonicalGuid: payload.replyParentCanonicalGuid,
+      replyParentPart: payload.replyParentPart,
+      editsState: _fieldState(payload.editsState),
+      edits: payload.edits.map(_messageEdit),
+      retractedPartsState: _fieldState(payload.retractedPartsState),
+      retractedParts: payload.retractedParts,
     );
   }
 
@@ -438,7 +632,34 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         parent == null ||
         parentGuid == null ||
         reactionKind == null ||
+        !_associationShapeMatches(payload, isReaction: true) ||
+        !_replyShapeMatches(payload) ||
+        payload.replyParentCanonicalGuid != null ||
+        payload.subjectState != frb_api.CloudSyncTransientFieldState.absent ||
         !_fieldStateMatches(payload.bodyState, payload.body) ||
+        payload.bodyState != frb_api.CloudSyncTransientFieldState.absent ||
+        !_collectionFieldStateMatches(
+          payload.attributedBodiesState,
+          payload.attributedBodies,
+        ) ||
+        payload.attributedBodiesState !=
+            frb_api.CloudSyncTransientFieldState.absent ||
+        payload.balloonBundleIdState !=
+            frb_api.CloudSyncTransientFieldState.absent ||
+        payload.effectState != frb_api.CloudSyncTransientFieldState.absent ||
+        !_fieldStateMatches(payload.readAtMillisState, payload.readAtMillis) ||
+        !_fieldStateMatches(
+          payload.deliveredAtMillisState,
+          payload.deliveredAtMillis,
+        ) ||
+        !_collectionFieldStateMatches(payload.editsState, payload.edits) ||
+        payload.editsState != frb_api.CloudSyncTransientFieldState.absent ||
+        !_collectionFieldStateMatches(
+          payload.retractedPartsState,
+          payload.retractedParts,
+        ) ||
+        payload.retractedPartsState !=
+            frb_api.CloudSyncTransientFieldState.absent ||
         !_fieldStateMatches(
           payload.associatedEmojiState,
           payload.associatedEmoji,
@@ -471,6 +692,16 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       senderHandle: payload.senderHandle,
       reactionType: type,
       associatedEmoji: payload.associatedEmoji,
+      createdAt: _dateTime(payload.createdAtMillis),
+      error: payload.error,
+      service: _service(payload.service),
+      knownFlags: _knownFlags(payload.knownFlags),
+      readAtState: _fieldState(payload.readAtMillisState),
+      readAt: _dateTime(payload.readAtMillis),
+      deliveredAtState: _fieldState(payload.deliveredAtMillisState),
+      deliveredAt: _dateTime(payload.deliveredAtMillis),
+      associatedRangeLocation: payload.associatedRangeLocation,
+      associatedRangeLength: payload.associatedRangeLength,
     );
   }
 
@@ -479,18 +710,18 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
   ) {
     final payload = value.attachment;
     if (payload == null ||
-        payload.ownerLogicalKeyHash == null ||
-        payload.ownerCanonicalGuid == null ||
-        payload.ownerPart == null ||
-        payload.fileNameState != frb_api.CloudSyncTransientFieldState.value ||
-        payload.fileName == null ||
-        payload.protectedLocalReferenceState !=
-            frb_api.CloudSyncTransientFieldState.value ||
-        payload.protectedLocalReference == null ||
-        payload.mimeTypeState ==
-            frb_api.CloudSyncTransientFieldState.explicitClear ||
+        !_ownerShapeMatches(payload) ||
+        !_fieldStateMatches(payload.utiState, payload.uti) ||
+        !_fieldStateMatches(payload.fileNameState, payload.fileName) ||
         !_fieldStateMatches(payload.mimeTypeState, payload.mimeType) ||
-        !_protectedReference.hasMatch(payload.protectedLocalReference!)) {
+        !_fieldStateMatches(payload.totalBytesState, payload.totalBytes) ||
+        !_fieldStateMatches(payload.isOutgoingState, payload.isOutgoing) ||
+        !_fieldStateMatches(
+          payload.protectedLocalReferenceState,
+          payload.protectedLocalReference,
+        ) ||
+        (payload.protectedLocalReference != null &&
+            !_protectedReference.hasMatch(payload.protectedLocalReference!))) {
       throw const CloudSemanticDecodeFailure(CloudFailureCategory.dependency);
     }
     return CloudAttachmentEntityPayload(
@@ -498,12 +729,23 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         payload.logicalEntityKeyHash,
       ),
       canonicalGuid: payload.canonicalGuid,
-      ownerLogicalKeyHash: _requireExternalDigest(payload.ownerLogicalKeyHash!),
-      ownerCanonicalGuid: payload.ownerCanonicalGuid!,
-      ownerPart: payload.ownerPart!,
-      fileName: payload.fileName!,
+      ownerLogicalKeyHash: _optionalExternalDigest(payload.ownerLogicalKeyHash),
+      ownerCanonicalGuid: payload.ownerCanonicalGuid,
+      ownerPart: payload.ownerPart,
+      utiState: _fieldState(payload.utiState),
+      uti: payload.uti,
+      fileNameState: _fieldState(payload.fileNameState),
+      fileName: payload.fileName,
+      mimeTypeState: _fieldState(payload.mimeTypeState),
       mimeType: payload.mimeType,
-      protectedLocalReference: payload.protectedLocalReference!,
+      totalBytesState: _fieldState(payload.totalBytesState),
+      totalBytes: _boundedUnsignedInt64(payload.totalBytes),
+      isOutgoingState: _fieldState(payload.isOutgoingState),
+      isOutgoing: payload.isOutgoing,
+      protectedLocalReferenceState: _fieldState(
+        payload.protectedLocalReferenceState,
+      ),
+      protectedLocalReference: payload.protectedLocalReference,
     );
   }
 
@@ -607,12 +849,85 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
 
   bool _fieldStateMatches(
     frb_api.CloudSyncTransientFieldState state,
-    String? value,
+    Object? value,
   ) => switch (state) {
     frb_api.CloudSyncTransientFieldState.value => value != null,
     frb_api.CloudSyncTransientFieldState.absent ||
     frb_api.CloudSyncTransientFieldState.explicitClear => value == null,
   };
+
+  bool _collectionFieldStateMatches(
+    frb_api.CloudSyncTransientFieldState state,
+    Iterable<Object?> value,
+  ) => state == frb_api.CloudSyncTransientFieldState.value || value.isEmpty;
+
+  bool _associationShapeMatches(
+    frb_api.CloudSyncTransientMessagePayload payload, {
+    required bool isReaction,
+  }) {
+    final parentHash = payload.reactionParentLogicalKeyHash;
+    final parentGuid = payload.reactionParentCanonicalGuid;
+    final hasParent = parentHash != null && parentGuid != null;
+    if ((parentHash == null) != (parentGuid == null) ||
+        (payload.associatedRangeLocation == null) !=
+            (payload.associatedRangeLength == null) ||
+        (!hasParent &&
+            (payload.reactionParentPart != null ||
+                payload.associatedRangeLocation != null))) {
+      return false;
+    }
+    return switch (payload.associationKind) {
+      frb_api.CloudSyncTransientAssociationKind.none =>
+        !isReaction &&
+            !hasParent &&
+            payload.reactionKind == null &&
+            !payload.reactionRemoved,
+      frb_api.CloudSyncTransientAssociationKind.sticker =>
+        !isReaction &&
+            hasParent &&
+            payload.reactionKind == null &&
+            !payload.reactionRemoved,
+      frb_api.CloudSyncTransientAssociationKind.reactionAdd =>
+        isReaction &&
+            hasParent &&
+            payload.reactionKind != null &&
+            !payload.reactionRemoved,
+      frb_api.CloudSyncTransientAssociationKind.reactionRemove =>
+        isReaction &&
+            hasParent &&
+            payload.reactionKind != null &&
+            payload.reactionRemoved,
+    };
+  }
+
+  bool _replyShapeMatches(frb_api.CloudSyncTransientMessagePayload payload) {
+    final fields = [
+      payload.replyParentLogicalKeyHash,
+      payload.replyParentCanonicalGuid,
+      payload.replyParentPart,
+    ];
+    return fields.every((value) => value == null) ||
+        fields.every((value) => value != null);
+  }
+
+  bool _ownerShapeMatches(frb_api.CloudSyncTransientAttachmentPayload payload) {
+    final fields = [
+      payload.ownerLogicalKeyHash,
+      payload.ownerCanonicalGuid,
+      payload.ownerPart,
+    ];
+    return fields.every((value) => value == null) ||
+        fields.every((value) => value != null);
+  }
+
+  int? _boundedUnsignedInt64(BigInt? value) {
+    if (value == null) return null;
+    final maximum = BigInt.parse('9223372036854775807');
+    if (value.isNegative || value > maximum) {
+      throw const CloudSemanticDecodeFailure(CloudFailureCategory.dependency);
+    }
+    return value.toInt();
+  }
 
   CloudFailureCategory _failureCategory(
     frb_api.CloudSyncTransientFailureCode value,

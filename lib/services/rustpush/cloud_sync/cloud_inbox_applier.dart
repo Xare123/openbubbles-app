@@ -7,6 +7,137 @@ import 'cloud_sync_transport.dart';
 
 enum CloudDecodedMutationKind { upsert, tombstone }
 
+enum CloudSemanticFieldState { absent, value, explicitClear }
+
+enum CloudSemanticService { iMessage }
+
+enum CloudSemanticChatStyle { direct, group }
+
+enum CloudSemanticAssociationKind { none, sticker, reactionAdd, reactionRemove }
+
+final class CloudSemanticKnownMessageFlags {
+  const CloudSemanticKnownMessageFlags({
+    required this.fromMe,
+    required this.delivered,
+    required this.read,
+    required this.hasDataDetectorResults,
+    required this.deliveredQuietly,
+    required this.didNotifyRecipient,
+  });
+
+  final bool fromMe;
+  final bool delivered;
+  final bool read;
+  final bool hasDataDetectorResults;
+  final bool deliveredQuietly;
+  final bool didNotifyRecipient;
+
+  @override
+  String toString() => 'CloudSemanticKnownMessageFlags(redacted)';
+}
+
+final class CloudSemanticTextRun {
+  CloudSemanticTextRun({
+    required this.startUtf16,
+    required this.lengthUtf16,
+    required this.messagePart,
+    required this.attachmentCanonicalGuid,
+    required this.attachmentLogicalKeyHash,
+    required this.mentionHandle,
+    required this.audioTranscript,
+    required this.textEffect,
+    required this.bold,
+    required this.italic,
+    required this.strikethrough,
+    required this.underline,
+  }) {
+    if (startUtf16 < 0 || lengthUtf16 < 0) {
+      throw ArgumentError('cloud_text_run_range_invalid');
+    }
+    if ((attachmentCanonicalGuid == null) !=
+        (attachmentLogicalKeyHash == null)) {
+      throw ArgumentError('cloud_text_run_attachment_identity_invalid');
+    }
+  }
+
+  final int startUtf16;
+  final int lengthUtf16;
+  final int? messagePart;
+  final String? attachmentCanonicalGuid;
+  final String? attachmentLogicalKeyHash;
+  final String? mentionHandle;
+  final String? audioTranscript;
+  final int? textEffect;
+  final bool? bold;
+  final bool? italic;
+  final bool? strikethrough;
+  final bool? underline;
+
+  @override
+  String toString() => 'CloudSemanticTextRun(redacted)';
+}
+
+final class CloudSemanticAttributedBody {
+  CloudSemanticAttributedBody({
+    required this.text,
+    required Iterable<CloudSemanticTextRun> runs,
+  }) : runs = List.unmodifiable(runs);
+
+  final String text;
+  final List<CloudSemanticTextRun> runs;
+
+  @override
+  String toString() => 'CloudSemanticAttributedBody(redacted)';
+}
+
+final class CloudSemanticMessageEdit {
+  CloudSemanticMessageEdit({
+    required this.part,
+    required this.revision,
+    required Iterable<CloudSemanticAttributedBody> bodies,
+    required this.modifiedAt,
+    required this.originalRangeLocation,
+    required this.originalRangeLength,
+  }) : bodies = List.unmodifiable(bodies) {
+    if (part < 0 ||
+        revision < 0 ||
+        bodies.isEmpty ||
+        (originalRangeLocation == null) != (originalRangeLength == null)) {
+      throw ArgumentError('cloud_message_edit_invalid');
+    }
+  }
+
+  final int part;
+  final int revision;
+  final List<CloudSemanticAttributedBody> bodies;
+  final DateTime modifiedAt;
+  final int? originalRangeLocation;
+  final int? originalRangeLength;
+
+  @override
+  String toString() => 'CloudSemanticMessageEdit(redacted)';
+}
+
+void _validateSemanticField(
+  CloudSemanticFieldState state,
+  Object? value,
+  String safeFieldName,
+) {
+  if ((state == CloudSemanticFieldState.value) != (value != null)) {
+    throw ArgumentError('cloud_semantic_${safeFieldName}_presence_invalid');
+  }
+}
+
+void _validateSemanticCollectionField(
+  CloudSemanticFieldState state,
+  List<Object?> value,
+  String safeFieldName,
+) {
+  if (state != CloudSemanticFieldState.value && value.isNotEmpty) {
+    throw ArgumentError('cloud_semantic_${safeFieldName}_presence_invalid');
+  }
+}
+
 /// Transient user-visible entity data produced by the native decoder.
 ///
 /// Payloads have no JSON/Map conversion and their string representation is
@@ -31,7 +162,44 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
     required this.chatIdentifier,
     required this.body,
     required this.senderHandle,
-  }) {
+    this.createdAt,
+    this.error,
+    this.service,
+    this.subjectState = CloudSemanticFieldState.absent,
+    this.subject,
+    this.bodyState = CloudSemanticFieldState.value,
+    this.attributedBodiesState = CloudSemanticFieldState.absent,
+    Iterable<CloudSemanticAttributedBody> attributedBodies = const [],
+    this.balloonBundleIdState = CloudSemanticFieldState.absent,
+    this.balloonBundleId,
+    this.decodedExtensionPayloadState = CloudSemanticFieldState.absent,
+    Uint8List? decodedExtensionPayload,
+    this.effectState = CloudSemanticFieldState.absent,
+    this.effect,
+    this.readAtState = CloudSemanticFieldState.absent,
+    this.readAt,
+    this.deliveredAtState = CloudSemanticFieldState.absent,
+    this.deliveredAt,
+    this.knownFlags,
+    this.associationKind = CloudSemanticAssociationKind.none,
+    this.associationParentLogicalKeyHash,
+    this.associationParentCanonicalGuid,
+    this.associationParentPart,
+    this.associatedRangeLocation,
+    this.associatedRangeLength,
+    this.replyParentLogicalKeyHash,
+    this.replyParentCanonicalGuid,
+    this.replyParentPart,
+    this.editsState = CloudSemanticFieldState.absent,
+    Iterable<CloudSemanticMessageEdit> edits = const [],
+    this.retractedPartsState = CloudSemanticFieldState.absent,
+    Iterable<int> retractedParts = const [],
+  }) : attributedBodies = List.unmodifiable(attributedBodies),
+       decodedExtensionPayload = decodedExtensionPayload == null
+           ? null
+           : Uint8List.fromList(decodedExtensionPayload),
+       edits = List.unmodifiable(edits),
+       retractedParts = List.unmodifiable(retractedParts) {
     if (logicalEntityKeyHash.isEmpty) {
       throw ArgumentError('cloud_message_payload_logical_key_invalid');
     }
@@ -41,6 +209,50 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
     if (chatAliasKeyHash.isEmpty) {
       throw ArgumentError('cloud_message_payload_chat_key_invalid');
     }
+    _validateSemanticField(subjectState, subject, 'subject');
+    _validateSemanticField(bodyState, body, 'body');
+    _validateSemanticCollectionField(
+      attributedBodiesState,
+      this.attributedBodies,
+      'attributed_bodies',
+    );
+    _validateSemanticField(
+      balloonBundleIdState,
+      balloonBundleId,
+      'balloon_bundle_id',
+    );
+    _validateSemanticField(
+      decodedExtensionPayloadState,
+      this.decodedExtensionPayload,
+      'decoded_extension_payload',
+    );
+    _validateSemanticField(effectState, effect, 'effect');
+    _validateSemanticField(readAtState, readAt, 'read_at');
+    _validateSemanticField(deliveredAtState, deliveredAt, 'delivered_at');
+    _validateSemanticCollectionField(editsState, this.edits, 'edits');
+    _validateSemanticCollectionField(
+      retractedPartsState,
+      this.retractedParts,
+      'retracted_parts',
+    );
+    if ((replyParentCanonicalGuid == null) != (replyParentPart == null) ||
+        (replyParentCanonicalGuid == null) !=
+            (replyParentLogicalKeyHash == null)) {
+      throw ArgumentError('cloud_message_payload_reply_identity_invalid');
+    }
+    final hasAssociationParent = associationParentCanonicalGuid != null;
+    if (hasAssociationParent != (associationParentLogicalKeyHash != null) ||
+        (associationKind == CloudSemanticAssociationKind.none &&
+            hasAssociationParent) ||
+        (associationKind != CloudSemanticAssociationKind.none &&
+            !hasAssociationParent) ||
+        (!hasAssociationParent &&
+            (associationParentPart != null ||
+                associatedRangeLocation != null ||
+                associatedRangeLength != null)) ||
+        (associatedRangeLocation == null) != (associatedRangeLength == null)) {
+      throw ArgumentError('cloud_message_payload_association_invalid');
+    }
   }
 
   @override
@@ -48,8 +260,40 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
   final String canonicalGuid;
   final String chatAliasKeyHash;
   final String chatIdentifier;
-  final String body;
+  final String? body;
   final String senderHandle;
+  final DateTime? createdAt;
+  final int? error;
+  final CloudSemanticService? service;
+  final CloudSemanticFieldState subjectState;
+  final String? subject;
+  final CloudSemanticFieldState bodyState;
+  final CloudSemanticFieldState attributedBodiesState;
+  final List<CloudSemanticAttributedBody> attributedBodies;
+  final CloudSemanticFieldState balloonBundleIdState;
+  final String? balloonBundleId;
+  final CloudSemanticFieldState decodedExtensionPayloadState;
+  final Uint8List? decodedExtensionPayload;
+  final CloudSemanticFieldState effectState;
+  final String? effect;
+  final CloudSemanticFieldState readAtState;
+  final DateTime? readAt;
+  final CloudSemanticFieldState deliveredAtState;
+  final DateTime? deliveredAt;
+  final CloudSemanticKnownMessageFlags? knownFlags;
+  final CloudSemanticAssociationKind associationKind;
+  final String? associationParentLogicalKeyHash;
+  final String? associationParentCanonicalGuid;
+  final int? associationParentPart;
+  final int? associatedRangeLocation;
+  final int? associatedRangeLength;
+  final String? replyParentLogicalKeyHash;
+  final String? replyParentCanonicalGuid;
+  final String? replyParentPart;
+  final CloudSemanticFieldState editsState;
+  final List<CloudSemanticMessageEdit> edits;
+  final CloudSemanticFieldState retractedPartsState;
+  final List<int> retractedParts;
 
   @override
   CloudEntityKind get kind => CloudEntityKind.message;
@@ -62,7 +306,25 @@ final class CloudChatEntityPayload extends CloudSemanticEntityPayload {
     required this.chatIdentifier,
     required this.displayName,
     required Iterable<String> participantHandles,
-  }) : participantHandles = List.unmodifiable(participantHandles) {
+    this.groupId,
+    this.originalGroupId,
+    this.service,
+    this.style,
+    CloudSemanticFieldState? displayNameState,
+    this.lastAddressedHandleState = CloudSemanticFieldState.absent,
+    this.lastAddressedHandle,
+    this.groupVersionState = CloudSemanticFieldState.absent,
+    this.groupVersion,
+    this.lastSeenMessageGuidState = CloudSemanticFieldState.absent,
+    this.lastSeenMessageGuid,
+    this.groupPhotoGuidState = CloudSemanticFieldState.absent,
+    this.groupPhotoGuid,
+  }) : displayNameState =
+           displayNameState ??
+           (displayName == null
+               ? CloudSemanticFieldState.absent
+               : CloudSemanticFieldState.value),
+       participantHandles = List.unmodifiable(participantHandles) {
     if (logicalEntityKeyHash.isEmpty) {
       throw ArgumentError('cloud_chat_payload_logical_key_invalid');
     }
@@ -72,14 +334,44 @@ final class CloudChatEntityPayload extends CloudSemanticEntityPayload {
     if (this.participantHandles.any((handle) => handle.isEmpty)) {
       throw ArgumentError('cloud_chat_payload_participant_invalid');
     }
+    _validateSemanticField(this.displayNameState, displayName, 'display_name');
+    _validateSemanticField(
+      lastAddressedHandleState,
+      lastAddressedHandle,
+      'last_addressed_handle',
+    );
+    _validateSemanticField(groupVersionState, groupVersion, 'group_version');
+    _validateSemanticField(
+      lastSeenMessageGuidState,
+      lastSeenMessageGuid,
+      'last_seen_message_guid',
+    );
+    _validateSemanticField(
+      groupPhotoGuidState,
+      groupPhotoGuid,
+      'group_photo_guid',
+    );
   }
 
   @override
   final String logicalEntityKeyHash;
   final String canonicalGuid;
   final String chatIdentifier;
+  final String? groupId;
+  final String? originalGroupId;
+  final CloudSemanticService? service;
+  final CloudSemanticChatStyle? style;
+  final CloudSemanticFieldState displayNameState;
   final String? displayName;
   final List<String> participantHandles;
+  final CloudSemanticFieldState lastAddressedHandleState;
+  final String? lastAddressedHandle;
+  final CloudSemanticFieldState groupVersionState;
+  final int? groupVersion;
+  final CloudSemanticFieldState lastSeenMessageGuidState;
+  final String? lastSeenMessageGuid;
+  final CloudSemanticFieldState groupPhotoGuidState;
+  final String? groupPhotoGuid;
 
   @override
   CloudEntityKind get kind => CloudEntityKind.chat;
@@ -95,19 +387,53 @@ final class CloudAttachmentEntityPayload extends CloudSemanticEntityPayload {
     required this.fileName,
     required this.mimeType,
     required this.protectedLocalReference,
-  }) {
+    this.utiState = CloudSemanticFieldState.absent,
+    this.uti,
+    this.fileNameState = CloudSemanticFieldState.value,
+    CloudSemanticFieldState? mimeTypeState,
+    this.totalBytesState = CloudSemanticFieldState.absent,
+    this.totalBytes,
+    this.isOutgoingState = CloudSemanticFieldState.absent,
+    this.isOutgoing,
+    this.protectedLocalReferenceState = CloudSemanticFieldState.value,
+  }) : mimeTypeState =
+           mimeTypeState ??
+           (mimeType == null
+               ? CloudSemanticFieldState.absent
+               : CloudSemanticFieldState.value) {
     if (logicalEntityKeyHash.isEmpty) {
       throw ArgumentError('cloud_attachment_payload_logical_key_invalid');
     }
-    if (canonicalGuid.isEmpty || ownerCanonicalGuid.isEmpty || ownerPart < 0) {
+    if (canonicalGuid.isEmpty ||
+        (ownerCanonicalGuid != null && ownerCanonicalGuid!.isEmpty) ||
+        (ownerPart != null && ownerPart! < 0)) {
       throw ArgumentError(
         'cloud_attachment_payload_canonical_identity_invalid',
       );
     }
-    if (ownerLogicalKeyHash.isEmpty) {
+    final ownerParts = [
+      ownerLogicalKeyHash != null,
+      ownerCanonicalGuid != null,
+      ownerPart != null,
+    ];
+    if (ownerParts.any((present) => present) &&
+        !ownerParts.every((present) => present)) {
+      throw ArgumentError('cloud_attachment_payload_owner_identity_invalid');
+    }
+    if (ownerLogicalKeyHash?.isEmpty ?? false) {
       throw ArgumentError('cloud_attachment_payload_owner_key_invalid');
     }
-    if (protectedLocalReference.isEmpty) {
+    _validateSemanticField(utiState, uti, 'uti');
+    _validateSemanticField(fileNameState, fileName, 'file_name');
+    _validateSemanticField(this.mimeTypeState, mimeType, 'mime_type');
+    _validateSemanticField(totalBytesState, totalBytes, 'total_bytes');
+    _validateSemanticField(isOutgoingState, isOutgoing, 'is_outgoing');
+    _validateSemanticField(
+      protectedLocalReferenceState,
+      protectedLocalReference,
+      'protected_local_reference',
+    );
+    if (protectedLocalReference?.isEmpty ?? false) {
       throw ArgumentError('cloud_attachment_payload_reference_invalid');
     }
   }
@@ -115,12 +441,21 @@ final class CloudAttachmentEntityPayload extends CloudSemanticEntityPayload {
   @override
   final String logicalEntityKeyHash;
   final String canonicalGuid;
-  final String ownerLogicalKeyHash;
-  final String ownerCanonicalGuid;
-  final int ownerPart;
-  final String fileName;
+  final String? ownerLogicalKeyHash;
+  final String? ownerCanonicalGuid;
+  final int? ownerPart;
+  final CloudSemanticFieldState utiState;
+  final String? uti;
+  final CloudSemanticFieldState fileNameState;
+  final String? fileName;
+  final CloudSemanticFieldState mimeTypeState;
   final String? mimeType;
-  final String protectedLocalReference;
+  final CloudSemanticFieldState totalBytesState;
+  final int? totalBytes;
+  final CloudSemanticFieldState isOutgoingState;
+  final bool? isOutgoing;
+  final CloudSemanticFieldState protectedLocalReferenceState;
+  final String? protectedLocalReference;
 
   @override
   CloudEntityKind get kind => CloudEntityKind.attachment;
@@ -136,6 +471,16 @@ final class CloudReactionEntityPayload extends CloudSemanticEntityPayload {
     required this.senderHandle,
     required this.reactionType,
     this.associatedEmoji,
+    this.createdAt,
+    this.error,
+    this.service,
+    this.knownFlags,
+    this.readAtState = CloudSemanticFieldState.absent,
+    this.readAt,
+    this.deliveredAtState = CloudSemanticFieldState.absent,
+    this.deliveredAt,
+    this.associatedRangeLocation,
+    this.associatedRangeLength,
   }) {
     if (logicalEntityKeyHash.isEmpty) {
       throw ArgumentError('cloud_reaction_payload_logical_key_invalid');
@@ -158,6 +503,15 @@ final class CloudReactionEntityPayload extends CloudSemanticEntityPayload {
         (associatedEmoji != null && associatedEmoji!.isNotEmpty)) {
       throw ArgumentError('cloud_reaction_payload_emoji_invalid');
     }
+    if ((associatedRangeLocation == null) != (associatedRangeLength == null)) {
+      throw ArgumentError('cloud_reaction_payload_range_invalid');
+    }
+    _validateSemanticField(readAtState, readAt, 'reaction_read_at');
+    _validateSemanticField(
+      deliveredAtState,
+      deliveredAt,
+      'reaction_delivered_at',
+    );
   }
 
   @override
@@ -169,6 +523,16 @@ final class CloudReactionEntityPayload extends CloudSemanticEntityPayload {
   final String senderHandle;
   final String reactionType;
   final String? associatedEmoji;
+  final DateTime? createdAt;
+  final int? error;
+  final CloudSemanticService? service;
+  final CloudSemanticKnownMessageFlags? knownFlags;
+  final CloudSemanticFieldState readAtState;
+  final DateTime? readAt;
+  final CloudSemanticFieldState deliveredAtState;
+  final DateTime? deliveredAt;
+  final int? associatedRangeLocation;
+  final int? associatedRangeLength;
 
   @override
   CloudEntityKind get kind => CloudEntityKind.reaction;
@@ -340,6 +704,19 @@ abstract interface class CloudSemanticDecoder {
   Future<CloudDecodedMutation> decode(CloudInboxEntry entry);
 }
 
+abstract interface class CloudTransientCanonicalIdentityLease {
+  void release();
+}
+
+/// Installs the plaintext canonical identities for exactly one decoded
+/// mutation while its synchronous ObjectBox transaction is active.
+///
+/// Implementations must remain memory-only and clear every identity when the
+/// returned lease is released.
+abstract interface class CloudTransientCanonicalIdentityRegistrar {
+  CloudTransientCanonicalIdentityLease bind(CloudDecodedMutation mutation);
+}
+
 class CloudSemanticDecodeFailure implements Exception {
   const CloudSemanticDecodeFailure(this.category);
 
@@ -407,12 +784,14 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
     required this._decoder,
     required this._store,
     this._mergePolicy = const CloudMergePolicy(),
+    this._identityRegistrar,
     this._allowTombstones = false,
   });
 
   final CloudSemanticDecoder _decoder;
   final CloudSemanticStoreGateway _store;
   final CloudMergePolicy _mergePolicy;
+  final CloudTransientCanonicalIdentityRegistrar? _identityRegistrar;
   final bool _allowTombstones;
 
   @override
@@ -472,7 +851,23 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
       );
     }
     if (decodedAsTombstone && !_allowTombstones) {
-      return const CloudInboxApplyResult.deferred();
+      // A disabled tombstone can never become applicable without a new build.
+      // Quarantine retains the protected source record while advancing the
+      // terminal prefix; no canonical row is deleted.
+      return const CloudInboxApplyResult.quarantined(
+        failureCategory: CloudFailureCategory.conflict,
+      );
+    }
+
+    CloudTransientCanonicalIdentityLease? identityLease;
+    if (!decodedAsTombstone && _identityRegistrar != null) {
+      try {
+        identityLease = _identityRegistrar.bind(decoded);
+      } catch (_) {
+        return const CloudInboxApplyResult.quarantined(
+          failureCategory: CloudFailureCategory.conflict,
+        );
+      }
     }
 
     try {
@@ -519,6 +914,8 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
       return const CloudInboxApplyResult.quarantined(
         failureCategory: CloudFailureCategory.unknown,
       );
+    } finally {
+      identityLease?.release();
     }
   }
 
@@ -593,7 +990,10 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
   }
 
   CloudEntityKind _parentKind(CloudEntityKind kind) => switch (kind) {
-    CloudEntityKind.message => CloudEntityKind.chat,
+    // Message snapshots carry a parent only for a reply/association. The chat
+    // relationship is represented separately by chatAliasKeyHash and is not
+    // the semantic snapshot parent.
+    CloudEntityKind.message => CloudEntityKind.message,
     CloudEntityKind.attachment ||
     CloudEntityKind.reaction => CloudEntityKind.message,
     CloudEntityKind.groupPhoto => CloudEntityKind.chat,
