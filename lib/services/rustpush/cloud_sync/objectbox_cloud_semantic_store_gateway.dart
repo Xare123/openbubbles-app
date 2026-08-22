@@ -1143,7 +1143,7 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     CloudSemanticSnapshot snapshot,
   ) {
     final expectedParent = switch (payload) {
-      CloudMessageEntityPayload _ => null,
+      CloudMessageEntityPayload value => value.replyParentLogicalKeyHash,
       CloudAttachmentEntityPayload value => value.ownerLogicalKeyHash,
       CloudReactionEntityPayload value => value.parentLogicalKeyHash,
       CloudGroupPhotoEntityPayload value => value.ownerLogicalKeyHash,
@@ -1156,21 +1156,21 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         safeCode: 'semantic_parent_identity_mismatch',
       );
     }
-    if ((payload is CloudChatEntityPayload ||
-            payload is CloudMessageEntityPayload ||
-            payload is CloudProfileEntityPayload) &&
-        snapshot.parentLogicalKeyHash != null) {
+    if (expectedParent == null && snapshot.parentLogicalKeyHash != null) {
       throw CloudSyncFailure(
         category: CloudFailureCategory.malformedRecord,
         safeCode: 'semantic_parent_identity_invalid',
       );
     }
     final (CloudEntityKind, String)? requiredParent = switch (payload) {
+      CloudMessageEntityPayload value
+          when value.replyParentLogicalKeyHash != null =>
+        (CloudEntityKind.message, value.replyParentLogicalKeyHash!),
       CloudMessageEntityPayload _ => null,
-      CloudAttachmentEntityPayload value => (
-        CloudEntityKind.message,
-        value.ownerLogicalKeyHash,
-      ),
+      CloudAttachmentEntityPayload value
+          when value.ownerLogicalKeyHash != null =>
+        (CloudEntityKind.message, value.ownerLogicalKeyHash!),
+      CloudAttachmentEntityPayload _ => null,
       CloudReactionEntityPayload value => (
         CloudEntityKind.message,
         value.parentLogicalKeyHash,

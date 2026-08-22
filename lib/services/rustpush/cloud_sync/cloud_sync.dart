@@ -34,3 +34,4 @@ export 'objectbox_canonical_semantic_entity_adapter.dart';
 export 'objectbox_cloud_sync_preflight.dart';
 export 'native_protected_cloud_sync_transport.dart';
 export 'rust_cloud_sync_transport.dart';
+export 'transient_cloud_canonical_identity_registry.dart';

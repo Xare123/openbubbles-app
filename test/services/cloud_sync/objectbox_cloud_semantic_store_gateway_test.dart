@@ -794,6 +794,57 @@ void main() {
     },
   );
 
+  test(
+    'accepts a reply message with the exact existing snapshot parent',
+    () async {
+      final entry = _entry(scope: scope);
+      final parentKey = _digestValue('P');
+      adapter.existingEntities.add((CloudEntityKind.message, parentKey));
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+
+      await gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: (transaction) {
+          transaction.applyEntity(
+            payload: CloudMessageEntityPayload(
+              logicalEntityKeyHash: _digestValue('L'),
+              canonicalGuid: 'reply-message-guid',
+              chatAliasKeyHash: _digestValue('H'),
+              chatIdentifier: 'iMessage;-;chat',
+              body: 'reply',
+              senderHandle: 'sender',
+              replyParentLogicalKeyHash: parentKey,
+              replyParentCanonicalGuid: 'parent-message-guid',
+              replyParentPart: '0',
+            ),
+            snapshot: CloudSemanticSnapshot(
+              kind: CloudEntityKind.message,
+              logicalEntityKeyHash: _digestValue('L'),
+              parentLogicalKeyHash: parentKey,
+              etagHash: entry.change.etagHash,
+              encryptedRawRecordReference:
+                  entry.change.encryptedPayloadReference,
+            ),
+          );
+          transaction.markChangeApplied(entry.change.changeId);
+        },
+      );
+
+      expect(adapter.entityApplyCalls, 1);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 1);
+      expect(
+        objectBox.box<CloudInboxChangeEntity>().getAll().single.status,
+        CloudInboxStatus.applied.index,
+      );
+    },
+  );
+
   test('message and profile streams reject the wrong entity kinds', () async {
     final entry = _entry(scope: scope);
     _seedDurableFence(
