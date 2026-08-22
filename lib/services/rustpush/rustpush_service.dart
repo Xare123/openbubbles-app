@@ -128,6 +128,39 @@ class FaceTimeIncomingAdmissionResult {
   bool get isApproved => status == FaceTimeIncomingAdmissionStatus.approved;
 }
 
+bool shouldAnswerIncomingFaceTimeAdmission(
+        FaceTimeIncomingAdmissionResult? admission) =>
+    admission?.isApproved == true;
+
+Future<bool> answerFaceTimeAdmissionIfAllowed({
+  required bool isIncomingAdmission,
+  required FaceTimeIncomingAdmissionResult? incomingAdmission,
+  required FaceTimeIncomingAdmissionCorrelation? correlation,
+  required String? fallbackApprovedGroup,
+  required Future<void> Function(String? approvedGroup) answer,
+}) async {
+  if (isIncomingAdmission &&
+      !shouldAnswerIncomingFaceTimeAdmission(incomingAdmission)) {
+    return false;
+  }
+
+  final approvedGroup = isIncomingAdmission
+      ? incomingAdmission!.approvedGroup
+      : fallbackApprovedGroup;
+  try {
+    await answer(approvedGroup);
+    if (isIncomingAdmission && approvedGroup != null) {
+      correlation?.complete();
+    }
+    return true;
+  } catch (_) {
+    if (isIncomingAdmission && approvedGroup != null) {
+      correlation?.release();
+    }
+    rethrow;
+  }
+}
+
 /// Correlates a WebView admission request with the ring that opened it.
 ///
 /// Direct incoming let-me-in requests do not carry the FaceTime group UUID.
@@ -4802,6 +4835,7 @@ class RustPushService extends GetxService {
       if (facetime is api.FTMessage_LetMeInRequest) {
         var approvedGroup = chosenFTRoomGuid;
         FaceTimeIncomingAdmissionCorrelation? claimedAdmission;
+        FaceTimeIncomingAdmissionResult? incomingAdmission;
         final isIncomingAdmission = facetime.field0.usage == "incomingcall" ||
             facetime.field0.usage == "nextincomingcall";
         if (isIncomingAdmission) {
@@ -4818,40 +4852,42 @@ class RustPushService extends GetxService {
             );
           }
 
-          final admission = claimedAdmission?.claim(
+          incomingAdmission = claimedAdmission?.claim(
             activeCallUuid: activeCallUuid,
             now: DateTime.now(),
           );
-          approvedGroup = admission?.approvedGroup;
-          if (admission == null || !admission.isApproved) {
+          approvedGroup = incomingAdmission?.approvedGroup;
+          if (!shouldAnswerIncomingFaceTimeAdmission(incomingAdmission)) {
             Logger.warn(
-              "FaceTime incoming admission rejected: ${admission?.status.name ?? 'missingPendingCall'}",
+              "FaceTime incoming admission rejected: ${incomingAdmission?.status.name ?? 'missingPendingCall'}",
             );
-            if (admission?.status ==
+            if (incomingAdmission?.status ==
                 FaceTimeIncomingAdmissionStatus.alreadyClaimed) {
               Logger.info(
                   "Ignoring concurrent duplicate FaceTime incoming admission request");
-              return;
             }
+            return;
           }
         }
         Logger.info(
             "FaceTime web admission request: usage=${facetime.field0.usage ?? 'unknown'}, approvedGroupPresent=${approvedGroup != null}");
         try {
-          await api.answerFtRequest(
-              facetime: pushService.state!.ftClient,
-              request: facetime.field0,
-              approvedGroup: approvedGroup);
-          if (isIncomingAdmission &&
-              claimedAdmission != null &&
-              approvedGroup != null) {
-            claimedAdmission.complete();
+          final answered = await answerFaceTimeAdmissionIfAllowed(
+            isIncomingAdmission: isIncomingAdmission,
+            incomingAdmission: incomingAdmission,
+            correlation: claimedAdmission,
+            fallbackApprovedGroup: approvedGroup,
+            answer: (resolvedApprovedGroup) => api.answerFtRequest(
+                facetime: pushService.state!.ftClient,
+                request: facetime.field0,
+                approvedGroup: resolvedApprovedGroup),
+          );
+          if (!answered) {
+            Logger.warn("FaceTime admission response blocked by final gate");
+            return;
           }
           Logger.info("FaceTime web admission response sent");
         } catch (error, trace) {
-          if (isIncomingAdmission && approvedGroup != null) {
-            claimedAdmission?.release();
-          }
           Logger.error("FaceTime web admission response failed",
               error: error, trace: trace);
           rethrow;
