@@ -107,6 +107,7 @@ final class CloudReactionEntityPayload extends CloudSemanticEntityPayload {
     required this.parentLogicalKeyHash,
     required this.senderHandle,
     required this.reactionType,
+    this.associatedEmoji,
   }) {
     if (logicalEntityKeyHash.isEmpty) {
       throw ArgumentError('cloud_reaction_payload_logical_key_invalid');
@@ -117,6 +118,13 @@ final class CloudReactionEntityPayload extends CloudSemanticEntityPayload {
     if (reactionType.isEmpty) {
       throw ArgumentError('cloud_reaction_payload_type_invalid');
     }
+    final baseType = reactionType.startsWith('-')
+        ? reactionType.substring(1)
+        : reactionType;
+    if ((baseType == 'emoji') !=
+        (associatedEmoji != null && associatedEmoji!.isNotEmpty)) {
+      throw ArgumentError('cloud_reaction_payload_emoji_invalid');
+    }
   }
 
   @override
@@ -124,6 +132,7 @@ final class CloudReactionEntityPayload extends CloudSemanticEntityPayload {
   final String parentLogicalKeyHash;
   final String senderHandle;
   final String reactionType;
+  final String? associatedEmoji;
 
   @override
   CloudEntityKind get kind => CloudEntityKind.reaction;

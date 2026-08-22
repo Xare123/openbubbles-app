@@ -20,13 +20,14 @@ prior document is stale, this one says so rather than repeating it.
 
 ## Where this actually stands
 
-Latest local evidence was refreshed on 2026-08-22. Cross-platform CI evidence
-remains from the 2026-08-06 run until this change set is pushed:
+Latest local evidence was refreshed on 2026-08-22. The current CI rerun is
+pending after removing an unrelated protobuf rename that broke the committed
+FRB mirror; Windows x64 and ARM64 already pass on the same change set:
 
 | Evidence | Result |
 | --- | --- |
-| Dart suite, ARM64 host | 453 tests pass |
-| Cloud Sync suite, ARM64 host | 316 tests pass |
+| Dart suite, ARM64 host | 470 tests pass |
+| Cloud Sync suite, ARM64 host | 332 tests pass |
 | Legacy ObjectBox upgrade probe, ARM64 host | copied pre-V2 database opens; source SHA-256 remains unchanged |
 | Cloud Sync suite, x64 host | 296 pass on the prior cross-platform run |
 | Cloud Sync suite in CI on Linux | passes, first time it has ever run there |
@@ -45,11 +46,12 @@ to a message table by the V2 path.
 
 Three categories, and only the first is ours to finish by typing.
 
-1. **Code and tests.** Large but tractable. The dominant item is the semantic
-   apply path, which is not a matter of polishing existing code: no Dart
-   semantic decoder implementation exists, the canonical GUID does not cross
-   the bridge for chats or messages, and the production entity adapter is a
-   set of stubs.
+1. **Code and tests.** Large but tractable. The native-to-Dart semantic decoder
+   boundary now exists and is exhaustively fail-closed across every current
+   result disposition and representable payload lane. It remains deliberately
+   uncomposed. The dominant item is still semantic apply: the canonical GUID
+   does not cross the bridge for chats or messages, and the production entity
+   adapter is a set of narrow default-off stubs.
 2. **Live validation.** Cannot be done offline at any effort level. Needs a
    Mac-activated Apple account with real history, a trusted device for PCS key
    access, and soak time measured in days.
@@ -173,8 +175,18 @@ database is written by this path.
    `CloudRawRecordPresence` already records which fields arrived with that wire
    type, but nothing can read it from Dart, so the evidence is gathered and
    discarded. It is held back rather than regenerated for one diagnostic field.
-9. **Implement the Dart semantic decoder.** None exists today; the interface
-   has no implementation outside test fakes.
+9. ~~**Implement the Dart semantic decoder boundary.**~~ **Done, but dormant.**
+   `RustCloudSemanticDecoder` validates the complete scope, generation,
+   protected source capability, native session before and after decode,
+   one-of result shape, mutation kind, entity kind, logical hashes, field
+   presence, and timestamps. Native failures map only to typed safe categories.
+   Partial messages and unproven tombstone identities defer instead of
+   inventing content or deletion targets. Fifteen focused tests cover all
+   current payload lanes, every native failure code, source/session mismatches,
+   mixed dispositions, partial messages, reactions and removals, explicit
+   clears, edit revisions, tombstones, and auxiliary-zone rejection. This
+   closes the decoder boundary only; it does not enable semantic apply or make
+   the missing canonical GUID problem smaller.
 10. **Expand the production entity adapter** to map onto the real `Chat`,
    `Message`, `Handle`, and `Attachment` entities. The legacy `applyFromCloud`
    path is the field-by-field reference implementation and already handles
