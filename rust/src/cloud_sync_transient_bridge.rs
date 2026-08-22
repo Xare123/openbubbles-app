@@ -973,14 +973,232 @@ pub(crate) async fn cloud_sync_decode_transient_record(
 mod tests {
     use super::*;
     use crate::cloud_sync_canonical_dto::{
-        CloudCanonicalAlias, CloudCanonicalChatPayload, CloudCanonicalChatStyle,
-        CloudCanonicalEnvelope, CloudCanonicalField, CloudCanonicalMutationKind,
-        CloudCanonicalProtectedReference, CloudCanonicalService, CloudCanonicalSnapshot,
-        CLOUD_CANONICAL_SCHEMA_VERSION,
+        parse_associated_parent, CloudCanonicalAlias, CloudCanonicalAttachmentPayload,
+        CloudCanonicalChatPayload, CloudCanonicalChatStyle, CloudCanonicalEnvelope,
+        CloudCanonicalField, CloudCanonicalKnownMessageFlags, CloudCanonicalMessageAssociation,
+        CloudCanonicalMessagePayload, CloudCanonicalMutationKind, CloudCanonicalParentReference,
+        CloudCanonicalPayload, CloudCanonicalProtectedReference, CloudCanonicalReactionKind,
+        CloudCanonicalService, CloudCanonicalSnapshot, CLOUD_CANONICAL_SCHEMA_VERSION,
     };
 
     fn digest(character: char) -> String {
         character.to_string().repeat(43)
+    }
+
+    fn upsert_mutation(
+        entity_kind: CloudCanonicalEntityKind,
+        logical_hash: CloudCanonicalHash,
+        parent_hash: Option<CloudCanonicalHash>,
+        payload: CloudCanonicalPayload,
+    ) -> CloudCanonicalMutation {
+        let protected_reference =
+            CloudCanonicalProtectedReference::new("obcs2.test-reference").unwrap();
+        let envelope = CloudCanonicalEnvelope::new(
+            CloudCanonicalHash::new(digest('s')).unwrap(),
+            CloudCanonicalHash::new(digest('z')).unwrap(),
+            7,
+            CLOUD_CANONICAL_SCHEMA_VERSION,
+            CloudCanonicalHash::new(digest('c')).unwrap(),
+            entity_kind,
+            CloudCanonicalMutationKind::Upsert,
+            CloudCanonicalHash::new(digest('r')).unwrap(),
+            logical_hash.clone(),
+            parent_hash.clone(),
+            Vec::new(),
+            None,
+            None,
+            None,
+            protected_reference.clone(),
+        )
+        .unwrap();
+        let snapshot = CloudCanonicalSnapshot::new(
+            entity_kind,
+            logical_hash,
+            parent_hash,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+            None,
+            None,
+            None,
+            protected_reference,
+        )
+        .unwrap();
+        CloudCanonicalMutation::new(envelope, Some(snapshot), Some(payload), None).unwrap()
+    }
+
+    fn message_payload(
+        hasher: &CloudSemanticIdentifierHasher,
+        guid: &str,
+        chat_alias_hash: Option<CloudCanonicalHash>,
+        association: CloudCanonicalMessageAssociation,
+    ) -> CloudCanonicalPayload {
+        let chat_alias_hash = chat_alias_hash.unwrap_or_else(|| {
+            hasher
+                .canonical_alias_key_hash(
+                    CloudCanonicalAliasKind::ChatServiceIdentifier,
+                    "iMessage;-;+15555550100",
+                )
+                .unwrap()
+        });
+        let is_reaction = association.is_reaction();
+        CloudCanonicalPayload::Message(Box::new(
+            CloudCanonicalMessagePayload::new(
+                guid.to_owned(),
+                "iMessage;-;+15555550100".to_owned(),
+                chat_alias_hash,
+                "sender@example.invalid".to_owned(),
+                1,
+                0,
+                CloudCanonicalService::IMessage,
+                CloudCanonicalField::Absent,
+                if is_reaction {
+                    CloudCanonicalField::Absent
+                } else {
+                    CloudCanonicalField::Value("body".to_owned())
+                },
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalKnownMessageFlags::default(),
+                association,
+                None,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+            )
+            .unwrap(),
+        ))
+    }
+
+    fn message_mutation(
+        hasher: &CloudSemanticIdentifierHasher,
+        logical_hash_override: Option<CloudCanonicalHash>,
+        chat_alias_hash_override: Option<CloudCanonicalHash>,
+    ) -> CloudCanonicalMutation {
+        let payload = message_payload(
+            hasher,
+            "message-guid",
+            chat_alias_hash_override,
+            CloudCanonicalMessageAssociation::None,
+        );
+        let logical_hash = logical_hash_override.unwrap_or_else(|| {
+            hasher
+                .canonical_entity_key_hash(CloudCanonicalEntityKind::Message, "message-guid")
+                .unwrap()
+        });
+        upsert_mutation(
+            CloudCanonicalEntityKind::Message,
+            logical_hash,
+            None,
+            payload,
+        )
+    }
+
+    fn reaction_mutation(
+        hasher: &CloudSemanticIdentifierHasher,
+        wire_parent: &str,
+        logical_hash_override: Option<CloudCanonicalHash>,
+        parent_hash_override: Option<CloudCanonicalHash>,
+    ) -> CloudCanonicalMutation {
+        let parsed = parse_associated_parent(wire_parent).unwrap();
+        let expected_parent_hash = hasher
+            .canonical_entity_key_hash(CloudCanonicalEntityKind::Message, parsed.parent_guid())
+            .unwrap();
+        let parent_hash = parent_hash_override.unwrap_or_else(|| expected_parent_hash.clone());
+        let parent = CloudCanonicalParentReference::new(
+            parsed.parent_guid().to_owned(),
+            parsed.parent_part(),
+            parent_hash.clone(),
+            None,
+            None,
+        )
+        .unwrap();
+        let association = CloudCanonicalMessageAssociation::ReactionAdd {
+            kind: CloudCanonicalReactionKind::Heart,
+            parent,
+        };
+        let expected_logical_hash = hasher
+            .canonical_reaction_key_hash(
+                "reaction-guid",
+                parsed.parent_guid(),
+                parsed.parent_part(),
+            )
+            .unwrap();
+        let logical_hash = logical_hash_override.unwrap_or(expected_logical_hash);
+        let payload = message_payload(hasher, "reaction-guid", None, association);
+        upsert_mutation(
+            CloudCanonicalEntityKind::Reaction,
+            logical_hash,
+            Some(parent_hash),
+            payload,
+        )
+    }
+
+    fn attachment_mutation(
+        hasher: &CloudSemanticIdentifierHasher,
+        canonical_guid: &str,
+        owner: Option<(&str, u32)>,
+        owner_hash_override: Option<CloudCanonicalHash>,
+        logical_hash_override: Option<CloudCanonicalHash>,
+    ) -> CloudCanonicalMutation {
+        let (owner_message_guid, owner_part, expected_logical_hash, expected_owner_hash) =
+            match owner {
+                Some((owner_guid, part)) => (
+                    Some(owner_guid.to_owned()),
+                    Some(part),
+                    hasher
+                        .canonical_owned_attachment_key_hash(owner_guid, part)
+                        .unwrap(),
+                    Some(
+                        hasher
+                            .canonical_entity_key_hash(
+                                CloudCanonicalEntityKind::Message,
+                                owner_guid,
+                            )
+                            .unwrap(),
+                    ),
+                ),
+                None => (
+                    None,
+                    None,
+                    hasher
+                        .canonical_entity_key_hash(
+                            CloudCanonicalEntityKind::Attachment,
+                            canonical_guid,
+                        )
+                        .unwrap(),
+                    None,
+                ),
+            };
+        let owner_hash = owner_hash_override.or(expected_owner_hash);
+        let payload = CloudCanonicalPayload::Attachment(Box::new(
+            CloudCanonicalAttachmentPayload::new(
+                canonical_guid.to_owned(),
+                owner_message_guid,
+                owner_hash.clone(),
+                owner_part,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Value(0),
+                CloudCanonicalField::Value(false),
+                CloudCanonicalField::Absent,
+            )
+            .unwrap(),
+        ));
+        upsert_mutation(
+            CloudCanonicalEntityKind::Attachment,
+            logical_hash_override.unwrap_or(expected_logical_hash),
+            owner_hash,
+            payload,
+        )
     }
 
     fn chat_mutation(
@@ -1098,6 +1316,147 @@ mod tests {
                 &chat_mutation(&hasher, tampered_hash, false),
                 &hasher
             ),
+            Err(CloudCanonicalValidationFailure::InvalidPayload)
+        );
+    }
+
+    #[test]
+    fn canonical_message_identity_tampering_is_rejected_before_dart_handoff() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"message-identity-test").unwrap();
+        let valid = message_mutation(&hasher, None, None);
+        assert_eq!(
+            validate_canonical_identity_bindings(&valid, &hasher),
+            Ok(())
+        );
+
+        let wrong_logical_hash = CloudCanonicalHash::new(digest('m')).unwrap();
+        assert_eq!(
+            validate_canonical_identity_bindings(
+                &message_mutation(&hasher, Some(wrong_logical_hash), None),
+                &hasher,
+            ),
+            Err(CloudCanonicalValidationFailure::InvalidPayload)
+        );
+
+        let wrong_chat_alias_hash = CloudCanonicalHash::new(digest('a')).unwrap();
+        assert_eq!(
+            validate_canonical_identity_bindings(
+                &message_mutation(&hasher, None, Some(wrong_chat_alias_hash)),
+                &hasher,
+            ),
+            Err(CloudCanonicalValidationFailure::InvalidPayload)
+        );
+    }
+
+    #[test]
+    fn canonical_reaction_identity_preserves_parent_part_semantics_and_rejects_tampering() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"reaction-identity-test").unwrap();
+        let partless = reaction_mutation(&hasher, "parent-guid", None, None);
+        let part_zero = reaction_mutation(&hasher, "p:0/parent-guid", None, None);
+        let bubble_part_zero = reaction_mutation(&hasher, "bp:0/parent-guid", None, None);
+
+        assert_eq!(
+            validate_canonical_identity_bindings(&partless, &hasher),
+            Ok(())
+        );
+        assert_eq!(
+            validate_canonical_identity_bindings(&part_zero, &hasher),
+            Ok(())
+        );
+        assert_eq!(
+            validate_canonical_identity_bindings(&bubble_part_zero, &hasher),
+            Ok(())
+        );
+        assert_ne!(
+            hasher
+                .canonical_reaction_key_hash("reaction-guid", "parent-guid", None)
+                .unwrap(),
+            hasher
+                .canonical_reaction_key_hash("reaction-guid", "parent-guid", Some(0))
+                .unwrap()
+        );
+
+        let wrong_logical_hash = hasher
+            .canonical_reaction_key_hash("reaction-guid", "parent-guid", Some(0))
+            .unwrap();
+        assert_eq!(
+            validate_canonical_identity_bindings(
+                &reaction_mutation(&hasher, "parent-guid", Some(wrong_logical_hash), None),
+                &hasher,
+            ),
+            Err(CloudCanonicalValidationFailure::InvalidPayload)
+        );
+
+        let wrong_parent_hash = CloudCanonicalHash::new(digest('p')).unwrap();
+        assert_eq!(
+            validate_canonical_identity_bindings(
+                &reaction_mutation(&hasher, "p:0/parent-guid", None, Some(wrong_parent_hash)),
+                &hasher,
+            ),
+            Err(CloudCanonicalValidationFailure::InvalidPayload)
+        );
+    }
+
+    #[test]
+    fn canonical_owned_attachment_identity_tampering_is_rejected_before_dart_handoff() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"owned-attachment-test").unwrap();
+        let valid = attachment_mutation(
+            &hasher,
+            "message_guid_with_underscores_7",
+            Some(("message_guid_with_underscores", 7)),
+            None,
+            None,
+        );
+        assert_eq!(
+            validate_canonical_identity_bindings(&valid, &hasher),
+            Ok(())
+        );
+
+        let wrong_canonical_guid = attachment_mutation(
+            &hasher,
+            "wrong-guid",
+            Some(("message_guid_with_underscores", 7)),
+            None,
+            None,
+        );
+        assert_eq!(
+            validate_canonical_identity_bindings(&wrong_canonical_guid, &hasher),
+            Err(CloudCanonicalValidationFailure::InvalidPayload)
+        );
+
+        let wrong_owner_hash = CloudCanonicalHash::new(digest('o')).unwrap();
+        let tampered_owner = attachment_mutation(
+            &hasher,
+            "message_guid_with_underscores_7",
+            Some(("message_guid_with_underscores", 7)),
+            Some(wrong_owner_hash),
+            None,
+        );
+        assert_eq!(
+            validate_canonical_identity_bindings(&tampered_owner, &hasher),
+            Err(CloudCanonicalValidationFailure::InvalidPayload)
+        );
+    }
+
+    #[test]
+    fn canonical_bare_attachment_identity_tampering_is_rejected_before_dart_handoff() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"bare-attachment-test").unwrap();
+        let valid = attachment_mutation(&hasher, "bare-attachment-guid", None, None, None);
+        assert_eq!(
+            validate_canonical_identity_bindings(&valid, &hasher),
+            Ok(())
+        );
+
+        let wrong_logical_hash = CloudCanonicalHash::new(digest('b')).unwrap();
+        let tampered = attachment_mutation(
+            &hasher,
+            "bare-attachment-guid",
+            None,
+            None,
+            Some(wrong_logical_hash),
+        );
+        assert_eq!(
+            validate_canonical_identity_bindings(&tampered, &hasher),
             Err(CloudCanonicalValidationFailure::InvalidPayload)
         );
     }
