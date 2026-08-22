@@ -99,7 +99,10 @@ typedef CloudUnknownOutcomeHandler =
       CloudOutboxOperation operation,
     );
 
-class FakeCloudSyncTransport implements CloudSyncTransport {
+typedef CloudNativeOperationQuiescenceHandler = Future<void> Function();
+
+class FakeCloudSyncTransport
+    implements CloudSyncTransport, CloudSyncNativeOperationQuiescence {
   final Queue<Object> _fetchResponses = Queue();
   final Queue<Object> _pushResponses = Queue();
 
@@ -110,6 +113,7 @@ class FakeCloudSyncTransport implements CloudSyncTransport {
   CloudRecordMappingHandler? recordMappingHandler;
   CloudConflictHandler? conflictHandler;
   CloudUnknownOutcomeHandler? unknownOutcomeHandler;
+  CloudNativeOperationQuiescenceHandler? quiescenceHandler;
 
   int fetchCallCount = 0;
   int pushCallCount = 0;
@@ -118,9 +122,16 @@ class FakeCloudSyncTransport implements CloudSyncTransport {
   int recordMappingCallCount = 0;
   int conflictCallCount = 0;
   int unknownOutcomeCallCount = 0;
+  int quiescenceCallCount = 0;
   final List<String?> observedFetchTokens = [];
   final List<List<String>> observedPushOperationIds = [];
   final List<String> observedUnknownOutcomeOperationIds = [];
+
+  @override
+  Future<void> quiesceNativeOperations() async {
+    quiescenceCallCount++;
+    await quiescenceHandler?.call();
+  }
 
   void enqueueFetchBatch(CloudFetchBatch batch) => _fetchResponses.add(batch);
 

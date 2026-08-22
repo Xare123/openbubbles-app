@@ -11,6 +11,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_testing.dart
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_writer_authority.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_transport.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/in_memory_cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/shadow_only_cloud_sync_store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -36,6 +37,7 @@ void main() {
     int maximumInboxEntriesPerRun = 512,
     int maximumOutboxBatches = 8,
     Duration fetchOperationTimeout = const Duration(seconds: 45),
+    Duration writeOperationTimeout = const Duration(seconds: 45),
     int maximumDeferredAttempts = 8,
     Duration maximumDeferredAge = const Duration(days: 3),
     Duration pausedRetryDelay = const Duration(hours: 6),
@@ -68,6 +70,7 @@ void main() {
         maximumInboxEntriesPerRun: maximumInboxEntriesPerRun,
         maximumOutboxBatchesPerRun: maximumOutboxBatches,
         fetchOperationTimeout: fetchOperationTimeout,
+        writeOperationTimeout: writeOperationTimeout,
         maximumDeferredAttempts: maximumDeferredAttempts,
         maximumDeferredAge: maximumDeferredAge,
         pausedRetryDelay: pausedRetryDelay,
@@ -462,6 +465,61 @@ void main() {
         ),
       ),
       throwsArgumentError,
+    );
+  });
+
+  test('save-enabled engine requires native operation quiescence', () {
+    final transportWithoutQuiescence = AccountBoundShadowTransport(
+      delegate: transport,
+      readActiveFingerprint: () async => scope.accountFingerprint,
+      expectedFingerprint: scope.accountFingerprint,
+    );
+
+    expect(
+      () => CloudSyncEngine(
+        scope: scope,
+        coordinatorId: 'missing-native-quiescence',
+        store: store,
+        transport: transportWithoutQuiescence,
+        inboxApplier: applier,
+        writerAuthority: writerAuthority,
+        writerExclusion: writerExclusion,
+        config: CloudSyncEngineConfig(
+          flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        ),
+      ),
+      throwsA(
+        isA<ArgumentError>().having(
+          (error) => error.message,
+          'message',
+          'cloud_sync_native_operation_quiescence_required',
+        ),
+      ),
+    );
+  });
+
+  test('write operation timeout is bounded and positive', () {
+    expect(
+      () => CloudSyncEngineConfig(writeOperationTimeout: Duration.zero),
+      throwsA(
+        isA<ArgumentError>().having(
+          (error) => error.message,
+          'message',
+          'cloud_sync_config_write_timeout_invalid',
+        ),
+      ),
+    );
+    expect(
+      () => CloudSyncEngineConfig(
+        writeOperationTimeout: const Duration(minutes: 5, microseconds: 1),
+      ),
+      throwsA(
+        isA<ArgumentError>().having(
+          (error) => error.message,
+          'message',
+          'cloud_sync_config_write_timeout_invalid',
+        ),
+      ),
     );
   });
 
@@ -1058,6 +1116,61 @@ void main() {
   });
 
   test(
+    'timed-out push remains unknown until native operations quiesce',
+    () async {
+      final operation = testOutboxOperation(scope, 807);
+      await store.enqueueOutbox(operation);
+      final pushEntered = Completer<void>();
+      final quiescenceStarted = Completer<void>();
+      final nativePushResult = Completer<CloudPushBatchResult>();
+      transport.pushHandler = (_, operations) {
+        pushEntered.complete();
+        return nativePushResult.future;
+      };
+      transport.quiescenceHandler = () async {
+        quiescenceStarted.complete();
+        await nativePushResult.future;
+      };
+
+      final run = engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+        writeOperationTimeout: const Duration(milliseconds: 5),
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+      var runReturned = false;
+      final completion = run.then<void>((_) {
+        runReturned = true;
+      });
+
+      await pushEntered.future;
+      await quiescenceStarted.future;
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(runReturned, isFalse);
+      expect(transport.quiescenceCallCount, 1);
+      expect(
+        (await store.outboxEntries(scope)).single.status,
+        CloudOutboxStatus.unknownOutcome,
+      );
+
+      nativePushResult.complete(
+        CloudPushBatchResult(
+          outcomes: [
+            CloudPushOutcome(
+              operationId: operation.operationId,
+              disposition: CloudPushDisposition.confirmed,
+            ),
+          ],
+        ),
+      );
+      await completion;
+      expect(
+        (await store.outboxEntries(scope)).single.status,
+        CloudOutboxStatus.unknownOutcome,
+      );
+    },
+  );
+
+  test(
     'thrown transport failure is frozen before it can be replayed',
     () async {
       final operation = testOutboxOperation(scope, 3);
@@ -1169,6 +1282,61 @@ void main() {
     expect(
       (await store.outboxEntries(scope)).single.status,
       CloudOutboxStatus.confirmed,
+    );
+  });
+
+  test('reconciliation timeout never replays the write', () async {
+    await seedAmbiguousOutbox(808);
+    final storedOperation = (await store.outboxEntries(scope)).single;
+    final nativeResolution = Completer<CloudUnknownOutcomeResolution>();
+    final quiescenceStarted = Completer<void>();
+    transport.unknownOutcomeHandler = (_, _) => nativeResolution.future;
+    transport.quiescenceHandler = () async {
+      quiescenceStarted.complete();
+      await nativeResolution.future;
+    };
+
+    final run = engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+      writeOperationTimeout: const Duration(milliseconds: 5),
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+    var runReturned = false;
+    final completion = run.then<void>((_) {
+      runReturned = true;
+    });
+
+    await quiescenceStarted.future;
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(runReturned, isFalse);
+    expect(transport.pushCallCount, 1);
+
+    nativeResolution.complete(
+      CloudUnknownOutcomeResolution.committed(proof: proofFor(storedOperation)),
+    );
+    await completion;
+    expect(transport.unknownOutcomeCallCount, 1);
+    expect(transport.pushCallCount, 1);
+    expect(
+      (await store.outboxEntries(scope)).single.status,
+      CloudOutboxStatus.unknownOutcome,
+    );
+
+    clock.advance(const Duration(minutes: 1));
+    transport.quiescenceHandler = null;
+    transport.unknownOutcomeHandler = (_, _) async =>
+        const CloudUnknownOutcomeResolution.unresolved(
+          failureCategory: CloudFailureCategory.network,
+        );
+    await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+      writeOperationTimeout: const Duration(milliseconds: 5),
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+    expect(transport.pushCallCount, 1);
+    expect(
+      (await store.outboxEntries(scope)).single.status,
+      CloudOutboxStatus.unknownOutcome,
     );
   });
 

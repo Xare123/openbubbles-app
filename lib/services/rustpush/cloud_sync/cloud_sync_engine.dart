@@ -43,6 +43,9 @@ class CloudSyncEngineConfig {
   static const Duration maximumAllowedFetchOperationTimeout = Duration(
     minutes: 5,
   );
+  static const Duration maximumAllowedWriteOperationTimeout = Duration(
+    minutes: 5,
+  );
   static const Duration maximumAllowedCoordinatorLeaseDuration = Duration(
     minutes: 30,
   );
@@ -58,6 +61,7 @@ class CloudSyncEngineConfig {
     this.maximumInboxEntriesPerRun = 512,
     this.maximumOutboxBatchesPerRun = 8,
     this.fetchOperationTimeout = const Duration(seconds: 45),
+    this.writeOperationTimeout = const Duration(seconds: 45),
     this.coordinatorLeaseDuration = const Duration(minutes: 5),
     this.outboxLeaseDuration = const Duration(minutes: 2),
     this.pausedRetryDelay = const Duration(hours: 6),
@@ -75,6 +79,7 @@ class CloudSyncEngineConfig {
   final int maximumInboxEntriesPerRun;
   final int maximumOutboxBatchesPerRun;
   final Duration fetchOperationTimeout;
+  final Duration writeOperationTimeout;
   final Duration coordinatorLeaseDuration;
   final Duration outboxLeaseDuration;
   final Duration pausedRetryDelay;
@@ -111,6 +116,10 @@ class CloudSyncEngineConfig {
     if (fetchOperationTimeout.inMicroseconds <= 0 ||
         fetchOperationTimeout > maximumAllowedFetchOperationTimeout) {
       throw ArgumentError('cloud_sync_config_fetch_timeout_invalid');
+    }
+    if (writeOperationTimeout.inMicroseconds <= 0 ||
+        writeOperationTimeout > maximumAllowedWriteOperationTimeout) {
+      throw ArgumentError('cloud_sync_config_write_timeout_invalid');
     }
     if (coordinatorLeaseDuration.inMicroseconds <= 0 ||
         coordinatorLeaseDuration > maximumAllowedCoordinatorLeaseDuration) {
@@ -187,6 +196,10 @@ class CloudSyncEngine {
   }) : config = config ?? CloudSyncEngineConfig(),
        _store = store,
        _transport = transport,
+       _nativeOperationQuiescence =
+           transport is CloudSyncNativeOperationQuiescence
+           ? transport as CloudSyncNativeOperationQuiescence
+           : null,
        _writerAuthority = writerAuthority,
        _writerExclusion = writerExclusion,
        _unknownOutcomeStore = store is CloudSyncUnknownOutcomeLeasingStore
@@ -215,6 +228,9 @@ class CloudSyncEngine {
     if (this.config.flags.saves && _writerExclusion == null) {
       throw ArgumentError('cloud_sync_writer_exclusion_required');
     }
+    if (this.config.flags.saves && _nativeOperationQuiescence == null) {
+      throw ArgumentError('cloud_sync_native_operation_quiescence_required');
+    }
   }
 
   final CloudSyncScope scope;
@@ -222,6 +238,7 @@ class CloudSyncEngine {
   final String architectureName;
   final CloudSyncStore _store;
   final CloudSyncTransport _transport;
+  final CloudSyncNativeOperationQuiescence? _nativeOperationQuiescence;
   final CloudSyncWriterAuthority? _writerAuthority;
   final CloudKitOperationExclusion? _writerExclusion;
   final CloudSyncUnknownOutcomeLeasingStore? _unknownOutcomeStore;
@@ -1088,7 +1105,10 @@ class CloudSyncEngine {
         );
         try {
           final result = await _withCoordinatorLeaseHeartbeat(
-            () => _transport.pushOperations(scope, operations: ready),
+            () => _withWriteOperationTimeout(
+              operationName: 'push',
+              action: () => _transport.pushOperations(scope, operations: ready),
+            ),
           );
           await _verifyWriterPermitAfterRemote();
           outcomes = _requireExactPushOutcomes(ready, result);
@@ -1278,8 +1298,13 @@ class CloudSyncEngine {
         CloudOutboxTransition transition;
         try {
           final resolution = await _withCoordinatorLeaseHeartbeat(
-            () =>
-                _transport.reconcileUnknownOutcome(scope, operation: operation),
+            () => _withWriteOperationTimeout(
+              operationName: 'reconcile',
+              action: () => _transport.reconcileUnknownOutcome(
+                scope,
+                operation: operation,
+              ),
+            ),
           );
           transition = await _transitionForUnknownResolution(
             operation,
@@ -1559,7 +1584,11 @@ class CloudSyncEngine {
     await _verifyWriterPermit();
     try {
       final retryResult = await _withCoordinatorLeaseHeartbeat(
-        () => _transport.pushOperations(scope, operations: operations),
+        () => _withWriteOperationTimeout(
+          operationName: 'authorization_repush',
+          action: () =>
+              _transport.pushOperations(scope, operations: operations),
+        ),
       );
       await _verifyWriterPermitAfterRemote();
       final retryOutcomes = _requireExactPushOutcomes(operations, retryResult);
@@ -1788,6 +1817,30 @@ class CloudSyncEngine {
     } finally {
       heartbeat.cancel();
       await renewalInFlight;
+    }
+  }
+
+  Future<T> _withWriteOperationTimeout<T>({
+    required String operationName,
+    required Future<T> Function() action,
+  }) async {
+    try {
+      return await action().timeout(config.writeOperationTimeout);
+    } on TimeoutException {
+      try {
+        await _nativeOperationQuiescence!.quiesceNativeOperations();
+      } catch (_) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.unknown,
+          retryAfter: config.writeOperationTimeout,
+          safeCode: 'cloud_sync_native_quiescence_failed',
+        );
+      }
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.unknown,
+        retryAfter: config.writeOperationTimeout,
+        safeCode: 'cloud_sync_${operationName}_timeout',
+      );
     }
   }
 
