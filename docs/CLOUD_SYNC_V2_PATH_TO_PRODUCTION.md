@@ -31,7 +31,7 @@ FRB mirror; Windows x64 and ARM64 already pass on the same change set:
 | Legacy ObjectBox upgrade probe, ARM64 host | copied pre-V2 database opens; source SHA-256 remains unchanged |
 | Cloud Sync suite, x64 host | 296 pass on the prior cross-platform run |
 | Cloud Sync suite in CI on Linux | passes, first time it has ever run there |
-| `cloud_sync_protector_harness`, ARM64 | 39 tests pass |
+| `cloud_sync_protector_harness`, ARM64 | 43 tests pass |
 | Kotlin FaceTime unit tests, Alpha variant | 14 tests pass |
 | Windows x64 CI lane | passes |
 | Windows ARM64 CI lane | passes |
