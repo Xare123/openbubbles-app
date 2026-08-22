@@ -81,7 +81,7 @@ void main() {
               message: frb.CloudSyncTransientMessagePayload(
                 logicalEntityKeyHash: _reactionHash,
                 canonicalGuid: 'reaction-guid',
-                chatLogicalKeyHash: _chatHash,
+                chatAliasKeyHash: _chatHash,
                 chatIdentifier: 'iMessage;-;chat',
                 senderHandle: 'sender@example.invalid',
                 bodyState: frb.CloudSyncTransientFieldState.absent,
@@ -308,7 +308,7 @@ void main() {
         message: frb.CloudSyncTransientMessagePayload(
           logicalEntityKeyHash: _messageHash,
           canonicalGuid: 'message-guid',
-          chatLogicalKeyHash: _chatHash,
+          chatAliasKeyHash: _chatHash,
           chatIdentifier: 'iMessage;-;chat',
           senderHandle: 'sender@example.invalid',
           bodyState: frb.CloudSyncTransientFieldState.absent,
@@ -359,52 +359,55 @@ void main() {
     },
   );
 
-  test('defers every incomplete attachment owner identity combination', () async {
-    final entry = _entry();
-    final incompleteOwners = <(String?, String?, int?)>[
-      (null, null, null),
-      (_messageHash, null, null),
-      (null, 'message-guid', null),
-      (null, null, 0),
-      (_messageHash, 'message-guid', null),
-      (_messageHash, null, 0),
-      (null, 'message-guid', 0),
-    ];
+  test(
+    'defers every incomplete attachment owner identity combination',
+    () async {
+      final entry = _entry();
+      final incompleteOwners = <(String?, String?, int?)>[
+        (null, null, null),
+        (_messageHash, null, null),
+        (null, 'message-guid', null),
+        (null, null, 0),
+        (_messageHash, 'message-guid', null),
+        (_messageHash, null, 0),
+        (null, 'message-guid', 0),
+      ];
 
-    for (final (ownerHash, ownerGuid, ownerPart) in incompleteOwners) {
-      bindings.result = frb.CloudSyncTransientDecodeResult(
-        protectedSourceReference: _sourceReference,
-        generation: BigInt.from(entry.generation),
-        changeId: entry.change.changeId,
-        entityKind: frb.CloudSyncTransientEntityKind.attachment,
-        mutationKind: frb.CloudSyncTransientMutationKind.upsert,
-        snapshot: _snapshotFor(
-          frb.CloudSyncTransientEntityKind.attachment,
-          _attachmentHash,
-        ),
-        payload: frb.CloudSyncTransientPayload(
-          attachment: frb.CloudSyncTransientAttachmentPayload(
-            logicalEntityKeyHash: _attachmentHash,
-            canonicalGuid: 'attachment-guid',
-            ownerLogicalKeyHash: ownerHash,
-            ownerCanonicalGuid: ownerGuid,
-            ownerPart: ownerPart,
-            fileNameState: frb.CloudSyncTransientFieldState.value,
-            fileName: 'document.pdf',
-            mimeTypeState: frb.CloudSyncTransientFieldState.absent,
-            protectedLocalReferenceState:
-                frb.CloudSyncTransientFieldState.value,
-            protectedLocalReference: _attachmentReference,
+      for (final (ownerHash, ownerGuid, ownerPart) in incompleteOwners) {
+        bindings.result = frb.CloudSyncTransientDecodeResult(
+          protectedSourceReference: _sourceReference,
+          generation: BigInt.from(entry.generation),
+          changeId: entry.change.changeId,
+          entityKind: frb.CloudSyncTransientEntityKind.attachment,
+          mutationKind: frb.CloudSyncTransientMutationKind.upsert,
+          snapshot: _snapshotFor(
+            frb.CloudSyncTransientEntityKind.attachment,
+            _attachmentHash,
           ),
-        ),
-      );
+          payload: frb.CloudSyncTransientPayload(
+            attachment: frb.CloudSyncTransientAttachmentPayload(
+              logicalEntityKeyHash: _attachmentHash,
+              canonicalGuid: 'attachment-guid',
+              ownerLogicalKeyHash: ownerHash,
+              ownerCanonicalGuid: ownerGuid,
+              ownerPart: ownerPart,
+              fileNameState: frb.CloudSyncTransientFieldState.value,
+              fileName: 'document.pdf',
+              mimeTypeState: frb.CloudSyncTransientFieldState.absent,
+              protectedLocalReferenceState:
+                  frb.CloudSyncTransientFieldState.value,
+              protectedLocalReference: _attachmentReference,
+            ),
+          ),
+        );
 
-      await _expectFailure(
-        decoder().decode(entry),
-        CloudFailureCategory.dependency,
-      );
-    }
-  });
+        await _expectFailure(
+          decoder().decode(entry),
+          CloudFailureCategory.dependency,
+        );
+      }
+    },
+  );
 
   test(
     'defers explicit clears that current Dart payloads cannot preserve',
@@ -441,7 +444,7 @@ void main() {
           message: frb.CloudSyncTransientMessagePayload(
             logicalEntityKeyHash: _messageHash,
             canonicalGuid: 'message-guid',
-            chatLogicalKeyHash: _chatHash,
+            chatAliasKeyHash: _chatHash,
             chatIdentifier: 'iMessage;-;chat',
             senderHandle: 'sender@example.invalid',
             bodyState: frb.CloudSyncTransientFieldState.explicitClear,
@@ -723,7 +726,7 @@ frb.CloudSyncTransientDecodeResult _readyReaction(
     message: frb.CloudSyncTransientMessagePayload(
       logicalEntityKeyHash: _reactionHash,
       canonicalGuid: 'reaction-guid',
-      chatLogicalKeyHash: _chatHash,
+      chatAliasKeyHash: _chatHash,
       chatIdentifier: 'iMessage;-;chat',
       senderHandle: 'sender@example.invalid',
       bodyState: frb.CloudSyncTransientFieldState.absent,
@@ -764,7 +767,7 @@ frb.CloudSyncTransientPayload _messagePayload() =>
       message: frb.CloudSyncTransientMessagePayload(
         logicalEntityKeyHash: _messageHash,
         canonicalGuid: 'message-guid',
-        chatLogicalKeyHash: _chatHash,
+        chatAliasKeyHash: _chatHash,
         chatIdentifier: 'iMessage;-;chat',
         senderHandle: 'sender@example.invalid',
         bodyState: frb.CloudSyncTransientFieldState.value,

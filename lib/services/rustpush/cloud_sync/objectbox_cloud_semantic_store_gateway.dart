@@ -1143,7 +1143,7 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     CloudSemanticSnapshot snapshot,
   ) {
     final expectedParent = switch (payload) {
-      CloudMessageEntityPayload value => value.chatLogicalKeyHash,
+      CloudMessageEntityPayload _ => null,
       CloudAttachmentEntityPayload value => value.ownerLogicalKeyHash,
       CloudReactionEntityPayload value => value.parentLogicalKeyHash,
       CloudGroupPhotoEntityPayload value => value.ownerLogicalKeyHash,
@@ -1157,6 +1157,7 @@ final class _ObjectBoxCloudSemanticStoreTransaction
       );
     }
     if ((payload is CloudChatEntityPayload ||
+            payload is CloudMessageEntityPayload ||
             payload is CloudProfileEntityPayload) &&
         snapshot.parentLogicalKeyHash != null) {
       throw CloudSyncFailure(
@@ -1165,10 +1166,7 @@ final class _ObjectBoxCloudSemanticStoreTransaction
       );
     }
     final (CloudEntityKind, String)? requiredParent = switch (payload) {
-      CloudMessageEntityPayload value => (
-        CloudEntityKind.chat,
-        value.chatLogicalKeyHash,
-      ),
+      CloudMessageEntityPayload _ => null,
       CloudAttachmentEntityPayload value => (
         CloudEntityKind.message,
         value.ownerLogicalKeyHash,
@@ -1196,6 +1194,9 @@ final class _ObjectBoxCloudSemanticStoreTransaction
           safeCode: 'semantic_parent_missing',
         );
       }
+    }
+    if (payload case CloudMessageEntityPayload value) {
+      _validateHashedValue(value.chatAliasKeyHash);
     }
   }
 

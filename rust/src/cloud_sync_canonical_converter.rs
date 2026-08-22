@@ -2104,20 +2104,17 @@ pub(crate) fn convert_message(
         Ok(value) => value,
         Err(error) => return validation_quarantine(error),
     };
-    let logical_identifier = if entity_kind == CloudCanonicalEntityKind::Reaction {
-        let Some(parent) = proto.associated_message_guid.as_deref() else {
-            return CloudCanonicalConversionOutcome::Quarantined(
-                CloudCanonicalQuarantineReason::MalformedParent,
-            );
-        };
-        format!("{}\0{}", message.guid, parent)
-    } else {
-        message.guid.clone()
+    let logical_hash_result = match association.reaction() {
+        Some((_, parent, _)) => context.hasher.canonical_reaction_key_hash(
+            &message.guid,
+            parent.parent_guid(),
+            parent.parent_part(),
+        ),
+        None => context
+            .hasher
+            .canonical_entity_key_hash(entity_kind, &message.guid),
     };
-    let logical_hash = match context
-        .hasher
-        .canonical_entity_key_hash(entity_kind, &logical_identifier)
-    {
+    let logical_hash = match logical_hash_result {
         Ok(value) => value,
         Err(error) => return validation_quarantine(error),
     };
@@ -2243,7 +2240,7 @@ pub(crate) fn convert_attachment(
             CloudCanonicalDeferredReason::UnsupportedSticker,
         );
     }
-    let (canonical_guid, logical_identifier, owner_guid, owner_hash, owner_part) =
+    let (canonical_guid, logical_hash, owner_guid, owner_hash, owner_part) =
         match parse_owned_attachment_guid(&attachment.guid) {
             Ok(owned) => {
                 let owner_hash = match context.hasher.canonical_entity_key_hash(
@@ -2253,9 +2250,16 @@ pub(crate) fn convert_attachment(
                     Ok(value) => value,
                     Err(error) => return validation_quarantine(error),
                 };
+                let logical_hash = match context
+                    .hasher
+                    .canonical_owned_attachment_key_hash(owned.message_guid(), owned.part())
+                {
+                    Ok(value) => value,
+                    Err(error) => return validation_quarantine(error),
+                };
                 (
                     owned.canonical_guid().to_owned(),
-                    format!("{}\0{}", owned.message_guid(), owned.part()),
+                    logical_hash,
                     Some(owned.message_guid().to_owned()),
                     Some(owner_hash),
                     Some(owned.part()),
@@ -2266,21 +2270,17 @@ pub(crate) fn convert_attachment(
                     CloudCanonicalQuarantineReason::MalformedParent,
                 )
             }
-            Err(_) => (
-                attachment.guid.clone(),
-                attachment.guid.clone(),
-                None,
-                None,
-                None,
-            ),
+            Err(_) => {
+                let logical_hash = match context.hasher.canonical_entity_key_hash(
+                    CloudCanonicalEntityKind::Attachment,
+                    &attachment.guid,
+                ) {
+                    Ok(value) => value,
+                    Err(error) => return validation_quarantine(error),
+                };
+                (attachment.guid.clone(), logical_hash, None, None, None)
+            }
         };
-    let logical_hash = match context
-        .hasher
-        .canonical_entity_key_hash(CloudCanonicalEntityKind::Attachment, &logical_identifier)
-    {
-        Ok(value) => value,
-        Err(error) => return validation_quarantine(error),
-    };
     let uti = match nested_attachment_string(presence, "t", &attachment.uti) {
         Ok(value) => value,
         Err(outcome) => return outcome,
@@ -3206,6 +3206,57 @@ mod tests {
     }
 
     #[test]
+    fn reaction_identity_normalizes_p_and_bp_but_preserves_partless_semantics() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut reaction = reaction_message();
+
+        reaction.msg_proto.0.associated_message_guid = Some("p:0/parent-guid".to_owned());
+        let p = convert_message(
+            &context(&hasher, "server-reaction-p", None),
+            &message_presence(),
+            &reaction,
+        );
+        reaction.msg_proto.0.associated_message_guid = Some("bp:0/parent-guid".to_owned());
+        let bp = convert_message(
+            &context(&hasher, "server-reaction-bp", None),
+            &message_presence(),
+            &reaction,
+        );
+        reaction.msg_proto.0.associated_message_guid = Some("parent-guid".to_owned());
+        let partless = convert_message(
+            &context(&hasher, "server-reaction-partless", None),
+            &message_presence(),
+            &reaction,
+        );
+
+        let CloudCanonicalConversionOutcome::Ready(p) = p else {
+            panic!("p reaction should convert");
+        };
+        let CloudCanonicalConversionOutcome::Ready(bp) = bp else {
+            panic!("bp reaction should convert");
+        };
+        let CloudCanonicalConversionOutcome::Ready(partless) = partless else {
+            panic!("partless reaction should convert");
+        };
+        assert_eq!(
+            p.envelope().logical_entity_key_hash(),
+            bp.envelope().logical_entity_key_hash()
+        );
+        assert_eq!(
+            p.envelope().parent_logical_key_hash(),
+            bp.envelope().parent_logical_key_hash()
+        );
+        assert_eq!(
+            p.envelope().parent_logical_key_hash(),
+            partless.envelope().parent_logical_key_hash()
+        );
+        assert_ne!(
+            p.envelope().logical_entity_key_hash(),
+            partless.envelope().logical_entity_key_hash()
+        );
+    }
+
+    #[test]
     fn emoji_reaction_content_is_required_only_for_the_emoji_reaction_kind() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let mut emoji = reaction_message();
@@ -3343,6 +3394,12 @@ mod tests {
         assert_eq!(payload.canonical_guid(), "parent_guid_with_underscore_0");
         assert_eq!(payload.owner_part(), Some(0));
         assert!(mutation.envelope().parent_logical_key_hash().is_some());
+        assert_eq!(
+            mutation.envelope().logical_entity_key_hash(),
+            &hasher
+                .canonical_owned_attachment_key_hash("parent_guid_with_underscore", 0)
+                .unwrap()
+        );
     }
 
     #[test]

@@ -69,7 +69,7 @@ void main() {
       CloudEntityKind.message => CloudMessageEntityPayload(
         logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
         canonicalGuid: 'message-guid',
-        chatLogicalKeyHash: snapshot.parentLogicalKeyHash!,
+        chatAliasKeyHash: snapshot.parentLogicalKeyHash!,
         chatIdentifier: 'iMessage;-;chat',
         body: 'renderable body',
         senderHandle: 'sender@example.invalid',
@@ -642,7 +642,7 @@ void main() {
       final firstPayload = CloudMessageEntityPayload(
         logicalEntityKeyHash: 'message-key',
         canonicalGuid: 'message-guid',
-        chatLogicalKeyHash: 'chat-key',
+        chatAliasKeyHash: 'chat-key',
         chatIdentifier: 'iMessage;-;chat',
         body: 'first plaintext body',
         senderHandle: 'first@example.invalid',
@@ -654,7 +654,7 @@ void main() {
       final secondPayload = CloudMessageEntityPayload(
         logicalEntityKeyHash: 'message-key',
         canonicalGuid: 'message-guid',
-        chatLogicalKeyHash: 'chat-key',
+        chatAliasKeyHash: 'chat-key',
         chatIdentifier: 'iMessage;-;chat',
         body: 'edited plaintext body',
         senderHandle: 'first@example.invalid',
@@ -687,7 +687,7 @@ void main() {
     final payload = CloudMessageEntityPayload(
       logicalEntityKeyHash: 'message-key',
       canonicalGuid: 'private-message-guid',
-      chatLogicalKeyHash: 'chat-key',
+      chatAliasKeyHash: 'chat-key',
       chatIdentifier: 'iMessage;-;private-chat',
       body: secretBody,
       senderHandle: secretHandle,

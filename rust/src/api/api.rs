@@ -526,7 +526,7 @@ pub struct CloudSyncTransientMessagePayload {
     pub logical_entity_key_hash: String,
     /// Validated application-level message/reaction GUID. Transient only.
     pub canonical_guid: String,
-    pub chat_logical_key_hash: String,
+    pub chat_alias_key_hash: String,
     pub chat_identifier: String,
     pub sender_handle: String,
     pub body_state: CloudSyncTransientFieldState,
@@ -1100,7 +1100,7 @@ fn map_cloud_sync_transient_payload(
             result.message = Some(CloudSyncTransientMessagePayload {
                 logical_entity_key_hash: logical_entity_key_hash.to_owned(),
                 canonical_guid: payload.guid().to_owned(),
-                chat_logical_key_hash: payload.chat_alias_key_hash().value().to_owned(),
+                chat_alias_key_hash: payload.chat_alias_key_hash().value().to_owned(),
                 chat_identifier: payload.chat_identifier().to_owned(),
                 sender_handle: payload.sender_handle().to_owned(),
                 body_state: map_cloud_sync_transient_field_state(payload.text_state()),

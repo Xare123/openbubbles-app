@@ -260,6 +260,14 @@ impl CloudCanonicalAlias {
     pub(crate) fn new(kind: CloudCanonicalAliasKind, key_hash: CloudCanonicalHash) -> Self {
         Self { kind, key_hash }
     }
+
+    pub(crate) fn kind(&self) -> CloudCanonicalAliasKind {
+        self.kind
+    }
+
+    pub(crate) fn key_hash(&self) -> &CloudCanonicalHash {
+        &self.key_hash
+    }
 }
 
 impl Debug for CloudCanonicalAlias {
@@ -401,6 +409,10 @@ impl CloudCanonicalEnvelope {
 
     pub(crate) fn parent_logical_key_hash(&self) -> Option<&CloudCanonicalHash> {
         self.parent_logical_key_hash.as_ref()
+    }
+
+    pub(crate) fn aliases(&self) -> &[CloudCanonicalAlias] {
+        &self.aliases
     }
 
     pub(crate) fn protected_raw_envelope_reference(&self) -> &CloudCanonicalProtectedReference {
@@ -785,6 +797,14 @@ impl CloudCanonicalChatPayload {
         &self.chat_identifier
     }
 
+    pub(crate) fn group_id(&self) -> &str {
+        &self.group_id
+    }
+
+    pub(crate) fn original_group_id(&self) -> &str {
+        &self.original_group_id
+    }
+
     pub(crate) fn group_version_state(&self) -> CloudCanonicalFieldState {
         self.group_version.state()
     }
@@ -1046,6 +1066,10 @@ impl CloudCanonicalReplyReference {
 
     pub(crate) fn parent_hash(&self) -> &CloudCanonicalHash {
         &self.parent_logical_key_hash
+    }
+
+    pub(crate) fn parent_guid(&self) -> &str {
+        &self.parent_guid
     }
 }
 
@@ -1415,6 +1439,10 @@ impl CloudCanonicalMessagePayload {
 
     pub(crate) fn association(&self) -> &CloudCanonicalMessageAssociation {
         &self.association
+    }
+
+    pub(crate) fn reply(&self) -> Option<&CloudCanonicalReplyReference> {
+        self.reply.as_ref()
     }
 
     pub(crate) fn attributed_bodies_state(&self) -> CloudCanonicalFieldState {

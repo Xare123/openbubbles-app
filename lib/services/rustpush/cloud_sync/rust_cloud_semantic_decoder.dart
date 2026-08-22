@@ -420,7 +420,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         payload.logicalEntityKeyHash,
       ),
       canonicalGuid: payload.canonicalGuid,
-      chatLogicalKeyHash: _requireExternalDigest(payload.chatLogicalKeyHash),
+      chatAliasKeyHash: _requireExternalDigest(payload.chatAliasKeyHash),
       chatIdentifier: payload.chatIdentifier,
       body: payload.body!,
       senderHandle: payload.senderHandle,

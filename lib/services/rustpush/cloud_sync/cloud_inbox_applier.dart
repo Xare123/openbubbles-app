@@ -27,7 +27,7 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
   CloudMessageEntityPayload({
     required this.logicalEntityKeyHash,
     required this.canonicalGuid,
-    required this.chatLogicalKeyHash,
+    required this.chatAliasKeyHash,
     required this.chatIdentifier,
     required this.body,
     required this.senderHandle,
@@ -38,7 +38,7 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
     if (canonicalGuid.isEmpty || chatIdentifier.isEmpty) {
       throw ArgumentError('cloud_message_payload_canonical_identity_invalid');
     }
-    if (chatLogicalKeyHash.isEmpty) {
+    if (chatAliasKeyHash.isEmpty) {
       throw ArgumentError('cloud_message_payload_chat_key_invalid');
     }
   }
@@ -46,7 +46,7 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
   @override
   final String logicalEntityKeyHash;
   final String canonicalGuid;
-  final String chatLogicalKeyHash;
+  final String chatAliasKeyHash;
   final String chatIdentifier;
   final String body;
   final String senderHandle;

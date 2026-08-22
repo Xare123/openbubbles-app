@@ -38,13 +38,16 @@ use crate::{
         CloudCanonicalQuarantineReason, CloudRawRecordPresence,
     },
     cloud_sync_canonical_dto::{
-        CloudCanonicalEntityKind, CloudCanonicalHash, CloudCanonicalMutation,
+        CloudCanonicalAliasKind, CloudCanonicalEntityKind, CloudCanonicalHash,
+        CloudCanonicalMessageAssociation, CloudCanonicalMutation, CloudCanonicalPayload,
+        CloudCanonicalValidationFailure,
     },
     cloud_sync_native_fetch::{
         cloud_sync_unprotect_raw_envelope, CloudNativeFailureCategory, CloudNativeProtectionScope,
         CloudNativeRawEnvelope, CloudNativeRawEnvelopeKind, CloudNativeSafeCode, CloudNativeStream,
     },
     cloud_sync_protector,
+    cloud_sync_semantic_identity::CloudSemanticIdentifierHasher,
 };
 
 const MAX_DECOMPRESSED_FIELD_BYTES: usize = 16 * 1024 * 1024;
@@ -567,8 +570,129 @@ fn conversion_context<'a>(
     ))
 }
 
+fn validate_canonical_identity_bindings(
+    mutation: &CloudCanonicalMutation,
+    hasher: &CloudSemanticIdentifierHasher,
+) -> Result<(), CloudCanonicalValidationFailure> {
+    let envelope_hash = mutation.envelope().logical_entity_key_hash();
+    let Some(payload) = mutation.payload() else {
+        return Ok(());
+    };
+
+    let expected_hash = match payload {
+        CloudCanonicalPayload::Chat(payload) => {
+            for (kind, value) in [
+                (CloudCanonicalAliasKind::ChatGroupId, payload.group_id()),
+                (
+                    CloudCanonicalAliasKind::ChatOriginalGroupId,
+                    payload.original_group_id(),
+                ),
+                (
+                    CloudCanonicalAliasKind::ChatServiceIdentifier,
+                    payload.chat_identifier(),
+                ),
+            ] {
+                let expected_alias_hash = hasher.canonical_alias_key_hash(kind, value)?;
+                if !mutation
+                    .envelope()
+                    .aliases()
+                    .iter()
+                    .any(|alias| alias.kind() == kind && alias.key_hash() == &expected_alias_hash)
+                {
+                    return Err(CloudCanonicalValidationFailure::InvalidPayload);
+                }
+            }
+            hasher.canonical_entity_key_hash(CloudCanonicalEntityKind::Chat, payload.guid())?
+        }
+        CloudCanonicalPayload::Message(payload) => {
+            let expected_alias_hash = hasher.canonical_alias_key_hash(
+                CloudCanonicalAliasKind::ChatServiceIdentifier,
+                payload.chat_identifier(),
+            )?;
+            if payload.chat_alias_key_hash() != &expected_alias_hash {
+                return Err(CloudCanonicalValidationFailure::InvalidPayload);
+            }
+            if let Some(reply) = payload.reply() {
+                let expected_reply_parent = hasher.canonical_entity_key_hash(
+                    CloudCanonicalEntityKind::Message,
+                    reply.parent_guid(),
+                )?;
+                if reply.parent_hash() != &expected_reply_parent {
+                    return Err(CloudCanonicalValidationFailure::InvalidPayload);
+                }
+            }
+
+            match payload.association() {
+                CloudCanonicalMessageAssociation::None => hasher
+                    .canonical_entity_key_hash(CloudCanonicalEntityKind::Message, payload.guid())?,
+                CloudCanonicalMessageAssociation::Sticker(parent) => {
+                    let expected_parent_hash = hasher.canonical_entity_key_hash(
+                        CloudCanonicalEntityKind::Message,
+                        parent.parent_guid(),
+                    )?;
+                    if parent.parent_hash() != &expected_parent_hash {
+                        return Err(CloudCanonicalValidationFailure::InvalidPayload);
+                    }
+                    hasher.canonical_entity_key_hash(
+                        CloudCanonicalEntityKind::Message,
+                        payload.guid(),
+                    )?
+                }
+                CloudCanonicalMessageAssociation::ReactionAdd { parent, .. }
+                | CloudCanonicalMessageAssociation::ReactionRemove { parent, .. } => {
+                    let expected_parent_hash = hasher.canonical_entity_key_hash(
+                        CloudCanonicalEntityKind::Message,
+                        parent.parent_guid(),
+                    )?;
+                    if parent.parent_hash() != &expected_parent_hash {
+                        return Err(CloudCanonicalValidationFailure::InvalidPayload);
+                    }
+                    hasher.canonical_reaction_key_hash(
+                        payload.guid(),
+                        parent.parent_guid(),
+                        parent.parent_part(),
+                    )?
+                }
+            }
+        }
+        CloudCanonicalPayload::Attachment(payload) => {
+            match (
+                payload.owner_message_guid(),
+                payload.owner_message_key_hash(),
+                payload.owner_part(),
+            ) {
+                (Some(owner_guid), Some(owner_hash), Some(owner_part)) => {
+                    if payload.canonical_guid() != format!("{owner_guid}_{owner_part}") {
+                        return Err(CloudCanonicalValidationFailure::InvalidPayload);
+                    }
+                    let expected_owner_hash = hasher
+                        .canonical_entity_key_hash(CloudCanonicalEntityKind::Message, owner_guid)?;
+                    if owner_hash != &expected_owner_hash {
+                        return Err(CloudCanonicalValidationFailure::InvalidPayload);
+                    }
+                    hasher.canonical_owned_attachment_key_hash(owner_guid, owner_part)?
+                }
+                (None, None, None) => hasher.canonical_entity_key_hash(
+                    CloudCanonicalEntityKind::Attachment,
+                    payload.canonical_guid(),
+                )?,
+                _ => return Err(CloudCanonicalValidationFailure::InvalidPayload),
+            }
+        }
+        CloudCanonicalPayload::GroupPhoto(_) => {
+            return Err(CloudCanonicalValidationFailure::InvalidPayload)
+        }
+    };
+
+    if envelope_hash != &expected_hash {
+        return Err(CloudCanonicalValidationFailure::InvalidPayload);
+    }
+    Ok(())
+}
+
 fn normalize_conversion(
     outcome: CloudCanonicalConversionOutcome,
+    hasher: &CloudSemanticIdentifierHasher,
     scope_fingerprint: &CloudCanonicalHash,
     zone_fingerprint: &CloudCanonicalHash,
     generation: u64,
@@ -581,6 +705,10 @@ fn normalize_conversion(
             {
                 CloudTransientDecodeOutcome::Failure(
                     CloudTransientBridgeFailure::GenerationMismatch,
+                )
+            } else if validate_canonical_identity_bindings(&mutation, hasher).is_err() {
+                CloudTransientDecodeOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::InvalidCanonicalPayload,
                 )
             } else {
                 CloudTransientDecodeOutcome::Ready(mutation)
@@ -705,6 +833,7 @@ pub(crate) async fn cloud_sync_decode_transient_record(
                 mapping.entity_kind,
                 mapping.logical_entity_key_hash.clone(),
             ),
+            &hasher,
             &scope_fingerprint,
             &zone_fingerprint,
             request.generation,
@@ -833,6 +962,7 @@ pub(crate) async fn cloud_sync_decode_transient_record(
     };
     normalize_conversion(
         converted,
+        &hasher,
         &scope_fingerprint,
         &zone_fingerprint,
         request.generation,
@@ -842,9 +972,134 @@ pub(crate) async fn cloud_sync_decode_transient_record(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cloud_sync_canonical_dto::{
+        CloudCanonicalAlias, CloudCanonicalChatPayload, CloudCanonicalChatStyle,
+        CloudCanonicalEnvelope, CloudCanonicalField, CloudCanonicalMutationKind,
+        CloudCanonicalProtectedReference, CloudCanonicalService, CloudCanonicalSnapshot,
+        CLOUD_CANONICAL_SCHEMA_VERSION,
+    };
 
     fn digest(character: char) -> String {
         character.to_string().repeat(43)
+    }
+
+    fn chat_mutation(
+        hasher: &CloudSemanticIdentifierHasher,
+        logical_hash: CloudCanonicalHash,
+        tamper_service_alias: bool,
+    ) -> CloudCanonicalMutation {
+        let protected_reference =
+            CloudCanonicalProtectedReference::new("obcs2.test-reference").unwrap();
+        let aliases = [
+            (CloudCanonicalAliasKind::ChatGroupId, "group-id"),
+            (
+                CloudCanonicalAliasKind::ChatOriginalGroupId,
+                "original-group-id",
+            ),
+            (
+                CloudCanonicalAliasKind::ChatServiceIdentifier,
+                "iMessage;-;+15555550100",
+            ),
+        ]
+        .into_iter()
+        .map(|(kind, value)| {
+            let key_hash =
+                if tamper_service_alias && kind == CloudCanonicalAliasKind::ChatServiceIdentifier {
+                    CloudCanonicalHash::new(digest('a')).unwrap()
+                } else {
+                    hasher.canonical_alias_key_hash(kind, value).unwrap()
+                };
+            CloudCanonicalAlias::new(kind, key_hash)
+        })
+        .collect();
+        let envelope = CloudCanonicalEnvelope::new(
+            CloudCanonicalHash::new(digest('s')).unwrap(),
+            CloudCanonicalHash::new(digest('z')).unwrap(),
+            7,
+            CLOUD_CANONICAL_SCHEMA_VERSION,
+            CloudCanonicalHash::new(digest('c')).unwrap(),
+            CloudCanonicalEntityKind::Chat,
+            CloudCanonicalMutationKind::Upsert,
+            CloudCanonicalHash::new(digest('r')).unwrap(),
+            logical_hash.clone(),
+            None,
+            aliases,
+            None,
+            None,
+            None,
+            protected_reference.clone(),
+        )
+        .unwrap();
+        let snapshot = CloudCanonicalSnapshot::new(
+            CloudCanonicalEntityKind::Chat,
+            logical_hash,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            None,
+            None,
+            None,
+            None,
+            protected_reference,
+        )
+        .unwrap();
+        let payload = CloudCanonicalChatPayload::new(
+            "chat-guid".to_owned(),
+            "iMessage;-;+15555550100".to_owned(),
+            "group-id".to_owned(),
+            "original-group-id".to_owned(),
+            CloudCanonicalService::IMessage,
+            CloudCanonicalChatStyle::Direct,
+            vec!["tel:+15555550100".to_owned()],
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Absent,
+        )
+        .unwrap();
+        CloudCanonicalMutation::new(
+            envelope,
+            Some(snapshot),
+            Some(CloudCanonicalPayload::Chat(Box::new(payload))),
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn canonical_identity_validator_recomputes_before_dart_handoff() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"bridge-identity-test").unwrap();
+        let valid_hash = hasher
+            .canonical_entity_key_hash(CloudCanonicalEntityKind::Chat, "chat-guid")
+            .unwrap();
+        assert_eq!(
+            validate_canonical_identity_bindings(
+                &chat_mutation(&hasher, valid_hash.clone(), false),
+                &hasher
+            ),
+            Ok(())
+        );
+
+        assert_eq!(
+            validate_canonical_identity_bindings(
+                &chat_mutation(&hasher, valid_hash, true),
+                &hasher
+            ),
+            Err(CloudCanonicalValidationFailure::InvalidPayload)
+        );
+
+        let tampered_hash = CloudCanonicalHash::new(digest('t')).unwrap();
+        assert_eq!(
+            validate_canonical_identity_bindings(
+                &chat_mutation(&hasher, tampered_hash, false),
+                &hasher
+            ),
+            Err(CloudCanonicalValidationFailure::InvalidPayload)
+        );
     }
 
     #[test]

@@ -200,7 +200,7 @@ void main() {
         payload: CloudMessageEntityPayload(
           logicalEntityKeyHash: messageHash,
           canonicalGuid: 'message-guid',
-          chatLogicalKeyHash: chatHash,
+          chatAliasKeyHash: chatHash,
           chatIdentifier: 'iMessage;-;chat',
           body: 'synthetic body',
           senderHandle: 'synthetic@example.invalid',

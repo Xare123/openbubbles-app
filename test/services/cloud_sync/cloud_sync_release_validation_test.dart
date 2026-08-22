@@ -268,7 +268,7 @@ void main() {
       CloudMessageEntityPayload(
         logicalEntityKeyHash: 'message-key',
         canonicalGuid: sentinels[0],
-        chatLogicalKeyHash: 'chat-key',
+        chatAliasKeyHash: 'chat-key',
         chatIdentifier: sentinels[2],
         body: 'body-sensitive',
         senderHandle: 'sender-sensitive',

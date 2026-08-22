@@ -116,6 +116,32 @@ impl CloudSemanticIdentifierHasher {
         CloudCanonicalHash::new(self.digest(LOGICAL_ID_DOMAIN, canonical))
     }
 
+    pub(crate) fn canonical_reaction_key_hash(
+        &self,
+        reaction_guid: &str,
+        parent_guid: &str,
+        parent_part: Option<u32>,
+    ) -> Result<CloudCanonicalHash, CloudCanonicalValidationFailure> {
+        let part = parent_part
+            .map(|value| format!("part:{value}"))
+            .unwrap_or_else(|| "partless".to_owned());
+        self.canonical_entity_key_hash(
+            CloudCanonicalEntityKind::Reaction,
+            &format!("{reaction_guid}\0{parent_guid}\0{part}"),
+        )
+    }
+
+    pub(crate) fn canonical_owned_attachment_key_hash(
+        &self,
+        owner_message_guid: &str,
+        owner_part: u32,
+    ) -> Result<CloudCanonicalHash, CloudCanonicalValidationFailure> {
+        self.canonical_entity_key_hash(
+            CloudCanonicalEntityKind::Attachment,
+            &format!("{owner_message_guid}\0{owner_part}"),
+        )
+    }
+
     pub(crate) fn canonical_alias_key_hash(
         &self,
         alias_kind: CloudCanonicalAliasKind,
@@ -155,3 +181,52 @@ impl CloudSemanticIdentifierHasher {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_reaction_identity_distinguishes_partless_from_part_zero() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"reaction-identity-test").unwrap();
+        let partless = hasher
+            .canonical_reaction_key_hash("reaction-guid", "parent-guid", None)
+            .unwrap();
+        let part_zero = hasher
+            .canonical_reaction_key_hash("reaction-guid", "parent-guid", Some(0))
+            .unwrap();
+        let part_one = hasher
+            .canonical_reaction_key_hash("reaction-guid", "parent-guid", Some(1))
+            .unwrap();
+
+        assert_ne!(partless, part_zero);
+        assert_ne!(partless, part_one);
+        assert_ne!(part_zero, part_one);
+        assert_eq!(
+            part_zero,
+            hasher
+                .canonical_reaction_key_hash("reaction-guid", "parent-guid", Some(0))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn owned_attachment_identity_is_stable_for_owner_and_part() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"attachment-identity-test").unwrap();
+        let first = hasher
+            .canonical_owned_attachment_key_hash("message_guid_with_underscores", 7)
+            .unwrap();
+
+        assert_eq!(
+            first,
+            hasher
+                .canonical_owned_attachment_key_hash("message_guid_with_underscores", 7)
+                .unwrap()
+        );
+        assert_ne!(
+            first,
+            hasher
+                .canonical_owned_attachment_key_hash("message_guid_with_underscores", 8)
+                .unwrap()
+        );
+    }
+}

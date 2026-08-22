@@ -126,78 +126,81 @@ void main() {
     _expectNoSemanticMutation(objectBox, adapter);
   });
 
-  test('durable metadata never stores transient payload identity or content', () async {
-    const secretBody = 'PRIVATE BODY 97213';
-    const secretSender = 'private.sender@example.com';
-    const secretMessageGuid = 'PRIVATE-MESSAGE-GUID-97213';
-    const secretChatIdentifier = 'iMessage;-;PRIVATE-CHAT-97213';
-    final entry = _entry(scope: scope);
-    _seedDurableFence(
-      objectBox,
-      entry: entry,
-      leaseFence: leaseFence,
-      now: now,
-    );
+  test(
+    'durable metadata never stores transient payload identity or content',
+    () async {
+      const secretBody = 'PRIVATE BODY 97213';
+      const secretSender = 'private.sender@example.com';
+      const secretMessageGuid = 'PRIVATE-MESSAGE-GUID-97213';
+      const secretChatIdentifier = 'iMessage;-;PRIVATE-CHAT-97213';
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
 
-    await gateway.writeTransaction<void>(
-      entry: entry,
-      leaseFence: leaseFence,
-      action: (transaction) {
-        transaction.applyEntity(
-          payload: CloudMessageEntityPayload(
-            logicalEntityKeyHash: _digestValue('L'),
-            canonicalGuid: secretMessageGuid,
-            chatLogicalKeyHash: _digestValue('H'),
-            chatIdentifier: secretChatIdentifier,
-            body: secretBody,
-            senderHandle: secretSender,
-          ),
-          snapshot: _snapshot(),
-        );
-        transaction.markChangeApplied(entry.change.changeId);
-      },
-    );
+      await gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: (transaction) {
+          transaction.applyEntity(
+            payload: CloudMessageEntityPayload(
+              logicalEntityKeyHash: _digestValue('L'),
+              canonicalGuid: secretMessageGuid,
+              chatAliasKeyHash: _digestValue('H'),
+              chatIdentifier: secretChatIdentifier,
+              body: secretBody,
+              senderHandle: secretSender,
+            ),
+            snapshot: _snapshot(),
+          );
+          transaction.markChangeApplied(entry.change.changeId);
+        },
+      );
 
-    final durable = <String>[
-      ...objectBox.box<CloudSemanticSnapshotEntity>().getAll().expand(
-        (row) => [
-          row.snapshotKey,
-          row.scopeGenerationKey,
-          row.scopeKey,
-          row.accountFingerprint,
-          row.logicalEntityKeyHash,
-          row.editPartsJson,
-        ],
-      ),
-      ...objectBox.box<CloudSemanticReplayEntity>().getAll().expand(
-        (row) => [
-          row.replayKey,
-          row.scopeGenerationKey,
-          row.scopeKey,
-          row.accountFingerprint,
-          row.changeIdHash,
-          row.serverRecordIdHash,
-          row.logicalEntityKeyHash ?? '',
-          row.payloadSha256 ?? '',
-          row.terminalOutcome,
-          row.terminalSafeCode ?? '',
-        ],
-      ),
-      ...objectBox.box<CloudRecordMapEntity>().getAll().expand(
-        (row) => [
-          row.mapKey,
-          row.logicalEntityKeyHash,
-          row.serverRecordIdHash,
-          row.encryptedServerRecordId,
-          row.encryptedRawRecordRef ?? '',
-        ],
-      ),
-    ].join('\n');
-    expect(durable, isNot(contains(secretBody)));
-    expect(durable, isNot(contains(secretSender)));
-    expect(durable, isNot(contains(secretMessageGuid)));
-    expect(durable, isNot(contains(secretChatIdentifier)));
-  });
+      final durable = <String>[
+        ...objectBox.box<CloudSemanticSnapshotEntity>().getAll().expand(
+          (row) => [
+            row.snapshotKey,
+            row.scopeGenerationKey,
+            row.scopeKey,
+            row.accountFingerprint,
+            row.logicalEntityKeyHash,
+            row.editPartsJson,
+          ],
+        ),
+        ...objectBox.box<CloudSemanticReplayEntity>().getAll().expand(
+          (row) => [
+            row.replayKey,
+            row.scopeGenerationKey,
+            row.scopeKey,
+            row.accountFingerprint,
+            row.changeIdHash,
+            row.serverRecordIdHash,
+            row.logicalEntityKeyHash ?? '',
+            row.payloadSha256 ?? '',
+            row.terminalOutcome,
+            row.terminalSafeCode ?? '',
+          ],
+        ),
+        ...objectBox.box<CloudRecordMapEntity>().getAll().expand(
+          (row) => [
+            row.mapKey,
+            row.logicalEntityKeyHash,
+            row.serverRecordIdHash,
+            row.encryptedServerRecordId,
+            row.encryptedRawRecordRef ?? '',
+          ],
+        ),
+      ].join('\n');
+      expect(durable, isNot(contains(secretBody)));
+      expect(durable, isNot(contains(secretSender)));
+      expect(durable, isNot(contains(secretMessageGuid)));
+      expect(durable, isNot(contains(secretChatIdentifier)));
+    },
+  );
 
   test('semantic metadata and protected record map survive reopen', () async {
     final entry = _entry(scope: scope);
@@ -680,13 +683,20 @@ void main() {
     'required payload parents must exactly match snapshot parents',
     () async {
       final cases =
-          <(CloudSyncScope, CloudSemanticEntityPayload, CloudSemanticSnapshot)>[
+          <
+            (
+              CloudSyncScope,
+              CloudSemanticEntityPayload,
+              CloudSemanticSnapshot,
+              String,
+            )
+          >[
             (
               _scope(account: _digestValue('B'), zone: 'messageManateeZone'),
               CloudMessageEntityPayload(
                 logicalEntityKeyHash: _digestValue('L'),
                 canonicalGuid: 'message-guid',
-                chatLogicalKeyHash: _digestValue('P'),
+                chatAliasKeyHash: _digestValue('P'),
                 chatIdentifier: 'iMessage;-;chat',
                 body: 'message',
                 senderHandle: 'sender',
@@ -696,6 +706,7 @@ void main() {
                 logicalEntityKeyHash: _digestValue('L'),
                 parentLogicalKeyHash: _digestValue('Q'),
               ),
+              'semantic_parent_identity_invalid',
             ),
             (
               _scope(account: _digestValue('C'), zone: 'messageManateeZone'),
@@ -712,6 +723,7 @@ void main() {
                 kind: CloudEntityKind.reaction,
                 logicalEntityKeyHash: _digestValue('Y'),
               ),
+              'semantic_parent_identity_mismatch',
             ),
             (
               _scope(account: _digestValue('D'), zone: 'attachmentManateeZone'),
@@ -730,6 +742,7 @@ void main() {
                 logicalEntityKeyHash: _digestValue('T'),
                 parentLogicalKeyHash: _digestValue('Q'),
               ),
+              'semantic_parent_identity_mismatch',
             ),
             (
               _scope(account: _digestValue('E'), zone: 'chatManateeZone'),
@@ -744,10 +757,11 @@ void main() {
                 logicalEntityKeyHash: _digestValue('G'),
                 parentLogicalKeyHash: _digestValue('Q'),
               ),
+              'semantic_parent_identity_mismatch',
             ),
           ];
 
-      for (final (caseScope, payload, snapshot) in cases) {
+      for (final (caseScope, payload, snapshot, safeCode) in cases) {
         final entry = _entry(scope: caseScope);
         adapter.activeScope = caseScope;
         _seedDurableFence(
@@ -764,7 +778,7 @@ void main() {
               transaction.applyEntity(payload: payload, snapshot: snapshot);
             },
           ),
-          throwsA(_failureCode('semantic_parent_identity_mismatch')),
+          throwsA(_failureCode(safeCode)),
         );
       }
       expect(objectBox.box<CloudSyncRunEntity>().count(), 0);
@@ -1144,7 +1158,7 @@ CloudMessageEntityPayload _payload() {
   return CloudMessageEntityPayload(
     logicalEntityKeyHash: _digestValue('L'),
     canonicalGuid: 'message-guid',
-    chatLogicalKeyHash: _digestValue('H'),
+    chatAliasKeyHash: _digestValue('H'),
     chatIdentifier: 'iMessage;-;chat',
     body: 'secret message body',
     senderHandle: 'secret@example.com',
