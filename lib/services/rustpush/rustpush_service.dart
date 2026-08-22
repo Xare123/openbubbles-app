@@ -22,6 +22,7 @@ import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/services/rustpush/apple_network_health.dart';
 import 'package:bluebubbles/services/rustpush/cloud_message_upload_state.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_controller.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_owner.dart';
@@ -79,15 +80,8 @@ const registrationRelayAccessToken = String.fromEnvironment(
   'OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN',
 );
 
-/// The legacy sync path predates the lossless V2 coordinator. Builds are
-/// restore-only unless mutation is explicitly enabled at compile time.
-const bool _legacyCloudKitMutationsEnabled = bool.fromEnvironment(
-  'OPENBUBBLES_LEGACY_CLOUDKIT_MUTATIONS',
-  defaultValue: false,
-);
-
 bool get legacyCloudKitMutationsEnabled =>
-    _legacyCloudKitMutationsEnabled;
+    CloudKitWriterOwnership.legacyMutationsEnabled;
 
 const clientId =
     '1041242226917-ik21n86fp43e82iu1e5soh6bu6gvuste.apps.googleusercontent.com';
@@ -1617,7 +1611,8 @@ class RustPushBackend implements BackendService {
             api.UnsendMessage(tuuid: msgObj.guid!, editPart: part.part)));
     await sendMsg(msg);
 
-    if (_legacyCloudKitMutationsEnabled && msgObj.ckRecordId != null) {
+    if (CloudKitWriterOwnership.legacyMutationsEnabled &&
+        msgObj.ckRecordId != null) {
       await pushService._runLegacyCloudKitOperation(
         () => api.saveMessages(
           cloudMessagesClient:
@@ -3137,7 +3132,7 @@ class RustPushService extends GetxService {
     Map<String, Attachment> idToAttachment,
     bool noAttachments,
   ) {
-    if (!_legacyCloudKitMutationsEnabled) {
+    if (!CloudKitWriterOwnership.legacyMutationsEnabled) {
       Logger.warn('Legacy CloudKit upload blocked by restore-only build');
       return Future.value(CloudMessageUploadBatchResult(
         confirmedCount: 0,
@@ -3335,7 +3330,7 @@ class RustPushService extends GetxService {
   }
 
   Future<void> uploadAttachment(Message message) async {
-    if (!_legacyCloudKitMutationsEnabled) {
+    if (!CloudKitWriterOwnership.legacyMutationsEnabled) {
       showSnackbar(
         'Upload unavailable',
         'Legacy CloudKit uploads are disabled in this safety build.',
@@ -3393,7 +3388,7 @@ class RustPushService extends GetxService {
       return;
     }
 
-    if (_legacyCloudKitMutationsEnabled &&
+    if (CloudKitWriterOwnership.legacyMutationsEnabled &&
         (ss.prefs.getStringList("messageDeletionIds-1")?.isNotEmpty ?? false)) {
       await api.deleteMessages(
           cloudMessagesClient:
@@ -3402,7 +3397,7 @@ class RustPushService extends GetxService {
       ss.prefs.remove("messageDeletionIds-1");
     }
 
-    if (_legacyCloudKitMutationsEnabled &&
+    if (CloudKitWriterOwnership.legacyMutationsEnabled &&
         (ss.prefs.getStringList("attachmentDeletionIds-1")?.isNotEmpty ??
             false)) {
       await api.deleteAttachments(
@@ -3412,7 +3407,7 @@ class RustPushService extends GetxService {
       ss.prefs.remove("attachmentDeletionIds-1");
     }
 
-    if (_legacyCloudKitMutationsEnabled &&
+    if (CloudKitWriterOwnership.legacyMutationsEnabled &&
         (ss.prefs.getStringList("chatDeletionIds-1")?.isNotEmpty ?? false)) {
       await api.deleteChats(
           cloudMessagesClient:
@@ -3446,7 +3441,8 @@ class RustPushService extends GetxService {
             final query =
                 Database.chats.query(Chat_.ckRecordId.equals(item.key)).build();
             final result = query.findFirst();
-            if (_legacyCloudKitMutationsEnabled && result != null) {
+            if (CloudKitWriterOwnership.legacyMutationsEnabled &&
+                result != null) {
               syncStopDelete = true;
               try {
                 chats.removeChat(result);
@@ -3483,7 +3479,7 @@ class RustPushService extends GetxService {
         }
       }
 
-      if (_legacyCloudKitMutationsEnabled &&
+      if (CloudKitWriterOwnership.legacyMutationsEnabled &&
           !pageHadItemFailure &&
           dupDeleteChats.isNotEmpty) {
         Logger.info("Deleting ${dupDeleteChats.length} duplicate chats");
@@ -3556,7 +3552,8 @@ class RustPushService extends GetxService {
                 .query(Attachment_.ckRecordId.equals(item.key))
                 .build();
             final result = query.findFirst();
-            if (_legacyCloudKitMutationsEnabled && result != null) {
+            if (CloudKitWriterOwnership.legacyMutationsEnabled &&
+                result != null) {
               syncStopDelete = true;
               try {
                 Attachment.delete(result.guid!);
@@ -3598,7 +3595,7 @@ class RustPushService extends GetxService {
         }
       }
 
-      if (_legacyCloudKitMutationsEnabled &&
+      if (CloudKitWriterOwnership.legacyMutationsEnabled &&
           !pageHadItemFailure &&
           dupDeleteAttachments.isNotEmpty) {
         Logger.info(
@@ -3678,7 +3675,8 @@ class RustPushService extends GetxService {
                 .query(Message_.ckRecordId.equals(item.key))
                 .build();
             final result = query.findFirst();
-            if (_legacyCloudKitMutationsEnabled && result != null) {
+            if (CloudKitWriterOwnership.legacyMutationsEnabled &&
+                result != null) {
               syncStopDelete = true;
               try {
                 Message.delete(result.guid!);
@@ -3731,7 +3729,7 @@ class RustPushService extends GetxService {
         }
       }
 
-      if (_legacyCloudKitMutationsEnabled &&
+      if (CloudKitWriterOwnership.legacyMutationsEnabled &&
           !pageHadItemFailure &&
           dupDeleteMessages.isNotEmpty) {
         Logger.info("Deleting ${dupDeleteMessages.length} duplicate messages");
@@ -3773,7 +3771,7 @@ class RustPushService extends GetxService {
       );
     }
 
-    if (!_legacyCloudKitMutationsEnabled) {
+    if (!CloudKitWriterOwnership.legacyMutationsEnabled) {
       ss.prefs.setInt("lastSynced", DateTime.now().millisecondsSinceEpoch);
       Logger.info(
         "Legacy CloudKit restore completed with uploads and deletes disabled",
@@ -5873,12 +5871,14 @@ class RustPushService extends GetxService {
 
                   Get.back();
                   await wrapPromise(
-                      api.resetClique(
-                          keychain:
-                              pushService.state!.icloudServices!.keychain!,
-                          cloudMessages: pushService
-                              .state!.icloudServices!.cloudMessagesClient!,
-                          devicePassword: defaultPassword),
+                      _runCloudKitDestructiveReset(
+                        () => api.resetClique(
+                            keychain:
+                                pushService.state!.icloudServices!.keychain!,
+                            cloudMessages: pushService
+                                .state!.icloudServices!.cloudMessagesClient!,
+                            devicePassword: defaultPassword),
+                      ),
                       "Resetting clique...");
 
                   showDialog(
@@ -6938,7 +6938,24 @@ class RustPushService extends GetxService {
 
   Future<T> _runLegacyCloudKitOperation<T>(
     Future<T> Function() action,
-  ) {
+  ) =>
+      _runCloudKitOperation(
+        kind: CloudKitOperationKind.legacyReadWrite,
+        action: action,
+      );
+
+  Future<T> _runCloudKitDestructiveReset<T>(
+    Future<T> Function() action,
+  ) =>
+      _runCloudKitOperation(
+        kind: CloudKitOperationKind.destructiveReset,
+        action: action,
+      );
+
+  Future<T> _runCloudKitOperation<T>({
+    required CloudKitOperationKind kind,
+    required Future<T> Function() action,
+  }) {
     if (statePath.isEmpty) {
       throw StateError('cloudkit_interlock_storage_unavailable');
     }
@@ -6952,7 +6969,7 @@ class RustPushService extends GetxService {
       privateStorageDirectory: statePath,
       fenceStore: fenceStore,
     ).runExclusive(
-      kind: CloudKitOperationKind.legacyReadWrite,
+      kind: kind,
       action: action,
     );
   }

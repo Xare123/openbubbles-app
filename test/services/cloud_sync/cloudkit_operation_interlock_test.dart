@@ -58,6 +58,25 @@ void main() {
     );
   });
 
+  test('destructive reset cannot nest inside another CloudKit operation', () async {
+    await expectLater(
+      interlock.runExclusive(
+        kind: CloudKitOperationKind.legacyReadWrite,
+        action: () => interlock.runExclusive(
+          kind: CloudKitOperationKind.destructiveReset,
+          action: () async {},
+        ),
+      ),
+      throwsA(
+        isA<CloudKitOperationInterlockException>().having(
+          (error) => error.safeCode,
+          'safeCode',
+          'cloudkit_interlock_mode_violation',
+        ),
+      ),
+    );
+  });
+
   test('a concurrent operation on the profile is rejected', () async {
     final entered = Completer<void>();
     final release = Completer<void>();

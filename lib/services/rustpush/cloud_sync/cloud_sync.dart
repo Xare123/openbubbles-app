@@ -3,6 +3,7 @@ export 'cloud_associated_message_parent_reference.dart';
 export 'cloud_attachment_materialization.dart';
 export 'cloud_attachment_materialization_store.dart';
 export 'cloud_inbox_applier.dart';
+export 'cloudkit_writer_ownership.dart';
 export 'cloud_operation_identity.dart';
 export 'cloud_protected_page_lease_lifecycle.dart';
 export 'cloud_shadow_journal_budget.dart';

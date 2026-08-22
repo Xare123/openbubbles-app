@@ -51,7 +51,7 @@ void main() {
       'runCloudSyncV2ManualSemanticPullConfirmed()',
     );
     final methodEnd = source.indexOf(
-      'Future<CloudSyncSemanticPullReport>\n  _runCloudSyncV2ManualSemanticPull()',
+      '_runCloudSyncV2ManualSemanticPull() async',
       methodStart,
     );
 
@@ -212,7 +212,7 @@ void main() {
     ).readAsStringSync();
     final blockStart = source.indexOf('_buildCloudSyncV2ShadowController()');
     final blockEnd = source.indexOf(
-      'Future<T> _runLegacyCloudKitOperation',
+      '_runLegacyCloudKitOperation<T>',
       blockStart,
     );
     expect(blockStart, greaterThanOrEqualTo(0));

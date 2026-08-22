@@ -8,7 +8,12 @@ import 'package:universal_io/io.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_store.dart';
 
-enum CloudKitOperationKind { legacyReadWrite, v2ShadowRead, v2SemanticRead }
+enum CloudKitOperationKind {
+  legacyReadWrite,
+  v2ShadowRead,
+  v2SemanticRead,
+  destructiveReset,
+}
 
 typedef CloudKitOperationBody<T> = Future<T> Function();
 
