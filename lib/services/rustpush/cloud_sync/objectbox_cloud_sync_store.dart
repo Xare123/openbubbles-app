@@ -1034,6 +1034,8 @@ class ObjectBoxCloudSyncStore
                     entity.checkpointGeneration == checkpoint.generation &&
                     _outboxStatusFromInt(entity.state) ==
                         CloudOutboxStatus.unknownOutcome &&
+                    entity.appleRequestUuid != null &&
+                    entity.appleOperationUuid != null &&
                     entity.leaseExpiresAtMs <= nowMs &&
                     entity.nextEligibleAtMs <= nowMs,
               )
@@ -1062,20 +1064,20 @@ class ObjectBoxCloudSyncStore
   }
 
   @override
-  Future<void> markOutboxSubmissionStarted(
+  Future<List<CloudOutboxOperation>> markOutboxSubmissionStarted(
     CloudSyncScope scope, {
     required String leaseId,
-    required Iterable<String> operationIds,
+    required CloudOutboxSubmissionIdentity submissionIdentity,
     required DateTime now,
   }) async {
-    final ids = operationIds.toList(growable: false);
+    final ids = submissionIdentity.operationUuids.keys.toList(growable: false);
     if (ids.isEmpty) {
       throw ArgumentError('outbox_submission_operation_ids_empty');
     }
     if (leaseId.isEmpty) throw ArgumentError.value(leaseId, 'leaseId');
     final leaseIdHash = _digest('outbox-lease\u001f$leaseId');
     final nowMs = now.millisecondsSinceEpoch;
-    _store.runInTransaction(TxMode.write, () {
+    return _store.runInTransaction(TxMode.write, () {
       final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
       final entities = <String, CloudOutboxOperationEntity>{};
       for (final operationId in ids) {
@@ -1094,15 +1096,25 @@ class ObjectBoxCloudSyncStore
             entity.leaseExpiresAtMs <= nowMs) {
           throw _storageFailure('stale_outbox_lease');
         }
+        if (entity.appleRequestUuid != null ||
+            entity.appleOperationUuid != null) {
+          throw _storageFailure('outbox_submission_identity_already_assigned');
+        }
         entities[operationId] = entity;
       }
       for (final entity in entities.values) {
         entity
           ..state = _outboxStatusToInt(CloudOutboxStatus.unknownOutcome)
           ..lastErrorCategory = CloudFailureCategory.unknown.name
+          ..appleRequestUuid = submissionIdentity.requestUuid
+          ..appleOperationUuid =
+              submissionIdentity.operationUuids[entity.operationId]
           ..updatedAtMs = nowMs;
         _outbox.put(entity);
       }
+      return entities.values
+          .map((entity) => _outboxFromEntity(scope, entity, leaseId: leaseId))
+          .toList(growable: false);
     });
   }
 
@@ -1165,6 +1177,11 @@ class ObjectBoxCloudSyncStore
               ..payloadSha256 = transition.payloadSha256 ?? entity.payloadSha256
               ..serverRecordIdHash =
                   transition.serverRecordIdHash ?? entity.serverRecordIdHash;
+            if (transition.clearSubmissionIdentity) {
+              entity
+                ..appleRequestUuid = null
+                ..appleOperationUuid = null;
+            }
             break;
           case CloudOutboxTransitionType.paused:
             entity
@@ -1173,6 +1190,11 @@ class ObjectBoxCloudSyncStore
               ..nextEligibleAtMs =
                   transition.nextEligibleAt?.millisecondsSinceEpoch ?? 0
               ..lastErrorCategory = transition.category!.name;
+            if (transition.clearSubmissionIdentity) {
+              entity
+                ..appleRequestUuid = null
+                ..appleOperationUuid = null;
+            }
             break;
           case CloudOutboxTransitionType.quarantined:
             entity
@@ -1690,6 +1712,8 @@ class ObjectBoxCloudSyncStore
       encryptedPayloadReference: entity.encryptedPayloadRef,
       payloadSha256: entity.payloadSha256,
       serverRecordIdHash: entity.serverRecordIdHash,
+      appleRequestUuid: entity.appleRequestUuid,
+      appleOperationUuid: entity.appleOperationUuid,
       dependencyOperationIds: _decodeDependencies(
         entity.dependencyOperationIdsJson,
       ),
@@ -1793,6 +1817,8 @@ class ObjectBoxCloudSyncStore
       nextEligibleAtMs: operation.nextEligibleAt?.millisecondsSinceEpoch ?? 0,
       lastErrorCategory: operation.lastFailure?.name,
       serverRecordIdHash: operation.serverRecordIdHash,
+      appleRequestUuid: operation.appleRequestUuid,
+      appleOperationUuid: operation.appleOperationUuid,
       leaseIdHash: operation.leaseId == null
           ? null
           : _digest('outbox-lease\u001f${operation.leaseId}'),

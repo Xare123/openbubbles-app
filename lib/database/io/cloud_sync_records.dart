@@ -268,6 +268,12 @@ class CloudOutboxOperationEntity {
   /// this property deserialize as zero and are fail-closed by the store.
   int checkpointGeneration;
 
+  /// Persisted Apple HTTP request identity shared by one submitted batch.
+  String? appleRequestUuid;
+
+  /// Persisted Apple operation identity unique within the submitted batch.
+  String? appleOperationUuid;
+
   /// Protected local reference or application ciphertext, never message text.
   String? encryptedPayloadRef;
   String? payloadSha256;
@@ -302,6 +308,8 @@ class CloudOutboxOperationEntity {
     this.payloadVersion = 1,
     required this.mutationRevision,
     this.checkpointGeneration = 0,
+    this.appleRequestUuid,
+    this.appleOperationUuid,
     this.encryptedPayloadRef,
     this.payloadSha256,
     this.state = 0,

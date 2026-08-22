@@ -125,6 +125,8 @@ class FakeCloudSyncTransport
   int quiescenceCallCount = 0;
   final List<String?> observedFetchTokens = [];
   final List<List<String>> observedPushOperationIds = [];
+  final List<List<String?>> observedAppleRequestUuids = [];
+  final List<List<String?>> observedAppleOperationUuids = [];
   final List<String> observedUnknownOutcomeOperationIds = [];
 
   @override
@@ -179,6 +181,12 @@ class FakeCloudSyncTransport
     pushCallCount++;
     observedPushOperationIds.add(
       operations.map((operation) => operation.operationId).toList(),
+    );
+    observedAppleRequestUuids.add(
+      operations.map((operation) => operation.appleRequestUuid).toList(),
+    );
+    observedAppleOperationUuids.add(
+      operations.map((operation) => operation.appleOperationUuid).toList(),
     );
     if (pushHandler != null) return pushHandler!(scope, operations);
     if (_pushResponses.isEmpty) {

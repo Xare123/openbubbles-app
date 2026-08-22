@@ -3,6 +3,8 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:uuid/uuid.dart';
+
 import 'cloud_shadow_journal_budget.dart';
 import 'cloud_protected_page_lease_lifecycle.dart';
 import 'cloud_sync_backoff.dart';
@@ -15,6 +17,7 @@ import 'cloud_sync_writer_authority.dart';
 import 'cloudkit_operation_interlock.dart';
 
 typedef CloudSyncClock = DateTime Function();
+typedef CloudSyncUuidFactory = String Function();
 
 class CloudSyncFeatureFlags {
   const CloudSyncFeatureFlags({
@@ -192,6 +195,7 @@ class CloudSyncEngine {
     CloudSyncBackoffPolicy? backoff,
     this._observer = const NoopCloudSyncObserver(),
     CloudSyncClock? clock,
+    CloudSyncUuidFactory? uuidFactory,
     CloudSyncEngineConfig? config,
   }) : config = config ?? CloudSyncEngineConfig(),
        _store = store,
@@ -214,7 +218,8 @@ class CloudSyncEngine {
              )
            : null,
        _backoff = backoff ?? CloudSyncBackoffPolicy(),
-       _clock = clock ?? DateTime.now {
+       _clock = clock ?? DateTime.now,
+       _uuidFactory = uuidFactory ?? (() => const Uuid().v4().toUpperCase()) {
     if (coordinatorId.isEmpty) {
       throw ArgumentError('cloud_sync_coordinator_id_invalid');
     }
@@ -247,6 +252,7 @@ class CloudSyncEngine {
   final CloudSyncBackoffPolicy _backoff;
   final CloudSyncObserver _observer;
   final CloudSyncClock _clock;
+  final CloudSyncUuidFactory _uuidFactory;
   final CloudSyncEngineConfig config;
 
   bool _runActive = false;
@@ -1006,15 +1012,12 @@ class CloudSyncEngine {
     CloudSyncCancellationToken? cancellationToken,
   }) async {
     var counters = const CloudSyncRunCounters();
-    var authenticationRefreshUsed = false;
-    var pcsRefreshUsed = false;
 
     final pausedCategories = await _store.readPausedOutboxFailureCategories(
       scope,
       now: _clock(),
     );
     if (pausedCategories.contains(CloudFailureCategory.authorization)) {
-      authenticationRefreshUsed = true;
       final refreshed = await _tryRefreshAuthentication();
       _emit(
         CloudSyncEventType.authenticationRefreshed,
@@ -1032,7 +1035,6 @@ class CloudSyncEngine {
       }
     }
     if (pausedCategories.contains(CloudFailureCategory.pcsUnavailable)) {
-      pcsRefreshUsed = true;
       final refreshed = await _tryRefreshPcs();
       _emit(
         CloudSyncEventType.pcsRefreshed,
@@ -1090,17 +1092,24 @@ class CloudSyncEngine {
       for (final transition in preparation.transitions) {
         counters = _countOutboxTransition(counters, transition);
       }
-      final ready = preparation.ready;
+      var ready = preparation.ready;
       var outcomes = <String, CloudPushOutcome>{};
       if (ready.isNotEmpty) {
         await _verifyWriterPermit();
         // Persist the ambiguity boundary before the transport can contact
         // CloudKit. A crash, lost lease, or lost response after this point
         // must never recover these operations into the ordinary retry queue.
-        await _store.markOutboxSubmissionStarted(
+        final submissionIdentity = CloudOutboxSubmissionIdentity(
+          requestUuid: _uuidFactory(),
+          operationUuids: {
+            for (final operation in ready)
+              operation.operationId: _uuidFactory(),
+          },
+        );
+        ready = await _store.markOutboxSubmissionStarted(
           scope,
           leaseId: leaseId,
-          operationIds: ready.map((operation) => operation.operationId),
+          submissionIdentity: submissionIdentity,
           now: _clock(),
         );
         try {
@@ -1117,7 +1126,6 @@ class CloudSyncEngine {
           for (final operation in ready) {
             outcomes[operation.operationId] = _outcomeForThrownFailure(
               operation.operationId,
-              error,
             );
           }
         } catch (_) {
@@ -1128,52 +1136,6 @@ class CloudSyncEngine {
               failureCategory: CloudFailureCategory.unknown,
             );
           }
-        }
-      }
-
-      final unauthorized = ready
-          .where(
-            (operation) =>
-                outcomes[operation.operationId]?.disposition ==
-                CloudPushDisposition.unauthorized,
-          )
-          .toList();
-      if (unauthorized.isNotEmpty && !authenticationRefreshUsed) {
-        authenticationRefreshUsed = true;
-        final refreshed = await _tryRefreshAuthentication();
-        _emit(
-          CloudSyncEventType.authenticationRefreshed,
-          at: _clock(),
-          count: refreshed ? 1 : 0,
-        );
-        if (refreshed) {
-          await _resumePausedOutbox(
-            categories: const {CloudFailureCategory.authorization},
-          );
-          await _repushAfterRefresh(unauthorized, outcomes);
-        }
-      }
-
-      final pcsUnavailable = ready
-          .where(
-            (operation) =>
-                outcomes[operation.operationId]?.disposition ==
-                CloudPushDisposition.pcsUnavailable,
-          )
-          .toList();
-      if (pcsUnavailable.isNotEmpty && !pcsRefreshUsed) {
-        pcsRefreshUsed = true;
-        final refreshed = await _tryRefreshPcs();
-        _emit(
-          CloudSyncEventType.pcsRefreshed,
-          at: _clock(),
-          count: refreshed ? 1 : 0,
-        );
-        if (refreshed) {
-          await _resumePausedOutbox(
-            categories: const {CloudFailureCategory.pcsUnavailable},
-          );
-          await _repushAfterRefresh(pcsUnavailable, outcomes);
         }
       }
 
@@ -1195,15 +1157,15 @@ class CloudSyncEngine {
             counters = counters.add(confirmed: 1);
             break;
           case CloudPushDisposition.retryable:
-            final category =
-                outcome.failureCategory ?? CloudFailureCategory.network;
-            final transition = category == CloudFailureCategory.unknown
-                ? CloudOutboxTransition.unknownOutcome(operation.operationId)
-                : _retryOrQuarantineTransition(
-                    operation,
-                    category: category,
-                    retryAfter: outcome.retryAfter,
-                  );
+            final transition = CloudOutboxTransition.unknownOutcome(
+              operation.operationId,
+              nextEligibleAt: _backoff.nextEligibleAt(
+                now: _clock(),
+                attempt: operation.attemptCount + 1,
+                category: CloudFailureCategory.unknown,
+                retryAfter: outcome.retryAfter,
+              ),
+            );
             transitions.add(transition);
             counters = _countOutboxTransition(counters, transition);
             break;
@@ -1215,7 +1177,7 @@ class CloudSyncEngine {
             counters = _countOutboxTransition(counters, transition);
             break;
           case CloudPushDisposition.unauthorized:
-            final transition = CloudOutboxTransition.paused(
+            final transition = CloudOutboxTransition.provenNotAppliedPaused(
               operation.operationId,
               category: CloudFailureCategory.authorization,
               nextEligibleAt: _clock().add(config.pausedRetryDelay),
@@ -1224,7 +1186,7 @@ class CloudSyncEngine {
             counters = _countOutboxTransition(counters, transition);
             break;
           case CloudPushDisposition.pcsUnavailable:
-            final transition = CloudOutboxTransition.paused(
+            final transition = CloudOutboxTransition.provenNotAppliedPaused(
               operation.operationId,
               category: CloudFailureCategory.pcsUnavailable,
               nextEligibleAt: _clock().add(config.pausedRetryDelay),
@@ -1360,7 +1322,7 @@ class CloudSyncEngine {
       case CloudUnknownOutcomeDisposition.committed:
         return CloudOutboxTransition.confirmed(operation.operationId);
       case CloudUnknownOutcomeDisposition.notApplied:
-        return CloudOutboxTransition.retryable(
+        return CloudOutboxTransition.provenNotApplied(
           operation.operationId,
           category: CloudFailureCategory.server,
           nextEligibleAt: _clock(),
@@ -1528,29 +1490,11 @@ class CloudSyncEngine {
     );
   }
 
-  CloudPushOutcome _outcomeForThrownFailure(
-    String operationId,
-    CloudSyncFailure error,
-  ) {
-    final disposition = switch (error.category) {
-      CloudFailureCategory.authorization => CloudPushDisposition.unauthorized,
-      CloudFailureCategory.pcsUnavailable =>
-        CloudPushDisposition.pcsUnavailable,
-      CloudFailureCategory.network ||
-      CloudFailureCategory.server ||
-      CloudFailureCategory.localStorage ||
-      CloudFailureCategory.cancelled ||
-      CloudFailureCategory.conflict ||
-      CloudFailureCategory.unknown => CloudPushDisposition.unknownOutcome,
-      CloudFailureCategory.throttled ||
-      CloudFailureCategory.dependency => CloudPushDisposition.retryable,
-      CloudFailureCategory.malformedRecord => CloudPushDisposition.quarantined,
-    };
+  CloudPushOutcome _outcomeForThrownFailure(String operationId) {
     return CloudPushOutcome(
       operationId: operationId,
-      disposition: disposition,
-      failureCategory: error.category,
-      retryAfter: error.retryAfter,
+      disposition: CloudPushDisposition.unknownOutcome,
+      failureCategory: CloudFailureCategory.unknown,
     );
   }
 
@@ -1575,43 +1519,6 @@ class CloudSyncEngine {
       );
     }
     return Map<String, CloudPushOutcome>.of(result.outcomes);
-  }
-
-  Future<void> _repushAfterRefresh(
-    List<CloudOutboxOperation> operations,
-    Map<String, CloudPushOutcome> outcomes,
-  ) async {
-    await _verifyWriterPermit();
-    try {
-      final retryResult = await _withCoordinatorLeaseHeartbeat(
-        () => _withWriteOperationTimeout(
-          operationName: 'authorization_repush',
-          action: () =>
-              _transport.pushOperations(scope, operations: operations),
-        ),
-      );
-      await _verifyWriterPermitAfterRemote();
-      final retryOutcomes = _requireExactPushOutcomes(operations, retryResult);
-      for (final operation in operations) {
-        outcomes[operation.operationId] = retryOutcomes[operation.operationId]!;
-      }
-    } on CloudSyncFailure catch (error) {
-      if (_isCoordinatorLeaseFailure(error)) rethrow;
-      for (final operation in operations) {
-        outcomes[operation.operationId] = _outcomeForThrownFailure(
-          operation.operationId,
-          error,
-        );
-      }
-    } catch (_) {
-      for (final operation in operations) {
-        outcomes[operation.operationId] = CloudPushOutcome(
-          operationId: operation.operationId,
-          disposition: CloudPushDisposition.unknownOutcome,
-          failureCategory: CloudFailureCategory.unknown,
-        );
-      }
-    }
   }
 
   Future<void> _resumePausedOutbox({
@@ -1675,9 +1582,12 @@ class CloudSyncEngine {
           );
           if (mapping == null ||
               mapping.serverRecordIdHash != resolution.serverRecordIdHash) {
-            return CloudOutboxTransition.paused(
-              operation.operationId,
-              category: CloudFailureCategory.dependency,
+            return _unresolvedUnknownTransition(
+              operation,
+              CloudSyncFailure(
+                category: CloudFailureCategory.dependency,
+                safeCode: 'server_conflict_mapping_missing',
+              ),
             );
           }
           await _store.upsertRecordMap(
@@ -1693,7 +1603,7 @@ class CloudSyncEngine {
             ),
             generation: operation.checkpointGeneration,
           );
-          return CloudOutboxTransition.retryable(
+          return CloudOutboxTransition.provenNotApplied(
             operation.operationId,
             category: CloudFailureCategory.conflict,
             nextEligibleAt: _clock(),
@@ -1702,28 +1612,50 @@ class CloudSyncEngine {
             serverRecordIdHash: resolution.serverRecordIdHash,
           );
         case CloudServerConflictDisposition.retryable:
-          return _retryOrQuarantineTransition(
+          return _unresolvedUnknownTransition(
             operation,
-            category:
-                resolution.failureCategory ?? CloudFailureCategory.network,
-            retryAfter: resolution.retryAfter,
+            CloudSyncFailure(
+              category:
+                  resolution.failureCategory ?? CloudFailureCategory.network,
+              retryAfter: resolution.retryAfter,
+              safeCode: 'server_conflict_retryable',
+            ),
           );
         case CloudServerConflictDisposition.quarantined:
           final category =
               resolution.failureCategory ?? CloudFailureCategory.unknown;
-          return category == CloudFailureCategory.unknown
-              ? _retryOrQuarantineTransition(operation, category: category)
+          return category == CloudFailureCategory.unknown ||
+                  category.isRetryable
+              ? _unresolvedUnknownTransition(
+                  operation,
+                  CloudSyncFailure(
+                    category: category,
+                    safeCode: 'server_conflict_not_terminal',
+                  ),
+                )
               : CloudOutboxTransition.quarantined(
                   operation.operationId,
                   category: category,
                 );
       }
     } on CloudSyncFailure catch (error) {
-      return _transitionForFailure(operation, error);
+      return error.category.isRetryable ||
+              error.category == CloudFailureCategory.unknown ||
+              error.category == CloudFailureCategory.authorization ||
+              error.category == CloudFailureCategory.pcsUnavailable ||
+              error.category == CloudFailureCategory.dependency
+          ? _unresolvedUnknownTransition(operation, error)
+          : CloudOutboxTransition.quarantined(
+              operation.operationId,
+              category: error.category,
+            );
     } catch (_) {
-      return _retryOrQuarantineTransition(
+      return _unresolvedUnknownTransition(
         operation,
-        category: CloudFailureCategory.unknown,
+        CloudSyncFailure(
+          category: CloudFailureCategory.unknown,
+          safeCode: 'server_conflict_reconciliation_failed',
+        ),
       );
     }
   }

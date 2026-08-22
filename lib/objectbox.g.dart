@@ -1281,7 +1281,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(19, 6209808242097333245),
     name: 'CloudOutboxOperationEntity',
-    lastPropertyId: const obx_int.IdUid(23, 3453625028306797643),
+    lastPropertyId: const obx_int.IdUid(25, 593864995002474100),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -1427,6 +1427,18 @@ final _entities = <obx_int.ModelEntity>[
         id: const obx_int.IdUid(23, 3453625028306797643),
         name: 'checkpointGeneration',
         type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(24, 2838853240019164046),
+        name: 'appleRequestUuid',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(25, 593864995002474100),
+        name: 'appleOperationUuid',
+        type: 9,
         flags: 0,
       ),
     ],
@@ -4397,7 +4409,13 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final leaseIdHashOffset = object.leaseIdHash == null
                 ? null
                 : fbb.writeString(object.leaseIdHash!);
-            fbb.startTable(24);
+            final appleRequestUuidOffset = object.appleRequestUuid == null
+                ? null
+                : fbb.writeString(object.appleRequestUuid!);
+            final appleOperationUuidOffset = object.appleOperationUuid == null
+                ? null
+                : fbb.writeString(object.appleOperationUuid!);
+            fbb.startTable(26);
             fbb.addInt64(0, object.id);
             fbb.addOffset(1, operationIdOffset);
             fbb.addOffset(2, accountFingerprintOffset);
@@ -4421,6 +4439,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
             fbb.addInt64(20, object.leaseExpiresAtMs);
             fbb.addInt64(21, object.confirmedAtMs);
             fbb.addInt64(22, object.checkpointGeneration);
+            fbb.addOffset(23, appleRequestUuidOffset);
+            fbb.addOffset(24, appleOperationUuidOffset);
             fbb.finish(fbb.endTable());
             return object.id;
           },
@@ -4475,6 +4495,12 @@ obx_int.ModelDefinition getObjectBoxModel() {
               48,
               0,
             );
+            final appleRequestUuidParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 50);
+            final appleOperationUuidParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 52);
             final encryptedPayloadRefParam = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGetNullable(buffer, rootOffset, 20);
@@ -4544,6 +4570,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
               payloadVersion: payloadVersionParam,
               mutationRevision: mutationRevisionParam,
               checkpointGeneration: checkpointGenerationParam,
+              appleRequestUuid: appleRequestUuidParam,
+              appleOperationUuid: appleOperationUuidParam,
               encryptedPayloadRef: encryptedPayloadRefParam,
               payloadSha256: payloadSha256Param,
               state: stateParam,
@@ -7082,6 +7110,18 @@ class CloudOutboxOperationEntity_ {
   static final checkpointGeneration =
       obx.QueryIntegerProperty<CloudOutboxOperationEntity>(
         _entities[10].properties[22],
+      );
+
+  /// See [CloudOutboxOperationEntity.appleRequestUuid].
+  static final appleRequestUuid =
+      obx.QueryStringProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[23],
+      );
+
+  /// See [CloudOutboxOperationEntity.appleOperationUuid].
+  static final appleOperationUuid =
+      obx.QueryStringProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[24],
       );
 }
 

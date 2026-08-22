@@ -163,15 +163,19 @@ void main() {
       (await store.outboxEntries(scope)).single.status,
       CloudOutboxStatus.unknownOutcome,
     );
-    return operation;
+    return (await store.outboxEntries(scope)).single;
   }
 
   CloudUnknownOutcomeProof proofFor(
     CloudOutboxOperation operation, {
     String? operationId,
+    String? appleRequestUuid,
+    String? appleOperationUuid,
   }) {
     return CloudUnknownOutcomeProof(
       operationId: operationId ?? operation.operationId,
+      appleRequestUuid: appleRequestUuid ?? operation.appleRequestUuid!,
+      appleOperationUuid: appleOperationUuid ?? operation.appleOperationUuid!,
       scopeStorageKey: operation.scope.storageKey,
       checkpointGeneration: operation.checkpointGeneration,
       logicalEntityKeyHash: operation.logicalEntityKeyHash,
@@ -1227,6 +1231,83 @@ void main() {
     expect(transport.conflictCallCount, 0);
   });
 
+  test(
+    'thrown authorization failure cannot clear submission identity',
+    () async {
+      final operation = testOutboxOperation(scope, 5);
+      await store.enqueueOutbox(operation);
+      transport.pushHandler = (_, _) async => throw CloudSyncFailure(
+        category: CloudFailureCategory.authorization,
+        safeCode: 'simulated_unproven_authorization_failure',
+      );
+
+      await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+      final stored = (await store.outboxEntries(scope)).single;
+      expect(stored.status, CloudOutboxStatus.unknownOutcome);
+      expect(stored.lastFailure, CloudFailureCategory.unknown);
+      expect(stored.appleRequestUuid, isNotNull);
+      expect(stored.appleOperationUuid, isNotNull);
+      expect(transport.authenticationRefreshCallCount, 0);
+      expect(transport.pushCallCount, 1);
+    },
+  );
+
+  test('thrown PCS failure cannot clear submission identity', () async {
+    final operation = testOutboxOperation(scope, 7);
+    await store.enqueueOutbox(operation);
+    transport.pushHandler = (_, _) async => throw CloudSyncFailure(
+      category: CloudFailureCategory.pcsUnavailable,
+      safeCode: 'simulated_unproven_pcs_failure',
+    );
+
+    await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    final stored = (await store.outboxEntries(scope)).single;
+    expect(stored.status, CloudOutboxStatus.unknownOutcome);
+    expect(stored.lastFailure, CloudFailureCategory.unknown);
+    expect(stored.appleRequestUuid, isNotNull);
+    expect(stored.appleOperationUuid, isNotNull);
+    expect(transport.pcsRefreshCallCount, 0);
+    expect(transport.pushCallCount, 1);
+  });
+
+  test(
+    'generic retryable result remains frozen with its exact identity',
+    () async {
+      final operation = testOutboxOperation(scope, 6);
+      await store.enqueueOutbox(operation);
+      transport.enqueuePushResult(
+        CloudPushBatchResult(
+          outcomes: [
+            CloudPushOutcome(
+              operationId: operation.operationId,
+              disposition: CloudPushDisposition.retryable,
+              failureCategory: CloudFailureCategory.server,
+            ),
+          ],
+        ),
+      );
+
+      await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+      final stored = (await store.outboxEntries(scope)).single;
+      expect(stored.status, CloudOutboxStatus.unknownOutcome);
+      expect(stored.appleRequestUuid, isNotNull);
+      expect(stored.appleOperationUuid, isNotNull);
+      expect(transport.pushCallCount, 1);
+    },
+  );
+
   test('unknown upload outcome rejects the complete batch', () async {
     final first = testOutboxOperation(scope, 1);
     final second = testOutboxOperation(scope, 2);
@@ -1342,10 +1423,12 @@ void main() {
 
   test('mismatched reconciliation proof cannot confirm or replay', () async {
     await seedAmbiguousOutbox(806);
-    final otherOperationId = testOutboxOperation(scope, 999).operationId;
     transport.unknownOutcomeHandler = (_, operation) async =>
         CloudUnknownOutcomeResolution.committed(
-          proof: proofFor(operation, operationId: otherOperationId),
+          proof: proofFor(
+            operation,
+            appleRequestUuid: '99999999-2222-4ABC-8DEF-555555555555',
+          ),
         );
 
     await engine(
@@ -1357,6 +1440,28 @@ void main() {
       (await store.outboxEntries(scope)).single.status,
       CloudOutboxStatus.unknownOutcome,
     );
+    expect(transport.pushCallCount, 1);
+  });
+
+  test('mismatched operation UUID proof cannot confirm or replay', () async {
+    await seedAmbiguousOutbox(807);
+    transport.unknownOutcomeHandler = (_, operation) async =>
+        CloudUnknownOutcomeResolution.committed(
+          proof: proofFor(
+            operation,
+            appleOperationUuid: 'AAAAAAAA-BBBB-4CCC-8DDD-999999999999',
+          ),
+        );
+
+    await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    final stored = (await store.outboxEntries(scope)).single;
+    expect(stored.status, CloudOutboxStatus.unknownOutcome);
+    expect(stored.appleRequestUuid, isNotNull);
+    expect(stored.appleOperationUuid, isNotNull);
     expect(transport.pushCallCount, 1);
   });
 
@@ -1475,6 +1580,54 @@ void main() {
     },
   );
 
+  test('retryable conflict reconciliation stays unknown', () async {
+    await seedAmbiguousOutbox(809);
+    transport.unknownOutcomeHandler = (_, operation) async =>
+        CloudUnknownOutcomeResolution.serverRecordChanged(
+          proof: proofFor(operation),
+        );
+    transport.conflictHandler = (_, _) async =>
+        const CloudServerConflictResolution.retryable(
+          failureCategory: CloudFailureCategory.network,
+        );
+
+    await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    final stored = (await store.outboxEntries(scope)).single;
+    expect(stored.status, CloudOutboxStatus.unknownOutcome);
+    expect(stored.appleRequestUuid, isNotNull);
+    expect(stored.appleOperationUuid, isNotNull);
+    expect(transport.conflictCallCount, 1);
+    expect(transport.pushCallCount, 1);
+  });
+
+  test('retryable conflict quarantine stays unknown', () async {
+    await seedAmbiguousOutbox(810);
+    transport.unknownOutcomeHandler = (_, operation) async =>
+        CloudUnknownOutcomeResolution.serverRecordChanged(
+          proof: proofFor(operation),
+        );
+    transport.conflictHandler = (_, _) async =>
+        const CloudServerConflictResolution.quarantined(
+          failureCategory: CloudFailureCategory.throttled,
+        );
+
+    await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    final stored = (await store.outboxEntries(scope)).single;
+    expect(stored.status, CloudOutboxStatus.unknownOutcome);
+    expect(stored.appleRequestUuid, isNotNull);
+    expect(stored.appleOperationUuid, isNotNull);
+    expect(transport.conflictCallCount, 1);
+    expect(transport.pushCallCount, 1);
+  });
+
   test('terminal reconciliation failure quarantines without replay', () async {
     await seedAmbiguousOutbox(805);
     transport.unknownOutcomeHandler = (_, _) async =>
@@ -1576,7 +1729,7 @@ void main() {
   });
 
   test(
-    'refreshes authorization once and retries only unauthorized records',
+    'authorization response pauses before a later refreshed attempt',
     () async {
       final operation = testOutboxOperation(scope, 1);
       await store.enqueueOutbox(operation);
@@ -1603,19 +1756,44 @@ void main() {
       );
       transport.authenticationRefreshHandler = (_) async => true;
 
-      final result = await engine(
+      final syncEngine = engine(
         flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
-      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+        pausedRetryDelay: const Duration(hours: 6),
+      );
+      final first = await syncEngine.synchronize(
+        trigger: CloudSyncTrigger.localOutbox,
+      );
 
-      expect(result.counters.confirmed, 1);
+      expect(first.counters.confirmed, 0);
+      expect(transport.authenticationRefreshCallCount, 0);
+      expect(transport.pushCallCount, 1);
+      expect(
+        (await store.outboxEntries(scope)).single.status,
+        CloudOutboxStatus.paused,
+      );
+
+      clock.advance(const Duration(hours: 6));
+      final second = await syncEngine.synchronize(
+        trigger: CloudSyncTrigger.localOutbox,
+      );
+      expect(second.counters.confirmed, 1);
       expect(transport.authenticationRefreshCallCount, 1);
       expect(transport.pushCallCount, 2);
+      expect(transport.observedAppleRequestUuids[0].single, isNotNull);
+      expect(transport.observedAppleOperationUuids[0].single, isNotNull);
+      expect(
+        transport.observedAppleRequestUuids[1].single,
+        isNot(transport.observedAppleRequestUuids[0].single),
+      );
+      expect(
+        transport.observedAppleOperationUuids[1].single,
+        isNot(transport.observedAppleOperationUuids[0].single),
+      );
     },
   );
 
-  test('authorization repush rejects a mismatched outcome set', () async {
+  test('authorization response cannot trigger a same-run replay', () async {
     final operation = testOutboxOperation(scope, 1);
-    final unknown = testOutboxOperation(scope, 99);
     await store.enqueueOutbox(operation);
     transport.enqueuePushResult(
       CloudPushBatchResult(
@@ -1624,16 +1802,6 @@ void main() {
             operationId: operation.operationId,
             disposition: CloudPushDisposition.unauthorized,
             failureCategory: CloudFailureCategory.authorization,
-          ),
-        ],
-      ),
-    );
-    transport.enqueuePushResult(
-      CloudPushBatchResult(
-        outcomes: [
-          CloudPushOutcome(
-            operationId: unknown.operationId,
-            disposition: CloudPushDisposition.confirmed,
           ),
         ],
       ),
@@ -1647,9 +1815,13 @@ void main() {
 
     expect(result.counters.confirmed, 0);
     expect(result.counters.retried, 0);
+    expect(transport.authenticationRefreshCallCount, 0);
+    expect(transport.pushCallCount, 1);
     final stored = (await store.outboxEntries(scope)).single;
-    expect(stored.status, CloudOutboxStatus.unknownOutcome);
-    expect(stored.lastFailure, CloudFailureCategory.unknown);
+    expect(stored.status, CloudOutboxStatus.paused);
+    expect(stored.lastFailure, CloudFailureCategory.authorization);
+    expect(stored.appleRequestUuid, isNull);
+    expect(stored.appleOperationUuid, isNull);
   });
 
   test('uploads attachment dependency before its owning message', () async {
@@ -1832,7 +2004,7 @@ void main() {
       await syncEngine.synchronize(trigger: CloudSyncTrigger.localOutbox);
 
       final stored = (await store.outboxEntries(scope)).single;
-      expect(transport.authenticationRefreshCallCount, 1);
+      expect(transport.authenticationRefreshCallCount, 0);
       expect(transport.pushCallCount, 1);
       expect(stored.status, CloudOutboxStatus.paused);
       expect(stored.nextEligibleAt, testEpoch.add(const Duration(hours: 6)));

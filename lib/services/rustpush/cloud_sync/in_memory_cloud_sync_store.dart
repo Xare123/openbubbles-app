@@ -513,6 +513,8 @@ class InMemoryCloudSyncStore
                 (operation) =>
                     operation.checkpointGeneration == checkpoint.generation &&
                     operation.status == CloudOutboxStatus.unknownOutcome &&
+                    operation.appleRequestUuid != null &&
+                    operation.appleOperationUuid != null &&
                     (operation.leaseExpiresAt == null ||
                         !operation.leaseExpiresAt!.isAfter(now)) &&
                     (operation.nextEligibleAt == null ||
@@ -543,13 +545,13 @@ class InMemoryCloudSyncStore
   }
 
   @override
-  Future<void> markOutboxSubmissionStarted(
+  Future<List<CloudOutboxOperation>> markOutboxSubmissionStarted(
     CloudSyncScope scope, {
     required String leaseId,
-    required Iterable<String> operationIds,
+    required CloudOutboxSubmissionIdentity submissionIdentity,
     required DateTime now,
   }) {
-    final ids = operationIds.toList(growable: false);
+    final ids = submissionIdentity.operationUuids.keys.toList(growable: false);
     if (ids.isEmpty) {
       throw ArgumentError('outbox_submission_operation_ids_empty');
     }
@@ -584,14 +586,28 @@ class InMemoryCloudSyncStore
             safeCode: 'stale_outbox_lease',
           );
         }
+        if (operation.appleRequestUuid != null ||
+            operation.appleOperationUuid != null) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.localStorage,
+            safeCode: 'outbox_submission_identity_already_assigned',
+          );
+        }
         operations.add(operation);
       }
+      final updated = <CloudOutboxOperation>[];
       for (final operation in operations) {
-        entries![operation.operationId] = operation.copyWith(
+        final submitted = operation.copyWith(
           status: CloudOutboxStatus.unknownOutcome,
           lastFailure: CloudFailureCategory.unknown,
+          appleRequestUuid: submissionIdentity.requestUuid,
+          appleOperationUuid:
+              submissionIdentity.operationUuids[operation.operationId],
         );
+        entries![operation.operationId] = submitted;
+        updated.add(submitted);
       }
+      return updated;
     });
   }
 
@@ -684,6 +700,7 @@ class InMemoryCloudSyncStore
               encryptedPayloadReference: transition.encryptedPayloadReference,
               payloadSha256: transition.payloadSha256,
               serverRecordIdHash: transition.serverRecordIdHash,
+              clearSubmissionIdentity: transition.clearSubmissionIdentity,
               clearLeaseId: true,
               clearLeaseExpiresAt: true,
             );
@@ -694,6 +711,7 @@ class InMemoryCloudSyncStore
               attemptCount: operation.attemptCount + 1,
               lastFailure: transition.category,
               nextEligibleAt: transition.nextEligibleAt,
+              clearSubmissionIdentity: transition.clearSubmissionIdentity,
               clearLeaseId: true,
               clearLeaseExpiresAt: true,
               clearNextEligibleAt: transition.nextEligibleAt == null,

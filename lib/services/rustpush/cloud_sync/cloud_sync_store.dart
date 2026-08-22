@@ -156,10 +156,10 @@ abstract interface class CloudSyncStore {
   /// original live lease is retained, so a process restart cannot replay an
   /// ambiguous submission as a fresh upload. A returned remote response may
   /// still resolve the rows through [applyOutboxTransitions].
-  Future<void> markOutboxSubmissionStarted(
+  Future<List<CloudOutboxOperation>> markOutboxSubmissionStarted(
     CloudSyncScope scope, {
     required String leaseId,
-    required Iterable<String> operationIds,
+    required CloudOutboxSubmissionIdentity submissionIdentity,
     required DateTime now,
   });
 
@@ -322,6 +322,7 @@ class CloudOutboxTransition {
     this.encryptedPayloadReference,
     this.payloadSha256,
     this.serverRecordIdHash,
+    this.clearSubmissionIdentity = false,
   });
 
   const CloudOutboxTransition.confirmed(String operationId)
@@ -347,6 +348,26 @@ class CloudOutboxTransition {
          serverRecordIdHash: serverRecordIdHash,
        );
 
+  /// Opens a new submission attempt only after authoritative reconciliation
+  /// proved that the prior identified request did not commit this operation.
+  const CloudOutboxTransition.provenNotApplied(
+    String operationId, {
+    required CloudFailureCategory category,
+    required DateTime nextEligibleAt,
+    String? encryptedPayloadReference,
+    String? payloadSha256,
+    String? serverRecordIdHash,
+  }) : this._(
+         operationId: operationId,
+         type: CloudOutboxTransitionType.retryable,
+         category: category,
+         nextEligibleAt: nextEligibleAt,
+         encryptedPayloadReference: encryptedPayloadReference,
+         payloadSha256: payloadSha256,
+         serverRecordIdHash: serverRecordIdHash,
+         clearSubmissionIdentity: true,
+       );
+
   const CloudOutboxTransition.paused(
     String operationId, {
     required CloudFailureCategory category,
@@ -356,6 +377,20 @@ class CloudOutboxTransition {
          type: CloudOutboxTransitionType.paused,
          category: category,
          nextEligibleAt: nextEligibleAt,
+       );
+
+  /// Pauses for credential or PCS recovery after an authoritative response
+  /// proved that the prior identified operation was not committed.
+  const CloudOutboxTransition.provenNotAppliedPaused(
+    String operationId, {
+    required CloudFailureCategory category,
+    DateTime? nextEligibleAt,
+  }) : this._(
+         operationId: operationId,
+         type: CloudOutboxTransitionType.paused,
+         category: category,
+         nextEligibleAt: nextEligibleAt,
+         clearSubmissionIdentity: true,
        );
 
   const CloudOutboxTransition.quarantined(
@@ -384,4 +419,5 @@ class CloudOutboxTransition {
   final String? encryptedPayloadReference;
   final String? payloadSha256;
   final String? serverRecordIdHash;
+  final bool clearSubmissionIdentity;
 }

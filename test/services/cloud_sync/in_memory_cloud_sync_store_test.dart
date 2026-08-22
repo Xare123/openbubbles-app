@@ -391,56 +391,59 @@ void main() {
     },
   );
 
-  test('reset rebootstrap clears the active in-memory generation state', () async {
-    final scope = testScope();
-    await _journal(
-      store,
-      CloudFetchBatch(
-        scope: scope,
-        changes: [testChange(1)],
-        batchId: 'reset-batch',
-        generation: 1,
-        nextToken: 'reset-token',
-        hasMore: false,
-      ),
-    );
-    final oldOperation = await store.enqueueOutboxMutation(
-      CloudOutboxDraft(
-        scope: scope,
-        logicalEntityKeyHash: 'reset-old-operation',
-        action: CloudOutboxAction.save,
-        payloadVersion: 1,
-        encryptedPayloadReference: 'protected:reset-old',
-        payloadSha256: 'payload-digest-reset-old',
-        dependencyOperationIds: const [],
-        createdAt: testEpoch,
-      ),
-    );
+  test(
+    'reset rebootstrap clears the active in-memory generation state',
+    () async {
+      final scope = testScope();
+      await _journal(
+        store,
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1)],
+          batchId: 'reset-batch',
+          generation: 1,
+          nextToken: 'reset-token',
+          hasMore: false,
+        ),
+      );
+      final oldOperation = await store.enqueueOutboxMutation(
+        CloudOutboxDraft(
+          scope: scope,
+          logicalEntityKeyHash: 'reset-old-operation',
+          action: CloudOutboxAction.save,
+          payloadVersion: 1,
+          encryptedPayloadReference: 'protected:reset-old',
+          payloadSha256: 'payload-digest-reset-old',
+          dependencyOperationIds: const [],
+          createdAt: testEpoch,
+        ),
+      );
 
-    final completion = await store.rebootstrapAfterReset(
-      CloudSyncResetRebootstrapRequest(
-        scope: scope,
-        transitionIdHash:
-            '2222222222222222222222222222222222222222222222222222222222222222',
-        activeIdentityFingerprint: scope.accountFingerprint,
-        expectedGeneration: 1,
-        protectedRemoteStateProofReference:
-            'obcs2.ref.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-      ),
-      now: testEpoch.add(const Duration(seconds: 1)),
-    );
-    expect(completion.previousGeneration, 1);
-    expect(completion.generation, 2);
-    expect((await store.readCheckpoint(scope)).fetchedToken, isNull);
-    expect((await store.readCheckpoint(scope)).fetchedSequence, 0);
-    expect(await store.inboxEntries(scope), isEmpty);
-    expect(
-      (await store.outboxEntries(scope))
-          .singleWhere((row) => row.operationId == oldOperation.operationId)
-          .status,
-      CloudOutboxStatus.quarantined,
-    );
-  });
+      final completion = await store.rebootstrapAfterReset(
+        CloudSyncResetRebootstrapRequest(
+          scope: scope,
+          transitionIdHash:
+              '2222222222222222222222222222222222222222222222222222222222222222',
+          activeIdentityFingerprint: scope.accountFingerprint,
+          expectedGeneration: 1,
+          protectedRemoteStateProofReference:
+              'obcs2.ref.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        ),
+        now: testEpoch.add(const Duration(seconds: 1)),
+      );
+      expect(completion.previousGeneration, 1);
+      expect(completion.generation, 2);
+      expect((await store.readCheckpoint(scope)).fetchedToken, isNull);
+      expect((await store.readCheckpoint(scope)).fetchedSequence, 0);
+      expect(await store.inboxEntries(scope), isEmpty);
+      expect(
+        (await store.outboxEntries(scope))
+            .singleWhere((row) => row.operationId == oldOperation.operationId)
+            .status,
+        CloudOutboxStatus.quarantined,
+      );
+    },
+  );
 
   test('advancing one account scope does not fence another account', () async {
     final otherScope = testScope(account: testAccountFingerprintB);
@@ -947,16 +950,20 @@ void main() {
         allowedActions: const {CloudOutboxAction.save},
       );
 
-      await store.markOutboxSubmissionStarted(
+      final submitted = await store.markOutboxSubmissionStarted(
         scope,
         leaseId: 'submission-marker-lease',
-        operationIds: [operation.operationId],
+        submissionIdentity: testSubmissionIdentity([operation.operationId]),
         now: testEpoch,
       );
+      expect(submitted.single.appleRequestUuid, isNotNull);
+      expect(submitted.single.appleOperationUuid, isNotNull);
 
       var marked = (await store.outboxEntries(scope)).single;
       expect(marked.status, CloudOutboxStatus.unknownOutcome);
       expect(marked.lastFailure, CloudFailureCategory.unknown);
+      expect(marked.appleRequestUuid, submitted.single.appleRequestUuid);
+      expect(marked.appleOperationUuid, submitted.single.appleOperationUuid);
       expect(marked.attemptCount, 0);
       expect(marked.leaseId, 'submission-marker-lease');
       expect(
@@ -994,6 +1001,65 @@ void main() {
     },
   );
 
+  test('submission identity assignment is atomic across the batch', () async {
+    final first = testOutboxOperation(scope, 31);
+    final second = testOutboxOperation(scope, 32);
+    await store.enqueueOutbox(first);
+    await store.enqueueOutbox(second);
+    await store.leaseEligibleOutbox(
+      scope,
+      now: testEpoch,
+      limit: 2,
+      leaseId: 'atomic-submission-lease',
+      leaseDuration: const Duration(minutes: 1),
+      allowedActions: const {CloudOutboxAction.save},
+    );
+
+    final invalid = CloudOutboxSubmissionIdentity(
+      requestUuid: '11111111-2222-4ABC-8DEF-555555555555',
+      operationUuids: {
+        first.operationId: 'AAAAAAAA-BBBB-4CCC-8DDD-000000000001',
+        'missing-operation': 'AAAAAAAA-BBBB-4CCC-8DDD-000000000002',
+      },
+    );
+    await expectLater(
+      store.markOutboxSubmissionStarted(
+        scope,
+        leaseId: 'atomic-submission-lease',
+        submissionIdentity: invalid,
+        now: testEpoch,
+      ),
+      throwsA(isA<CloudSyncFailure>()),
+    );
+
+    final rows = await store.outboxEntries(scope);
+    expect(rows.every((row) => row.status == CloudOutboxStatus.leased), isTrue);
+    expect(rows.every((row) => row.appleRequestUuid == null), isTrue);
+    expect(rows.every((row) => row.appleOperationUuid == null), isTrue);
+  });
+
+  test(
+    'legacy unknown outcome without Apple identities stays frozen',
+    () async {
+      final legacy = testOutboxOperation(
+        scope,
+        33,
+      ).copyWith(status: CloudOutboxStatus.unknownOutcome);
+      await store.enqueueOutbox(legacy);
+
+      expect(
+        await store.leaseUnknownOutcomes(
+          scope,
+          now: testEpoch,
+          limit: 1,
+          leaseId: 'legacy-unknown-lease',
+          leaseDuration: const Duration(minutes: 1),
+        ),
+        isEmpty,
+      );
+    },
+  );
+
   test(
     'marked submission can be resolved by a returned confirmation',
     () async {
@@ -1010,7 +1076,7 @@ void main() {
       await store.markOutboxSubmissionStarted(
         scope,
         leaseId: 'submission-confirm-lease',
-        operationIds: [operation.operationId],
+        submissionIdentity: testSubmissionIdentity([operation.operationId]),
         now: testEpoch,
       );
 
@@ -1441,6 +1507,12 @@ void main() {
         leaseDuration: const Duration(minutes: 1),
         allowedActions: const {CloudOutboxAction.save},
       );
+      await store.markOutboxSubmissionStarted(
+        scope,
+        leaseId: 'seed-${operation.operationId}',
+        submissionIdentity: testSubmissionIdentity([operation.operationId]),
+        now: testEpoch,
+      );
       await store.applyOutboxTransitions(
         scope,
         leaseId: 'seed-${operation.operationId}',
@@ -1538,6 +1610,12 @@ void main() {
         leaseDuration: const Duration(minutes: 1),
         allowedActions: const {CloudOutboxAction.save},
       );
+      await store.markOutboxSubmissionStarted(
+        scope,
+        leaseId: 'seed-backoff-lease',
+        submissionIdentity: testSubmissionIdentity([operation.operationId]),
+        now: testEpoch,
+      );
       await store.applyOutboxTransitions(
         scope,
         leaseId: 'seed-backoff-lease',
@@ -1607,6 +1685,12 @@ void main() {
       leaseDuration: const Duration(minutes: 1),
       allowedActions: const {CloudOutboxAction.save},
     );
+    await store.markOutboxSubmissionStarted(
+      otherScope,
+      leaseId: 'other-seed-lease',
+      submissionIdentity: testSubmissionIdentity([other.operationId]),
+      now: testEpoch,
+    );
     await store.applyOutboxTransitions(
       otherScope,
       leaseId: 'other-seed-lease',
@@ -1623,6 +1707,12 @@ void main() {
       leaseId: 'stale-seed-lease',
       leaseDuration: const Duration(minutes: 1),
       allowedActions: const {CloudOutboxAction.save},
+    );
+    await store.markOutboxSubmissionStarted(
+      scope,
+      leaseId: 'stale-seed-lease',
+      submissionIdentity: testSubmissionIdentity([stale.operationId]),
+      now: testEpoch,
     );
     await store.applyOutboxTransitions(
       scope,

@@ -75,6 +75,20 @@ CloudOutboxOperation testOutboxOperation(
   );
 }
 
+CloudOutboxSubmissionIdentity testSubmissionIdentity(
+  Iterable<String> operationIds,
+) {
+  final ids = operationIds.toList(growable: false);
+  return CloudOutboxSubmissionIdentity(
+    requestUuid: '11111111-2222-4ABC-8DEF-555555555555',
+    operationUuids: {
+      for (var index = 0; index < ids.length; index++)
+        ids[index]:
+            'AAAAAAAA-BBBB-4CCC-8DDD-${(index + 1).toRadixString(16).padLeft(12, '0').toUpperCase()}',
+    },
+  );
+}
+
 class MutableTestClock {
   MutableTestClock(this.value);
 

@@ -1,5 +1,12 @@
 import 'dart:collection';
 
+final RegExp _canonicalAppleUuidPattern = RegExp(
+  r'^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$',
+);
+
+bool _isCanonicalAppleUuid(String value) =>
+    _canonicalAppleUuidPattern.hasMatch(value);
+
 enum CloudSyncStreamKind { messages, profiles }
 
 /// Account and CloudKit-zone boundary for every V2 record and operation.
@@ -496,6 +503,35 @@ class CloudSyncCheckpoint {
   }
 }
 
+class CloudOutboxSubmissionIdentity {
+  CloudOutboxSubmissionIdentity({
+    required this.requestUuid,
+    required Map<String, String> operationUuids,
+  }) : operationUuids = Map.unmodifiable(operationUuids) {
+    if (!_isCanonicalAppleUuid(requestUuid)) {
+      throw ArgumentError('cloud_outbox_request_uuid_invalid');
+    }
+    if (operationUuids.isEmpty ||
+        operationUuids.keys.any((operationId) => operationId.isEmpty) ||
+        operationUuids.values.any((uuid) => !_isCanonicalAppleUuid(uuid)) ||
+        operationUuids.values.toSet().length != operationUuids.length ||
+        operationUuids.values.contains(requestUuid)) {
+      throw ArgumentError('cloud_outbox_operation_uuid_map_invalid');
+    }
+  }
+
+  final String requestUuid;
+  final Map<String, String> operationUuids;
+
+  void validateOperationIds(Iterable<String> operationIds) {
+    final expected = operationIds.toSet();
+    if (expected.length != operationUuids.length ||
+        !expected.containsAll(operationUuids.keys)) {
+      throw ArgumentError('cloud_outbox_submission_identity_mismatch');
+    }
+  }
+}
+
 class CloudOutboxOperation {
   CloudOutboxOperation({
     required this.scope,
@@ -510,6 +546,8 @@ class CloudOutboxOperation {
     this.encryptedPayloadReference,
     this.payloadSha256,
     this.serverRecordIdHash,
+    this.appleRequestUuid,
+    this.appleOperationUuid,
     this.status = CloudOutboxStatus.pending,
     this.attemptCount = 0,
     this.nextEligibleAt,
@@ -545,6 +583,16 @@ class CloudOutboxOperation {
     if (serverRecordIdHash != null && serverRecordIdHash!.isEmpty) {
       throw ArgumentError('cloud_outbox_server_record_hash_invalid');
     }
+    if ((appleRequestUuid == null) != (appleOperationUuid == null)) {
+      throw ArgumentError('cloud_outbox_submission_identity_incomplete');
+    }
+    if (appleRequestUuid != null &&
+        (!_isCanonicalAppleUuid(appleRequestUuid!) ||
+            !_isCanonicalAppleUuid(appleOperationUuid!) ||
+            appleRequestUuid == appleOperationUuid ||
+            operationId == appleOperationUuid)) {
+      throw ArgumentError('cloud_outbox_submission_identity_invalid');
+    }
     if (action != CloudOutboxAction.delete &&
         (encryptedPayloadReference == null || payloadSha256 == null)) {
       throw ArgumentError('cloud_outbox_save_payload_missing');
@@ -572,6 +620,8 @@ class CloudOutboxOperation {
   final String? encryptedPayloadReference;
   final String? payloadSha256;
   final String? serverRecordIdHash;
+  final String? appleRequestUuid;
+  final String? appleOperationUuid;
   final Set<String> dependencyOperationIds;
   final DateTime createdAt;
   final CloudOutboxStatus status;
@@ -598,6 +648,9 @@ class CloudOutboxOperation {
     String? encryptedPayloadReference,
     String? payloadSha256,
     String? serverRecordIdHash,
+    String? appleRequestUuid,
+    String? appleOperationUuid,
+    bool clearSubmissionIdentity = false,
   }) {
     return CloudOutboxOperation(
       scope: scope,
@@ -611,6 +664,12 @@ class CloudOutboxOperation {
           encryptedPayloadReference ?? this.encryptedPayloadReference,
       payloadSha256: payloadSha256 ?? this.payloadSha256,
       serverRecordIdHash: serverRecordIdHash ?? this.serverRecordIdHash,
+      appleRequestUuid: clearSubmissionIdentity
+          ? null
+          : appleRequestUuid ?? this.appleRequestUuid,
+      appleOperationUuid: clearSubmissionIdentity
+          ? null
+          : appleOperationUuid ?? this.appleOperationUuid,
       dependencyOperationIds:
           dependencyOperationIds ?? this.dependencyOperationIds,
       createdAt: createdAt,
@@ -764,6 +823,8 @@ enum CloudUnknownOutcomeDisposition {
 final class CloudUnknownOutcomeProof {
   CloudUnknownOutcomeProof({
     required this.operationId,
+    required this.appleRequestUuid,
+    required this.appleOperationUuid,
     required this.scopeStorageKey,
     required this.checkpointGeneration,
     required this.logicalEntityKeyHash,
@@ -774,6 +835,9 @@ final class CloudUnknownOutcomeProof {
     this.observedEtagHash,
   }) {
     if (operationId.isEmpty ||
+        !_isCanonicalAppleUuid(appleRequestUuid) ||
+        !_isCanonicalAppleUuid(appleOperationUuid) ||
+        appleRequestUuid == appleOperationUuid ||
         scopeStorageKey.isEmpty ||
         checkpointGeneration <= 0 ||
         logicalEntityKeyHash.isEmpty ||
@@ -786,6 +850,8 @@ final class CloudUnknownOutcomeProof {
   }
 
   final String operationId;
+  final String appleRequestUuid;
+  final String appleOperationUuid;
   final String scopeStorageKey;
   final int checkpointGeneration;
   final String logicalEntityKeyHash;
@@ -797,6 +863,8 @@ final class CloudUnknownOutcomeProof {
 
   bool binds(CloudOutboxOperation operation) =>
       operationId == operation.operationId &&
+      appleRequestUuid == operation.appleRequestUuid &&
+      appleOperationUuid == operation.appleOperationUuid &&
       scopeStorageKey == operation.scope.storageKey &&
       checkpointGeneration == operation.checkpointGeneration &&
       logicalEntityKeyHash == operation.logicalEntityKeyHash &&

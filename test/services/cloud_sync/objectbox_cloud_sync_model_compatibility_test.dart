@@ -52,6 +52,20 @@ void main() {
       expect(model['lastEntityId'], '30:156682190547124916');
       expect(model['modelVersion'], 5);
       expect(model['modelVersionParserMinimum'], 5);
+
+      final outbox = (model['entities'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .singleWhere(
+            (entity) => entity['name'] == 'CloudOutboxOperationEntity',
+          );
+      final properties = {
+        for (final value in outbox['properties'] as List<dynamic>)
+          (value as Map<String, dynamic>)['name'] as String:
+              value['id'] as String,
+      };
+      expect(properties['checkpointGeneration'], '23:3453625028306797643');
+      expect(properties['appleRequestUuid'], '24:2838853240019164046');
+      expect(properties['appleOperationUuid'], '25:593864995002474100');
     },
   );
 }

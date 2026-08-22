@@ -52,6 +52,46 @@ void main() {
     expect(identity, startsWith('op1:'));
   });
 
+  test('submission identities require canonical distinct Apple UUIDs', () {
+    final operation = testOutboxOperation(testScope(), 1);
+    final identity = testSubmissionIdentity([operation.operationId]);
+    expect(identity.operationUuids, hasLength(1));
+    expect(
+      () => CloudOutboxSubmissionIdentity(
+        requestUuid: identity.requestUuid.toLowerCase(),
+        operationUuids: identity.operationUuids,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => CloudOutboxSubmissionIdentity(
+        requestUuid: identity.requestUuid,
+        operationUuids: {operation.operationId: identity.requestUuid},
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test('outbox state transitions preserve submission identities', () {
+    final operation = testOutboxOperation(testScope(), 1);
+    final identity = testSubmissionIdentity([operation.operationId]);
+    final submitted = operation.copyWith(
+      appleRequestUuid: identity.requestUuid,
+      appleOperationUuid: identity.operationUuids[operation.operationId],
+      status: CloudOutboxStatus.unknownOutcome,
+    );
+
+    final preserved = submitted.copyWith(status: CloudOutboxStatus.confirmed);
+    expect(preserved.appleRequestUuid, submitted.appleRequestUuid);
+    expect(preserved.appleOperationUuid, submitted.appleOperationUuid);
+    final provenNotApplied = submitted.copyWith(
+      status: CloudOutboxStatus.pending,
+      clearSubmissionIdentity: true,
+    );
+    expect(provenNotApplied.appleRequestUuid, isNull);
+    expect(provenNotApplied.appleOperationUuid, isNull);
+  });
+
   test('full-jitter exponential backoff honors retry-after', () {
     final policy = CloudSyncBackoffPolicy(
       baseDelay: const Duration(seconds: 2),

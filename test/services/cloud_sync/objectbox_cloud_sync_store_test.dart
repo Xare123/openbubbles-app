@@ -692,8 +692,9 @@ void main() {
       await reopen();
       expect((await store.readCheckpoint(scope)).generation, 2);
       expect(
-        (await store.enqueueOutboxMutation(draft(scope, 78)))
-            .checkpointGeneration,
+        (await store.enqueueOutboxMutation(
+          draft(scope, 78),
+        )).checkpointGeneration,
         2,
       );
       coordinatorFences.remove(scope.storageKey);
@@ -1161,10 +1162,10 @@ void main() {
         allowedActions: const {CloudOutboxAction.save},
       );
 
-      await store.markOutboxSubmissionStarted(
+      final submitted = await store.markOutboxSubmissionStarted(
         scope,
         leaseId: 'objectbox-submission-marker-lease',
-        operationIds: [operation.operationId],
+        submissionIdentity: testSubmissionIdentity([operation.operationId]),
         now: testEpoch,
       );
       final markedEntity = objectBox
@@ -1175,6 +1176,11 @@ void main() {
       expect(markedEntity.lastErrorCategory, CloudFailureCategory.unknown.name);
       expect(markedEntity.attemptCount, 0);
       expect(markedEntity.leaseIdHash, isNotNull);
+      expect(markedEntity.appleRequestUuid, submitted.single.appleRequestUuid);
+      expect(
+        markedEntity.appleOperationUuid,
+        submitted.single.appleOperationUuid,
+      );
 
       await reopen();
       expect(
@@ -1199,6 +1205,12 @@ void main() {
         objectBox.box<CloudOutboxOperationEntity>().getAll().single.state,
         5,
       );
+      final reopened = objectBox
+          .box<CloudOutboxOperationEntity>()
+          .getAll()
+          .single;
+      expect(reopened.appleRequestUuid, submitted.single.appleRequestUuid);
+      expect(reopened.appleOperationUuid, submitted.single.appleOperationUuid);
     },
   );
 
@@ -1218,7 +1230,7 @@ void main() {
       await store.markOutboxSubmissionStarted(
         scope,
         leaseId: 'objectbox-submission-confirm-lease',
-        operationIds: [operation.operationId],
+        submissionIdentity: testSubmissionIdentity([operation.operationId]),
         now: testEpoch,
       );
 
@@ -1235,6 +1247,65 @@ void main() {
       expect(resolved.state, 2);
       expect(resolved.leaseIdHash, isNull);
       expect(resolved.attemptCount, 0);
+    },
+  );
+
+  test('submission identity failure rolls back the complete batch', () async {
+    final scope = testScope();
+    final first = await store.enqueueOutboxMutation(draft(scope, 31));
+    await store.enqueueOutboxMutation(draft(scope, 32));
+    await store.leaseEligibleOutbox(
+      scope,
+      now: testEpoch,
+      limit: 2,
+      leaseId: 'objectbox-atomic-submission-lease',
+      leaseDuration: const Duration(minutes: 1),
+      allowedActions: const {CloudOutboxAction.save},
+    );
+    final invalid = CloudOutboxSubmissionIdentity(
+      requestUuid: '11111111-2222-4ABC-8DEF-555555555555',
+      operationUuids: {
+        first.operationId: 'AAAAAAAA-BBBB-4CCC-8DDD-000000000001',
+        'missing-operation': 'AAAAAAAA-BBBB-4CCC-8DDD-000000000002',
+      },
+    );
+
+    await expectLater(
+      store.markOutboxSubmissionStarted(
+        scope,
+        leaseId: 'objectbox-atomic-submission-lease',
+        submissionIdentity: invalid,
+        now: testEpoch,
+      ),
+      throwsA(isA<CloudSyncFailure>()),
+    );
+
+    final rows = objectBox.box<CloudOutboxOperationEntity>().getAll();
+    expect(rows.every((row) => row.state == 1), isTrue);
+    expect(rows.every((row) => row.appleRequestUuid == null), isTrue);
+    expect(rows.every((row) => row.appleOperationUuid == null), isTrue);
+  });
+
+  test(
+    'legacy unknown outcome without Apple identities stays frozen',
+    () async {
+      final scope = testScope();
+      final legacy = testOutboxOperation(
+        scope,
+        33,
+      ).copyWith(status: CloudOutboxStatus.unknownOutcome);
+      await store.enqueueOutbox(legacy);
+
+      expect(
+        await store.leaseUnknownOutcomes(
+          scope,
+          now: testEpoch,
+          limit: 1,
+          leaseId: 'objectbox-legacy-unknown-lease',
+          leaseDuration: const Duration(minutes: 1),
+        ),
+        isEmpty,
+      );
     },
   );
 
@@ -1932,6 +2003,12 @@ void main() {
         leaseDuration: const Duration(minutes: 1),
         allowedActions: const {CloudOutboxAction.save},
       );
+      await store.markOutboxSubmissionStarted(
+        value,
+        leaseId: 'seed-$index',
+        submissionIdentity: testSubmissionIdentity([operation.operationId]),
+        now: testEpoch,
+      );
       await store.applyOutboxTransitions(
         value,
         leaseId: 'seed-$index',
@@ -2026,6 +2103,12 @@ void main() {
         leaseDuration: const Duration(minutes: 1),
         allowedActions: const {CloudOutboxAction.save},
       );
+      await store.markOutboxSubmissionStarted(
+        scope,
+        leaseId: 'seed-backoff-lease',
+        submissionIdentity: testSubmissionIdentity([operation.operationId]),
+        now: testEpoch,
+      );
       await store.applyOutboxTransitions(
         scope,
         leaseId: 'seed-backoff-lease',
@@ -2095,6 +2178,12 @@ void main() {
       leaseDuration: const Duration(minutes: 1),
       allowedActions: const {CloudOutboxAction.save},
     );
+    await store.markOutboxSubmissionStarted(
+      otherScope,
+      leaseId: 'other-seed-lease',
+      submissionIdentity: testSubmissionIdentity([other.operationId]),
+      now: testEpoch,
+    );
     await store.applyOutboxTransitions(
       otherScope,
       leaseId: 'other-seed-lease',
@@ -2110,6 +2199,12 @@ void main() {
       leaseId: 'stale-seed-lease',
       leaseDuration: const Duration(minutes: 1),
       allowedActions: const {CloudOutboxAction.save},
+    );
+    await store.markOutboxSubmissionStarted(
+      scope,
+      leaseId: 'stale-seed-lease',
+      submissionIdentity: testSubmissionIdentity([stale.operationId]),
+      now: testEpoch,
     );
     await store.applyOutboxTransitions(
       scope,
