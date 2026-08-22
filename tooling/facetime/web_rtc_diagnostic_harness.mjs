@@ -94,9 +94,11 @@ export async function createWebRtcDiagnosticHarness(peerConfigurations = []) {
     setInterval: () => 1,
     clearInterval: () => {},
   };
+  const document = { querySelectorAll: () => [] };
+  window.document = document;
   const context = vm.createContext({
     window,
-    document: { querySelectorAll: () => [] },
+    document,
     console,
   });
   const bootstrap = loadProductionBootstrap();
@@ -105,9 +107,13 @@ export async function createWebRtcDiagnosticHarness(peerConfigurations = []) {
   const peers = peerConfigurations.map(() => new window.RTCPeerConnection());
   return {
     bootstrap,
+    window,
     peers,
     stats,
     createTrack: (id, kind) => new FakeTrack(id, kind),
+    installBootstrap: () => {
+      new vm.Script(bootstrap, { filename: "CachedWebview.webRtcDiagnosticBootstrap.js" }).runInContext(context);
+    },
     snapshot: () => window.__obFaceTimeDiagnostics.snapshot().then((raw) => JSON.parse(raw)),
   };
 }

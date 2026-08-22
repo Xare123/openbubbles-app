@@ -28,6 +28,52 @@ import java.io.File
 class CachedWebview(context: Context, name: String?, desc: String, url: String) {
     companion object {
         private const val diagnosticTag = "FaceTimeDiag"
+
+        /**
+         * Return a JavaScript string literal for values supplied by the user.
+         *
+         * This deliberately follows JSON string escaping, which is also valid
+         * JavaScript, and additionally escapes the two Unicode line separators
+         * that are valid JSON but terminate a classic JavaScript string literal.
+         */
+        internal fun javascriptStringLiteral(value: String): String = buildString {
+            append('"')
+            var index = 0
+            while (index < value.length) {
+                val character = value[index]
+                when (character) {
+                    '"' -> append("\\\"")
+                    '\\' -> append("\\\\")
+                    '\b' -> append("\\b")
+                    '\u000C' -> append("\\f")
+                    '\n' -> append("\\n")
+                    '\r' -> append("\\r")
+                    '\t' -> append("\\t")
+                    '\u2028', '\u2029' -> append(
+                        "\\u${character.code.toString(16).padStart(4, '0')}"
+                    )
+                    in '\u0000'..'\u001F' -> append(
+                        "\\u${character.code.toString(16).padStart(4, '0')}"
+                    )
+                    in '\uD800'..'\uDBFF' -> {
+                        val lowSurrogate = value.getOrNull(index + 1)
+                        if (lowSurrogate != null && lowSurrogate in '\uDC00'..'\uDFFF') {
+                            append(character)
+                            append(lowSurrogate)
+                            index++
+                        } else {
+                            append("\\u${character.code.toString(16).padStart(4, '0')}")
+                        }
+                    }
+                    in '\uDC00'..'\uDFFF' -> append(
+                        "\\u${character.code.toString(16).padStart(4, '0')}"
+                    )
+                    else -> append(character)
+                }
+                index++
+            }
+            append('"')
+        }
     }
 
     val webView = WebView(context)
@@ -103,7 +149,10 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             .replace("this.onLeave.notifyListeners()", "Native.leave(), this.onLeave.notifyListeners()")
 
         if (name != null) {
-            string = string.replace(submitNamePattern, "$1 $2(\"$name\").then(() => Native.mirrored());")
+            val javascriptName = javascriptStringLiteral(name)
+            string = string.replace(submitNamePattern) { match ->
+                "${match.groupValues[1]} ${match.groupValues[2]}($javascriptName).then(() => Native.mirrored());"
+            }
         }
 
         val patchCount = waitingMatches + bannerMatches + leaveMatches + submitNameMatches
@@ -168,6 +217,26 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             });
             return true;
           };
+          const controlText = (button) =>
+            (button.innerText || button.textContent || button.getAttribute("aria-label") || "")
+              .trim()
+              .replace(/\s+/g, " ")
+              .toLowerCase();
+          const isVisible = (button) =>
+            button.hidden !== true &&
+            button.getAttribute("aria-hidden") !== "true" &&
+            button.offsetParent !== null;
+          const controlState = (names) => {
+            const matches = Array.from(document.querySelectorAll("button"))
+              .filter((button) => names.includes(controlText(button)));
+            const visible = matches.some((button) => isVisible(button));
+            const enabled = matches.some((button) =>
+              isVisible(button) &&
+              button.disabled !== true &&
+              button.getAttribute("aria-disabled") !== "true"
+            );
+            return { visible, enabled, count: matches.length };
+          };
           install();
           if (!window.__obFaceTimeRtcInstallTimer) {
             window.__obFaceTimeRtcInstallTimer = window.setInterval(() => {
@@ -212,17 +281,19 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
               const active = [...candidates].reverse().find((candidate) => candidate.bytesAdvancing)
                 || candidates.at(-1)
                 || null;
-              const leave = Array.from(document.querySelectorAll("button")).some((button) => {
-                const text = (button.innerText || button.textContent || button.getAttribute("aria-label") || "").trim();
-                return /^(leave|end call)$/i.test(text) && button.offsetParent !== null;
-              });
+              const controls = {
+                join: controlState(["join"]),
+                rejoin: controlState(["rejoin"]),
+                leave: controlState(["leave", "end call"]),
+              };
               return JSON.stringify({
                 peerId: active ? active.peerId : null,
                 iceState: active ? active.iceState : "unknown",
                 remoteAudioTracks: active ? active.remoteAudioTracks : 0,
                 remoteVideoTracks: active ? active.remoteVideoTracks : 0,
                 mediaBytes: active ? active.mediaBytes : null,
-                webLeaveVisible: leave
+                webLeaveVisible: controls.leave.visible,
+                webControls: controls
               });
             }
           };

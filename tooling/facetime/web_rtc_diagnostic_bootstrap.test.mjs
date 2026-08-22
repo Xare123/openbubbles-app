@@ -56,6 +56,11 @@ test("ended remote tracks disappear from later snapshots", async () => {
     remoteVideoTracks: 1,
     mediaBytes: 64,
     webLeaveVisible: false,
+    webControls: {
+      join: { visible: false, enabled: false, count: 0 },
+      rejoin: { visible: false, enabled: false, count: 0 },
+      leave: { visible: false, enabled: false, count: 0 },
+    },
   });
 
   audio.end();
@@ -130,6 +135,58 @@ test("a reset counter is not considered advancing peer activity", async () => {
   assert.equal(snapshot.iceState, "checking");
 });
 
+test("the DOM diagnostic distinguishes visible, hidden, and disabled Join/Rejoin/Leave controls", async () => {
+  const harness = await createWebRtcDiagnosticHarness([
+    { iceConnectionState: "connected", stats: harnessStats(10) },
+  ]);
+  const buttons = [
+    button("Join", { offsetParent: {} }),
+    button("Rejoin", { offsetParent: null }),
+    button("Leave", { offsetParent: {}, disabled: true }),
+    button("end call", { offsetParent: {}, ariaDisabled: true }),
+  ];
+  harness.window.document.querySelectorAll = () => buttons;
+
+  const controls = (await harness.snapshot()).webControls;
+
+  assert.deepEqual(controls, {
+    join: { visible: true, enabled: true, count: 1 },
+    rejoin: { visible: false, enabled: false, count: 1 },
+    leave: { visible: true, enabled: false, count: 2 },
+  });
+});
+
+test("duplicate bootstrap installation does not double-wrap new peers", async () => {
+  const harness = await createWebRtcDiagnosticHarness();
+  const diagnostics = harness.window.__obFaceTimeDiagnostics;
+
+  harness.installBootstrap();
+  assert.equal(harness.window.__obFaceTimeDiagnostics, diagnostics);
+
+  const peer = new harness.window.RTCPeerConnection();
+  peer.iceConnectionState = "connected";
+  peer.connectionState = "connected";
+  peer.stats = harnessStats(10);
+
+  const snapshot = await harness.snapshot();
+  assert.equal(snapshot.peerId, 1);
+});
+
 function harnessStats(inboundBytes) {
   return [{ type: "inbound-rtp", bytesReceived: inboundBytes }];
+}
+
+function button(text, { offsetParent, disabled = false, ariaDisabled = false }) {
+  return {
+    innerText: text,
+    textContent: text,
+    offsetParent,
+    hidden: false,
+    disabled,
+    getAttribute(name) {
+      if (name === "aria-disabled") return ariaDisabled ? "true" : null;
+      if (name === "aria-hidden") return null;
+      return null;
+    },
+  };
 }
