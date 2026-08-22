@@ -325,6 +325,41 @@ void main() {
     },
   );
 
+  test(
+    'persistent dependency failures dead-letter after attempt and age bounds',
+    () async {
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1)],
+          batchId: 'batch-retryable-dependency',
+          generation: 1,
+          nextToken: 'opaque-token',
+          hasMore: false,
+        ),
+      );
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.retryable(
+        failureCategory: CloudFailureCategory.dependency,
+      );
+      final syncEngine = engine(
+        maximumDeferredAttempts: 1,
+        maximumDeferredAge: const Duration(seconds: 1),
+      );
+
+      await syncEngine.synchronize(trigger: CloudSyncTrigger.manual);
+      clock.advance(const Duration(seconds: 10));
+      final second = await syncEngine.synchronize(
+        trigger: CloudSyncTrigger.manual,
+      );
+
+      final stored = (await store.inboxEntries(scope)).single;
+      expect(second.counters.quarantined, 1);
+      expect(second.counters.retried, 0);
+      expect(stored.status, CloudInboxStatus.quarantined);
+      expect(stored.lastFailure, CloudFailureCategory.dependency);
+    },
+  );
+
   test('persists pull backoff and suppresses restart retry storm', () async {
     transport.enqueueFetchFailure(
       CloudSyncFailure(category: CloudFailureCategory.network),

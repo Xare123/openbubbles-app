@@ -795,7 +795,11 @@ class CloudSyncEngine {
         case CloudInboxApplyDisposition.retryable:
           final category =
               result.failureCategory ?? CloudFailureCategory.dependency;
-          if (result.disposition == CloudInboxApplyDisposition.deferred &&
+          final terminalBoundApplies =
+              result.disposition == CloudInboxApplyDisposition.deferred ||
+              (result.disposition == CloudInboxApplyDisposition.retryable &&
+                  category == CloudFailureCategory.dependency);
+          if (terminalBoundApplies &&
               _shouldQuarantineDeferredInboxEntry(entry, now)) {
             if (!result.inboxStatusPersisted) {
               await _store.quarantineInbox(
