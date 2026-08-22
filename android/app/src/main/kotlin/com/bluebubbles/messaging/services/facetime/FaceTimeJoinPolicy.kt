@@ -43,6 +43,7 @@ internal data class FaceTimeMediaEvidence(
     val remoteVideoTracks: Int,
     val mediaBytes: Long?,
     val webLeaveVisible: Boolean,
+    val peerId: Int? = null,
 ) {
     val hasRemoteTrack: Boolean
         get() = remoteAudioTracks > 0 || remoteVideoTracks > 0
@@ -117,6 +118,9 @@ internal class FaceTimeJoinPolicy(
     private val manualRecoveryAttempt: Int = 20,
     private val maxAttempts: Int = 80,
 ) {
+    private var previousPeerId: Int? = null
+    private var previousInboundMediaBytes: Long? = null
+
     var attempts: Int = 0
         private set
 
@@ -137,12 +141,27 @@ internal class FaceTimeJoinPolicy(
         }
 
         // A click and a visible Leave button are only signaling evidence. The
-        // WebView must later report connected ICE plus a remote media track.
+        // WebView must later report connected ICE and advancing inbound media.
         return decision(outcome)
     }
 
     fun recordMediaEvidence(evidence: FaceTimeMediaEvidence): FaceTimeJoinDecision {
-        if (evidence.isConnected) {
+        val currentBytes = evidence.mediaBytes
+        val previousBytes = previousInboundMediaBytes
+        val currentPeerId = evidence.peerId
+        val validBaseline = evidence.isConnected &&
+            currentPeerId != null &&
+            currentBytes != null &&
+            currentBytes in 1 until Long.MAX_VALUE
+        val mediaIsAdvancing = validBaseline &&
+            previousPeerId == currentPeerId &&
+            previousBytes != null &&
+            currentBytes > previousBytes
+
+        previousPeerId = if (validBaseline) currentPeerId else null
+        previousInboundMediaBytes = if (validBaseline) currentBytes else null
+
+        if (mediaIsAdvancing) {
             joined = true
             completedJoin = true
             return decision(FaceTimeJoinOutcome.MEDIA_CONNECTED)
@@ -163,6 +182,8 @@ internal class FaceTimeJoinPolicy(
         admissionRequested = false
         joined = false
         completedJoin = false
+        previousPeerId = null
+        previousInboundMediaBytes = null
     }
 
     private fun decision(outcome: FaceTimeJoinOutcome): FaceTimeJoinDecision = FaceTimeJoinDecision(

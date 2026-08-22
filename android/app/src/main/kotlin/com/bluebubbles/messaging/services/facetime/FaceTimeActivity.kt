@@ -164,7 +164,7 @@ class FaceTimeActivity : Activity() {
         val runnable = Runnable {
             if (callEnding || isFinishing || isDestroyed) return@Runnable
             webView.evaluateJavascript(
-                """window.__obFaceTimeDiagnostics ? window.__obFaceTimeDiagnostics.snapshot() : JSON.stringify({iceState:"unknown",remoteAudioTracks:0,remoteVideoTracks:0,mediaBytes:null,webLeaveVisible:false})"""
+                """window.__obFaceTimeDiagnostics ? window.__obFaceTimeDiagnostics.snapshot() : JSON.stringify({peerId:null,iceState:"unknown",remoteAudioTracks:0,remoteVideoTracks:0,mediaBytes:null,webLeaveVisible:false})"""
             ) { result ->
                 connectionProbeCount += 1
                 val evidence = parseMediaEvidence(result)
@@ -405,6 +405,23 @@ class FaceTimeActivity : Activity() {
             FaceTimeIntentDisposition.ACCEPTED -> {
                 FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.LIFECYCLE, state = disposition.name.lowercase())
             }
+        }
+    }
+
+    private fun startOutgoingCall() {
+        if (answered) return
+        // The shared admission loop is also required for outgoing FaceTime
+        // links. Previously only answered incoming calls could click Join or
+        // Rejoin, leaving an outgoing page probing forever if Apple did not
+        // auto-admit it.
+        answered = true
+        FaceTimeDiagnostics.logStage(this, FaceTimeDiagnosticStage.ADMISSION_REQUESTED, state = "outgoing")
+        handlePermissionRequests()
+        if (mirrorReady) {
+            logJoinButtonState("outgoing-ready")
+            scheduleJoinAttempt("outgoing-ready")
+        } else {
+            connecting()
         }
     }
 
@@ -692,7 +709,7 @@ class FaceTimeActivity : Activity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 window.setBackgroundBlurRadius(0)
             }
-            handlePermissionRequests()
+            startOutgoingCall()
             scheduleConnectionProbe(1000)
         }
     }

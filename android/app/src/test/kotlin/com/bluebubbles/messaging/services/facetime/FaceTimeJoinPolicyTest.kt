@@ -42,6 +42,17 @@ class FaceTimeJoinPolicyTest {
         val policy = FaceTimeJoinPolicy()
         policy.record("\"clicked\"")
 
+        policy.recordMediaEvidence(
+            FaceTimeMediaEvidence(
+                iceState = FaceTimeIceState.CONNECTED,
+                remoteAudioTracks = 1,
+                remoteVideoTracks = 0,
+                mediaBytes = 64,
+                webLeaveVisible = true,
+                peerId = 1,
+            )
+        )
+
         val decision = policy.recordMediaEvidence(
             FaceTimeMediaEvidence(
                 iceState = FaceTimeIceState.CONNECTED,
@@ -49,6 +60,7 @@ class FaceTimeJoinPolicyTest {
                 remoteVideoTracks = 0,
                 mediaBytes = 128,
                 webLeaveVisible = true,
+                peerId = 1,
             )
         )
 
@@ -81,6 +93,16 @@ class FaceTimeJoinPolicyTest {
     fun mediaLossClearsJoinedButDoesNotBlindlyRetryAfterCompletedJoin() {
         val policy = FaceTimeJoinPolicy()
         policy.record("\"clicked\"")
+        policy.recordMediaEvidence(
+            FaceTimeMediaEvidence(
+                iceState = FaceTimeIceState.CONNECTED,
+                remoteAudioTracks = 1,
+                remoteVideoTracks = 1,
+                mediaBytes = 512,
+                webLeaveVisible = true,
+                peerId = 1,
+            )
+        )
         assertTrue(policy.recordMediaEvidence(
             FaceTimeMediaEvidence(
                 iceState = FaceTimeIceState.CONNECTED,
@@ -88,6 +110,7 @@ class FaceTimeJoinPolicyTest {
                 remoteVideoTracks = 1,
                 mediaBytes = 1024,
                 webLeaveVisible = true,
+                peerId = 1,
             )
         ).joined)
 
@@ -113,6 +136,16 @@ class FaceTimeJoinPolicyTest {
 
         assertFalse(policy.record("\"missing\"").joined)
         assertFalse(policy.record("\"clicked\"").joined)
+        policy.recordMediaEvidence(
+            FaceTimeMediaEvidence(
+                iceState = FaceTimeIceState.COMPLETED,
+                remoteAudioTracks = 1,
+                remoteVideoTracks = 1,
+                mediaBytes = 1024,
+                webLeaveVisible = true,
+                peerId = 1,
+            )
+        )
         assertTrue(policy.recordMediaEvidence(
             FaceTimeMediaEvidence(
                 iceState = FaceTimeIceState.COMPLETED,
@@ -120,6 +153,7 @@ class FaceTimeJoinPolicyTest {
                 remoteVideoTracks = 1,
                 mediaBytes = 2048,
                 webLeaveVisible = true,
+                peerId = 1,
             )
         ).joined)
     }

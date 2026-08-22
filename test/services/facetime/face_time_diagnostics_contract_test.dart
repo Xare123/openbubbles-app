@@ -78,4 +78,28 @@ void main() {
     expect(cachedWebview, contains('message=<omitted>'));
     expect(cachedWebview, isNot(contains('consoleMessage.message()')));
   });
+
+  test('outgoing calls enter the same automatic admission loop', () {
+    final activity = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeActivity.kt',
+    ).readAsStringSync();
+    final start = activity.indexOf('private fun startOutgoingCall()');
+    final end = activity.indexOf('override fun onCreate', start);
+
+    expect(start, greaterThanOrEqualTo(0));
+    expect(end, greaterThan(start));
+    final outgoingPath = activity.substring(start, end);
+    expect(outgoingPath, contains('answered = true'));
+    expect(outgoingPath, contains('scheduleJoinAttempt("outgoing-ready")'));
+
+    final configStart = activity.indexOf('private fun handleConfig(');
+    final configEnd = activity.indexOf(
+      'private fun parseMediaEvidence',
+      configStart,
+    );
+    expect(
+      activity.substring(configStart, configEnd),
+      contains('startOutgoingCall()'),
+    );
+  });
 }

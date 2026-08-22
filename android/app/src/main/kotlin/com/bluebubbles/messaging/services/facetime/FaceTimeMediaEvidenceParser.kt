@@ -17,6 +17,7 @@ internal object FaceTimeMediaEvidenceParser {
             JSONObject(decodedPayload)
 
             FaceTimeMediaEvidence(
+                peerId = parseNullablePositiveInt(fieldValue(decodedPayload, "peerId")),
                 iceState = FaceTimeIceState.fromWireValue(
                     fieldValue(decodedPayload, "iceState")
                         .takeUnless { it == null || it.isBlank() || it == "null" },
@@ -73,7 +74,16 @@ internal object FaceTimeMediaEvidenceParser {
 
     private fun parseNullableBoundedLong(value: String?): Long? {
         if (value == null || value == "null") return null
-        return parseBoundedLong(value, Long.MAX_VALUE)
+        val decimal = value.toBigDecimalOrNull() ?: return 0L
+        if (decimal.signum() <= 0) return 0L
+        val integer = decimal.toBigIntegerExactOrNull() ?: return 0L
+        return if (integer > BigInteger.valueOf(Long.MAX_VALUE)) null else integer.toLong()
+    }
+
+    private fun parseNullablePositiveInt(value: String?): Int? {
+        if (value == null || value == "null") return null
+        val parsed = parseBoundedLong(value, Int.MAX_VALUE.toLong()).toInt()
+        return parsed.takeIf { it > 0 }
     }
 
     private fun fieldValue(payload: String, key: String): String? {

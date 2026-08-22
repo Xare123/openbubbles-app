@@ -155,6 +155,14 @@ jobs:
           flutter pub get
           bash ./tooling/android/patch_pub_cache_cargokit.sh
 
+      - name: Set up Node for FaceTime WebRTC replay tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run FaceTime WebRTC diagnostic replay tests
+        run: node --test tooling/facetime/web_rtc_diagnostic_bootstrap.test.mjs
+
       # Slower than it used to be: CargoKit now actually applies, so this
       # compile also builds the Rust bridge and vendored OpenSSL. That cost is
       # the price of the APKs below containing a native library at all, since

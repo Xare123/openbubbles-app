@@ -124,14 +124,17 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
           if (window.__obFaceTimeDiagnostics) return;
           const state = {
             peers: [],
+            nextPeerId: 1,
           };
           const updateIceState = (peerState) => {
             peerState.iceState = peerState.peer.iceConnectionState || peerState.peer.connectionState || "unknown";
           };
           const watchPeer = (pc) => {
             const peerState = {
+              id: state.nextPeerId++,
               peer: pc,
               iceState: "unknown",
+              previousInboundBytes: null,
               remoteAudioTracks: new Map(),
               remoteVideoTracks: new Map()
             };
@@ -173,11 +176,13 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
           }
           window.__obFaceTimeDiagnostics = {
             snapshot: async () => {
-              let bytes = 0;
-              let bytesObserved = false;
+              const candidates = [];
               for (const peerState of state.peers) {
-                const peer = peerState.peer;
                 updateIceState(peerState);
+                if (peerState.iceState === "closed") continue;
+                let bytes = 0;
+                let bytesObserved = false;
+                const peer = peerState.peer;
                 try {
                   const reports = await peer.getStats();
                   reports.forEach((report) => {
@@ -187,25 +192,36 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                     }
                   });
                 } catch (_) {}
+                const remoteAudioTracks = Array.from(peerState.remoteAudioTracks.values())
+                  .filter((track) => track.readyState !== "ended").length;
+                const remoteVideoTracks = Array.from(peerState.remoteVideoTracks.values())
+                  .filter((track) => track.readyState !== "ended").length;
+                const bytesAdvancing = bytesObserved &&
+                  peerState.previousInboundBytes !== null &&
+                  bytes > peerState.previousInboundBytes;
+                peerState.previousInboundBytes = bytesObserved ? bytes : null;
+                candidates.push({
+                  peerId: peerState.id,
+                  iceState: peerState.iceState,
+                  remoteAudioTracks,
+                  remoteVideoTracks,
+                  mediaBytes: bytesObserved ? bytes : null,
+                  bytesAdvancing,
+                });
               }
-              const currentStates = state.peers.map((peerState) => peerState.iceState);
-              const preferredStates = ["connected", "completed", "checking", "new", "disconnected", "failed", "closed"];
-              const iceState = preferredStates.find((candidate) => currentStates.includes(candidate)) || "unknown";
-              const remoteAudioTracks = state.peers.reduce((count, peerState) => {
-                return count + Array.from(peerState.remoteAudioTracks.values()).filter((track) => track.readyState !== "ended").length;
-              }, 0);
-              const remoteVideoTracks = state.peers.reduce((count, peerState) => {
-                return count + Array.from(peerState.remoteVideoTracks.values()).filter((track) => track.readyState !== "ended").length;
-              }, 0);
+              const active = [...candidates].reverse().find((candidate) => candidate.bytesAdvancing)
+                || candidates.at(-1)
+                || null;
               const leave = Array.from(document.querySelectorAll("button")).some((button) => {
                 const text = (button.innerText || button.textContent || button.getAttribute("aria-label") || "").trim();
                 return /^(leave|end call)$/i.test(text) && button.offsetParent !== null;
               });
               return JSON.stringify({
-                iceState,
-                remoteAudioTracks,
-                remoteVideoTracks,
-                mediaBytes: bytesObserved ? bytes : null,
+                peerId: active ? active.peerId : null,
+                iceState: active ? active.iceState : "unknown",
+                remoteAudioTracks: active ? active.remoteAudioTracks : 0,
+                remoteVideoTracks: active ? active.remoteVideoTracks : 0,
+                mediaBytes: active ? active.mediaBytes : null,
                 webLeaveVisible: leave
               });
             }

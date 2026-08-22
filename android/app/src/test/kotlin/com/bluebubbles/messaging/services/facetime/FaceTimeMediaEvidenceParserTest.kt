@@ -16,11 +16,12 @@ class FaceTimeMediaEvidenceParserTest {
 
     @Test
     fun parsesEscapedEvaluateJavascriptJson() {
-        val json = """{"iceState":"connected","remoteAudioTracks":1,"remoteVideoTracks":1,"mediaBytes":128,"webLeaveVisible":true}"""
+        val json = """{"peerId":7,"iceState":"connected","remoteAudioTracks":1,"remoteVideoTracks":1,"mediaBytes":128,"webLeaveVisible":true}"""
 
         val evidence = FaceTimeMediaEvidenceParser.parse(asEvaluateJavascriptString(json))
 
         assertEquals(FaceTimeIceState.CONNECTED, evidence?.iceState)
+        assertEquals(7, evidence?.peerId)
         assertEquals(1, evidence?.remoteAudioTracks)
         assertEquals(1, evidence?.remoteVideoTracks)
         assertEquals(128L, evidence?.mediaBytes)
@@ -84,14 +85,14 @@ class FaceTimeMediaEvidenceParserTest {
     }
 
     @Test
-    fun oversizedValuesSaturateWithoutOverflow() {
+    fun oversizedValuesFailClosedWithoutOverflow() {
         val evidence = FaceTimeMediaEvidenceParser.parse(
             """{"iceState":"connected","remoteAudioTracks":999999999999999999999999999999,"remoteVideoTracks":1,"mediaBytes":999999999999999999999999999999999999999999999999999999999999}"""
         )
 
         assertEquals(Int.MAX_VALUE, evidence?.remoteAudioTracks)
         assertEquals(1, evidence?.remoteVideoTracks)
-        assertEquals(Long.MAX_VALUE, evidence?.mediaBytes)
+        assertNull(evidence?.mediaBytes)
     }
 
     @Test
