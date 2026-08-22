@@ -391,6 +391,57 @@ void main() {
     },
   );
 
+  test('reset rebootstrap clears the active in-memory generation state', () async {
+    final scope = testScope();
+    await _journal(
+      store,
+      CloudFetchBatch(
+        scope: scope,
+        changes: [testChange(1)],
+        batchId: 'reset-batch',
+        generation: 1,
+        nextToken: 'reset-token',
+        hasMore: false,
+      ),
+    );
+    final oldOperation = await store.enqueueOutboxMutation(
+      CloudOutboxDraft(
+        scope: scope,
+        logicalEntityKeyHash: 'reset-old-operation',
+        action: CloudOutboxAction.save,
+        payloadVersion: 1,
+        encryptedPayloadReference: 'protected:reset-old',
+        payloadSha256: 'payload-digest-reset-old',
+        dependencyOperationIds: const [],
+        createdAt: testEpoch,
+      ),
+    );
+
+    final completion = await store.rebootstrapAfterReset(
+      CloudSyncResetRebootstrapRequest(
+        scope: scope,
+        transitionIdHash:
+            '2222222222222222222222222222222222222222222222222222222222222222',
+        activeIdentityFingerprint: scope.accountFingerprint,
+        expectedGeneration: 1,
+        protectedRemoteStateProofReference:
+            'obcs2.ref.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      ),
+      now: testEpoch.add(const Duration(seconds: 1)),
+    );
+    expect(completion.previousGeneration, 1);
+    expect(completion.generation, 2);
+    expect((await store.readCheckpoint(scope)).fetchedToken, isNull);
+    expect((await store.readCheckpoint(scope)).fetchedSequence, 0);
+    expect(await store.inboxEntries(scope), isEmpty);
+    expect(
+      (await store.outboxEntries(scope))
+          .singleWhere((row) => row.operationId == oldOperation.operationId)
+          .status,
+      CloudOutboxStatus.quarantined,
+    );
+  });
+
   test('advancing one account scope does not fence another account', () async {
     final otherScope = testScope(account: testAccountFingerprintB);
     final first = await store.enqueueOutboxMutation(

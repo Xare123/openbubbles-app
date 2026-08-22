@@ -1340,19 +1340,26 @@ class Message {
   /// Delete a message and remove all instances of that message in the DB
   static void delete(String guid) {
     if (kIsWeb) return;
+    String? cloudRecordId;
     Database.runInTransaction(TxMode.write, () {
       final query = Database.messages.query(Message_.guid.equals(guid)).build();
       final result = query.findFirst();
       query.close();
       if (result?.id != null) {
         if (result?.ckRecordId != null && !pushService.syncStopDelete) {
-          var list = ss.prefs.getStringList("messageDeletionIds-1") ?? [];
-          list.add(result!.ckRecordId!);
-          ss.prefs.setStringList("messageDeletionIds-1", list);
+          cloudRecordId = result!.ckRecordId;
         }
         Database.messages.remove(result!.id!);
       }
     });
+    if (cloudRecordId != null) {
+      unawaited(
+        pushService.queueLegacyCloudKitDeletion(
+          kind: LegacyCloudKitDeletionKind.message,
+          recordId: cloudRecordId!,
+        ),
+      );
+    }
   }
 
   static void softDelete(String guid) async {

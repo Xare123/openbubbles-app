@@ -6,6 +6,7 @@ export 'cloud_inbox_applier.dart';
 export 'cloudkit_writer_authority.dart';
 export 'cloudkit_writer_mutation_guard.dart';
 export 'cloudkit_writer_ownership.dart';
+export 'legacy_cloudkit_deletion_intents.dart';
 export 'cloud_operation_identity.dart';
 export 'cloud_protected_page_lease_lifecycle.dart';
 export 'cloud_shadow_journal_budget.dart';

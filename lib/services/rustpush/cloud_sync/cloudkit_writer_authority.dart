@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 
 import 'cloudkit_writer_ownership.dart';
 import 'cloudkit_operation_interlock.dart';
+import 'cloud_sync_models.dart';
 
 enum CloudKitWriterAuthorityState {
   stable,
@@ -116,15 +117,21 @@ final class CloudKitWriterPermit {
 final class CloudKitResetFence {
   const CloudKitResetFence._({
     required this.scope,
+    required this.syncScope,
     required this.owner,
     required this.epoch,
+    required this.expectedGeneration,
     required this.transitionIdHash,
+    required this.proofReferenceHash,
   });
 
   final CloudKitWriterScope scope;
+  final CloudSyncScope syncScope;
   final CloudKitWriterOwner owner;
   final int epoch;
+  final int expectedGeneration;
   final String transitionIdHash;
+  final String proofReferenceHash;
 
   @override
   String toString() =>
@@ -394,11 +401,11 @@ final class ObjectBoxCloudKitWriterAuthority {
 
   CloudKitResetFence prepareReset(
     CloudKitWriterPermit permit, {
-    required String transitionIdHash,
+    required CloudSyncResetRebootstrapRequest request,
     required DateTime now,
   }) {
     _requireTransitionInterlock();
-    _requireTransitionIdHash(transitionIdHash);
+    _requireResetRequest(permit.scope, request);
     return _store.runInTransaction(TxMode.write, () {
       final entity = _require(permit.scope);
       final current = _requireStable(permit.scope, entity);
@@ -410,21 +417,32 @@ final class ObjectBoxCloudKitWriterAuthority {
       }
       entity
         ..state = _stateCode(CloudKitWriterAuthorityState.resetPrepared)
-        ..transitionIdHash = transitionIdHash
+        ..transitionIdHash = request.transitionIdHash
+        ..resetScopeKeyHash = _scopeDigest(request.scope)
+        ..resetProofReferenceHash = _digest(
+          'cloudkit-reset-proof\u001f${request.protectedRemoteStateProofReference}',
+        )
+        ..resetGeneration = request.expectedGeneration
         ..epoch += 1
         ..updatedAtMs = now.millisecondsSinceEpoch;
       _authorities.put(entity);
       return CloudKitResetFence._(
         scope: permit.scope,
+        syncScope: request.scope,
         owner: permit.owner,
         epoch: entity.epoch,
-        transitionIdHash: transitionIdHash,
+        expectedGeneration: request.expectedGeneration,
+        transitionIdHash: request.transitionIdHash,
+        proofReferenceHash: entity.resetProofReferenceHash!,
       );
     });
   }
 
   /// Reconstructs an interrupted reset strictly from durable state.
-  CloudKitResetFence? recoverResetFence(CloudKitWriterScope scope) {
+  CloudKitResetFence? recoverResetFence(
+    CloudKitWriterScope scope, {
+    required CloudSyncScope syncScope,
+  }) {
     return _store.runInTransaction(TxMode.read, () {
       final entity = _find(scope);
       if (entity == null) return null;
@@ -433,20 +451,35 @@ final class ObjectBoxCloudKitWriterAuthority {
           snapshot.state != CloudKitWriterAuthorityState.resetUnknown) {
         return null;
       }
+      if (entity.resetScopeKeyHash != _scopeDigest(syncScope)) {
+        throw const CloudKitWriterAuthorityFailure(
+          'cloudkit_writer_reset_scope_mismatch',
+        );
+      }
+      if (entity.resetProofReferenceHash == null) {
+        throw const CloudKitWriterAuthorityFailure(
+          'cloudkit_writer_reset_proof_binding_missing',
+        );
+      }
       return CloudKitResetFence._(
         scope: scope,
+        syncScope: syncScope,
         owner: snapshot.owner,
         epoch: snapshot.epoch,
+        expectedGeneration: entity.resetGeneration,
         transitionIdHash: snapshot.transitionIdHash!,
+        proofReferenceHash: entity.resetProofReferenceHash!,
       );
     });
   }
 
   CloudKitWriterAuthoritySnapshot completeReset(
     CloudKitResetFence fence, {
+    required CloudSyncResetCompletionProof proof,
     required DateTime now,
   }) {
     _requireTransitionInterlock();
+    _requireResetCompletionProof(fence, proof);
     return _finishReset(
       fence,
       expectedState: CloudKitWriterAuthorityState.resetPrepared,
@@ -481,16 +514,11 @@ final class ObjectBoxCloudKitWriterAuthority {
 
   CloudKitWriterAuthoritySnapshot reconcileResetUnknown(
     CloudKitResetFence fence, {
-    required bool remoteStateReconciled,
-    required bool activeIdentityRevalidated,
+    required CloudSyncResetCompletionProof proof,
     required DateTime now,
   }) {
     _requireTransitionInterlock();
-    if (!remoteStateReconciled || !activeIdentityRevalidated) {
-      throw const CloudKitWriterAuthorityFailure(
-        'cloudkit_writer_reset_reconciliation_incomplete',
-      );
-    }
+    _requireResetCompletionProof(fence, proof);
     return _finishReset(
       fence,
       expectedState: CloudKitWriterAuthorityState.resetUnknown,
@@ -518,6 +546,9 @@ final class ObjectBoxCloudKitWriterAuthority {
       entity
         ..state = _stateCode(CloudKitWriterAuthorityState.stable)
         ..transitionIdHash = null
+        ..resetScopeKeyHash = null
+        ..resetProofReferenceHash = null
+        ..resetGeneration = 0
         ..epoch += 1
         ..updatedAtMs = now.millisecondsSinceEpoch;
       _authorities.put(entity);
@@ -558,6 +589,38 @@ final class ObjectBoxCloudKitWriterAuthority {
     if (!evidence.isComplete) {
       throw const CloudKitWriterAuthorityFailure(
         'cloudkit_writer_transition_evidence_incomplete',
+      );
+    }
+  }
+
+  void _requireResetRequest(
+    CloudKitWriterScope writerScope,
+    CloudSyncResetRebootstrapRequest request,
+  ) {
+    if (request.scope.accountFingerprint != writerScope.accountFingerprint ||
+        request.scope.container != writerScope.container ||
+        request.scope.database != writerScope.database) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_reset_scope_mismatch',
+      );
+    }
+  }
+
+  void _requireResetCompletionProof(
+    CloudKitResetFence fence,
+    CloudSyncResetCompletionProof proof,
+  ) {
+    if (proof.scope != fence.syncScope ||
+        proof.transitionIdHash != fence.transitionIdHash ||
+        proof.activeIdentityFingerprint != fence.scope.accountFingerprint ||
+        proof.previousGeneration != fence.expectedGeneration ||
+        proof.generation != fence.expectedGeneration + 1 ||
+        _digest(
+              'cloudkit-reset-proof\u001f${proof.protectedRemoteStateProofReference}',
+            ) !=
+            fence.proofReferenceHash) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_reset_completion_proof_mismatch',
       );
     }
   }
@@ -673,7 +736,11 @@ final class ObjectBoxCloudKitWriterAuthority {
       }
     } else if (state == CloudKitWriterAuthorityState.resetPrepared ||
         state == CloudKitWriterAuthorityState.resetUnknown) {
-      if (target != CloudKitWriterOwner.none || transitionIdHash == null) {
+      if (target != CloudKitWriterOwner.none ||
+          transitionIdHash == null ||
+          entity.resetScopeKeyHash == null ||
+          entity.resetProofReferenceHash == null ||
+          entity.resetGeneration <= 0) {
         throw const CloudKitWriterAuthorityFailure(
           'cloudkit_writer_authority_state_invalid',
         );
@@ -693,6 +760,15 @@ final class ObjectBoxCloudKitWriterAuthority {
     }
     if (transitionIdHash != null) {
       _requireTransitionIdHash(transitionIdHash);
+    }
+    if (state != CloudKitWriterAuthorityState.resetPrepared &&
+        state != CloudKitWriterAuthorityState.resetUnknown &&
+        (entity.resetScopeKeyHash != null ||
+            entity.resetProofReferenceHash != null ||
+            entity.resetGeneration != 0)) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_authority_state_invalid',
+      );
     }
     return CloudKitWriterAuthoritySnapshot(
       scope: scope,
@@ -757,4 +833,10 @@ final class ObjectBoxCloudKitWriterAuthority {
         utf8.encode('cloudkit-writer-authority\u001f${scope.storageKey}'),
       )
       .toString();
+
+  String _scopeDigest(CloudSyncScope scope) => sha256
+      .convert(utf8.encode('cloudkit-reset-scope\u001f${scope.storageKey}'))
+      .toString();
+
+  String _digest(String value) => sha256.convert(utf8.encode(value)).toString();
 }

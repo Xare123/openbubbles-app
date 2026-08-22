@@ -83,6 +83,81 @@ class CloudSyncScope {
   String toString() => 'CloudSyncScope($diagnosticKey)';
 }
 
+/// Typed reset input produced after the protected remote reset/identity
+/// checks have completed. The store treats the proof reference as opaque and
+/// never resolves it inside an ObjectBox transaction.
+final class CloudSyncResetRebootstrapRequest {
+  CloudSyncResetRebootstrapRequest({
+    required this.scope,
+    required this.transitionIdHash,
+    required this.activeIdentityFingerprint,
+    required this.expectedGeneration,
+    required this.protectedRemoteStateProofReference,
+  }) {
+    if (!_isDigest(transitionIdHash) ||
+        activeIdentityFingerprint != scope.accountFingerprint ||
+        expectedGeneration <= 0 ||
+        !_isProtectedReference(protectedRemoteStateProofReference)) {
+      throw ArgumentError('cloud_reset_rebootstrap_request_invalid');
+    }
+  }
+
+  final CloudSyncScope scope;
+  final String transitionIdHash;
+  final String activeIdentityFingerprint;
+  final int expectedGeneration;
+  final String protectedRemoteStateProofReference;
+
+  @override
+  String toString() => 'CloudSyncResetRebootstrapRequest(redacted)';
+}
+
+/// Receipt emitted only after the store has atomically completed a reset
+/// rebootstrap. It is the only accepted input for authority reset completion.
+final class CloudSyncResetCompletionProof {
+  CloudSyncResetCompletionProof({
+    required this.scope,
+    required this.transitionIdHash,
+    required this.activeIdentityFingerprint,
+    required this.previousGeneration,
+    required this.generation,
+    required this.protectedRemoteStateProofReference,
+  }) {
+    if (!_isDigest(transitionIdHash) ||
+        activeIdentityFingerprint != scope.accountFingerprint ||
+        previousGeneration <= 0 ||
+        generation != previousGeneration + 1 ||
+        !_isProtectedReference(protectedRemoteStateProofReference)) {
+      throw ArgumentError('cloud_reset_completion_proof_invalid');
+    }
+  }
+
+  final CloudSyncScope scope;
+  final String transitionIdHash;
+  final String activeIdentityFingerprint;
+  final int previousGeneration;
+  final int generation;
+  final String protectedRemoteStateProofReference;
+
+  bool binds(CloudSyncResetRebootstrapRequest request) =>
+      scope == request.scope &&
+      transitionIdHash == request.transitionIdHash &&
+      activeIdentityFingerprint == request.activeIdentityFingerprint &&
+      previousGeneration == request.expectedGeneration &&
+      protectedRemoteStateProofReference ==
+          request.protectedRemoteStateProofReference;
+
+  @override
+  String toString() => 'CloudSyncResetCompletionProof(redacted)';
+}
+
+bool _isDigest(String value) => RegExp(r'^[a-f0-9]{64}$').hasMatch(value);
+
+bool _isProtectedReference(String value) =>
+    value.length <= 256 &&
+    value.startsWith('obcs2.ref.') &&
+    !value.contains(RegExp(r'[\x00-\x1f\x7f-\x9f]'));
+
 enum CloudChangeType { save, delete }
 
 enum CloudInboxStatus { pending, applied, quarantined }

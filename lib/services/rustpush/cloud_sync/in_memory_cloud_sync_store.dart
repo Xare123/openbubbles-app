@@ -346,6 +346,60 @@ class InMemoryCloudSyncStore
   }
 
   @override
+  Future<CloudSyncResetCompletionProof> rebootstrapAfterReset(
+    CloudSyncResetRebootstrapRequest request, {
+    required DateTime now,
+  }) {
+    return _lock.synchronized(() async {
+      final activeLease = _coordinatorLeases[request.scope.storageKey];
+      if (activeLease != null && activeLease.expiresAt.isAfter(now)) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'reset_rebootstrap_coordinator_active',
+        );
+      }
+      final checkpoint = _checkpoint(request.scope);
+      if (checkpoint.generation != request.expectedGeneration) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'reset_rebootstrap_generation_mismatch',
+        );
+      }
+      final previousGeneration = checkpoint.generation;
+      final generation = previousGeneration + 1;
+      _checkpoints[request.scope.storageKey] = checkpoint.copyWith(
+        generation: generation,
+        clearFetchedToken: true,
+        lastBatchId: null,
+        fetchedSequence: 0,
+        lastAppliedSequence: 0,
+        consecutivePullFailures: 0,
+        clearNextPullEligibleAt: true,
+        lastSuccessfulRunAt: null,
+        clearLastFailure: true,
+      );
+      _fenceStaleOutboxLocked(
+        request.scope,
+        now: now,
+        checkpoint: _checkpoints[request.scope.storageKey],
+      );
+      // The in-memory implementation has no durable archive; dropping only
+      // its test journal is the equivalent of fencing old ObjectBox rows.
+      _inbox.remove(request.scope.storageKey);
+      _seenChangeIds.remove(request.scope.storageKey);
+      return CloudSyncResetCompletionProof(
+        scope: request.scope,
+        transitionIdHash: request.transitionIdHash,
+        activeIdentityFingerprint: request.activeIdentityFingerprint,
+        previousGeneration: previousGeneration,
+        generation: generation,
+        protectedRemoteStateProofReference:
+            request.protectedRemoteStateProofReference,
+      );
+    });
+  }
+
+  @override
   Future<CloudSyncCheckpoint> advanceOutboxGeneration(
     CloudSyncScope scope, {
     required DateTime now,

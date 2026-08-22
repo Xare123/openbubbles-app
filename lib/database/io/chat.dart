@@ -9,6 +9,7 @@ import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/services/network/backend_service.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/legacy_cloudkit_deletion_intents.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
@@ -1509,9 +1510,10 @@ class Chat {
       Database.attachments.removeMany(attachments.map((e) => e.id!).toList());
     });
     if (chat.ckRecordId != null && !pushService.syncStopDelete) {
-      var list = ss.prefs.getStringList("chatDeletionIds-1") ?? [];
-      list.add(chat.ckRecordId!);
-      ss.prefs.setStringList("chatDeletionIds-1", list);
+      await pushService.queueLegacyCloudKitDeletion(
+        kind: LegacyCloudKitDeletionKind.chat,
+        recordId: chat.ckRecordId!,
+      );
     }
   }
 

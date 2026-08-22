@@ -4,6 +4,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -322,14 +323,18 @@ void main() {
     );
     final fence = v2.prepareReset(
       permit,
-      transitionIdHash: _resetId,
+      request: _resetRequest(),
       now: _time(2),
     );
     expect(
       () => v2.verifyPermit(permit),
       throwsA(_failure('cloudkit_writer_authority_not_stable')),
     );
-    final completed = v2.completeReset(fence, now: _time(3));
+    final completed = v2.completeReset(
+      fence,
+      proof: _completionProof(),
+      now: _time(3),
+    );
     expect(completed.state, CloudKitWriterAuthorityState.stable);
     expect(completed.owner, CloudKitWriterOwner.v2);
     expect(completed.epoch, fence.epoch + 1);
@@ -346,7 +351,7 @@ void main() {
       final v2 = authority(CloudKitWriterOwner.v2);
       final fence = v2.prepareReset(
         v2.issuePermit(_scopeA, expectedOwner: CloudKitWriterOwner.v2),
-        transitionIdHash: _resetId,
+        request: _resetRequest(),
         now: _time(2),
       );
       final unknown = v2.markResetUnknown(fence, now: _time(3));
@@ -354,7 +359,10 @@ void main() {
 
       await reopen();
       final reopened = authority(CloudKitWriterOwner.v2);
-      final recoveredFence = reopened.recoverResetFence(_scopeA)!;
+      final recoveredFence = reopened.recoverResetFence(
+        _scopeA,
+        syncScope: _resetScopeA,
+      )!;
       expect(recoveredFence.epoch, fence.epoch);
       expect(recoveredFence.transitionIdHash, _resetId);
       expect(
@@ -367,22 +375,76 @@ void main() {
       expect(
         () => reopened.reconcileResetUnknown(
           recoveredFence,
-          remoteStateReconciled: true,
-          activeIdentityRevalidated: false,
+          proof: _completionProof(),
           now: _time(4),
         ),
-        throwsA(_failure('cloudkit_writer_reset_reconciliation_incomplete')),
+        returnsNormally,
       );
-      final reconciled = reopened.reconcileResetUnknown(
-        recoveredFence,
-        remoteStateReconciled: true,
-        activeIdentityRevalidated: true,
-        now: _time(5),
+      expect(
+        reopened.read(_scopeA)?.state,
+        CloudKitWriterAuthorityState.stable,
       );
-      expect(reconciled.state, CloudKitWriterAuthorityState.stable);
-      expect(reconciled.epoch, recoveredFence.epoch + 1);
+      expect(
+        () => reopened.reconcileResetUnknown(
+          recoveredFence,
+          proof: _completionProof(),
+          now: _time(5),
+        ),
+        throwsA(_failure('cloudkit_writer_reset_finish_precondition_failed')),
+      );
     },
   );
+
+  test('reset completion rejects a proof from another scope or generation', () {
+    provision(owner: CloudKitWriterOwner.v2);
+    final v2 = authority(CloudKitWriterOwner.v2);
+    final fence = v2.prepareReset(
+      v2.issuePermit(_scopeA, expectedOwner: CloudKitWriterOwner.v2),
+      request: _resetRequest(),
+      now: _time(2),
+    );
+    expect(
+      () => v2.completeReset(
+        fence,
+        proof: CloudSyncResetCompletionProof(
+          scope: _resetScopeA,
+          transitionIdHash: _resetId,
+          activeIdentityFingerprint: _scopeA.accountFingerprint,
+          previousGeneration: 2,
+          generation: 3,
+          protectedRemoteStateProofReference: _resetProofReference,
+        ),
+        now: _time(3),
+      ),
+      throwsA(_failure('cloudkit_writer_reset_completion_proof_mismatch')),
+    );
+  });
+
+  test('reset completion rejects an unrelated protected proof reference', () {
+    provision(owner: CloudKitWriterOwner.v2);
+    final v2 = authority(CloudKitWriterOwner.v2);
+    final fence = v2.prepareReset(
+      v2.issuePermit(_scopeA, expectedOwner: CloudKitWriterOwner.v2),
+      request: _resetRequest(),
+      now: _time(2),
+    );
+    expect(
+      () => v2.completeReset(
+        fence,
+        proof: CloudSyncResetCompletionProof(
+          scope: _resetScopeA,
+          transitionIdHash: _resetId,
+          activeIdentityFingerprint: _scopeA.accountFingerprint,
+          previousGeneration: 1,
+          generation: 2,
+          protectedRemoteStateProofReference:
+              'obcs2.ref.BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+        ),
+        now: _time(3),
+      ),
+      throwsA(_failure('cloudkit_writer_reset_completion_proof_mismatch')),
+    );
+  });
 
   test('authorities are isolated by complete account scope', () {
     provision(scope: _scopeA, owner: CloudKitWriterOwner.v2);
@@ -574,3 +636,31 @@ final _scopeA = CloudKitWriterScope(
 final _scopeB = CloudKitWriterScope(
   accountFingerprint: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
 );
+
+final _resetScopeA = CloudSyncScope(
+  accountFingerprint: _scopeA.accountFingerprint,
+  container: _scopeA.container,
+  database: _scopeA.database,
+  zone: 'message-zone',
+);
+const _resetProofReference =
+    'obcs2.ref.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+
+CloudSyncResetRebootstrapRequest _resetRequest({int generation = 1}) =>
+    CloudSyncResetRebootstrapRequest(
+      scope: _resetScopeA,
+      transitionIdHash: _resetId,
+      activeIdentityFingerprint: _scopeA.accountFingerprint,
+      expectedGeneration: generation,
+      protectedRemoteStateProofReference: _resetProofReference,
+    );
+
+CloudSyncResetCompletionProof _completionProof({int generation = 2}) =>
+    CloudSyncResetCompletionProof(
+      scope: _resetScopeA,
+      transitionIdHash: _resetId,
+      activeIdentityFingerprint: _scopeA.accountFingerprint,
+      previousGeneration: generation - 1,
+      generation: generation,
+      protectedRemoteStateProofReference: _resetProofReference,
+    );

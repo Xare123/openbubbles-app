@@ -38,7 +38,18 @@ void main() {
         entities,
         containsPair('CloudKitWriterAuthorityEntity', '28:889478301778181246'),
       );
-      expect(model['lastEntityId'], '28:889478301778181246');
+      expect(
+        entities,
+        containsPair('CloudKitDeletionIntentEntity', '29:3887662870209685934'),
+      );
+      expect(
+        entities,
+        containsPair(
+          'CloudKitDeletionQuarantineEntity',
+          '30:156682190547124916',
+        ),
+      );
+      expect(model['lastEntityId'], '30:156682190547124916');
       expect(model['modelVersion'], 5);
       expect(model['modelVersionParserMinimum'], 5);
     },

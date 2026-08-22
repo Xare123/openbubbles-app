@@ -1,9 +1,12 @@
 import 'dart:convert';
 
+import 'dart:async';
+
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/legacy_cloudkit_deletion_intents.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/utils/attachment_guid_utils.dart';
 import 'package:bluebubbles/services/services.dart';
@@ -302,19 +305,26 @@ class Attachment {
   /// Delete an attachment and remove all instances of that attachment in the DB
   static void delete(String guid) {
     if (kIsWeb) return;
+    String? cloudRecordId;
     Database.runInTransaction(TxMode.write, () {
       final query = Database.attachments.query(Attachment_.guid.equals(guid)).build();
       final result = query.findFirst();
       query.close();
       if (result?.id != null) {
         if (result?.ckRecordId != null && !pushService.syncStopDelete) {
-          var list = ss.prefs.getStringList("attachmentDeletionIds-1") ?? [];
-          list.add(result!.ckRecordId!);
-          ss.prefs.setStringList("attachmentDeletionIds-1", list);
+          cloudRecordId = result!.ckRecordId;
         }
         Database.attachments.remove(result!.id!);
       }
     });
+    if (cloudRecordId != null) {
+      unawaited(
+        pushService.queueLegacyCloudKitDeletion(
+          kind: LegacyCloudKitDeletionKind.attachment,
+          recordId: cloudRecordId!,
+        ),
+      );
+    }
   }
 
   String getFriendlySize({decimals = 2}) {

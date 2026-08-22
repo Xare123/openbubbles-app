@@ -22,6 +22,7 @@ import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/services/rustpush/apple_network_health.dart';
 import 'package:bluebubbles/services/rustpush/cloud_message_upload_state.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
@@ -35,6 +36,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pul
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_report.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_report_file.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/legacy_cloudkit_page_guard.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/legacy_cloudkit_deletion_intents.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_preflight.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:bluebubbles/utils/attachment_guid_utils.dart';
@@ -2998,14 +3000,144 @@ class RustPushService extends GetxService {
 
   bool syncStopDelete = false;
 
+  Future<void> queueLegacyCloudKitDeletion({
+    required LegacyCloudKitDeletionKind kind,
+    required String recordId,
+  }) async {
+    final deletionStore = LegacyCloudKitDeletionIntentStore(
+      store: Database.store,
+    );
+    final now = DateTime.now().toUtc();
+    try {
+      if (!CloudKitWriterOwnership.legacyMutationsEnabled) {
+        deletionStore.quarantineUnscoped(
+          kind: kind,
+          recordId: recordId,
+          reason: 'legacy_writer_disabled',
+          now: now,
+        );
+        return;
+      }
+      final context = await _readLegacyCloudKitDeletionContext();
+      if (context == null) {
+        deletionStore.quarantineUnscoped(
+          kind: kind,
+          recordId: recordId,
+          reason: 'legacy_writer_scope_unavailable',
+          now: now,
+        );
+        return;
+      }
+      deletionStore.enqueue(
+        context: context,
+        kind: kind,
+        recordId: recordId,
+        now: now,
+      );
+    } catch (error, trace) {
+      Logger.warn(
+        'Legacy CloudKit deletion was quarantined after scope binding failed',
+        error: error,
+        trace: trace,
+      );
+      try {
+        deletionStore.quarantineUnscoped(
+          kind: kind,
+          recordId: recordId,
+          reason: 'legacy_writer_scope_binding_failed',
+          now: now,
+        );
+      } catch (quarantineError, quarantineTrace) {
+        Logger.error(
+          'Failed to persist legacy CloudKit deletion quarantine',
+          error: quarantineError,
+          trace: quarantineTrace,
+        );
+      }
+    }
+  }
+
+  Future<LegacyCloudKitDeletionContext?>
+  _readLegacyCloudKitDeletionContext() async {
+    final currentState = state;
+    final client = currentState?.icloudServices?.cloudMessagesClient;
+    if (client == null || statePath.isEmpty) return null;
+
+    final metadata = await FrbCloudSyncNativeAuthBinding().capture(
+      cloudMessagesClient: client,
+      privateStorageDirectory: statePath,
+    );
+    if (!identical(currentState, state) ||
+        !identical(client, state?.icloudServices?.cloudMessagesClient)) {
+      return null;
+    }
+
+    final scope = CloudKitWriterScope(
+      accountFingerprint: metadata.accountFingerprint,
+    );
+    final authority = ObjectBoxCloudKitWriterAuthority(store: Database.store);
+    final snapshot = authority.read(scope);
+    if (snapshot == null ||
+        snapshot.owner != CloudKitWriterOwner.legacy ||
+        snapshot.state != CloudKitWriterAuthorityState.stable) {
+      return null;
+    }
+    return LegacyCloudKitDeletionContext(
+      scope: scope,
+      writerEpoch: snapshot.epoch,
+    );
+  }
+
+  Future<void> _flushLegacyCloudKitDeletions(
+    LegacyCloudKitDeletionContext context,
+  ) async {
+    final currentState = state;
+    final client = currentState?.icloudServices?.cloudMessagesClient;
+    if (client == null) return;
+    final deletionStore = LegacyCloudKitDeletionIntentStore(
+      store: Database.store,
+    );
+
+    Future<void> flushKind(
+      LegacyCloudKitDeletionKind kind,
+      Future<void> Function(List<String>) delete,
+    ) async {
+      final intents = deletionStore.pendingForFlush(
+        scope: context.scope,
+        writerEpoch: context.writerEpoch,
+        kind: kind,
+      );
+      if (intents.isEmpty) return;
+      await delete(intents.map((intent) => intent.recordId).toList());
+      deletionStore.confirmFlushed(
+        context: context,
+        kind: kind,
+        intents: intents,
+      );
+    }
+
+    await flushKind(
+      LegacyCloudKitDeletionKind.message,
+      (ids) => api.deleteMessages(cloudMessagesClient: client, messages: ids),
+    );
+    await flushKind(
+      LegacyCloudKitDeletionKind.attachment,
+      (ids) => api.deleteAttachments(
+        cloudMessagesClient: client,
+        attachments: ids,
+      ),
+    );
+    await flushKind(
+      LegacyCloudKitDeletionKind.chat,
+      (ids) => api.deleteChats(cloudMessagesClient: client, chats: ids),
+    );
+  }
+
   void eraseCloudKitSync() {
     if (ss.prefs.getString("chatSyncToken") == null) return;
     ss.prefs.remove("chatSyncToken");
     ss.prefs.remove("messageSyncToken");
     ss.prefs.remove("attachmentSyncToken");
-    ss.prefs.remove("chatDeletionIds-1");
-    ss.prefs.remove("messageDeletionIds-1");
-    ss.prefs.remove("attachmentDeletionIds-1");
     var messages = Database.messages.getAll();
     for (var message in messages) {
       message.ckRecordId = null;
@@ -3380,6 +3512,14 @@ class RustPushService extends GetxService {
   Future<void> _doCloudKitSyncPrivateUnlocked() async {
     isSyncing.value = "Syncing Now...";
 
+    final deletionStore = LegacyCloudKitDeletionIntentStore(
+      store: Database.store,
+    );
+    await deletionStore.quarantineLegacySharedPreferenceQueues(
+      ss.prefs,
+      now: DateTime.now().toUtc(),
+    );
+
     var isInClique = await api.isInClique(
         keychain: pushService.state!.icloudServices!.keychain!);
     if (!isInClique) {
@@ -3389,32 +3529,11 @@ class RustPushService extends GetxService {
       return;
     }
 
-    if (CloudKitWriterOwnership.legacyMutationsEnabled &&
-        (ss.prefs.getStringList("messageDeletionIds-1")?.isNotEmpty ?? false)) {
-      await api.deleteMessages(
-          cloudMessagesClient:
-              pushService.state!.icloudServices!.cloudMessagesClient!,
-          messages: ss.prefs.getStringList("messageDeletionIds-1")!);
-      ss.prefs.remove("messageDeletionIds-1");
-    }
-
-    if (CloudKitWriterOwnership.legacyMutationsEnabled &&
-        (ss.prefs.getStringList("attachmentDeletionIds-1")?.isNotEmpty ??
-            false)) {
-      await api.deleteAttachments(
-          cloudMessagesClient:
-              pushService.state!.icloudServices!.cloudMessagesClient!,
-          attachments: ss.prefs.getStringList("attachmentDeletionIds-1")!);
-      ss.prefs.remove("attachmentDeletionIds-1");
-    }
-
-    if (CloudKitWriterOwnership.legacyMutationsEnabled &&
-        (ss.prefs.getStringList("chatDeletionIds-1")?.isNotEmpty ?? false)) {
-      await api.deleteChats(
-          cloudMessagesClient:
-              pushService.state!.icloudServices!.cloudMessagesClient!,
-          chats: ss.prefs.getStringList("chatDeletionIds-1")!);
-      ss.prefs.remove("chatDeletionIds-1");
+    if (CloudKitWriterOwnership.legacyMutationsEnabled) {
+      final context = await _readLegacyCloudKitDeletionContext();
+      if (context != null) {
+        await _flushLegacyCloudKitDeletions(context);
+      }
     }
 
     ss.saveSettings();

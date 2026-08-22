@@ -151,7 +151,11 @@ class ObjectBoxCloudSyncStore
       var nextSequence = checkpoint.fetchedSequence + 1;
       var inserted = 0;
       for (final change in batch.changes) {
-        final changeKey = _scopedDigest(batch.scope, 'change', change.changeId);
+        final changeKey = _changeKey(
+          batch.scope,
+          batch.generation,
+          change.changeId,
+        );
         if (_findInboxByChangeKeyLocked(changeKey) != null) continue;
         _inbox.put(
           CloudInboxChangeEntity(
@@ -323,7 +327,11 @@ class ObjectBoxCloudSyncStore
       final unseen = <CloudFetchedChange>[];
       final pageKeys = <String>{};
       for (final change in batch.changes) {
-        final changeKey = _scopedDigest(batch.scope, 'change', change.changeId);
+        final changeKey = _changeKey(
+          batch.scope,
+          batch.generation,
+          change.changeId,
+        );
         if (!pageKeys.add(changeKey) ||
             _findInboxByChangeKeyLocked(changeKey) != null) {
           continue;
@@ -360,7 +368,11 @@ class ObjectBoxCloudSyncStore
 
       var nextSequence = checkpoint.fetchedSequence + 1;
       for (final change in unseen) {
-        final changeKey = _scopedDigest(batch.scope, 'change', change.changeId);
+        final changeKey = _changeKey(
+          batch.scope,
+          batch.generation,
+          change.changeId,
+        );
         _inbox.put(
           CloudInboxChangeEntity(
             changeKey: changeKey,
@@ -817,6 +829,81 @@ class ObjectBoxCloudSyncStore
       _enqueueOutboxLocked(operation);
       return operation;
     });
+  }
+
+  @override
+  Future<CloudSyncResetCompletionProof> rebootstrapAfterReset(
+    CloudSyncResetRebootstrapRequest request, {
+    required DateTime now,
+  }) async {
+    final nowMs = now.millisecondsSinceEpoch;
+    late int previousGeneration;
+    late int nextGeneration;
+    _store.runInTransaction(TxMode.write, () {
+      final leaseKey = _scopedDigest(request.scope, 'coordinator-lease', 'v1');
+      final activeLease = _findLeaseByKeyLocked(leaseKey);
+      if (activeLease != null && activeLease.expiresAtMs > nowMs) {
+        throw _storageFailure('reset_rebootstrap_coordinator_active');
+      }
+
+      final checkpoint = _checkpointLocked(request.scope, nowMs: nowMs);
+      if (checkpoint.generation != request.expectedGeneration) {
+        throw _storageFailure('reset_rebootstrap_generation_mismatch');
+      }
+      previousGeneration = checkpoint.generation;
+      nextGeneration = previousGeneration + 1;
+      checkpoint
+        ..generation = nextGeneration
+        ..fetchedTokenCiphertext = null
+        ..lastBatchId = null
+        ..fetchedSequence = 0
+        ..appliedSequence = 0
+        ..lastSuccessfulAtMs = 0
+        ..lastAttemptAtMs = 0
+        ..lastErrorCategory = null
+        ..backoffAttempt = 0
+        ..nextEligibleAtMs = 0
+        ..updatedAtMs = nowMs;
+      _checkpoints.put(checkpoint);
+
+      // Keep rows as evidence, but make every old-generation operation
+      // terminal and every old mapping unreadable by the active generation.
+      _fenceStaleOutboxLocked(
+        request.scope,
+        checkpoint: checkpoint,
+        nowMs: nowMs,
+      );
+      for (final entity in _findRecordMapsForScopeLocked(request.scope)) {
+        entity
+          ..generation = 0
+          ..updatedAtMs = nowMs;
+        _recordMaps.put(entity);
+      }
+      for (final entity in _findInboxForScopeLocked(request.scope)) {
+        final status = _inboxStatusFromInt(entity.status);
+        entity
+          ..generation = 0
+          ..updatedAtMs = nowMs;
+        if (status == CloudInboxStatus.pending) {
+          entity
+            ..status = _inboxStatusToInt(CloudInboxStatus.quarantined)
+            ..retryCount += 1
+            ..failureCategory = CloudFailureCategory.localStorage.name
+            ..nextEligibleAtMs = 0
+            ..completedAtMs = nowMs;
+        }
+        _inbox.put(entity);
+      }
+    });
+    return CloudSyncResetCompletionProof(
+      scope: request.scope,
+      transitionIdHash: request.transitionIdHash,
+      activeIdentityFingerprint: request.activeIdentityFingerprint,
+      previousGeneration: previousGeneration,
+      generation: nextGeneration,
+      protectedRemoteStateProofReference:
+          request.protectedRemoteStateProofReference,
+    );
   }
 
   @override
@@ -1846,6 +1933,10 @@ class ObjectBoxCloudSyncStore
     try {
       var usage = CloudShadowJournalUsage.empty;
       for (final entity in query.find()) {
+        final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
+        if (checkpoint == null || entity.generation != checkpoint.generation) {
+          continue;
+        }
         final entry = _inboxFromEntity(scope, entity);
         usage = usage.add(
           entries: 1,
@@ -1891,17 +1982,19 @@ class ObjectBoxCloudSyncStore
     CloudSyncScope scope,
     int sequence,
   ) {
-    final query =
-        _inbox
-            .query(
-              CloudInboxChangeEntity_.scopeKey
-                  .equals(_scopeKey(scope))
-                  .and(CloudInboxChangeEntity_.fetchSequence.equals(sequence)),
-            )
-            .build()
-          ..limit = 2;
+    final query = _inbox
+        .query(
+          CloudInboxChangeEntity_.scopeKey
+              .equals(_scopeKey(scope))
+              .and(CloudInboxChangeEntity_.fetchSequence.equals(sequence)),
+        )
+        .build();
     try {
-      final matches = query.find();
+      final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
+      final matches = query
+          .find()
+          .where((entity) => entity.generation == checkpoint?.generation)
+          .toList(growable: false);
       if (matches.length > 1) {
         throw _storageFailure('inbox_sequence_ambiguous');
       }
@@ -1914,6 +2007,19 @@ class ObjectBoxCloudSyncStore
   List<CloudInboxChangeEntity> _findInboxForScopeLocked(CloudSyncScope scope) {
     final query = _inbox
         .query(CloudInboxChangeEntity_.scopeKey.equals(_scopeKey(scope)))
+        .build();
+    try {
+      return query.find();
+    } finally {
+      query.close();
+    }
+  }
+
+  List<CloudRecordMapEntity> _findRecordMapsForScopeLocked(
+    CloudSyncScope scope,
+  ) {
+    final query = _recordMaps
+        .query(CloudRecordMapEntity_.scopeKey.equals(_scopeKey(scope)))
         .build();
     try {
       return query.find();
@@ -2085,6 +2191,11 @@ class ObjectBoxCloudSyncStore
       '$purpose:${_digest('${scope.storageKey}\u001f$purpose\u001f$value')}';
 
   String _digest(String value) => sha256.convert(utf8.encode(value)).toString();
+
+  String _changeKey(CloudSyncScope scope, int generation, String changeId) =>
+      generation == 1
+      ? _scopedDigest(scope, 'change', changeId)
+      : _scopedDigest(scope, 'change-generation-$generation', changeId);
 
   String _encodeDependencies(Iterable<String> values) {
     final sorted = values.toSet().toList()..sort();

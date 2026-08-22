@@ -2312,7 +2312,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(28, 889478301778181246),
     name: 'CloudKitWriterAuthorityEntity',
-    lastPropertyId: const obx_int.IdUid(11, 5989769012840038573),
+    lastPropertyId: const obx_int.IdUid(14, 4174520670149979908),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -2383,6 +2383,156 @@ final _entities = <obx_int.ModelEntity>[
         type: 9,
         flags: 0,
       ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 9160103618601374829),
+        name: 'resetScopeKeyHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(13, 2198164706224214236),
+        name: 'resetGeneration',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(14, 4174520670149979908),
+        name: 'resetProofReferenceHash',
+        type: 9,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(29, 3887662870209685934),
+    name: 'CloudKitDeletionIntentEntity',
+    lastPropertyId: const obx_int.IdUid(12, 4810596780446149463),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 4826700441964631379),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 3159247580443387695),
+        name: 'intentKey',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(74, 8915222881106965724),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 6722727339572908414),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(75, 3577054364456742958),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 458894881388309981),
+        name: 'container',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 6503045858666304076),
+        name: 'database',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 9128063155847659726),
+        name: 'writerEpoch',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 8745333787754726390),
+        name: 'kind',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 8231123974175741804),
+        name: 'recordId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 8313675762076426993),
+        name: 'state',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(76, 4653884840954261598),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 1791582430176981252),
+        name: 'quarantineReason',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 6754220496000410228),
+        name: 'createdAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 4810596780446149463),
+        name: 'updatedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(30, 156682190547124916),
+    name: 'CloudKitDeletionQuarantineEntity',
+    lastPropertyId: const obx_int.IdUid(6, 7608873074433568741),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 9016454772102266426),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 6218233504524201595),
+        name: 'quarantineKey',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(77, 1999680227156715272),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 5288728045287545979),
+        name: 'sourceKey',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 7940712078234941674),
+        name: 'recordId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 8871707048403049958),
+        name: 'reason',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 7608873074433568741),
+        name: 'createdAtMs',
+        type: 6,
+        flags: 0,
+      ),
     ],
     relations: <obx_int.ModelRelation>[],
     backlinks: <obx_int.ModelBacklink>[],
@@ -2432,8 +2582,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
     // Typically, this is done with `dart run build_runner build`.
     generatorVersion: obx_int.GeneratorVersion.v2025_12_16,
     entities: _entities,
-    lastEntityId: const obx_int.IdUid(28, 889478301778181246),
-    lastIndexId: const obx_int.IdUid(73, 5488879845786692064),
+    lastEntityId: const obx_int.IdUid(30, 156682190547124916),
+    lastIndexId: const obx_int.IdUid(77, 1999680227156715272),
     lastRelationId: const obx_int.IdUid(1, 7492985733214117623),
     lastSequenceId: const obx_int.IdUid(0, 0),
     retiredEntityUids: const [
@@ -5549,7 +5699,14 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final transitionIdHashOffset = object.transitionIdHash == null
                 ? null
                 : fbb.writeString(object.transitionIdHash!);
-            fbb.startTable(12);
+            final resetScopeKeyHashOffset = object.resetScopeKeyHash == null
+                ? null
+                : fbb.writeString(object.resetScopeKeyHash!);
+            final resetProofReferenceHashOffset =
+                object.resetProofReferenceHash == null
+                ? null
+                : fbb.writeString(object.resetProofReferenceHash!);
+            fbb.startTable(15);
             fbb.addInt64(0, object.id);
             fbb.addOffset(1, authorityKeyOffset);
             fbb.addOffset(2, accountFingerprintOffset);
@@ -5561,6 +5718,9 @@ obx_int.ModelDefinition getObjectBoxModel() {
             fbb.addInt64(8, object.epoch);
             fbb.addInt64(9, object.updatedAtMs);
             fbb.addOffset(10, transitionIdHashOffset);
+            fbb.addOffset(11, resetScopeKeyHashOffset);
+            fbb.addInt64(12, object.resetGeneration);
+            fbb.addOffset(13, resetProofReferenceHashOffset);
             fbb.finish(fbb.endTable());
             return object.id;
           },
@@ -5612,6 +5772,18 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final transitionIdHashParam = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGetNullable(buffer, rootOffset, 24);
+            final resetScopeKeyHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 26);
+            final resetProofReferenceHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 30);
+            final resetGenerationParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              28,
+              0,
+            );
             final updatedAtMsParam = const fb.Int64Reader().vTableGet(
               buffer,
               rootOffset,
@@ -5629,7 +5801,187 @@ obx_int.ModelDefinition getObjectBoxModel() {
               targetOwner: targetOwnerParam,
               epoch: epochParam,
               transitionIdHash: transitionIdHashParam,
+              resetScopeKeyHash: resetScopeKeyHashParam,
+              resetProofReferenceHash: resetProofReferenceHashParam,
+              resetGeneration: resetGenerationParam,
               updatedAtMs: updatedAtMsParam,
+            );
+
+            return object;
+          },
+        ),
+    CloudKitDeletionIntentEntity:
+        obx_int.EntityDefinition<CloudKitDeletionIntentEntity>(
+          model: _entities[20],
+          toOneRelations: (CloudKitDeletionIntentEntity object) => [],
+          toManyRelations: (CloudKitDeletionIntentEntity object) => {},
+          getId: (CloudKitDeletionIntentEntity object) => object.id,
+          setId: (CloudKitDeletionIntentEntity object, int id) {
+            object.id = id;
+          },
+          objectToFB: (CloudKitDeletionIntentEntity object, fb.Builder fbb) {
+            final intentKeyOffset = fbb.writeString(object.intentKey);
+            final accountFingerprintOffset = fbb.writeString(
+              object.accountFingerprint,
+            );
+            final containerOffset = fbb.writeString(object.container);
+            final databaseOffset = fbb.writeString(object.database);
+            final recordIdOffset = fbb.writeString(object.recordId);
+            final quarantineReasonOffset = object.quarantineReason == null
+                ? null
+                : fbb.writeString(object.quarantineReason!);
+            fbb.startTable(13);
+            fbb.addInt64(0, object.id);
+            fbb.addOffset(1, intentKeyOffset);
+            fbb.addOffset(2, accountFingerprintOffset);
+            fbb.addOffset(3, containerOffset);
+            fbb.addOffset(4, databaseOffset);
+            fbb.addInt64(5, object.writerEpoch);
+            fbb.addInt64(6, object.kind);
+            fbb.addOffset(7, recordIdOffset);
+            fbb.addInt64(8, object.state);
+            fbb.addOffset(9, quarantineReasonOffset);
+            fbb.addInt64(10, object.createdAtMs);
+            fbb.addInt64(11, object.updatedAtMs);
+            fbb.finish(fbb.endTable());
+            return object.id;
+          },
+          objectFromFB: (obx.Store store, ByteData fbData) {
+            final buffer = fb.BufferContext(fbData);
+            final rootOffset = buffer.derefObject(0);
+            final idParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              4,
+              0,
+            );
+            final intentKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 6, '');
+            final accountFingerprintParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 8, '');
+            final containerParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 10, '');
+            final databaseParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 12, '');
+            final writerEpochParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              14,
+              0,
+            );
+            final kindParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              16,
+              0,
+            );
+            final recordIdParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 18, '');
+            final stateParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              20,
+              0,
+            );
+            final quarantineReasonParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 22);
+            final createdAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              24,
+              0,
+            );
+            final updatedAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              26,
+              0,
+            );
+            final object = CloudKitDeletionIntentEntity(
+              id: idParam,
+              intentKey: intentKeyParam,
+              accountFingerprint: accountFingerprintParam,
+              container: containerParam,
+              database: databaseParam,
+              writerEpoch: writerEpochParam,
+              kind: kindParam,
+              recordId: recordIdParam,
+              state: stateParam,
+              quarantineReason: quarantineReasonParam,
+              createdAtMs: createdAtMsParam,
+              updatedAtMs: updatedAtMsParam,
+            );
+
+            return object;
+          },
+        ),
+    CloudKitDeletionQuarantineEntity:
+        obx_int.EntityDefinition<CloudKitDeletionQuarantineEntity>(
+          model: _entities[21],
+          toOneRelations: (CloudKitDeletionQuarantineEntity object) => [],
+          toManyRelations: (CloudKitDeletionQuarantineEntity object) => {},
+          getId: (CloudKitDeletionQuarantineEntity object) => object.id,
+          setId: (CloudKitDeletionQuarantineEntity object, int id) {
+            object.id = id;
+          },
+          objectToFB:
+              (CloudKitDeletionQuarantineEntity object, fb.Builder fbb) {
+                final quarantineKeyOffset = fbb.writeString(
+                  object.quarantineKey,
+                );
+                final sourceKeyOffset = fbb.writeString(object.sourceKey);
+                final recordIdOffset = fbb.writeString(object.recordId);
+                final reasonOffset = fbb.writeString(object.reason);
+                fbb.startTable(7);
+                fbb.addInt64(0, object.id);
+                fbb.addOffset(1, quarantineKeyOffset);
+                fbb.addOffset(2, sourceKeyOffset);
+                fbb.addOffset(3, recordIdOffset);
+                fbb.addOffset(4, reasonOffset);
+                fbb.addInt64(5, object.createdAtMs);
+                fbb.finish(fbb.endTable());
+                return object.id;
+              },
+          objectFromFB: (obx.Store store, ByteData fbData) {
+            final buffer = fb.BufferContext(fbData);
+            final rootOffset = buffer.derefObject(0);
+            final idParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              4,
+              0,
+            );
+            final quarantineKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 6, '');
+            final sourceKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 8, '');
+            final recordIdParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 10, '');
+            final reasonParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 12, '');
+            final createdAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              14,
+              0,
+            );
+            final object = CloudKitDeletionQuarantineEntity(
+              id: idParam,
+              quarantineKey: quarantineKeyParam,
+              sourceKey: sourceKeyParam,
+              recordId: recordIdParam,
+              reason: reasonParam,
+              createdAtMs: createdAtMsParam,
             );
 
             return object;
@@ -7521,5 +7873,131 @@ class CloudKitWriterAuthorityEntity_ {
   static final transitionIdHash =
       obx.QueryStringProperty<CloudKitWriterAuthorityEntity>(
         _entities[19].properties[10],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.resetScopeKeyHash].
+  static final resetScopeKeyHash =
+      obx.QueryStringProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[11],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.resetGeneration].
+  static final resetGeneration =
+      obx.QueryIntegerProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[12],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.resetProofReferenceHash].
+  static final resetProofReferenceHash =
+      obx.QueryStringProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[13],
+      );
+}
+
+/// [CloudKitDeletionIntentEntity] entity fields to define ObjectBox queries.
+class CloudKitDeletionIntentEntity_ {
+  /// See [CloudKitDeletionIntentEntity.id].
+  static final id = obx.QueryIntegerProperty<CloudKitDeletionIntentEntity>(
+    _entities[20].properties[0],
+  );
+
+  /// See [CloudKitDeletionIntentEntity.intentKey].
+  static final intentKey =
+      obx.QueryStringProperty<CloudKitDeletionIntentEntity>(
+        _entities[20].properties[1],
+      );
+
+  /// See [CloudKitDeletionIntentEntity.accountFingerprint].
+  static final accountFingerprint =
+      obx.QueryStringProperty<CloudKitDeletionIntentEntity>(
+        _entities[20].properties[2],
+      );
+
+  /// See [CloudKitDeletionIntentEntity.container].
+  static final container =
+      obx.QueryStringProperty<CloudKitDeletionIntentEntity>(
+        _entities[20].properties[3],
+      );
+
+  /// See [CloudKitDeletionIntentEntity.database].
+  static final database = obx.QueryStringProperty<CloudKitDeletionIntentEntity>(
+    _entities[20].properties[4],
+  );
+
+  /// See [CloudKitDeletionIntentEntity.writerEpoch].
+  static final writerEpoch =
+      obx.QueryIntegerProperty<CloudKitDeletionIntentEntity>(
+        _entities[20].properties[5],
+      );
+
+  /// See [CloudKitDeletionIntentEntity.kind].
+  static final kind = obx.QueryIntegerProperty<CloudKitDeletionIntentEntity>(
+    _entities[20].properties[6],
+  );
+
+  /// See [CloudKitDeletionIntentEntity.recordId].
+  static final recordId = obx.QueryStringProperty<CloudKitDeletionIntentEntity>(
+    _entities[20].properties[7],
+  );
+
+  /// See [CloudKitDeletionIntentEntity.state].
+  static final state = obx.QueryIntegerProperty<CloudKitDeletionIntentEntity>(
+    _entities[20].properties[8],
+  );
+
+  /// See [CloudKitDeletionIntentEntity.quarantineReason].
+  static final quarantineReason =
+      obx.QueryStringProperty<CloudKitDeletionIntentEntity>(
+        _entities[20].properties[9],
+      );
+
+  /// See [CloudKitDeletionIntentEntity.createdAtMs].
+  static final createdAtMs =
+      obx.QueryIntegerProperty<CloudKitDeletionIntentEntity>(
+        _entities[20].properties[10],
+      );
+
+  /// See [CloudKitDeletionIntentEntity.updatedAtMs].
+  static final updatedAtMs =
+      obx.QueryIntegerProperty<CloudKitDeletionIntentEntity>(
+        _entities[20].properties[11],
+      );
+}
+
+/// [CloudKitDeletionQuarantineEntity] entity fields to define ObjectBox queries.
+class CloudKitDeletionQuarantineEntity_ {
+  /// See [CloudKitDeletionQuarantineEntity.id].
+  static final id = obx.QueryIntegerProperty<CloudKitDeletionQuarantineEntity>(
+    _entities[21].properties[0],
+  );
+
+  /// See [CloudKitDeletionQuarantineEntity.quarantineKey].
+  static final quarantineKey =
+      obx.QueryStringProperty<CloudKitDeletionQuarantineEntity>(
+        _entities[21].properties[1],
+      );
+
+  /// See [CloudKitDeletionQuarantineEntity.sourceKey].
+  static final sourceKey =
+      obx.QueryStringProperty<CloudKitDeletionQuarantineEntity>(
+        _entities[21].properties[2],
+      );
+
+  /// See [CloudKitDeletionQuarantineEntity.recordId].
+  static final recordId =
+      obx.QueryStringProperty<CloudKitDeletionQuarantineEntity>(
+        _entities[21].properties[3],
+      );
+
+  /// See [CloudKitDeletionQuarantineEntity.reason].
+  static final reason =
+      obx.QueryStringProperty<CloudKitDeletionQuarantineEntity>(
+        _entities[21].properties[4],
+      );
+
+  /// See [CloudKitDeletionQuarantineEntity.createdAtMs].
+  static final createdAtMs =
+      obx.QueryIntegerProperty<CloudKitDeletionQuarantineEntity>(
+        _entities[21].properties[5],
       );
 }

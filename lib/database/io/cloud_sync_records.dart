@@ -659,6 +659,9 @@ class CloudKitWriterAuthorityEntity {
   int targetOwner;
   int epoch;
   String? transitionIdHash;
+  String? resetScopeKeyHash;
+  String? resetProofReferenceHash;
+  int resetGeneration;
   int updatedAtMs;
 
   CloudKitWriterAuthorityEntity({
@@ -672,6 +675,82 @@ class CloudKitWriterAuthorityEntity {
     this.targetOwner = 0,
     this.epoch = 1,
     this.transitionIdHash,
+    this.resetScopeKeyHash,
+    this.resetProofReferenceHash,
+    this.resetGeneration = 0,
     required this.updatedAtMs,
+  });
+}
+
+/// One legacy CloudKit deletion target admitted under a complete writer scope.
+///
+/// The raw record ID is retained because the legacy Rust API requires it to
+/// issue a delete. It is never selected for a remote call unless the supplied
+/// scope and writer epoch still match the durable legacy authority.
+@Entity()
+class CloudKitDeletionIntentEntity {
+  int id;
+
+  @Index(type: IndexType.hash64)
+  @Unique()
+  String intentKey;
+
+  @Index(type: IndexType.hash64)
+  String accountFingerprint;
+
+  String container;
+  String database;
+  int writerEpoch;
+  int kind;
+  String recordId;
+
+  /// 0 pending, 1 quarantined. Values are stable persisted state codes.
+  @Index()
+  int state;
+
+  String? quarantineReason;
+  int createdAtMs;
+  int updatedAtMs;
+
+  CloudKitDeletionIntentEntity({
+    this.id = 0,
+    required this.intentKey,
+    required this.accountFingerprint,
+    required this.container,
+    required this.database,
+    required this.writerEpoch,
+    required this.kind,
+    required this.recordId,
+    this.state = 0,
+    this.quarantineReason,
+    required this.createdAtMs,
+    required this.updatedAtMs,
+  });
+}
+
+/// Durable evidence for a pre-V2 SharedPreferences deletion value.
+///
+/// These rows intentionally have no CloudKit scope. They are evidence only,
+/// and the deletion-intent store never includes them in a remote batch.
+@Entity()
+class CloudKitDeletionQuarantineEntity {
+  int id;
+
+  @Index(type: IndexType.hash64)
+  @Unique()
+  String quarantineKey;
+
+  String sourceKey;
+  String recordId;
+  String reason;
+  int createdAtMs;
+
+  CloudKitDeletionQuarantineEntity({
+    this.id = 0,
+    required this.quarantineKey,
+    required this.sourceKey,
+    required this.recordId,
+    required this.reason,
+    required this.createdAtMs,
   });
 }

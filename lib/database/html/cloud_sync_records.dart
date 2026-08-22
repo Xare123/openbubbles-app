@@ -23,3 +23,9 @@ class CloudAttachmentMaterializationEntity {}
 class CloudSemanticSnapshotEntity {}
 
 class CloudSemanticReplayEntity {}
+
+class CloudKitWriterAuthorityEntity {}
+
+class CloudKitDeletionIntentEntity {}
+
+class CloudKitDeletionQuarantineEntity {}

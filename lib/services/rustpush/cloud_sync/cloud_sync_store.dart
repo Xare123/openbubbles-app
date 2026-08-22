@@ -110,6 +110,18 @@ abstract interface class CloudSyncStore {
   /// operation in one transaction.
   Future<CloudOutboxOperation> enqueueOutboxMutation(CloudOutboxDraft draft);
 
+  /// Atomically starts a new reset generation.
+  ///
+  /// The transaction fences every old-generation outbox operation and record
+  /// mapping, preserves old inbox evidence outside the active generation,
+  /// clears the continuation/checkpoint sequencing and pull backoff state,
+  /// and returns a proof tied to the exact request. No network or protected
+  /// reference resolution is permitted while the transaction is open.
+  Future<CloudSyncResetCompletionProof> rebootstrapAfterReset(
+    CloudSyncResetRebootstrapRequest request, {
+    required DateTime now,
+  });
+
   /// Atomically advances the account/scope checkpoint generation and fences
   /// every non-terminal outbox row admitted under an older generation.
   ///

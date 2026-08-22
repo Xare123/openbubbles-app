@@ -1980,7 +1980,7 @@
     },
     {
       "id": "28:889478301778181246",
-      "lastPropertyId": "11:5989769012840038573",
+      "lastPropertyId": "14:4174520670149979908",
       "name": "CloudKitWriterAuthorityEntity",
       "properties": [
         {
@@ -2042,13 +2042,144 @@
           "id": "11:5989769012840038573",
           "name": "transitionIdHash",
           "type": 9
+        },
+        {
+          "id": "12:9160103618601374829",
+          "name": "resetScopeKeyHash",
+          "type": 9
+        },
+        {
+          "id": "13:2198164706224214236",
+          "name": "resetGeneration",
+          "type": 6
+        },
+        {
+          "id": "14:4174520670149979908",
+          "name": "resetProofReferenceHash",
+          "type": 9
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "29:3887662870209685934",
+      "lastPropertyId": "12:4810596780446149463",
+      "name": "CloudKitDeletionIntentEntity",
+      "properties": [
+        {
+          "id": "1:4826700441964631379",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:3159247580443387695",
+          "name": "intentKey",
+          "indexId": "74:8915222881106965724",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:6722727339572908414",
+          "name": "accountFingerprint",
+          "indexId": "75:3577054364456742958",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "4:458894881388309981",
+          "name": "container",
+          "type": 9
+        },
+        {
+          "id": "5:6503045858666304076",
+          "name": "database",
+          "type": 9
+        },
+        {
+          "id": "6:9128063155847659726",
+          "name": "writerEpoch",
+          "type": 6
+        },
+        {
+          "id": "7:8745333787754726390",
+          "name": "kind",
+          "type": 6
+        },
+        {
+          "id": "8:8231123974175741804",
+          "name": "recordId",
+          "type": 9
+        },
+        {
+          "id": "9:8313675762076426993",
+          "name": "state",
+          "indexId": "76:4653884840954261598",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "10:1791582430176981252",
+          "name": "quarantineReason",
+          "type": 9
+        },
+        {
+          "id": "11:6754220496000410228",
+          "name": "createdAtMs",
+          "type": 6
+        },
+        {
+          "id": "12:4810596780446149463",
+          "name": "updatedAtMs",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "30:156682190547124916",
+      "lastPropertyId": "6:7608873074433568741",
+      "name": "CloudKitDeletionQuarantineEntity",
+      "properties": [
+        {
+          "id": "1:9016454772102266426",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:6218233504524201595",
+          "name": "quarantineKey",
+          "indexId": "77:1999680227156715272",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:5288728045287545979",
+          "name": "sourceKey",
+          "type": 9
+        },
+        {
+          "id": "4:7940712078234941674",
+          "name": "recordId",
+          "type": 9
+        },
+        {
+          "id": "5:8871707048403049958",
+          "name": "reason",
+          "type": 9
+        },
+        {
+          "id": "6:7608873074433568741",
+          "name": "createdAtMs",
+          "type": 6
         }
       ],
       "relations": []
     }
   ],
-  "lastEntityId": "28:889478301778181246",
-  "lastIndexId": "73:5488879845786692064",
+  "lastEntityId": "30:156682190547124916",
+  "lastIndexId": "77:1999680227156715272",
   "lastRelationId": "1:7492985733214117623",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

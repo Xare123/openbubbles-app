@@ -616,6 +616,103 @@ void main() {
   );
 
   test(
+    'reset rebootstrap atomically fences evidence and clears active state',
+    () async {
+      final scope = testScope();
+      await journal(batch(scope, token: 'old-reset-token'));
+      final operation = await store.enqueueOutboxMutation(draft(scope, 77));
+      await store.upsertRecordMap(
+        CloudRecordMapEntry(
+          scope: scope,
+          logicalEntityKeyHash: 'logical-key-digest-map-reset',
+          serverRecordIdHash: 'server-record-reset',
+          encryptedServerRecordId:
+              'obcs2.ref.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+          updatedAt: testEpoch,
+        ),
+        generation: 1,
+      );
+      await store.recordPullFailure(
+        scope,
+        category: CloudFailureCategory.network,
+        nextEligibleAt: testEpoch.add(const Duration(hours: 1)),
+      );
+      await store.releaseCoordinatorLease(
+        scope,
+        leaseFence: coordinatorFences[scope.storageKey]!,
+      );
+
+      final completion = await store.rebootstrapAfterReset(
+        _resetRequest(scope),
+        now: testEpoch.add(const Duration(seconds: 1)),
+      );
+      expect(completion.previousGeneration, 1);
+      expect(completion.generation, 2);
+      expect(completion.binds(_resetRequest(scope)), isTrue);
+
+      final checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.generation, 2);
+      expect(checkpoint.fetchedToken, isNull);
+      expect(checkpoint.lastBatchId, isNull);
+      expect(checkpoint.fetchedSequence, 0);
+      expect(checkpoint.lastAppliedSequence, 0);
+      expect(checkpoint.consecutivePullFailures, 0);
+      expect(checkpoint.nextPullEligibleAt, isNull);
+      expect(checkpoint.lastFailure, isNull);
+
+      final oldOutbox = objectBox.box<CloudOutboxOperationEntity>().getAll();
+      expect(oldOutbox.single.operationId, operation.operationId);
+      expect(oldOutbox.single.state, 4);
+      expect(oldOutbox.single.leaseIdHash, isNull);
+      expect(
+        objectBox.box<CloudRecordMapEntity>().getAll().single.generation,
+        0,
+      );
+      expect(
+        objectBox.box<CloudInboxChangeEntity>().getAll(),
+        everyElement(
+          predicate<CloudInboxChangeEntity>(
+            (row) => row.generation == 0 && row.status == 2,
+          ),
+        ),
+      );
+      expect(
+        await store.readEligibleInbox(scope, now: testEpoch, limit: 1),
+        isEmpty,
+      );
+      expect(
+        await store.readRecordMap(
+          scope,
+          logicalEntityKeyHash: 'logical-key-digest-map-reset',
+          generation: 2,
+        ),
+        isNull,
+      );
+
+      await reopen();
+      expect((await store.readCheckpoint(scope)).generation, 2);
+      expect(
+        (await store.enqueueOutboxMutation(draft(scope, 78)))
+            .checkpointGeneration,
+        2,
+      );
+      coordinatorFences.remove(scope.storageKey);
+      expect(
+        await journal(
+          batch(
+            scope,
+            generation: 2,
+            batchId: 'new-generation-page',
+            token: 'new-generation-token',
+            changes: [testChange(1)],
+          ),
+        ),
+        1,
+      );
+    },
+  );
+
+  test(
     'legacy zero-generation outbox row is terminally fenced and never leased',
     () async {
       final scope = testScope();
@@ -2060,6 +2157,18 @@ String _nativeReferenceForIndex(int index) {
       .replaceAll('=', '');
   return 'obcs2.ref.$token';
 }
+
+CloudSyncResetRebootstrapRequest _resetRequest(
+  CloudSyncScope scope, {
+  int expectedGeneration = 1,
+}) => CloudSyncResetRebootstrapRequest(
+  scope: scope,
+  transitionIdHash:
+      '2222222222222222222222222222222222222222222222222222222222222222',
+  activeIdentityFingerprint: scope.accountFingerprint,
+  expectedGeneration: expectedGeneration,
+  protectedRemoteStateProofReference: _nativeReference('A'),
+);
 
 class _TestCloudSyncProtector implements CloudSyncProtector {
   bool failProtection = false;

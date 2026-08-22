@@ -174,6 +174,12 @@ final class ShadowOnlyCloudSyncStore
       _blocked();
 
   @override
+  Future<CloudSyncResetCompletionProof> rebootstrapAfterReset(
+    CloudSyncResetRebootstrapRequest request, {
+    required DateTime now,
+  }) => _blocked();
+
+  @override
   Future<CloudSyncCheckpoint> advanceOutboxGeneration(
     CloudSyncScope scope, {
     required DateTime now,
