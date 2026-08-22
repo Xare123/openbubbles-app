@@ -57,12 +57,11 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
         return try {
             val uri = android.net.Uri.parse(requestUrl)
             val segment = uri.lastPathSegment.orEmpty()
-            val resource = when {
-                segment.endsWith(".js", ignoreCase = true) -> segment.substringAfterLast('/')
-                segment.endsWith(".css", ignoreCase = true) -> segment.substringAfterLast('/')
+            when {
+                segment.endsWith(".js", ignoreCase = true) -> "script"
+                segment.endsWith(".css", ignoreCase = true) -> "style"
                 else -> "page-or-media"
             }
-            "${uri.host ?: "unknown"}/$resource"
         } catch (_: Exception) {
             "unparseable"
         }
@@ -107,15 +106,112 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             string = string.replace(submitNamePattern, "$1 $2(\"$name\").then(() => Native.mirrored());")
         }
 
+        val patchCount = waitingMatches + bannerMatches + leaveMatches + submitNameMatches
         if (diagnosticsEnabled) {
-            Log.i(
-                diagnosticTag,
-                "main.js bytes=${string.length} patches waiting=$waitingMatches banner=$bannerMatches leave=$leaveMatches submitName=$submitNameMatches nameProvided=${name != null}"
+            FaceTimeDiagnostics.logStage(
+                applicationContext,
+                FaceTimeDiagnosticStage.JS_PATCHED,
+                state = if (patchCount > 0) "true" else "false",
+                count = patchCount,
             )
         }
 
-        return string
+        return webRtcDiagnosticBootstrap + string
     }
+
+    private val webRtcDiagnosticBootstrap = """
+        (() => {
+          if (window.__obFaceTimeDiagnostics) return;
+          const state = {
+            peers: [],
+          };
+          const updateIceState = (peerState) => {
+            peerState.iceState = peerState.peer.iceConnectionState || peerState.peer.connectionState || "unknown";
+          };
+          const watchPeer = (pc) => {
+            const peerState = {
+              peer: pc,
+              iceState: "unknown",
+              remoteAudioTracks: new Map(),
+              remoteVideoTracks: new Map()
+            };
+            state.peers.push(peerState);
+            updateIceState(peerState);
+            pc.addEventListener("iceconnectionstatechange", () => updateIceState(peerState));
+            pc.addEventListener("connectionstatechange", () => updateIceState(peerState));
+            pc.addEventListener("track", (event) => {
+              if (!event.track || !event.track.id) return;
+              const tracks = event.track.kind === "audio"
+                ? peerState.remoteAudioTracks
+                : event.track.kind === "video" ? peerState.remoteVideoTracks : null;
+              if (!tracks) return;
+              const track = event.track;
+              tracks.set(track.id, track);
+              track.addEventListener("ended", () => {
+                if (tracks.get(track.id) === track) tracks.delete(track.id);
+              });
+            });
+          };
+          const install = () => {
+            const original = window.RTCPeerConnection;
+            if (!original || window.__obFaceTimeRtcWrapped) return !!original;
+            window.__obFaceTimeRtcWrapped = true;
+            window.RTCPeerConnection = new Proxy(original, {
+              construct(target, args, newTarget) {
+                const peer = Reflect.construct(target, args, newTarget);
+                watchPeer(peer);
+                return peer;
+              }
+            });
+            return true;
+          };
+          install();
+          if (!window.__obFaceTimeRtcInstallTimer) {
+            window.__obFaceTimeRtcInstallTimer = window.setInterval(() => {
+              if (install()) window.clearInterval(window.__obFaceTimeRtcInstallTimer);
+            }, 100);
+          }
+          window.__obFaceTimeDiagnostics = {
+            snapshot: async () => {
+              let bytes = 0;
+              let bytesObserved = false;
+              for (const peerState of state.peers) {
+                const peer = peerState.peer;
+                updateIceState(peerState);
+                try {
+                  const reports = await peer.getStats();
+                  reports.forEach((report) => {
+                    if (report.type === "inbound-rtp" && typeof report.bytesReceived === "number") {
+                      bytes += report.bytesReceived;
+                      bytesObserved = true;
+                    }
+                  });
+                } catch (_) {}
+              }
+              const currentStates = state.peers.map((peerState) => peerState.iceState);
+              const preferredStates = ["connected", "completed", "checking", "new", "disconnected", "failed", "closed"];
+              const iceState = preferredStates.find((candidate) => currentStates.includes(candidate)) || "unknown";
+              const remoteAudioTracks = state.peers.reduce((count, peerState) => {
+                return count + Array.from(peerState.remoteAudioTracks.values()).filter((track) => track.readyState !== "ended").length;
+              }, 0);
+              const remoteVideoTracks = state.peers.reduce((count, peerState) => {
+                return count + Array.from(peerState.remoteVideoTracks.values()).filter((track) => track.readyState !== "ended").length;
+              }, 0);
+              const leave = Array.from(document.querySelectorAll("button")).some((button) => {
+                const text = (button.innerText || button.textContent || button.getAttribute("aria-label") || "").trim();
+                return /^(leave|end call)$/i.test(text) && button.offsetParent !== null;
+              });
+              return JSON.stringify({
+                iceState,
+                remoteAudioTracks,
+                remoteVideoTracks,
+                mediaBytes: bytesObserved ? bytes : null,
+                webLeaveVisible: leave
+              });
+            }
+          };
+        })();
+    """.trimIndent()
 
     init {
         val client = OkHttpClient.Builder()
@@ -168,7 +264,11 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 if (diagnosticsEnabled()) {
-                    Log.i(diagnosticTag, "page finished ${safeResourceLabel(url)} mirrorReady=$mirrorReady")
+                    FaceTimeDiagnostics.logStage(
+                        applicationContext,
+                        FaceTimeDiagnosticStage.WEBVIEW_LOADED,
+                        state = "true",
+                    )
                 }
             }
 
@@ -233,7 +333,11 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             override fun onPermissionRequest(request: PermissionRequest?) {
                 if (request == null) return
                 if (diagnosticsEnabled()) {
-                    Log.i(diagnosticTag, "WebView permission request resources=${request.resources.sorted().joinToString()}")
+                    FaceTimeDiagnostics.logStage(
+                        applicationContext,
+                        FaceTimeDiagnosticStage.PERMISSIONS_REQUESTED,
+                        count = request.resources.size,
+                    )
                 }
                 deferredRequests.add(request)
                 deferredRequestsUpdated()

@@ -96,6 +96,115 @@ String _diagnosticHash(String value) =>
 String _durationMs(Stopwatch stopwatch) =>
     stopwatch.elapsedMilliseconds.toString();
 
+enum FaceTimeIncomingAdmissionStatus {
+  approved,
+  missingCallUuid,
+  stale,
+  mismatched,
+  alreadyClaimed,
+}
+
+class FaceTimeIncomingAdmissionResult {
+  const FaceTimeIncomingAdmissionResult._({
+    required this.status,
+    this.approvedGroup,
+  });
+
+  const FaceTimeIncomingAdmissionResult.approved(String groupUuid)
+      : this._(
+          status: FaceTimeIncomingAdmissionStatus.approved,
+          approvedGroup: groupUuid,
+        );
+
+  const FaceTimeIncomingAdmissionResult.rejected(
+      FaceTimeIncomingAdmissionStatus status)
+      : this._(status: status);
+
+  final FaceTimeIncomingAdmissionStatus status;
+  final String? approvedGroup;
+
+  bool get isApproved => status == FaceTimeIncomingAdmissionStatus.approved;
+}
+
+/// Correlates a WebView admission request with the ring that opened it.
+///
+/// Direct incoming let-me-in requests do not carry the FaceTime group UUID.
+/// The Android call activity supplies the UUID through `get-active-call`, so
+/// admission is allowed only when that UUID matches the still-pending ring.
+/// The claim remains held until the response completes. The completed ticket
+/// stays boundedly available for an idempotent retry of the same request, while
+/// a concurrent in-flight duplicate is ignored.
+class FaceTimeIncomingAdmissionCorrelation {
+  FaceTimeIncomingAdmissionCorrelation({
+    required this.callUuid,
+    required this.receivedAt,
+  });
+
+  static const maxAge = Duration(minutes: 2);
+
+  final String callUuid;
+  final DateTime receivedAt;
+  bool _claimed = false;
+  bool _completed = false;
+  bool _expired = false;
+
+  bool get isCompleted => _completed;
+
+  FaceTimeIncomingAdmissionResult claim({
+    required String? activeCallUuid,
+    required DateTime now,
+  }) {
+    if (_expired) {
+      return const FaceTimeIncomingAdmissionResult.rejected(
+        FaceTimeIncomingAdmissionStatus.stale,
+      );
+    }
+    if (now.isBefore(receivedAt) || now.difference(receivedAt) > maxAge) {
+      _expired = true;
+      return const FaceTimeIncomingAdmissionResult.rejected(
+        FaceTimeIncomingAdmissionStatus.stale,
+      );
+    }
+    if (activeCallUuid == null || activeCallUuid.trim().isEmpty) {
+      return const FaceTimeIncomingAdmissionResult.rejected(
+        FaceTimeIncomingAdmissionStatus.missingCallUuid,
+      );
+    }
+    if (activeCallUuid != callUuid) {
+      return const FaceTimeIncomingAdmissionResult.rejected(
+        FaceTimeIncomingAdmissionStatus.mismatched,
+      );
+    }
+    if (_completed) {
+      // Direct incoming requests have no delegation UUID, so rustpush cannot
+      // deduplicate a retry for us. Re-approve the same call while its ticket
+      // remains live in case the first response was lost in transit.
+      return FaceTimeIncomingAdmissionResult.approved(callUuid);
+    }
+    if (_claimed) {
+      return const FaceTimeIncomingAdmissionResult.rejected(
+        FaceTimeIncomingAdmissionStatus.alreadyClaimed,
+      );
+    }
+
+    _claimed = true;
+    return FaceTimeIncomingAdmissionResult.approved(callUuid);
+  }
+
+  void complete() {
+    if (_claimed) {
+      _completed = true;
+      _claimed = false;
+    }
+  }
+
+  void release() {
+    if (!_completed) {
+      _claimed = false;
+    }
+  }
+}
+
 class SyncIsolate {
   static void initialize() {
     ui.CallbackHandle callbackHandle =
@@ -4391,7 +4500,7 @@ class RustPushService extends GetxService {
   var notifiedSubFailed = false;
 
   String? chosenFTRoomGuid;
-  String? incomingRingingCallGuid;
+  FaceTimeIncomingAdmissionCorrelation? _incomingAdmission;
 
   Future<void> markCertified(api.PushMessage push) async {
     if (push is! api.PushMessage_IMessage) return;
@@ -4551,7 +4660,7 @@ class RustPushService extends GetxService {
                 mode: LaunchMode.externalApplication);
           }
 
-          incomingRingingCallGuid = null;
+          _incomingAdmission = null;
         }
       } else if (facetime is api.FTMessage_AddMembers) {
         if (facetime.ring) {
@@ -4593,7 +4702,11 @@ class RustPushService extends GetxService {
         var link = await api.getFtLink(
             facetime: pushService.state!.ftClient, usage: "nextincomingcall");
         rotateIncomingLink();
-        incomingRingingCallGuid = ring;
+        final incomingAdmission = FaceTimeIncomingAdmissionCorrelation(
+          callUuid: ring,
+          receivedAt: DateTime.now(),
+        );
+        _incomingAdmission = incomingAdmission;
 
         String? myPoster;
         Uint8List? icon;
@@ -4601,7 +4714,9 @@ class RustPushService extends GetxService {
         if (identity != null) {
           var handle = RustPushBBUtils.rustHandleToBB(identity);
           if (handle.isBlocked()) {
-            incomingRingingCallGuid = null;
+            if (identical(_incomingAdmission, incomingAdmission)) {
+              _incomingAdmission = null;
+            }
             Logger.info("Dropping call from blocked handle $handle");
             return;
           }
@@ -4655,7 +4770,10 @@ class RustPushService extends GetxService {
         var nonActive =
             sessions.firstWhereOrNull((a) => a.groupId == facetime.guid);
         if (nonActive != null) {
-          if (incomingRingingCallGuid != null) {
+          final pendingAdmission = _incomingAdmission;
+          if (pendingAdmission != null &&
+              !pendingAdmission.isCompleted &&
+              pendingAdmission.callUuid == facetime.guid) {
             var session = getSessionName(facetime.guid, false);
             if (session == null) {
               Logger.warn("Missed call $ring not found in active sessions!");
@@ -4663,7 +4781,7 @@ class RustPushService extends GetxService {
             }
             // this is a missed call
             notif.createMissedCallNotification(session, facetime.guid);
-            incomingRingingCallGuid = null;
+            _incomingAdmission = null;
           }
 
           hideFaceTimeOverlay(facetime.guid,
@@ -4674,15 +4792,46 @@ class RustPushService extends GetxService {
       if (facetime is api.FTMessage_RespondedElsewhere) {
         hideFaceTimeOverlay(facetime.guid,
             timeout: true); // they have given up the ringing
-        incomingRingingCallGuid = null;
+        if (_incomingAdmission?.callUuid == facetime.guid) {
+          _incomingAdmission = null;
+        }
       }
 
       if (facetime is api.FTMessage_LetMeInRequest) {
         var approvedGroup = chosenFTRoomGuid;
-        if (facetime.field0.usage == "incomingcall" ||
-            facetime.field0.usage == "nextincomingcall") {
-          approvedGroup = incomingRingingCallGuid;
-          incomingRingingCallGuid = null;
+        FaceTimeIncomingAdmissionCorrelation? claimedAdmission;
+        final isIncomingAdmission = facetime.field0.usage == "incomingcall" ||
+            facetime.field0.usage == "nextincomingcall";
+        if (isIncomingAdmission) {
+          claimedAdmission = _incomingAdmission;
+          String? activeCallUuid;
+          try {
+            activeCallUuid =
+                (await mcs.invokeMethod("get-active-call")) as String?;
+          } catch (error, trace) {
+            Logger.warn(
+              "FaceTime incoming admission UUID lookup failed",
+              error: error,
+              trace: trace,
+            );
+          }
+
+          final admission = claimedAdmission?.claim(
+            activeCallUuid: activeCallUuid,
+            now: DateTime.now(),
+          );
+          approvedGroup = admission?.approvedGroup;
+          if (admission == null || !admission.isApproved) {
+            Logger.warn(
+              "FaceTime incoming admission rejected: ${admission?.status.name ?? 'missingPendingCall'}",
+            );
+            if (admission?.status ==
+                FaceTimeIncomingAdmissionStatus.alreadyClaimed) {
+              Logger.info(
+                  "Ignoring concurrent duplicate FaceTime incoming admission request");
+              return;
+            }
+          }
         }
         Logger.info(
             "FaceTime web admission request: usage=${facetime.field0.usage ?? 'unknown'}, approvedGroupPresent=${approvedGroup != null}");
@@ -4691,8 +4840,16 @@ class RustPushService extends GetxService {
               facetime: pushService.state!.ftClient,
               request: facetime.field0,
               approvedGroup: approvedGroup);
+          if (isIncomingAdmission &&
+              claimedAdmission != null &&
+              approvedGroup != null) {
+            claimedAdmission.complete();
+          }
           Logger.info("FaceTime web admission response sent");
         } catch (error, trace) {
+          if (isIncomingAdmission && approvedGroup != null) {
+            claimedAdmission?.release();
+          }
           Logger.error("FaceTime web admission response failed",
               error: error, trace: trace);
           rethrow;

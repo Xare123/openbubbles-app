@@ -20,19 +20,22 @@ prior document is stale, this one says so rather than repeating it.
 
 ## Where this actually stands
 
-Verified on 2026-08-06:
+Latest local evidence was refreshed on 2026-08-22. Cross-platform CI evidence
+remains from the 2026-08-06 run until this change set is pushed:
 
 | Evidence | Result |
 | --- | --- |
-| Dart suite, ARM64 host | 388 tests pass |
-| Cloud Sync suite, ARM64 and x64 hosts | 296 pass on each |
+| Dart suite, ARM64 host | 453 tests pass |
+| Cloud Sync suite, ARM64 host | 316 tests pass |
+| Legacy ObjectBox upgrade probe, ARM64 host | copied pre-V2 database opens; source SHA-256 remains unchanged |
+| Cloud Sync suite, x64 host | 296 pass on the prior cross-platform run |
 | Cloud Sync suite in CI on Linux | passes, first time it has ever run there |
 | `cloud_sync_protector_harness`, ARM64 | 39 tests pass |
-| Kotlin unit tests, Alpha variant | 12 tests pass |
+| Kotlin FaceTime unit tests, Alpha variant | 14 tests pass |
 | Windows x64 CI lane | passes |
 | Windows ARM64 CI lane | passes |
 | Release Rust libraries | correct PE ARM64, PE x64, ELF64 AArch64 |
-| `cargo test` on the main crate | blocked by host policy, not by code |
+| `cargo test` on the main crate | 122 tests pass |
 
 What that evidence does **not** cover: no live CloudKit fetch has ever run, no
 record has been decoded from a real Apple account, and nothing has been written
@@ -80,22 +83,23 @@ Nothing here needs a device or an Apple account.
    statement as though it covered the second briefly made both parsers reject a
    valid parent. Field names and identifier prefixes are different things even
    when they share letters.
-2. **Decide the zone set.** We synchronize three Manatee zones.
-   `messageUpdateZone` and `recoverableMessageDeleteZone` also exist and are
-   plausibly where edits and recoverable deletes live. If so, reconciliation
-   built on three zones is incomplete by construction, and that is far cheaper
-   to learn now than after semantic apply is built on the assumption.
+2. ~~**Decide the discovery zone set.**~~ **Done for the raw sampler.** The
+   bounded read-only sampler now inspects the original three Manatee zones plus
+   `messageUpdateZone`, `recoverableMessageDeleteZone`,
+   `scheduledMessageZone`, and `chat1ManateeZone`. Stable native stream tags 4
+   through 7 preserve checkpoint separation. The four auxiliary streams are
+   deliberately rejected before semantic decode, and the existing production
+   record-count path remains limited to its original three zones.
 3. **Resolve the `EMPTY_LIST` question.** The CloudKit wire format has a
    distinct type for "present but empty" and our tri-state depends on it. Prior
    art collapses it with absent and therefore cannot answer whether Apple emits
    it. This is a question for the first live fetch, but the transport must be
    able to *record* the distinction before that run, or the run cannot answer it.
 
-4. **Decide what unblocks a stalled applied floor.** `_advanceContiguousApplied`
-   stops at the first inbox row whose status is not `applied`, and a
-   `quarantined` row therefore blocks the checkpoint permanently. That is
-   deliberate: the design refuses to skip a change. What is missing is any
-   bound on the stall.
+4. ~~**Decide what unblocks a stalled applied floor.**~~ **Done: advance
+   through terminal quarantine while retaining the journal evidence.**
+   `_advanceContiguousApplied` now treats both `applied` and `quarantined` as
+   terminal. Pending and retryable rows still block the floor.
 
    The consequence chain is worth stating plainly. One malformed record blocks
    the floor, the pending journal keeps growing, the journal budget eventually
@@ -104,18 +108,28 @@ Nothing here needs a device or an Apple account.
    of the entire zone, which is far worse than the single record that caused it.
    That lifetime is undocumented, so no safe stall duration can be assumed.
 
-   Two options, and this needs an explicit choice rather than a default:
+   The retained quarantine row preserves the protected source reference,
+   failure category, and replay evidence for a later decoder or targeted
+   recovery. It is not silently deleted. The tradeoff is explicit: CloudKit
+   will not automatically re-offer that change after the terminal floor moves,
+   so a future fetch-by-record-name repair path remains useful. This is safer
+   than allowing one malformed record to stop an entire zone indefinitely when
+   Apple's change-token lifetime is undocumented.
 
-   - **Advance past a terminal quarantine.** The row stays in the inbox as
-     evidence, so nothing is dropped, but the checkpoint moves past it and
-     CloudKit will not re-offer that record. Recovery then depends on a
-     fetch-by-record-name sweep that does not exist yet.
-   - **Keep blocking, but bound the stall by token age** and force a decision
-     before the token can expire. Preserves the no-skip guarantee at the cost
-     of needing a token-age estimate we do not have.
+Additional safety closures in this stage:
 
-   Whichever is chosen, the stall must become observable first. Today a blocked
-   floor produces no diagnostic at all, so the symptom is sync quietly stopping.
+- Dependency-deferred inbox rows now have a bounded terminal path, but only
+  after both eight attempts and three days by default. Ordinary retryable
+  network, server, and storage failures are not captured by that terminal rule.
+- The outbox leases only the earliest nonterminal mutation for each logical
+  entity, so a newer delete cannot overtake an older leased or paused save.
+- Push-only runs can revive an all-paused authorization or PCS outbox after a
+  successful subsystem refresh. Failed refreshes retain the paused row and a
+  durable six-hour retry delay prevents a trigger-driven refresh storm.
+- The current ObjectBox model successfully opens a copied legacy database and
+  leaves the source hash unchanged. That source contained no canonical message
+  rows, so a non-empty real-history migration probe is still required before
+  rollout.
 
 Exit: CI green on all lanes with the corrections landed.
 
@@ -198,7 +212,7 @@ x64, with zero lost and zero duplicated logical message GUIDs.
 | Windows desktop package | ANGLE built from pinned official source; the bundled media package deliberately refuses the unlicensed third-party ARM64 bundle | No runnable Windows build; the Rust bridge itself already builds for both architectures |
 | Android release signing | Keystore and `android/key.properties` absent | Debug and profile packages only |
 | Public redistribution | libmpv/FFmpeg transitive licence inventory incomplete | Cannot ship publicly regardless of engineering state |
-| `cargo test` on the main crate | Smart App Control on the development host | Run on CI or another host; do not disable the policy, it cannot be re-enabled |
+| `rustpush` crate-level test execution on the Windows host | Smart App Control blocks newly rebuilt test executables | The dedicated CI gate now runs these tests; do not disable the local policy |
 | Cross-client provenance | Per-install fingerprints cannot prove the same event reached two clients | Two clients showing the same message proves nothing without explicit cloud provenance |
 
 ## Standing constraints
