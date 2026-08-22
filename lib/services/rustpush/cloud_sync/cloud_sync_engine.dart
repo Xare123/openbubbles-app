@@ -1,3 +1,5 @@
+// ignore_for_file: prefer_initializing_formals
+
 import 'dart:async';
 import 'dart:math';
 
@@ -9,6 +11,8 @@ import 'cloud_sync_models.dart';
 import 'cloud_sync_observability.dart';
 import 'cloud_sync_store.dart';
 import 'cloud_sync_transport.dart';
+import 'cloud_sync_writer_authority.dart';
+import 'cloudkit_operation_interlock.dart';
 
 typedef CloudSyncClock = DateTime Function();
 
@@ -174,6 +178,8 @@ class CloudSyncEngine {
     required CloudSyncStore store,
     required CloudSyncTransport transport,
     required this._inboxApplier,
+    CloudSyncWriterAuthority? writerAuthority,
+    CloudKitOperationExclusion? writerExclusion,
     CloudSyncBackoffPolicy? backoff,
     this._observer = const NoopCloudSyncObserver(),
     CloudSyncClock? clock,
@@ -181,6 +187,11 @@ class CloudSyncEngine {
   }) : config = config ?? CloudSyncEngineConfig(),
        _store = store,
        _transport = transport,
+       _writerAuthority = writerAuthority,
+       _writerExclusion = writerExclusion,
+       _unknownOutcomeStore = store is CloudSyncUnknownOutcomeLeasingStore
+           ? store as CloudSyncUnknownOutcomeLeasingStore
+           : null,
        _protectedPageLeaseLifecycle =
            store is CloudProtectedPageLeaseAdoptionStore &&
                _protectedLeaseTransportFor(transport) != null
@@ -195,6 +206,15 @@ class CloudSyncEngine {
       throw ArgumentError('cloud_sync_coordinator_id_invalid');
     }
     this.config.validate();
+    if (this.config.flags.saves && _writerAuthority == null) {
+      throw ArgumentError('cloud_sync_writer_authority_required');
+    }
+    if (this.config.flags.saves && _unknownOutcomeStore == null) {
+      throw ArgumentError('cloud_sync_unknown_outcome_store_required');
+    }
+    if (this.config.flags.saves && _writerExclusion == null) {
+      throw ArgumentError('cloud_sync_writer_exclusion_required');
+    }
   }
 
   final CloudSyncScope scope;
@@ -202,6 +222,9 @@ class CloudSyncEngine {
   final String architectureName;
   final CloudSyncStore _store;
   final CloudSyncTransport _transport;
+  final CloudSyncWriterAuthority? _writerAuthority;
+  final CloudKitOperationExclusion? _writerExclusion;
+  final CloudSyncUnknownOutcomeLeasingStore? _unknownOutcomeStore;
   final CloudProtectedPageLeaseLifecycle? _protectedPageLeaseLifecycle;
   final CloudInboxApplier _inboxApplier;
   final CloudSyncBackoffPolicy _backoff;
@@ -213,8 +236,25 @@ class CloudSyncEngine {
   int _runSerial = 0;
   DateTime? _lastCoordinatorLeaseRenewal;
   CloudCoordinatorLeaseFence? _activeLeaseFence;
+  CloudSyncWriterPermit? _activeWriterPermit;
 
   Future<CloudSyncRunResult> synchronize({
+    required CloudSyncTrigger trigger,
+    CloudSyncCancellationToken? cancellationToken,
+  }) {
+    if (config.flags.saves) {
+      return _writerExclusion!.runExclusive(
+        kind: CloudKitOperationKind.v2ReadWrite,
+        action: () => _synchronize(
+          trigger: trigger,
+          cancellationToken: cancellationToken,
+        ),
+      );
+    }
+    return _synchronize(trigger: trigger, cancellationToken: cancellationToken);
+  }
+
+  Future<CloudSyncRunResult> _synchronize({
     required CloudSyncTrigger trigger,
     CloudSyncCancellationToken? cancellationToken,
   }) async {
@@ -294,6 +334,8 @@ class CloudSyncEngine {
       // state. Lease recovery is part of the write pipeline, even though it
       // does not contact CloudKit.
       if (config.flags.saves) {
+        _activeWriterPermit = await _writerAuthority!.issue(scope);
+        await _verifyWriterPermit();
         await _store.recoverExpiredOutboxLeases(scope, now: _clock());
       }
       var pullSucceeded = !config.flags.readOnlyFetch;
@@ -482,6 +524,7 @@ class CloudSyncEngine {
       } finally {
         _lastCoordinatorLeaseRenewal = null;
         _activeLeaseFence = null;
+        _activeWriterPermit = null;
         _runActive = false;
       }
     }
@@ -990,6 +1033,16 @@ class CloudSyncEngine {
       }
     }
 
+    final reconciliationCounters = await _reconcileUnknownOutcomes(
+      runNumber: runNumber,
+      cancellationToken: cancellationToken,
+    );
+    counters = counters.add(
+      confirmed: reconciliationCounters.confirmed,
+      quarantined: reconciliationCounters.quarantined,
+      retried: reconciliationCounters.retried,
+    );
+
     final allowedActions = <CloudOutboxAction>{
       CloudOutboxAction.save,
       if (config.flags.deletions) CloudOutboxAction.delete,
@@ -1023,10 +1076,21 @@ class CloudSyncEngine {
       final ready = preparation.ready;
       var outcomes = <String, CloudPushOutcome>{};
       if (ready.isNotEmpty) {
+        await _verifyWriterPermit();
+        // Persist the ambiguity boundary before the transport can contact
+        // CloudKit. A crash, lost lease, or lost response after this point
+        // must never recover these operations into the ordinary retry queue.
+        await _store.markOutboxSubmissionStarted(
+          scope,
+          leaseId: leaseId,
+          operationIds: ready.map((operation) => operation.operationId),
+          now: _clock(),
+        );
         try {
           final result = await _withCoordinatorLeaseHeartbeat(
             () => _transport.pushOperations(scope, operations: ready),
           );
+          await _verifyWriterPermitAfterRemote();
           outcomes = _requireExactPushOutcomes(ready, result);
         } on CloudSyncFailure catch (error) {
           if (_isCoordinatorLeaseFailure(error)) rethrow;
@@ -1040,7 +1104,7 @@ class CloudSyncEngine {
           for (final operation in ready) {
             outcomes[operation.operationId] = CloudPushOutcome(
               operationId: operation.operationId,
-              disposition: CloudPushDisposition.retryable,
+              disposition: CloudPushDisposition.unknownOutcome,
               failureCategory: CloudFailureCategory.unknown,
             );
           }
@@ -1096,9 +1160,8 @@ class CloudSyncEngine {
       for (final operation in ready) {
         final outcome = outcomes[operation.operationId];
         if (outcome == null) {
-          final transition = _retryOrQuarantineTransition(
-            operation,
-            category: CloudFailureCategory.network,
+          final transition = CloudOutboxTransition.unknownOutcome(
+            operation.operationId,
           );
           transitions.add(transition);
           counters = _countOutboxTransition(counters, transition);
@@ -1112,10 +1175,21 @@ class CloudSyncEngine {
             counters = counters.add(confirmed: 1);
             break;
           case CloudPushDisposition.retryable:
-            final transition = _retryOrQuarantineTransition(
-              operation,
-              category: outcome.failureCategory ?? CloudFailureCategory.network,
-              retryAfter: outcome.retryAfter,
+            final category =
+                outcome.failureCategory ?? CloudFailureCategory.network;
+            final transition = category == CloudFailureCategory.unknown
+                ? CloudOutboxTransition.unknownOutcome(operation.operationId)
+                : _retryOrQuarantineTransition(
+                    operation,
+                    category: category,
+                    retryAfter: outcome.retryAfter,
+                  );
+            transitions.add(transition);
+            counters = _countOutboxTransition(counters, transition);
+            break;
+          case CloudPushDisposition.unknownOutcome:
+            final transition = CloudOutboxTransition.unknownOutcome(
+              operation.operationId,
             );
             transitions.add(transition);
             counters = _countOutboxTransition(counters, transition);
@@ -1147,7 +1221,7 @@ class CloudSyncEngine {
             final category =
                 outcome.failureCategory ?? CloudFailureCategory.unknown;
             final transition = category == CloudFailureCategory.unknown
-                ? _retryOrQuarantineTransition(operation, category: category)
+                ? CloudOutboxTransition.unknownOutcome(operation.operationId)
                 : CloudOutboxTransition.quarantined(
                     operation.operationId,
                     category: category,
@@ -1172,6 +1246,144 @@ class CloudSyncEngine {
       );
     }
     return counters;
+  }
+
+  Future<CloudSyncRunCounters> _reconcileUnknownOutcomes({
+    required int runNumber,
+    CloudSyncCancellationToken? cancellationToken,
+  }) async {
+    var counters = const CloudSyncRunCounters();
+    for (
+      var batchIndex = 0;
+      batchIndex < config.maximumOutboxBatchesPerRun &&
+          !_isCancelled(cancellationToken);
+      batchIndex++
+    ) {
+      final now = _clock();
+      await _renewCoordinatorLeaseOrThrow();
+      final leaseId =
+          '$coordinatorId:$runNumber:reconcile:$batchIndex:'
+          '${now.microsecondsSinceEpoch}';
+      final operations = await _unknownOutcomeStore!.leaseUnknownOutcomes(
+        scope,
+        now: now,
+        limit: config.maximumBatchSize,
+        leaseId: leaseId,
+        leaseDuration: config.outboxLeaseDuration,
+      );
+      if (operations.isEmpty) break;
+
+      final transitions = <CloudOutboxTransition>[];
+      for (final operation in operations) {
+        CloudOutboxTransition transition;
+        try {
+          final resolution = await _withCoordinatorLeaseHeartbeat(
+            () =>
+                _transport.reconcileUnknownOutcome(scope, operation: operation),
+          );
+          transition = await _transitionForUnknownResolution(
+            operation,
+            resolution,
+          );
+        } on CloudSyncFailure catch (error) {
+          if (_isCoordinatorLeaseFailure(error)) rethrow;
+          transition = _unresolvedUnknownTransition(operation, error);
+        } catch (_) {
+          transition = _unresolvedUnknownTransition(
+            operation,
+            CloudSyncFailure(
+              category: CloudFailureCategory.unknown,
+              safeCode: 'unknown_outcome_reconciliation_failed',
+            ),
+          );
+        }
+        transitions.add(transition);
+        counters = _countOutboxTransition(counters, transition);
+      }
+
+      await _store.applyOutboxTransitions(
+        scope,
+        leaseId: leaseId,
+        transitions: transitions,
+        now: _clock(),
+      );
+    }
+    return counters;
+  }
+
+  Future<CloudOutboxTransition> _transitionForUnknownResolution(
+    CloudOutboxOperation operation,
+    CloudUnknownOutcomeResolution resolution,
+  ) async {
+    final proofRequired = switch (resolution.disposition) {
+      CloudUnknownOutcomeDisposition.committed ||
+      CloudUnknownOutcomeDisposition.notApplied ||
+      CloudUnknownOutcomeDisposition.serverRecordChanged => true,
+      CloudUnknownOutcomeDisposition.unresolved ||
+      CloudUnknownOutcomeDisposition.quarantined => false,
+    };
+    if (proofRequired && !(resolution.proof?.binds(operation) ?? false)) {
+      return _unresolvedUnknownTransition(
+        operation,
+        CloudSyncFailure(
+          category: CloudFailureCategory.unknown,
+          safeCode: 'unknown_outcome_proof_mismatch',
+        ),
+      );
+    }
+    switch (resolution.disposition) {
+      case CloudUnknownOutcomeDisposition.committed:
+        return CloudOutboxTransition.confirmed(operation.operationId);
+      case CloudUnknownOutcomeDisposition.notApplied:
+        return CloudOutboxTransition.retryable(
+          operation.operationId,
+          category: CloudFailureCategory.server,
+          nextEligibleAt: _clock(),
+        );
+      case CloudUnknownOutcomeDisposition.serverRecordChanged:
+        return _resolveServerRecordChanged(operation);
+      case CloudUnknownOutcomeDisposition.unresolved:
+        return _unresolvedUnknownTransition(
+          operation,
+          CloudSyncFailure(
+            category:
+                resolution.failureCategory ?? CloudFailureCategory.unknown,
+            retryAfter: resolution.retryAfter,
+            safeCode: 'unknown_outcome_unresolved',
+          ),
+        );
+      case CloudUnknownOutcomeDisposition.quarantined:
+        final category =
+            resolution.failureCategory ?? CloudFailureCategory.unknown;
+        if (category == CloudFailureCategory.unknown || category.isRetryable) {
+          return _unresolvedUnknownTransition(
+            operation,
+            CloudSyncFailure(
+              category: category,
+              safeCode: 'unknown_outcome_not_terminal',
+            ),
+          );
+        }
+        return CloudOutboxTransition.quarantined(
+          operation.operationId,
+          category: category,
+        );
+    }
+  }
+
+  CloudOutboxTransition _unresolvedUnknownTransition(
+    CloudOutboxOperation operation,
+    CloudSyncFailure error,
+  ) {
+    return CloudOutboxTransition.unknownOutcome(
+      operation.operationId,
+      nextEligibleAt: _backoff.nextEligibleAt(
+        now: _clock(),
+        attempt: operation.attemptCount + 1,
+        category: error.category,
+        retryAfter: error.retryAfter,
+      ),
+    );
   }
 
   Future<_OutboxPreparation> _prepareOutboxMappings(
@@ -1299,15 +1511,15 @@ class CloudSyncEngine {
       CloudFailureCategory.authorization => CloudPushDisposition.unauthorized,
       CloudFailureCategory.pcsUnavailable =>
         CloudPushDisposition.pcsUnavailable,
-      CloudFailureCategory.conflict => CloudPushDisposition.serverRecordChanged,
       CloudFailureCategory.network ||
-      CloudFailureCategory.throttled ||
       CloudFailureCategory.server ||
       CloudFailureCategory.localStorage ||
-      CloudFailureCategory.dependency ||
-      CloudFailureCategory.unknown => CloudPushDisposition.retryable,
-      CloudFailureCategory.malformedRecord ||
-      CloudFailureCategory.cancelled => CloudPushDisposition.quarantined,
+      CloudFailureCategory.cancelled ||
+      CloudFailureCategory.conflict ||
+      CloudFailureCategory.unknown => CloudPushDisposition.unknownOutcome,
+      CloudFailureCategory.throttled ||
+      CloudFailureCategory.dependency => CloudPushDisposition.retryable,
+      CloudFailureCategory.malformedRecord => CloudPushDisposition.quarantined,
     };
     return CloudPushOutcome(
       operationId: operationId,
@@ -1344,10 +1556,12 @@ class CloudSyncEngine {
     List<CloudOutboxOperation> operations,
     Map<String, CloudPushOutcome> outcomes,
   ) async {
+    await _verifyWriterPermit();
     try {
       final retryResult = await _withCoordinatorLeaseHeartbeat(
         () => _transport.pushOperations(scope, operations: operations),
       );
+      await _verifyWriterPermitAfterRemote();
       final retryOutcomes = _requireExactPushOutcomes(operations, retryResult);
       for (final operation in operations) {
         outcomes[operation.operationId] = retryOutcomes[operation.operationId]!;
@@ -1364,7 +1578,7 @@ class CloudSyncEngine {
       for (final operation in operations) {
         outcomes[operation.operationId] = CloudPushOutcome(
           operationId: operation.operationId,
-          disposition: CloudPushDisposition.retryable,
+          disposition: CloudPushDisposition.unknownOutcome,
           failureCategory: CloudFailureCategory.unknown,
         );
       }
@@ -1581,6 +1795,29 @@ class CloudSyncEngine {
       error.safeCode == 'coordinator_lease_fence_missing' ||
       error.safeCode == 'coordinator_lease_lost';
 
+  Future<void> _verifyWriterPermit() async {
+    if (!config.flags.saves) return;
+    final permit = _activeWriterPermit;
+    if (permit == null) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.authorization,
+        safeCode: 'cloud_sync_writer_permit_missing',
+      );
+    }
+    await permit.verify();
+  }
+
+  Future<void> _verifyWriterPermitAfterRemote() async {
+    try {
+      await _verifyWriterPermit();
+    } catch (_) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.unknown,
+        safeCode: 'cloud_sync_writer_post_push_verification_failed',
+      );
+    }
+  }
+
   CloudCoordinatorLeaseFence _requireActiveLeaseFence() {
     final leaseFence = _activeLeaseFence;
     if (leaseFence == null) {
@@ -1610,6 +1847,7 @@ class CloudSyncEngine {
       CloudOutboxTransitionType.retryable => counters.add(retried: 1),
       CloudOutboxTransitionType.paused => counters,
       CloudOutboxTransitionType.quarantined => counters.add(quarantined: 1),
+      CloudOutboxTransitionType.unknownOutcome => counters,
     };
   }
 

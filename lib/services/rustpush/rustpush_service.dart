@@ -22,6 +22,7 @@ import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/services/rustpush/apple_network_health.dart';
 import 'package:bluebubbles/services/rustpush/cloud_message_upload_state.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_controller.dart';
@@ -6941,7 +6942,20 @@ class RustPushService extends GetxService {
   ) =>
       _runCloudKitOperation(
         kind: CloudKitOperationKind.legacyReadWrite,
-        action: action,
+        action: () {
+          if (!CloudKitWriterOwnership.legacyMutationsEnabled) {
+            return action();
+          }
+          return CloudKitWriterMutationGuard(
+            store: Database.store,
+            readActiveClient: () =>
+                state?.icloudServices?.cloudMessagesClient,
+            privateStorageDirectory: statePath,
+          ).run(
+            owner: CloudKitWriterOwner.legacy,
+            action: action,
+          );
+        },
       );
 
   Future<T> _runCloudKitDestructiveReset<T>(

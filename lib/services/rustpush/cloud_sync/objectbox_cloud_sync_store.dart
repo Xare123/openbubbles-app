@@ -16,7 +16,10 @@ import 'cloud_sync_store.dart';
 /// outbox operation is synchronous inside one ObjectBox transaction. Network
 /// and platform-keystore work always happen outside the transaction.
 class ObjectBoxCloudSyncStore
-    implements CloudSyncStore, CloudProtectedPageLeaseAdoptionStore {
+    implements
+        CloudSyncStore,
+        CloudSyncUnknownOutcomeLeasingStore,
+        CloudProtectedPageLeaseAdoptionStore {
   ObjectBoxCloudSyncStore({
     required Store store,
     required this._protector,
@@ -923,6 +926,100 @@ class ObjectBoxCloudSyncStore
   }
 
   @override
+  Future<List<CloudOutboxOperation>> leaseUnknownOutcomes(
+    CloudSyncScope scope, {
+    required DateTime now,
+    required int limit,
+    required String leaseId,
+    required Duration leaseDuration,
+  }) async {
+    _requirePositiveLimit(limit);
+    if (leaseId.isEmpty) throw ArgumentError.value(leaseId, 'leaseId');
+    final nowMs = now.millisecondsSinceEpoch;
+    final leaseIdHash = _digest('outbox-lease\u001f$leaseId');
+    return _store.runInTransaction(TxMode.write, () {
+      final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
+      _fenceStaleOutboxLocked(scope, checkpoint: checkpoint, nowMs: nowMs);
+      final eligible =
+          _findOutboxForScopeLocked(scope)
+              .where(
+                (entity) =>
+                    entity.checkpointGeneration == checkpoint.generation &&
+                    _outboxStatusFromInt(entity.state) ==
+                        CloudOutboxStatus.unknownOutcome &&
+                    entity.leaseExpiresAtMs <= nowMs &&
+                    entity.nextEligibleAtMs <= nowMs,
+              )
+              .toList()
+            ..sort((first, second) {
+              final revision = first.mutationRevision.compareTo(
+                second.mutationRevision,
+              );
+              if (revision != 0) return revision;
+              return first.operationId.compareTo(second.operationId);
+            });
+
+      final leased = <CloudOutboxOperation>[];
+      for (final entity in eligible) {
+        if (leased.length == limit) break;
+        entity
+          ..state = _outboxStatusToInt(CloudOutboxStatus.unknownOutcome)
+          ..leaseIdHash = leaseIdHash
+          ..leaseExpiresAtMs = now.add(leaseDuration).millisecondsSinceEpoch
+          ..updatedAtMs = nowMs;
+        _outbox.put(entity);
+        leased.add(_outboxFromEntity(scope, entity, leaseId: leaseId));
+      }
+      return leased;
+    });
+  }
+
+  @override
+  Future<void> markOutboxSubmissionStarted(
+    CloudSyncScope scope, {
+    required String leaseId,
+    required Iterable<String> operationIds,
+    required DateTime now,
+  }) async {
+    final ids = operationIds.toList(growable: false);
+    if (ids.isEmpty) {
+      throw ArgumentError('outbox_submission_operation_ids_empty');
+    }
+    if (leaseId.isEmpty) throw ArgumentError.value(leaseId, 'leaseId');
+    final leaseIdHash = _digest('outbox-lease\u001f$leaseId');
+    final nowMs = now.millisecondsSinceEpoch;
+    _store.runInTransaction(TxMode.write, () {
+      final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
+      final entities = <String, CloudOutboxOperationEntity>{};
+      for (final operationId in ids) {
+        if (entities.containsKey(operationId)) {
+          throw _storageFailure('duplicate_outbox_submission_operation');
+        }
+        final entity = _findOutboxByOperationIdLocked(operationId);
+        if (entity == null ||
+            entity.scopeKey != _scopeKey(scope) ||
+            entity.checkpointGeneration <= 0 ||
+            entity.checkpointGeneration != checkpoint.generation) {
+          throw _storageFailure('stale_outbox_generation');
+        }
+        if (_outboxStatusFromInt(entity.state) != CloudOutboxStatus.leased ||
+            entity.leaseIdHash != leaseIdHash ||
+            entity.leaseExpiresAtMs <= nowMs) {
+          throw _storageFailure('stale_outbox_lease');
+        }
+        entities[operationId] = entity;
+      }
+      for (final entity in entities.values) {
+        entity
+          ..state = _outboxStatusToInt(CloudOutboxStatus.unknownOutcome)
+          ..lastErrorCategory = CloudFailureCategory.unknown.name
+          ..updatedAtMs = nowMs;
+        _outbox.put(entity);
+      }
+    });
+  }
+
+  @override
   Future<void> applyOutboxTransitions(
     CloudSyncScope scope, {
     required String leaseId,
@@ -947,7 +1044,9 @@ class ObjectBoxCloudSyncStore
         }
         if (entity == null ||
             entity.scopeKey != _scopeKey(scope) ||
-            _outboxStatusFromInt(entity.state) != CloudOutboxStatus.leased ||
+            (_outboxStatusFromInt(entity.state) != CloudOutboxStatus.leased &&
+                _outboxStatusFromInt(entity.state) !=
+                    CloudOutboxStatus.unknownOutcome) ||
             entity.leaseIdHash != leaseIdHash ||
             entity.leaseExpiresAtMs <= nowMs) {
           throw _storageFailure('stale_outbox_lease');
@@ -995,6 +1094,19 @@ class ObjectBoxCloudSyncStore
               ..nextEligibleAtMs = 0
               ..lastErrorCategory =
                   (transition.category ?? CloudFailureCategory.unknown).name;
+            break;
+          case CloudOutboxTransitionType.unknownOutcome:
+            if (transition.category != CloudFailureCategory.unknown) {
+              throw ArgumentError(
+                'Unknown outcome transitions require unknown category',
+              );
+            }
+            entity
+              ..state = _outboxStatusToInt(CloudOutboxStatus.unknownOutcome)
+              ..attemptCount += 1
+              ..nextEligibleAtMs =
+                  transition.nextEligibleAt?.millisecondsSinceEpoch ?? 0
+              ..lastErrorCategory = CloudFailureCategory.unknown.name;
             break;
         }
         entity
@@ -1648,7 +1760,8 @@ class ObjectBoxCloudSyncStore
   bool _isBlockingOutboxStatus(CloudOutboxStatus status) =>
       status == CloudOutboxStatus.pending ||
       status == CloudOutboxStatus.leased ||
-      status == CloudOutboxStatus.paused;
+      status == CloudOutboxStatus.paused ||
+      status == CloudOutboxStatus.unknownOutcome;
 
   int _compareMutationOrder(
     CloudOutboxOperationEntity first,
@@ -2040,6 +2153,7 @@ class ObjectBoxCloudSyncStore
     CloudOutboxStatus.confirmed => 2,
     CloudOutboxStatus.paused => 3,
     CloudOutboxStatus.quarantined => 4,
+    CloudOutboxStatus.unknownOutcome => 5,
   };
 
   CloudOutboxStatus _outboxStatusFromInt(int status) => switch (status) {
@@ -2048,6 +2162,7 @@ class ObjectBoxCloudSyncStore
     2 => CloudOutboxStatus.confirmed,
     3 => CloudOutboxStatus.paused,
     4 => CloudOutboxStatus.quarantined,
+    5 => CloudOutboxStatus.unknownOutcome,
     _ => throw _storageFailure('outbox_status_invalid'),
   };
 

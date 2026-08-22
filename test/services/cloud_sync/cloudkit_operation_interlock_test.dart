@@ -58,24 +58,27 @@ void main() {
     );
   });
 
-  test('destructive reset cannot nest inside another CloudKit operation', () async {
-    await expectLater(
-      interlock.runExclusive(
-        kind: CloudKitOperationKind.legacyReadWrite,
-        action: () => interlock.runExclusive(
-          kind: CloudKitOperationKind.destructiveReset,
-          action: () async {},
+  test(
+    'destructive reset cannot nest inside another CloudKit operation',
+    () async {
+      await expectLater(
+        interlock.runExclusive(
+          kind: CloudKitOperationKind.legacyReadWrite,
+          action: () => interlock.runExclusive(
+            kind: CloudKitOperationKind.destructiveReset,
+            action: () async {},
+          ),
         ),
-      ),
-      throwsA(
-        isA<CloudKitOperationInterlockException>().having(
-          (error) => error.safeCode,
-          'safeCode',
-          'cloudkit_interlock_mode_violation',
+        throwsA(
+          isA<CloudKitOperationInterlockException>().having(
+            (error) => error.safeCode,
+            'safeCode',
+            'cloudkit_interlock_mode_violation',
+          ),
         ),
-      ),
-    );
-  });
+      );
+    },
+  );
 
   test('a concurrent operation on the profile is rejected', () async {
     final entered = Completer<void>();
@@ -110,6 +113,55 @@ void main() {
     release.complete();
     await first;
   });
+
+  test(
+    'writer transition cannot overlap an in-flight legacy mutation',
+    () async {
+      final legacyEntered = Completer<void>();
+      final releaseLegacy = Completer<void>();
+      var transitionRuns = 0;
+      final legacyMutation = interlock.runExclusive(
+        kind: CloudKitOperationKind.legacyReadWrite,
+        action: () async {
+          legacyEntered.complete();
+          await releaseLegacy.future;
+        },
+      );
+      await legacyEntered.future;
+
+      final transitionInterlock = CloudKitOperationInterlock(
+        privateStorageDirectory: temporaryDirectory.path,
+        fenceStore: fenceStore,
+      );
+      await expectLater(
+        transitionInterlock.runExclusive(
+          kind: CloudKitOperationKind.writerTransition,
+          action: () async {
+            transitionRuns += 1;
+          },
+        ),
+        throwsA(
+          isA<CloudKitOperationInterlockException>().having(
+            (error) => error.safeCode,
+            'safeCode',
+            'cloudkit_interlock_busy',
+          ),
+        ),
+      );
+      expect(transitionRuns, 0);
+
+      releaseLegacy.complete();
+      await legacyMutation;
+
+      await transitionInterlock.runExclusive(
+        kind: CloudKitOperationKind.writerTransition,
+        action: () async {
+          transitionRuns += 1;
+        },
+      );
+      expect(transitionRuns, 1);
+    },
+  );
 
   test('an action failure releases the lease', () async {
     await expectLater(

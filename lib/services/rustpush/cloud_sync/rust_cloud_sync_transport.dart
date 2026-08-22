@@ -359,6 +359,12 @@ final class RustCloudSyncTransport implements CloudSyncTransport {
   }) => throw _readOnlyFailure();
 
   @override
+  Future<CloudUnknownOutcomeResolution> reconcileUnknownOutcome(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation operation,
+  }) => throw _readOnlyFailure();
+
+  @override
   Future<CloudRecordMapEntry> allocateServerRecordMapping(
     CloudSyncScope scope, {
     required String logicalEntityKeyHash,

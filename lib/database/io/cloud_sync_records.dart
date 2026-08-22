@@ -272,7 +272,8 @@ class CloudOutboxOperationEntity {
   String? encryptedPayloadRef;
   String? payloadSha256;
 
-  /// 0 pending, 1 in-flight, 2 confirmed, 3 paused, 4 quarantined.
+  /// 0 pending, 1 in-flight, 2 confirmed, 3 paused, 4 quarantined,
+  /// 5 unknown outcome. These values are stable persisted state codes.
   @Index()
   int state;
 
@@ -631,6 +632,46 @@ class CloudSemanticReplayEntity {
     required this.changeType,
     required this.terminalOutcome,
     this.terminalSafeCode,
+    required this.updatedAtMs,
+  });
+}
+
+/// Durable single-writer authority for one Apple account/container/database.
+///
+/// The account value is an application-scoped one-way fingerprint. Owner,
+/// state, and targetOwner use stable integer encodings validated by the
+/// authority adapter before any permit is issued.
+@Entity()
+class CloudKitWriterAuthorityEntity {
+  int id;
+
+  @Index(type: IndexType.hash64)
+  @Unique()
+  String authorityKey;
+
+  @Index(type: IndexType.hash64)
+  String accountFingerprint;
+
+  String container;
+  String database;
+  int owner;
+  int state;
+  int targetOwner;
+  int epoch;
+  String? transitionIdHash;
+  int updatedAtMs;
+
+  CloudKitWriterAuthorityEntity({
+    this.id = 0,
+    required this.authorityKey,
+    required this.accountFingerprint,
+    required this.container,
+    required this.database,
+    this.owner = 0,
+    this.state = 0,
+    this.targetOwner = 0,
+    this.epoch = 1,
+    this.transitionIdHash,
     required this.updatedAtMs,
   });
 }

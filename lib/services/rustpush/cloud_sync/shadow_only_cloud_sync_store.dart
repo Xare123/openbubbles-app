@@ -190,6 +190,14 @@ final class ShadowOnlyCloudSyncStore
   }) => _blocked();
 
   @override
+  Future<void> markOutboxSubmissionStarted(
+    CloudSyncScope scope, {
+    required String leaseId,
+    required Iterable<String> operationIds,
+    required DateTime now,
+  }) => _blocked();
+
+  @override
   Future<void> applyOutboxTransitions(
     CloudSyncScope scope, {
     required String leaseId,

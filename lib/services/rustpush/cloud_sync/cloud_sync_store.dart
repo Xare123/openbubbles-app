@@ -138,6 +138,19 @@ abstract interface class CloudSyncStore {
     required Set<CloudOutboxAction> allowedActions,
   });
 
+  /// Marks rows as having been submitted before the remote request begins.
+  ///
+  /// This is a crash-safety boundary: the rows become non-leasable while the
+  /// original live lease is retained, so a process restart cannot replay an
+  /// ambiguous submission as a fresh upload. A returned remote response may
+  /// still resolve the rows through [applyOutboxTransitions].
+  Future<void> markOutboxSubmissionStarted(
+    CloudSyncScope scope, {
+    required String leaseId,
+    required Iterable<String> operationIds,
+    required DateTime now,
+  });
+
   /// Applies all per-record outcomes atomically. Every transition must match
   /// [leaseId], preventing a stale worker from confirming another run's work.
   Future<void> applyOutboxTransitions(
@@ -224,6 +237,26 @@ abstract interface class CloudSyncStore {
   Future<void> recordRun(CloudSyncRunRecord run);
 }
 
+/// Optional outbox capability used by the reconciliation worker.
+///
+/// The read-only shadow wrapper deliberately does not expose this mutation
+/// surface. Keeping it as a capability instead of adding it to
+/// [CloudSyncStore] preserves that compile-time restriction while still
+/// allowing production stores to share the same leasing contract.
+abstract interface class CloudSyncUnknownOutcomeLeasingStore {
+  /// Atomically leases current-generation unknown-outcome rows that are due.
+  ///
+  /// A live lease is never taken over. An expired lease may be replaced. The
+  /// rows remain [CloudOutboxStatus.unknownOutcome] for the entire operation.
+  Future<List<CloudOutboxOperation>> leaseUnknownOutcomes(
+    CloudSyncScope scope, {
+    required DateTime now,
+    required int limit,
+    required String leaseId,
+    required Duration leaseDuration,
+  });
+}
+
 /// Crash-recovery metadata for native protected page blobs.
 ///
 /// Implementations must never return a truncated set: native recovery treats
@@ -260,7 +293,13 @@ final class CloudProtectedReferenceSnapshot {
   final bool isComplete;
 }
 
-enum CloudOutboxTransitionType { confirmed, retryable, paused, quarantined }
+enum CloudOutboxTransitionType {
+  confirmed,
+  retryable,
+  paused,
+  quarantined,
+  unknownOutcome,
+}
 
 class CloudOutboxTransition {
   const CloudOutboxTransition._({
@@ -314,6 +353,16 @@ class CloudOutboxTransition {
          operationId: operationId,
          type: CloudOutboxTransitionType.quarantined,
          category: category,
+       );
+
+  const CloudOutboxTransition.unknownOutcome(
+    String operationId, {
+    DateTime? nextEligibleAt,
+  }) : this._(
+         operationId: operationId,
+         type: CloudOutboxTransitionType.unknownOutcome,
+         category: CloudFailureCategory.unknown,
+         nextEligibleAt: nextEligibleAt,
        );
 
   final String operationId;

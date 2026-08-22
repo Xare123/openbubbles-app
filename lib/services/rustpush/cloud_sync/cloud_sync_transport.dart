@@ -13,11 +13,21 @@ abstract interface class CloudSyncTransport {
     required int limit,
   });
 
-  /// Must return one explicit outcome per attempted operation. The engine
-  /// treats omitted outcomes as retryable failures.
+  /// Must return one explicit outcome per attempted operation. An omitted,
+  /// extra, or otherwise untrustworthy outcome set is ambiguous and remains
+  /// frozen until server-state reconciliation proves what CloudKit committed.
   Future<CloudPushBatchResult> pushOperations(
     CloudSyncScope scope, {
     required List<CloudOutboxOperation> operations,
+  });
+
+  /// Reads the current server record after an ambiguous write and compares it
+  /// with the protected desired payload. `notApplied` may be returned only
+  /// when the read proves that replaying this stable record operation cannot
+  /// duplicate a committed mutation.
+  Future<CloudUnknownOutcomeResolution> reconcileUnknownOutcome(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation operation,
   });
 
   /// Performs at most one credential refresh when requested by an engine run.

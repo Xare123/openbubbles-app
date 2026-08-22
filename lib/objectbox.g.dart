@@ -2309,6 +2309,84 @@ final _entities = <obx_int.ModelEntity>[
     relations: <obx_int.ModelRelation>[],
     backlinks: <obx_int.ModelBacklink>[],
   ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(28, 889478301778181246),
+    name: 'CloudKitWriterAuthorityEntity',
+    lastPropertyId: const obx_int.IdUid(11, 5989769012840038573),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 5473247877995585615),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 1642692165078650755),
+        name: 'authorityKey',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(72, 6121958980954465281),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 5104060885702386570),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(73, 5488879845786692064),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 1430241371294861401),
+        name: 'container',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 4032154290354580986),
+        name: 'database',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 2423775511408165446),
+        name: 'owner',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 1072554348408456591),
+        name: 'state',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 7868095992651810717),
+        name: 'targetOwner',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 676908442821730166),
+        name: 'epoch',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 151617614527735346),
+        name: 'updatedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 5989769012840038573),
+        name: 'transitionIdHash',
+        type: 9,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
 ];
 
 /// Shortcut for [obx.Store.new] that passes [getObjectBoxModel] and for Flutter
@@ -2354,8 +2432,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
     // Typically, this is done with `dart run build_runner build`.
     generatorVersion: obx_int.GeneratorVersion.v2025_12_16,
     entities: _entities,
-    lastEntityId: const obx_int.IdUid(27, 4280538170716883312),
-    lastIndexId: const obx_int.IdUid(71, 9143856129043954915),
+    lastEntityId: const obx_int.IdUid(28, 889478301778181246),
+    lastIndexId: const obx_int.IdUid(73, 5488879845786692064),
     lastRelationId: const obx_int.IdUid(1, 7492985733214117623),
     lastSequenceId: const obx_int.IdUid(0, 0),
     retiredEntityUids: const [
@@ -5452,6 +5530,111 @@ obx_int.ModelDefinition getObjectBoxModel() {
             return object;
           },
         ),
+    CloudKitWriterAuthorityEntity:
+        obx_int.EntityDefinition<CloudKitWriterAuthorityEntity>(
+          model: _entities[19],
+          toOneRelations: (CloudKitWriterAuthorityEntity object) => [],
+          toManyRelations: (CloudKitWriterAuthorityEntity object) => {},
+          getId: (CloudKitWriterAuthorityEntity object) => object.id,
+          setId: (CloudKitWriterAuthorityEntity object, int id) {
+            object.id = id;
+          },
+          objectToFB: (CloudKitWriterAuthorityEntity object, fb.Builder fbb) {
+            final authorityKeyOffset = fbb.writeString(object.authorityKey);
+            final accountFingerprintOffset = fbb.writeString(
+              object.accountFingerprint,
+            );
+            final containerOffset = fbb.writeString(object.container);
+            final databaseOffset = fbb.writeString(object.database);
+            final transitionIdHashOffset = object.transitionIdHash == null
+                ? null
+                : fbb.writeString(object.transitionIdHash!);
+            fbb.startTable(12);
+            fbb.addInt64(0, object.id);
+            fbb.addOffset(1, authorityKeyOffset);
+            fbb.addOffset(2, accountFingerprintOffset);
+            fbb.addOffset(3, containerOffset);
+            fbb.addOffset(4, databaseOffset);
+            fbb.addInt64(5, object.owner);
+            fbb.addInt64(6, object.state);
+            fbb.addInt64(7, object.targetOwner);
+            fbb.addInt64(8, object.epoch);
+            fbb.addInt64(9, object.updatedAtMs);
+            fbb.addOffset(10, transitionIdHashOffset);
+            fbb.finish(fbb.endTable());
+            return object.id;
+          },
+          objectFromFB: (obx.Store store, ByteData fbData) {
+            final buffer = fb.BufferContext(fbData);
+            final rootOffset = buffer.derefObject(0);
+            final idParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              4,
+              0,
+            );
+            final authorityKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 6, '');
+            final accountFingerprintParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 8, '');
+            final containerParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 10, '');
+            final databaseParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 12, '');
+            final ownerParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              14,
+              0,
+            );
+            final stateParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              16,
+              0,
+            );
+            final targetOwnerParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              18,
+              0,
+            );
+            final epochParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              20,
+              0,
+            );
+            final transitionIdHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 24);
+            final updatedAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              22,
+              0,
+            );
+            final object = CloudKitWriterAuthorityEntity(
+              id: idParam,
+              authorityKey: authorityKeyParam,
+              accountFingerprint: accountFingerprintParam,
+              container: containerParam,
+              database: databaseParam,
+              owner: ownerParam,
+              state: stateParam,
+              targetOwner: targetOwnerParam,
+              epoch: epochParam,
+              transitionIdHash: transitionIdHashParam,
+              updatedAtMs: updatedAtMsParam,
+            );
+
+            return object;
+          },
+        ),
   };
 
   return obx_int.ModelDefinition(model, bindings);
@@ -7273,5 +7456,70 @@ class CloudProtectedPageLeaseEntity_ {
   static final nextFinalizeEligibleAtMs =
       obx.QueryIntegerProperty<CloudProtectedPageLeaseEntity>(
         _entities[18].properties[8],
+      );
+}
+
+/// [CloudKitWriterAuthorityEntity] entity fields to define ObjectBox queries.
+class CloudKitWriterAuthorityEntity_ {
+  /// See [CloudKitWriterAuthorityEntity.id].
+  static final id = obx.QueryIntegerProperty<CloudKitWriterAuthorityEntity>(
+    _entities[19].properties[0],
+  );
+
+  /// See [CloudKitWriterAuthorityEntity.authorityKey].
+  static final authorityKey =
+      obx.QueryStringProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[1],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.accountFingerprint].
+  static final accountFingerprint =
+      obx.QueryStringProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[2],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.container].
+  static final container =
+      obx.QueryStringProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[3],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.database].
+  static final database =
+      obx.QueryStringProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[4],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.owner].
+  static final owner = obx.QueryIntegerProperty<CloudKitWriterAuthorityEntity>(
+    _entities[19].properties[5],
+  );
+
+  /// See [CloudKitWriterAuthorityEntity.state].
+  static final state = obx.QueryIntegerProperty<CloudKitWriterAuthorityEntity>(
+    _entities[19].properties[6],
+  );
+
+  /// See [CloudKitWriterAuthorityEntity.targetOwner].
+  static final targetOwner =
+      obx.QueryIntegerProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[7],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.epoch].
+  static final epoch = obx.QueryIntegerProperty<CloudKitWriterAuthorityEntity>(
+    _entities[19].properties[8],
+  );
+
+  /// See [CloudKitWriterAuthorityEntity.updatedAtMs].
+  static final updatedAtMs =
+      obx.QueryIntegerProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[9],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.transitionIdHash].
+  static final transitionIdHash =
+      obx.QueryStringProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[10],
       );
 }

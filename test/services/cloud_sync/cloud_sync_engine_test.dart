@@ -9,7 +9,10 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_shadow_journal_budget.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_testing.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_writer_authority.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/in_memory_cloud_sync_store.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/shadow_only_cloud_sync_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'cloud_sync_test_helpers.dart';
@@ -19,6 +22,8 @@ void main() {
   late InMemoryCloudSyncStore store;
   late FakeCloudSyncTransport transport;
   late FakeCloudInboxApplier applier;
+  late FakeCloudSyncWriterAuthority writerAuthority;
+  late FakeCloudKitOperationExclusion writerExclusion;
   late MutableTestClock clock;
 
   CloudSyncEngine engine({
@@ -39,6 +44,7 @@ void main() {
     MemoryCloudSyncObserver? observer,
     String coordinatorId = 'coordinator-a',
     CloudShadowJournalBudget? shadowJournalBudget,
+    CloudSyncWriterAuthority? writerAuthorityOverride,
   }) {
     return CloudSyncEngine(
       scope: scope,
@@ -46,6 +52,10 @@ void main() {
       store: store,
       transport: transport,
       inboxApplier: applier,
+      writerAuthority: flags.saves
+          ? writerAuthorityOverride ?? writerAuthority
+          : null,
+      writerExclusion: flags.saves ? writerExclusion : null,
       backoff: CloudSyncBackoffPolicy(
         baseDelay: const Duration(seconds: 10),
         maximumDelay: const Duration(minutes: 1),
@@ -74,6 +84,8 @@ void main() {
     store = InMemoryCloudSyncStore();
     transport = FakeCloudSyncTransport();
     applier = FakeCloudInboxApplier();
+    writerAuthority = FakeCloudSyncWriterAuthority();
+    writerExclusion = FakeCloudKitOperationExclusion();
     clock = MutableTestClock(testEpoch);
   });
 
@@ -126,6 +138,48 @@ void main() {
     );
   }
 
+  Future<CloudOutboxOperation> seedAmbiguousOutbox(int index) async {
+    final operation = testOutboxOperation(scope, index);
+    await store.enqueueOutbox(operation);
+    transport.enqueuePushResult(
+      CloudPushBatchResult(
+        outcomes: [
+          CloudPushOutcome(
+            operationId: operation.operationId,
+            disposition: CloudPushDisposition.unknownOutcome,
+            failureCategory: CloudFailureCategory.unknown,
+          ),
+        ],
+      ),
+    );
+    await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+    expect(
+      (await store.outboxEntries(scope)).single.status,
+      CloudOutboxStatus.unknownOutcome,
+    );
+    return operation;
+  }
+
+  CloudUnknownOutcomeProof proofFor(
+    CloudOutboxOperation operation, {
+    String? operationId,
+  }) {
+    return CloudUnknownOutcomeProof(
+      operationId: operationId ?? operation.operationId,
+      scopeStorageKey: operation.scope.storageKey,
+      checkpointGeneration: operation.checkpointGeneration,
+      logicalEntityKeyHash: operation.logicalEntityKeyHash,
+      serverRecordIdHash: operation.serverRecordIdHash!,
+      action: operation.action,
+      expectedPayloadSha256: operation.payloadSha256,
+      protectedProofReference: 'obcs2.reconcile.test-proof',
+      observedEtagHash: 'test-observed-etag-hash',
+    );
+  }
+
   test('fetches, journals, applies, and advances checkpoint', () async {
     transport.enqueueFetchBatch(
       CloudFetchBatch(
@@ -141,6 +195,8 @@ void main() {
     final result = await engine().synchronize(trigger: CloudSyncTrigger.manual);
 
     expect(result.status, CloudSyncRunStatus.completed);
+    expect(writerExclusion.runCallCount, 1);
+    expect(writerExclusion.observedKinds, [CloudKitOperationKind.v2ReadWrite]);
     expect(result.counters.fetched, 2);
     expect(result.counters.applied, 2);
     expect(applier.appliedLeaseFences, hasLength(2));
@@ -357,6 +413,119 @@ void main() {
     expect(transport.pushCallCount, 0);
     expect(applier.appliedSequences, isEmpty);
   });
+
+  test('save-enabled engine requires an explicit writer authority', () {
+    expect(
+      () => CloudSyncEngine(
+        scope: scope,
+        coordinatorId: 'missing-writer-authority',
+        store: store,
+        transport: transport,
+        inboxApplier: applier,
+        config: CloudSyncEngineConfig(
+          flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        ),
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test('save-enabled engine requires unknown-outcome leasing support', () {
+    expect(
+      () => CloudSyncEngine(
+        scope: scope,
+        coordinatorId: 'missing-unknown-outcome-store',
+        store: ShadowOnlyCloudSyncStore(store),
+        transport: transport,
+        inboxApplier: applier,
+        writerAuthority: writerAuthority,
+        writerExclusion: writerExclusion,
+        config: CloudSyncEngineConfig(
+          flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        ),
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test('save-enabled engine requires the cross-process writer exclusion', () {
+    expect(
+      () => CloudSyncEngine(
+        scope: scope,
+        coordinatorId: 'missing-writer-exclusion',
+        store: store,
+        transport: transport,
+        inboxApplier: applier,
+        writerAuthority: writerAuthority,
+        config: CloudSyncEngineConfig(
+          flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        ),
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test('revoked V2 permit blocks transport immediately before push', () async {
+    await store.enqueueOutbox(testOutboxOperation(scope, 700));
+    writerAuthority.verifyHandler = (call) async {
+      if (call == 2) writerAuthority.allowVerify = false;
+    };
+
+    final result = await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    expect(result.status, CloudSyncRunStatus.failed);
+    expect(result.failureCategory, CloudFailureCategory.authorization);
+    expect(writerAuthority.issueCallCount, 1);
+    expect(writerAuthority.verifyCallCount, 2);
+    expect(transport.pushCallCount, 0);
+  });
+
+  test(
+    'permit revocation after submission freezes the ambiguous operation',
+    () async {
+      final operation = testOutboxOperation(scope, 701);
+      await store.enqueueOutbox(operation);
+      writerAuthority.verifyHandler = (call) async {
+        if (call == 3) writerAuthority.allowVerify = false;
+      };
+      transport.enqueuePushResult(
+        CloudPushBatchResult(
+          outcomes: [
+            CloudPushOutcome(
+              operationId: operation.operationId,
+              disposition: CloudPushDisposition.confirmed,
+            ),
+          ],
+        ),
+      );
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+      expect(result.counters.confirmed, 0);
+      expect(transport.pushCallCount, 1);
+      expect(writerAuthority.verifyCallCount, 3);
+      expect(
+        (await store.outboxEntries(scope)).single.status,
+        CloudOutboxStatus.unknownOutcome,
+      );
+
+      writerAuthority
+        ..allowVerify = true
+        ..verifyHandler = null;
+      clock.advance(const Duration(minutes: 3));
+      await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+      expect(transport.pushCallCount, 1);
+    },
+  );
 
   test(
     'terminal quarantine advances the floor without dropping later data',
@@ -879,13 +1048,70 @@ void main() {
     ).synchronize(trigger: CloudSyncTrigger.localOutbox);
 
     expect(result.counters.confirmed, 0);
-    expect(result.counters.retried, 2);
+    expect(result.counters.retried, 0);
     final outbox = await store.outboxEntries(scope);
     for (final operation in outbox) {
-      expect(operation.status, CloudOutboxStatus.pending);
+      expect(operation.status, CloudOutboxStatus.unknownOutcome);
       expect(operation.attemptCount, 1);
       expect(operation.lastFailure, CloudFailureCategory.unknown);
     }
+  });
+
+  test(
+    'thrown transport failure is frozen before it can be replayed',
+    () async {
+      final operation = testOutboxOperation(scope, 3);
+      await store.enqueueOutbox(operation);
+      transport.pushHandler = (_, _) async => throw StateError('response lost');
+
+      await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+      var stored = (await store.outboxEntries(scope)).single;
+      expect(stored.status, CloudOutboxStatus.unknownOutcome);
+      expect(stored.lastFailure, CloudFailureCategory.unknown);
+      expect(transport.pushCallCount, 1);
+
+      clock.advance(const Duration(minutes: 3));
+      await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+      stored = (await store.outboxEntries(scope)).single;
+      expect(stored.status, CloudOutboxStatus.unknownOutcome);
+      expect(transport.pushCallCount, 1);
+    },
+  );
+
+  test('thrown conflict is ambiguous and cannot enter merge retry', () async {
+    final operation = testOutboxOperation(scope, 4);
+    await store.enqueueOutbox(operation);
+    transport.pushHandler = (_, _) async => throw CloudSyncFailure(
+      category: CloudFailureCategory.conflict,
+      safeCode: 'simulated_unproven_conflict',
+    );
+
+    await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    expect(
+      (await store.outboxEntries(scope)).single.status,
+      CloudOutboxStatus.unknownOutcome,
+    );
+    expect(transport.pushCallCount, 1);
+    expect(transport.conflictCallCount, 0);
+
+    clock.advance(const Duration(minutes: 3));
+    await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+    expect(transport.pushCallCount, 1);
+    expect(transport.conflictCallCount, 0);
   });
 
   test('unknown upload outcome rejects the complete batch', () async {
@@ -919,12 +1145,186 @@ void main() {
     ).synchronize(trigger: CloudSyncTrigger.localOutbox);
 
     expect(result.counters.confirmed, 0);
-    expect(result.counters.retried, 2);
+    expect(result.counters.retried, 0);
     for (final operation in await store.outboxEntries(scope)) {
-      expect(operation.status, CloudOutboxStatus.pending);
+      expect(operation.status, CloudOutboxStatus.unknownOutcome);
       expect(operation.attemptCount, 1);
       expect(operation.lastFailure, CloudFailureCategory.unknown);
     }
+  });
+
+  test('server read confirms an ambiguous write without replay', () async {
+    await seedAmbiguousOutbox(801);
+    transport.unknownOutcomeHandler = (_, operation) async =>
+        CloudUnknownOutcomeResolution.committed(proof: proofFor(operation));
+
+    final result = await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    expect(result.counters.confirmed, 1);
+    expect(transport.unknownOutcomeCallCount, 1);
+    expect(transport.pushCallCount, 1);
+    expect(
+      (await store.outboxEntries(scope)).single.status,
+      CloudOutboxStatus.confirmed,
+    );
+  });
+
+  test('mismatched reconciliation proof cannot confirm or replay', () async {
+    await seedAmbiguousOutbox(806);
+    final otherOperationId = testOutboxOperation(scope, 999).operationId;
+    transport.unknownOutcomeHandler = (_, operation) async =>
+        CloudUnknownOutcomeResolution.committed(
+          proof: proofFor(operation, operationId: otherOperationId),
+        );
+
+    await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    expect(
+      (await store.outboxEntries(scope)).single.status,
+      CloudOutboxStatus.unknownOutcome,
+    );
+    expect(transport.pushCallCount, 1);
+  });
+
+  test('server-proven absence requeues and sends exactly once', () async {
+    final operation = await seedAmbiguousOutbox(802);
+    transport.unknownOutcomeHandler = (_, operation) async =>
+        CloudUnknownOutcomeResolution.notApplied(proof: proofFor(operation));
+    transport.enqueuePushResult(
+      CloudPushBatchResult(
+        outcomes: [
+          CloudPushOutcome(
+            operationId: operation.operationId,
+            disposition: CloudPushDisposition.confirmed,
+          ),
+        ],
+      ),
+    );
+
+    final result = await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    expect(result.counters.retried, 1);
+    expect(result.counters.confirmed, 1);
+    expect(transport.unknownOutcomeCallCount, 1);
+    expect(transport.pushCallCount, 2);
+    expect(
+      (await store.outboxEntries(scope)).single.status,
+      CloudOutboxStatus.confirmed,
+    );
+  });
+
+  test(
+    'unresolved server read backs off without replaying the write',
+    () async {
+      await seedAmbiguousOutbox(803);
+      transport.unknownOutcomeHandler = (_, _) async =>
+          const CloudUnknownOutcomeResolution.unresolved(
+            failureCategory: CloudFailureCategory.network,
+            retryAfter: Duration(seconds: 30),
+          );
+
+      await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+      var stored = (await store.outboxEntries(scope)).single;
+      expect(stored.status, CloudOutboxStatus.unknownOutcome);
+      expect(stored.attemptCount, 2);
+      expect(
+        stored.nextEligibleAt,
+        clock.value.add(const Duration(seconds: 30)),
+      );
+      expect(transport.pushCallCount, 1);
+      expect(transport.unknownOutcomeCallCount, 1);
+
+      await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+      expect(transport.unknownOutcomeCallCount, 1);
+      expect(transport.pushCallCount, 1);
+
+      clock.advance(const Duration(seconds: 30));
+      await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+      stored = (await store.outboxEntries(scope)).single;
+      expect(stored.status, CloudOutboxStatus.unknownOutcome);
+      expect(transport.unknownOutcomeCallCount, 2);
+      expect(transport.pushCallCount, 1);
+    },
+  );
+
+  test(
+    'divergent server state enters the existing semantic merge path',
+    () async {
+      final operation = await seedAmbiguousOutbox(804);
+      transport.unknownOutcomeHandler = (_, operation) async =>
+          CloudUnknownOutcomeResolution.serverRecordChanged(
+            proof: proofFor(operation),
+          );
+      transport.conflictHandler = (_, leasedOperation) async {
+        return CloudServerConflictResolution.mergedForRetry(
+          encryptedPayloadReference: 'protected:ambiguous-merged',
+          payloadSha256: 'ambiguous-merged-digest',
+          serverRecordIdHash: leasedOperation.serverRecordIdHash!,
+          encryptedRawRecordReference: 'protected:ambiguous-server-record',
+        );
+      };
+      transport.enqueuePushResult(
+        CloudPushBatchResult(
+          outcomes: [
+            CloudPushOutcome(
+              operationId: operation.operationId,
+              disposition: CloudPushDisposition.confirmed,
+            ),
+          ],
+        ),
+      );
+
+      await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+      expect(transport.unknownOutcomeCallCount, 1);
+      expect(transport.conflictCallCount, 1);
+      expect(transport.pushCallCount, 2);
+      expect(
+        (await store.outboxEntries(scope)).single.status,
+        CloudOutboxStatus.confirmed,
+      );
+    },
+  );
+
+  test('terminal reconciliation failure quarantines without replay', () async {
+    await seedAmbiguousOutbox(805);
+    transport.unknownOutcomeHandler = (_, _) async =>
+        const CloudUnknownOutcomeResolution.quarantined(
+          failureCategory: CloudFailureCategory.malformedRecord,
+        );
+
+    final result = await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    expect(result.counters.quarantined, 1);
+    expect(transport.pushCallCount, 1);
+    expect(
+      (await store.outboxEntries(scope)).single.status,
+      CloudOutboxStatus.quarantined,
+    );
   });
 
   test(
@@ -955,7 +1355,7 @@ void main() {
       expect(result.status, CloudSyncRunStatus.failed);
       expect(result.failureCategory, CloudFailureCategory.localStorage);
       final stored = (await store.outboxEntries(scope)).single;
-      expect(stored.status, CloudOutboxStatus.leased);
+      expect(stored.status, CloudOutboxStatus.unknownOutcome);
       expect(stored.confirmedAt, isNull);
     },
   );
@@ -1078,9 +1478,9 @@ void main() {
     ).synchronize(trigger: CloudSyncTrigger.localOutbox);
 
     expect(result.counters.confirmed, 0);
-    expect(result.counters.retried, 1);
+    expect(result.counters.retried, 0);
     final stored = (await store.outboxEntries(scope)).single;
-    expect(stored.status, CloudOutboxStatus.pending);
+    expect(stored.status, CloudOutboxStatus.unknownOutcome);
     expect(stored.lastFailure, CloudFailureCategory.unknown);
   });
 
@@ -1325,46 +1725,38 @@ void main() {
     );
   });
 
-  test(
-    'unknown upload failures retry a bounded number then quarantine',
-    () async {
-      final operation = testOutboxOperation(scope, 1);
-      await store.enqueueOutbox(operation);
-      transport.pushHandler = (requestedScope, operations) async {
-        return CloudPushBatchResult(
-          outcomes: operations.map(
-            (item) => CloudPushOutcome(
-              operationId: item.operationId,
-              disposition: CloudPushDisposition.quarantined,
-              failureCategory: CloudFailureCategory.unknown,
-            ),
+  test('unknown upload failures freeze without automatic replay', () async {
+    final operation = testOutboxOperation(scope, 1);
+    await store.enqueueOutbox(operation);
+    transport.pushHandler = (requestedScope, operations) async {
+      return CloudPushBatchResult(
+        outcomes: operations.map(
+          (item) => CloudPushOutcome(
+            operationId: item.operationId,
+            disposition: CloudPushDisposition.quarantined,
+            failureCategory: CloudFailureCategory.unknown,
           ),
-        );
-      };
-      final syncEngine = engine(
-        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        ),
       );
+    };
+    final syncEngine = engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+    );
 
-      await syncEngine.synchronize(trigger: CloudSyncTrigger.localOutbox);
-      expect(
-        (await store.outboxEntries(scope)).single.status,
-        CloudOutboxStatus.pending,
-      );
-      clock.advance(const Duration(seconds: 10));
-      await syncEngine.synchronize(trigger: CloudSyncTrigger.localOutbox);
-      expect(
-        (await store.outboxEntries(scope)).single.status,
-        CloudOutboxStatus.pending,
-      );
-      clock.advance(const Duration(seconds: 20));
-      await syncEngine.synchronize(trigger: CloudSyncTrigger.localOutbox);
-
-      final stored = (await store.outboxEntries(scope)).single;
-      expect(stored.status, CloudOutboxStatus.quarantined);
-      expect(stored.attemptCount, 3);
-      expect(transport.recordMappingCallCount, 1);
-    },
-  );
+    await syncEngine.synchronize(trigger: CloudSyncTrigger.localOutbox);
+    expect(
+      (await store.outboxEntries(scope)).single.status,
+      CloudOutboxStatus.unknownOutcome,
+    );
+    clock.advance(const Duration(seconds: 10));
+    await syncEngine.synchronize(trigger: CloudSyncTrigger.localOutbox);
+    final stored = (await store.outboxEntries(scope)).single;
+    expect(stored.status, CloudOutboxStatus.unknownOutcome);
+    expect(stored.attemptCount, 2);
+    expect(transport.recordMappingCallCount, 1);
+    expect(transport.pushCallCount, 1);
+    expect(transport.unknownOutcomeCallCount, 1);
+  });
 
   test(
     'profile stream is inert until its independent flag is enabled',

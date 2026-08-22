@@ -1050,6 +1050,192 @@ void main() {
     },
   );
 
+  test(
+    'submission marker survives reopen and recovery without replay leasing',
+    () async {
+      final scope = testScope();
+      final operation = await store.enqueueOutboxMutation(draft(scope, 20));
+      await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'objectbox-submission-marker-lease',
+        leaseDuration: const Duration(seconds: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+
+      await store.markOutboxSubmissionStarted(
+        scope,
+        leaseId: 'objectbox-submission-marker-lease',
+        operationIds: [operation.operationId],
+        now: testEpoch,
+      );
+      final markedEntity = objectBox
+          .box<CloudOutboxOperationEntity>()
+          .getAll()
+          .single;
+      expect(markedEntity.state, 5);
+      expect(markedEntity.lastErrorCategory, CloudFailureCategory.unknown.name);
+      expect(markedEntity.attemptCount, 0);
+      expect(markedEntity.leaseIdHash, isNotNull);
+
+      await reopen();
+      expect(
+        await store.recoverExpiredOutboxLeases(
+          scope,
+          now: testEpoch.add(const Duration(seconds: 2)),
+        ),
+        0,
+      );
+      expect(
+        await store.leaseEligibleOutbox(
+          scope,
+          now: testEpoch.add(const Duration(seconds: 2)),
+          limit: 1,
+          leaseId: 'objectbox-replay-lease',
+          leaseDuration: const Duration(minutes: 1),
+          allowedActions: const {CloudOutboxAction.save},
+        ),
+        isEmpty,
+      );
+      expect(
+        objectBox.box<CloudOutboxOperationEntity>().getAll().single.state,
+        5,
+      );
+    },
+  );
+
+  test(
+    'marked submission can be resolved by a returned confirmation',
+    () async {
+      final scope = testScope();
+      final operation = await store.enqueueOutboxMutation(draft(scope, 21));
+      await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'objectbox-submission-confirm-lease',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+      await store.markOutboxSubmissionStarted(
+        scope,
+        leaseId: 'objectbox-submission-confirm-lease',
+        operationIds: [operation.operationId],
+        now: testEpoch,
+      );
+
+      await store.applyOutboxTransitions(
+        scope,
+        leaseId: 'objectbox-submission-confirm-lease',
+        transitions: [CloudOutboxTransition.confirmed(operation.operationId)],
+        now: testEpoch.add(const Duration(seconds: 1)),
+      );
+      final resolved = objectBox
+          .box<CloudOutboxOperationEntity>()
+          .getAll()
+          .single;
+      expect(resolved.state, 2);
+      expect(resolved.leaseIdHash, isNull);
+      expect(resolved.attemptCount, 0);
+    },
+  );
+
+  test(
+    'explicit unknown transition clears the live lease and increments attempts',
+    () async {
+      final scope = testScope();
+      final operation = await store.enqueueOutboxMutation(draft(scope, 22));
+      await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'objectbox-explicit-unknown-lease',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+      await store.applyOutboxTransitions(
+        scope,
+        leaseId: 'objectbox-explicit-unknown-lease',
+        transitions: [
+          CloudOutboxTransition.unknownOutcome(operation.operationId),
+        ],
+        now: testEpoch,
+      );
+      final unknown = objectBox
+          .box<CloudOutboxOperationEntity>()
+          .getAll()
+          .single;
+      expect(unknown.state, 5);
+      expect(unknown.lastErrorCategory, CloudFailureCategory.unknown.name);
+      expect(unknown.attemptCount, 1);
+      expect(unknown.leaseIdHash, isNull);
+      expect(unknown.leaseExpiresAtMs, 0);
+      expect(unknown.nextEligibleAtMs, 0);
+    },
+  );
+
+  test(
+    'unknown outcome blocks newer mutation and is fenced on generation advance',
+    () async {
+      final scope = testScope();
+      const logicalKeyHash = 'objectbox-shared-unknown-logical-key';
+
+      Future<CloudOutboxOperation> enqueue(int revision) {
+        return store.enqueueOutboxMutation(
+          CloudOutboxDraft(
+            scope: scope,
+            logicalEntityKeyHash: logicalKeyHash,
+            action: CloudOutboxAction.save,
+            payloadVersion: 1,
+            dependencyOperationIds: const [],
+            createdAt: testEpoch.add(Duration(seconds: revision)),
+            encryptedPayloadReference: 'protected:objectbox-shared-$revision',
+            payloadSha256: 'digest:objectbox-shared-$revision',
+          ),
+        );
+      }
+
+      final first = await enqueue(1);
+      await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'objectbox-shared-unknown-lease',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+      await store.applyOutboxTransitions(
+        scope,
+        leaseId: 'objectbox-shared-unknown-lease',
+        transitions: [CloudOutboxTransition.unknownOutcome(first.operationId)],
+        now: testEpoch,
+      );
+      final second = await enqueue(2);
+
+      expect(
+        await store.leaseEligibleOutbox(
+          scope,
+          now: testEpoch,
+          limit: 1,
+          leaseId: 'objectbox-shared-newer-lease',
+          leaseDuration: const Duration(minutes: 1),
+          allowedActions: const {CloudOutboxAction.save},
+        ),
+        isEmpty,
+      );
+
+      await store.advanceOutboxGeneration(scope, now: testEpoch);
+      final rows = objectBox.box<CloudOutboxOperationEntity>().getAll();
+      expect(rows, hasLength(2));
+      expect(rows.map((row) => row.state), everyElement(4));
+      expect(
+        rows.map((row) => row.operationId),
+        containsAll([first.operationId, second.operationId]),
+      );
+    },
+  );
+
   test('expired outbox lease cannot map or confirm before recovery', () async {
     final scope = testScope();
     final operation = await store.enqueueOutboxMutation(draft(scope, 1));
@@ -1632,6 +1818,237 @@ void main() {
       expect(snapshot.references, references.toSet());
     },
   );
+
+  test('leases only due unknown outcomes in deterministic order', () async {
+    final scope = testScope();
+    Future<CloudOutboxOperation> makeUnknown(
+      CloudSyncScope value,
+      int index, {
+      DateTime? nextEligibleAt,
+    }) async {
+      final operation = await store.enqueueOutboxMutation(draft(value, index));
+      await store.leaseEligibleOutbox(
+        value,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'seed-$index',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+      await store.applyOutboxTransitions(
+        value,
+        leaseId: 'seed-$index',
+        transitions: [
+          CloudOutboxTransition.unknownOutcome(
+            operation.operationId,
+            nextEligibleAt: nextEligibleAt,
+          ),
+        ],
+        now: testEpoch,
+      );
+      return operation;
+    }
+
+    final live = await makeUnknown(scope, 201);
+    await store.leaseUnknownOutcomes(
+      scope,
+      now: testEpoch,
+      limit: 1,
+      leaseId: 'live-unknown-lease',
+      leaseDuration: const Duration(hours: 1),
+    );
+    await makeUnknown(
+      scope,
+      202,
+      nextEligibleAt: testEpoch.add(const Duration(hours: 1)),
+    );
+    final expired = await makeUnknown(scope, 204);
+    await store.leaseUnknownOutcomes(
+      scope,
+      now: testEpoch,
+      limit: 1,
+      leaseId: 'expired-unknown-lease',
+      leaseDuration: const Duration(seconds: 1),
+    );
+    final due = await makeUnknown(scope, 205);
+    final pending = await store.enqueueOutboxMutation(draft(scope, 203));
+
+    final takeoverAt = testEpoch.add(const Duration(seconds: 2));
+    final leased = await store.leaseUnknownOutcomes(
+      scope,
+      now: takeoverAt,
+      limit: 10,
+      leaseId: 'reconcile-lease',
+      leaseDuration: const Duration(minutes: 1),
+    );
+
+    expect(leased.map((operation) => operation.operationId), [
+      expired.operationId,
+      due.operationId,
+    ]);
+    expect(
+      leased,
+      everyElement(
+        isA<CloudOutboxOperation>()
+            .having(
+              (operation) => operation.status,
+              'status',
+              CloudOutboxStatus.unknownOutcome,
+            )
+            .having(
+              (operation) => operation.leaseId,
+              'leaseId',
+              'reconcile-lease',
+            ),
+      ),
+    );
+    final rows = objectBox.box<CloudOutboxOperationEntity>().getAll();
+    expect(
+      rows
+          .singleWhere((row) => row.operationId == live.operationId)
+          .leaseIdHash,
+      isNotNull,
+    );
+    expect(
+      rows.singleWhere((row) => row.operationId == pending.operationId).state,
+      0,
+    );
+    expect(rows, hasLength(5));
+  });
+
+  test(
+    'unknown transition persists reconciliation backoff and clears its lease',
+    () async {
+      final scope = testScope();
+      final operation = await store.enqueueOutboxMutation(draft(scope, 206));
+      await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'seed-backoff-lease',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+      await store.applyOutboxTransitions(
+        scope,
+        leaseId: 'seed-backoff-lease',
+        transitions: [
+          CloudOutboxTransition.unknownOutcome(operation.operationId),
+        ],
+        now: testEpoch,
+      );
+
+      final retryAt = testEpoch.add(const Duration(minutes: 5));
+      await store.leaseUnknownOutcomes(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'reconcile-backoff-lease',
+        leaseDuration: const Duration(minutes: 1),
+      );
+      await store.applyOutboxTransitions(
+        scope,
+        leaseId: 'reconcile-backoff-lease',
+        transitions: [
+          CloudOutboxTransition.unknownOutcome(
+            operation.operationId,
+            nextEligibleAt: retryAt,
+          ),
+        ],
+        now: testEpoch,
+      );
+
+      var row = objectBox.box<CloudOutboxOperationEntity>().getAll().single;
+      expect(row.state, 5);
+      expect(row.nextEligibleAtMs, retryAt.millisecondsSinceEpoch);
+      expect(row.leaseIdHash, isNull);
+      expect(
+        await store.leaseUnknownOutcomes(
+          scope,
+          now: retryAt.subtract(const Duration(seconds: 1)),
+          limit: 1,
+          leaseId: 'too-early-lease',
+          leaseDuration: const Duration(minutes: 1),
+        ),
+        isEmpty,
+      );
+      final eligible = await store.leaseUnknownOutcomes(
+        scope,
+        now: retryAt,
+        limit: 1,
+        leaseId: 'due-again-lease',
+        leaseDuration: const Duration(minutes: 1),
+      );
+      expect(eligible.single.operationId, operation.operationId);
+      row = objectBox.box<CloudOutboxOperationEntity>().getAll().single;
+      expect(row.state, 5);
+      expect(row.leaseIdHash, isNotNull);
+    },
+  );
+
+  test('unknown-outcome leasing isolates account and generation', () async {
+    final scope = testScope();
+    final otherScope = testScope(account: testAccountFingerprintB);
+    final other = await store.enqueueOutboxMutation(draft(otherScope, 207));
+    await store.leaseEligibleOutbox(
+      otherScope,
+      now: testEpoch,
+      limit: 1,
+      leaseId: 'other-seed-lease',
+      leaseDuration: const Duration(minutes: 1),
+      allowedActions: const {CloudOutboxAction.save},
+    );
+    await store.applyOutboxTransitions(
+      otherScope,
+      leaseId: 'other-seed-lease',
+      transitions: [CloudOutboxTransition.unknownOutcome(other.operationId)],
+      now: testEpoch,
+    );
+
+    final stale = await store.enqueueOutboxMutation(draft(scope, 208));
+    await store.leaseEligibleOutbox(
+      scope,
+      now: testEpoch,
+      limit: 1,
+      leaseId: 'stale-seed-lease',
+      leaseDuration: const Duration(minutes: 1),
+      allowedActions: const {CloudOutboxAction.save},
+    );
+    await store.applyOutboxTransitions(
+      scope,
+      leaseId: 'stale-seed-lease',
+      transitions: [CloudOutboxTransition.unknownOutcome(stale.operationId)],
+      now: testEpoch,
+    );
+    await store.advanceOutboxGeneration(scope, now: testEpoch);
+
+    expect(
+      await store.leaseUnknownOutcomes(
+        scope,
+        now: testEpoch,
+        limit: 10,
+        leaseId: 'scope-lease',
+        leaseDuration: const Duration(minutes: 1),
+      ),
+      isEmpty,
+    );
+    final otherLeased = await store.leaseUnknownOutcomes(
+      otherScope,
+      now: testEpoch,
+      limit: 1,
+      leaseId: 'other-reconcile-lease',
+      leaseDuration: const Duration(minutes: 1),
+    );
+    expect(otherLeased.single.operationId, other.operationId);
+    expect(
+      objectBox
+          .box<CloudOutboxOperationEntity>()
+          .getAll()
+          .singleWhere((row) => row.operationId == stale.operationId)
+          .state,
+      4,
+    );
+  });
 }
 
 String _nativeReference(String character) =>

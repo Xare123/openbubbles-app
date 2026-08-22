@@ -67,6 +67,12 @@ final class AccountBoundShadowTransport
   }) async => _rejectWrite();
 
   @override
+  Future<CloudUnknownOutcomeResolution> reconcileUnknownOutcome(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation operation,
+  }) async => _rejectWrite();
+
+  @override
   Future<CloudRecordMapEntry> allocateServerRecordMapping(
     CloudSyncScope scope, {
     required String logicalEntityKeyHash,

@@ -40,14 +40,15 @@ void main() {
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsStringSync();
 
-    expect(
-      source,
-      contains('CloudKitWriterOwnership.legacyMutationsEnabled'),
-    );
+    expect(source, contains('CloudKitWriterOwnership.legacyMutationsEnabled'));
     expect(source, contains('_runLegacyCloudKitOperation('));
     expect(source, contains('CloudKitOperationKind.legacyReadWrite'));
+    expect(source, contains('CloudKitWriterMutationGuard('));
+    expect(source, contains('owner: CloudKitWriterOwner.legacy'));
     expect(source, contains('_runCloudKitDestructiveReset('));
     expect(source, contains('CloudKitOperationKind.destructiveReset'));
     expect(source, isNot(contains('OPENBUBBLES_LEGACY_CLOUDKIT_MUTATIONS')));
+    expect(source, isNot(contains('CloudKitWriterMutationGuard.forTest')));
+    expect(source, isNot(contains('ObjectBoxCloudKitWriterAuthority.forTest')));
   });
 }

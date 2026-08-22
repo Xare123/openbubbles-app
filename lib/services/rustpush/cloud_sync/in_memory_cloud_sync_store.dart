@@ -9,7 +9,8 @@ import 'cloud_sync_store.dart';
 
 /// Transactional reference implementation used by unit tests and adapter
 /// development. It is not durable across process restarts.
-class InMemoryCloudSyncStore implements CloudSyncStore {
+class InMemoryCloudSyncStore
+    implements CloudSyncStore, CloudSyncUnknownOutcomeLeasingStore {
   final Lock _lock = Lock();
   final Map<String, CloudSyncCheckpoint> _checkpoints = {};
   final Map<String, SplayTreeMap<int, CloudInboxEntry>> _inbox = {};
@@ -437,6 +438,110 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
   }
 
   @override
+  Future<List<CloudOutboxOperation>> leaseUnknownOutcomes(
+    CloudSyncScope scope, {
+    required DateTime now,
+    required int limit,
+    required String leaseId,
+    required Duration leaseDuration,
+  }) {
+    _requirePositiveLimit(limit);
+    if (leaseId.isEmpty) throw ArgumentError.value(leaseId, 'leaseId');
+    return _lock.synchronized(() async {
+      _fenceStaleOutboxLocked(scope, now: now);
+      final checkpoint = _checkpoint(scope);
+      final entries = _outbox[scope.storageKey];
+      if (entries == null) return const <CloudOutboxOperation>[];
+
+      final eligible =
+          entries.values
+              .where(
+                (operation) =>
+                    operation.checkpointGeneration == checkpoint.generation &&
+                    operation.status == CloudOutboxStatus.unknownOutcome &&
+                    (operation.leaseExpiresAt == null ||
+                        !operation.leaseExpiresAt!.isAfter(now)) &&
+                    (operation.nextEligibleAt == null ||
+                        !operation.nextEligibleAt!.isAfter(now)),
+              )
+              .toList()
+            ..sort((first, second) {
+              final revision = first.mutationRevision.compareTo(
+                second.mutationRevision,
+              );
+              if (revision != 0) return revision;
+              return first.operationId.compareTo(second.operationId);
+            });
+
+      final leased = <CloudOutboxOperation>[];
+      for (final operation in eligible) {
+        if (leased.length == limit) break;
+        final updated = operation.copyWith(
+          status: CloudOutboxStatus.unknownOutcome,
+          leaseId: leaseId,
+          leaseExpiresAt: now.add(leaseDuration),
+        );
+        entries[operation.operationId] = updated;
+        leased.add(updated);
+      }
+      return leased;
+    });
+  }
+
+  @override
+  Future<void> markOutboxSubmissionStarted(
+    CloudSyncScope scope, {
+    required String leaseId,
+    required Iterable<String> operationIds,
+    required DateTime now,
+  }) {
+    final ids = operationIds.toList(growable: false);
+    if (ids.isEmpty) {
+      throw ArgumentError('outbox_submission_operation_ids_empty');
+    }
+    if (leaseId.isEmpty) throw ArgumentError.value(leaseId, 'leaseId');
+    return _lock.synchronized(() async {
+      final checkpoint = _checkpoint(scope);
+      final entries = _outbox[scope.storageKey];
+      final operations = <CloudOutboxOperation>[];
+      final seen = <String>{};
+      for (final operationId in ids) {
+        if (!seen.add(operationId)) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.localStorage,
+            safeCode: 'duplicate_outbox_submission_operation',
+          );
+        }
+        final operation = entries?[operationId];
+        if (operation == null ||
+            operation.checkpointGeneration <= 0 ||
+            operation.checkpointGeneration != checkpoint.generation) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.localStorage,
+            safeCode: 'stale_outbox_generation',
+          );
+        }
+        if (operation.status != CloudOutboxStatus.leased ||
+            operation.leaseId != leaseId ||
+            operation.leaseExpiresAt == null ||
+            !operation.leaseExpiresAt!.isAfter(now)) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.localStorage,
+            safeCode: 'stale_outbox_lease',
+          );
+        }
+        operations.add(operation);
+      }
+      for (final operation in operations) {
+        entries![operation.operationId] = operation.copyWith(
+          status: CloudOutboxStatus.unknownOutcome,
+          lastFailure: CloudFailureCategory.unknown,
+        );
+      }
+    });
+  }
+
+  @override
   Future<void> applyOutboxTransitions(
     CloudSyncScope scope, {
     required String leaseId,
@@ -472,7 +577,8 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
           );
         }
         if (operation == null ||
-            operation.status != CloudOutboxStatus.leased ||
+            (operation.status != CloudOutboxStatus.leased &&
+                operation.status != CloudOutboxStatus.unknownOutcome) ||
             operation.leaseId != leaseId ||
             operation.leaseExpiresAt == null ||
             !operation.leaseExpiresAt!.isAfter(now)) {
@@ -492,6 +598,12 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
             transition.category == null) {
           throw ArgumentError(
             'Paused outbox transitions require a failure category',
+          );
+        }
+        if (transition.type == CloudOutboxTransitionType.unknownOutcome &&
+            transition.category != CloudFailureCategory.unknown) {
+          throw ArgumentError(
+            'Unknown outcome transitions require unknown category',
           );
         }
       }
@@ -541,6 +653,17 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
               clearLeaseId: true,
               clearLeaseExpiresAt: true,
               clearNextEligibleAt: true,
+            );
+            break;
+          case CloudOutboxTransitionType.unknownOutcome:
+            entries[operation.operationId] = operation.copyWith(
+              status: CloudOutboxStatus.unknownOutcome,
+              attemptCount: operation.attemptCount + 1,
+              lastFailure: CloudFailureCategory.unknown,
+              nextEligibleAt: transition.nextEligibleAt,
+              clearLeaseId: true,
+              clearLeaseExpiresAt: true,
+              clearNextEligibleAt: transition.nextEligibleAt == null,
             );
             break;
         }
@@ -974,7 +1097,8 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
   bool _isBlockingOutboxStatus(CloudOutboxStatus status) =>
       status == CloudOutboxStatus.pending ||
       status == CloudOutboxStatus.leased ||
-      status == CloudOutboxStatus.paused;
+      status == CloudOutboxStatus.paused ||
+      status == CloudOutboxStatus.unknownOutcome;
 
   String _recordMapKey(CloudSyncScope scope, String logicalKeyHash) =>
       '${scope.storageKey}\u001f$logicalKeyHash';

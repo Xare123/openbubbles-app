@@ -89,7 +89,16 @@ enum CloudInboxStatus { pending, applied, quarantined }
 
 enum CloudOutboxAction { save, delete }
 
-enum CloudOutboxStatus { pending, leased, confirmed, paused, quarantined }
+/// Durable outbox states. Keep the order stable because ObjectBox persists the
+/// explicit integer mapping in its state column.
+enum CloudOutboxStatus {
+  pending,
+  leased,
+  confirmed,
+  paused,
+  quarantined,
+  unknownOutcome,
+}
 
 enum CloudEntityKind {
   chat,
@@ -599,6 +608,7 @@ enum CloudPushDisposition {
   pcsUnavailable,
   serverRecordChanged,
   quarantined,
+  unknownOutcome,
 }
 
 class CloudPushOutcome {
@@ -617,6 +627,10 @@ class CloudPushOutcome {
     }
     if (retryAfter != null && retryAfter!.isNegative) {
       throw ArgumentError('cloud_push_outcome_retry_after_invalid');
+    }
+    if (disposition == CloudPushDisposition.unknownOutcome &&
+        failureCategory != CloudFailureCategory.unknown) {
+      throw ArgumentError('cloud_push_unknown_outcome_requires_unknown');
     }
   }
 
@@ -654,6 +668,125 @@ class CloudPushBatchResult {
 
   @override
   String toString() => 'CloudPushBatchResult(count: ${outcomes.length})';
+}
+
+/// Result of reading CloudKit after a write response was lost.
+///
+/// The transport performs the protected semantic comparison. The Dart engine
+/// never inspects message content or treats a transport retry as proof that a
+/// write did not commit.
+enum CloudUnknownOutcomeDisposition {
+  committed,
+  notApplied,
+  serverRecordChanged,
+  unresolved,
+  quarantined,
+}
+
+/// Content-free evidence binding one protected server-state comparison to the
+/// exact durable mutation it resolved. Production transports create the
+/// opaque proof reference inside the protected Rust boundary.
+final class CloudUnknownOutcomeProof {
+  CloudUnknownOutcomeProof({
+    required this.operationId,
+    required this.scopeStorageKey,
+    required this.checkpointGeneration,
+    required this.logicalEntityKeyHash,
+    required this.serverRecordIdHash,
+    required this.action,
+    required this.expectedPayloadSha256,
+    required this.protectedProofReference,
+    this.observedEtagHash,
+  }) {
+    if (operationId.isEmpty ||
+        scopeStorageKey.isEmpty ||
+        checkpointGeneration <= 0 ||
+        logicalEntityKeyHash.isEmpty ||
+        serverRecordIdHash.isEmpty ||
+        protectedProofReference.isEmpty ||
+        (action == CloudOutboxAction.save && expectedPayloadSha256 == null) ||
+        (action == CloudOutboxAction.delete && expectedPayloadSha256 != null)) {
+      throw ArgumentError('cloud_unknown_outcome_proof_invalid');
+    }
+  }
+
+  final String operationId;
+  final String scopeStorageKey;
+  final int checkpointGeneration;
+  final String logicalEntityKeyHash;
+  final String serverRecordIdHash;
+  final CloudOutboxAction action;
+  final String? expectedPayloadSha256;
+  final String protectedProofReference;
+  final String? observedEtagHash;
+
+  bool binds(CloudOutboxOperation operation) =>
+      operationId == operation.operationId &&
+      scopeStorageKey == operation.scope.storageKey &&
+      checkpointGeneration == operation.checkpointGeneration &&
+      logicalEntityKeyHash == operation.logicalEntityKeyHash &&
+      serverRecordIdHash == operation.serverRecordIdHash &&
+      action == operation.action &&
+      expectedPayloadSha256 == operation.payloadSha256;
+
+  @override
+  String toString() => 'CloudUnknownOutcomeProof(redacted)';
+}
+
+class CloudUnknownOutcomeResolution {
+  const CloudUnknownOutcomeResolution._({
+    required this.disposition,
+    this.proof,
+    this.failureCategory,
+    this.retryAfter,
+  });
+
+  const CloudUnknownOutcomeResolution.committed({
+    required CloudUnknownOutcomeProof proof,
+  }) : this._(
+         disposition: CloudUnknownOutcomeDisposition.committed,
+         proof: proof,
+       );
+
+  const CloudUnknownOutcomeResolution.notApplied({
+    required CloudUnknownOutcomeProof proof,
+  }) : this._(
+         disposition: CloudUnknownOutcomeDisposition.notApplied,
+         proof: proof,
+       );
+
+  const CloudUnknownOutcomeResolution.serverRecordChanged({
+    required CloudUnknownOutcomeProof proof,
+  }) : this._(
+         disposition: CloudUnknownOutcomeDisposition.serverRecordChanged,
+         proof: proof,
+         failureCategory: CloudFailureCategory.conflict,
+       );
+
+  const CloudUnknownOutcomeResolution.unresolved({
+    required CloudFailureCategory failureCategory,
+    Duration? retryAfter,
+  }) : this._(
+         disposition: CloudUnknownOutcomeDisposition.unresolved,
+         failureCategory: failureCategory,
+         retryAfter: retryAfter,
+       );
+
+  const CloudUnknownOutcomeResolution.quarantined({
+    required CloudFailureCategory failureCategory,
+  }) : this._(
+         disposition: CloudUnknownOutcomeDisposition.quarantined,
+         failureCategory: failureCategory,
+       );
+
+  final CloudUnknownOutcomeDisposition disposition;
+  final CloudUnknownOutcomeProof? proof;
+  final CloudFailureCategory? failureCategory;
+  final Duration? retryAfter;
+
+  @override
+  String toString() =>
+      'CloudUnknownOutcomeResolution(${disposition.name}, redacted)';
 }
 
 class CloudRecordMapEntry {

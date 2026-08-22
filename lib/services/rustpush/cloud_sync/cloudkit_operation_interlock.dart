@@ -10,12 +10,21 @@ import 'cloud_sync_store.dart';
 
 enum CloudKitOperationKind {
   legacyReadWrite,
+  v2ReadWrite,
   v2ShadowRead,
   v2SemanticRead,
+  writerTransition,
   destructiveReset,
 }
 
 typedef CloudKitOperationBody<T> = Future<T> Function();
+
+abstract interface class CloudKitOperationExclusion {
+  Future<T> runExclusive<T>({
+    required CloudKitOperationKind kind,
+    required CloudKitOperationBody<T> action,
+  });
+}
 
 /// A process- and isolate-wide exclusion boundary for private CloudKit work.
 ///
@@ -28,7 +37,7 @@ typedef CloudKitOperationBody<T> = Future<T> Function();
 /// legacy sync call smaller legacy upload helpers without deadlocking, while
 /// ensuring a write helper accidentally reached from the V2 shadow sampler
 /// fails closed.
-final class CloudKitOperationInterlock {
+final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
   CloudKitOperationInterlock({
     required String privateStorageDirectory,
     required this._fenceStore,
@@ -86,6 +95,40 @@ final class CloudKitOperationInterlock {
     }
   }
 
+  /// Proves that a mutation guard is executing inside the expected exclusion
+  /// boundary. This prevents future callers from treating the interlock as a
+  /// documentation-only precondition.
+  static void requireActive(CloudKitOperationKind kind) {
+    final active = Zone.current[_zoneLeaseKey];
+    if (active is! _ActiveCloudKitOperation) {
+      throw const CloudKitOperationInterlockException(
+        'cloudkit_interlock_required',
+      );
+    }
+    if (active.kind != kind) {
+      throw const CloudKitOperationInterlockException(
+        'cloudkit_interlock_mode_violation',
+      );
+    }
+    throwIfActiveFenceLost();
+  }
+
+  static void requireActiveAny(Set<CloudKitOperationKind> kinds) {
+    final active = Zone.current[_zoneLeaseKey];
+    if (active is! _ActiveCloudKitOperation) {
+      throw const CloudKitOperationInterlockException(
+        'cloudkit_interlock_required',
+      );
+    }
+    if (!kinds.contains(active.kind)) {
+      throw const CloudKitOperationInterlockException(
+        'cloudkit_interlock_mode_violation',
+      );
+    }
+    throwIfActiveFenceLost();
+  }
+
+  @override
   Future<T> runExclusive<T>({
     required CloudKitOperationKind kind,
     required CloudKitOperationBody<T> action,

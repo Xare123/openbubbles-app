@@ -34,7 +34,11 @@ void main() {
         entities,
         containsPair('CloudProtectedPageLeaseEntity', '27:4280538170716883312'),
       );
-      expect(model['lastEntityId'], '27:4280538170716883312');
+      expect(
+        entities,
+        containsPair('CloudKitWriterAuthorityEntity', '28:889478301778181246'),
+      );
+      expect(model['lastEntityId'], '28:889478301778181246');
       expect(model['modelVersion'], 5);
       expect(model['modelVersionParserMinimum'], 5);
     },
