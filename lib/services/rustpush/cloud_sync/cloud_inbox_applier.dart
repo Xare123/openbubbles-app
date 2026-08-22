@@ -785,6 +785,7 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
     required this._store,
     this._mergePolicy = const CloudMergePolicy(),
     this._identityRegistrar,
+    this._activeScopeRevalidator,
     this._allowTombstones = false,
   });
 
@@ -792,6 +793,7 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
   final CloudSemanticStoreGateway _store;
   final CloudMergePolicy _mergePolicy;
   final CloudTransientCanonicalIdentityRegistrar? _identityRegistrar;
+  final Future<bool> Function()? _activeScopeRevalidator;
   final bool _allowTombstones;
 
   @override
@@ -799,6 +801,14 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
     CloudInboxEntry entry, {
     required CloudCoordinatorLeaseFence leaseFence,
   }) async {
+    if (entry.change.isTombstone && !_allowTombstones) {
+      // Do not ask the native decoder for a reversible plaintext identity when
+      // this build is forbidden to delete canonical state. The protected raw
+      // tombstone remains in the quarantined inbox for future reprocessing.
+      return const CloudInboxApplyResult.quarantined(
+        failureCategory: CloudFailureCategory.conflict,
+      );
+    }
     final CloudDecodedMutation decoded;
     try {
       decoded = await _decoder.decode(entry);
@@ -850,15 +860,6 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
         failureCategory: CloudFailureCategory.malformedRecord,
       );
     }
-    if (decodedAsTombstone && !_allowTombstones) {
-      // A disabled tombstone can never become applicable without a new build.
-      // Quarantine retains the protected source record while advancing the
-      // terminal prefix; no canonical row is deleted.
-      return const CloudInboxApplyResult.quarantined(
-        failureCategory: CloudFailureCategory.conflict,
-      );
-    }
-
     CloudTransientCanonicalIdentityLease? identityLease;
     if (!decodedAsTombstone && _identityRegistrar != null) {
       try {
@@ -871,6 +872,19 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
     }
 
     try {
+      if (_activeScopeRevalidator != null) {
+        try {
+          if (!await _activeScopeRevalidator()) {
+            return const CloudInboxApplyResult.quarantined(
+              failureCategory: CloudFailureCategory.conflict,
+            );
+          }
+        } catch (_) {
+          return const CloudInboxApplyResult.retryable(
+            failureCategory: CloudFailureCategory.authorization,
+          );
+        }
+      }
       return await _store.writeTransaction(
         entry: entry,
         leaseFence: leaseFence,

@@ -574,6 +574,39 @@ void main() {
     expect(store.transaction.entityApplyCount, 0);
   });
 
+  test('active native account is revalidated immediately before write',
+      () async {
+    final inbox = entry(1);
+    decodeUpsert(inbox, message());
+    applier = TransactionalCloudInboxApplier(
+      decoder: decoder,
+      store: store,
+      activeScopeRevalidator: () async => false,
+    );
+
+    final result = await _apply(applier, inbox);
+
+    expect(result.disposition, CloudInboxApplyDisposition.quarantined);
+    expect(result.failureCategory, CloudFailureCategory.conflict);
+    expect(store.transactionCount, 0);
+  });
+
+  test('native account revalidation failure remains retryable', () async {
+    final inbox = entry(1);
+    decodeUpsert(inbox, message());
+    applier = TransactionalCloudInboxApplier(
+      decoder: decoder,
+      store: store,
+      activeScopeRevalidator: () async => throw StateError('unavailable'),
+    );
+
+    final result = await _apply(applier, inbox);
+
+    expect(result.disposition, CloudInboxApplyDisposition.retryable);
+    expect(result.failureCategory, CloudFailureCategory.authorization);
+    expect(store.transactionCount, 0);
+  });
+
   test(
     'typed decoder failure quarantines without opening a transaction',
     () async {

@@ -1,11 +1,18 @@
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:bluebubbles/src/rust/frb_generated.dart' as frb_generated;
 import 'package:bluebubbles/src/rust/lib.dart' as frb_lib;
+import 'package:bluebubbles/database/database.dart';
 
+import 'cloud_inbox_applier.dart';
+import 'cloud_sync_manual_semantic_pull_sampler.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'native_protected_cloud_sync_transport.dart';
+import 'objectbox_canonical_semantic_entity_adapter.dart';
+import 'objectbox_cloud_semantic_store_gateway.dart';
 import 'cloud_sync_protector.dart';
 import 'objectbox_cloud_sync_store.dart';
+import 'rust_cloud_semantic_decoder.dart';
+import 'transient_cloud_canonical_identity_registry.dart';
 
 /// Redacted metadata returned by one native operation that reads the DSID from
 /// the supplied Rust Cloud Messages client and derives its per-install
@@ -143,6 +150,99 @@ final class CloudSyncProductionSamplerAdapter {
   }
 
   late final CloudSyncManualShadowSampler sampler;
+}
+
+/// Production composition for the separately compile-gated manual semantic
+/// pull canary. CloudKit transport remains read-only while supported chat,
+/// message, reaction, and attachment metadata records are projected locally.
+final class CloudSyncProductionSemanticPullAdapter {
+  CloudSyncProductionSemanticPullAdapter({
+    required ActiveCloudMessagesClientReader readActiveClient,
+    CloudSyncNativeAuthBinding? nativeAuthBinding,
+    required CloudSyncShadowPreflightReader readPreflight,
+    required String privateStorageDirectory,
+    required String platform,
+    required String architecture,
+    required String buildCommit,
+    RustCloudSyncProtectionBindings? protectionBindings,
+    NativeProtectedCloudSyncBindings? transportBindings,
+    RustCloudSemanticDecodeBindings? semanticDecodeBindings,
+    bool? compileGateOverrideForTest,
+  }) {
+    final authProvider = CloudSyncProductionAuthSnapshotProvider(
+      readActiveClient: readActiveClient,
+      nativeAuthBinding: nativeAuthBinding ?? FrbCloudSyncNativeAuthBinding(),
+      privateStorageDirectory: privateStorageDirectory,
+    );
+    final protector = RustCloudSyncProtector(
+      storageDirectory: privateStorageDirectory,
+      bindings: protectionBindings,
+    );
+    final durableStore = ObjectBoxCloudSyncStore.fromDatabase(
+      protector: protector,
+    );
+    sampler = CloudSyncManualSemanticPullSampler(
+      readPreflight: readPreflight,
+      readAuthSnapshot: authProvider.capture,
+      createStore: (scope) async => durableStore,
+      createRawTransport: (snapshot, scope) async =>
+          NativeProtectedCloudSyncTransport(
+            cloudMessagesClient: snapshot.cloudMessagesClient,
+            storageDirectory: privateStorageDirectory,
+            protectedStoreIdentity: snapshot.protectedStoreIdentity,
+            bindings: transportBindings,
+          ),
+      createInboxApplier: (snapshot, scope, generation) async {
+        final identityRegistry = TransientCloudCanonicalIdentityRegistry();
+        final activeScope = CloudCanonicalActiveScope(
+          scope: scope,
+          generation: generation,
+        );
+        final canonicalAdapter = ObjectBoxCanonicalSemanticEntityAdapter(
+          store: Database.store,
+          activeScopeProvider: () =>
+              identical(snapshot.cloudMessagesClient, readActiveClient())
+              ? activeScope
+              : null,
+          identityResolver: identityRegistry,
+          semanticApplyEnabled: true,
+          allowExistingChatPresentationUpdates: false,
+          allowChatUpserts: true,
+          allowExistingChatDisplayNameClears: false,
+          allowMessageUpserts: true,
+          allowReactionUpserts: true,
+          allowAttachmentMetadataUpserts: true,
+        );
+        final gateway = ObjectBoxCloudSemanticStoreGateway.fromDatabase(
+          canonicalAdapter: canonicalAdapter,
+          allowTombstones: false,
+        );
+        return TransactionalCloudInboxApplier(
+          decoder: RustCloudSemanticDecoder(
+            readAuthSnapshot: authProvider.capture,
+            storageDirectory: privateStorageDirectory,
+            bindings: semanticDecodeBindings,
+          ),
+          store: gateway,
+          identityRegistrar: identityRegistry,
+          activeScopeRevalidator: () async {
+            final current = await authProvider.capture();
+            return snapshot.sameIdentity(current) &&
+                identical(snapshot.cloudMessagesClient, readActiveClient());
+          },
+          allowTombstones: false,
+        );
+      },
+      operationFenceStore: durableStore,
+      privateStorageDirectory: privateStorageDirectory,
+      platform: platform,
+      architecture: architecture,
+      buildCommit: buildCommit,
+      compileGateOverrideForTest: compileGateOverrideForTest,
+    );
+  }
+
+  late final CloudSyncManualSemanticPullSampler sampler;
 }
 
 /// Captures a client-bound snapshot and rejects replacement races.

@@ -33,7 +33,7 @@ void main() {
   });
 
   test(
-    'protected transport is constructed only by the compile-gated sampler adapter',
+    'protected transport is constructed only by compile-gated canary adapters',
     () {
       final constructors = <String>[];
       const allowed =
@@ -61,7 +61,7 @@ void main() {
         normalized,
         [allowed],
         reason:
-            'only the explicit compile-gated manual adapter may construct the protected transport',
+            'only explicit compile-gated canary adapters may construct the protected transport',
       );
 
       final adapter = File(allowed).readAsStringSync();
@@ -69,7 +69,7 @@ void main() {
         RegExp(
           r'NativeProtectedCloudSyncTransport\(',
         ).allMatches(adapter).length,
-        1,
+        2,
       );
       expect(adapter, contains('NativeProtectedCloudSyncBindings?'));
       expect(adapter, isNot(contains('RustCloudSyncTransport(')));

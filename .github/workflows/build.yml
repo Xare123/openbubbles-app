@@ -306,6 +306,7 @@ jobs:
         run: >-
           flutter build apk --flavor beta --debug --target-platform android-arm64
           --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true
+          --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true
           --dart-define=OPENBUBBLES_BUILD_COMMIT=${{ github.sha }}
           "--dart-define=OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN=$REGISTRATION_RELAY_ACCESS_TOKEN"
 

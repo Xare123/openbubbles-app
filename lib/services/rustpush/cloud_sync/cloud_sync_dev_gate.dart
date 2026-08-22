@@ -7,4 +7,11 @@ abstract final class CloudSyncDevGate {
     'OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER',
     defaultValue: false,
   );
+
+  /// Separate opt-in for the developer-only local semantic projection canary.
+  /// Enabling the read-only sampler alone can never enable local mutations.
+  static const bool manualSemanticPullEnabled = bool.fromEnvironment(
+    'OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL',
+    defaultValue: false,
+  );
 }

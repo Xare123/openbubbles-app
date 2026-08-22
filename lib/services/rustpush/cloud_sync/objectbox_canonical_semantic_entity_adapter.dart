@@ -52,8 +52,8 @@ abstract interface class CloudCanonicalIdentityResolver {
 /// payloads that still require decoding, media materialization, profiles,
 /// group photos, and tombstones fail closed. The adapter never writes raw
 /// CloudKit record IDs, account identifiers, protected references, attachment
-/// paths, or media bytes into canonical entities. No production composition
-/// instantiates it today.
+/// paths, or media bytes into canonical entities. The only production
+/// composition is the separately compile-gated manual semantic pull canary.
 final class ObjectBoxCanonicalSemanticEntityAdapter
     implements CloudCanonicalSemanticEntityAdapter {
   ObjectBoxCanonicalSemanticEntityAdapter({

@@ -8,7 +8,7 @@ import 'package:universal_io/io.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_store.dart';
 
-enum CloudKitOperationKind { legacyReadWrite, v2ShadowRead }
+enum CloudKitOperationKind { legacyReadWrite, v2ShadowRead, v2SemanticRead }
 
 typedef CloudKitOperationBody<T> = Future<T> Function();
 
@@ -52,6 +52,7 @@ final class CloudKitOperationInterlock {
     database: 'private',
     zone: 'cloudkit-operation-fence',
   );
+
   /// Storage key of the mutual-exclusion fence lease.
   ///
   /// This interlock holds a lease on a sentinel scope for the duration of the

@@ -29,6 +29,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_p
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector_health.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_report.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_report_file.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/legacy_cloudkit_page_guard.dart';
@@ -6738,6 +6739,10 @@ class RustPushService extends GetxService {
 
   String statePath = "";
   CloudSyncManualShadowOwner? _cloudSyncV2ShadowOwner;
+  Future<CloudSyncSemanticPullReport>? _cloudSyncV2SemanticPullInFlight;
+  bool _cloudSyncV2SemanticPullQuiescing = false;
+  static const _cloudSyncV2SemanticPullQuiescenceTimeout =
+      Duration(seconds: 50);
 
   bool get cloudSyncV2ManualShadowAvailable {
     if (!CloudSyncDevGate.manualShadowSamplerEnabled ||
@@ -6767,6 +6772,92 @@ class RustPushService extends GetxService {
       throw StateError('cloud_sync_developer_mode_required');
     }
     return _cloudSyncV2Owner().runConfirmedAndPersist();
+  }
+
+  bool get cloudSyncV2ManualSemanticPullAvailable {
+    if (!CloudSyncDevGate.manualSemanticPullEnabled ||
+        !_cloudSyncV2DeveloperRuntimeAllowed ||
+        !ls.isUiThread ||
+        loggingOut ||
+        _cloudSyncV2SemanticPullQuiescing ||
+        _cloudSyncV2SemanticPullInFlight != null ||
+        statePath.isEmpty ||
+        state?.icloudServices?.cloudMessagesClient == null) {
+      return false;
+    }
+    final abi = ffi.Abi.current();
+    return abi == ffi.Abi.androidArm64 ||
+        abi == ffi.Abi.windowsArm64 ||
+        abi == ffi.Abi.windowsX64;
+  }
+
+  /// Runs one explicitly confirmed, bounded CloudKit read whose supported
+  /// records may be projected into canonical local ObjectBox entities.
+  /// CloudKit saves, CloudKit deletes, and local tombstones remain disabled.
+  Future<CloudSyncSemanticPullReport>
+  runCloudSyncV2ManualSemanticPullConfirmed() {
+    if (!CloudSyncDevGate.manualSemanticPullEnabled) {
+      throw StateError('cloud_sync_semantic_pull_disabled');
+    }
+    if (!_cloudSyncV2DeveloperRuntimeAllowed) {
+      throw StateError('cloud_sync_developer_mode_required');
+    }
+    if (_cloudSyncV2SemanticPullQuiescing) {
+      throw StateError('cloud_sync_semantic_pull_quiescing');
+    }
+    if (_cloudSyncV2SemanticPullInFlight != null) {
+      throw StateError('cloud_sync_semantic_pull_active');
+    }
+
+    final future = _runCloudSyncV2ManualSemanticPull();
+    _cloudSyncV2SemanticPullInFlight = future;
+    return future.whenComplete(() {
+      if (identical(_cloudSyncV2SemanticPullInFlight, future)) {
+        _cloudSyncV2SemanticPullInFlight = null;
+      }
+    });
+  }
+
+  Future<CloudSyncSemanticPullReport>
+  _runCloudSyncV2ManualSemanticPull() async {
+    if (statePath.isEmpty || !Directory(statePath).existsSync()) {
+      throw StateError('cloud_sync_private_storage_unavailable');
+    }
+
+    final protector = RustCloudSyncProtector(storageDirectory: statePath);
+    final preflight = CloudSyncProductionPreflightProbe(
+      platformSupported: () {
+        final abi = ffi.Abi.current();
+        return abi == ffi.Abi.androidArm64 ||
+            abi == ffi.Abi.windowsArm64 ||
+            abi == ffi.Abi.windowsX64;
+      },
+      uiIsolate: () => ls.isUiThread,
+      rustPushReady: () =>
+          state?.icloudServices?.cloudMessagesClient != null,
+      localState: ObjectBoxCloudSyncPreflightReader.fromDatabase().read,
+      privateStorageExists: () =>
+          statePath.isNotEmpty && Directory(statePath).existsSync(),
+      logoutActive: () =>
+          loggingOut || _cloudSyncV2SemanticPullQuiescing,
+      legacySyncEnabled: () => ss.settings.cloudSyncingEnabled.value,
+      legacySyncActive: () => isSyncing.value != null,
+      protectorSentinelValid:
+          CloudSyncProtectorHealthProbe(protector: protector).read,
+    );
+    final adapter = CloudSyncProductionSemanticPullAdapter(
+      readActiveClient: () =>
+          state?.icloudServices?.cloudMessagesClient,
+      readPreflight: preflight.read,
+      privateStorageDirectory: statePath,
+      platform: Platform.operatingSystem,
+      architecture: ffi.Abi.current().toString(),
+      buildCommit: _cloudSyncV2BuildIdentifier(),
+    );
+    final report = await adapter.sampler.runConfirmed();
+    Logger.info(
+        "Cloud Sync V2 semantic canary report=${jsonEncode(report.toJson())}");
+    return report;
   }
 
   bool get _cloudSyncV2DeveloperRuntimeAllowed =>
@@ -6885,8 +6976,25 @@ class RustPushService extends GetxService {
 
   Future reset(bool hw, bool logout, bool setup) async {
     final shadowOwner = _cloudSyncV2ShadowOwner;
-    await shadowOwner?.quiesceForAccountTransition();
+    _cloudSyncV2SemanticPullQuiescing = true;
     try {
+      await shadowOwner?.quiesceForAccountTransition();
+      final semanticPull = _cloudSyncV2SemanticPullInFlight;
+      if (semanticPull != null) {
+        try {
+          await semanticPull.timeout(
+            _cloudSyncV2SemanticPullQuiescenceTimeout,
+          );
+        } on TimeoutException {
+          // Leave the account and native client attached. Disposing them while
+          // a native CloudKit operation is still running risks use-after-free.
+          throw StateError('cloud_sync_semantic_pull_quiescence_timeout');
+        } catch (_) {
+          // Account teardown must continue after a safely failed read-only run.
+          Logger.warn(
+              "Cloud Sync V2 semantic pull stopped during account transition");
+        }
+      }
       var thisState = state;
       state = null;
 
@@ -6916,6 +7024,7 @@ class RustPushService extends GetxService {
       disposeState(thisState, hw, setup);
     } finally {
       await shadowOwner?.resumeAfterAccountTransition();
+      _cloudSyncV2SemanticPullQuiescing = false;
     }
   }
 

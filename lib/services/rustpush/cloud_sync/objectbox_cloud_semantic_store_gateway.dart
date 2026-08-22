@@ -59,8 +59,8 @@ enum _SemanticTransactionPhase { open, appliedTerminal, quarantinedTerminal }
 
 /// Durable ObjectBox implementation of [CloudSemanticStoreGateway].
 ///
-/// This gateway remains default-off and has no production composition. When
-/// enabled by a future reviewed composition, it fences the active account,
+/// This gateway remains default-off outside the separately compile-gated
+/// manual semantic pull canary. When enabled, it fences the active account,
 /// coordinator lease, checkpoint, and exact inbox row inside the same
 /// ObjectBox write transaction as canonical state, snapshot metadata, record
 /// mapping, replay outcome, and inbox terminal status.

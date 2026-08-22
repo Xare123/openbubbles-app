@@ -4,7 +4,7 @@ title: OpenBubbles Cloud Sync V2 Path to Production
 description: Dependency-ordered sequence from the current verified state to a production rollout, separating code work from work that needs live Apple access, hardware, or a licensing decision.
 resource: openbubbles-app
 tags: [cloudkit, sync, rollout, validation, android, windows, arm64, x64]
-timestamp: 2026-08-06
+timestamp: 2026-08-22
 ---
 
 # Cloud Sync V2 path to production
@@ -26,8 +26,8 @@ FRB mirror; Windows x64 and ARM64 already pass on the same change set:
 
 | Evidence | Result |
 | --- | --- |
-| Dart suite, ARM64 host | 470 tests pass |
-| Cloud Sync suite, ARM64 host | 332 tests pass |
+| Dart suite, ARM64 host | 533 tests pass |
+| Cloud Sync suite, ARM64 host | 388 tests pass |
 | Legacy ObjectBox upgrade probe, ARM64 host | copied pre-V2 database opens; source SHA-256 remains unchanged |
 | Cloud Sync suite, x64 host | 296 pass on the prior cross-platform run |
 | Cloud Sync suite in CI on Linux | passes, first time it has ever run there |
@@ -36,22 +36,24 @@ FRB mirror; Windows x64 and ARM64 already pass on the same change set:
 | Windows x64 CI lane | passes |
 | Windows ARM64 CI lane | passes |
 | Release Rust libraries | correct PE ARM64, PE x64, ELF64 AArch64 |
-| `cargo test` on the main crate | 122 tests pass |
+| `cargo test` on the main crate | 130 tests pass |
 
 What that evidence does **not** cover: no live CloudKit fetch has ever run, no
 record has been decoded from a real Apple account, and nothing has been written
-to a message table by the V2 path.
+to a message table by the V2 path. The production code now supports that first
+bounded semantic canary, but code-path coverage is not live-account evidence.
 
 ## The honest shape of the remaining work
 
 Three categories, and only the first is ours to finish by typing.
 
-1. **Code and tests.** Large but tractable. The native-to-Dart semantic decoder
-   boundary now exists and is exhaustively fail-closed across every current
-   result disposition and representable payload lane. It remains deliberately
-   uncomposed. The dominant item is still semantic apply: the canonical GUID
-   does not cross the bridge for chats or messages, and the production entity
-   adapter is a set of narrow default-off stubs.
+1. **Code and tests.** The bounded semantic canary is now composed behind its
+   own compile-time and Developer Mode gates. It projects supported chats,
+   messages, reactions, and attachment metadata into ObjectBox while remote
+   saves, remote deletes, local tombstones, automatic triggers, and unbounded
+   traversal remain structurally disabled. The remaining code work is
+   hardening found by review and the later write path, not the first read-only
+   semantic projection.
 2. **Live validation.** Cannot be done offline at any effort level. Needs a
    Mac-activated Apple account with real history, a trusted device for PCS key
    access, and soak time measured in days.
@@ -148,34 +150,41 @@ Protection there is no server-side fallback at all; and local 2FA entry.
 5. **Install the sampler build** on a device whose profile is separate from any
    real account, and verify package identity, UID, native ABI, and data
    directory before trusting isolation.
-6. **One manual read-only pass, then an immediate replay in the same session.**
-   The replay must be in-session: the journal budget rejects pending entries
-   older than 24 hours, so a next-day replay can be legitimately blocked and
-   will look like a failure.
-7. **Read the result carefully.** A zone that returns `completed` with
+6. **Run the shadow sampler first.** This fetches and protects one bounded page
+   without canonical message-table writes. Do not move to semantic projection
+   if any zone fails its transport, journal, checkpoint, account, or write
+   tripwire checks.
+7. **Read the shadow result carefully.** A zone that returns `completed` with
    `fetched: 0` and no failure category is a success, but an empty zone and a
    never-populated zone are indistinguishable in the report. Confirm upload
    from the Mac first or this stage proves only that transport works.
+8. **Run one semantic pull canary, then one immediate replay in the same
+   session.** It processes chats, messages, then attachments, at one page and
+   50 changes per zone. A pass requires all three exact zones to complete, zero
+   deferred, quarantined, or retried records, and unchanged empty outbox
+   tripwires. The replay must be in-session: the journal budget rejects pending
+   entries older than 24 hours, so a next-day replay can be legitimately
+   blocked and look like a failure.
 
-Exit: bounded fetch, protected journaling, checkpoint behaviour, and replay
-idempotence demonstrated against a real account. This proves none of the
-message semantics.
+Exit: bounded fetch, protected journaling, checkpoint behaviour, canonical
+projection, and replay idempotence demonstrated against a real account. It
+still does not prove full-history coverage, legacy coexistence, or writes.
 
 ### Stage 3 — semantic apply
 
 The largest block of code work, and the first point at which the local message
 database is written by this path.
 
-8. **Widen the bridge once.** The transient DTO carries a narrow subset and no
-   canonical GUID for chats or messages. Widening it is a binding regeneration,
-   which is disruptive, so it should happen once and deliberately rather than
-   incrementally.
+9. ~~**Widen the bridge once.**~~ **Done.** Rich transient payloads now carry
+   validated canonical identities for chats, messages, reactions, and
+   attachment metadata without exposing raw CloudKit identifiers or records.
 
    Carry the `EMPTY_LIST` observation across at the same time.
    `CloudRawRecordPresence` already records which fields arrived with that wire
    type, but nothing can read it from Dart, so the evidence is gathered and
    discarded. It is held back rather than regenerated for one diagnostic field.
-9. ~~**Implement the Dart semantic decoder boundary.**~~ **Done, but dormant.**
+10. ~~**Implement the Dart semantic decoder boundary.**~~ **Done and composed
+   only by the manual semantic canary.**
    `RustCloudSemanticDecoder` validates the complete scope, generation,
    protected source capability, native session before and after decode,
    one-of result shape, mutation kind, entity kind, logical hashes, field
@@ -187,16 +196,16 @@ database is written by this path.
    clears, edit revisions, tombstones, and auxiliary-zone rejection. This
    closes the decoder boundary only; it does not enable semantic apply or make
    the missing canonical GUID problem smaller.
-10. **Expand the production entity adapter** to map onto the real `Chat`,
-   `Message`, `Handle`, and `Attachment` entities. The legacy `applyFromCloud`
-   path is the field-by-field reference implementation and already handles
-   attributed bodies, edits, retractions, and reply parents. Field classes and
-   merge rules are specified in [field ownership](CLOUD_SYNC_V2_FIELD_OWNERSHIP.md).
-11. **Respect the transaction boundary.** The gateway already performs the whole
-    multi-box transition in one write transaction. The adapter cannot reuse the
-    entities' own `save()` methods, which open their own transactions, and
-    `Handle.save()` reaches into the contacts service.
-12. **Prove no duplicate rows.** `Message.guid` is unique, and the legacy
+11. ~~**Expand the production entity adapter.**~~ **Done for the current canary
+    lanes.** Supported chat, message, reaction, and attachment metadata records
+    map onto the real ObjectBox entities. Display-name clears, profiles, group
+    photos, media bytes, and tombstones remain gated or unsupported rather than
+    guessed.
+12. ~~**Respect the transaction boundary.**~~ **Done.** Canonical mutation,
+    merge snapshot, identity mapping, replay outcome, inbox terminal state, and
+    checkpoint floor share one ObjectBox transaction. A full native account
+    identity recheck occurs immediately before that write.
+13. **Prove no duplicate rows.** `Message.guid` is unique, and the legacy
     CloudKit path still ships. A live coexistence test is the only way to show
     V2 does not create duplicates alongside it.
 
@@ -205,16 +214,16 @@ x64, with zero lost and zero duplicated logical message GUIDs.
 
 ### Stage 4 — writes
 
-13. Durable dependency-aware outbox, explicit per-record confirmation, then
+14. Durable dependency-aware outbox, explicit per-record confirmation, then
     tombstones behind their own flag. Deletion stays disabled until its own
     review.
 
 ### Stage 5 — rollout
 
-14. Android wake-cost suite under Doze, Battery Saver, locked screen, and 24-hour
+15. Android wake-cost suite under Doze, Battery Saver, locked screen, and 24-hour
     idle, with paired sync-off and sync-on runs. No credible battery claim can
     be made before this, and none is made now.
-15. Staged rollout with the alarm thresholds already specified in the
+16. Staged rollout with the alarm thresholds already specified in the
     production-readiness notes wired as rollback signals.
 
 ## What is blocked on something other than code
