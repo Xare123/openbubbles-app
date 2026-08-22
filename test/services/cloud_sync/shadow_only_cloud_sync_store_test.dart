@@ -92,7 +92,7 @@ void main() {
       throwsA(isA<CloudSyncShadowStoreTripwireException>()),
     );
     await expectLater(
-      store.readRecordMap(scope, logicalEntityKeyHash: 'entity'),
+      store.readRecordMap(scope, logicalEntityKeyHash: 'entity', generation: 1),
       throwsA(isA<CloudSyncShadowStoreTripwireException>()),
     );
   });

@@ -34,6 +34,8 @@ void main() {
     int maximumDeferredAttempts = 8,
     Duration maximumDeferredAge = const Duration(days: 3),
     Duration pausedRetryDelay = const Duration(hours: 6),
+    Duration coordinatorLeaseDuration = const Duration(minutes: 5),
+    Duration outboxLeaseDuration = const Duration(minutes: 2),
     MemoryCloudSyncObserver? observer,
     String coordinatorId = 'coordinator-a',
     CloudShadowJournalBudget? shadowJournalBudget,
@@ -59,6 +61,8 @@ void main() {
         maximumDeferredAttempts: maximumDeferredAttempts,
         maximumDeferredAge: maximumDeferredAge,
         pausedRetryDelay: pausedRetryDelay,
+        coordinatorLeaseDuration: coordinatorLeaseDuration,
+        outboxLeaseDuration: outboxLeaseDuration,
         shadowJournalBudget: shadowJournalBudget ?? CloudShadowJournalBudget(),
         flags: flags,
       ),
@@ -853,7 +857,7 @@ void main() {
     },
   );
 
-  test('only explicit upload success confirms an outbox operation', () async {
+  test('missing upload outcome rejects the complete batch', () async {
     final confirmed = testOutboxOperation(scope, 1);
     final omitted = testOutboxOperation(scope, 2);
     await store.enqueueOutbox(confirmed);
@@ -874,20 +878,133 @@ void main() {
       maximumOutboxBatches: 1,
     ).synchronize(trigger: CloudSyncTrigger.localOutbox);
 
-    expect(result.counters.confirmed, 1);
-    expect(result.counters.retried, 1);
+    expect(result.counters.confirmed, 0);
+    expect(result.counters.retried, 2);
     final outbox = await store.outboxEntries(scope);
+    for (final operation in outbox) {
+      expect(operation.status, CloudOutboxStatus.pending);
+      expect(operation.attemptCount, 1);
+      expect(operation.lastFailure, CloudFailureCategory.unknown);
+    }
+  });
+
+  test('unknown upload outcome rejects the complete batch', () async {
+    final first = testOutboxOperation(scope, 1);
+    final second = testOutboxOperation(scope, 2);
+    final unknown = testOutboxOperation(scope, 99);
+    await store.enqueueOutbox(first);
+    await store.enqueueOutbox(second);
+    transport.enqueuePushResult(
+      CloudPushBatchResult(
+        outcomes: [
+          CloudPushOutcome(
+            operationId: first.operationId,
+            disposition: CloudPushDisposition.confirmed,
+          ),
+          CloudPushOutcome(
+            operationId: second.operationId,
+            disposition: CloudPushDisposition.confirmed,
+          ),
+          CloudPushOutcome(
+            operationId: unknown.operationId,
+            disposition: CloudPushDisposition.confirmed,
+          ),
+        ],
+      ),
+    );
+
+    final result = await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    expect(result.counters.confirmed, 0);
+    expect(result.counters.retried, 2);
+    for (final operation in await store.outboxEntries(scope)) {
+      expect(operation.status, CloudOutboxStatus.pending);
+      expect(operation.attemptCount, 1);
+      expect(operation.lastFailure, CloudFailureCategory.unknown);
+    }
+  });
+
+  test(
+    'lost coordinator lease during push cannot confirm the outbox',
+    () async {
+      store = _RejectingCoordinatorRenewalStore();
+      final operation = testOutboxOperation(scope, 1);
+      await store.enqueueOutbox(operation);
+      transport.pushHandler = (scope, operations) async {
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+        return CloudPushBatchResult(
+          outcomes: [
+            CloudPushOutcome(
+              operationId: operations.single.operationId,
+              disposition: CloudPushDisposition.confirmed,
+            ),
+          ],
+        );
+      };
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+        coordinatorLeaseDuration: const Duration(milliseconds: 60),
+        outboxLeaseDuration: const Duration(seconds: 1),
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+      expect(result.status, CloudSyncRunStatus.failed);
+      expect(result.failureCategory, CloudFailureCategory.localStorage);
+      final stored = (await store.outboxEntries(scope)).single;
+      expect(stored.status, CloudOutboxStatus.leased);
+      expect(stored.confirmedAt, isNull);
+    },
+  );
+
+  test('generation advance cannot overtake an in-flight remote push', () async {
+    final operation = testOutboxOperation(scope, 44);
+    await store.enqueueOutbox(operation);
+    final pushStarted = Completer<void>();
+    final releasePush = Completer<void>();
+    transport.pushHandler = (requestedScope, operations) async {
+      pushStarted.complete();
+      await releasePush.future;
+      return CloudPushBatchResult(
+        outcomes: [
+          CloudPushOutcome(
+            operationId: operations.single.operationId,
+            disposition: CloudPushDisposition.confirmed,
+          ),
+        ],
+      );
+    };
+
+    final run = engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+    await pushStarted.future;
+
+    await expectLater(
+      store.advanceOutboxGeneration(scope, now: clock.value),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode,
+          'safeCode',
+          'generation_advance_coordinator_active',
+        ),
+      ),
+    );
+    expect((await store.readCheckpoint(scope)).generation, 1);
+
+    releasePush.complete();
+    await run;
     expect(
-      outbox
-          .singleWhere((item) => item.operationId == confirmed.operationId)
-          .status,
+      (await store.outboxEntries(scope)).single.status,
       CloudOutboxStatus.confirmed,
     );
-    final retry = outbox.singleWhere(
-      (item) => item.operationId == omitted.operationId,
+    expect(
+      (await store.advanceOutboxGeneration(scope, now: clock.value)).generation,
+      2,
     );
-    expect(retry.status, CloudOutboxStatus.pending);
-    expect(retry.attemptCount, 1);
   });
 
   test(
@@ -927,6 +1044,45 @@ void main() {
       expect(transport.pushCallCount, 2);
     },
   );
+
+  test('authorization repush rejects a mismatched outcome set', () async {
+    final operation = testOutboxOperation(scope, 1);
+    final unknown = testOutboxOperation(scope, 99);
+    await store.enqueueOutbox(operation);
+    transport.enqueuePushResult(
+      CloudPushBatchResult(
+        outcomes: [
+          CloudPushOutcome(
+            operationId: operation.operationId,
+            disposition: CloudPushDisposition.unauthorized,
+            failureCategory: CloudFailureCategory.authorization,
+          ),
+        ],
+      ),
+    );
+    transport.enqueuePushResult(
+      CloudPushBatchResult(
+        outcomes: [
+          CloudPushOutcome(
+            operationId: unknown.operationId,
+            disposition: CloudPushDisposition.confirmed,
+          ),
+        ],
+      ),
+    );
+    transport.authenticationRefreshHandler = (_) async => true;
+
+    final result = await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    expect(result.counters.confirmed, 0);
+    expect(result.counters.retried, 1);
+    final stored = (await store.outboxEntries(scope)).single;
+    expect(stored.status, CloudOutboxStatus.pending);
+    expect(stored.lastFailure, CloudFailureCategory.unknown);
+  });
 
   test('uploads attachment dependency before its owning message', () async {
     final attachment = testOutboxOperation(scope, 1);
@@ -1163,6 +1319,7 @@ void main() {
       (await store.readRecordMap(
         scope,
         logicalEntityKeyHash: operation.logicalEntityKeyHash,
+        generation: operation.checkpointGeneration,
       ))!.encryptedRawRecordReference,
       'protected:merged-raw-record',
     );
@@ -1238,5 +1395,26 @@ class _RecoveryTrackingStore extends InMemoryCloudSyncStore {
   }) {
     recoverExpiredOutboxLeaseCalls++;
     return super.recoverExpiredOutboxLeases(scope, now: now);
+  }
+}
+
+class _RejectingCoordinatorRenewalStore extends InMemoryCloudSyncStore {
+  int renewalCalls = 0;
+
+  @override
+  Future<bool> renewCoordinatorLease(
+    CloudSyncScope scope, {
+    required CloudCoordinatorLeaseFence leaseFence,
+    required DateTime now,
+    required Duration leaseDuration,
+  }) {
+    renewalCalls++;
+    if (renewalCalls > 1) return Future.value(false);
+    return super.renewCoordinatorLease(
+      scope,
+      leaseFence: leaseFence,
+      now: now,
+      leaseDuration: leaseDuration,
+    );
   }
 }

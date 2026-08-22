@@ -174,6 +174,12 @@ final class ShadowOnlyCloudSyncStore
       _blocked();
 
   @override
+  Future<CloudSyncCheckpoint> advanceOutboxGeneration(
+    CloudSyncScope scope, {
+    required DateTime now,
+  }) => _blocked();
+
+  @override
   Future<List<CloudOutboxOperation>> leaseEligibleOutbox(
     CloudSyncScope scope, {
     required DateTime now,
@@ -203,6 +209,7 @@ final class ShadowOnlyCloudSyncStore
     required String leaseId,
     required String operationId,
     required String serverRecordIdHash,
+    required DateTime now,
   }) => _blocked();
 
   @override
@@ -230,10 +237,14 @@ final class ShadowOnlyCloudSyncStore
   Future<CloudRecordMapEntry?> readRecordMap(
     CloudSyncScope scope, {
     required String logicalEntityKeyHash,
+    required int generation,
   }) => _blocked();
 
   @override
-  Future<void> upsertRecordMap(CloudRecordMapEntry entry) => _blocked();
+  Future<void> upsertRecordMap(
+    CloudRecordMapEntry entry, {
+    required int generation,
+  }) => _blocked();
 
   Future<T> _blocked<T>() =>
       Future<T>.error(const CloudSyncShadowStoreTripwireException());

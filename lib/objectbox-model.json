@@ -1060,7 +1060,7 @@
     },
     {
       "id": "19:6209808242097333245",
-      "lastPropertyId": "22:1517823970736287654",
+      "lastPropertyId": "23:3453625028306797643",
       "name": "CloudOutboxOperationEntity",
       "properties": [
         {
@@ -1187,13 +1187,18 @@
           "id": "22:1517823970736287654",
           "name": "confirmedAtMs",
           "type": 6
+        },
+        {
+          "id": "23:3453625028306797643",
+          "name": "checkpointGeneration",
+          "type": 6
         }
       ],
       "relations": []
     },
     {
       "id": "20:8623084761715763815",
-      "lastPropertyId": "11:6045468503885689678",
+      "lastPropertyId": "12:7135872154167319448",
       "name": "CloudRecordMapEntity",
       "properties": [
         {
@@ -1263,6 +1268,11 @@
           "indexId": "42:8580390230204763517",
           "type": 9,
           "flags": 4096
+        },
+        {
+          "id": "12:7135872154167319448",
+          "name": "generation",
+          "type": 6
         }
       ],
       "relations": []

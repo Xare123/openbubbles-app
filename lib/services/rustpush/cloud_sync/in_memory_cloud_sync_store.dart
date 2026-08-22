@@ -16,7 +16,7 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
   final Map<String, Set<String>> _seenChangeIds = {};
   final Map<String, Map<String, CloudOutboxOperation>> _outbox = {};
   final Map<String, _CoordinatorLease> _coordinatorLeases = {};
-  final Map<String, CloudRecordMapEntry> _recordMaps = {};
+  final Map<String, _GenerationBoundRecordMap> _recordMaps = {};
   final List<CloudSyncRunRecord> _runs = [];
 
   List<CloudSyncRunRecord> get runs => List.unmodifiable(_runs);
@@ -304,6 +304,7 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
   @override
   Future<void> enqueueOutbox(CloudOutboxOperation operation) {
     return _lock.synchronized(() async {
+      _fenceStaleOutboxLocked(operation.scope, now: operation.createdAt);
       _enqueueOutboxLocked(operation);
     });
   }
@@ -312,6 +313,7 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
   Future<CloudOutboxOperation> enqueueOutboxMutation(CloudOutboxDraft draft) {
     return _lock.synchronized(() async {
       final checkpoint = _checkpoint(draft.scope);
+      _fenceStaleOutboxLocked(draft.scope, now: draft.createdAt);
       final revision = checkpoint.mutationRevisionCounter + 1;
       _checkpoints[draft.scope.storageKey] = checkpoint.copyWith(
         mutationRevisionCounter: revision,
@@ -330,6 +332,7 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
         action: draft.action,
         payloadVersion: draft.payloadVersion,
         mutationRevision: revision,
+        checkpointGeneration: checkpoint.generation,
         encryptedPayloadReference: draft.encryptedPayloadReference,
         payloadSha256: draft.payloadSha256,
         serverRecordIdHash: draft.serverRecordIdHash,
@@ -338,6 +341,29 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
       );
       _enqueueOutboxLocked(operation);
       return operation;
+    });
+  }
+
+  @override
+  Future<CloudSyncCheckpoint> advanceOutboxGeneration(
+    CloudSyncScope scope, {
+    required DateTime now,
+  }) {
+    return _lock.synchronized(() async {
+      final activeLease = _coordinatorLeases[scope.storageKey];
+      if (activeLease != null && activeLease.expiresAt.isAfter(now)) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'generation_advance_coordinator_active',
+        );
+      }
+      final checkpoint = _checkpoint(scope);
+      final advanced = checkpoint.copyWith(
+        generation: checkpoint.generation + 1,
+      );
+      _checkpoints[scope.storageKey] = advanced;
+      _fenceStaleOutboxLocked(scope, now: now, checkpoint: advanced);
+      return advanced;
     });
   }
 
@@ -353,6 +379,7 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
     _requirePositiveLimit(limit);
     if (leaseId.isEmpty) throw ArgumentError.value(leaseId, 'leaseId');
     return _lock.synchronized(() async {
+      _fenceStaleOutboxLocked(scope, now: now);
       _recoverExpiredOutboxLeasesLocked(scope, now);
       final entries = _outbox[scope.storageKey];
       if (entries == null) return const <CloudOutboxOperation>[];
@@ -375,11 +402,13 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
                     allowedActions.contains(operation.action) &&
                     (operation.nextEligibleAt == null ||
                         !operation.nextEligibleAt!.isAfter(now)) &&
-                    operation.dependencyOperationIds.every(
-                      (dependencyId) =>
-                          entries[dependencyId]?.status ==
-                          CloudOutboxStatus.confirmed,
-                    ),
+                    operation.dependencyOperationIds.every((dependencyId) {
+                      final dependency = entries[dependencyId];
+                      return dependency?.status ==
+                              CloudOutboxStatus.confirmed &&
+                          dependency?.checkpointGeneration ==
+                              operation.checkpointGeneration;
+                    }),
               )
               .toList()
             ..sort((first, second) {
@@ -415,6 +444,7 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
     required DateTime now,
   }) {
     return _lock.synchronized(() async {
+      final checkpoint = _checkpoint(scope);
       final transitionList = transitions.toList(growable: false);
       final entries = _outbox[scope.storageKey];
       if (entries == null && transitionList.isNotEmpty) {
@@ -424,11 +454,28 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
         );
       }
 
+      final transitionIds = <String>{};
       for (final transition in transitionList) {
+        if (!transitionIds.add(transition.operationId)) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.localStorage,
+            safeCode: 'duplicate_outbox_transition',
+          );
+        }
         final operation = entries?[transition.operationId];
+        if (operation != null &&
+            (operation.checkpointGeneration <= 0 ||
+                operation.checkpointGeneration != checkpoint.generation)) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.localStorage,
+            safeCode: 'stale_outbox_generation',
+          );
+        }
         if (operation == null ||
             operation.status != CloudOutboxStatus.leased ||
-            operation.leaseId != leaseId) {
+            operation.leaseId != leaseId ||
+            operation.leaseExpiresAt == null ||
+            !operation.leaseExpiresAt!.isAfter(now)) {
           throw CloudSyncFailure(
             category: CloudFailureCategory.localStorage,
             safeCode: 'stale_outbox_lease',
@@ -506,9 +553,10 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
     CloudSyncScope scope, {
     required DateTime now,
   }) {
-    return _lock.synchronized(
-      () async => _recoverExpiredOutboxLeasesLocked(scope, now),
-    );
+    return _lock.synchronized(() async {
+      _fenceStaleOutboxLocked(scope, now: now);
+      return _recoverExpiredOutboxLeasesLocked(scope, now);
+    });
   }
 
   @override
@@ -517,12 +565,24 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
     required String leaseId,
     required String operationId,
     required String serverRecordIdHash,
+    required DateTime now,
   }) {
     return _lock.synchronized(() async {
+      final checkpoint = _checkpoint(scope);
       final operation = _outbox[scope.storageKey]?[operationId];
+      if (operation != null &&
+          (operation.checkpointGeneration <= 0 ||
+              operation.checkpointGeneration != checkpoint.generation)) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'stale_outbox_generation',
+        );
+      }
       if (operation == null ||
           operation.status != CloudOutboxStatus.leased ||
-          operation.leaseId != leaseId) {
+          operation.leaseId != leaseId ||
+          operation.leaseExpiresAt == null ||
+          !operation.leaseExpiresAt!.isAfter(now)) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.localStorage,
           safeCode: 'stale_outbox_lease',
@@ -548,6 +608,7 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
     required DateTime now,
   }) {
     return _lock.synchronized(() async {
+      _fenceStaleOutboxLocked(scope, now: now);
       final entries = _outbox[scope.storageKey];
       if (entries == null) return 0;
       var resumed = 0;
@@ -555,7 +616,9 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
         final operation = entry.value;
         if (operation.status == CloudOutboxStatus.paused &&
             operation.lastFailure != null &&
-            categories.contains(operation.lastFailure)) {
+            categories.contains(operation.lastFailure) &&
+            (operation.nextEligibleAt == null ||
+                !operation.nextEligibleAt!.isAfter(now))) {
           entries[entry.key] = operation.copyWith(
             status: CloudOutboxStatus.pending,
             nextEligibleAt: now,
@@ -574,11 +637,13 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
     required DateTime now,
   }) {
     return _lock.synchronized(() async {
+      final generation = _checkpoint(scope).generation;
       final entries = _outbox[scope.storageKey];
       if (entries == null) return <CloudFailureCategory>{};
       return entries.values
           .where(
             (operation) =>
+                operation.checkpointGeneration == generation &&
                 operation.status == CloudOutboxStatus.paused &&
                 (operation.nextEligibleAt == null ||
                     !operation.nextEligibleAt!.isAfter(now)),
@@ -597,6 +662,7 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
     required DateTime nextEligibleAt,
   }) {
     return _lock.synchronized(() async {
+      _fenceStaleOutboxLocked(scope, now: now);
       final entries = _outbox[scope.storageKey];
       if (entries == null) return 0;
       var postponed = 0;
@@ -687,25 +753,46 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
   Future<CloudRecordMapEntry?> readRecordMap(
     CloudSyncScope scope, {
     required String logicalEntityKeyHash,
+    required int generation,
   }) {
     return _lock.synchronized(() async {
-      return _recordMaps[_recordMapKey(scope, logicalEntityKeyHash)];
+      final checkpoint = _checkpoint(scope);
+      if (generation <= 0 || generation != checkpoint.generation) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'record_map_generation_mismatch',
+        );
+      }
+      final entry = _recordMaps[_recordMapKey(scope, logicalEntityKeyHash)];
+      if (entry == null || entry.generation != generation) return null;
+      return entry.value;
     });
   }
 
   @override
-  Future<void> upsertRecordMap(CloudRecordMapEntry entry) {
+  Future<void> upsertRecordMap(
+    CloudRecordMapEntry entry, {
+    required int generation,
+  }) {
     return _lock.synchronized(() async {
+      final checkpoint = _checkpoint(entry.scope);
+      if (generation <= 0 || generation != checkpoint.generation) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'record_map_generation_mismatch',
+        );
+      }
       final key = _recordMapKey(entry.scope, entry.logicalEntityKeyHash);
       final existing = _recordMaps[key];
       if (existing != null &&
-          existing.serverRecordIdHash != entry.serverRecordIdHash) {
+          existing.generation == generation &&
+          existing.value.serverRecordIdHash != entry.serverRecordIdHash) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.conflict,
           safeCode: 'server_mapping_changed',
         );
       }
-      _recordMaps[key] = entry;
+      _recordMaps[key] = _GenerationBoundRecordMap(generation, entry);
     });
   }
 
@@ -893,7 +980,22 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
       '${scope.storageKey}\u001f$logicalKeyHash';
 
   void _enqueueOutboxLocked(CloudOutboxOperation operation) {
+    for (final scopedEntry in _outbox.entries) {
+      if (scopedEntry.key != operation.scope.storageKey &&
+          scopedEntry.value.containsKey(operation.operationId)) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'outbox_operation_scope_collision',
+        );
+      }
+    }
     final checkpoint = _checkpoint(operation.scope);
+    if (operation.checkpointGeneration != checkpoint.generation) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.localStorage,
+        safeCode: 'outbox_generation_mismatch',
+      );
+    }
     if (operation.mutationRevision > checkpoint.mutationRevisionCounter) {
       _checkpoints[operation.scope.storageKey] = checkpoint.copyWith(
         mutationRevisionCounter: operation.mutationRevision,
@@ -951,6 +1053,31 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
     entries[operation.operationId] = operation;
   }
 
+  void _fenceStaleOutboxLocked(
+    CloudSyncScope scope, {
+    required DateTime now,
+    CloudSyncCheckpoint? checkpoint,
+  }) {
+    final activeCheckpoint = checkpoint ?? _checkpoint(scope);
+    final entries = _outbox[scope.storageKey];
+    if (entries == null) return;
+    for (final entry in entries.entries.toList()) {
+      final operation = entry.value;
+      if (!_isBlockingOutboxStatus(operation.status) ||
+          operation.checkpointGeneration == activeCheckpoint.generation) {
+        continue;
+      }
+      entries[entry.key] = operation.copyWith(
+        status: CloudOutboxStatus.quarantined,
+        attemptCount: operation.attemptCount + 1,
+        lastFailure: CloudFailureCategory.localStorage,
+        clearLeaseId: true,
+        clearLeaseExpiresAt: true,
+        clearNextEligibleAt: true,
+      );
+    }
+  }
+
   int _compareMutationOrder(
     CloudOutboxOperation first,
     CloudOutboxOperation second,
@@ -971,4 +1098,11 @@ class _CoordinatorLease {
   final String ownerId;
   final int generation;
   final DateTime expiresAt;
+}
+
+class _GenerationBoundRecordMap {
+  const _GenerationBoundRecordMap(this.generation, this.value);
+
+  final int generation;
+  final CloudRecordMapEntry value;
 }

@@ -420,6 +420,7 @@ class CloudOutboxOperation {
     required this.action,
     required this.payloadVersion,
     required this.mutationRevision,
+    required this.checkpointGeneration,
     required Iterable<String> dependencyOperationIds,
     required this.createdAt,
     this.encryptedPayloadReference,
@@ -447,6 +448,9 @@ class CloudOutboxOperation {
     if (mutationRevision < 0) {
       throw ArgumentError('cloud_outbox_mutation_revision_invalid');
     }
+    if (checkpointGeneration <= 0) {
+      throw ArgumentError('cloud_outbox_checkpoint_generation_invalid');
+    }
     if (encryptedPayloadReference != null &&
         encryptedPayloadReference!.isEmpty) {
       throw ArgumentError('cloud_outbox_payload_reference_invalid');
@@ -472,6 +476,13 @@ class CloudOutboxOperation {
   final CloudOutboxAction action;
   final int payloadVersion;
   final int mutationRevision;
+
+  /// Generation of the scope checkpoint which admitted this mutation.
+  ///
+  /// A rebootstrap advances the checkpoint generation and terminally fences
+  /// every older non-terminal outbox row. This value must therefore never be
+  /// zero, including after an ObjectBox schema migration.
+  final int checkpointGeneration;
 
   /// A ciphertext blob identifier or protected local keystore reference.
   final String? encryptedPayloadReference;
@@ -511,6 +522,7 @@ class CloudOutboxOperation {
       action: action,
       payloadVersion: payloadVersion,
       mutationRevision: mutationRevision,
+      checkpointGeneration: checkpointGeneration,
       encryptedPayloadReference:
           encryptedPayloadReference ?? this.encryptedPayloadReference,
       payloadSha256: payloadSha256 ?? this.payloadSha256,
@@ -590,26 +602,58 @@ enum CloudPushDisposition {
 }
 
 class CloudPushOutcome {
-  const CloudPushOutcome({
+  CloudPushOutcome({
     required this.operationId,
     required this.disposition,
     this.failureCategory,
     this.retryAfter,
-  });
+  }) {
+    final operationIdMatch = _operationIdPattern.matchAsPrefix(operationId);
+    if (operationIdMatch == null ||
+        operationIdMatch.end != operationId.length) {
+      // Keep the rejected value out of the exception. Operation IDs are
+      // correlation keys and must not become a diagnostic data-leak path.
+      throw ArgumentError('cloud_push_outcome_operation_id_invalid');
+    }
+    if (retryAfter != null && retryAfter!.isNegative) {
+      throw ArgumentError('cloud_push_outcome_retry_after_invalid');
+    }
+  }
+
+  static final RegExp _operationIdPattern = RegExp(r'op1:[0-9a-f]{64}');
 
   final String operationId;
   final CloudPushDisposition disposition;
   final CloudFailureCategory? failureCategory;
   final Duration? retryAfter;
+
+  @override
+  String toString() => 'CloudPushOutcome(${disposition.name}, redacted)';
 }
 
 class CloudPushBatchResult {
   CloudPushBatchResult({required Iterable<CloudPushOutcome> outcomes})
-    : outcomes = UnmodifiableMapView({
-        for (final outcome in outcomes) outcome.operationId: outcome,
-      });
+    : outcomes = UnmodifiableMapView(_indexOutcomes(outcomes));
+
+  static Map<String, CloudPushOutcome> _indexOutcomes(
+    Iterable<CloudPushOutcome> values,
+  ) {
+    final indexed = <String, CloudPushOutcome>{};
+    for (final outcome in values) {
+      if (indexed.containsKey(outcome.operationId)) {
+        // Do not include the duplicate ID in the exception. The batch must
+        // fail closed instead of silently choosing one of two outcomes.
+        throw ArgumentError('cloud_push_batch_duplicate_outcome_id');
+      }
+      indexed[outcome.operationId] = outcome;
+    }
+    return indexed;
+  }
 
   final Map<String, CloudPushOutcome> outcomes;
+
+  @override
+  String toString() => 'CloudPushBatchResult(count: ${outcomes.length})';
 }
 
 class CloudRecordMapEntry {

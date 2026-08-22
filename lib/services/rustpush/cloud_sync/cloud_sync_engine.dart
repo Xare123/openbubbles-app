@@ -1024,12 +1024,12 @@ class CloudSyncEngine {
       var outcomes = <String, CloudPushOutcome>{};
       if (ready.isNotEmpty) {
         try {
-          final result = await _transport.pushOperations(
-            scope,
-            operations: ready,
+          final result = await _withCoordinatorLeaseHeartbeat(
+            () => _transport.pushOperations(scope, operations: ready),
           );
-          outcomes = Map.of(result.outcomes);
+          outcomes = _requireExactPushOutcomes(ready, result);
         } on CloudSyncFailure catch (error) {
+          if (_isCoordinatorLeaseFailure(error)) rethrow;
           for (final operation in ready) {
             outcomes[operation.operationId] = _outcomeForThrownFailure(
               operation.operationId,
@@ -1185,6 +1185,7 @@ class CloudSyncEngine {
         var mapping = await _store.readRecordMap(
           scope,
           logicalEntityKeyHash: operation.logicalEntityKeyHash,
+          generation: operation.checkpointGeneration,
         );
         if (operation.serverRecordIdHash != null) {
           if (mapping == null) {
@@ -1232,13 +1233,17 @@ class CloudSyncEngine {
               safeCode: 'invalid_server_mapping',
             );
           }
-          await _store.upsertRecordMap(mapping);
+          await _store.upsertRecordMap(
+            mapping,
+            generation: operation.checkpointGeneration,
+          );
         }
         await _store.attachOutboxRecordMapping(
           scope,
           leaseId: leaseId,
           operationId: operation.operationId,
           serverRecordIdHash: mapping.serverRecordIdHash,
+          now: _clock(),
         );
         ready.add(
           operation.copyWith(serverRecordIdHash: mapping.serverRecordIdHash),
@@ -1312,25 +1317,43 @@ class CloudSyncEngine {
     );
   }
 
+  Map<String, CloudPushOutcome> _requireExactPushOutcomes(
+    List<CloudOutboxOperation> operations,
+    CloudPushBatchResult result,
+  ) {
+    final expected = operations
+        .map((operation) => operation.operationId)
+        .toSet();
+    final actual = result.outcomes.keys.toSet();
+    if (expected.length != operations.length ||
+        actual.length != expected.length ||
+        !actual.containsAll(expected)) {
+      // A missing result is ambiguous: the server may have committed the
+      // operation before the response was lost. An unknown result can be
+      // misattributed. Fail the complete batch closed and let later
+      // reconciliation decide instead of confirming a subset.
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.unknown,
+        safeCode: 'push_outcome_set_mismatch',
+      );
+    }
+    return Map<String, CloudPushOutcome>.of(result.outcomes);
+  }
+
   Future<void> _repushAfterRefresh(
     List<CloudOutboxOperation> operations,
     Map<String, CloudPushOutcome> outcomes,
   ) async {
     try {
-      final retryResult = await _transport.pushOperations(
-        scope,
-        operations: operations,
+      final retryResult = await _withCoordinatorLeaseHeartbeat(
+        () => _transport.pushOperations(scope, operations: operations),
       );
+      final retryOutcomes = _requireExactPushOutcomes(operations, retryResult);
       for (final operation in operations) {
-        outcomes[operation.operationId] =
-            retryResult.outcomes[operation.operationId] ??
-            CloudPushOutcome(
-              operationId: operation.operationId,
-              disposition: CloudPushDisposition.retryable,
-              failureCategory: CloudFailureCategory.network,
-            );
+        outcomes[operation.operationId] = retryOutcomes[operation.operationId]!;
       }
     } on CloudSyncFailure catch (error) {
+      if (_isCoordinatorLeaseFailure(error)) rethrow;
       for (final operation in operations) {
         outcomes[operation.operationId] = _outcomeForThrownFailure(
           operation.operationId,
@@ -1405,6 +1428,7 @@ class CloudSyncEngine {
           final mapping = await _store.readRecordMap(
             scope,
             logicalEntityKeyHash: operation.logicalEntityKeyHash,
+            generation: operation.checkpointGeneration,
           );
           if (mapping == null ||
               mapping.serverRecordIdHash != resolution.serverRecordIdHash) {
@@ -1424,6 +1448,7 @@ class CloudSyncEngine {
                   resolution.encryptedRawRecordReference,
               updatedAt: _clock(),
             ),
+            generation: operation.checkpointGeneration,
           );
           return CloudOutboxTransition.retryable(
             operation.operationId,
@@ -1509,6 +1534,52 @@ class CloudSyncEngine {
     }
     _lastCoordinatorLeaseRenewal = now;
   }
+
+  Future<T> _withCoordinatorLeaseHeartbeat<T>(
+    Future<T> Function() action,
+  ) async {
+    await _renewCoordinatorLeaseOrThrow(force: true);
+    final heartbeatInterval = Duration(
+      microseconds: max(1, config.coordinatorLeaseDuration.inMicroseconds ~/ 3),
+    );
+    Object? renewalFailure;
+    StackTrace? renewalFailureStack;
+    Future<void>? renewalInFlight;
+    late final Timer heartbeat;
+    heartbeat = Timer.periodic(heartbeatInterval, (_) {
+      if (renewalInFlight != null || renewalFailure != null) return;
+      final renewal = _renewCoordinatorLeaseOrThrow(force: true);
+      renewalInFlight = renewal
+          .then<void>((_) {})
+          .catchError((Object error, StackTrace stack) {
+            renewalFailure = error;
+            renewalFailureStack = stack;
+          })
+          .whenComplete(() {
+            renewalInFlight = null;
+          });
+    });
+    try {
+      final result = await action();
+      heartbeat.cancel();
+      await renewalInFlight;
+      final failure = renewalFailure;
+      if (failure != null) {
+        Error.throwWithStackTrace(failure, renewalFailureStack!);
+      }
+      // Covers an operation that completed before the first timer tick and
+      // closes the takeover window immediately before outcome processing.
+      await _renewCoordinatorLeaseOrThrow(force: true);
+      return result;
+    } finally {
+      heartbeat.cancel();
+      await renewalInFlight;
+    }
+  }
+
+  bool _isCoordinatorLeaseFailure(CloudSyncFailure error) =>
+      error.safeCode == 'coordinator_lease_fence_missing' ||
+      error.safeCode == 'coordinator_lease_lost';
 
   CloudCoordinatorLeaseFence _requireActiveLeaseFence() {
     final leaseFence = _activeLeaseFence;

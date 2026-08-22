@@ -524,6 +524,299 @@ void main() {
     },
   );
 
+  test(
+    'outbox generation survives restart and rejects a stale direct row',
+    () async {
+      final scope = testScope();
+      final admitted = await store.enqueueOutboxMutation(draft(scope, 1));
+      expect(admitted.checkpointGeneration, 1);
+      await reopen();
+      expect((await store.readCheckpoint(scope)).generation, 1);
+      expect(
+        objectBox
+            .box<CloudOutboxOperationEntity>()
+            .getAll()
+            .single
+            .checkpointGeneration,
+        1,
+      );
+      await expectLater(
+        store.enqueueOutbox(
+          testOutboxOperation(scope, 2, checkpointGeneration: 2),
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'outbox_generation_mismatch',
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
+    'advance persists and fences stale leased rows before map or transition',
+    () async {
+      final scope = testScope();
+      final operation = await store.enqueueOutboxMutation(draft(scope, 1));
+      await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'generation-lease',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+      expect(
+        (await store.advanceOutboxGeneration(scope, now: testEpoch)).generation,
+        2,
+      );
+      await reopen();
+      expect((await store.readCheckpoint(scope)).generation, 2);
+      final stale = objectBox.box<CloudOutboxOperationEntity>().getAll().single;
+      expect(stale.state, 4);
+      expect(stale.leaseIdHash, isNull);
+
+      await expectLater(
+        store.attachOutboxRecordMapping(
+          scope,
+          leaseId: 'generation-lease',
+          operationId: operation.operationId,
+          serverRecordIdHash: 'server-record-generation',
+          now: testEpoch,
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'stale_outbox_generation',
+          ),
+        ),
+      );
+      await expectLater(
+        store.applyOutboxTransitions(
+          scope,
+          leaseId: 'generation-lease',
+          transitions: [CloudOutboxTransition.confirmed(operation.operationId)],
+          now: testEpoch,
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'stale_outbox_generation',
+          ),
+        ),
+      );
+
+      final fresh = await store.enqueueOutboxMutation(draft(scope, 2));
+      expect(fresh.checkpointGeneration, 2);
+    },
+  );
+
+  test(
+    'legacy zero-generation outbox row is terminally fenced and never leased',
+    () async {
+      final scope = testScope();
+      await store.enqueueOutboxMutation(draft(scope, 1));
+      final legacy = objectBox.box<CloudOutboxOperationEntity>().getAll().single
+        ..checkpointGeneration = 0
+        ..state = 1
+        ..leaseIdHash = 'legacy-lease-hash'
+        ..leaseExpiresAtMs = testEpoch
+            .subtract(const Duration(seconds: 1))
+            .millisecondsSinceEpoch;
+      objectBox.box<CloudOutboxOperationEntity>().put(legacy);
+
+      expect(await store.recoverExpiredOutboxLeases(scope, now: testEpoch), 0);
+      expect(
+        await store.leaseEligibleOutbox(
+          scope,
+          now: testEpoch,
+          limit: 1,
+          leaseId: 'legacy-row-lease',
+          leaseDuration: const Duration(minutes: 1),
+          allowedActions: const {CloudOutboxAction.save},
+        ),
+        isEmpty,
+      );
+      final fenced = objectBox
+          .box<CloudOutboxOperationEntity>()
+          .getAll()
+          .single;
+      expect(fenced.state, 4);
+      expect(fenced.leaseIdHash, isNull);
+
+      fenced
+        ..checkpointGeneration = 0
+        ..state = 3
+        ..lastErrorCategory = CloudFailureCategory.authorization.name
+        ..nextEligibleAtMs = 0;
+      objectBox.box<CloudOutboxOperationEntity>().put(fenced);
+      expect(
+        await store.resumePausedOutbox(
+          scope,
+          categories: const {CloudFailureCategory.authorization},
+          now: testEpoch,
+        ),
+        0,
+      );
+      expect(
+        objectBox.box<CloudOutboxOperationEntity>().getAll().single.state,
+        4,
+      );
+
+      fenced
+        ..checkpointGeneration = 0
+        ..state = 3
+        ..lastErrorCategory = CloudFailureCategory.network.name
+        ..nextEligibleAtMs = 0;
+      objectBox.box<CloudOutboxOperationEntity>().put(fenced);
+      expect(
+        await store.postponeEligiblePausedOutbox(
+          scope,
+          categories: const {CloudFailureCategory.network},
+          now: testEpoch,
+          nextEligibleAt: testEpoch.add(const Duration(minutes: 1)),
+        ),
+        0,
+      );
+      expect(
+        objectBox.box<CloudOutboxOperationEntity>().getAll().single.state,
+        4,
+      );
+    },
+  );
+
+  test('generation advance is isolated to its full account scope', () async {
+    final firstScope = testScope();
+    final secondScope = testScope(account: testAccountFingerprintB);
+    await store.enqueueOutboxMutation(draft(firstScope, 1));
+    final second = await store.enqueueOutboxMutation(draft(secondScope, 2));
+
+    await store.advanceOutboxGeneration(firstScope, now: testEpoch);
+    expect((await store.readCheckpoint(firstScope)).generation, 2);
+    expect((await store.readCheckpoint(secondScope)).generation, 1);
+    expect(
+      (await store.leaseEligibleOutbox(
+        secondScope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'scope-b-lease',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      )).single.operationId,
+      second.operationId,
+    );
+  });
+
+  test(
+    'generation cannot advance while its coordinator may be writing',
+    () async {
+      final scope = testScope();
+      final fence = (await store.tryAcquireCoordinatorLease(
+        scope,
+        ownerId: 'active-generation-writer',
+        now: testEpoch,
+        leaseDuration: const Duration(minutes: 1),
+      ))!;
+
+      await expectLater(
+        store.advanceOutboxGeneration(scope, now: testEpoch),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'generation_advance_coordinator_active',
+          ),
+        ),
+      );
+      expect((await store.readCheckpoint(scope)).generation, 1);
+
+      await store.releaseCoordinatorLease(scope, leaseFence: fence);
+      expect(
+        (await store.advanceOutboxGeneration(scope, now: testEpoch)).generation,
+        2,
+      );
+    },
+  );
+
+  test('caller-supplied operation ID cannot collide across scopes', () async {
+    final firstScope = testScope();
+    final first = testOutboxOperation(firstScope, 91);
+    final otherScope = testScope(account: testAccountFingerprintB);
+    final collision = CloudOutboxOperation(
+      scope: otherScope,
+      operationId: first.operationId,
+      logicalEntityKeyHash: first.logicalEntityKeyHash,
+      action: first.action,
+      payloadVersion: first.payloadVersion,
+      mutationRevision: first.mutationRevision,
+      checkpointGeneration: 1,
+      encryptedPayloadReference: first.encryptedPayloadReference,
+      payloadSha256: first.payloadSha256,
+      dependencyOperationIds: first.dependencyOperationIds,
+      createdAt: first.createdAt,
+    );
+    await store.enqueueOutbox(first);
+
+    await expectLater(
+      store.enqueueOutbox(collision),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode,
+          'safeCode',
+          'outbox_operation_scope_collision',
+        ),
+      ),
+    );
+    expect(
+      objectBox.box<CloudOutboxOperationEntity>().getAll().where(
+        (entity) => entity.accountFingerprint == testAccountFingerprintB,
+      ),
+      isEmpty,
+    );
+  });
+
+  test(
+    'confirmed dependency from an older generation cannot unlock work',
+    () async {
+      final scope = testScope();
+      final dependency = await store.enqueueOutboxMutation(draft(scope, 101));
+      await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'old-generation-lease',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+      await store.applyOutboxTransitions(
+        scope,
+        leaseId: 'old-generation-lease',
+        transitions: [CloudOutboxTransition.confirmed(dependency.operationId)],
+        now: testEpoch,
+      );
+      await store.advanceOutboxGeneration(scope, now: testEpoch);
+      await store.enqueueOutboxMutation(
+        draft(scope, 102, dependencies: {dependency.operationId}),
+      );
+
+      expect(
+        await store.leaseEligibleOutbox(
+          scope,
+          now: testEpoch,
+          limit: 1,
+          leaseId: 'new-generation-lease',
+          leaseDuration: const Duration(minutes: 1),
+          allowedActions: const {CloudOutboxAction.save},
+        ),
+        isEmpty,
+      );
+    },
+  );
+
   test('stale worker cannot partially transition a newer lease', () async {
     final scope = testScope();
     final first = await store.enqueueOutboxMutation(draft(scope, 1));
@@ -756,6 +1049,142 @@ void main() {
       );
     },
   );
+
+  test('expired outbox lease cannot map or confirm before recovery', () async {
+    final scope = testScope();
+    final operation = await store.enqueueOutboxMutation(draft(scope, 1));
+    await store.leaseEligibleOutbox(
+      scope,
+      now: testEpoch,
+      limit: 1,
+      leaseId: 'expired-lease',
+      leaseDuration: const Duration(seconds: 1),
+      allowedActions: const {CloudOutboxAction.save},
+    );
+
+    await expectLater(
+      store.attachOutboxRecordMapping(
+        scope,
+        leaseId: 'expired-lease',
+        operationId: operation.operationId,
+        serverRecordIdHash: 'server-record-hash',
+        now: testEpoch.add(const Duration(seconds: 1)),
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (error) => error.safeCode,
+          'safeCode',
+          'stale_outbox_lease',
+        ),
+      ),
+    );
+
+    await expectLater(
+      store.applyOutboxTransitions(
+        scope,
+        leaseId: 'expired-lease',
+        transitions: [CloudOutboxTransition.confirmed(operation.operationId)],
+        now: testEpoch.add(const Duration(seconds: 1)),
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (error) => error.safeCode,
+          'safeCode',
+          'stale_outbox_lease',
+        ),
+      ),
+    );
+    expect(
+      objectBox.box<CloudOutboxOperationEntity>().getAll().single.state,
+      1,
+    );
+  });
+
+  test('resume keeps future paused rows behind their retry boundary', () async {
+    final scope = testScope();
+    final eligible = await store.enqueueOutboxMutation(draft(scope, 1));
+    final future = await store.enqueueOutboxMutation(draft(scope, 2));
+    final leased = await store.leaseEligibleOutbox(
+      scope,
+      now: testEpoch,
+      limit: 2,
+      leaseId: 'pause-lease',
+      leaseDuration: const Duration(minutes: 1),
+      allowedActions: const {CloudOutboxAction.save},
+    );
+    expect(leased, hasLength(2));
+    await store.applyOutboxTransitions(
+      scope,
+      leaseId: 'pause-lease',
+      transitions: [
+        CloudOutboxTransition.paused(
+          eligible.operationId,
+          category: CloudFailureCategory.authorization,
+          nextEligibleAt: testEpoch,
+        ),
+        CloudOutboxTransition.paused(
+          future.operationId,
+          category: CloudFailureCategory.authorization,
+          nextEligibleAt: testEpoch.add(const Duration(hours: 1)),
+        ),
+      ],
+      now: testEpoch,
+    );
+
+    expect(
+      await store.resumePausedOutbox(
+        scope,
+        categories: const {CloudFailureCategory.authorization},
+        now: testEpoch,
+      ),
+      1,
+    );
+    final rows = objectBox.box<CloudOutboxOperationEntity>().getAll();
+    expect(
+      rows.singleWhere((row) => row.operationId == eligible.operationId).state,
+      0,
+    );
+    expect(
+      rows.singleWhere((row) => row.operationId == future.operationId).state,
+      3,
+    );
+  });
+
+  test('duplicate outbox transitions fail before mutation', () async {
+    final scope = testScope();
+    final operation = await store.enqueueOutboxMutation(draft(scope, 1));
+    await store.leaseEligibleOutbox(
+      scope,
+      now: testEpoch,
+      limit: 1,
+      leaseId: 'duplicate-transition-lease',
+      leaseDuration: const Duration(minutes: 1),
+      allowedActions: const {CloudOutboxAction.save},
+    );
+
+    await expectLater(
+      store.applyOutboxTransitions(
+        scope,
+        leaseId: 'duplicate-transition-lease',
+        transitions: [
+          CloudOutboxTransition.confirmed(operation.operationId),
+          CloudOutboxTransition.confirmed(operation.operationId),
+        ],
+        now: testEpoch,
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (error) => error.safeCode,
+          'safeCode',
+          'duplicate_outbox_transition',
+        ),
+      ),
+    );
+    expect(
+      objectBox.box<CloudOutboxOperationEntity>().getAll().single.state,
+      1,
+    );
+  });
 
   test('coordinator lease renews across adapter instances', () async {
     final scope = testScope();
@@ -1022,7 +1451,7 @@ void main() {
       encryptedRawRecordReference: 'protected:raw-a',
       updatedAt: testEpoch,
     );
-    await store.upsertRecordMap(original);
+    await store.upsertRecordMap(original, generation: 1);
     await store.upsertRecordMap(
       CloudRecordMapEntry(
         scope: scope,
@@ -1033,10 +1462,12 @@ void main() {
         encryptedRawRecordReference: 'protected:raw-b',
         updatedAt: testEpoch.add(const Duration(seconds: 1)),
       ),
+      generation: 1,
     );
     final updated = await store.readRecordMap(
       scope,
       logicalEntityKeyHash: original.logicalEntityKeyHash,
+      generation: 1,
     );
     expect(updated!.encryptedServerRecordId, 'protected:server-record-a');
     expect(updated.etagHash, 'etag-b');
@@ -1050,6 +1481,7 @@ void main() {
           encryptedServerRecordId: 'protected:server-record-b',
           updatedAt: testEpoch,
         ),
+        generation: 1,
       ),
       throwsA(
         isA<CloudSyncFailure>().having(
@@ -1058,6 +1490,60 @@ void main() {
           'server_mapping_changed',
         ),
       ),
+    );
+  });
+
+  test('record mappings cannot cross a checkpoint generation', () async {
+    final scope = testScope();
+    final generationOne = CloudRecordMapEntry(
+      scope: scope,
+      logicalEntityKeyHash: 'generation-bound-logical-key',
+      serverRecordIdHash: 'generation-one-server-record',
+      encryptedServerRecordId: 'protected:generation-one-record',
+      updatedAt: testEpoch,
+    );
+    await store.upsertRecordMap(generationOne, generation: 1);
+    await store.advanceOutboxGeneration(scope, now: testEpoch);
+    await reopen();
+
+    await expectLater(
+      store.readRecordMap(
+        scope,
+        logicalEntityKeyHash: generationOne.logicalEntityKeyHash,
+        generation: 1,
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode,
+          'safeCode',
+          'record_map_generation_mismatch',
+        ),
+      ),
+    );
+    expect(
+      await store.readRecordMap(
+        scope,
+        logicalEntityKeyHash: generationOne.logicalEntityKeyHash,
+        generation: 2,
+      ),
+      isNull,
+    );
+
+    final generationTwo = CloudRecordMapEntry(
+      scope: scope,
+      logicalEntityKeyHash: generationOne.logicalEntityKeyHash,
+      serverRecordIdHash: 'generation-two-server-record',
+      encryptedServerRecordId: 'protected:generation-two-record',
+      updatedAt: testEpoch,
+    );
+    await store.upsertRecordMap(generationTwo, generation: 2);
+    expect(
+      (await store.readRecordMap(
+        scope,
+        logicalEntityKeyHash: generationOne.logicalEntityKeyHash,
+        generation: 2,
+      ))?.serverRecordIdHash,
+      generationTwo.serverRecordIdHash,
     );
   });
 

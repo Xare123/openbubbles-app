@@ -754,6 +754,14 @@ class ObjectBoxCloudSyncStore
         operation.scope,
         nowMs: operation.createdAt.millisecondsSinceEpoch,
       );
+      _fenceStaleOutboxLocked(
+        operation.scope,
+        checkpoint: checkpoint,
+        nowMs: operation.createdAt.millisecondsSinceEpoch,
+      );
+      if (operation.checkpointGeneration != checkpoint.generation) {
+        throw _storageFailure('outbox_generation_mismatch');
+      }
       if (operation.mutationRevision > checkpoint.mutationRevisionCounter) {
         checkpoint
           ..mutationRevisionCounter = operation.mutationRevision
@@ -771,6 +779,11 @@ class ObjectBoxCloudSyncStore
     return _store.runInTransaction(TxMode.write, () {
       final nowMs = draft.createdAt.millisecondsSinceEpoch;
       final checkpoint = _checkpointLocked(draft.scope, nowMs: nowMs);
+      _fenceStaleOutboxLocked(
+        draft.scope,
+        checkpoint: checkpoint,
+        nowMs: nowMs,
+      );
       final revision = checkpoint.mutationRevisionCounter + 1;
       checkpoint
         ..mutationRevisionCounter = revision
@@ -791,6 +804,7 @@ class ObjectBoxCloudSyncStore
         action: draft.action,
         payloadVersion: draft.payloadVersion,
         mutationRevision: revision,
+        checkpointGeneration: checkpoint.generation,
         encryptedPayloadReference: draft.encryptedPayloadReference,
         payloadSha256: draft.payloadSha256,
         serverRecordIdHash: draft.serverRecordIdHash,
@@ -800,6 +814,31 @@ class ObjectBoxCloudSyncStore
       _enqueueOutboxLocked(operation);
       return operation;
     });
+  }
+
+  @override
+  Future<CloudSyncCheckpoint> advanceOutboxGeneration(
+    CloudSyncScope scope, {
+    required DateTime now,
+  }) async {
+    final nowMs = now.millisecondsSinceEpoch;
+    _store.runInTransaction(TxMode.write, () {
+      final leaseKey = _scopedDigest(scope, 'coordinator-lease', 'v1');
+      final activeLease = _findLeaseByKeyLocked(leaseKey);
+      if (activeLease != null && activeLease.expiresAtMs > nowMs) {
+        throw _storageFailure('generation_advance_coordinator_active');
+      }
+      final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
+      checkpoint
+        ..generation += 1
+        ..updatedAtMs = nowMs;
+      _checkpoints.put(checkpoint);
+      _fenceStaleOutboxLocked(scope, checkpoint: checkpoint, nowMs: nowMs);
+    });
+    // Preserve the caller-visible protected continuation token. It is never
+    // needed inside the fencing transaction and is deliberately unprotected
+    // only after the durable generation advance commits.
+    return readCheckpoint(scope);
   }
 
   @override
@@ -816,6 +855,8 @@ class ObjectBoxCloudSyncStore
     final nowMs = now.millisecondsSinceEpoch;
     final leaseIdHash = _digest('outbox-lease\u001f$leaseId');
     return _store.runInTransaction(TxMode.write, () {
+      final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
+      _fenceStaleOutboxLocked(scope, checkpoint: checkpoint, nowMs: nowMs);
       _recoverExpiredOutboxLeasesLocked(scope, nowMs);
       final allEntities = _findOutboxForScopeLocked(scope).toList();
       final blockingByLogicalKey = <String, CloudOutboxOperationEntity>{};
@@ -860,12 +901,13 @@ class ObjectBoxCloudSyncStore
         final dependencies = _decodeDependencies(
           entity.dependencyOperationIdsJson,
         );
-        final dependenciesConfirmed = dependencies.every(
-          (operationId) =>
-              allById[operationId] != null &&
-              _outboxStatusFromInt(allById[operationId]!.state) ==
-                  CloudOutboxStatus.confirmed,
-        );
+        final dependenciesConfirmed = dependencies.every((operationId) {
+          final dependency = allById[operationId];
+          return dependency != null &&
+              dependency.checkpointGeneration == entity.checkpointGeneration &&
+              _outboxStatusFromInt(dependency.state) ==
+                  CloudOutboxStatus.confirmed;
+        });
         if (!dependenciesConfirmed) continue;
 
         entity
@@ -891,13 +933,23 @@ class ObjectBoxCloudSyncStore
     final leaseIdHash = _digest('outbox-lease\u001f$leaseId');
     final nowMs = now.millisecondsSinceEpoch;
     _store.runInTransaction(TxMode.write, () {
+      final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
       final entities = <String, CloudOutboxOperationEntity>{};
       for (final transition in transitionList) {
+        if (entities.containsKey(transition.operationId)) {
+          throw _storageFailure('duplicate_outbox_transition');
+        }
         final entity = _findOutboxByOperationIdLocked(transition.operationId);
+        if (entity != null &&
+            (entity.checkpointGeneration <= 0 ||
+                entity.checkpointGeneration != checkpoint.generation)) {
+          throw _storageFailure('stale_outbox_generation');
+        }
         if (entity == null ||
             entity.scopeKey != _scopeKey(scope) ||
             _outboxStatusFromInt(entity.state) != CloudOutboxStatus.leased ||
-            entity.leaseIdHash != leaseIdHash) {
+            entity.leaseIdHash != leaseIdHash ||
+            entity.leaseExpiresAtMs <= nowMs) {
           throw _storageFailure('stale_outbox_lease');
         }
         _validateTransition(transition);
@@ -959,11 +1011,12 @@ class ObjectBoxCloudSyncStore
     CloudSyncScope scope, {
     required DateTime now,
   }) async {
-    return _store.runInTransaction(
-      TxMode.write,
-      () =>
-          _recoverExpiredOutboxLeasesLocked(scope, now.millisecondsSinceEpoch),
-    );
+    final nowMs = now.millisecondsSinceEpoch;
+    return _store.runInTransaction(TxMode.write, () {
+      final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
+      _fenceStaleOutboxLocked(scope, checkpoint: checkpoint, nowMs: nowMs);
+      return _recoverExpiredOutboxLeasesLocked(scope, nowMs);
+    });
   }
 
   @override
@@ -972,14 +1025,23 @@ class ObjectBoxCloudSyncStore
     required String leaseId,
     required String operationId,
     required String serverRecordIdHash,
+    required DateTime now,
   }) async {
     final leaseIdHash = _digest('outbox-lease\u001f$leaseId');
+    final nowMs = now.millisecondsSinceEpoch;
     _store.runInTransaction(TxMode.write, () {
+      final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
       final entity = _findOutboxByOperationIdLocked(operationId);
+      if (entity != null &&
+          (entity.checkpointGeneration <= 0 ||
+              entity.checkpointGeneration != checkpoint.generation)) {
+        throw _storageFailure('stale_outbox_generation');
+      }
       if (entity == null ||
           entity.scopeKey != _scopeKey(scope) ||
           _outboxStatusFromInt(entity.state) != CloudOutboxStatus.leased ||
-          entity.leaseIdHash != leaseIdHash) {
+          entity.leaseIdHash != leaseIdHash ||
+          entity.leaseExpiresAtMs <= nowMs) {
         throw _storageFailure('stale_outbox_lease');
       }
       if (entity.serverRecordIdHash != null &&
@@ -1004,10 +1066,13 @@ class ObjectBoxCloudSyncStore
   }) async {
     final nowMs = now.millisecondsSinceEpoch;
     return _store.runInTransaction(TxMode.write, () {
+      final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
+      _fenceStaleOutboxLocked(scope, checkpoint: checkpoint, nowMs: nowMs);
       var resumed = 0;
       for (final entity in _findOutboxForScopeLocked(scope)) {
         if (_outboxStatusFromInt(entity.state) != CloudOutboxStatus.paused ||
             entity.lastErrorCategory == null ||
+            entity.nextEligibleAtMs > nowMs ||
             !categories
                 .map((category) => category.name)
                 .contains(entity.lastErrorCategory)) {
@@ -1032,9 +1097,12 @@ class ObjectBoxCloudSyncStore
   }) async {
     final nowMs = now.millisecondsSinceEpoch;
     return _store.runInTransaction(TxMode.read, () {
+      final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
+      if (checkpoint == null) return <CloudFailureCategory>{};
       return _findOutboxForScopeLocked(scope)
           .where(
             (entity) =>
+                entity.checkpointGeneration == checkpoint.generation &&
                 _outboxStatusFromInt(entity.state) ==
                     CloudOutboxStatus.paused &&
                 entity.nextEligibleAtMs <= nowMs,
@@ -1058,6 +1126,8 @@ class ObjectBoxCloudSyncStore
     final nextEligibleAtMs = nextEligibleAt.millisecondsSinceEpoch;
     final categoryNames = categories.map((category) => category.name).toSet();
     return _store.runInTransaction(TxMode.write, () {
+      final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
+      _fenceStaleOutboxLocked(scope, checkpoint: checkpoint, nowMs: nowMs);
       var postponed = 0;
       for (final entity in _findOutboxForScopeLocked(scope)) {
         if (_outboxStatusFromInt(entity.state) != CloudOutboxStatus.paused ||
@@ -1165,37 +1235,55 @@ class ObjectBoxCloudSyncStore
   Future<CloudRecordMapEntry?> readRecordMap(
     CloudSyncScope scope, {
     required String logicalEntityKeyHash,
+    required int generation,
   }) async {
     final mapKey = _scopedDigest(scope, 'record-map', logicalEntityKeyHash);
-    final entity = _findRecordMapByKey(mapKey);
-    if (entity == null) return null;
-    if (entity.scopeKey != _scopeKey(scope)) {
-      throw _storageFailure('scope_collision');
-    }
-    return CloudRecordMapEntry(
-      scope: scope,
-      logicalEntityKeyHash: entity.logicalEntityKeyHash,
-      serverRecordIdHash: entity.serverRecordIdHash,
-      encryptedServerRecordId: entity.encryptedServerRecordId,
-      etagHash: entity.etagHash,
-      encryptedRawRecordReference: entity.encryptedRawRecordRef,
-      updatedAt: DateTime.fromMillisecondsSinceEpoch(
-        entity.updatedAtMs,
-        isUtc: true,
-      ),
-    );
+    return _store.runInTransaction(TxMode.read, () {
+      final checkpoint = _findCheckpointByKeyLocked(_scopeKey(scope));
+      if (generation <= 0 || checkpoint?.generation != generation) {
+        throw _storageFailure('record_map_generation_mismatch');
+      }
+      final entity = _findRecordMapByKeyLocked(mapKey);
+      if (entity == null || entity.generation != generation) return null;
+      if (entity.scopeKey != _scopeKey(scope)) {
+        throw _storageFailure('scope_collision');
+      }
+      return CloudRecordMapEntry(
+        scope: scope,
+        logicalEntityKeyHash: entity.logicalEntityKeyHash,
+        serverRecordIdHash: entity.serverRecordIdHash,
+        encryptedServerRecordId: entity.encryptedServerRecordId,
+        etagHash: entity.etagHash,
+        encryptedRawRecordReference: entity.encryptedRawRecordRef,
+        updatedAt: DateTime.fromMillisecondsSinceEpoch(
+          entity.updatedAtMs,
+          isUtc: true,
+        ),
+      );
+    });
   }
 
   @override
-  Future<void> upsertRecordMap(CloudRecordMapEntry entry) async {
+  Future<void> upsertRecordMap(
+    CloudRecordMapEntry entry, {
+    required int generation,
+  }) async {
     final mapKey = _scopedDigest(
       entry.scope,
       'record-map',
       entry.logicalEntityKeyHash,
     );
     _store.runInTransaction(TxMode.write, () {
+      final checkpoint = _checkpointLocked(
+        entry.scope,
+        nowMs: entry.updatedAt.millisecondsSinceEpoch,
+      );
+      if (generation <= 0 || checkpoint.generation != generation) {
+        throw _storageFailure('record_map_generation_mismatch');
+      }
       final existing = _findRecordMapByKeyLocked(mapKey);
       if (existing != null &&
+          existing.generation == generation &&
           existing.serverRecordIdHash != entry.serverRecordIdHash) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.conflict,
@@ -1211,9 +1299,10 @@ class ObjectBoxCloudSyncStore
           zone: entry.scope.zone,
           logicalEntityKeyHash: entry.logicalEntityKeyHash,
           serverRecordIdHash: entry.serverRecordIdHash,
-          encryptedServerRecordId:
-              existing?.encryptedServerRecordId ??
-              entry.encryptedServerRecordId,
+          generation: generation,
+          encryptedServerRecordId: existing?.generation == generation
+              ? existing!.encryptedServerRecordId
+              : entry.encryptedServerRecordId,
           etagHash: entry.etagHash,
           encryptedRawRecordRef: entry.encryptedRawRecordReference,
           updatedAtMs: entry.updatedAt.millisecondsSinceEpoch,
@@ -1398,6 +1487,7 @@ class ObjectBoxCloudSyncStore
       action: _actionFromInt(entity.action),
       payloadVersion: entity.payloadVersion,
       mutationRevision: entity.mutationRevision,
+      checkpointGeneration: entity.checkpointGeneration,
       encryptedPayloadReference: entity.encryptedPayloadRef,
       payloadSha256: entity.payloadSha256,
       serverRecordIdHash: entity.serverRecordIdHash,
@@ -1420,7 +1510,12 @@ class ObjectBoxCloudSyncStore
 
   void _enqueueOutboxLocked(CloudOutboxOperation operation) {
     final identical = _findOutboxByOperationIdLocked(operation.operationId);
-    if (identical != null) return;
+    if (identical != null) {
+      if (identical.scopeKey != _scopeKey(operation.scope)) {
+        throw _storageFailure('outbox_operation_scope_collision');
+      }
+      return;
+    }
 
     if (operation.action == CloudOutboxAction.save) {
       final candidates = _findOutboxForScopeLocked(operation.scope)
@@ -1491,6 +1586,7 @@ class ObjectBoxCloudSyncStore
       ),
       payloadVersion: operation.payloadVersion,
       mutationRevision: operation.mutationRevision,
+      checkpointGeneration: operation.checkpointGeneration,
       encryptedPayloadRef: operation.encryptedPayloadReference,
       payloadSha256: operation.payloadSha256,
       state: _outboxStatusToInt(operation.status),
@@ -1524,6 +1620,29 @@ class ObjectBoxCloudSyncStore
       }
     }
     return recovered;
+  }
+
+  void _fenceStaleOutboxLocked(
+    CloudSyncScope scope, {
+    required CloudSyncCheckpointEntity checkpoint,
+    required int nowMs,
+  }) {
+    for (final entity in _findOutboxForScopeLocked(scope)) {
+      final status = _outboxStatusFromInt(entity.state);
+      if (!_isBlockingOutboxStatus(status) ||
+          entity.checkpointGeneration == checkpoint.generation) {
+        continue;
+      }
+      entity
+        ..state = _outboxStatusToInt(CloudOutboxStatus.quarantined)
+        ..attemptCount += 1
+        ..lastErrorCategory = CloudFailureCategory.localStorage.name
+        ..nextEligibleAtMs = 0
+        ..leaseIdHash = null
+        ..leaseExpiresAtMs = 0
+        ..updatedAtMs = nowMs;
+      _outbox.put(entity);
+    }
   }
 
   bool _isBlockingOutboxStatus(CloudOutboxStatus status) =>

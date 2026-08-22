@@ -98,6 +98,7 @@ class CloudInboxChangeEntity {
   /// Redacted identifiers used for equality and diagnostics.
   @Index(type: IndexType.hash64)
   String serverRecordIdHash;
+
   String? etagHash;
   String changeType;
 
@@ -263,6 +264,10 @@ class CloudOutboxOperationEntity {
   int payloadVersion;
   int mutationRevision;
 
+  /// Checkpoint generation which admitted this row. Existing rows from before
+  /// this property deserialize as zero and are fail-closed by the store.
+  int checkpointGeneration;
+
   /// Protected local reference or application ciphertext, never message text.
   String? encryptedPayloadRef;
   String? payloadSha256;
@@ -295,6 +300,7 @@ class CloudOutboxOperationEntity {
     this.dependencyOperationIdsJson = '[]',
     this.payloadVersion = 1,
     required this.mutationRevision,
+    this.checkpointGeneration = 0,
     this.encryptedPayloadRef,
     this.payloadSha256,
     this.state = 0,
@@ -334,6 +340,10 @@ class CloudRecordMapEntity {
   @Index(type: IndexType.hash64)
   String serverRecordIdHash;
 
+  /// Checkpoint generation that proved this server identity.
+  /// Existing rows deserialize as zero and are ignored until reproven.
+  int generation;
+
   /// Application-encrypted Apple record ID and last-known raw record reference.
   String encryptedServerRecordId;
   String? etagHash;
@@ -348,6 +358,7 @@ class CloudRecordMapEntity {
     required this.zone,
     required this.logicalEntityKeyHash,
     required this.serverRecordIdHash,
+    this.generation = 0,
     required this.encryptedServerRecordId,
     this.etagHash,
     this.encryptedRawRecordRef,

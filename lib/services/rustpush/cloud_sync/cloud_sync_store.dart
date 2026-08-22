@@ -110,6 +110,22 @@ abstract interface class CloudSyncStore {
   /// operation in one transaction.
   Future<CloudOutboxOperation> enqueueOutboxMutation(CloudOutboxDraft draft);
 
+  /// Atomically advances the account/scope checkpoint generation and fences
+  /// every non-terminal outbox row admitted under an older generation.
+  ///
+  /// This is the required rebootstrap boundary for account-reset recovery.
+  /// Fenced rows are terminal and cannot lease, block later work, attach a
+  /// record map, or accept a late transition.
+  ///
+  /// The advance fails while the exact scope has an active coordinator lease.
+  /// A reset must first quiesce and release the writer coordinator, which
+  /// closes the race where an already-leased operation reaches CloudKit after
+  /// its local generation has been fenced.
+  Future<CloudSyncCheckpoint> advanceOutboxGeneration(
+    CloudSyncScope scope, {
+    required DateTime now,
+  });
+
   /// Atomically leases eligible operations. Confirmed dependencies are
   /// enforced by the store so callers cannot upload a message before its
   /// attachments.
@@ -142,6 +158,7 @@ abstract interface class CloudSyncStore {
     required String leaseId,
     required String operationId,
     required String serverRecordIdHash,
+    required DateTime now,
   });
 
   /// Resumes deliberately paused authorization or PCS operations only after
@@ -195,9 +212,13 @@ abstract interface class CloudSyncStore {
   Future<CloudRecordMapEntry?> readRecordMap(
     CloudSyncScope scope, {
     required String logicalEntityKeyHash,
+    required int generation,
   });
 
-  Future<void> upsertRecordMap(CloudRecordMapEntry entry);
+  Future<void> upsertRecordMap(
+    CloudRecordMapEntry entry, {
+    required int generation,
+  });
 
   /// Appends a bounded, content-free diagnostic run record.
   Future<void> recordRun(CloudSyncRunRecord run);

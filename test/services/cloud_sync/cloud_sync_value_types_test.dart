@@ -133,4 +133,82 @@ void main() {
     expect(messages.storageKey, isNot(profiles.storageKey));
     expect(messages.schemaVersion, 2);
   });
+
+  test('push batch rejects duplicate outcome IDs without overwriting', () {
+    final operationId = testOutboxOperation(testScope(), 1).operationId;
+    final first = CloudPushOutcome(
+      operationId: operationId,
+      disposition: CloudPushDisposition.confirmed,
+    );
+    final second = CloudPushOutcome(
+      operationId: operationId,
+      disposition: CloudPushDisposition.retryable,
+      failureCategory: CloudFailureCategory.network,
+    );
+
+    expect(
+      () => CloudPushBatchResult(outcomes: [first, second]),
+      throwsA(
+        isA<ArgumentError>().having(
+          (error) => error.toString(),
+          'redacted message',
+          allOf(
+            contains('cloud_push_batch_duplicate_outcome_id'),
+            isNot(contains(operationId)),
+          ),
+        ),
+      ),
+    );
+  });
+
+  test('push outcomes reject empty and unsafe operation IDs', () {
+    final invalidIds = <String>[
+      '',
+      'raw/record/secret',
+      'op1:${'a' * 63}',
+      'op1:${'A' * 64}',
+      'op1:${'a' * 64}\nsecret-tail',
+    ];
+
+    for (final invalidId in invalidIds) {
+      final redactedMessageMatcher = invalidId.isEmpty
+          ? contains('cloud_push_outcome_operation_id_invalid')
+          : allOf(
+              contains('cloud_push_outcome_operation_id_invalid'),
+              isNot(contains(invalidId)),
+            );
+      expect(
+        () => CloudPushOutcome(
+          operationId: invalidId,
+          disposition: CloudPushDisposition.confirmed,
+        ),
+        throwsA(
+          isA<ArgumentError>().having(
+            (error) => error.toString(),
+            'redacted message',
+            redactedMessageMatcher,
+          ),
+        ),
+      );
+    }
+  });
+
+  test('push batch exposes a stable read-only map and redacted strings', () {
+    final operationId = testOutboxOperation(testScope(), 1).operationId;
+    final outcome = CloudPushOutcome(
+      operationId: operationId,
+      disposition: CloudPushDisposition.confirmed,
+    );
+    final result = CloudPushBatchResult(outcomes: [outcome]);
+
+    expect(result.outcomes, hasLength(1));
+    expect(result.toString(), 'CloudPushBatchResult(count: 1)');
+    expect(result.toString(), isNot(contains(operationId)));
+    expect(outcome.toString(), 'CloudPushOutcome(confirmed, redacted)');
+    expect(outcome.toString(), isNot(contains(operationId)));
+    expect(
+      () => result.outcomes[operationId] = outcome,
+      throwsUnsupportedError,
+    );
+  });
 }

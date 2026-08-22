@@ -43,6 +43,7 @@ CloudOutboxOperation testOutboxOperation(
   int index, {
   CloudOutboxAction action = CloudOutboxAction.save,
   int revision = 1,
+  int checkpointGeneration = 1,
   Iterable<String> dependencies = const [],
   DateTime? createdAt,
 }) {
@@ -64,6 +65,7 @@ CloudOutboxOperation testOutboxOperation(
     action: action,
     payloadVersion: 1,
     mutationRevision: revision,
+    checkpointGeneration: checkpointGeneration,
     encryptedPayloadReference: action == CloudOutboxAction.save
         ? 'protected:outbox-$index-$revision'
         : null,

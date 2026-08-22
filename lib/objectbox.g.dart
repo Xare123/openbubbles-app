@@ -1281,7 +1281,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(19, 6209808242097333245),
     name: 'CloudOutboxOperationEntity',
-    lastPropertyId: const obx_int.IdUid(22, 1517823970736287654),
+    lastPropertyId: const obx_int.IdUid(23, 3453625028306797643),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -1423,6 +1423,12 @@ final _entities = <obx_int.ModelEntity>[
         type: 6,
         flags: 0,
       ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(23, 3453625028306797643),
+        name: 'checkpointGeneration',
+        type: 6,
+        flags: 0,
+      ),
     ],
     relations: <obx_int.ModelRelation>[],
     backlinks: <obx_int.ModelBacklink>[],
@@ -1430,7 +1436,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(20, 8623084761715763815),
     name: 'CloudRecordMapEntity',
-    lastPropertyId: const obx_int.IdUid(11, 6045468503885689678),
+    lastPropertyId: const obx_int.IdUid(12, 7135872154167319448),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -1504,6 +1510,12 @@ final _entities = <obx_int.ModelEntity>[
         type: 9,
         flags: 4096,
         indexId: const obx_int.IdUid(42, 8580390230204763517),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 7135872154167319448),
+        name: 'generation',
+        type: 6,
+        flags: 0,
       ),
     ],
     relations: <obx_int.ModelRelation>[],
@@ -4157,7 +4169,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final leaseIdHashOffset = object.leaseIdHash == null
                 ? null
                 : fbb.writeString(object.leaseIdHash!);
-            fbb.startTable(23);
+            fbb.startTable(24);
             fbb.addInt64(0, object.id);
             fbb.addOffset(1, operationIdOffset);
             fbb.addOffset(2, accountFingerprintOffset);
@@ -4180,6 +4192,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
             fbb.addOffset(19, leaseIdHashOffset);
             fbb.addInt64(20, object.leaseExpiresAtMs);
             fbb.addInt64(21, object.confirmedAtMs);
+            fbb.addInt64(22, object.checkpointGeneration);
             fbb.finish(fbb.endTable());
             return object.id;
           },
@@ -4226,6 +4239,12 @@ obx_int.ModelDefinition getObjectBoxModel() {
               buffer,
               rootOffset,
               40,
+              0,
+            );
+            final checkpointGenerationParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              48,
               0,
             );
             final encryptedPayloadRefParam = const fb.StringReader(
@@ -4296,6 +4315,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
               dependencyOperationIdsJson: dependencyOperationIdsJsonParam,
               payloadVersion: payloadVersionParam,
               mutationRevision: mutationRevisionParam,
+              checkpointGeneration: checkpointGenerationParam,
               encryptedPayloadRef: encryptedPayloadRefParam,
               payloadSha256: payloadSha256Param,
               state: stateParam,
@@ -4343,7 +4363,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
             ? null
             : fbb.writeString(object.encryptedRawRecordRef!);
         final scopeKeyOffset = fbb.writeString(object.scopeKey);
-        fbb.startTable(12);
+        fbb.startTable(13);
         fbb.addInt64(0, object.id);
         fbb.addOffset(1, mapKeyOffset);
         fbb.addOffset(2, accountFingerprintOffset);
@@ -4355,6 +4375,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
         fbb.addOffset(8, encryptedRawRecordRefOffset);
         fbb.addInt64(9, object.updatedAtMs);
         fbb.addOffset(10, scopeKeyOffset);
+        fbb.addInt64(11, object.generation);
         fbb.finish(fbb.endTable());
         return object.id;
       },
@@ -4385,6 +4406,12 @@ obx_int.ModelDefinition getObjectBoxModel() {
         final serverRecordIdHashParam = const fb.StringReader(
           asciiOptimization: true,
         ).vTableGet(buffer, rootOffset, 14, '');
+        final generationParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          26,
+          0,
+        );
         final encryptedServerRecordIdParam = const fb.StringReader(
           asciiOptimization: true,
         ).vTableGet(buffer, rootOffset, 16, '');
@@ -4408,6 +4435,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
           zone: zoneParam,
           logicalEntityKeyHash: logicalEntityKeyHashParam,
           serverRecordIdHash: serverRecordIdHashParam,
+          generation: generationParam,
           encryptedServerRecordId: encryptedServerRecordIdParam,
           etagHash: etagHashParam,
           encryptedRawRecordRef: encryptedRawRecordRefParam,
@@ -6514,6 +6542,12 @@ class CloudOutboxOperationEntity_ {
       obx.QueryIntegerProperty<CloudOutboxOperationEntity>(
         _entities[10].properties[21],
       );
+
+  /// See [CloudOutboxOperationEntity.checkpointGeneration].
+  static final checkpointGeneration =
+      obx.QueryIntegerProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[22],
+      );
 }
 
 /// [CloudRecordMapEntity] entity fields to define ObjectBox queries.
@@ -6576,6 +6610,11 @@ class CloudRecordMapEntity_ {
   /// See [CloudRecordMapEntity.scopeKey].
   static final scopeKey = obx.QueryStringProperty<CloudRecordMapEntity>(
     _entities[11].properties[10],
+  );
+
+  /// See [CloudRecordMapEntity.generation].
+  static final generation = obx.QueryIntegerProperty<CloudRecordMapEntity>(
+    _entities[11].properties[11],
   );
 }
 
