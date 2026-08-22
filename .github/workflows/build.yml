@@ -164,7 +164,11 @@ jobs:
         run: gradle --no-daemon :app:testAlphaDebugUnitTest :app:compileAlphaDebugKotlin
 
       - name: Build Alpha Profile APK
-        run: flutter build apk --flavor alpha --profile --target-platform android-arm64
+        env:
+          REGISTRATION_RELAY_ACCESS_TOKEN: ${{ secrets.REGISTRATION_RELAY_ACCESS_TOKEN }}
+        run: >-
+          flutter build apk --flavor alpha --profile --target-platform android-arm64
+          "--dart-define=OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN=$REGISTRATION_RELAY_ACCESS_TOKEN"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -172,7 +176,11 @@ jobs:
           path: build/app/outputs/flutter-apk/app-alpha-profile.apk
 
       - name: Build Alpha Debug APK
-        run: flutter build apk --flavor alpha --debug --target-platform android-arm64
+        env:
+          REGISTRATION_RELAY_ACCESS_TOKEN: ${{ secrets.REGISTRATION_RELAY_ACCESS_TOKEN }}
+        run: >-
+          flutter build apk --flavor alpha --debug --target-platform android-arm64
+          "--dart-define=OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN=$REGISTRATION_RELAY_ACCESS_TOKEN"
 
       - name: Verify the alpha APKs carry all native libraries
         run: |
@@ -285,10 +293,13 @@ jobs:
       # report has no in-app export and must be pulled with adb run-as, which a
       # release build does not permit.
       - name: Build Beta Debug APK with the Cloud Sync V2 sampler
+        env:
+          REGISTRATION_RELAY_ACCESS_TOKEN: ${{ secrets.REGISTRATION_RELAY_ACCESS_TOKEN }}
         run: >-
           flutter build apk --flavor beta --debug --target-platform android-arm64
           --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true
           --dart-define=OPENBUBBLES_BUILD_COMMIT=${{ github.sha }}
+          "--dart-define=OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN=$REGISTRATION_RELAY_ACCESS_TOKEN"
 
       - name: Verify the beta APK carries the Rust bridge
         run: |

@@ -13,6 +13,7 @@ $searchRoots = @(
 $forbiddenPatterns = @(
     '\b(?:trace|debug|info|warn|error|println)!\s*\([^\r\n]*(?:Got spd|spd \{?:\?|IDSUser|login_state|adsid.*\{|PET:|Got code \{|idms message \{data:\?|auth response \{|gsa auth extras \{|wrapped asn|Decoding with \{|response hex|ati:)',
     '\b(?:trace|debug|info|warn|error|println)!\s*\([^\r\n]*(?:response|body|request|token)[^\r\n]*\{[^}]*:\?[^}]*\}',
+    '\b(?:trace|debug|info|warn|error|println)!\s*\([^\r\n]*(?:C -> S|S -> C)[^\r\n]*\{read:\?\}',
     '\b(?:trace|debug|info|warn|error|println)!\s*\([^\r\n]*\{(?:path|file|folder)(?::\?)?\}',
     '\b(?:trace|debug|info|warn|error|println)!\s*\([^\r\n]*,\s*(?:path|file|folder|state\.folder)\s*\)'
 )

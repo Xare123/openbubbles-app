@@ -74,7 +74,9 @@ RustPushService pushService = Get.isRegistered<RustPushService>()
 
 const rpApiRoot = "https://hw.openbubbles.app/code";
 const registrationRelayHost = "https://registration-relay.beeper.com";
-const registrationRelayAccessToken = "5c175851953ecaf5209185d897591badb6c3e712";
+const registrationRelayAccessToken = String.fromEnvironment(
+  'OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN',
+);
 
 /// The legacy sync path predates the lossless V2 coordinator. Builds are
 /// restore-only unless mutation is explicitly enabled at compile time.
