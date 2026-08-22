@@ -18,7 +18,7 @@ jobs:
           large-packages: true
           swap-storage: true
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -178,7 +178,7 @@ jobs:
           flutter build apk --flavor alpha --profile --target-platform android-arm64
           "--dart-define=OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN=$REGISTRATION_RELAY_ACCESS_TOKEN"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Alpha Profile APK
           path: build/app/outputs/flutter-apk/app-alpha-profile.apk
@@ -209,7 +209,7 @@ jobs:
             done
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Alpha Debug APK
           path: build/app/outputs/flutter-apk/app-alpha-debug.apk
@@ -232,7 +232,7 @@ jobs:
           large-packages: true
           swap-storage: true
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -336,7 +336,7 @@ jobs:
           done
           unzip -l "$apk" | grep 'lib/arm64-v8a/'
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Beta Debug APK (Cloud Sync sampler)
           path: build/app/outputs/flutter-apk/app-beta-debug.apk
