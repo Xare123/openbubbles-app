@@ -59,6 +59,10 @@ final class CloudSyncShadowReportFileWriter {
     'chats',
     'messages',
     'attachments',
+    'message updates',
+    'recoverable deletes',
+    'scheduled messages',
+    'chat1 manatee',
   };
   static const Duration _orphanedTemporaryAge = Duration(hours: 24);
   static const int _maximumZoneElapsedMilliseconds = 10 * 60 * 1000;

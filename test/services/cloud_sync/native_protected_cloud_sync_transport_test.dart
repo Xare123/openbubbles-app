@@ -82,6 +82,37 @@ void main() {
     },
   );
 
+  test('accepts the expanded protected-zone allowlist without remapping', () async {
+    bindings.fetchResult = _validEmptyFetchResult();
+    final cases = <(String zone, String stream)>[
+      ('chatManateeZone', 'chats'),
+      ('messageManateeZone', 'messages'),
+      ('attachmentManateeZone', 'attachments'),
+      ('messageUpdateZone', 'messageUpdateZone'),
+      ('recoverableMessageDeleteZone', 'recoverableMessageDeleteZone'),
+      ('scheduledMessageZone', 'scheduledMessageZone'),
+      ('chat1ManateeZone', 'chat1ManateeZone'),
+    ];
+
+    for (final (zone, stream) in cases) {
+      final batch = await transport.fetchChanges(
+        CloudSyncScope(
+          accountFingerprint: _hash('A'),
+          container: 'com.apple.messages.cloud',
+          database: 'private',
+          zone: zone,
+          streamKind: CloudSyncStreamKind.messages,
+          schemaVersion: 2,
+        ),
+        previousToken: null,
+        generation: 1,
+        limit: 1,
+      );
+      expect(batch.changes, isEmpty);
+      expect(bindings.stream, stream);
+    }
+  });
+
   test(
     'quarantined tombstone preserves delete shape without raw material',
     () async {
@@ -619,6 +650,7 @@ final class _FakeBindings implements NativeProtectedCloudSyncBindings {
         ),
       );
   String? expectedAccountFingerprint;
+  String? stream;
   String? previousCheckpointReference;
   int? maximumChanges;
   List<String>? adoptedLeaseReferences;
@@ -648,6 +680,7 @@ final class _FakeBindings implements NativeProtectedCloudSyncBindings {
   }) async {
     await _before('fetch');
     this.expectedAccountFingerprint = expectedAccountFingerprint;
+    this.stream = stream;
     this.previousCheckpointReference = previousCheckpointReference;
     this.maximumChanges = maximumChanges;
     return fetchResult;

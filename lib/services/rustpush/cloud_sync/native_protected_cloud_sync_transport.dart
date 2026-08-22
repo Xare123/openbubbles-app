@@ -737,6 +737,10 @@ final class NativeProtectedCloudSyncTransport
       'chatManateeZone' => 'chats',
       'messageManateeZone' => 'messages',
       'attachmentManateeZone' => 'attachments',
+      'messageUpdateZone' => 'messageUpdateZone',
+      'recoverableMessageDeleteZone' => 'recoverableMessageDeleteZone',
+      'scheduledMessageZone' => 'scheduledMessageZone',
+      'chat1ManateeZone' => 'chat1ManateeZone',
       _ => throw CloudSyncFailure(
         category: CloudFailureCategory.cancelled,
         safeCode: 'unsupported_protected_cloud_zone',

@@ -139,6 +139,10 @@ final class CloudSyncManualShadowSampler {
     'chatManateeZone',
     'messageManateeZone',
     'attachmentManateeZone',
+    'messageUpdateZone',
+    'recoverableMessageDeleteZone',
+    'scheduledMessageZone',
+    'chat1ManateeZone',
   ];
   static const pageLimit = 1;
   static const changeLimit = 50;
@@ -162,6 +166,7 @@ final class CloudSyncManualShadowSampler {
   bool _active = false;
 
   bool get isActive => _active;
+  CloudSyncFeatureFlags get debugFlags => _config().flags;
 
   Future<CloudSyncShadowReport> runConfirmed() async {
     if (!_enabled) throw StateError('cloud_sync_sampler_disabled');
@@ -328,6 +333,10 @@ final class CloudSyncManualShadowSampler {
     'chatManateeZone' => 'chats',
     'messageManateeZone' => 'messages',
     'attachmentManateeZone' => 'attachments',
+    'messageUpdateZone' => 'message updates',
+    'recoverableMessageDeleteZone' => 'recoverable deletes',
+    'scheduledMessageZone' => 'scheduled messages',
+    'chat1ManateeZone' => 'chat1 manatee',
     _ => throw StateError('unsupported_cloud_zone'),
   };
 }

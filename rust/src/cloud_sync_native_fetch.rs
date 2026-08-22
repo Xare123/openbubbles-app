@@ -76,6 +76,10 @@ pub(crate) enum CloudNativeStream {
     Chats,
     Messages,
     Attachments,
+    MessageUpdate,
+    RecoverableMessageDelete,
+    ScheduledMessage,
+    Chat1,
 }
 
 impl CloudNativeStream {
@@ -84,6 +88,10 @@ impl CloudNativeStream {
             "chats" => Some(Self::Chats),
             "messages" => Some(Self::Messages),
             "attachments" => Some(Self::Attachments),
+            "messageUpdateZone" => Some(Self::MessageUpdate),
+            "recoverableMessageDeleteZone" => Some(Self::RecoverableMessageDelete),
+            "scheduledMessageZone" => Some(Self::ScheduledMessage),
+            "chat1ManateeZone" => Some(Self::Chat1),
             _ => None,
         }
     }
@@ -93,6 +101,10 @@ impl CloudNativeStream {
             Self::Chats => "chatManateeZone",
             Self::Messages => "messageManateeZone",
             Self::Attachments => "attachmentManateeZone",
+            Self::MessageUpdate => "messageUpdateZone",
+            Self::RecoverableMessageDelete => "recoverableMessageDeleteZone",
+            Self::ScheduledMessage => "scheduledMessageZone",
+            Self::Chat1 => "chat1ManateeZone",
         }
     }
 
@@ -101,6 +113,10 @@ impl CloudNativeStream {
             Self::Chats => 1,
             Self::Messages => 2,
             Self::Attachments => 3,
+            Self::MessageUpdate => 4,
+            Self::RecoverableMessageDelete => 5,
+            Self::ScheduledMessage => 6,
+            Self::Chat1 => 7,
         }
     }
 
@@ -109,6 +125,10 @@ impl CloudNativeStream {
             1 => Some(Self::Chats),
             2 => Some(Self::Messages),
             3 => Some(Self::Attachments),
+            4 => Some(Self::MessageUpdate),
+            5 => Some(Self::RecoverableMessageDelete),
+            6 => Some(Self::ScheduledMessage),
+            7 => Some(Self::Chat1),
             _ => None,
         }
     }
@@ -3070,6 +3090,29 @@ async fn cloud_sync_fetch_protected_page_with_store(
                     .sync_attachments_page(continuation_token, Some(request.maximum_changes))
                     .await
             }
+            CloudNativeStream::MessageUpdate => {
+                cloud_messages_client
+                    .sync_message_update_page(continuation_token, Some(request.maximum_changes))
+                    .await
+            }
+            CloudNativeStream::RecoverableMessageDelete => {
+                cloud_messages_client
+                    .sync_recoverable_message_delete_page(
+                        continuation_token,
+                        Some(request.maximum_changes),
+                    )
+                    .await
+            }
+            CloudNativeStream::ScheduledMessage => {
+                cloud_messages_client
+                    .sync_scheduled_message_page(continuation_token, Some(request.maximum_changes))
+                    .await
+            }
+            CloudNativeStream::Chat1 => {
+                cloud_messages_client
+                    .sync_chat1_page(continuation_token, Some(request.maximum_changes))
+                    .await
+            }
         }
     };
     match tokio::time::timeout(FETCH_DEADLINE, fetch).await {
@@ -3580,6 +3623,58 @@ mod tests {
             stream,
         )
         .expect("scope")
+    }
+
+    #[test]
+    fn auxiliary_streams_roundtrip_parse_tag_and_zone() {
+        let cases = [
+            (CloudNativeStream::Chats, 1u8, "chatManateeZone", "chats"),
+            (
+                CloudNativeStream::Messages,
+                2u8,
+                "messageManateeZone",
+                "messages",
+            ),
+            (
+                CloudNativeStream::Attachments,
+                3u8,
+                "attachmentManateeZone",
+                "attachments",
+            ),
+            (
+                CloudNativeStream::MessageUpdate,
+                4u8,
+                "messageUpdateZone",
+                "messageUpdateZone",
+            ),
+            (
+                CloudNativeStream::RecoverableMessageDelete,
+                5u8,
+                "recoverableMessageDeleteZone",
+                "recoverableMessageDeleteZone",
+            ),
+            (
+                CloudNativeStream::ScheduledMessage,
+                6u8,
+                "scheduledMessageZone",
+                "scheduledMessageZone",
+            ),
+            (
+                CloudNativeStream::Chat1,
+                7u8,
+                "chat1ManateeZone",
+                "chat1ManateeZone",
+            ),
+        ];
+
+        for (stream, tag, zone, parsed_zone) in cases {
+            assert_eq!(stream.tag(), tag);
+            assert_eq!(stream.zone(), zone);
+            assert_eq!(CloudNativeStream::from_tag(tag), Some(stream));
+            assert_eq!(CloudNativeStream::parse(parsed_zone), Some(stream));
+        }
+        assert_eq!(CloudNativeStream::parse("futureZone"), None);
+        assert_eq!(CloudNativeStream::from_tag(8), None);
     }
 
     fn change(name: &str, raw: Vec<u8>) -> CloudMessageRecordPageChange {

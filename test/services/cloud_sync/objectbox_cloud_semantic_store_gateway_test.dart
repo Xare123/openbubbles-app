@@ -945,6 +945,10 @@ void main() {
       objectBox.box<CloudInboxChangeEntity>().getAll().single.status,
       CloudInboxStatus.quarantined.index,
     );
+    expect(
+      objectBox.box<CloudSyncCheckpointEntity>().getAll().single.appliedSequence,
+      1,
+    );
   });
 
   test(

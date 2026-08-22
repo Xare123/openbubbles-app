@@ -2589,7 +2589,7 @@ fn subscribe_streams<
                 break;
             };
             let new = shared_items(&manager, &mut seen_paths).await;
-            info!("New files {:?}", new);
+            info!("Shared-stream diff found {} new files", new.len());
             if let Some(packager) = PACKAGER_LOCK.get() {
                 packager.scan_files(
                     new.into_iter()
@@ -4089,14 +4089,12 @@ pub async fn download_attachment(
     path: String,
 ) {
     wrap_sink(&sink, || async {
-        println!("donwloading file {}", path);
         let path = std::path::Path::new(&path);
         let prefix = path.parent().unwrap();
         std::fs::create_dir_all(prefix)?;
         let mut file = std::fs::File::create(path)?;
         attachment
             .get_attachment(aps, &mut file, |prog, total| {
-                println!("donwloading file {} of {}", prog, total);
                 let _ = sink.add(TransferProgress {
                     prog,
                     total,
@@ -5124,7 +5122,16 @@ pub async fn cloud_sync_fetch_raw_page(
     continuation_token: Option<Vec<u8>>,
     max_changes: u32,
 ) -> CloudSyncRawFetchResult {
-    if !matches!(stream.as_str(), "chats" | "messages" | "attachments") {
+    if !matches!(
+        stream.as_str(),
+        "chats"
+            | "messages"
+            | "attachments"
+            | "messageUpdateZone"
+            | "recoverableMessageDeleteZone"
+            | "scheduledMessageZone"
+            | "chat1ManateeZone"
+    ) {
         return CloudSyncRawFetchResult {
             page: None,
             failure: Some(CloudSyncRawFailure {
@@ -5150,6 +5157,26 @@ pub async fn cloud_sync_fetch_raw_page(
             "attachments" => {
                 cloud_messages_client
                     .sync_attachments_page(continuation_token, Some(max_changes))
+                    .await
+            }
+            "messageUpdateZone" => {
+                cloud_messages_client
+                    .sync_message_update_page(continuation_token, Some(max_changes))
+                    .await
+            }
+            "recoverableMessageDeleteZone" => {
+                cloud_messages_client
+                    .sync_recoverable_message_delete_page(continuation_token, Some(max_changes))
+                    .await
+            }
+            "scheduledMessageZone" => {
+                cloud_messages_client
+                    .sync_scheduled_message_page(continuation_token, Some(max_changes))
+                    .await
+            }
+            "chat1ManateeZone" => {
+                cloud_messages_client
+                    .sync_chat1_page(continuation_token, Some(max_changes))
                     .await
             }
             _ => unreachable!("stream was validated before starting the fetch"),
@@ -5303,12 +5330,9 @@ pub async fn download_cloud_attachments(
 ) -> anyhow::Result<()> {
     let mut map = HashMap::new();
     for (file, record) in files {
-        info!("here {}", file);
         let path = std::path::Path::new(&file);
         let prefix = path.parent().unwrap();
         std::fs::create_dir_all(prefix)?;
-
-        info!("created {}", file);
 
         map.insert(record, std::fs::File::create(file)?);
     }

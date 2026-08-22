@@ -365,6 +365,9 @@ class CloudSyncCheckpoint {
   final int generation;
   final String? lastBatchId;
   final int fetchedSequence;
+
+  /// Highest contiguous terminal inbox sequence. Applied and quarantined rows
+  /// advance it; pending and retryable rows continue to block it.
   final int lastAppliedSequence;
   final int mutationRevisionCounter;
   final int consecutivePullFailures;

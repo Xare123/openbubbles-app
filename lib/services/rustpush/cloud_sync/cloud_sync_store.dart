@@ -73,7 +73,7 @@ abstract interface class CloudSyncStore {
   });
 
   /// Atomically updates the journal entry and advances the checkpoint's
-  /// contiguous applied position where possible. Fallback transitions must
+  /// contiguous terminal position where possible. Fallback transitions must
   /// match the exact active coordinator owner and generation. A terminal row
   /// may be repeated idempotently, but must never be regressed or replaced.
   Future<void> markInboxApplied(
@@ -150,6 +150,23 @@ abstract interface class CloudSyncStore {
     CloudSyncScope scope, {
     required Set<CloudFailureCategory> categories,
     required DateTime now,
+  });
+
+  /// Returns failure categories holding paused operations whose durable retry
+  /// delay has elapsed. This lets a push-only run refresh only blocked systems.
+  Future<Set<CloudFailureCategory>> readPausedOutboxFailureCategories(
+    CloudSyncScope scope, {
+    required DateTime now,
+  });
+
+  /// Moves only currently eligible paused operations back behind a durable
+  /// retry boundary after their subsystem refresh fails. Rows whose existing
+  /// delay has not elapsed are left unchanged.
+  Future<int> postponeEligiblePausedOutbox(
+    CloudSyncScope scope, {
+    required Set<CloudFailureCategory> categories,
+    required DateTime now,
+    required DateTime nextEligibleAt,
   });
 
   /// Cross-process coordinator lease. This supplements the engine's in-memory
@@ -261,10 +278,12 @@ class CloudOutboxTransition {
   const CloudOutboxTransition.paused(
     String operationId, {
     required CloudFailureCategory category,
+    DateTime? nextEligibleAt,
   }) : this._(
          operationId: operationId,
          type: CloudOutboxTransitionType.paused,
          category: category,
+         nextEligibleAt: nextEligibleAt,
        );
 
   const CloudOutboxTransition.quarantined(

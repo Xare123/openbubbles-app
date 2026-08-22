@@ -85,50 +85,53 @@ void main() {
     );
   });
 
-  test('applied checkpoint advances through contiguous entries only', () async {
-    await _journal(
-      store,
-      CloudFetchBatch(
-        scope: scope,
-        changes: [testChange(1), testChange(2), testChange(3)],
-        batchId: 'batch-1',
-        generation: 1,
-        nextToken: 'token',
-        hasMore: false,
-      ),
-    );
+  test(
+    'terminal checkpoint advances through applied and quarantined rows',
+    () async {
+      await _journal(
+        store,
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1), testChange(2), testChange(3)],
+          batchId: 'batch-1',
+          generation: 1,
+          nextToken: 'token',
+          hasMore: false,
+        ),
+      );
 
-    final fence = (await store.tryAcquireCoordinatorLease(
-      scope,
-      ownerId: 'inbox-transition-owner',
-      now: testEpoch,
-      leaseDuration: const Duration(minutes: 5),
-    ))!;
-    await store.markInboxApplied(
-      scope,
-      sequence: 2,
-      now: testEpoch,
-      leaseFence: fence,
-    );
-    expect((await store.readCheckpoint(scope)).lastAppliedSequence, 0);
+      final fence = (await store.tryAcquireCoordinatorLease(
+        scope,
+        ownerId: 'inbox-transition-owner',
+        now: testEpoch,
+        leaseDuration: const Duration(minutes: 5),
+      ))!;
+      await store.markInboxApplied(
+        scope,
+        sequence: 2,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 0);
 
-    await store.markInboxApplied(
-      scope,
-      sequence: 1,
-      now: testEpoch,
-      leaseFence: fence,
-    );
-    expect((await store.readCheckpoint(scope)).lastAppliedSequence, 2);
+      await store.markInboxApplied(
+        scope,
+        sequence: 1,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 2);
 
-    await store.quarantineInbox(
-      scope,
-      sequence: 3,
-      category: CloudFailureCategory.malformedRecord,
-      now: testEpoch,
-      leaseFence: fence,
-    );
-    expect((await store.readCheckpoint(scope)).lastAppliedSequence, 2);
-  });
+      await store.quarantineInbox(
+        scope,
+        sequence: 3,
+        category: CloudFailureCategory.malformedRecord,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 3);
+    },
+  );
 
   test('retry fallback is monotonic and idempotent', () async {
     await _journal(
@@ -317,6 +320,72 @@ void main() {
       message.operationId,
     ]);
   });
+
+  test(
+    'newer delete waits behind a leased save and the batch keeps scanning',
+    () async {
+      final saveA = testOutboxOperation(scope, 1, revision: 1);
+      final deleteA = testOutboxOperation(
+        scope,
+        1,
+        action: CloudOutboxAction.delete,
+        revision: 2,
+        createdAt: testEpoch.add(const Duration(microseconds: 1)),
+      );
+      final saveB = testOutboxOperation(
+        scope,
+        2,
+        revision: 3,
+        createdAt: testEpoch.add(const Duration(microseconds: 2)),
+      );
+      await store.enqueueOutbox(saveA);
+      await store.enqueueOutbox(deleteA);
+      await store.enqueueOutbox(saveB);
+
+      final firstLease = await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'lease-save-a',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: CloudOutboxAction.values.toSet(),
+      );
+      expect(firstLease.map((operation) => operation.operationId), [
+        saveA.operationId,
+      ]);
+
+      final secondLease = await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'lease-save-b',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: CloudOutboxAction.values.toSet(),
+      );
+      expect(secondLease.map((operation) => operation.operationId), [
+        saveB.operationId,
+      ]);
+
+      await store.applyOutboxTransitions(
+        scope,
+        leaseId: 'lease-save-a',
+        transitions: [CloudOutboxTransition.confirmed(saveA.operationId)],
+        now: testEpoch,
+      );
+
+      final thirdLease = await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'lease-delete-a',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: CloudOutboxAction.values.toSet(),
+      );
+      expect(thirdLease.map((operation) => operation.operationId), [
+        deleteA.operationId,
+      ]);
+    },
+  );
 
   test('stale worker cannot confirm a newer lease', () async {
     final operation = testOutboxOperation(scope, 1);

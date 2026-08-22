@@ -118,18 +118,24 @@ void main() {
   CloudOutboxDraft draft(
     CloudSyncScope scope,
     int index, {
+    CloudOutboxAction action = CloudOutboxAction.save,
     DateTime? createdAt,
     Set<String> dependencies = const {},
   }) {
+    final payloadSha256 = action == CloudOutboxAction.save
+        ? 'payload-digest-$index'
+        : null;
     return CloudOutboxDraft(
       scope: scope,
       logicalEntityKeyHash: 'logical-key-digest-$index',
-      action: CloudOutboxAction.save,
+      action: action,
       payloadVersion: 1,
       dependencyOperationIds: dependencies,
       createdAt: createdAt ?? testEpoch,
-      encryptedPayloadReference: 'protected:payload-$index',
-      payloadSha256: 'payload-digest-$index',
+      encryptedPayloadReference: action == CloudOutboxAction.save
+          ? 'protected:payload-$index'
+          : null,
+      payloadSha256: payloadSha256,
     );
   }
 
@@ -558,6 +564,149 @@ void main() {
     expect(states[first.operationId], 1);
     expect(states[second.operationId], 1);
   });
+
+  test('reports and resumes only paused outbox failure categories', () async {
+    final scope = testScope();
+    final operation = await store.enqueueOutboxMutation(draft(scope, 1));
+    await store.leaseEligibleOutbox(
+      scope,
+      now: testEpoch,
+      limit: 1,
+      leaseId: 'lease-paused',
+      leaseDuration: const Duration(minutes: 1),
+      allowedActions: const {CloudOutboxAction.save},
+    );
+    await store.applyOutboxTransitions(
+      scope,
+      leaseId: 'lease-paused',
+      transitions: [
+        CloudOutboxTransition.paused(
+          operation.operationId,
+          category: CloudFailureCategory.authorization,
+          nextEligibleAt: testEpoch.add(const Duration(hours: 1)),
+        ),
+      ],
+      now: testEpoch,
+    );
+
+    expect(
+      await store.readPausedOutboxFailureCategories(scope, now: testEpoch),
+      isEmpty,
+    );
+    final eligibleAt = testEpoch.add(const Duration(hours: 1));
+    expect(
+      await store.readPausedOutboxFailureCategories(scope, now: eligibleAt),
+      {CloudFailureCategory.authorization},
+    );
+    final postponedUntil = eligibleAt.add(const Duration(hours: 6));
+    expect(
+      await store.postponeEligiblePausedOutbox(
+        scope,
+        categories: const {CloudFailureCategory.authorization},
+        now: eligibleAt,
+        nextEligibleAt: postponedUntil,
+      ),
+      1,
+    );
+    expect(
+      await store.readPausedOutboxFailureCategories(scope, now: eligibleAt),
+      isEmpty,
+    );
+    expect(
+      await store.readPausedOutboxFailureCategories(scope, now: postponedUntil),
+      {CloudFailureCategory.authorization},
+    );
+    expect(
+      await store.resumePausedOutbox(
+        scope,
+        categories: const {CloudFailureCategory.pcsUnavailable},
+        now: postponedUntil,
+      ),
+      0,
+    );
+    expect(
+      await store.readPausedOutboxFailureCategories(scope, now: postponedUntil),
+      {CloudFailureCategory.authorization},
+    );
+    expect(
+      await store.resumePausedOutbox(
+        scope,
+        categories: const {CloudFailureCategory.authorization},
+        now: postponedUntil,
+      ),
+      1,
+    );
+    expect(
+      await store.readPausedOutboxFailureCategories(scope, now: postponedUntil),
+      isEmpty,
+    );
+  });
+
+  test(
+    'newer delete waits behind a leased save and the batch keeps scanning',
+    () async {
+      final scope = testScope();
+      final saveA = await store.enqueueOutboxMutation(draft(scope, 1));
+      final deleteA = await store.enqueueOutboxMutation(
+        draft(
+          scope,
+          1,
+          action: CloudOutboxAction.delete,
+          createdAt: testEpoch.add(const Duration(microseconds: 1)),
+        ),
+      );
+      final saveB = await store.enqueueOutboxMutation(
+        draft(
+          scope,
+          2,
+          createdAt: testEpoch.add(const Duration(microseconds: 2)),
+        ),
+      );
+
+      final firstLease = await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'lease-save-a',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: CloudOutboxAction.values.toSet(),
+      );
+      expect(firstLease.map((operation) => operation.operationId), [
+        saveA.operationId,
+      ]);
+
+      final secondLease = await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'lease-save-b',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: CloudOutboxAction.values.toSet(),
+      );
+      expect(secondLease.map((operation) => operation.operationId), [
+        saveB.operationId,
+      ]);
+
+      await store.applyOutboxTransitions(
+        scope,
+        leaseId: 'lease-save-a',
+        transitions: [CloudOutboxTransition.confirmed(saveA.operationId)],
+        now: testEpoch,
+      );
+
+      final thirdLease = await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'lease-delete-a',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: CloudOutboxAction.values.toSet(),
+      );
+      expect(thirdLease.map((operation) => operation.operationId), [
+        deleteA.operationId,
+      ]);
+    },
+  );
 
   test(
     'expired outbox lease can recover but old owner cannot confirm',

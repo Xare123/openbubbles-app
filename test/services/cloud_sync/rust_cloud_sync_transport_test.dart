@@ -401,6 +401,42 @@ void main() {
       ),
     );
   });
+
+  test('accepts the expanded raw-zone allowlist without remapping', () async {
+    bindings.result = const RustCloudSyncRawFetchResult(
+      page: RustCloudSyncRawPage(
+        changes: [],
+        nextToken: null,
+        status: 3,
+        complete: true,
+      ),
+    );
+    final cases = <(String zone, String stream)>[
+      ('chatManateeZone', 'chats'),
+      ('messageManateeZone', 'messages'),
+      ('attachmentManateeZone', 'attachments'),
+      ('messageUpdateZone', 'messageUpdateZone'),
+      ('recoverableMessageDeleteZone', 'recoverableMessageDeleteZone'),
+      ('scheduledMessageZone', 'scheduledMessageZone'),
+      ('chat1ManateeZone', 'chat1ManateeZone'),
+    ];
+
+    for (final (zone, stream) in cases) {
+      final batch = await transport.fetchChanges(
+        CloudSyncScope(
+          accountFingerprint: testAccountFingerprintA,
+          container: 'com.apple.messages.cloud',
+          database: 'private',
+          zone: zone,
+        ),
+        previousToken: null,
+        generation: 1,
+        limit: 10,
+      );
+      expect(batch.changes, isEmpty);
+      expect(bindings.stream, stream);
+    }
+  });
 }
 
 final class _FakeBindings implements RustCloudSyncTransportBindings {

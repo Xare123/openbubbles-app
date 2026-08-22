@@ -852,6 +852,7 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         ..completedAtMs = _updatedAtMs
         ..updatedAtMs = _updatedAtMs;
       _inbox.put(_inboxEntity);
+      _advanceContiguousApplied();
       return;
     }
     if (alreadyQuarantined) {
@@ -903,7 +904,10 @@ final class _ObjectBoxCloudSemanticStoreTransaction
           'semantic_inbox_sequence_scope_mismatch',
         );
       }
-      if (row.status != CloudInboxStatus.applied.index) break;
+      if (row.status != CloudInboxStatus.applied.index &&
+          row.status != CloudInboxStatus.quarantined.index) {
+        break;
+      }
       next++;
     }
     final appliedThrough = next - 1;

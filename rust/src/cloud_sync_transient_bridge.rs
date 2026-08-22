@@ -175,6 +175,7 @@ impl CloudTransientDecodeRequest {
             || generation == 0
             || !is_sha256_hex(&expected_payload_sha256)
             || !is_protected_reference(&protected_raw_envelope_reference)
+            || !semantic_stream_is_supported(stream)
         {
             return Err(CloudTransientBridgeFailure::InvalidRequest);
         }
@@ -242,6 +243,13 @@ fn is_protected_reference(value: &str) -> bool {
     value.strip_prefix("obcs2.ref.").is_some_and(is_digest)
 }
 
+fn semantic_stream_is_supported(stream: CloudNativeStream) -> bool {
+    matches!(
+        stream,
+        CloudNativeStream::Chats | CloudNativeStream::Messages | CloudNativeStream::Attachments
+    )
+}
+
 fn entity_kind_matches_stream(
     entity_kind: CloudCanonicalEntityKind,
     stream: CloudNativeStream,
@@ -265,6 +273,7 @@ fn expected_record_type(stream: CloudNativeStream) -> &'static str {
         CloudNativeStream::Chats => CloudChat::record_type(),
         CloudNativeStream::Messages => CloudMessage::record_type(),
         CloudNativeStream::Attachments => CloudAttachment::record_type(),
+        _ => unreachable!("auxiliary streams are rejected before semantic decode"),
     }
 }
 
@@ -813,6 +822,14 @@ pub(crate) async fn cloud_sync_decode_transient_record(
             };
             convert_attachment(&context, &presence, &attachment.cm.0)
         }
+        CloudNativeStream::MessageUpdate
+        | CloudNativeStream::RecoverableMessageDelete
+        | CloudNativeStream::ScheduledMessage
+        | CloudNativeStream::Chat1 => {
+            return CloudTransientDecodeOutcome::Failure(
+                CloudTransientBridgeFailure::DecoderFailure,
+            );
+        }
     };
     normalize_conversion(
         converted,
@@ -887,6 +904,43 @@ mod tests {
             result.err(),
             Some(CloudTransientBridgeFailure::InvalidRequest)
         );
+    }
+
+    #[test]
+    fn request_rejects_auxiliary_streams_before_semantic_decode() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        for stream in [
+            CloudNativeStream::MessageUpdate,
+            CloudNativeStream::RecoverableMessageDelete,
+            CloudNativeStream::ScheduledMessage,
+            CloudNativeStream::Chat1,
+        ] {
+            let result = CloudTransientDecodeRequest::new(
+                directory.path().to_path_buf(),
+                digest('a'),
+                format!("obcs2.store.{}", digest('b')),
+                "com.apple.messages.cloud".to_owned(),
+                "private".to_owned(),
+                stream.zone().to_owned(),
+                "messages".to_owned(),
+                2,
+                stream,
+                7,
+                CloudTransientExpectedChangeKind::Save,
+                digest('c'),
+                digest('d'),
+                None,
+                "e".repeat(64),
+                Some(1),
+                None,
+                format!("obcs2.ref.{}", digest('f')),
+                None,
+            );
+            assert_eq!(
+                result.err(),
+                Some(CloudTransientBridgeFailure::InvalidRequest)
+            );
+        }
     }
 
     #[test]

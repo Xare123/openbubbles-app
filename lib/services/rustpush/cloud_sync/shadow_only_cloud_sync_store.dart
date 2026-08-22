@@ -213,6 +213,20 @@ final class ShadowOnlyCloudSyncStore
   }) => _blocked();
 
   @override
+  Future<Set<CloudFailureCategory>> readPausedOutboxFailureCategories(
+    CloudSyncScope scope, {
+    required DateTime now,
+  }) => _blocked();
+
+  @override
+  Future<int> postponeEligiblePausedOutbox(
+    CloudSyncScope scope, {
+    required Set<CloudFailureCategory> categories,
+    required DateTime now,
+    required DateTime nextEligibleAt,
+  }) => _blocked();
+
+  @override
   Future<CloudRecordMapEntry?> readRecordMap(
     CloudSyncScope scope, {
     required String logicalEntityKeyHash,

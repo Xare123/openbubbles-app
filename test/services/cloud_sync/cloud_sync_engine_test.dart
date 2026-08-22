@@ -5,6 +5,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_cancellation
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_shadow_journal_budget.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_testing.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
@@ -29,6 +30,9 @@ void main() {
     int batchSize = 256,
     int maximumOutboxBatches = 8,
     Duration fetchOperationTimeout = const Duration(seconds: 45),
+    int maximumDeferredAttempts = 8,
+    Duration maximumDeferredAge = const Duration(days: 3),
+    Duration pausedRetryDelay = const Duration(hours: 6),
     MemoryCloudSyncObserver? observer,
     String coordinatorId = 'coordinator-a',
     CloudShadowJournalBudget? shadowJournalBudget,
@@ -50,6 +54,9 @@ void main() {
         maximumBatchSize: batchSize,
         maximumOutboxBatchesPerRun: maximumOutboxBatches,
         fetchOperationTimeout: fetchOperationTimeout,
+        maximumDeferredAttempts: maximumDeferredAttempts,
+        maximumDeferredAge: maximumDeferredAge,
+        pausedRetryDelay: pausedRetryDelay,
         shadowJournalBudget: shadowJournalBudget ?? CloudShadowJournalBudget(),
         flags: flags,
       ),
@@ -87,6 +94,30 @@ void main() {
     } finally {
       await store.releaseCoordinatorLease(batch.scope, leaseFence: fence);
     }
+  }
+
+  Future<void> seedPausedOutbox(
+    CloudOutboxOperation operation, {
+    required CloudFailureCategory category,
+  }) async {
+    await store.enqueueOutbox(operation);
+    final leased = await store.leaseEligibleOutbox(
+      operation.scope,
+      now: clock.value,
+      limit: 1,
+      leaseId: 'seed-lease-${operation.operationId}',
+      leaseDuration: const Duration(minutes: 2),
+      allowedActions: {operation.action},
+    );
+    expect(leased.single.operationId, operation.operationId);
+    await store.applyOutboxTransitions(
+      operation.scope,
+      leaseId: 'seed-lease-${operation.operationId}',
+      transitions: [
+        CloudOutboxTransition.paused(operation.operationId, category: category),
+      ],
+      now: clock.value,
+    );
   }
 
   test('fetches, journals, applies, and advances checkpoint', () async {
@@ -155,7 +186,7 @@ void main() {
   });
 
   test(
-    'quarantine blocks contiguous checkpoint without dropping later data',
+    'terminal quarantine advances the floor without dropping later data',
     () async {
       transport.enqueueFetchBatch(
         CloudFetchBatch(
@@ -177,7 +208,7 @@ void main() {
 
       expect(result.counters.quarantined, 1);
       expect(result.counters.applied, 1);
-      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 0);
+      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 2);
       final entries = await store.inboxEntries(scope);
       expect(entries[0].status, CloudInboxStatus.quarantined);
       expect(entries[1].status, CloudInboxStatus.applied);
@@ -212,6 +243,85 @@ void main() {
       final entries = await store.inboxEntries(scope);
       expect(entries.single.status, CloudInboxStatus.quarantined);
       expect(entries.single.lastFailure, CloudFailureCategory.malformedRecord);
+    },
+  );
+
+  test(
+    'deferred inbox entries quarantine only after age and attempt thresholds',
+    () async {
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1)],
+          batchId: 'batch-deferred-parent',
+          generation: 1,
+          nextToken: 'opaque-token',
+          hasMore: false,
+        ),
+      );
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.deferred();
+      final syncEngine = engine(
+        maximumDeferredAttempts: 1,
+        maximumDeferredAge: const Duration(seconds: 1),
+      );
+
+      final first = await syncEngine.synchronize(
+        trigger: CloudSyncTrigger.manual,
+      );
+
+      expect(first.counters.deferred, 1);
+      expect(first.counters.quarantined, 0);
+      var entries = await store.inboxEntries(scope);
+      expect(entries.single.status, CloudInboxStatus.pending);
+      expect(entries.single.attemptCount, 1);
+      expect(entries.single.lastFailure, CloudFailureCategory.dependency);
+
+      clock.advance(const Duration(seconds: 10));
+      final second = await syncEngine.synchronize(
+        trigger: CloudSyncTrigger.manual,
+      );
+
+      expect(second.counters.deferred, 0);
+      expect(second.counters.quarantined, 1);
+      entries = await store.inboxEntries(scope);
+      expect(entries.single.status, CloudInboxStatus.quarantined);
+      expect(entries.single.attemptCount, 2);
+      expect(entries.single.lastFailure, CloudFailureCategory.dependency);
+    },
+  );
+
+  test(
+    'retryable inbox failures do not use the deferred terminal bound',
+    () async {
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1)],
+          batchId: 'batch-retryable-network',
+          generation: 1,
+          nextToken: 'opaque-token',
+          hasMore: false,
+        ),
+      );
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.retryable(
+        failureCategory: CloudFailureCategory.network,
+      );
+      final syncEngine = engine(
+        maximumDeferredAttempts: 1,
+        maximumDeferredAge: const Duration(seconds: 1),
+      );
+
+      await syncEngine.synchronize(trigger: CloudSyncTrigger.manual);
+      clock.advance(const Duration(seconds: 10));
+      final second = await syncEngine.synchronize(
+        trigger: CloudSyncTrigger.manual,
+      );
+
+      final stored = (await store.inboxEntries(scope)).single;
+      expect(second.counters.retried, 1);
+      expect(second.counters.quarantined, 0);
+      expect(stored.status, CloudInboxStatus.pending);
+      expect(stored.lastFailure, CloudFailureCategory.network);
     },
   );
 
@@ -582,65 +692,126 @@ void main() {
   });
 
   test(
-    'authorization refresh runs once then leaves the operation paused',
+    'authorization refresh sends an all-paused outbox without a pull',
     () async {
-      final operation = testOutboxOperation(scope, 1);
-      await store.enqueueOutbox(operation);
-      for (var attempt = 0; attempt < 2; attempt++) {
-        transport.enqueuePushResult(
-          CloudPushBatchResult(
-            outcomes: [
-              CloudPushOutcome(
-                operationId: operation.operationId,
-                disposition: CloudPushDisposition.unauthorized,
-                failureCategory: CloudFailureCategory.authorization,
-              ),
-            ],
-          ),
-        );
-      }
-      transport.authenticationRefreshHandler = (_) async => true;
-
-      await engine(
-        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
-      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
-
-      final stored = (await store.outboxEntries(scope)).single;
-      expect(transport.authenticationRefreshCallCount, 1);
-      expect(transport.pushCallCount, 2);
-      expect(stored.status, CloudOutboxStatus.paused);
-      expect(stored.lastFailure, CloudFailureCategory.authorization);
-    },
-  );
-
-  test('PCS refresh runs once then leaves the operation paused', () async {
-    final operation = testOutboxOperation(scope, 1);
-    await store.enqueueOutbox(operation);
-    for (var attempt = 0; attempt < 2; attempt++) {
+      final paused = testOutboxOperation(scope, 1);
+      await seedPausedOutbox(
+        paused,
+        category: CloudFailureCategory.authorization,
+      );
       transport.enqueuePushResult(
         CloudPushBatchResult(
           outcomes: [
             CloudPushOutcome(
-              operationId: operation.operationId,
-              disposition: CloudPushDisposition.pcsUnavailable,
-              failureCategory: CloudFailureCategory.pcsUnavailable,
+              operationId: paused.operationId,
+              disposition: CloudPushDisposition.confirmed,
             ),
           ],
         ),
       );
-    }
+      transport.authenticationRefreshHandler = (_) async => true;
+
+      await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+      final entries = await store.outboxEntries(scope);
+      expect(transport.authenticationRefreshCallCount, 1);
+      expect(transport.pushCallCount, 1);
+      expect(entries.single.status, CloudOutboxStatus.confirmed);
+      expect(entries.single.lastFailure, isNull);
+    },
+  );
+
+  test('PCS refresh sends an all-paused outbox without a pull', () async {
+    final paused = testOutboxOperation(scope, 1);
+    await seedPausedOutbox(
+      paused,
+      category: CloudFailureCategory.pcsUnavailable,
+    );
+    transport.enqueuePushResult(
+      CloudPushBatchResult(
+        outcomes: [
+          CloudPushOutcome(
+            operationId: paused.operationId,
+            disposition: CloudPushDisposition.confirmed,
+          ),
+        ],
+      ),
+    );
     transport.pcsRefreshHandler = (_) async => true;
+
+    await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    final entries = await store.outboxEntries(scope);
+    expect(transport.pcsRefreshCallCount, 1);
+    expect(transport.pushCallCount, 1);
+    expect(entries.single.status, CloudOutboxStatus.confirmed);
+    expect(entries.single.lastFailure, isNull);
+  });
+
+  test('failed push-only refresh leaves paused work untouched', () async {
+    final paused = testOutboxOperation(scope, 1);
+    await seedPausedOutbox(
+      paused,
+      category: CloudFailureCategory.authorization,
+    );
+    transport.authenticationRefreshHandler = (_) async => false;
 
     await engine(
       flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
     ).synchronize(trigger: CloudSyncTrigger.localOutbox);
 
     final stored = (await store.outboxEntries(scope)).single;
-    expect(transport.pcsRefreshCallCount, 1);
-    expect(transport.pushCallCount, 2);
+    expect(transport.authenticationRefreshCallCount, 1);
+    expect(transport.pushCallCount, 0);
     expect(stored.status, CloudOutboxStatus.paused);
-    expect(stored.lastFailure, CloudFailureCategory.pcsUnavailable);
+    expect(stored.lastFailure, CloudFailureCategory.authorization);
+    expect(stored.nextEligibleAt, testEpoch.add(const Duration(hours: 6)));
+
+    await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    expect(transport.authenticationRefreshCallCount, 1);
   });
+
+  test(
+    'paused authorization refresh respects its durable retry delay',
+    () async {
+      final operation = testOutboxOperation(scope, 1);
+      await store.enqueueOutbox(operation);
+      transport.enqueuePushResult(
+        CloudPushBatchResult(
+          outcomes: [
+            CloudPushOutcome(
+              operationId: operation.operationId,
+              disposition: CloudPushDisposition.unauthorized,
+              failureCategory: CloudFailureCategory.authorization,
+            ),
+          ],
+        ),
+      );
+      transport.authenticationRefreshHandler = (_) async => false;
+      final syncEngine = engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        pausedRetryDelay: const Duration(hours: 6),
+      );
+
+      await syncEngine.synchronize(trigger: CloudSyncTrigger.localOutbox);
+      await syncEngine.synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+      final stored = (await store.outboxEntries(scope)).single;
+      expect(transport.authenticationRefreshCallCount, 1);
+      expect(transport.pushCallCount, 1);
+      expect(stored.status, CloudOutboxStatus.paused);
+      expect(stored.nextEligibleAt, testEpoch.add(const Duration(hours: 6)));
+    },
+  );
 
   test('server-record-changed fetches, merges, and retries', () async {
     final operation = testOutboxOperation(scope, 1);

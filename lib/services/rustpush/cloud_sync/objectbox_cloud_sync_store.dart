@@ -752,6 +752,7 @@ class ObjectBoxCloudSyncStore
         ..completedAtMs = transactionNowMs
         ..updatedAtMs = transactionNowMs;
       _inbox.put(entity);
+      _advanceContiguousAppliedLocked(scope, transactionNowMs);
     });
   }
 
@@ -825,8 +826,20 @@ class ObjectBoxCloudSyncStore
     final leaseIdHash = _digest('outbox-lease\u001f$leaseId');
     return _store.runInTransaction(TxMode.write, () {
       _recoverExpiredOutboxLeasesLocked(scope, nowMs);
+      final allEntities = _findOutboxForScopeLocked(scope).toList();
+      final blockingByLogicalKey = <String, CloudOutboxOperationEntity>{};
+      for (final entity in allEntities) {
+        if (!_isBlockingOutboxStatus(_outboxStatusFromInt(entity.state))) {
+          continue;
+        }
+        final existing = blockingByLogicalKey[entity.logicalEntityKeyHash];
+        if (existing == null || _compareMutationOrder(entity, existing) < 0) {
+          blockingByLogicalKey[entity.logicalEntityKeyHash] = entity;
+        }
+      }
+
       final candidates =
-          _findOutboxForScopeLocked(scope)
+          allEntities
               .where(
                 (entity) =>
                     _outboxStatusFromInt(entity.state) ==
@@ -844,12 +857,15 @@ class ObjectBoxCloudSyncStore
             });
 
       final allById = {
-        for (final entity in _findOutboxForScopeLocked(scope))
-          entity.operationId: entity,
+        for (final entity in allEntities) entity.operationId: entity,
       };
       final leased = <CloudOutboxOperation>[];
       for (final entity in candidates) {
         if (leased.length == limit) break;
+        final blocker = blockingByLogicalKey[entity.logicalEntityKeyHash];
+        if (blocker != null && _compareMutationOrder(blocker, entity) < 0) {
+          continue;
+        }
         final dependencies = _decodeDependencies(
           entity.dependencyOperationIdsJson,
         );
@@ -925,7 +941,8 @@ class ObjectBoxCloudSyncStore
             entity
               ..state = _outboxStatusToInt(CloudOutboxStatus.paused)
               ..attemptCount += 1
-              ..nextEligibleAtMs = 0
+              ..nextEligibleAtMs =
+                  transition.nextEligibleAt?.millisecondsSinceEpoch ?? 0
               ..lastErrorCategory = transition.category!.name;
             break;
           case CloudOutboxTransitionType.quarantined:
@@ -1014,6 +1031,57 @@ class ObjectBoxCloudSyncStore
         resumed++;
       }
       return resumed;
+    });
+  }
+
+  @override
+  Future<Set<CloudFailureCategory>> readPausedOutboxFailureCategories(
+    CloudSyncScope scope, {
+    required DateTime now,
+  }) async {
+    final nowMs = now.millisecondsSinceEpoch;
+    return _store.runInTransaction(TxMode.read, () {
+      return _findOutboxForScopeLocked(scope)
+          .where(
+            (entity) =>
+                _outboxStatusFromInt(entity.state) ==
+                    CloudOutboxStatus.paused &&
+                entity.nextEligibleAtMs <= nowMs,
+          )
+          .map((entity) => entity.lastErrorCategory)
+          .whereType<String>()
+          .map(_failureOrNull)
+          .whereType<CloudFailureCategory>()
+          .toSet();
+    });
+  }
+
+  @override
+  Future<int> postponeEligiblePausedOutbox(
+    CloudSyncScope scope, {
+    required Set<CloudFailureCategory> categories,
+    required DateTime now,
+    required DateTime nextEligibleAt,
+  }) async {
+    final nowMs = now.millisecondsSinceEpoch;
+    final nextEligibleAtMs = nextEligibleAt.millisecondsSinceEpoch;
+    final categoryNames = categories.map((category) => category.name).toSet();
+    return _store.runInTransaction(TxMode.write, () {
+      var postponed = 0;
+      for (final entity in _findOutboxForScopeLocked(scope)) {
+        if (_outboxStatusFromInt(entity.state) != CloudOutboxStatus.paused ||
+            entity.lastErrorCategory == null ||
+            !categoryNames.contains(entity.lastErrorCategory) ||
+            entity.nextEligibleAtMs > nowMs) {
+          continue;
+        }
+        entity
+          ..nextEligibleAtMs = nextEligibleAtMs
+          ..updatedAtMs = nowMs;
+        _outbox.put(entity);
+        postponed++;
+      }
+      return postponed;
     });
   }
 
@@ -1467,13 +1535,27 @@ class ObjectBoxCloudSyncStore
     return recovered;
   }
 
+  bool _isBlockingOutboxStatus(CloudOutboxStatus status) =>
+      status == CloudOutboxStatus.pending ||
+      status == CloudOutboxStatus.leased ||
+      status == CloudOutboxStatus.paused;
+
+  int _compareMutationOrder(
+    CloudOutboxOperationEntity first,
+    CloudOutboxOperationEntity second,
+  ) {
+    final revision = first.mutationRevision.compareTo(second.mutationRevision);
+    if (revision != 0) return revision;
+    return first.operationId.compareTo(second.operationId);
+  }
+
   void _advanceContiguousAppliedLocked(CloudSyncScope scope, int nowMs) {
     final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
     var next = checkpoint.appliedSequence + 1;
     while (true) {
       final entity = _findInboxBySequenceLocked(scope, next);
       if (entity == null ||
-          _inboxStatusFromInt(entity.status) != CloudInboxStatus.applied) {
+          !_isTerminalInboxStatus(_inboxStatusFromInt(entity.status))) {
         break;
       }
       next++;
@@ -1486,6 +1568,10 @@ class ObjectBoxCloudSyncStore
       _checkpoints.put(checkpoint);
     }
   }
+
+  bool _isTerminalInboxStatus(CloudInboxStatus status) =>
+      status == CloudInboxStatus.applied ||
+      status == CloudInboxStatus.quarantined;
 
   void _validateTransition(CloudOutboxTransition transition) {
     if (transition.type == CloudOutboxTransitionType.retryable &&

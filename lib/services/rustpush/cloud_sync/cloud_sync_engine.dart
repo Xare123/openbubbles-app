@@ -35,6 +35,7 @@ class CloudSyncEngineConfig {
   static const int maximumAllowedInboxEntriesPerRun = 4096;
   static const int maximumAllowedOutboxBatchesPerRun = 64;
   static const int maximumAllowedUnknownAttempts = 16;
+  static const int maximumAllowedDeferredAttempts = 64;
   static const Duration maximumAllowedFetchOperationTimeout = Duration(
     minutes: 5,
   );
@@ -45,6 +46,7 @@ class CloudSyncEngineConfig {
     minutes: 30,
   );
   static const Duration maximumAllowedPausedRetryDelay = Duration(days: 30);
+  static const Duration maximumAllowedDeferredAge = Duration(days: 30);
 
   CloudSyncEngineConfig({
     this.maximumBatchSize = 256,
@@ -55,6 +57,8 @@ class CloudSyncEngineConfig {
     this.coordinatorLeaseDuration = const Duration(minutes: 5),
     this.outboxLeaseDuration = const Duration(minutes: 2),
     this.pausedRetryDelay = const Duration(hours: 6),
+    this.maximumDeferredAttempts = 8,
+    this.maximumDeferredAge = const Duration(days: 3),
     this.maximumUnknownAttempts = 3,
     CloudShadowJournalBudget? shadowJournalBudget,
     this.flags = const CloudSyncFeatureFlags(),
@@ -70,6 +74,8 @@ class CloudSyncEngineConfig {
   final Duration coordinatorLeaseDuration;
   final Duration outboxLeaseDuration;
   final Duration pausedRetryDelay;
+  final int maximumDeferredAttempts;
+  final Duration maximumDeferredAge;
   final int maximumUnknownAttempts;
   final CloudShadowJournalBudget shadowJournalBudget;
   final CloudSyncFeatureFlags flags;
@@ -94,6 +100,10 @@ class CloudSyncEngineConfig {
         maximumUnknownAttempts > maximumAllowedUnknownAttempts) {
       throw ArgumentError('cloud_sync_config_unknown_attempts_invalid');
     }
+    if (maximumDeferredAttempts <= 0 ||
+        maximumDeferredAttempts > maximumAllowedDeferredAttempts) {
+      throw ArgumentError('cloud_sync_config_deferred_attempts_invalid');
+    }
     if (fetchOperationTimeout.inMicroseconds <= 0 ||
         fetchOperationTimeout > maximumAllowedFetchOperationTimeout) {
       throw ArgumentError('cloud_sync_config_fetch_timeout_invalid');
@@ -109,6 +119,10 @@ class CloudSyncEngineConfig {
     if (pausedRetryDelay.inMicroseconds <= 0 ||
         pausedRetryDelay > maximumAllowedPausedRetryDelay) {
       throw ArgumentError('cloud_sync_config_paused_retry_invalid');
+    }
+    if (maximumDeferredAge.inMicroseconds <= 0 ||
+        maximumDeferredAge > maximumAllowedDeferredAge) {
+      throw ArgumentError('cloud_sync_config_deferred_age_invalid');
     }
     shadowJournalBudget.validate();
   }
@@ -781,6 +795,20 @@ class CloudSyncEngine {
         case CloudInboxApplyDisposition.retryable:
           final category =
               result.failureCategory ?? CloudFailureCategory.dependency;
+          if (result.disposition == CloudInboxApplyDisposition.deferred &&
+              _shouldQuarantineDeferredInboxEntry(entry, now)) {
+            if (!result.inboxStatusPersisted) {
+              await _store.quarantineInbox(
+                scope,
+                sequence: entry.sequence,
+                category: category,
+                now: now,
+                leaseFence: _requireActiveLeaseFence(),
+              );
+            }
+            counters = counters.add(quarantined: 1);
+            break;
+          }
           final nextEligibleAt = _backoff.nextEligibleAt(
             now: now,
             attempt: entry.attemptCount + 1,
@@ -826,6 +854,16 @@ class CloudSyncEngine {
     return counters;
   }
 
+  bool _shouldQuarantineDeferredInboxEntry(
+    CloudInboxEntry entry,
+    DateTime now,
+  ) {
+    final age = now.difference(entry.createdAt);
+    return entry.attemptCount + 1 >= config.maximumDeferredAttempts &&
+        !age.isNegative &&
+        age >= config.maximumDeferredAge;
+  }
+
   Future<CloudSyncRunCounters> _flushOutbox({
     required int runNumber,
     CloudSyncCancellationToken? cancellationToken,
@@ -833,6 +871,47 @@ class CloudSyncEngine {
     var counters = const CloudSyncRunCounters();
     var authenticationRefreshUsed = false;
     var pcsRefreshUsed = false;
+
+    final pausedCategories = await _store.readPausedOutboxFailureCategories(
+      scope,
+      now: _clock(),
+    );
+    if (pausedCategories.contains(CloudFailureCategory.authorization)) {
+      authenticationRefreshUsed = true;
+      final refreshed = await _tryRefreshAuthentication();
+      _emit(
+        CloudSyncEventType.authenticationRefreshed,
+        at: _clock(),
+        count: refreshed ? 1 : 0,
+      );
+      if (refreshed) {
+        await _resumePausedOutbox(
+          categories: const {CloudFailureCategory.authorization},
+        );
+      } else {
+        await _postponeEligiblePausedOutbox(
+          categories: const {CloudFailureCategory.authorization},
+        );
+      }
+    }
+    if (pausedCategories.contains(CloudFailureCategory.pcsUnavailable)) {
+      pcsRefreshUsed = true;
+      final refreshed = await _tryRefreshPcs();
+      _emit(
+        CloudSyncEventType.pcsRefreshed,
+        at: _clock(),
+        count: refreshed ? 1 : 0,
+      );
+      if (refreshed) {
+        await _resumePausedOutbox(
+          categories: const {CloudFailureCategory.pcsUnavailable},
+        );
+      } else {
+        await _postponeEligiblePausedOutbox(
+          categories: const {CloudFailureCategory.pcsUnavailable},
+        );
+      }
+    }
 
     final allowedActions = <CloudOutboxAction>{
       CloudOutboxAction.save,
@@ -907,6 +986,9 @@ class CloudSyncEngine {
           count: refreshed ? 1 : 0,
         );
         if (refreshed) {
+          await _resumePausedOutbox(
+            categories: const {CloudFailureCategory.authorization},
+          );
           await _repushAfterRefresh(unauthorized, outcomes);
         }
       }
@@ -927,6 +1009,9 @@ class CloudSyncEngine {
           count: refreshed ? 1 : 0,
         );
         if (refreshed) {
+          await _resumePausedOutbox(
+            categories: const {CloudFailureCategory.pcsUnavailable},
+          );
           await _repushAfterRefresh(pcsUnavailable, outcomes);
         }
       }
@@ -962,6 +1047,7 @@ class CloudSyncEngine {
             final transition = CloudOutboxTransition.paused(
               operation.operationId,
               category: CloudFailureCategory.authorization,
+              nextEligibleAt: _clock().add(config.pausedRetryDelay),
             );
             transitions.add(transition);
             counters = _countOutboxTransition(counters, transition);
@@ -970,6 +1056,7 @@ class CloudSyncEngine {
             final transition = CloudOutboxTransition.paused(
               operation.operationId,
               category: CloudFailureCategory.pcsUnavailable,
+              nextEligibleAt: _clock().add(config.pausedRetryDelay),
             );
             transitions.add(transition);
             counters = _countOutboxTransition(counters, transition);
@@ -1103,6 +1190,9 @@ class CloudSyncEngine {
       return CloudOutboxTransition.paused(
         operation.operationId,
         category: error.category,
+        nextEligibleAt: error.category == CloudFailureCategory.dependency
+            ? null
+            : _clock().add(config.pausedRetryDelay),
       );
     }
     if (error.category.isRetryable ||
@@ -1179,6 +1269,28 @@ class CloudSyncEngine {
         );
       }
     }
+  }
+
+  Future<void> _resumePausedOutbox({
+    required Set<CloudFailureCategory> categories,
+  }) async {
+    await _store.resumePausedOutbox(
+      scope,
+      categories: categories,
+      now: _clock(),
+    );
+  }
+
+  Future<void> _postponeEligiblePausedOutbox({
+    required Set<CloudFailureCategory> categories,
+  }) async {
+    final now = _clock();
+    await _store.postponeEligiblePausedOutbox(
+      scope,
+      categories: categories,
+      now: now,
+      nextEligibleAt: now.add(config.pausedRetryDelay),
+    );
   }
 
   Future<CloudOutboxTransition> _resolveServerRecordChanged(

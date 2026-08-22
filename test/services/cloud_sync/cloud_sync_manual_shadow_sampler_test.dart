@@ -138,13 +138,38 @@ void main() {
         1,
         1,
         1,
+        1,
+        1,
+        1,
+        1,
       ]);
-      expect(transports.map((transport) => transport.pushCallCount), [0, 0, 0]);
+      expect(
+        transports.map((transport) => transport.pushCallCount),
+        [0, 0, 0, 0, 0, 0, 0],
+      );
+      expect(
+        report.zones.map((zone) => zone.zoneLabel),
+        const [
+          'chats',
+          'messages',
+          'attachments',
+          'message updates',
+          'recoverable deletes',
+          'scheduled messages',
+          'chat1 manatee',
+        ],
+      );
       expect(report.pageLimit, 1);
       expect(report.changeLimit, 50);
       expect(report.toJson(), isNot(contains('fingerprintPrefix')));
       expect(report.correlationTag, hasLength(16));
       expect(report.isValidReadOnlySuccess, isTrue);
+      expect(sampler.debugFlags.readOnlyFetch, isTrue);
+      expect(sampler.debugFlags.semanticApply, isFalse);
+      expect(sampler.debugFlags.saves, isFalse);
+      expect(sampler.debugFlags.deletions, isFalse);
+      expect(sampler.debugFlags.profiles, isFalse);
+      expect(sampler.debugFlags.notificationHints, isFalse);
     },
   );
 

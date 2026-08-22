@@ -296,6 +296,7 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
         completedAt: now,
         clearNextEligibleAt: true,
       );
+      _advanceContiguousAppliedPosition(scope);
     });
   }
 
@@ -355,6 +356,16 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
       final entries = _outbox[scope.storageKey];
       if (entries == null) return const <CloudOutboxOperation>[];
 
+      final blockingByLogicalKey = <String, CloudOutboxOperation>{};
+      for (final operation in entries.values) {
+        if (!_isBlockingOutboxStatus(operation.status)) continue;
+        final existing = blockingByLogicalKey[operation.logicalEntityKeyHash];
+        if (existing == null ||
+            _compareMutationOrder(operation, existing) < 0) {
+          blockingByLogicalKey[operation.logicalEntityKeyHash] = operation;
+        }
+      }
+
       final eligible =
           entries.values
               .where(
@@ -377,7 +388,12 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
             });
 
       final leased = <CloudOutboxOperation>[];
-      for (final operation in eligible.take(limit)) {
+      for (final operation in eligible) {
+        if (leased.length == limit) break;
+        final blocker = blockingByLogicalKey[operation.logicalEntityKeyHash];
+        if (blocker != null && _compareMutationOrder(blocker, operation) < 0) {
+          continue;
+        }
         final updated = operation.copyWith(
           status: CloudOutboxStatus.leased,
           leaseId: leaseId,
@@ -463,9 +479,10 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
               status: CloudOutboxStatus.paused,
               attemptCount: operation.attemptCount + 1,
               lastFailure: transition.category,
+              nextEligibleAt: transition.nextEligibleAt,
               clearLeaseId: true,
               clearLeaseExpiresAt: true,
-              clearNextEligibleAt: true,
+              clearNextEligibleAt: transition.nextEligibleAt == null,
             );
             break;
           case CloudOutboxTransitionType.quarantined:
@@ -547,6 +564,54 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
         }
       }
       return resumed;
+    });
+  }
+
+  @override
+  Future<Set<CloudFailureCategory>> readPausedOutboxFailureCategories(
+    CloudSyncScope scope, {
+    required DateTime now,
+  }) {
+    return _lock.synchronized(() async {
+      final entries = _outbox[scope.storageKey];
+      if (entries == null) return <CloudFailureCategory>{};
+      return entries.values
+          .where(
+            (operation) =>
+                operation.status == CloudOutboxStatus.paused &&
+                (operation.nextEligibleAt == null ||
+                    !operation.nextEligibleAt!.isAfter(now)),
+          )
+          .map((operation) => operation.lastFailure)
+          .whereType<CloudFailureCategory>()
+          .toSet();
+    });
+  }
+
+  @override
+  Future<int> postponeEligiblePausedOutbox(
+    CloudSyncScope scope, {
+    required Set<CloudFailureCategory> categories,
+    required DateTime now,
+    required DateTime nextEligibleAt,
+  }) {
+    return _lock.synchronized(() async {
+      final entries = _outbox[scope.storageKey];
+      if (entries == null) return 0;
+      var postponed = 0;
+      for (final entry in entries.entries.toList()) {
+        final operation = entry.value;
+        if (operation.status != CloudOutboxStatus.paused ||
+            operation.lastFailure == null ||
+            !categories.contains(operation.lastFailure) ||
+            (operation.nextEligibleAt != null &&
+                operation.nextEligibleAt!.isAfter(now))) {
+          continue;
+        }
+        entries[entry.key] = operation.copyWith(nextEligibleAt: nextEligibleAt);
+        postponed++;
+      }
+      return postponed;
     });
   }
 
@@ -784,7 +849,7 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
     var checkpoint = _checkpoint(scope);
     final entries = _inbox[scope.storageKey];
     var next = checkpoint.lastAppliedSequence + 1;
-    while (entries?[next]?.status == CloudInboxStatus.applied) {
+    while (_isTerminalInboxStatus(entries?[next]?.status)) {
       next++;
     }
     final appliedThrough = next - 1;
@@ -793,6 +858,10 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
       _checkpoints[scope.storageKey] = checkpoint;
     }
   }
+
+  bool _isTerminalInboxStatus(CloudInboxStatus? status) =>
+      status == CloudInboxStatus.applied ||
+      status == CloudInboxStatus.quarantined;
 
   int _recoverExpiredOutboxLeasesLocked(CloudSyncScope scope, DateTime now) {
     final entries = _outbox[scope.storageKey];
@@ -813,6 +882,11 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
     }
     return recovered;
   }
+
+  bool _isBlockingOutboxStatus(CloudOutboxStatus status) =>
+      status == CloudOutboxStatus.pending ||
+      status == CloudOutboxStatus.leased ||
+      status == CloudOutboxStatus.paused;
 
   String _recordMapKey(CloudSyncScope scope, String logicalKeyHash) =>
       '${scope.storageKey}\u001f$logicalKeyHash';

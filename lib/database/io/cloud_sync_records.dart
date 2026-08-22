@@ -36,6 +36,10 @@ class CloudSyncCheckpointEntity {
   int generation;
   String? lastBatchId;
   int fetchedSequence;
+
+  /// Highest contiguous terminal inbox sequence. The historical field name is
+  /// retained for schema compatibility; both applied and quarantined rows are
+  /// terminal and advance this floor.
   int appliedSequence;
   int lastSuccessfulAtMs;
   int lastAttemptAtMs;
