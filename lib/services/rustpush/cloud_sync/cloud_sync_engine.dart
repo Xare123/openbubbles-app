@@ -721,14 +721,18 @@ class CloudSyncEngine {
   Future<CloudSyncRunCounters> _applyInbox(
     CloudSyncCancellationToken? cancellationToken,
   ) async {
-    final entries = await _store.readEligibleInbox(
-      scope,
-      now: _clock(),
-      limit: config.maximumInboxEntriesPerRun,
-    );
     var counters = const CloudSyncRunCounters();
-    for (final entry in entries) {
+    var processedEntries = 0;
+    while (processedEntries < config.maximumInboxEntriesPerRun) {
       if (_isCancelled(cancellationToken)) break;
+      final entries = await _store.readEligibleInbox(
+        scope,
+        now: _clock(),
+        limit: 1,
+      );
+      if (entries.isEmpty) break;
+      final entry = entries.single;
+      processedEntries++;
       await _renewCoordinatorLeaseOrThrow();
 
       CloudInboxApplyResult result;
@@ -779,6 +783,7 @@ class CloudSyncEngine {
       }
 
       final now = _clock();
+      var canApplyNextSequence = false;
       switch (result.disposition) {
         case CloudInboxApplyDisposition.applied:
           if (!result.inboxStatusPersisted) {
@@ -790,6 +795,7 @@ class CloudSyncEngine {
             );
           }
           counters = counters.add(applied: 1);
+          canApplyNextSequence = true;
           break;
         case CloudInboxApplyDisposition.deferred:
         case CloudInboxApplyDisposition.retryable:
@@ -811,6 +817,7 @@ class CloudSyncEngine {
               );
             }
             counters = counters.add(quarantined: 1);
+            canApplyNextSequence = true;
             break;
           }
           final nextEligibleAt = _backoff.nextEligibleAt(
@@ -847,8 +854,12 @@ class CloudSyncEngine {
             );
           }
           counters = counters.add(quarantined: 1);
+          canApplyNextSequence = true;
           break;
       }
+      // A pending/deferred/retryable predecessor remains the causal barrier.
+      // Do not let a later journal row mutate canonical state in this run.
+      if (!canApplyNextSequence) break;
     }
     _emit(
       CloudSyncEventType.inboxApplied,

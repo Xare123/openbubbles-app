@@ -216,6 +216,104 @@ void main() {
   );
 
   test(
+    'deferred predecessor blocks later sequence until it succeeds',
+    () async {
+      await seedGeneralJournal(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1), testChange(2)],
+          batchId: 'batch-contiguous-deferred',
+          generation: 1,
+          nextToken: 'opaque-token',
+          hasMore: false,
+        ),
+        now: clock.value,
+      );
+      expect(
+        (await store.readEligibleInbox(
+          scope,
+          now: clock.value,
+          limit: 256,
+        )).map((entry) => entry.sequence),
+        [1],
+      );
+
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.deferred();
+      const readOnlySemanticFlags = CloudSyncFeatureFlags(
+        readOnlyFetch: true,
+        semanticApply: true,
+        saves: false,
+        deletions: false,
+        profiles: false,
+        notificationHints: false,
+      );
+      final first = await engine(
+        flags: readOnlySemanticFlags,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(first.counters.deferred, 1);
+      expect(applier.appliedSequences, [1]);
+      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 0);
+
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.applied();
+      clock.advance(const Duration(seconds: 10));
+      final second = await engine(
+        flags: readOnlySemanticFlags,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(second.counters.applied, 2);
+      expect(applier.appliedSequences, [1, 1, 2]);
+      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 2);
+    },
+  );
+
+  test(
+    'retryable predecessor also blocks later sequence until it succeeds',
+    () async {
+      await seedGeneralJournal(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1), testChange(2)],
+          batchId: 'batch-contiguous-retryable',
+          generation: 1,
+          nextToken: 'opaque-token',
+          hasMore: false,
+        ),
+        now: clock.value,
+      );
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.retryable(
+        failureCategory: CloudFailureCategory.network,
+      );
+
+      const readOnlySemanticFlags = CloudSyncFeatureFlags(
+        readOnlyFetch: true,
+        semanticApply: true,
+        saves: false,
+        deletions: false,
+        profiles: false,
+        notificationHints: false,
+      );
+      final first = await engine(
+        flags: readOnlySemanticFlags,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(first.counters.retried, 1);
+      expect(applier.appliedSequences, [1]);
+      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 0);
+
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.applied();
+      clock.advance(const Duration(seconds: 10));
+      final second = await engine(
+        flags: readOnlySemanticFlags,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(second.counters.applied, 2);
+      expect(applier.appliedSequences, [1, 1, 2]);
+      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 2);
+    },
+  );
+
+  test(
     'preflight failure quarantines raw record without invoking decoder',
     () async {
       transport.enqueueFetchBatch(

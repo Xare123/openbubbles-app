@@ -165,7 +165,7 @@ void main() {
           now: testEpoch,
           limit: 256,
         )).map((entry) => entry.sequence),
-        [1, 2],
+        [1],
       );
 
       await reopen();

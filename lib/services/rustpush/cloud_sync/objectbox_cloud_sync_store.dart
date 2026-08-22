@@ -631,25 +631,16 @@ class ObjectBoxCloudSyncStore
     _requirePositiveLimit(limit);
     final scopeKey = _scopeKey(scope);
     final nowMs = now.millisecondsSinceEpoch;
-    final builder = _inbox.query(
-      CloudInboxChangeEntity_.scopeKey
-          .equals(scopeKey)
-          .and(
-            CloudInboxChangeEntity_.status.equals(
-              _inboxStatusToInt(CloudInboxStatus.pending),
-            ),
-          )
-          .and(CloudInboxChangeEntity_.nextEligibleAtMs.lessOrEqual(nowMs)),
-    )..order(CloudInboxChangeEntity_.fetchSequence);
-    final query = builder.build()..limit = limit;
-    try {
-      return query
-          .find()
-          .map((entity) => _inboxFromEntity(scope, entity))
-          .toList(growable: false);
-    } finally {
-      query.close();
+    final checkpoint = _findCheckpointByKeyLocked(scopeKey);
+    if (checkpoint != null) _validateCheckpointScope(checkpoint, scope);
+    final nextSequence = (checkpoint?.appliedSequence ?? 0) + 1;
+    final entity = _findInboxBySequenceLocked(scope, nextSequence);
+    if (entity == null ||
+        _inboxStatusFromInt(entity.status) != CloudInboxStatus.pending ||
+        entity.nextEligibleAtMs > nowMs) {
+      return const <CloudInboxEntry>[];
     }
+    return <CloudInboxEntry>[_inboxFromEntity(scope, entity)];
   }
 
   @override

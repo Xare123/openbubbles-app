@@ -191,17 +191,18 @@ class InMemoryCloudSyncStore implements CloudSyncStore {
   }) {
     _requirePositiveLimit(limit);
     return _lock.synchronized(() async {
-      final entries =
-          _inbox[scope.storageKey]?.values ?? const <CloudInboxEntry>[];
-      return entries
-          .where(
-            (entry) =>
-                entry.status == CloudInboxStatus.pending &&
-                (entry.nextEligibleAt == null ||
-                    !entry.nextEligibleAt!.isAfter(now)),
-          )
-          .take(limit)
-          .toList(growable: false);
+      // Only the first non-terminal sequence after the contiguous floor is
+      // eligible. Returning later rows here would let a caller mutate local
+      // state out of order if the predecessor is deferred or retryable.
+      final nextSequence = _checkpoint(scope).lastAppliedSequence + 1;
+      final entry = _inbox[scope.storageKey]?[nextSequence];
+      if (entry == null ||
+          entry.status != CloudInboxStatus.pending ||
+          (entry.nextEligibleAt != null &&
+              entry.nextEligibleAt!.isAfter(now))) {
+        return const <CloudInboxEntry>[];
+      }
+      return <CloudInboxEntry>[entry];
     });
   }
 
