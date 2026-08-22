@@ -219,10 +219,15 @@ x64, with zero lost and zero duplicated logical message GUIDs.
     its uploads and duplicate-record deletion must be structurally unavailable
     whenever V2 owns the profile. Today the two paths have separate record maps,
     and legacy duplicate cleanup can otherwise delete a valid V2-owned record.
-15. **Complete durable record identity.** Store the proven CloudKit change
-    tag/CAS value, record type, owner, generation, server ordering, and deletion
-    fence. Add reverse uniqueness for server record identity. Do not treat a
-    different opaque etag hash as proof that an observation is newer.
+15. **Complete durable record and request identity.** Store the proven CloudKit
+    predecessor change tag/CAS value, record type, owner, generation, server
+    ordering, deletion fence, HTTP request UUID, and per-operation UUID. Add
+    reverse uniqueness for server record identity. Do not treat a different
+    opaque ETag hash as proof that an observation is newer, and do not conflate
+    the request UUID, operation UUID, record ETag, or change-feed ETag. Prepare
+    authentication first, then assign and persist the request and operation
+    UUIDs in the same transaction that marks submission started. The native
+    writer must consume those exact identities without refreshing or replaying.
 16. **Validate every push result exactly.** Reject duplicate, missing, and
     unknown operation IDs before durable confirmation, and bind every result to
     action, logical identity, payload digest, server identity, and expected
@@ -246,7 +251,13 @@ x64, with zero lost and zero duplicated logical message GUIDs.
 20. **Build a dedicated V2 Rust writer.** It must expose zone-specific PCS
     protection, explicit save policy and atomicity, per-record save/delete
     results, returned server change tags, conflict classification, and
-    read-after-ambiguous-result reconciliation. Do not expose the legacy
+    read-after-ambiguous-result reconciliation. The current private protobuf is
+    missing fixture-verified request/response ETag and conflict/protection
+    fields visible in Apple's private client declarations. Obtain serialized
+    fixtures and establish their wire numbers before implementing them; never
+    infer wire numbers from header property order. A missing record after an
+    ambiguous delete and `REQUEST_ALREADY_PROCESSED` without authoritative
+    per-record results both remain unresolved. Do not expose the legacy
     wrappers as though they satisfy this contract.
 
 Exit: lost-response, duplicate/missing/unknown-result, change-tag conflict,
