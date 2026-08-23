@@ -370,14 +370,21 @@ jobs:
           apk=build/app/outputs/flutter-apk/app-canary-debug.apk
           keystore="$RUNNER_TEMP/cloudkit-canary.p12"
           signed_apk="$RUNNER_TEMP/app-canary-debug-signed.apk"
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          apksigner="$(
+            find "$sdk_root/build-tools" -type f -name apksigner -print \
+              | sort -V \
+              | tail -n 1
+          )"
 
           test -n "$CANARY_KEYSTORE_BASE64"
           test -n "$CANARY_KEYSTORE_PASSWORD"
           test -n "$CANARY_KEY_PASSWORD"
           test -n "$CANARY_KEY_ALIAS"
+          test -x "$apksigner"
           printf '%s' "$CANARY_KEYSTORE_BASE64" | base64 --decode > "$keystore"
 
-          apksigner sign \
+          "$apksigner" sign \
             --ks "$keystore" \
             --ks-key-alias "$CANARY_KEY_ALIAS" \
             --ks-pass env:CANARY_KEYSTORE_PASSWORD \
@@ -387,7 +394,7 @@ jobs:
           mv "$signed_apk" "$apk"
 
           actual_fingerprint="$(
-            apksigner verify --print-certs "$apk" \
+            "$apksigner" verify --print-certs "$apk" \
               | sed -n 's/^Signer #1 certificate SHA-256 digest: //p'
           )"
           expected_fingerprint='0ea17c1b67581ca79660d33db45af0a36b71ea36a4cbafec5293d3ae80570d79'
