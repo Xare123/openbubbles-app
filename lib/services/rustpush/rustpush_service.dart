@@ -79,10 +79,9 @@ const registrationRelayAccessToken = "5c175851953ecaf5209185d897591badb6c3e712";
 
 /// The legacy sync path predates the lossless V2 coordinator. Builds are
 /// restore-only unless mutation is explicitly enabled at compile time.
-const bool _legacyCloudKitMutationsEnabled = bool.fromEnvironment(
-  'OPENBUBBLES_LEGACY_CLOUDKIT_MUTATIONS',
-  defaultValue: false,
-);
+// The legacy path is a restore path only. Do not allow a build-time define to
+// turn downloads into remote CloudKit writes or deletes.
+const bool _legacyCloudKitMutationsEnabled = false;
 
 bool get legacyCloudKitMutationsEnabled => _legacyCloudKitMutationsEnabled;
 
@@ -108,45 +107,89 @@ class SyncIsolate {
 @pragma('vm:entry-point')
 Future<void> backgroundSyncIsolate() async {
   final receive = ReceivePort();
-  ui.IsolateNameServer.registerPortWithName(receive.sendPort, "bg_sync");
+  final ownsPortMapping = ui.IsolateNameServer.registerPortWithName(
+    receive.sendPort,
+    "bg_sync",
+  );
+  if (!ownsPortMapping) {
+    receive.close();
+    try {
+      await mcs.invokeMethod("exit");
+    } catch (_) {}
+    return;
+  }
   List<SendPort> ports = [];
+  final firstStatusPort = Completer<void>();
 
-  receive.listen((port) {
-    ports.add(port);
+  receive.listen((message) {
+    if (message is! SendPort) {
+      Logger.warn("Ignoring invalid legacy CloudKit sync port message");
+      return;
+    }
+    ports.add(message);
+    if (!firstStatusPort.isCompleted) firstStatusPort.complete();
+    // A UI isolate can be recreated while this worker remains alive. Send the
+    // current state immediately so the new UI can display and cancel the
+    // existing operation instead of mistaking it for a fresh sync.
+    message.send(pushService.isSyncing.value ?? "Starting Sync...");
   });
 
-  await StartupTasks.initIsolateServices();
-
-  pushService.isSyncing.listen((value) {
-    notif.createSyncStatusNotification(value);
-
-    ports.retainWhere((port) {
-      try {
-        port.send(value);
-        return true;
-      } catch (e) {
-        Logger.error("failed to send status", error: e);
-        return false;
-      }
-    });
-  });
-
-  chats.restoring = true;
-
-  await pushService.initFuture;
   String? emsg;
 
   try {
+    await StartupTasks.initIsolateServices();
+
+    pushService.isSyncing.listen((value) {
+      notif.createSyncStatusNotification(value);
+
+      ports.retainWhere((port) {
+        try {
+          port.send(value);
+          return true;
+        } catch (e) {
+          Logger.error("failed to send status", error: e);
+          return false;
+        }
+      });
+    });
+
+    chats.restoring = true;
+    await pushService.initFuture;
+    await firstStatusPort.future.timeout(
+      const Duration(seconds: 30),
+      onTimeout: () => throw TimeoutException(
+        "CloudKit sync UI did not attach within 30 seconds.",
+      ),
+    );
     await pushService.doCloudKitSyncPrivate();
-  } catch (e) {
+  } catch (e, s) {
     emsg = e.toString();
-    rethrow;
+    Logger.error("Legacy CloudKit background sync failed", error: e, trace: s);
   } finally {
-    pushService.isSyncing.value = null;
     chats.restoring = false;
-    if (emsg != null) notif.createSyncFailed(emsg);
-    ui.IsolateNameServer.removePortNameMapping("bg_sync");
-    mcs.invokeMethod("exit");
+    if (emsg != null) {
+      try {
+        notif.createSyncFailed(emsg);
+      } catch (e, s) {
+        Logger.error(
+          "Failed to show CloudKit sync failure",
+          error: e,
+          trace: s,
+        );
+      }
+    }
+    // Remove only this worker's registration. A replacement worker may have
+    // started after a reset while this isolate was winding down.
+    if (ui.IsolateNameServer.lookupPortByName("bg_sync") == receive.sendPort) {
+      ui.IsolateNameServer.removePortNameMapping("bg_sync");
+    }
+    pushService.isSyncing.value = null;
+    receive.close();
+    try {
+      await mcs.invokeMethod("exit");
+    } catch (e, s) {
+      Logger.error("Failed to close CloudKit sync isolate", error: e, trace: s);
+    }
   }
 }
 
@@ -3222,11 +3265,16 @@ class RustPushService extends GetxService {
       isSyncing.value = null;
       chats.restoring = false;
     } else {
-      if (isSyncing.value == null) return;
-      await mcs.invokeMethod("native-sync-isolate", {"close": true});
-      ui.IsolateNameServer.removePortNameMapping("bg_sync");
-      pushService.isSyncing.value = null;
-      chats.restoring = false;
+      final activePort = ui.IsolateNameServer.lookupPortByName("bg_sync");
+      if (isSyncing.value == null && activePort == null) return;
+      try {
+        await mcs.invokeMethod("native-sync-isolate", {"close": true});
+      } finally {
+        _closeLegacyCloudKitStatusPort();
+        ui.IsolateNameServer.removePortNameMapping("bg_sync");
+        pushService.isSyncing.value = null;
+        chats.restoring = false;
+      }
     }
   }
 
@@ -3234,6 +3282,33 @@ class RustPushService extends GetxService {
   Future<void>? _desktopCloudKitSync;
   final CloudKitOperationCoordinator _desktopCloudKitOperations =
       CloudKitOperationCoordinator();
+
+  ReceivePort? _legacyCloudKitStatusPort;
+
+  void _closeLegacyCloudKitStatusPort() {
+    _legacyCloudKitStatusPort?.close();
+    _legacyCloudKitStatusPort = null;
+  }
+
+  void _attachLegacyCloudKitSyncPort(SendPort syncing) {
+    _closeLegacyCloudKitStatusPort();
+    final port = ReceivePort();
+    _legacyCloudKitStatusPort = port;
+    port.listen((data) {
+      Logger.info(
+        "Legacy CloudKit sync status: ${data?.toString() ?? 'complete'}",
+      );
+      if (data == null) {
+        ss.prefs.reload();
+        port.close();
+        if (identical(_legacyCloudKitStatusPort, port)) {
+          _legacyCloudKitStatusPort = null;
+        }
+      }
+      isSyncing.value = data;
+    });
+    syncing.send(port.sendPort);
+  }
 
   Future<void> doCloudKitSync() async {
     if (kIsDesktop) {
@@ -3256,21 +3331,33 @@ class RustPushService extends GetxService {
     }
     var syncing = ui.IsolateNameServer.lookupPortByName("bg_sync");
     if (syncing != null) {
-      Logger.warn("Already syncing, not syncing again!");
+      Logger.info("Joining active legacy CloudKit sync");
+      _attachLegacyCloudKitSyncPort(syncing);
       return;
     }
     isSyncing.value = "Starting Sync...";
-    await mcs.invokeMethod("native-sync-isolate");
-
-    var port = ReceivePort();
-    port.listen((data) {
-      if (data == null) {
-        ss.prefs.reload(); // to get the new final sync time
+    try {
+      await mcs
+          .invokeMethod("native-sync-isolate")
+          .timeout(const Duration(seconds: 30));
+    } catch (e) {
+      isSyncing.value = null;
+      _closeLegacyCloudKitStatusPort();
+      try {
+        await mcs.invokeMethod("native-sync-isolate", {"close": true});
+      } finally {
+        ui.IsolateNameServer.removePortNameMapping("bg_sync");
       }
-      isSyncing.value = data;
-    });
+      throw StateError("cloudkit_sync_isolate_start_failed: $e");
+    }
+
     syncing = ui.IsolateNameServer.lookupPortByName("bg_sync");
-    syncing!.send(port.sendPort);
+    if (syncing == null) {
+      isSyncing.value = null;
+      await mcs.invokeMethod("native-sync-isolate", {"close": true});
+      throw StateError("cloudkit_sync_isolate_unavailable");
+    }
+    _attachLegacyCloudKitSyncPort(syncing);
   }
 
   Future<void> _runDesktopCloudKitSync() async {
@@ -7137,11 +7224,7 @@ class RustPushService extends GetxService {
 
     var syncing = ui.IsolateNameServer.lookupPortByName("bg_sync");
     if (syncing != null) {
-      var port = ReceivePort();
-      port.listen((data) {
-        isSyncing.value = data;
-      });
-      syncing.send(port.sendPort);
+      _attachLegacyCloudKitSyncPort(syncing);
     }
   }
 
@@ -7434,7 +7517,11 @@ class RustPushService extends GetxService {
         trackAutomaticEvents: false,
       );
     } catch (error, trace) {
-      Logger.warn('Mixpanel initialization unavailable', error: error, trace: trace);
+      Logger.warn(
+        'Mixpanel initialization unavailable',
+        error: error,
+        trace: trace,
+      );
     }
   }
 

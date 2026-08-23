@@ -47,6 +47,28 @@ class FlutterBackgroundIsolateEmbeddingContractTest {
             ),
         )
         assertTrue(nativeSync.text.contains("\"flutter.backgroundSyncIsolate\""))
+        assertTrue(
+            "native sync must reject a missing callback instead of hanging",
+            nativeSync.text.contains(
+                "?: throw IllegalStateException(\"CloudKit sync callback is unavailable\")",
+            ),
+        )
+        assertTrue(
+            "native sync startup failures must resolve the pending method call",
+            nativeSync.text.contains("mainresult.error("),
+        )
+        assertTrue(
+            "the worker exit call must be acknowledged before teardown",
+            nativeSync.text.contains("result.success(null)"),
+        )
+        assertTrue(
+            "destroyed workers must clear only their own static engine",
+            nativeSync.text.contains("if (engine === workerEngine)"),
+        )
+        assertTrue(
+            "the native start result must be completed at most once",
+            nativeSync.text.contains("startResultCompleted.compareAndSet(false, true)"),
+        )
     }
 
     @Test

@@ -409,8 +409,9 @@ void _showScaffoldSnackbar(
   messenger.showSnackBar(
     SnackBar(
       content: content,
-      behavior: SnackBarBehavior.floating,
-      margin: const EdgeInsets.only(bottom: 10),
+      // Scaffold reserves space for a fixed fallback. A floating fallback can
+      // be pushed entirely off-screen by a persistent footer or bottom bar.
+      behavior: SnackBarBehavior.fixed,
       duration: Duration(milliseconds: durationMs),
     ),
   );
