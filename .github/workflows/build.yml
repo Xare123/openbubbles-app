@@ -356,6 +356,46 @@ jobs:
           --dart-define=OPENBUBBLES_BUILD_COMMIT=${{ github.sha }}
           "--dart-define=OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN=$REGISTRATION_RELAY_ACCESS_TOKEN"
 
+      # Debug APKs otherwise use a runner-generated key that changes between
+      # jobs. A stable, Canary-only key permits safe in-place updates without
+      # sharing the production signing identity.
+      - name: Sign the evidence canary with its stable key
+        env:
+          CANARY_KEYSTORE_BASE64: ${{ secrets.CANARY_KEYSTORE_BASE64 }}
+          CANARY_KEYSTORE_PASSWORD: ${{ secrets.CANARY_KEYSTORE_PASSWORD }}
+          CANARY_KEY_PASSWORD: ${{ secrets.CANARY_KEY_PASSWORD }}
+          CANARY_KEY_ALIAS: ${{ secrets.CANARY_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-canary-debug.apk
+          keystore="$RUNNER_TEMP/cloudkit-canary.p12"
+          signed_apk="$RUNNER_TEMP/app-canary-debug-signed.apk"
+
+          test -n "$CANARY_KEYSTORE_BASE64"
+          test -n "$CANARY_KEYSTORE_PASSWORD"
+          test -n "$CANARY_KEY_PASSWORD"
+          test -n "$CANARY_KEY_ALIAS"
+          printf '%s' "$CANARY_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+
+          apksigner sign \
+            --ks "$keystore" \
+            --ks-key-alias "$CANARY_KEY_ALIAS" \
+            --ks-pass env:CANARY_KEYSTORE_PASSWORD \
+            --key-pass env:CANARY_KEY_PASSWORD \
+            --out "$signed_apk" \
+            "$apk"
+          mv "$signed_apk" "$apk"
+
+          actual_fingerprint="$(
+            apksigner verify --print-certs "$apk" \
+              | sed -n 's/^Signer #1 certificate SHA-256 digest: //p'
+          )"
+          expected_fingerprint='0ea17c1b67581ca79660d33db45af0a36b71ea36a4cbafec5293d3ae80570d79'
+          if [[ "$actual_fingerprint" != "$expected_fingerprint" ]]; then
+            echo "Unexpected Canary signing certificate: $actual_fingerprint" >&2
+            exit 1
+          fi
+
       - name: Verify the evidence canary APK carries all native libraries
         run: |
           set -euo pipefail
