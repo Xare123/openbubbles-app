@@ -30,6 +30,54 @@ void main() {
     );
   });
 
+  test('initial create identity is stable across restaging', () {
+    final scope = testScope();
+    final logicalHash = List.filled(43, 'L').join();
+    final identity = CloudOperationIdentity.forInitialCreate(
+      scope: scope,
+      logicalEntityKeyHash: logicalHash,
+      payloadVersion: 1,
+    );
+
+    expect(
+      CloudOperationIdentity.forInitialCreate(
+        scope: scope,
+        logicalEntityKeyHash: logicalHash,
+        payloadVersion: 1,
+      ),
+      identity,
+    );
+    expect(identity, startsWith('op1:'));
+    expect(
+      CloudOperationIdentity.forInitialCreate(
+        scope: testScope(account: testAccountFingerprintB),
+        logicalEntityKeyHash: logicalHash,
+        payloadVersion: 1,
+      ),
+      isNot(identity),
+    );
+  });
+
+  test('initial create identity matches the Rust cross-language fixture', () {
+    final scope = CloudSyncScope(
+      accountFingerprint: List.filled(43, 'A').join(),
+      container: 'com.apple.messages.cloud',
+      database: 'private',
+      zone: 'messageManateeZone',
+      streamKind: CloudSyncStreamKind.messages,
+      schemaVersion: 2,
+    );
+
+    expect(
+      CloudOperationIdentity.forInitialCreate(
+        scope: scope,
+        logicalEntityKeyHash: List.filled(43, 'L').join(),
+        payloadVersion: 1,
+      ),
+      'op1:516a95310adb6de12787de0e51d654e05f40f2289991f76dcd8e1dac2bd865cb',
+    );
+  });
+
   test('delete identity and draft do not require an etag or payload', () {
     final scope = testScope();
     final draft = CloudOutboxDraft(
@@ -258,7 +306,7 @@ void main() {
     final operation = testOutboxOperation(
       scope,
       12,
-    ).copyWith(serverRecordIdHash: testSha256('c'));
+    ).copyWith(serverRecordIdHash: List.filled(43, 'R').join());
     final identity = testSubmissionIdentity([operation.operationId]);
     final protectedOperation = CloudSyncProtectedWriteOperation.fromOutbox(
       operation,
@@ -278,7 +326,9 @@ void main() {
 
     final mismatchedOperation = CloudSyncProtectedWriteOperation(
       operationId: operation.operationId,
+      logicalEntityKeyHash: protectedOperation.logicalEntityKeyHash,
       action: operation.action,
+      protectedLeaseReference: protectedOperation.protectedLeaseReference,
       protectedServerRecordIdReference:
           protectedOperation.protectedServerRecordIdReference,
       serverRecordIdHash: protectedOperation.serverRecordIdHash,

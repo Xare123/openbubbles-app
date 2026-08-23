@@ -1,16 +1,29 @@
+// ignore_for_file: prefer_initializing_formals
+
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:bluebubbles/src/rust/frb_generated.dart' as frb_generated;
 import 'package:bluebubbles/src/rust/lib.dart' as frb_lib;
 import 'package:bluebubbles/database/database.dart';
 
 import 'cloud_inbox_applier.dart';
+import 'cloud_protected_page_lease_lifecycle.dart';
+import 'cloud_sync_engine.dart';
+import 'cloud_sync_manual_outbound_canary.dart';
 import 'cloud_sync_manual_semantic_pull_sampler.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
+import 'cloud_sync_models.dart';
+import 'cloud_sync_observability.dart';
 import 'native_protected_cloud_sync_transport.dart';
 import 'objectbox_canonical_semantic_entity_adapter.dart';
 import 'objectbox_cloud_semantic_store_gateway.dart';
 import 'cloud_sync_protector.dart';
+import 'cloud_sync_outbound_admission.dart';
+import 'cloud_sync_writer_authority.dart';
+import 'cloudkit_operation_interlock.dart';
+import 'cloudkit_writer_authority.dart';
+import 'cloudkit_writer_ownership.dart';
 import 'objectbox_cloud_sync_store.dart';
+import 'cloud_sync_shadow_transport.dart';
 import 'rust_cloud_semantic_decoder.dart';
 import 'transient_cloud_canonical_identity_registry.dart';
 
@@ -113,6 +126,7 @@ final class CloudSyncProductionSamplerAdapter {
     required String platform,
     required String architecture,
     required String buildCommit,
+    CloudSyncObserverFactory? observerFactory,
     RustCloudSyncProtectionBindings? protectionBindings,
     NativeProtectedCloudSyncBindings? transportBindings,
     bool? compileGateOverrideForTest,
@@ -145,6 +159,7 @@ final class CloudSyncProductionSamplerAdapter {
       platform: platform,
       architecture: architecture,
       buildCommit: buildCommit,
+      observerFactory: observerFactory,
       compileGateOverrideForTest: compileGateOverrideForTest,
     );
   }
@@ -164,6 +179,7 @@ final class CloudSyncProductionSemanticPullAdapter {
     required String platform,
     required String architecture,
     required String buildCommit,
+    CloudSyncObserverFactory? observerFactory,
     RustCloudSyncProtectionBindings? protectionBindings,
     NativeProtectedCloudSyncBindings? transportBindings,
     RustCloudSemanticDecodeBindings? semanticDecodeBindings,
@@ -238,11 +254,174 @@ final class CloudSyncProductionSemanticPullAdapter {
       platform: platform,
       architecture: architecture,
       buildCommit: buildCommit,
+      observerFactory: observerFactory,
       compileGateOverrideForTest: compileGateOverrideForTest,
     );
   }
 
   late final CloudSyncManualSemanticPullSampler sampler;
+}
+
+/// Production composition for the separately gated one-text outbound canary.
+///
+/// Constructing this adapter performs no network access and admits no work.
+/// The durable writer authority must already be stable and owned by V2 before
+/// [CloudSyncManualOutboundCanary.runDoubleConfirmed] can flush an operation.
+final class CloudSyncProductionOutboundCanaryAdapter {
+  CloudSyncProductionOutboundCanaryAdapter({
+    required ActiveCloudMessagesClientReader readActiveClient,
+    CloudSyncNativeAuthBinding? nativeAuthBinding,
+    required CloudSyncShadowPreflightReader readPreflight,
+    required String privateStorageDirectory,
+    RustCloudSyncProtectionBindings? protectionBindings,
+    NativeProtectedCloudSyncBindings? transportBindings,
+    required CloudKitWriterLegacyQueueQuarantine quarantineLegacyDeletionQueues,
+    required CloudKitWriterProvisioningMeasurementsReader
+    readWriterMeasurements,
+    bool? compileGateOverrideForTest,
+    bool? v2WriterOverrideForTest,
+  }) {
+    final authProvider = CloudSyncProductionAuthSnapshotProvider(
+      readActiveClient: readActiveClient,
+      nativeAuthBinding: nativeAuthBinding ?? FrbCloudSyncNativeAuthBinding(),
+      privateStorageDirectory: privateStorageDirectory,
+    );
+    final protector = RustCloudSyncProtector(
+      storageDirectory: privateStorageDirectory,
+      bindings: protectionBindings,
+    );
+    final durableStore = ObjectBoxCloudSyncStore.fromDatabase(
+      protector: protector,
+    );
+    final authority = ObjectBoxCloudKitWriterAuthority(store: Database.store);
+    final interlock = CloudKitOperationInterlock(
+      privateStorageDirectory: privateStorageDirectory,
+      fenceStore: durableStore,
+    );
+    writerProvisioner = CloudKitV2WriterProvisioner(
+      authority: authority,
+      interlock: interlock,
+      readAuthSnapshot: authProvider.capture,
+      quarantineLegacyDeletionQueues: quarantineLegacyDeletionQueues,
+      readMeasurements: readWriterMeasurements,
+    );
+    _captureAuth = authProvider.capture;
+    canary = CloudSyncManualOutboundCanary(
+      readPreflight: readPreflight,
+      readAuthSnapshot: authProvider.capture,
+      createSession: (snapshot, scope) async {
+        final writerScope = CloudKitWriterScope(
+          accountFingerprint: scope.accountFingerprint,
+          container: scope.container,
+          database: scope.database,
+        );
+        final permit = authority.issuePermit(
+          writerScope,
+          expectedOwner: CloudKitWriterOwner.v2,
+        );
+        authority.verifyPermit(permit);
+        final transport = NativeProtectedCloudSyncTransport(
+          cloudMessagesClient: snapshot.cloudMessagesClient,
+          storageDirectory: privateStorageDirectory,
+          protectedStoreIdentity: snapshot.protectedStoreIdentity,
+          bindings: transportBindings,
+        );
+        final lifecycle = CloudProtectedPageLeaseLifecycle(
+          store: durableStore,
+          transport: transport,
+        );
+        final admission = CloudSyncOutboundAdmissionCoordinator(
+          store: durableStore,
+          transport: transport,
+          ensureProtectedStoreRecovered: lifecycle.ensureRecoveredBeforeWrite,
+        );
+        final engine = CloudSyncEngine(
+          scope: scope,
+          coordinatorId:
+              'manual-outbound-${snapshot.nativeSessionId}-${scope.zone}',
+          store: durableStore,
+          transport: transport,
+          inboxApplier: const RejectingShadowInboxApplier(),
+          writerAuthority: ObjectBoxCloudSyncWriterAuthority(
+            store: Database.store,
+          ),
+          writerExclusion: interlock,
+          config: CloudSyncEngineConfig(
+            maximumBatchSize: 1,
+            maximumFetchPagesPerRun: 1,
+            maximumInboxEntriesPerRun: 1,
+            maximumOutboxBatchesPerRun: 1,
+            flags: const CloudSyncFeatureFlags(
+              readOnlyFetch: false,
+              semanticApply: false,
+              saves: true,
+              deletions: false,
+              profiles: false,
+              notificationHints: false,
+            ),
+          ),
+        );
+        return _ProductionOutboundCanarySession(
+          scope: scope,
+          admission: admission,
+          engine: engine,
+          transport: transport,
+          store: durableStore,
+        );
+      },
+      compileGateOverrideForTest: compileGateOverrideForTest,
+      v2WriterOverrideForTest: v2WriterOverrideForTest,
+    );
+  }
+
+  late final CloudSyncManualOutboundCanary canary;
+  late final CloudKitV2WriterProvisioner writerProvisioner;
+  late final CloudSyncNativeAuthSnapshotReader _captureAuth;
+
+  Future<CloudKitV2WriterProvisioningResult> ensureWriterOwned() async {
+    final auth = await _captureAuth();
+    if (auth == null) {
+      throw StateError('native_auth_unavailable');
+    }
+    return writerProvisioner.ensureV2Owned(expectedAuth: auth);
+  }
+}
+
+final class _ProductionOutboundCanarySession
+    implements CloudSyncOutboundCanarySession {
+  const _ProductionOutboundCanarySession({
+    required this.scope,
+    required CloudSyncOutboundAdmissionCoordinator admission,
+    required CloudSyncEngine engine,
+    required NativeProtectedCloudSyncTransport transport,
+    required ObjectBoxCloudSyncStore store,
+  }) : _admission = admission,
+       _engine = engine,
+       _transport = transport,
+       _store = store;
+
+  final CloudSyncScope scope;
+  final CloudSyncOutboundAdmissionCoordinator _admission;
+  final CloudSyncEngine _engine;
+  final NativeProtectedCloudSyncTransport _transport;
+  final ObjectBoxCloudSyncStore _store;
+
+  @override
+  Future<CloudOutboxOperation> admitMessage({
+    required frb_api.CloudMessage message,
+    required DateTime createdAt,
+  }) => _admission.admitMessage(scope, message: message, createdAt: createdAt);
+
+  @override
+  Future<CloudSyncRunResult> flushOneBatch() =>
+      _engine.synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+  @override
+  Future<List<CloudOutboxOperation>> readOutbox() =>
+      _store.readOutboxEntries(scope);
+
+  @override
+  Future<void> quiesce() => _transport.quiesceNativeOperations();
 }
 
 /// Captures a client-bound snapshot and rejects replacement races.

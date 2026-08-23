@@ -9,6 +9,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_shadow_journal_budget.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_testing.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_write_transport.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_writer_authority.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_transport.dart';
@@ -171,6 +172,7 @@ void main() {
     String? operationId,
     String? appleRequestUuid,
     String? appleOperationUuid,
+    String? protectedProofReference,
   }) {
     return CloudUnknownOutcomeProof(
       operationId: operationId ?? operation.operationId,
@@ -182,7 +184,8 @@ void main() {
       serverRecordIdHash: operation.serverRecordIdHash!,
       action: operation.action,
       expectedPayloadSha256: operation.payloadSha256,
-      protectedProofReference: 'obcs2.reconcile.test-proof',
+      protectedProofReference:
+          protectedProofReference ?? operation.encryptedPayloadReference!,
       observedEtagHash: 'test-observed-etag-hash',
     );
   }
@@ -501,6 +504,55 @@ void main() {
       ),
     );
   });
+
+  test('save-enabled protected writer requires durable recovery stores', () {
+    transport = _RecoveryOrderedProtectedWriteTransport(events: []);
+
+    expect(
+      () => engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      ),
+      throwsA(
+        isA<ArgumentError>().having(
+          (error) => error.message,
+          'message',
+          'cloud_sync_native_protected_writer_recovery_required',
+        ),
+      ),
+    );
+  });
+
+  test(
+    'local outbox recovers protected store before reconcile and preflight',
+    () async {
+      store = _ProtectedRecoveryTrackingStore();
+      final events = <String>[];
+      transport = _RecoveryOrderedProtectedWriteTransport(events: events);
+
+      // Prime the process-wide startup cache before creating the adopted
+      // outbound rows. The write run must still perform a fresh pass.
+      await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: true, saves: false),
+      ).synchronize(trigger: CloudSyncTrigger.startup);
+      events.clear();
+
+      final ambiguous = await seedAmbiguousOutbox(711);
+      final ready = testOutboxOperation(scope, 712);
+      await store.enqueueOutbox(ready);
+      (store as _ProtectedRecoveryTrackingStore).outboundLeaseReferences.addAll(
+        [ambiguous.protectedLeaseReference!, ready.protectedLeaseReference!],
+      );
+      events.clear();
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+      expect(result.status, CloudSyncRunStatus.completed);
+      expect(events, ['recover', 'reconcile', 'prepare']);
+    },
+  );
 
   test('write operation timeout is bounded and positive', () {
     expect(
@@ -1533,35 +1585,73 @@ void main() {
     expect(transport.pushCallCount, 1);
   });
 
-  test('server-proven absence requeues and sends exactly once', () async {
-    final operation = await seedAmbiguousOutbox(802);
+  test('mismatched protected proof cannot confirm or replay', () async {
+    await seedAmbiguousOutbox(811);
     transport.unknownOutcomeHandler = (_, operation) async =>
-        CloudUnknownOutcomeResolution.notApplied(proof: proofFor(operation));
-    transport.enqueuePushResult(
-      CloudPushBatchResult(
-        outcomes: [
-          CloudPushOutcome(
-            operationId: operation.operationId,
-            disposition: CloudPushDisposition.confirmed,
+        CloudUnknownOutcomeResolution.committed(
+          proof: proofFor(
+            operation,
+            protectedProofReference: testProtectedReference('Z'),
           ),
-        ],
-      ),
-    );
+        );
 
-    final result = await engine(
+    await engine(
       flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
       maximumOutboxBatches: 1,
     ).synchronize(trigger: CloudSyncTrigger.localOutbox);
 
-    expect(result.counters.retried, 1);
-    expect(result.counters.confirmed, 1);
-    expect(transport.unknownOutcomeCallCount, 1);
-    expect(transport.pushCallCount, 2);
     expect(
       (await store.outboxEntries(scope)).single.status,
-      CloudOutboxStatus.confirmed,
+      CloudOutboxStatus.unknownOutcome,
     );
+    expect(transport.pushCallCount, 1);
   });
+
+  test(
+    'server-proven absence requires a later run before one resubmission',
+    () async {
+      final operation = await seedAmbiguousOutbox(802);
+      transport.unknownOutcomeHandler = (_, operation) async =>
+          CloudUnknownOutcomeResolution.notApplied(proof: proofFor(operation));
+      transport.enqueuePushResult(
+        CloudPushBatchResult(
+          outcomes: [
+            CloudPushOutcome(
+              operationId: operation.operationId,
+              disposition: CloudPushDisposition.confirmed,
+            ),
+          ],
+        ),
+      );
+
+      final first = await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+      expect(first.counters.retried, 1);
+      expect(first.counters.confirmed, 0);
+      expect(transport.unknownOutcomeCallCount, 1);
+      expect(transport.pushCallCount, 1);
+      expect(
+        (await store.outboxEntries(scope)).single.status,
+        CloudOutboxStatus.pending,
+      );
+
+      final second = await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+      expect(second.counters.retried, 0);
+      expect(second.counters.confirmed, 1);
+      expect(transport.pushCallCount, 2);
+      expect(
+        (await store.outboxEntries(scope)).single.status,
+        CloudOutboxStatus.confirmed,
+      );
+    },
+  );
 
   test(
     'unresolved server read backs off without replaying the write',
@@ -1607,7 +1697,7 @@ void main() {
   );
 
   test(
-    'divergent server state enters the existing semantic merge path',
+    'divergent server state merges but waits for a later submission run',
     () async {
       final operation = await seedAmbiguousOutbox(804);
       transport.unknownOutcomeHandler = (_, operation) async =>
@@ -1640,6 +1730,17 @@ void main() {
 
       expect(transport.unknownOutcomeCallCount, 1);
       expect(transport.conflictCallCount, 1);
+      expect(transport.pushCallCount, 1);
+      expect(
+        (await store.outboxEntries(scope)).single.status,
+        CloudOutboxStatus.pending,
+      );
+
+      await engine(
+        flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
       expect(transport.pushCallCount, 2);
       expect(
         (await store.outboxEntries(scope)).single.status,
@@ -2195,6 +2296,111 @@ class _RecoveryTrackingStore extends InMemoryCloudSyncStore {
   }) {
     recoverExpiredOutboxLeaseCalls++;
     return super.recoverExpiredOutboxLeases(scope, now: now);
+  }
+}
+
+class _ProtectedRecoveryTrackingStore extends InMemoryCloudSyncStore
+    implements
+        CloudProtectedPageLeaseAdoptionStore,
+        CloudProtectedOutboundLeaseAdoptionStore {
+  final Set<String> outboundLeaseReferences = {};
+
+  @override
+  Future<Set<String>> readAdoptedProtectedPageLeaseReferences({
+    required int maximumCount,
+  }) async => {};
+
+  @override
+  Future<CloudProtectedReferenceSnapshot> readLiveProtectedReferences({
+    required int maximumCount,
+  }) async =>
+      CloudProtectedReferenceSnapshot(references: const {}, isComplete: true);
+
+  @override
+  Future<void> releaseAdoptedProtectedPageLeaseReferences(
+    Iterable<String> leaseReferences,
+  ) async {}
+
+  @override
+  Future<Set<String>> readNonterminalProtectedOutboundLeaseReferences({
+    required int maximumCount,
+  }) async => Set.unmodifiable(outboundLeaseReferences);
+}
+
+class _RecoveryOrderedProtectedWriteTransport extends FakeCloudSyncTransport
+    implements CloudProtectedPageLeaseTransport {
+  _RecoveryOrderedProtectedWriteTransport({required this.events});
+
+  final List<String> events;
+
+  @override
+  String get protectedPageLeaseRecoveryIdentity =>
+      'obcs2.store.${List.filled(43, 'R').join()}';
+
+  @override
+  Future<T> runProtectedStoreExclusive<T>(Future<T> Function() action) =>
+      action();
+
+  @override
+  Future<CloudProtectedPageLeaseRecoveryResult> recoverProtectedPageLeases(
+    Set<String> adoptedLeaseReferences,
+    CloudProtectedReferenceSnapshot liveReferences,
+  ) async {
+    events.add('recover');
+    return CloudProtectedPageLeaseRecoveryResult(
+      finalizedAdoptedLeaseReferences: const {},
+      hasMore: false,
+    );
+  }
+
+  @override
+  Future<void> commitProtectedPageLease(
+    String leaseReference,
+    Set<String> retainedReferences,
+  ) async {}
+
+  @override
+  Future<void> acknowledgeCommittedPageLease(String leaseReference) async {}
+
+  @override
+  Future<void> rollbackProtectedPageLease(String leaseReference) async {}
+
+  @override
+  Future<int> retireProtectedReferences(Set<String> references) async => 0;
+
+  @override
+  Future<CloudProtectedGarbageCollectionResult> collectProtectedGarbage(
+    CloudProtectedReferenceSnapshot liveReferences,
+  ) async => const CloudProtectedGarbageCollectionResult(
+    scannedCount: 0,
+    firstObservedCount: 0,
+    deletedCount: 0,
+    preservedLiveCount: 0,
+    preservedActiveLeaseCount: 0,
+    hasMore: false,
+  );
+
+  @override
+  Future<CloudUnknownOutcomeResolution> reconcileUnknownOutcome(
+    CloudSyncScope scope, {
+    required CloudOutboxOperation operation,
+  }) {
+    events.add('reconcile');
+    return super.reconcileUnknownOutcome(scope, operation: operation);
+  }
+
+  @override
+  Future<CloudSyncPreparedSubmission> prepareSubmission(
+    CloudSyncScope scope, {
+    required CloudOutboxSubmissionIdentity submissionIdentity,
+    required List<CloudSyncProtectedWriteOperation> operations,
+  }) {
+    events.add('prepare');
+    return super.prepareSubmission(
+      scope,
+      submissionIdentity: submissionIdentity,
+      operations: operations,
+    );
   }
 }
 

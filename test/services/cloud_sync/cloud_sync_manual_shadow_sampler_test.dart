@@ -4,6 +4,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shado
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_controller.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_owner.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_testing.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
@@ -108,6 +109,7 @@ void main() {
     () async {
       final transports = <FakeCloudSyncTransport>[];
       final scopes = <CloudSyncScope>[];
+      final observers = <String, _RecordingFlushableObserver>{};
       final sampler = CloudSyncManualShadowSampler(
         readPreflight: () async => readyState(),
         readAuthSnapshot: () async => auth('session-a'),
@@ -125,6 +127,8 @@ void main() {
         platform: 'windows',
         architecture: 'arm64',
         buildCommit: 'test',
+        observerFactory: (scope) async =>
+            observers[scope.zone] = _RecordingFlushableObserver(),
         compileGateOverrideForTest: true,
       );
 
@@ -143,27 +147,35 @@ void main() {
         1,
         1,
       ]);
-      expect(
-        transports.map((transport) => transport.pushCallCount),
-        [0, 0, 0, 0, 0, 0, 0],
-      );
-      expect(
-        report.zones.map((zone) => zone.zoneLabel),
-        const [
-          'chats',
-          'messages',
-          'attachments',
-          'message updates',
-          'recoverable deletes',
-          'scheduled messages',
-          'chat1 manatee',
-        ],
-      );
+      expect(transports.map((transport) => transport.pushCallCount), [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+      ]);
+      expect(report.zones.map((zone) => zone.zoneLabel), const [
+        'chats',
+        'messages',
+        'attachments',
+        'message updates',
+        'recoverable deletes',
+        'scheduled messages',
+        'chat1 manatee',
+      ]);
       expect(report.pageLimit, 1);
       expect(report.changeLimit, 50);
       expect(report.toJson(), isNot(contains('fingerprintPrefix')));
       expect(report.correlationTag, hasLength(16));
       expect(report.isValidReadOnlySuccess, isTrue);
+      expect(observers.keys, CloudSyncManualShadowSampler.zones);
+      expect(observers.values.every((observer) => observer.flushed), isTrue);
+      expect(
+        observers.values.every((observer) => observer.events.isNotEmpty),
+        isTrue,
+      );
       expect(sampler.debugFlags.readOnlyFetch, isTrue);
       expect(sampler.debugFlags.semanticApply, isFalse);
       expect(sampler.debugFlags.saves, isFalse);
@@ -380,6 +392,17 @@ void main() {
     await first;
     expect(sampler.isActive, isFalse);
   });
+}
+
+final class _RecordingFlushableObserver implements FlushableCloudSyncObserver {
+  final List<CloudSyncEvent> events = [];
+  bool flushed = false;
+
+  @override
+  void onEvent(CloudSyncEvent event) => events.add(event);
+
+  @override
+  Future<void> flush() async => flushed = true;
 }
 
 final class _JoinableFakeCloudSyncTransport extends FakeCloudSyncTransport

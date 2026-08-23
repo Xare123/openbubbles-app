@@ -69,7 +69,9 @@ void main() {
         RegExp(
           r'NativeProtectedCloudSyncTransport\(',
         ).allMatches(adapter).length,
-        2,
+        3,
+        reason:
+            'shadow, semantic pull, and one-text outbound are the only protected transport compositions',
       );
       expect(adapter, contains('NativeProtectedCloudSyncBindings?'));
       expect(adapter, isNot(contains('RustCloudSyncTransport(')));

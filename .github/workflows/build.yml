@@ -341,3 +341,38 @@ jobs:
         with:
           name: Beta Debug APK (Cloud Sync sampler)
           path: build/app/outputs/flutter-apk/app-beta-debug.apk
+
+      # Separate applicationId for bounded, local-only protocol evidence. The
+      # audited outbound path remains compile-time absent until a remote-
+      # absence proof can prevent duplicate logical messages.
+      - name: Build developer-only CloudKit V2 Evidence Canary APK
+        env:
+          REGISTRATION_RELAY_ACCESS_TOKEN: ${{ secrets.REGISTRATION_RELAY_ACCESS_TOKEN }}
+        run: >-
+          flutter build apk --flavor canary --debug --target-platform android-arm64
+          --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true
+          --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true
+          --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE=true
+          --dart-define=OPENBUBBLES_BUILD_COMMIT=${{ github.sha }}
+          "--dart-define=OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN=$REGISTRATION_RELAY_ACCESS_TOKEN"
+
+      - name: Verify the evidence canary APK carries all native libraries
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-canary-debug.apk
+          for entry in \
+            lib/arm64-v8a/libflutter.so \
+            lib/arm64-v8a/librust_lib_bluebubbles.so \
+            lib/arm64-v8a/libirondash_engine_context_native.so \
+            lib/arm64-v8a/libsuper_native_extensions.so; do
+            if ! unzip -l "$apk" | grep -q "$entry"; then
+              echo "evidence canary APK is missing $entry" >&2
+              unzip -l "$apk" | grep 'lib/' >&2 || true
+              exit 1
+            fi
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: CloudKit V2 Evidence Canary APK
+          path: build/app/outputs/flutter-apk/app-canary-debug.apk

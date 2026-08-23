@@ -4,6 +4,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_seman
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_testing.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
@@ -65,6 +66,7 @@ CloudSyncManualSemanticPullSampler _sampler({
   required CloudSyncStore operationFenceStore,
   bool enabled = true,
   Duration? fetchTimeout,
+  CloudSyncObserverFactory? observerFactory,
 }) => CloudSyncManualSemanticPullSampler(
   readPreflight: readPreflight,
   readAuthSnapshot: readAuthSnapshot,
@@ -78,6 +80,7 @@ CloudSyncManualSemanticPullSampler _sampler({
   buildCommit: 'test-commit',
   compileGateOverrideForTest: enabled,
   fetchTimeoutOverrideForTest: fetchTimeout,
+  observerFactory: observerFactory,
 );
 
 void main() {
@@ -148,6 +151,7 @@ void main() {
       final applied = <String>[];
       final stores = <String, InMemoryCloudSyncStore>{};
       final preflightStates = <CloudSyncShadowPreflightState>[];
+      final observers = <String, _RecordingFlushableObserver>{};
 
       final sampler = _sampler(
         privateStorageDirectory: privateStorageDirectory,
@@ -187,6 +191,8 @@ void main() {
           appliers[scope.zone] = applier;
           return applier;
         },
+        observerFactory: (scope) async =>
+            observers[scope.zone] = _RecordingFlushableObserver(),
       );
 
       expect(scopes, isEmpty);
@@ -222,6 +228,12 @@ void main() {
       expect(report.outboxCountAfter, 0);
       expect(preflightStates.map((state) => state.outboxCount), [0, 0]);
       expect(report.remoteWriteTripwiresIntact, isTrue);
+      expect(observers.keys, CloudSyncManualSemanticPullSampler.zones);
+      expect(observers.values.every((observer) => observer.flushed), isTrue);
+      expect(
+        observers.values.every((observer) => observer.events.isNotEmpty),
+        isTrue,
+      );
       expect(transports.values.map((transport) => transport.fetchCallCount), [
         1,
         1,
@@ -506,6 +518,17 @@ void main() {
       );
     },
   );
+}
+
+final class _RecordingFlushableObserver implements FlushableCloudSyncObserver {
+  final List<CloudSyncEvent> events = [];
+  bool flushed = false;
+
+  @override
+  void onEvent(CloudSyncEvent event) => events.add(event);
+
+  @override
+  Future<void> flush() async => flushed = true;
 }
 
 final class _JoinableTransport extends FakeCloudSyncTransport

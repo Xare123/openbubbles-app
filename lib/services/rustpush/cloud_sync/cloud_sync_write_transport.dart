@@ -1,4 +1,5 @@
 import 'cloud_sync_models.dart';
+import 'cloud_sync_store.dart';
 
 /// A write operation containing only protected local references.
 ///
@@ -9,7 +10,9 @@ import 'cloud_sync_models.dart';
 final class CloudSyncProtectedWriteOperation {
   CloudSyncProtectedWriteOperation({
     required this.operationId,
+    required this.logicalEntityKeyHash,
     required this.action,
+    this.protectedLeaseReference,
     required this.protectedServerRecordIdReference,
     required this.serverRecordIdHash,
     this.protectedPayloadReference,
@@ -18,14 +21,23 @@ final class CloudSyncProtectedWriteOperation {
     if (operationId.isEmpty) {
       throw ArgumentError('cloud_sync_write_operation_id_invalid');
     }
+    if (!_isNativeDigest(logicalEntityKeyHash)) {
+      throw ArgumentError('cloud_sync_write_logical_key_hash_invalid');
+    }
+    if (protectedLeaseReference != null &&
+        !_isLeaseReference(protectedLeaseReference!)) {
+      throw ArgumentError('cloud_sync_write_lease_reference_invalid');
+    }
     if (!_isProtectedReference(protectedServerRecordIdReference)) {
       throw ArgumentError('cloud_sync_write_server_record_reference_invalid');
     }
-    if (!_isDigest(serverRecordIdHash)) {
+    if (!_isNativeDigest(serverRecordIdHash)) {
       throw ArgumentError('cloud_sync_write_server_record_hash_invalid');
     }
     if (action == CloudOutboxAction.save &&
-        (protectedPayloadReference == null || payloadSha256 == null)) {
+        (protectedPayloadReference == null ||
+            payloadSha256 == null ||
+            protectedLeaseReference == null)) {
       throw ArgumentError('cloud_sync_write_payload_missing');
     }
     if (action == CloudOutboxAction.delete &&
@@ -36,7 +48,7 @@ final class CloudSyncProtectedWriteOperation {
         !_isProtectedReference(protectedPayloadReference!)) {
       throw ArgumentError('cloud_sync_write_payload_reference_invalid');
     }
-    if (payloadSha256 != null && !_isDigest(payloadSha256!)) {
+    if (payloadSha256 != null && !_isContentDigest(payloadSha256!)) {
       throw ArgumentError('cloud_sync_write_payload_digest_invalid');
     }
   }
@@ -56,7 +68,9 @@ final class CloudSyncProtectedWriteOperation {
 
     return CloudSyncProtectedWriteOperation(
       operationId: operation.operationId,
+      logicalEntityKeyHash: operation.logicalEntityKeyHash,
       action: operation.action,
+      protectedLeaseReference: operation.protectedLeaseReference,
       protectedServerRecordIdReference: recordMapping.encryptedServerRecordId,
       serverRecordIdHash: recordMapping.serverRecordIdHash,
       protectedPayloadReference: operation.encryptedPayloadReference,
@@ -65,7 +79,9 @@ final class CloudSyncProtectedWriteOperation {
   }
 
   final String operationId;
+  final String logicalEntityKeyHash;
   final CloudOutboxAction action;
+  final String? protectedLeaseReference;
   final String protectedServerRecordIdReference;
   final String serverRecordIdHash;
   final String? protectedPayloadReference;
@@ -78,7 +94,7 @@ final class CloudSyncProtectedWriteOperation {
 /// there is no serialization or copying API. Dart cannot make an object truly
 /// opaque, so the only public inspection is redacted binding metadata and the
 /// single-use claim used by a transport implementation.
-final class CloudSyncPreparedSubmission {
+class CloudSyncPreparedSubmission {
   /// Internal construction seam for native transport implementations and
   /// fakes. The resulting object contains only protected references and is
   /// still bound to one exact identity before it can be consumed.
@@ -186,14 +202,32 @@ abstract interface class CloudSyncWriteTransport {
   });
 }
 
+/// Optional native receipt cleanup invoked only after outbox outcomes are
+/// durable. Implementations must retain receipts for every non-terminal row.
+abstract interface class CloudSyncWriteReceiptFinalizer {
+  Future<void> acknowledgeDurableTerminalOperations(
+    CloudSyncScope scope, {
+    required List<CloudOutboxOperation> operations,
+    required List<CloudOutboxTransition> transitions,
+  });
+}
+
 String _protectedOperationBinding(CloudSyncProtectedWriteOperation operation) =>
-    '${operation.operationId}\u001f${operation.action.name}\u001f'
+    '${operation.operationId}\u001f${operation.logicalEntityKeyHash}\u001f'
+    '${operation.action.name}\u001f${operation.protectedLeaseReference ?? ''}\u001f'
     '${operation.protectedServerRecordIdReference}\u001f'
     '${operation.serverRecordIdHash}\u001f'
     '${operation.protectedPayloadReference ?? ''}\u001f'
     '${operation.payloadSha256 ?? ''}';
 
-bool _isDigest(String value) => RegExp(r'^[a-f0-9]{64}$').hasMatch(value);
+bool _isContentDigest(String value) =>
+    RegExp(r'^[a-f0-9]{64}$').hasMatch(value);
+
+bool _isNativeDigest(String value) =>
+    RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(value);
+
+bool _isLeaseReference(String value) =>
+    RegExp(r'^obcs2\.lease\.[0-9a-f]{32}$').hasMatch(value);
 
 bool _isProtectedReference(String value) =>
     RegExp(r'^obcs2\.ref\.[A-Za-z0-9_-]{43}$').hasMatch(value);

@@ -26,10 +26,15 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authori
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_canary_candidate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_controller.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_owner.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_preflight.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protocol_evidence.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector_health.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report.dart';
@@ -6861,8 +6866,13 @@ class RustPushService extends GetxService {
   CloudSyncManualShadowOwner? _cloudSyncV2ShadowOwner;
   Future<CloudSyncSemanticPullReport>? _cloudSyncV2SemanticPullInFlight;
   bool _cloudSyncV2SemanticPullQuiescing = false;
+  CloudSyncProductionOutboundCanaryAdapter? _cloudSyncV2OutboundAdapter;
+  CloudSyncOutboundCanaryConfirmation? _cloudSyncV2OutboundConfirmation;
+  Future<CloudSyncOutboundCanaryReport>? _cloudSyncV2OutboundInFlight;
+  bool _cloudSyncV2OutboundQuiescing = false;
   static const _cloudSyncV2SemanticPullQuiescenceTimeout =
       Duration(seconds: 50);
+  static const _cloudSyncV2OutboundQuiescenceTimeout = Duration(seconds: 90);
 
   bool get cloudSyncV2ManualShadowAvailable {
     if (!CloudSyncDevGate.manualShadowSamplerEnabled ||
@@ -6973,11 +6983,206 @@ class RustPushService extends GetxService {
       platform: Platform.operatingSystem,
       architecture: ffi.Abi.current().toString(),
       buildCommit: _cloudSyncV2BuildIdentifier(),
+      observerFactory: _cloudSyncV2EvidenceObserverFactory(),
     );
     final report = await adapter.sampler.runConfirmed();
     Logger.info(
         "Cloud Sync V2 semantic canary report=${jsonEncode(report.toJson())}");
     return report;
+  }
+
+  bool get cloudSyncV2ManualOutboundAvailable {
+    if (!CloudSyncDevGate.manualOutboundCanaryEnabled ||
+        !CloudKitWriterOwnership.v2MutationsEnabled ||
+        !_cloudSyncV2DeveloperRuntimeAllowed ||
+        !ls.isUiThread ||
+        loggingOut ||
+        _cloudSyncV2OutboundQuiescing ||
+        _cloudSyncV2OutboundInFlight != null ||
+        statePath.isEmpty ||
+        state?.icloudServices?.cloudMessagesClient == null) {
+      return false;
+    }
+    return ffi.Abi.current() == ffi.Abi.androidArm64;
+  }
+
+  /// Selects, without mutation, the newest existing local message that is safe
+  /// for the one-text outbound canary. Content and destination are never
+  /// exposed through the returned diagnostics.
+  CloudSyncOutboundCanaryCandidate?
+      selectCloudSyncV2OutboundCanaryCandidate() {
+    if (!cloudSyncV2ManualOutboundAvailable) {
+      throw StateError('cloud_sync_outbound_canary_unavailable');
+    }
+    try {
+      return CloudSyncOutboundCanaryCandidateSelector().selectNewest();
+    } catch (_) {
+      throw StateError('cloud_sync_outbound_candidate_selection_failed');
+    }
+  }
+
+  /// Establishes V2 writer ownership from direct, fail-closed local probes.
+  /// This never contacts CloudKit and does not admit an outbound operation.
+  Future<CloudKitV2WriterProvisioningResult>
+      prepareCloudSyncV2OutboundWriter() async {
+    if (!cloudSyncV2ManualOutboundAvailable) {
+      throw StateError('cloud_sync_outbound_canary_unavailable');
+    }
+    return _cloudSyncV2Outbound().ensureWriterOwned();
+  }
+
+  Future<CloudSyncOutboundCanaryConfirmation>
+      armCloudSyncV2OutboundConfirmed({
+    required api.CloudMessage message,
+    required DateTime createdAt,
+  }) async {
+    if (!cloudSyncV2ManualOutboundAvailable) {
+      throw StateError('cloud_sync_outbound_canary_unavailable');
+    }
+    if (_cloudSyncV2OutboundConfirmation != null) {
+      throw StateError('cloud_sync_outbound_canary_already_armed');
+    }
+    final confirmation = await _cloudSyncV2Outbound().canary.armConfirmed(
+          message: message,
+          createdAt: createdAt,
+        );
+    _cloudSyncV2OutboundConfirmation = confirmation;
+    return confirmation;
+  }
+
+  Future<CloudSyncOutboundCanaryConfirmation>
+      armCloudSyncV2OutboundRecoveryConfirmed() async {
+    if (!cloudSyncV2ManualOutboundAvailable) {
+      throw StateError('cloud_sync_outbound_canary_unavailable');
+    }
+    if (_cloudSyncV2OutboundConfirmation != null) {
+      throw StateError('cloud_sync_outbound_canary_already_armed');
+    }
+    final confirmation =
+        await _cloudSyncV2Outbound().canary.armRecoveryConfirmed();
+    _cloudSyncV2OutboundConfirmation = confirmation;
+    return confirmation;
+  }
+
+  Future<CloudSyncOutboundCanaryReport>
+      runCloudSyncV2OutboundDoubleConfirmed(
+    CloudSyncOutboundCanaryConfirmation confirmation,
+  ) {
+    if (!identical(_cloudSyncV2OutboundConfirmation, confirmation)) {
+      throw StateError('cloud_sync_outbound_canary_confirmation_invalid');
+    }
+    if (!cloudSyncV2ManualOutboundAvailable) {
+      throw StateError('cloud_sync_outbound_canary_unavailable');
+    }
+    if (_cloudSyncV2OutboundQuiescing) {
+      throw StateError('cloud_sync_outbound_canary_quiescing');
+    }
+    if (_cloudSyncV2OutboundInFlight != null) {
+      throw StateError('cloud_sync_outbound_canary_active');
+    }
+    _cloudSyncV2OutboundConfirmation = null;
+    final future =
+        _cloudSyncV2Outbound().canary.runDoubleConfirmed(confirmation);
+    _cloudSyncV2OutboundInFlight = future;
+    return future.whenComplete(() {
+      if (identical(_cloudSyncV2OutboundInFlight, future)) {
+        _cloudSyncV2OutboundInFlight = null;
+      }
+    });
+  }
+
+  void disarmCloudSyncV2Outbound(
+    CloudSyncOutboundCanaryConfirmation confirmation,
+  ) {
+    _cloudSyncV2Outbound().canary.disarm(confirmation);
+    if (identical(_cloudSyncV2OutboundConfirmation, confirmation)) {
+      _cloudSyncV2OutboundConfirmation = null;
+    }
+  }
+
+  CloudSyncProductionOutboundCanaryAdapter _cloudSyncV2Outbound() {
+    return _cloudSyncV2OutboundAdapter ??=
+        CloudSyncProductionOutboundCanaryAdapter(
+      readActiveClient: () => state?.icloudServices?.cloudMessagesClient,
+      readPreflight: _buildCloudSyncV2OutboundPreflight().read,
+      privateStorageDirectory: statePath,
+      quarantineLegacyDeletionQueues: () async {
+        await LegacyCloudKitDeletionIntentStore(store: Database.store)
+            .quarantineLegacySharedPreferenceQueues(
+          ss.prefs,
+          now: DateTime.now(),
+        );
+      },
+      readWriterMeasurements: _readCloudSyncV2WriterMeasurements,
+    );
+  }
+
+  CloudSyncProductionPreflightProbe _buildCloudSyncV2OutboundPreflight() {
+    final protector = RustCloudSyncProtector(storageDirectory: statePath);
+    return CloudSyncProductionPreflightProbe(
+      platformSupported: () => ffi.Abi.current() == ffi.Abi.androidArm64,
+      uiIsolate: () => ls.isUiThread,
+      rustPushReady: () =>
+          state?.icloudServices?.cloudMessagesClient != null,
+      localState: ObjectBoxCloudSyncPreflightReader.fromDatabase().read,
+      privateStorageExists: () =>
+          statePath.isNotEmpty && Directory(statePath).existsSync(),
+      logoutActive: () => loggingOut || _cloudSyncV2OutboundQuiescing,
+      legacySyncEnabled: () => ss.settings.cloudSyncingEnabled.value,
+      legacySyncActive: () =>
+          isSyncing.value != null ||
+          ui.IsolateNameServer.lookupPortByName('bg_sync') != null,
+      protectorSentinelValid:
+          CloudSyncProtectorHealthProbe(protector: protector).read,
+    );
+  }
+
+  Future<CloudKitWriterProvisioningMeasurements>
+      _readCloudSyncV2WriterMeasurements(
+    CloudKitWriterScope writerScope,
+  ) async {
+    final local = ObjectBoxCloudSyncPreflightReader.fromDatabase().read();
+    final deletionStore =
+        LegacyCloudKitDeletionIntentStore(store: Database.store);
+    final messageQuery = Database.messages
+        .query(Message_.itemType.equals(0).and(Message_.ckSyncState
+            .equals(false)
+            .or(Message_.ckSyncState.isNull())))
+        .build();
+    final chatQuery =
+        Database.chats.query(Chat_.ckSyncState.equals(false)).build();
+    final syncScope = CloudSyncScope(
+      accountFingerprint: writerScope.accountFingerprint,
+      container: writerScope.container,
+      database: writerScope.database,
+      zone: CloudSyncManualOutboundCanary.zone,
+      streamKind: CloudSyncStreamKind.messages,
+      schemaVersion: 2,
+    );
+    final outboxQuery = Database.cloudSyncOutbox
+        .query(CloudOutboxOperationEntity_.scopeKey.equals(syncScope.storageKey))
+        .build();
+    try {
+      return CloudKitWriterProvisioningMeasurements(
+        objectBoxReady: !Database.store.isClosed(),
+        legacySyncEnabled: ss.settings.cloudSyncingEnabled.value,
+        legacySyncActive: isSyncing.value != null,
+        backgroundSyncActive:
+            ui.IsolateNameServer.lookupPortByName('bg_sync') != null,
+        coordinatorLeaseActive: local.coordinatorLeaseActive,
+        pendingLegacyDeletionIntents:
+            deletionStore.pendingCountForScope(writerScope),
+        legacyPreferenceQueueEntries:
+            deletionStore.legacySharedPreferenceQueueEntryCount(ss.prefs),
+        unsyncedLegacyMessages: messageQuery.count(),
+        unsyncedLegacyChats: chatQuery.count(),
+        existingV2OutboxOperations: outboxQuery.count(),
+      );
+    } finally {
+      messageQuery.close();
+      chatQuery.close();
+      outboxQuery.close();
+    }
   }
 
   bool get _cloudSyncV2DeveloperRuntimeAllowed =>
@@ -7027,6 +7232,7 @@ class RustPushService extends GetxService {
       platform: Platform.operatingSystem,
       architecture: ffi.Abi.current().toString(),
       buildCommit: _cloudSyncV2BuildIdentifier(),
+      observerFactory: _cloudSyncV2EvidenceObserverFactory(),
     );
     return CloudSyncManualShadowController.production(
       sampler: adapter.sampler,
@@ -7039,6 +7245,29 @@ class RustPushService extends GetxService {
         trustedStorageRoot: statePath,
       ),
     );
+  }
+
+  CloudSyncObserverFactory _cloudSyncV2EvidenceObserverFactory() {
+    CloudSyncProtocolEvidenceWriter? writer;
+    return (scope) async {
+      if (!CloudSyncDevGate.protocolEvidenceAvailable ||
+          !_cloudSyncV2DeveloperRuntimeAllowed ||
+          !ss.settings.cloudSyncV2EvidenceEnabled.value) {
+        return const NoopCloudSyncObserver();
+      }
+      writer ??= await CloudSyncProtocolEvidenceWriter.open(
+        privateDirectory: join(statePath, 'cloud-sync-v2', 'evidence'),
+        trustedRoot: statePath,
+      );
+      return CloudSyncProtocolEvidenceObserver(
+        writer: writer!,
+        zoneLabel: scope.zone,
+        streamKindLabel: scope.streamKind.name,
+        platform: Platform.operatingSystem,
+        architecture: ffi.Abi.current().toString(),
+        buildCommit: _cloudSyncV2BuildIdentifier(),
+      );
+    };
   }
 
   String _cloudSyncV2BuildIdentifier() {
@@ -7062,6 +7291,10 @@ class RustPushService extends GetxService {
       _runCloudKitOperation(
         kind: CloudKitOperationKind.legacyReadWrite,
         action: () {
+          if (CloudKitWriterOwnership.decision.owner ==
+              CloudKitWriterOwner.v2) {
+            throw StateError('legacy_cloudkit_blocked_by_v2_writer');
+          }
           if (!CloudKitWriterOwnership.legacyMutationsEnabled) {
             return action();
           }
@@ -7127,6 +7360,7 @@ class RustPushService extends GetxService {
   Future reset(bool hw, bool logout, bool setup) async {
     final shadowOwner = _cloudSyncV2ShadowOwner;
     _cloudSyncV2SemanticPullQuiescing = true;
+    _cloudSyncV2OutboundQuiescing = true;
     try {
       await shadowOwner?.quiesceForAccountTransition();
       final semanticPull = _cloudSyncV2SemanticPullInFlight;
@@ -7145,6 +7379,25 @@ class RustPushService extends GetxService {
               "Cloud Sync V2 semantic pull stopped during account transition");
         }
       }
+      final outboundConfirmation = _cloudSyncV2OutboundConfirmation;
+      if (outboundConfirmation != null) {
+        _cloudSyncV2OutboundAdapter?.canary.disarm(outboundConfirmation);
+        _cloudSyncV2OutboundConfirmation = null;
+      }
+      final outbound = _cloudSyncV2OutboundInFlight;
+      if (outbound != null) {
+        try {
+          await outbound.timeout(_cloudSyncV2OutboundQuiescenceTimeout);
+        } on TimeoutException {
+          // Keep native account handles attached if a protected write has not
+          // reached its terminal or durably recoverable boundary.
+          throw StateError('cloud_sync_outbound_quiescence_timeout');
+        } catch (_) {
+          Logger.warn(
+              "Cloud Sync V2 outbound canary stopped during account transition");
+        }
+      }
+      _cloudSyncV2OutboundAdapter = null;
       var thisState = state;
       state = null;
 
@@ -7175,6 +7428,7 @@ class RustPushService extends GetxService {
     } finally {
       await shadowOwner?.resumeAfterAccountTransition();
       _cloudSyncV2SemanticPullQuiescing = false;
+      _cloudSyncV2OutboundQuiescing = false;
     }
   }
 
@@ -7264,7 +7518,20 @@ class RustPushService extends GetxService {
     _profileRetryTimers.clear();
     _profileRetryAttempts.clear();
     unawaited(cancelRelayHealthReminder());
-    if (state != null) disposeState(state!, true, false);
+    _cloudSyncV2OutboundQuiescing = true;
+    final outboundConfirmation = _cloudSyncV2OutboundConfirmation;
+    if (outboundConfirmation != null) {
+      _cloudSyncV2OutboundAdapter?.canary.disarm(outboundConfirmation);
+      _cloudSyncV2OutboundConfirmation = null;
+    }
+    if (_cloudSyncV2OutboundInFlight == null) {
+      if (state != null) disposeState(state!, true, false);
+    } else {
+      // onClose is synchronous. Do not dispose native handles underneath a
+      // protected CloudKit write; process teardown will reclaim them.
+      Logger.warn(
+          "Skipping explicit RustPush disposal while Cloud Sync V2 write is active");
+    }
     super.onClose();
   }
 }

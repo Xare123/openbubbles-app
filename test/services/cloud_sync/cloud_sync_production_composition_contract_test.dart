@@ -7,6 +7,79 @@ void main() {
   test('ordinary builds keep the manual production sampler absent', () {
     expect(CloudSyncDevGate.manualShadowSamplerEnabled, isFalse);
     expect(CloudSyncDevGate.manualSemanticPullEnabled, isFalse);
+    expect(CloudSyncDevGate.manualOutboundCanaryEnabled, isFalse);
+    expect(CloudSyncDevGate.protocolEvidenceAvailable, isFalse);
+  });
+
+  test('evidence canary is a distinct read-only Android artifact', () {
+    final workflow = File('.github/workflows/build.yml').readAsStringSync();
+    final gradle = File('android/app/build.gradle').readAsStringSync();
+    final betaStart = workflow.indexOf(
+      'Build Beta Debug APK with the Cloud Sync V2 sampler',
+    );
+    final canaryStart = workflow.indexOf(
+      'Build developer-only CloudKit V2 Evidence Canary APK',
+    );
+    expect(betaStart, greaterThanOrEqualTo(0));
+    expect(canaryStart, greaterThan(betaStart));
+    final betaBuild = workflow.substring(betaStart, canaryStart);
+    expect(betaBuild, isNot(contains('OPENBUBBLES_CLOUDKIT_WRITER_OWNER')));
+    expect(
+      betaBuild,
+      isNot(contains('OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY')),
+    );
+    expect(betaBuild, isNot(contains('OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE')));
+    final canaryBuild = workflow.substring(canaryStart);
+    expect(canaryBuild, isNot(contains('OPENBUBBLES_CLOUDKIT_WRITER_OWNER')));
+    expect(
+      canaryBuild,
+      isNot(contains('OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY')),
+    );
+    expect(
+      canaryBuild,
+      contains('--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true'),
+    );
+    expect(
+      canaryBuild,
+      contains('--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true'),
+    );
+    expect(
+      canaryBuild,
+      contains('--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE=true'),
+    );
+    expect(canaryBuild, contains('app-canary-debug.apk'));
+    expect(
+      gradle,
+      contains('applicationId "com.bluebubbles.messaging.cloudkitcanary"'),
+    );
+    expect(gradle, contains('applicationId "com.bluebubbles.messaging.beta"'));
+    expect(gradle, contains('applicationId "com.bluebubbles.messaging.alpha"'));
+  });
+
+  test('outbound runtime requires V2 ownership and blocks the legacy path', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final availability = source.indexOf(
+      'bool get cloudSyncV2ManualOutboundAvailable',
+    );
+    final legacy = source.indexOf('_runLegacyCloudKitOperation<T>');
+    expect(availability, greaterThanOrEqualTo(0));
+    expect(legacy, greaterThan(availability));
+    final outbound = source.substring(availability, legacy);
+    expect(outbound, contains('CloudSyncDevGate.manualOutboundCanaryEnabled'));
+    expect(outbound, contains('CloudKitWriterOwnership.v2MutationsEnabled'));
+    expect(outbound, contains('prepareCloudSyncV2OutboundWriter'));
+    expect(outbound, contains('armCloudSyncV2OutboundConfirmed'));
+    expect(outbound, contains('armCloudSyncV2OutboundRecoveryConfirmed'));
+    expect(outbound, contains('runCloudSyncV2OutboundDoubleConfirmed'));
+    expect(outbound, contains('pendingCountForScope'));
+    expect(outbound, contains("lookupPortByName('bg_sync')"));
+
+    final legacyEnd = source.indexOf('_runCloudKitDestructiveReset<T>', legacy);
+    final legacyBlock = source.substring(legacy, legacyEnd);
+    expect(legacyBlock, contains('CloudKitWriterOwner.v2'));
+    expect(legacyBlock, contains('legacy_cloudkit_blocked_by_v2_writer'));
   });
 
   test('beta sampler CI explicitly enables both independent canary gates', () {
@@ -17,9 +90,7 @@ void main() {
     );
     expect(
       workflow,
-      contains(
-        '--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true',
-      ),
+      contains('--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true'),
     );
   });
 
@@ -87,10 +158,12 @@ void main() {
       source.substring(wrapperStart, sectionStart),
       contains('ss.settings.developerEnabled.value'),
     );
-
-    final shadowStart = section.indexOf(
-      'title: "Run Read-only Shadow Sample"',
+    expect(
+      source.substring(wrapperStart, sectionStart),
+      contains('CloudSyncDevGate.protocolEvidenceAvailable'),
     );
+
+    final shadowStart = section.indexOf('title: "Run Read-only Shadow Sample"');
     final semanticGate = section.indexOf(
       'if (CloudSyncDevGate.manualSemanticPullEnabled)',
       shadowStart,
@@ -103,10 +176,7 @@ void main() {
       'if (cloudSyncV2Running.value) return;',
       confirmed,
     );
-    final claim = shadow.indexOf(
-      'cloudSyncV2Running.value = true;',
-      confirmed,
-    );
+    final claim = shadow.indexOf('cloudSyncV2Running.value = true;', confirmed);
     final run = shadow.indexOf(
       'runCloudSyncV2ManualShadowConfirmed()',
       confirmed,
@@ -120,9 +190,7 @@ void main() {
     expect(shadow, contains('cloudSyncV2SafeFailureCode(error)'));
     expect(shadow, isNot(contains('catch (_)')));
 
-    final semanticStart = section.indexOf(
-      'title: "Run Semantic Pull Canary"',
-    );
+    final semanticStart = section.indexOf('title: "Run Semantic Pull Canary"');
     final semantic = section.substring(semanticStart);
     expect(semantic, contains('cloudSyncV2ManualSemanticPullAvailable'));
     expect(semantic, contains('runCloudSyncV2ManualSemanticPullConfirmed()'));
@@ -143,6 +211,54 @@ void main() {
     expect(semantic, contains('Incomplete records/zone'));
     expect(semantic, contains('cloudSyncV2SafeFailureCode(error)'));
     expect(semantic, isNot(contains('catch (_)')));
+    expect(
+      semantic,
+      isNot(contains('title: "Upload One Existing Text Canary"')),
+    );
+    expect(
+      semantic,
+      isNot(contains('title: "Recover One Interrupted Upload"')),
+    );
+    expect(section, contains('title: "Record CloudKit protocol evidence"'));
+    expect(section, contains('CloudSyncDevGate.protocolEvidenceAvailable'));
+    expect(section, contains('cloudSyncV2EvidenceEnabled'));
+    expect(section, contains('Never records message text'));
+  });
+
+  test('protocol evidence preference is default-off and developer-bound', () {
+    final settings = File(
+      'lib/database/global/settings.dart',
+    ).readAsStringSync();
+    final panel = File(
+      'lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart',
+    ).readAsStringSync();
+
+    expect(
+      settings,
+      contains('final RxBool cloudSyncV2EvidenceEnabled = false.obs;'),
+    );
+    expect(
+      settings,
+      contains(
+        "'cloudSyncV2EvidenceEnabled': cloudSyncV2EvidenceEnabled.value",
+      ),
+    );
+    expect(settings, contains("map['cloudSyncV2EvidenceEnabled'] ?? false"));
+    expect(
+      panel,
+      contains('ss.settings.cloudSyncV2EvidenceEnabled.value = false'),
+    );
+    expect(panel, contains("'cloudSyncV2EvidenceEnabled'"));
+  });
+
+  test('outbound UI remains absent until remote absence proof exists', () {
+    final source = File(
+      'lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart',
+    ).readAsStringSync();
+    expect(source, isNot(contains('_runCloudSyncV2OutboundCanary')));
+    expect(source, isNot(contains('_recoverCloudSyncV2OutboundCanary')));
+    expect(source, isNot(contains('Upload One Existing Text Canary')));
+    expect(source, isNot(contains('Recover One Interrupted Upload')));
   });
 
   test('semantic sampler pins local-only flags and manual trigger', () {
@@ -182,7 +298,10 @@ void main() {
     final reset = source.substring(resetStart, resetEnd);
     final quiesce = reset.indexOf('_cloudSyncV2SemanticPullQuiescing = true;');
     final semanticWait = reset.indexOf('final semanticPull =');
-    final awaitSemantic = reset.indexOf('await semanticPull.timeout(', semanticWait);
+    final awaitSemantic = reset.indexOf(
+      'await semanticPull.timeout(',
+      semanticWait,
+    );
     final boundedWait = reset.indexOf(
       '_cloudSyncV2SemanticPullQuiescenceTimeout',
       awaitSemantic,
@@ -192,6 +311,9 @@ void main() {
       boundedWait,
     );
     final detachState = reset.indexOf('state = null');
+    final outboundWait = reset.indexOf(
+      'await outbound.timeout(_cloudSyncV2OutboundQuiescenceTimeout)',
+    );
     final nativeReset = reset.indexOf('api.resetState(');
     final resume = reset.indexOf('resumeAfterAccountTransition()');
 
@@ -200,7 +322,8 @@ void main() {
     expect(awaitSemantic, greaterThan(semanticWait));
     expect(boundedWait, greaterThan(awaitSemantic));
     expect(safeAbort, greaterThan(boundedWait));
-    expect(detachState, greaterThan(safeAbort));
+    expect(outboundWait, greaterThan(safeAbort));
+    expect(detachState, greaterThan(outboundWait));
     expect(nativeReset, greaterThan(detachState));
     expect(resume, greaterThan(nativeReset));
     expect(reset, contains('finally'));

@@ -165,6 +165,18 @@ bool _isProtectedReference(String value) =>
     value.startsWith('obcs2.ref.') &&
     !value.contains(RegExp(r'[\x00-\x1f\x7f-\x9f]'));
 
+bool _isProtectedLeaseReference(String value) =>
+    RegExp(r'^obcs2\.lease\.[0-9a-f]{32}$').hasMatch(value);
+
+bool _isNativeProtectedReference(String value) =>
+    RegExp(r'^obcs2\.ref\.[A-Za-z0-9_-]{43}$').hasMatch(value);
+
+bool _isNativeDigest(String value) =>
+    RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(value);
+
+bool _isOperationId(String value) =>
+    RegExp(r'^op1:[a-f0-9]{64}$').hasMatch(value);
+
 enum CloudChangeType { save, delete }
 
 enum CloudInboxStatus { pending, applied, quarantined }
@@ -546,6 +558,7 @@ class CloudOutboxOperation {
     this.encryptedPayloadReference,
     this.payloadSha256,
     this.serverRecordIdHash,
+    this.protectedLeaseReference,
     this.appleRequestUuid,
     this.appleOperationUuid,
     this.status = CloudOutboxStatus.pending,
@@ -582,6 +595,10 @@ class CloudOutboxOperation {
     }
     if (serverRecordIdHash != null && serverRecordIdHash!.isEmpty) {
       throw ArgumentError('cloud_outbox_server_record_hash_invalid');
+    }
+    if (protectedLeaseReference != null &&
+        !_isProtectedLeaseReference(protectedLeaseReference!)) {
+      throw ArgumentError('cloud_outbox_protected_lease_reference_invalid');
     }
     if ((appleRequestUuid == null) != (appleOperationUuid == null)) {
       throw ArgumentError('cloud_outbox_submission_identity_incomplete');
@@ -620,6 +637,12 @@ class CloudOutboxOperation {
   final String? encryptedPayloadReference;
   final String? payloadSha256;
   final String? serverRecordIdHash;
+
+  /// Native protected lease adopted by this outbox row.
+  ///
+  /// This is deliberately separate from the page-lease adoption marker. It
+  /// remains live while the outbound operation is non-terminal.
+  final String? protectedLeaseReference;
   final String? appleRequestUuid;
   final String? appleOperationUuid;
   final Set<String> dependencyOperationIds;
@@ -648,6 +671,8 @@ class CloudOutboxOperation {
     String? encryptedPayloadReference,
     String? payloadSha256,
     String? serverRecordIdHash,
+    String? protectedLeaseReference,
+    bool clearProtectedLeaseReference = false,
     String? appleRequestUuid,
     String? appleOperationUuid,
     bool clearSubmissionIdentity = false,
@@ -664,6 +689,9 @@ class CloudOutboxOperation {
           encryptedPayloadReference ?? this.encryptedPayloadReference,
       payloadSha256: payloadSha256 ?? this.payloadSha256,
       serverRecordIdHash: serverRecordIdHash ?? this.serverRecordIdHash,
+      protectedLeaseReference: clearProtectedLeaseReference
+          ? null
+          : protectedLeaseReference ?? this.protectedLeaseReference,
       appleRequestUuid: clearSubmissionIdentity
           ? null
           : appleRequestUuid ?? this.appleRequestUuid,
@@ -699,6 +727,7 @@ class CloudOutboxDraft {
     this.encryptedPayloadReference,
     this.payloadSha256,
     this.serverRecordIdHash,
+    this.protectedLeaseReference,
   }) : dependencyOperationIds = Set.unmodifiable(
          dependencyOperationIds.toSet(),
        ) {
@@ -718,6 +747,12 @@ class CloudOutboxDraft {
     if (serverRecordIdHash != null && serverRecordIdHash!.isEmpty) {
       throw ArgumentError('cloud_outbox_draft_server_record_hash_invalid');
     }
+    if (protectedLeaseReference != null &&
+        !_isProtectedLeaseReference(protectedLeaseReference!)) {
+      throw ArgumentError(
+        'cloud_outbox_draft_protected_lease_reference_invalid',
+      );
+    }
     if (action != CloudOutboxAction.delete &&
         (encryptedPayloadReference == null || payloadSha256 == null)) {
       throw ArgumentError('cloud_outbox_draft_save_payload_missing');
@@ -733,6 +768,7 @@ class CloudOutboxDraft {
   final String? encryptedPayloadReference;
   final String? payloadSha256;
   final String? serverRecordIdHash;
+  final String? protectedLeaseReference;
 }
 
 enum CloudPushDisposition {
@@ -834,16 +870,17 @@ final class CloudUnknownOutcomeProof {
     required this.protectedProofReference,
     this.observedEtagHash,
   }) {
-    if (operationId.isEmpty ||
+    if (!_isOperationId(operationId) ||
         !_isCanonicalAppleUuid(appleRequestUuid) ||
         !_isCanonicalAppleUuid(appleOperationUuid) ||
         appleRequestUuid == appleOperationUuid ||
         scopeStorageKey.isEmpty ||
         checkpointGeneration <= 0 ||
-        logicalEntityKeyHash.isEmpty ||
-        serverRecordIdHash.isEmpty ||
-        protectedProofReference.isEmpty ||
+        !_isNativeDigest(logicalEntityKeyHash) ||
+        !_isNativeDigest(serverRecordIdHash) ||
+        !_isNativeProtectedReference(protectedProofReference) ||
         (action == CloudOutboxAction.save && expectedPayloadSha256 == null) ||
+        (expectedPayloadSha256 != null && !_isDigest(expectedPayloadSha256!)) ||
         (action == CloudOutboxAction.delete && expectedPayloadSha256 != null)) {
       throw ArgumentError('cloud_unknown_outcome_proof_invalid');
     }
@@ -862,6 +899,7 @@ final class CloudUnknownOutcomeProof {
   final String? observedEtagHash;
 
   bool binds(CloudOutboxOperation operation) =>
+      action == CloudOutboxAction.save &&
       operationId == operation.operationId &&
       appleRequestUuid == operation.appleRequestUuid &&
       appleOperationUuid == operation.appleOperationUuid &&
@@ -870,7 +908,8 @@ final class CloudUnknownOutcomeProof {
       logicalEntityKeyHash == operation.logicalEntityKeyHash &&
       serverRecordIdHash == operation.serverRecordIdHash &&
       action == operation.action &&
-      expectedPayloadSha256 == operation.payloadSha256;
+      expectedPayloadSha256 == operation.payloadSha256 &&
+      protectedProofReference == operation.encryptedPayloadReference;
 
   @override
   String toString() => 'CloudUnknownOutcomeProof(redacted)';

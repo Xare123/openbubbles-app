@@ -122,6 +122,7 @@ impl CloudSyncProtectionContext {
                 self.purpose.as_str(),
                 "checkpointToken"
                     | "serverRecordId"
+                    | "outboundMessage"
                     | "systemFields"
                     | "payloadReference"
                     | "rawRecord"

@@ -47,7 +47,10 @@ CloudOutboxOperation testOutboxOperation(
   Iterable<String> dependencies = const [],
   DateTime? createdAt,
 }) {
-  final logicalKeyHash = 'logical-key-digest-$index';
+  final logicalKeyHash = List.filled(
+    43,
+    String.fromCharCode(65 + (index % 26)),
+  ).join();
   final payloadSha256 = action == CloudOutboxAction.save
       ? '${index.toRadixString(16).padLeft(32, '0')}'
             '${revision.toRadixString(16).padLeft(32, '0')}'
@@ -74,6 +77,9 @@ CloudOutboxOperation testOutboxOperation(
         ? 'obcs2.ref.${List.filled(43, protectedReferenceMarker).join()}'
         : null,
     payloadSha256: payloadSha256,
+    protectedLeaseReference: action == CloudOutboxAction.save
+        ? 'obcs2.lease.${index.toRadixString(16).padLeft(32, '0')}'
+        : null,
     dependencyOperationIds: dependencies,
     createdAt: createdAt ?? testEpoch.add(Duration(microseconds: revision)),
   );
@@ -98,6 +104,9 @@ String testSha256(String hexadecimalCharacter) =>
 
 String testProtectedReference(String urlSafeCharacter) =>
     'obcs2.ref.${List.filled(43, urlSafeCharacter).join()}';
+
+String testProtectedLeaseReference(String hexadecimalCharacter) =>
+    'obcs2.lease.${List.filled(32, hexadecimalCharacter).join()}';
 
 class MutableTestClock {
   MutableTestClock(this.value);

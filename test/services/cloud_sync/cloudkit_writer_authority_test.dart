@@ -102,7 +102,7 @@ void main() {
           _scopeA,
           owner: CloudKitWriterOwner.legacy,
           expectedEpoch: initial.epoch,
-          evidence: const CloudKitWriterTransitionEvidence(
+          evidence: const CloudKitWriterTransitionEvidence.forTest(
             operationsQuiesced: false,
             activeIdentityRevalidated: true,
             legacyMutationQueues: LegacyMutationQueueDisposition.quarantined,
@@ -116,7 +116,7 @@ void main() {
           _scopeA,
           owner: CloudKitWriterOwner.legacy,
           expectedEpoch: initial.epoch,
-          evidence: const CloudKitWriterTransitionEvidence(
+          evidence: const CloudKitWriterTransitionEvidence.forTest(
             operationsQuiesced: true,
             activeIdentityRevalidated: true,
             legacyMutationQueues: LegacyMutationQueueDisposition.quarantined,
@@ -620,7 +620,7 @@ Matcher _failure(String safeCode) => isA<CloudKitWriterAuthorityFailure>()
 
 DateTime _time(int seconds) => DateTime.utc(2026, 8, 22, 12, 0, seconds);
 
-const _completeEvidence = CloudKitWriterTransitionEvidence(
+const _completeEvidence = CloudKitWriterTransitionEvidence.forTest(
   operationsQuiesced: true,
   activeIdentityRevalidated: true,
   legacyMutationQueues: LegacyMutationQueueDisposition.empty,

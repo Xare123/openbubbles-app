@@ -121,6 +121,7 @@ void main() {
     CloudOutboxAction action = CloudOutboxAction.save,
     DateTime? createdAt,
     Set<String> dependencies = const {},
+    String? protectedLeaseReference,
   }) {
     final payloadSha256 = action == CloudOutboxAction.save
         ? 'payload-digest-$index'
@@ -136,8 +137,222 @@ void main() {
           ? 'protected:payload-$index'
           : null,
       payloadSha256: payloadSha256,
+      protectedLeaseReference: protectedLeaseReference,
     );
   }
+
+  test(
+    'propagates the protected outbound lease reference through models',
+    () async {
+      final scope = testScope();
+      final reference = testProtectedLeaseReference('a');
+      final value = draft(scope, 901, protectedLeaseReference: reference);
+
+      expect(value.protectedLeaseReference, reference);
+
+      final admitted = await store.enqueueOutboxMutation(value);
+      expect(admitted.protectedLeaseReference, reference);
+      expect(
+        await store.readNonterminalProtectedOutboundLeaseReferences(
+          maximumCount: 4096,
+        ),
+        {reference},
+      );
+      await reopen();
+      expect(
+        await store.readNonterminalProtectedOutboundLeaseReferences(
+          maximumCount: 4096,
+        ),
+        {reference},
+      );
+
+      final operation = testOutboxOperation(
+        scope,
+        901,
+      ).copyWith(protectedLeaseReference: reference);
+      expect(operation.protectedLeaseReference, reference);
+      expect(
+        operation
+            .copyWith(clearProtectedLeaseReference: true)
+            .protectedLeaseReference,
+        isNull,
+      );
+    },
+  );
+
+  test('keeps the outbound lease field distinct on the ObjectBox entity', () {
+    final reference = testProtectedLeaseReference('b');
+    final entity = CloudOutboxOperationEntity(
+      operationId: 'entity-protected-lease-test',
+      scopeKey: 'scope-protected-lease-test',
+      accountFingerprint: 'account-protected-lease-test',
+      zone: 'zone-protected-lease-test',
+      logicalEntityKeyHash: 'logical-protected-lease-test',
+      action: 0,
+      mutationRevision: 1,
+      protectedLeaseReference: reference,
+      createdAtMs: testEpoch.millisecondsSinceEpoch,
+      updatedAtMs: testEpoch.millisecondsSinceEpoch,
+    );
+
+    expect(entity.protectedLeaseReference, reference);
+  });
+
+  test(
+    'protected create atomically persists outbox mapping and stable retry identity',
+    () async {
+      final scope = testScope();
+      final first = CloudOutboxDraft(
+        scope: scope,
+        logicalEntityKeyHash: List.filled(43, 'L').join(),
+        action: CloudOutboxAction.save,
+        payloadVersion: 1,
+        dependencyOperationIds: const {},
+        createdAt: testEpoch,
+        encryptedPayloadReference: testProtectedReference('P'),
+        payloadSha256: testSha256('a'),
+        serverRecordIdHash: List.filled(43, 'S').join(),
+        protectedLeaseReference: testProtectedLeaseReference('a'),
+      );
+      final firstMapping = CloudRecordMapEntry(
+        scope: scope,
+        logicalEntityKeyHash: first.logicalEntityKeyHash,
+        serverRecordIdHash: first.serverRecordIdHash!,
+        encryptedServerRecordId: first.encryptedPayloadReference!,
+        updatedAt: testEpoch,
+      );
+
+      final admitted = await store.admitProtectedOutboundCreate(
+        draft: first,
+        recordMapping: firstMapping,
+      );
+      await reopen();
+      final mapping = await store.readRecordMap(
+        scope,
+        logicalEntityKeyHash: first.logicalEntityKeyHash,
+        generation: 1,
+      );
+      expect(mapping?.encryptedServerRecordId, first.encryptedPayloadReference);
+      expect(
+        await store.readNonterminalProtectedOutboundLeaseReferences(
+          maximumCount: 4096,
+        ),
+        {first.protectedLeaseReference},
+      );
+
+      final restaged = CloudOutboxDraft(
+        scope: scope,
+        logicalEntityKeyHash: first.logicalEntityKeyHash,
+        action: CloudOutboxAction.save,
+        payloadVersion: 1,
+        dependencyOperationIds: const {},
+        createdAt: testEpoch.add(const Duration(seconds: 1)),
+        encryptedPayloadReference: testProtectedReference('Q'),
+        payloadSha256: first.payloadSha256,
+        serverRecordIdHash: List.filled(43, 'T').join(),
+        protectedLeaseReference: testProtectedLeaseReference('b'),
+      );
+      final retried = await store.admitProtectedOutboundCreate(
+        draft: restaged,
+        recordMapping: CloudRecordMapEntry(
+          scope: scope,
+          logicalEntityKeyHash: restaged.logicalEntityKeyHash,
+          serverRecordIdHash: restaged.serverRecordIdHash!,
+          encryptedServerRecordId: restaged.encryptedPayloadReference!,
+          updatedAt: restaged.createdAt,
+        ),
+      );
+      expect(retried.operationId, admitted.operationId);
+      expect(retried.mutationRevision, admitted.mutationRevision);
+      expect(retried.protectedLeaseReference, first.protectedLeaseReference);
+    },
+  );
+
+  test(
+    'protected create rejects reverse server mapping collisions atomically',
+    () async {
+      final scope = testScope();
+      Future<CloudOutboxOperation> admit(String logical, String referenceChar) {
+        final draft = CloudOutboxDraft(
+          scope: scope,
+          logicalEntityKeyHash: List.filled(43, logical).join(),
+          action: CloudOutboxAction.save,
+          payloadVersion: 1,
+          dependencyOperationIds: const {},
+          createdAt: testEpoch,
+          encryptedPayloadReference: testProtectedReference(referenceChar),
+          payloadSha256: testSha256(referenceChar.toLowerCase()),
+          serverRecordIdHash: List.filled(43, 'S').join(),
+          protectedLeaseReference: testProtectedLeaseReference(
+            referenceChar.toLowerCase(),
+          ),
+        );
+        return store.admitProtectedOutboundCreate(
+          draft: draft,
+          recordMapping: CloudRecordMapEntry(
+            scope: scope,
+            logicalEntityKeyHash: draft.logicalEntityKeyHash,
+            serverRecordIdHash: draft.serverRecordIdHash!,
+            encryptedServerRecordId: draft.encryptedPayloadReference!,
+            updatedAt: draft.createdAt,
+          ),
+        );
+      }
+
+      await admit('L', 'a');
+      await expectLater(
+        admit('M', 'b'),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'server_mapping_reverse_collision',
+          ),
+        ),
+      );
+      expect((await store.readCheckpoint(scope)).mutationRevisionCounter, 1);
+    },
+  );
+
+  test(
+    'protected create rejects malformed capabilities before mutation',
+    () async {
+      final scope = testScope();
+      final invalid = CloudOutboxDraft(
+        scope: scope,
+        logicalEntityKeyHash: List.filled(43, 'L').join(),
+        action: CloudOutboxAction.save,
+        payloadVersion: 1,
+        dependencyOperationIds: const {},
+        createdAt: testEpoch,
+        encryptedPayloadReference: 'obcs2.ref.not-a-capability',
+        payloadSha256: testSha256('a'),
+        serverRecordIdHash: List.filled(43, 'S').join(),
+        protectedLeaseReference: testProtectedLeaseReference('a'),
+      );
+
+      await expectLater(
+        store.admitProtectedOutboundCreate(
+          draft: invalid,
+          recordMapping: CloudRecordMapEntry(
+            scope: scope,
+            logicalEntityKeyHash: invalid.logicalEntityKeyHash,
+            serverRecordIdHash: invalid.serverRecordIdHash!,
+            encryptedServerRecordId: invalid.encryptedPayloadReference!,
+            updatedAt: testEpoch,
+          ),
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'protected_outbound_admission_invalid',
+          ),
+        ),
+      );
+      expect((await store.readCheckpoint(scope)).mutationRevisionCounter, 0);
+    },
+  );
 
   test(
     'atomically journals an ordered page and protects its token at rest',

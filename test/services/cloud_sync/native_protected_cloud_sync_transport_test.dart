@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_write_transport.dart';
+import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -82,36 +84,39 @@ void main() {
     },
   );
 
-  test('accepts the expanded protected-zone allowlist without remapping', () async {
-    bindings.fetchResult = _validEmptyFetchResult();
-    final cases = <(String zone, String stream)>[
-      ('chatManateeZone', 'chats'),
-      ('messageManateeZone', 'messages'),
-      ('attachmentManateeZone', 'attachments'),
-      ('messageUpdateZone', 'messageUpdateZone'),
-      ('recoverableMessageDeleteZone', 'recoverableMessageDeleteZone'),
-      ('scheduledMessageZone', 'scheduledMessageZone'),
-      ('chat1ManateeZone', 'chat1ManateeZone'),
-    ];
+  test(
+    'accepts the expanded protected-zone allowlist without remapping',
+    () async {
+      bindings.fetchResult = _validEmptyFetchResult();
+      final cases = <(String zone, String stream)>[
+        ('chatManateeZone', 'chats'),
+        ('messageManateeZone', 'messages'),
+        ('attachmentManateeZone', 'attachments'),
+        ('messageUpdateZone', 'messageUpdateZone'),
+        ('recoverableMessageDeleteZone', 'recoverableMessageDeleteZone'),
+        ('scheduledMessageZone', 'scheduledMessageZone'),
+        ('chat1ManateeZone', 'chat1ManateeZone'),
+      ];
 
-    for (final (zone, stream) in cases) {
-      final batch = await transport.fetchChanges(
-        CloudSyncScope(
-          accountFingerprint: _hash('A'),
-          container: 'com.apple.messages.cloud',
-          database: 'private',
-          zone: zone,
-          streamKind: CloudSyncStreamKind.messages,
-          schemaVersion: 2,
-        ),
-        previousToken: null,
-        generation: 1,
-        limit: 1,
-      );
-      expect(batch.changes, isEmpty);
-      expect(bindings.stream, stream);
-    }
-  });
+      for (final (zone, stream) in cases) {
+        final batch = await transport.fetchChanges(
+          CloudSyncScope(
+            accountFingerprint: _hash('A'),
+            container: 'com.apple.messages.cloud',
+            database: 'private',
+            zone: zone,
+            streamKind: CloudSyncStreamKind.messages,
+            schemaVersion: 2,
+          ),
+          previousToken: null,
+          generation: 1,
+          limit: 1,
+        );
+        expect(batch.changes, isEmpty);
+        expect(bindings.stream, stream);
+      }
+    },
+  );
 
   test(
     'quarantined tombstone preserves delete shape without raw material',
@@ -592,7 +597,381 @@ void main() {
     },
   );
 
-  test('write-side CloudKit methods remain unavailable', () {
+  test('protected writer forwards one exact prepared create binding', () async {
+    final operation = _writeOperation(scope);
+    final protectedOperation = _protectedWriteOperation(operation);
+    final identity = _submissionIdentity(operation.operationId);
+    bindings.prepareResult = frb_api.CloudSyncPreparedMessageCreateResult(
+      handle: _FakePreparedHandle(),
+    );
+
+    final prepared = await transport.prepareSubmission(
+      scope,
+      submissionIdentity: identity,
+      operations: [protectedOperation],
+    );
+
+    expect(prepared.operationIds, [operation.operationId]);
+    expect(bindings.preparedRequestUuid, identity.requestUuid);
+    final input = bindings.preparedInputs.single;
+    expect(input.localOperationId, operation.operationId);
+    expect(input.logicalEntityKeyHash, operation.logicalEntityKeyHash);
+    expect(input.protectedLeaseReference, operation.protectedLeaseReference);
+    expect(
+      input.protectedPayloadReference,
+      operation.encryptedPayloadReference,
+    );
+    expect(
+      input.protectedServerRecordReference,
+      operation.encryptedPayloadReference,
+    );
+    expect(input.payloadSha256, operation.payloadSha256);
+    expect(input.serverRecordIdHash, operation.serverRecordIdHash);
+    expect(
+      input.appleOperationUuid,
+      identity.operationUuids[operation.operationId],
+    );
+  });
+
+  test(
+    'protected writer rejects a well-formed but wrong operation identity',
+    () async {
+      final operation = _writeOperation(scope);
+      final wrongOperationId = 'op1:${_sha('f')}';
+      final protectedOperation = CloudSyncProtectedWriteOperation(
+        operationId: wrongOperationId,
+        logicalEntityKeyHash: operation.logicalEntityKeyHash,
+        action: operation.action,
+        protectedLeaseReference: operation.protectedLeaseReference,
+        protectedServerRecordIdReference: operation.encryptedPayloadReference!,
+        serverRecordIdHash: operation.serverRecordIdHash!,
+        protectedPayloadReference: operation.encryptedPayloadReference,
+        payloadSha256: operation.payloadSha256,
+      );
+
+      await expectLater(
+        transport.prepareSubmission(
+          scope,
+          submissionIdentity: _submissionIdentity(wrongOperationId),
+          operations: [protectedOperation],
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'cloud_sync_outbound_create_only',
+          ),
+        ),
+      );
+      expect(bindings.preparedInputs, isEmpty);
+    },
+  );
+
+  test('protected writer rejects every non-message outbound zone', () async {
+    final wrongScope = CloudSyncScope(
+      accountFingerprint: scope.accountFingerprint,
+      container: scope.container,
+      database: scope.database,
+      zone: 'chatManateeZone',
+      streamKind: scope.streamKind,
+      schemaVersion: scope.schemaVersion,
+    );
+    final operation = _writeOperation(wrongScope);
+
+    await expectLater(
+      transport.prepareSubmission(
+        wrongScope,
+        submissionIdentity: _submissionIdentity(operation.operationId),
+        operations: [_protectedWriteOperation(operation)],
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode,
+          'safeCode',
+          'unsupported_protected_outbound_scope',
+        ),
+      ),
+    );
+    expect(bindings.preparedInputs, isEmpty);
+  });
+
+  test(
+    'protected writer is single-use and bounds native retry-after',
+    () async {
+      final operation = _writeOperation(scope);
+      final protectedOperation = _protectedWriteOperation(operation);
+      final identity = _submissionIdentity(operation.operationId);
+      bindings.prepareResult = frb_api.CloudSyncPreparedMessageCreateResult(
+        handle: _FakePreparedHandle(),
+      );
+      bindings.consumeResult = frb_api.CloudSyncOutboundConsumeResult(
+        outcomes: [
+          frb_api.CloudSyncOutboundSaveOutcome(
+            localOperationId: operation.operationId,
+            appleOperationUuid: identity.operationUuids[operation.operationId]!,
+            disposition:
+                frb_api.CloudSyncOutboundSaveDisposition.unknownOutcome,
+            retryAfterSeconds: BigInt.parse('18446744073709551615'),
+          ),
+        ],
+      );
+      final prepared = await transport.prepareSubmission(
+        scope,
+        submissionIdentity: identity,
+        operations: [protectedOperation],
+      );
+
+      final result = await transport.consumePreparedSubmission(
+        scope,
+        preparedSubmission: prepared,
+        persistedIdentity: identity,
+        protectedOperations: [protectedOperation],
+        operations: [operation],
+      );
+
+      expect(
+        result.outcomes.values.single.disposition,
+        CloudPushDisposition.unknownOutcome,
+      );
+      expect(result.outcomes.values.single.retryAfter, const Duration(days: 7));
+      expect(bindings.consumeCalls, 1);
+      await expectLater(
+        transport.consumePreparedSubmission(
+          scope,
+          preparedSubmission: prepared,
+          persistedIdentity: identity,
+          protectedOperations: [protectedOperation],
+          operations: [operation],
+        ),
+        throwsStateError,
+      );
+      expect(bindings.consumeCalls, 1);
+    },
+  );
+
+  test('reconciles committed only with the exact protected proof', () async {
+    final operation = _unknownOutcomeOperation(scope);
+    bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+      disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+      protectedProofReference: operation.encryptedPayloadReference,
+    );
+
+    final resolution = await transport.reconcileUnknownOutcome(
+      scope,
+      operation: operation,
+    );
+
+    expect(resolution.disposition, CloudUnknownOutcomeDisposition.committed);
+    expect(resolution.failureCategory, isNull);
+    expect(resolution.retryAfter, isNull);
+    expect(resolution.proof, isNotNull);
+    expect(resolution.proof!.binds(operation), isTrue);
+    expect(
+      resolution.proof!.protectedProofReference,
+      operation.encryptedPayloadReference,
+    );
+    _expectReconcileCall(bindings, operation, scope);
+  });
+
+  test(
+    'reconciles explicit notApplied only with the exact protected proof',
+    () async {
+      final operation = _unknownOutcomeOperation(scope);
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.notApplied,
+        protectedProofReference: operation.encryptedPayloadReference,
+      );
+
+      final resolution = await transport.reconcileUnknownOutcome(
+        scope,
+        operation: operation,
+      );
+
+      expect(resolution.disposition, CloudUnknownOutcomeDisposition.notApplied);
+      expect(resolution.failureCategory, isNull);
+      expect(resolution.retryAfter, isNull);
+      expect(resolution.proof, isNotNull);
+      expect(resolution.proof!.binds(operation), isTrue);
+      expect(
+        resolution.proof!.protectedProofReference,
+        operation.encryptedPayloadReference,
+      );
+      _expectReconcileCall(bindings, operation, scope);
+    },
+  );
+
+  test('maps diverged reconciliation to a quarantined conflict', () async {
+    final operation = _unknownOutcomeOperation(scope);
+    bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+      disposition: frb_api.CloudSyncOutboundReconcileDisposition.diverged,
+      protectedProofReference: operation.encryptedPayloadReference,
+      failureClass: frb_api.CloudSyncOutboundFailureClass.conflict,
+    );
+
+    final resolution = await transport.reconcileUnknownOutcome(
+      scope,
+      operation: operation,
+    );
+
+    expect(resolution.disposition, CloudUnknownOutcomeDisposition.quarantined);
+    expect(resolution.failureCategory, CloudFailureCategory.conflict);
+    expect(resolution.proof, isNull);
+    expect(resolution.retryAfter, isNull);
+    _expectReconcileCall(bindings, operation, scope);
+  });
+
+  test(
+    'maps unresolved retry class and caps retry-after at seven days',
+    () async {
+      final operation = _unknownOutcomeOperation(scope);
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.unresolved,
+        failureClass: frb_api.CloudSyncOutboundFailureClass.transientServer,
+        retryAfterSeconds: BigInt.parse('18446744073709551615'),
+      );
+
+      final resolution = await transport.reconcileUnknownOutcome(
+        scope,
+        operation: operation,
+      );
+
+      expect(resolution.disposition, CloudUnknownOutcomeDisposition.unresolved);
+      expect(resolution.failureCategory, CloudFailureCategory.server);
+      expect(resolution.retryAfter, const Duration(days: 7));
+      expect(resolution.proof, isNull);
+      _expectReconcileCall(bindings, operation, scope);
+    },
+  );
+
+  test('malformed or swapped proof references fail closed', () async {
+    final operation = _unknownOutcomeOperation(scope);
+    for (final proofReference in <String>[
+      'raw/proof-reference',
+      _reference('Q'),
+    ]) {
+      bindings.reconcileResult = frb_api.CloudSyncOutboundReconcileResult(
+        disposition: frb_api.CloudSyncOutboundReconcileDisposition.committed,
+        protectedProofReference: proofReference,
+      );
+
+      await expectLater(
+        transport.reconcileUnknownOutcome(scope, operation: operation),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'cloud_sync_outbound_reconcile_envelope_invalid',
+          ),
+        ),
+      );
+    }
+    expect(bindings.reconcileCalls, 2);
+  });
+
+  test(
+    'malformed, cross-scope, non-unknown, and delete operations never reach native',
+    () async {
+      final otherScope = CloudSyncScope(
+        accountFingerprint: _hash('Z'),
+        container: scope.container,
+        database: scope.database,
+        zone: scope.zone,
+        streamKind: scope.streamKind,
+        schemaVersion: scope.schemaVersion,
+      );
+      final invalidOperations = <CloudOutboxOperation>[
+        _unknownOutcomeOperation(
+          scope,
+          payloadReference: 'raw/payload-reference',
+        ),
+        _unknownOutcomeOperation(otherScope),
+        _unknownOutcomeOperation(scope, status: CloudOutboxStatus.pending),
+        _unknownOutcomeOperation(scope, action: CloudOutboxAction.delete),
+        _unknownOutcomeOperation(scope, operationId: 'op1:${_sha('f')}'),
+      ];
+
+      for (final operation in invalidOperations) {
+        await expectLater(
+          transport.reconcileUnknownOutcome(scope, operation: operation),
+          throwsA(
+            isA<CloudSyncFailure>().having(
+              (failure) => failure.safeCode,
+              'safeCode',
+              'cloud_sync_outbound_reconcile_operation_invalid',
+            ),
+          ),
+        );
+      }
+      expect(bindings.reconcileCalls, 0);
+    },
+  );
+
+  test(
+    'terminal receipt acknowledgement validates scope and correlation',
+    () async {
+      final operation = _writeOperation(scope);
+      await transport.acknowledgeDurableTerminalOperations(
+        scope,
+        operations: [operation],
+        transitions: [CloudOutboxTransition.confirmed(operation.operationId)],
+      );
+      expect(bindings.acknowledgedLeases, [operation.protectedLeaseReference]);
+
+      final otherScope = CloudSyncScope(
+        accountFingerprint: _hash('Z'),
+        container: scope.container,
+        database: scope.database,
+        zone: scope.zone,
+        streamKind: scope.streamKind,
+        schemaVersion: scope.schemaVersion,
+      );
+      await expectLater(
+        transport.acknowledgeDurableTerminalOperations(
+          otherScope,
+          operations: [operation],
+          transitions: [CloudOutboxTransition.confirmed(operation.operationId)],
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'cloud_sync_outbound_receipt_scope_invalid',
+          ),
+        ),
+      );
+      expect(bindings.acknowledgedLeases, [operation.protectedLeaseReference]);
+    },
+  );
+
+  test(
+    'outbound stage rejects independently swapped protected references',
+    () async {
+      bindings.stageResult = frb_api.CloudSyncProtectedOutboundStageResult(
+        stage: frb_api.CloudSyncProtectedOutboundStage(
+          logicalEntityKeyHash: _hash('L'),
+          protectedPayloadReference: _reference('P'),
+          payloadSha256: _sha('a'),
+          payloadLength: BigInt.one,
+          protectedServerRecordReference: _reference('Q'),
+          serverRecordIdHash: _hash('S'),
+          leaseReference: _lease('a'),
+        ),
+      );
+
+      await expectLater(
+        transport.stageOutboundMessage(scope, message: _FakeCloudMessage()),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'cloud_sync_outbound_stage_invalid',
+          ),
+        ),
+      );
+    },
+  );
+
+  test('legacy write-side CloudKit method remains unavailable', () {
     expect(
       () => transport.pushOperations(scope, operations: const []),
       throwsA(
@@ -604,6 +983,115 @@ void main() {
       ),
     );
   });
+}
+
+CloudOutboxOperation _writeOperation(CloudSyncScope scope) {
+  final logicalEntityKeyHash = _hash('L');
+  return CloudOutboxOperation(
+    scope: scope,
+    operationId: CloudOperationIdentity.forInitialCreate(
+      scope: scope,
+      logicalEntityKeyHash: logicalEntityKeyHash,
+      payloadVersion: 1,
+    ),
+    logicalEntityKeyHash: logicalEntityKeyHash,
+    action: CloudOutboxAction.save,
+    payloadVersion: 1,
+    mutationRevision: 1,
+    checkpointGeneration: 1,
+    encryptedPayloadReference: _reference('P'),
+    payloadSha256: _sha('b'),
+    serverRecordIdHash: _hash('S'),
+    protectedLeaseReference: _lease('a'),
+    dependencyOperationIds: const {},
+    createdAt: DateTime.fromMillisecondsSinceEpoch(1, isUtc: true),
+  );
+}
+
+CloudOutboxOperation _unknownOutcomeOperation(
+  CloudSyncScope scope, {
+  CloudOutboxStatus status = CloudOutboxStatus.unknownOutcome,
+  CloudOutboxAction action = CloudOutboxAction.save,
+  String? payloadReference,
+  String? operationId,
+}) {
+  final protectedPayloadReference = payloadReference ?? _reference('P');
+  final logicalEntityKeyHash = _hash('L');
+  return CloudOutboxOperation(
+    scope: scope,
+    operationId:
+        operationId ??
+        CloudOperationIdentity.forInitialCreate(
+          scope: scope,
+          logicalEntityKeyHash: logicalEntityKeyHash,
+          payloadVersion: 1,
+        ),
+    logicalEntityKeyHash: logicalEntityKeyHash,
+    action: action,
+    payloadVersion: 1,
+    mutationRevision: 1,
+    checkpointGeneration: 1,
+    encryptedPayloadReference: protectedPayloadReference,
+    payloadSha256: _sha('b'),
+    serverRecordIdHash: _hash('S'),
+    protectedLeaseReference: _lease('a'),
+    appleRequestUuid: '11111111-2222-4ABC-8DEF-555555555555',
+    appleOperationUuid: 'AAAAAAAA-BBBB-4CCC-8DDD-000000000001',
+    dependencyOperationIds: const {},
+    createdAt: DateTime.fromMillisecondsSinceEpoch(1, isUtc: true),
+    status: status,
+    attemptCount: 1,
+  );
+}
+
+void _expectReconcileCall(
+  _FakeBindings bindings,
+  CloudOutboxOperation operation,
+  CloudSyncScope scope,
+) {
+  expect(bindings.reconcileCalls, 1);
+  expect(bindings.reconcileCloudMessagesClient, isNotNull);
+  expect(bindings.reconcileStorageDirectory, 'private-storage');
+  expect(
+    bindings.reconcileExpectedAccountFingerprint,
+    scope.accountFingerprint,
+  );
+  expect(bindings.reconcileExpectedProtectedStoreIdentity, _storeIdentity);
+  expect(bindings.reconcileRequestUuid, operation.appleRequestUuid);
+  final input = bindings.reconcileInput!;
+  expect(input.localOperationId, operation.operationId);
+  expect(input.logicalEntityKeyHash, operation.logicalEntityKeyHash);
+  expect(input.protectedLeaseReference, operation.protectedLeaseReference);
+  expect(input.protectedPayloadReference, operation.encryptedPayloadReference);
+  expect(input.payloadSha256, operation.payloadSha256);
+  expect(
+    input.protectedServerRecordReference,
+    operation.encryptedPayloadReference,
+  );
+  expect(input.serverRecordIdHash, operation.serverRecordIdHash);
+  expect(input.appleOperationUuid, operation.appleOperationUuid);
+}
+
+CloudSyncProtectedWriteOperation _protectedWriteOperation(
+  CloudOutboxOperation operation,
+) {
+  return CloudSyncProtectedWriteOperation(
+    operationId: operation.operationId,
+    logicalEntityKeyHash: operation.logicalEntityKeyHash,
+    action: operation.action,
+    protectedLeaseReference: operation.protectedLeaseReference,
+    protectedServerRecordIdReference: operation.encryptedPayloadReference!,
+    serverRecordIdHash: operation.serverRecordIdHash!,
+    protectedPayloadReference: operation.encryptedPayloadReference,
+    payloadSha256: operation.payloadSha256,
+  );
+}
+
+CloudOutboxSubmissionIdentity _submissionIdentity(String operationId) {
+  return CloudOutboxSubmissionIdentity(
+    requestUuid: '11111111-2222-4ABC-8DEF-555555555555',
+    operationUuids: {operationId: 'AAAAAAAA-BBBB-4CCC-8DDD-000000000001'},
+  );
 }
 
 String _repeat(String character, int count) =>
@@ -634,7 +1122,10 @@ Future<void> _waitFor(bool Function() predicate) async {
   fail('condition_not_reached');
 }
 
-final class _FakeBindings implements NativeProtectedCloudSyncBindings {
+final class _FakeBindings
+    implements
+        NativeProtectedCloudSyncBindings,
+        NativeProtectedCloudSyncWriteBindings {
   NativeProtectedFetchResult fetchResult = const NativeProtectedFetchResult();
   NativeProtectedRecoveryResult recoveryResult =
       const NativeProtectedRecoveryResult();
@@ -649,6 +1140,23 @@ final class _FakeBindings implements NativeProtectedCloudSyncBindings {
           hasMore: false,
         ),
       );
+  frb_api.CloudSyncProtectedOutboundStageResult stageResult =
+      const frb_api.CloudSyncProtectedOutboundStageResult(
+        failure: frb_api.CloudSyncOutboundSafeCode.invalidRequest,
+      );
+  frb_api.CloudSyncPreparedMessageCreateResult prepareResult =
+      const frb_api.CloudSyncPreparedMessageCreateResult(
+        failure: frb_api.CloudSyncOutboundSafeCode.invalidRequest,
+      );
+  frb_api.CloudSyncOutboundConsumeResult consumeResult =
+      const frb_api.CloudSyncOutboundConsumeResult(
+        outcomes: [],
+        failure: frb_api.CloudSyncOutboundSafeCode.invalidRequest,
+      );
+  frb_api.CloudSyncOutboundReconcileResult reconcileResult =
+      const frb_api.CloudSyncOutboundReconcileResult(
+        failure: frb_api.CloudSyncOutboundSafeCode.invalidRequest,
+      );
   String? expectedAccountFingerprint;
   String? stream;
   String? previousCheckpointReference;
@@ -662,6 +1170,17 @@ final class _FakeBindings implements NativeProtectedCloudSyncBindings {
   int commitCalls = 0;
   int recoveryCalls = 0;
   int garbageCollectionCalls = 0;
+  int consumeCalls = 0;
+  int reconcileCalls = 0;
+  String? preparedRequestUuid;
+  List<frb_api.CloudSyncPreparedMessageCreateInput> preparedInputs = const [];
+  Object? reconcileCloudMessagesClient;
+  String? reconcileStorageDirectory;
+  String? reconcileExpectedAccountFingerprint;
+  String? reconcileExpectedProtectedStoreIdentity;
+  String? reconcileRequestUuid;
+  frb_api.CloudSyncPreparedMessageCreateInput? reconcileInput;
+  final List<String> acknowledgedLeases = [];
   Future<void> Function(String operation)? beforeOperation;
 
   Future<void> _before(String operation) async {
@@ -705,7 +1224,65 @@ final class _FakeBindings implements NativeProtectedCloudSyncBindings {
     required String leaseReference,
   }) async {
     await _before('acknowledge');
+    acknowledgedLeases.add(leaseReference);
     return const NativeProtectedLeaseResult();
+  }
+
+  @override
+  Future<frb_api.CloudSyncProtectedOutboundStageResult> stageOutboundMessage({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required frb_api.CloudMessage message,
+  }) async {
+    await _before('stageOutbound');
+    return stageResult;
+  }
+
+  @override
+  Future<frb_api.CloudSyncPreparedMessageCreateResult> prepareMessageCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required Duration requestTimeout,
+    required List<frb_api.CloudSyncPreparedMessageCreateInput> inputs,
+  }) async {
+    await _before('prepareOutbound');
+    preparedRequestUuid = requestUuid;
+    preparedInputs = [...inputs];
+    return prepareResult;
+  }
+
+  @override
+  Future<frb_api.CloudSyncOutboundConsumeResult> consumePreparedMessageCreate({
+    required frb_api.CloudSyncPreparedMessageCreateHandle handle,
+  }) async {
+    await _before('consumeOutbound');
+    consumeCalls++;
+    return consumeResult;
+  }
+
+  @override
+  Future<frb_api.CloudSyncOutboundReconcileResult> reconcileMessageCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  }) async {
+    await _before('reconcileOutbound');
+    reconcileCalls++;
+    reconcileCloudMessagesClient = cloudMessagesClient;
+    reconcileStorageDirectory = storageDirectory;
+    reconcileExpectedAccountFingerprint = expectedAccountFingerprint;
+    reconcileExpectedProtectedStoreIdentity = expectedProtectedStoreIdentity;
+    reconcileRequestUuid = requestUuid;
+    reconcileInput = input;
+    return reconcileResult;
   }
 
   @override
@@ -753,4 +1330,15 @@ final class _FakeBindings implements NativeProtectedCloudSyncBindings {
     await _before('rollback');
     return const NativeProtectedLeaseResult();
   }
+}
+
+final class _FakePreparedHandle
+    implements frb_api.CloudSyncPreparedMessageCreateHandle {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _FakeCloudMessage implements frb_api.CloudMessage {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

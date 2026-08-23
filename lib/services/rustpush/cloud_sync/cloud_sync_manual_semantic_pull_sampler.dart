@@ -38,6 +38,7 @@ final class CloudSyncManualSemanticPullSampler {
     required this.platform,
     required this.architecture,
     required this.buildCommit,
+    this._observerFactory,
     bool? compileGateOverrideForTest,
     Duration? fetchTimeoutOverrideForTest,
   }) : _operationInterlock = CloudKitOperationInterlock(
@@ -79,6 +80,7 @@ final class CloudSyncManualSemanticPullSampler {
   final String platform;
   final String architecture;
   final String buildCommit;
+  final CloudSyncObserverFactory? _observerFactory;
   final Duration _fetchTimeout;
   final bool _enabled;
   bool _active = false;
@@ -117,6 +119,7 @@ final class CloudSyncManualSemanticPullSampler {
         zone: zone,
       );
       final store = await _createStore(scope);
+      final observer = await _createObserver(scope);
       final checkpoint = await store.readCheckpoint(scope);
       final inboxApplier = await _createInboxApplier(
         auth,
@@ -143,10 +146,12 @@ final class CloudSyncManualSemanticPullSampler {
           transport: guardedTransport,
           inboxApplier: inboxApplier,
           config: _config(),
+          observer: observer,
         );
         final result = await engine.synchronize(
           trigger: CloudSyncTrigger.manual,
         );
+        await _flushObserver(observer);
         if (result.counters.confirmed != 0) {
           throw StateError('cloud_sync_semantic_remote_write_tripwire');
         }
@@ -166,6 +171,9 @@ final class CloudSyncManualSemanticPullSampler {
             skipReason: result.skipReason,
           ),
         );
+      } catch (_) {
+        await _flushObserverAfterFailure(observer);
+        rethrow;
       } finally {
         if (rawTransport case CloudSyncNativeOperationQuiescence quiescence) {
           await quiescence.quiesceNativeOperations();
@@ -190,6 +198,25 @@ final class CloudSyncManualSemanticPullSampler {
       outboxCountAfter: after.outboxCount,
       zones: reports,
     );
+  }
+
+  Future<CloudSyncObserver> _createObserver(CloudSyncScope scope) async =>
+      _observerFactory == null
+      ? const NoopCloudSyncObserver()
+      : _observerFactory(scope);
+
+  Future<void> _flushObserver(CloudSyncObserver observer) async {
+    if (observer case FlushableCloudSyncObserver flushable) {
+      await flushable.flush();
+    }
+  }
+
+  Future<void> _flushObserverAfterFailure(CloudSyncObserver observer) async {
+    try {
+      await _flushObserver(observer);
+    } catch (_) {
+      // Preserve the primary synchronization failure.
+    }
   }
 
   CloudSyncEngineConfig _config() => CloudSyncEngineConfig(

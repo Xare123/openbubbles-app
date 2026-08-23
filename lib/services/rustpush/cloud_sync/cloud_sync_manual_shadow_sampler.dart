@@ -6,6 +6,7 @@ import 'cloud_shadow_journal_budget.dart';
 import 'cloud_sync_dev_gate.dart';
 import 'cloud_sync_engine.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_observability.dart';
 import 'cloud_sync_runtime.dart';
 import 'cloud_sync_shadow_report.dart';
 import 'cloud_sync_shadow_transport.dart';
@@ -117,6 +118,7 @@ final class CloudSyncManualShadowSampler {
     required this.platform,
     required this.architecture,
     required this.buildCommit,
+    this._observerFactory,
     bool? compileGateOverrideForTest,
     Duration? fetchTimeoutOverrideForTest,
   }) : _operationInterlock = CloudKitOperationInterlock(
@@ -161,6 +163,7 @@ final class CloudSyncManualShadowSampler {
   final String platform;
   final String architecture;
   final String buildCommit;
+  final CloudSyncObserverFactory? _observerFactory;
   final Duration _fetchTimeout;
   final bool _enabled;
   bool _active = false;
@@ -198,6 +201,7 @@ final class CloudSyncManualShadowSampler {
         zone: zone,
       );
       final store = ShadowOnlyCloudSyncStore(await _createStore(scope));
+      final observer = await _createObserver(scope);
       final rawTransport = await _createRawTransport(auth, scope);
       CloudSyncShadowRuntime? runtime;
       try {
@@ -219,6 +223,7 @@ final class CloudSyncManualShadowSampler {
           transport: guardedTransport,
           inboxApplier: const RejectingShadowInboxApplier(),
           config: _config(),
+          observer: observer,
         );
         runtime = CloudSyncShadowRuntime(
           engines: [engine],
@@ -226,6 +231,7 @@ final class CloudSyncManualShadowSampler {
           debounce: Duration.zero,
         );
         final result = (await runtime.synchronizeNow()).single;
+        await _flushObserver(observer);
         _requireZeroMutationCounters(result.counters);
         reports.add(
           CloudSyncShadowZoneReport(
@@ -243,6 +249,9 @@ final class CloudSyncManualShadowSampler {
             blockReason: result.shadowJournalBlockReason,
           ),
         );
+      } catch (_) {
+        await _flushObserverAfterFailure(observer);
+        rethrow;
       } finally {
         await runtime?.dispose();
         if (rawTransport case CloudSyncNativeOperationQuiescence quiescence) {
@@ -272,6 +281,25 @@ final class CloudSyncManualShadowSampler {
       outboxCountAfter: after.outboxCount,
       zones: reports,
     );
+  }
+
+  Future<CloudSyncObserver> _createObserver(CloudSyncScope scope) async =>
+      _observerFactory == null
+      ? const NoopCloudSyncObserver()
+      : _observerFactory(scope);
+
+  Future<void> _flushObserver(CloudSyncObserver observer) async {
+    if (observer case FlushableCloudSyncObserver flushable) {
+      await flushable.flush();
+    }
+  }
+
+  Future<void> _flushObserverAfterFailure(CloudSyncObserver observer) async {
+    try {
+      await _flushObserver(observer);
+    } catch (_) {
+      // Preserve the primary synchronization failure.
+    }
   }
 
   CloudSyncEngineConfig _config() => CloudSyncEngineConfig(

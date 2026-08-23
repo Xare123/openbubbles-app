@@ -251,7 +251,7 @@ const _metadataA = CloudSyncNativeAuthMetadata(
   protectedStoreIdentity: 'obcs2.store.$_digestA',
 );
 final _scope = CloudKitWriterScope(accountFingerprint: _digestA);
-const _completeEvidence = CloudKitWriterTransitionEvidence(
+const _completeEvidence = CloudKitWriterTransitionEvidence.forTest(
   operationsQuiesced: true,
   activeIdentityRevalidated: true,
   legacyMutationQueues: LegacyMutationQueueDisposition.empty,

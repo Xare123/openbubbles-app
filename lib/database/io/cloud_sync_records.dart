@@ -278,6 +278,12 @@ class CloudOutboxOperationEntity {
   String? encryptedPayloadRef;
   String? payloadSha256;
 
+  /// Native protected lease adopted by this non-terminal outbound operation.
+  ///
+  /// This is distinct from CloudProtectedPageLeaseEntity. It is nullable so
+  /// rows written before the schema migration remain readable.
+  String? protectedLeaseReference;
+
   /// 0 pending, 1 in-flight, 2 confirmed, 3 paused, 4 quarantined,
   /// 5 unknown outcome. These values are stable persisted state codes.
   @Index()
@@ -312,6 +318,7 @@ class CloudOutboxOperationEntity {
     this.appleOperationUuid,
     this.encryptedPayloadRef,
     this.payloadSha256,
+    this.protectedLeaseReference,
     this.state = 0,
     this.attemptCount = 0,
     this.nextEligibleAtMs = 0,

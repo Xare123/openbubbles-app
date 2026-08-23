@@ -1,5 +1,6 @@
 // ignore_for_file: prefer_initializing_formals
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:bluebubbles/database/models.dart';
@@ -7,6 +8,7 @@ import 'package:crypto/crypto.dart';
 
 import 'cloudkit_writer_ownership.dart';
 import 'cloudkit_operation_interlock.dart';
+import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
 
 enum CloudKitWriterAuthorityState {
@@ -57,15 +59,42 @@ final class CloudKitWriterScope {
 }
 
 final class CloudKitWriterTransitionEvidence {
-  const CloudKitWriterTransitionEvidence({
+  const CloudKitWriterTransitionEvidence._({
     required this.operationsQuiesced,
     required this.activeIdentityRevalidated,
     required this.legacyMutationQueues,
-  });
+    required bool productionMeasured,
+  }) : _productionMeasured = productionMeasured;
+
+  /// Synthetic evidence is available only to authorities created with
+  /// [ObjectBoxCloudKitWriterAuthority.forTest]. Production authorities reject
+  /// it even when every boolean is true.
+  const CloudKitWriterTransitionEvidence.forTest({
+    required bool operationsQuiesced,
+    required bool activeIdentityRevalidated,
+    required LegacyMutationQueueDisposition legacyMutationQueues,
+  }) : this._(
+         operationsQuiesced: operationsQuiesced,
+         activeIdentityRevalidated: activeIdentityRevalidated,
+         legacyMutationQueues: legacyMutationQueues,
+         productionMeasured: false,
+       );
+
+  const CloudKitWriterTransitionEvidence._productionMeasured({
+    required bool operationsQuiesced,
+    required bool activeIdentityRevalidated,
+    required LegacyMutationQueueDisposition legacyMutationQueues,
+  }) : this._(
+         operationsQuiesced: operationsQuiesced,
+         activeIdentityRevalidated: activeIdentityRevalidated,
+         legacyMutationQueues: legacyMutationQueues,
+         productionMeasured: true,
+       );
 
   final bool operationsQuiesced;
   final bool activeIdentityRevalidated;
   final LegacyMutationQueueDisposition legacyMutationQueues;
+  final bool _productionMeasured;
 
   bool get isComplete =>
       operationsQuiesced &&
@@ -591,6 +620,11 @@ final class ObjectBoxCloudKitWriterAuthority {
         'cloudkit_writer_transition_evidence_incomplete',
       );
     }
+    if (_requireInterlock && !evidence._productionMeasured) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_transition_evidence_untrusted',
+      );
+    }
   }
 
   void _requireResetRequest(
@@ -839,4 +873,333 @@ final class ObjectBoxCloudKitWriterAuthority {
       .toString();
 
   String _digest(String value) => sha256.convert(utf8.encode(value)).toString();
+}
+
+typedef CloudKitWriterProvisioningMeasurementsReader =
+    FutureOr<CloudKitWriterProvisioningMeasurements> Function(
+      CloudKitWriterScope scope,
+    );
+typedef CloudKitWriterLegacyQueueQuarantine = FutureOr<void> Function();
+typedef CloudKitWriterProvisioningClock = DateTime Function();
+
+/// Direct, read-only measurements used before changing durable writer owner.
+///
+/// Counts are deliberately retained instead of collapsed into caller-supplied
+/// booleans. A transition can be authorized only by the production provisioner
+/// after it has obtained a complete zero-risk snapshot under the shared writer
+/// interlock.
+final class CloudKitWriterProvisioningMeasurements {
+  const CloudKitWriterProvisioningMeasurements({
+    required this.objectBoxReady,
+    required this.legacySyncEnabled,
+    required this.legacySyncActive,
+    required this.backgroundSyncActive,
+    required this.coordinatorLeaseActive,
+    required this.pendingLegacyDeletionIntents,
+    required this.legacyPreferenceQueueEntries,
+    required this.unsyncedLegacyMessages,
+    required this.unsyncedLegacyChats,
+    required this.existingV2OutboxOperations,
+  });
+
+  final bool objectBoxReady;
+  final bool legacySyncEnabled;
+  final bool legacySyncActive;
+  final bool backgroundSyncActive;
+  final bool coordinatorLeaseActive;
+  final int pendingLegacyDeletionIntents;
+  final int legacyPreferenceQueueEntries;
+
+  /// `ckSyncState == false/null` marks a record as a possible input to the old
+  /// uploader; it is not itself durable queued work. These counts are retained
+  /// for migration diagnostics while the V2-only build keeps those rows inert.
+  final int unsyncedLegacyMessages;
+  final int unsyncedLegacyChats;
+  final int existingV2OutboxOperations;
+
+  bool get hasValidCounts =>
+      pendingLegacyDeletionIntents >= 0 &&
+      legacyPreferenceQueueEntries >= 0 &&
+      unsyncedLegacyMessages >= 0 &&
+      unsyncedLegacyChats >= 0 &&
+      existingV2OutboxOperations >= 0;
+
+  bool get operationsQuiesced =>
+      objectBoxReady &&
+      !legacySyncEnabled &&
+      !legacySyncActive &&
+      !backgroundSyncActive &&
+      !coordinatorLeaseActive;
+
+  bool get legacyMutationQueuesEmpty =>
+      pendingLegacyDeletionIntents == 0 && legacyPreferenceQueueEntries == 0;
+
+  bool get safeForTransition =>
+      hasValidCounts &&
+      operationsQuiesced &&
+      legacyMutationQueuesEmpty &&
+      existingV2OutboxOperations == 0;
+
+  /// Once V2 already owns the profile, its durable outbox and newly received
+  /// local rows are expected. Legacy execution and deletion queues must still
+  /// remain absent on every permit restoration.
+  bool get safeForStableV2 =>
+      hasValidCounts &&
+      operationsQuiesced &&
+      pendingLegacyDeletionIntents == 0 &&
+      legacyPreferenceQueueEntries == 0;
+
+  @override
+  String toString() => 'CloudKitWriterProvisioningMeasurements(redacted)';
+}
+
+enum CloudKitV2WriterProvisioningDisposition {
+  provisioned,
+  migrated,
+  alreadyOwned,
+}
+
+final class CloudKitV2WriterProvisioningResult {
+  const CloudKitV2WriterProvisioningResult({
+    required this.snapshot,
+    required this.permit,
+    required this.disposition,
+  });
+
+  final CloudKitWriterAuthoritySnapshot snapshot;
+  final CloudKitWriterPermit permit;
+  final CloudKitV2WriterProvisioningDisposition disposition;
+}
+
+/// The sole production entry point for establishing V2 writer ownership.
+///
+/// Every probe and identity read occurs while the cross-process writer
+/// transition interlock is held. Probe errors, account replacement, non-stable
+/// authority state, pending legacy work, and stale permits all fail closed.
+final class CloudKitV2WriterProvisioner {
+  CloudKitV2WriterProvisioner({
+    required ObjectBoxCloudKitWriterAuthority authority,
+    required CloudKitOperationExclusion interlock,
+    required CloudSyncNativeAuthSnapshotReader readAuthSnapshot,
+    required CloudKitWriterLegacyQueueQuarantine quarantineLegacyDeletionQueues,
+    required CloudKitWriterProvisioningMeasurementsReader readMeasurements,
+    CloudKitWriterProvisioningClock? clock,
+  }) : _authority = authority,
+       _interlock = interlock,
+       _readAuthSnapshot = readAuthSnapshot,
+       _quarantineLegacyDeletionQueues = quarantineLegacyDeletionQueues,
+       _readMeasurements = readMeasurements,
+       _clock = clock ?? DateTime.now;
+
+  final ObjectBoxCloudKitWriterAuthority _authority;
+  final CloudKitOperationExclusion _interlock;
+  final CloudSyncNativeAuthSnapshotReader _readAuthSnapshot;
+  final CloudKitWriterLegacyQueueQuarantine _quarantineLegacyDeletionQueues;
+  final CloudKitWriterProvisioningMeasurementsReader _readMeasurements;
+  final CloudKitWriterProvisioningClock _clock;
+
+  Future<CloudKitV2WriterProvisioningResult> ensureV2Owned({
+    required CloudSyncNativeAuthSnapshot expectedAuth,
+  }) {
+    if (!_authority._buildDecision.configurationValid ||
+        _authority._buildDecision.owner != CloudKitWriterOwner.v2) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_build_owner_mismatch',
+      );
+    }
+    final scope = CloudKitWriterScope(
+      accountFingerprint: expectedAuth.accountFingerprint,
+    );
+    return _interlock.runExclusive(
+      kind: CloudKitOperationKind.writerTransition,
+      action: () => _ensureV2OwnedInsideInterlock(
+        scope: scope,
+        expectedAuth: expectedAuth,
+      ),
+    );
+  }
+
+  Future<CloudKitV2WriterProvisioningResult> _ensureV2OwnedInsideInterlock({
+    required CloudKitWriterScope scope,
+    required CloudSyncNativeAuthSnapshot expectedAuth,
+  }) async {
+    await _requireSameAuth(expectedAuth);
+    final initial = _authority.initializeDisabled(scope, now: _clock());
+    await _quarantineLegacyQueuesFailClosed();
+    var measurements = await _readMeasurementsFailClosed(scope);
+    await _requireSameAuth(expectedAuth);
+
+    if (initial.owner == CloudKitWriterOwner.v2) {
+      if (initial.state != CloudKitWriterAuthorityState.stable ||
+          initial.targetOwner != CloudKitWriterOwner.none ||
+          !measurements.safeForStableV2) {
+        throw const CloudKitWriterAuthorityFailure(
+          'cloudkit_writer_v2_restore_precondition_failed',
+        );
+      }
+      return _finish(
+        scope,
+        expectedAuth,
+        disposition: CloudKitV2WriterProvisioningDisposition.alreadyOwned,
+      );
+    }
+
+    if (!measurements.safeForTransition) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_transition_precondition_failed',
+      );
+    }
+    final evidence = _productionEvidence(measurements);
+    CloudKitV2WriterProvisioningDisposition disposition;
+    if (initial.owner == CloudKitWriterOwner.none &&
+        initial.state == CloudKitWriterAuthorityState.stable &&
+        initial.targetOwner == CloudKitWriterOwner.none) {
+      _authority.provisionInitialOwner(
+        scope,
+        owner: CloudKitWriterOwner.v2,
+        expectedEpoch: initial.epoch,
+        evidence: evidence,
+        now: _clock(),
+      );
+      disposition = CloudKitV2WriterProvisioningDisposition.provisioned;
+    } else if (initial.owner == CloudKitWriterOwner.legacy &&
+        initial.state == CloudKitWriterAuthorityState.stable &&
+        initial.targetOwner == CloudKitWriterOwner.none) {
+      final transitionIdHash = _migrationTransitionId(
+        scope,
+        expectedAuth,
+        initial.epoch,
+      );
+      final prepared = _authority.prepareMigration(
+        scope,
+        from: CloudKitWriterOwner.legacy,
+        to: CloudKitWriterOwner.v2,
+        expectedEpoch: initial.epoch,
+        transitionIdHash: transitionIdHash,
+        evidence: evidence,
+        now: _clock(),
+      );
+      await _requireSameAuth(expectedAuth);
+      measurements = await _readMeasurementsFailClosed(scope);
+      if (!measurements.safeForTransition) {
+        throw const CloudKitWriterAuthorityFailure(
+          'cloudkit_writer_migration_commit_precondition_failed',
+        );
+      }
+      _authority.commitMigration(
+        scope,
+        targetOwner: CloudKitWriterOwner.v2,
+        expectedEpoch: prepared.epoch,
+        transitionIdHash: transitionIdHash,
+        now: _clock(),
+      );
+      disposition = CloudKitV2WriterProvisioningDisposition.migrated;
+    } else {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_authority_requires_manual_recovery',
+      );
+    }
+
+    return _finish(scope, expectedAuth, disposition: disposition);
+  }
+
+  Future<CloudKitV2WriterProvisioningResult> _finish(
+    CloudKitWriterScope scope,
+    CloudSyncNativeAuthSnapshot expectedAuth, {
+    required CloudKitV2WriterProvisioningDisposition disposition,
+  }) async {
+    await _requireSameAuth(expectedAuth);
+    final snapshot = _authority.read(scope);
+    if (snapshot == null ||
+        snapshot.owner != CloudKitWriterOwner.v2 ||
+        snapshot.state != CloudKitWriterAuthorityState.stable ||
+        snapshot.targetOwner != CloudKitWriterOwner.none) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_v2_readback_failed',
+      );
+    }
+    final permit = _authority.issuePermit(
+      scope,
+      expectedOwner: CloudKitWriterOwner.v2,
+    );
+    _authority.verifyPermit(permit);
+    await _requireSameAuth(expectedAuth);
+    return CloudKitV2WriterProvisioningResult(
+      snapshot: snapshot,
+      permit: permit,
+      disposition: disposition,
+    );
+  }
+
+  Future<void> _quarantineLegacyQueuesFailClosed() async {
+    try {
+      await _quarantineLegacyDeletionQueues();
+    } catch (_) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_legacy_queue_quarantine_failed',
+      );
+    }
+  }
+
+  Future<CloudKitWriterProvisioningMeasurements> _readMeasurementsFailClosed(
+    CloudKitWriterScope scope,
+  ) async {
+    try {
+      final measurements = await _readMeasurements(scope);
+      if (!measurements.hasValidCounts) {
+        throw const CloudKitWriterAuthorityFailure(
+          'cloudkit_writer_provisioning_measurements_invalid',
+        );
+      }
+      return measurements;
+    } on CloudKitWriterAuthorityFailure {
+      rethrow;
+    } catch (_) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_provisioning_probe_failed',
+      );
+    }
+  }
+
+  Future<void> _requireSameAuth(
+    CloudSyncNativeAuthSnapshot expectedAuth,
+  ) async {
+    CloudSyncNativeAuthSnapshot? current;
+    try {
+      current = await _readAuthSnapshot();
+    } catch (_) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_identity_revalidation_failed',
+      );
+    }
+    if (!expectedAuth.sameIdentity(current)) {
+      throw const CloudKitWriterAuthorityFailure(
+        'cloudkit_writer_identity_changed',
+      );
+    }
+  }
+
+  CloudKitWriterTransitionEvidence _productionEvidence(
+    CloudKitWriterProvisioningMeasurements measurements,
+  ) => CloudKitWriterTransitionEvidence._productionMeasured(
+    operationsQuiesced: measurements.operationsQuiesced,
+    activeIdentityRevalidated: true,
+    legacyMutationQueues: measurements.legacyMutationQueuesEmpty
+        ? LegacyMutationQueueDisposition.empty
+        : LegacyMutationQueueDisposition.quarantined,
+  );
+
+  String _migrationTransitionId(
+    CloudKitWriterScope scope,
+    CloudSyncNativeAuthSnapshot auth,
+    int epoch,
+  ) => sha256
+      .convert(
+        utf8.encode(
+          'cloudkit-v2-writer-migration\u001f${scope.storageKey}\u001f'
+          '${auth.nativeSessionId}\u001f$epoch\u001f'
+          '${_clock().microsecondsSinceEpoch}',
+        ),
+      )
+      .toString();
 }

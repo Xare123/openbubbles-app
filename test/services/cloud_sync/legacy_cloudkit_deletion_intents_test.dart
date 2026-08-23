@@ -50,7 +50,7 @@ void main() {
       scope,
       owner: CloudKitWriterOwner.legacy,
       expectedEpoch: initial.epoch,
-      evidence: const CloudKitWriterTransitionEvidence(
+      evidence: const CloudKitWriterTransitionEvidence.forTest(
         operationsQuiesced: true,
         activeIdentityRevalidated: true,
         legacyMutationQueues: LegacyMutationQueueDisposition.empty,
@@ -188,12 +188,110 @@ void main() {
       );
     },
   );
+
+  test(
+    'legacy preference inventory counts entries and malformed values',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        LegacyCloudKitDeletionIntentStore.legacyMessageKey: [
+          'message-a',
+          'message-b',
+        ],
+        LegacyCloudKitDeletionIntentStore.legacyAttachmentKey: 'malformed',
+      });
+      final prefs = await SharedPreferences.getInstance();
+
+      expect(deletionStore.legacySharedPreferenceQueueEntryCount(prefs), 3);
+    },
+  );
+
+  test('pending count matches the full scope across writer epochs', () {
+    final scope = _scope('A');
+    deletionStore.enqueue(
+      context: LegacyCloudKitDeletionContext(scope: scope, writerEpoch: 1),
+      kind: LegacyCloudKitDeletionKind.message,
+      recordId: 'message-epoch-1',
+      now: _time(2),
+    );
+    deletionStore.enqueue(
+      context: LegacyCloudKitDeletionContext(scope: scope, writerEpoch: 99),
+      kind: LegacyCloudKitDeletionKind.attachment,
+      recordId: 'attachment-epoch-99',
+      now: _time(3),
+    );
+
+    expect(deletionStore.pendingCountForScope(scope), 2);
+  });
+
+  test('pending count excludes another account and container', () {
+    final scope = _scope('A');
+    deletionStore.enqueue(
+      context: LegacyCloudKitDeletionContext(scope: scope, writerEpoch: 1),
+      kind: LegacyCloudKitDeletionKind.message,
+      recordId: 'message-matching',
+      now: _time(2),
+    );
+    deletionStore.enqueue(
+      context: LegacyCloudKitDeletionContext(
+        scope: _scope('B'),
+        writerEpoch: 1,
+      ),
+      kind: LegacyCloudKitDeletionKind.message,
+      recordId: 'message-other-account',
+      now: _time(3),
+    );
+    deletionStore.enqueue(
+      context: LegacyCloudKitDeletionContext(
+        scope: _scope('A', container: 'com.example.other'),
+        writerEpoch: 1,
+      ),
+      kind: LegacyCloudKitDeletionKind.message,
+      recordId: 'message-other-container',
+      now: _time(4),
+    );
+
+    expect(deletionStore.pendingCountForScope(scope), 1);
+  });
+
+  test('pending count excludes quarantined rows in the same scope', () {
+    final scope = _scope('A');
+    deletionStore.enqueue(
+      context: LegacyCloudKitDeletionContext(scope: scope, writerEpoch: 1),
+      kind: LegacyCloudKitDeletionKind.message,
+      recordId: 'message-quarantined',
+      now: _time(2),
+    );
+    deletionStore.enqueue(
+      context: LegacyCloudKitDeletionContext(scope: scope, writerEpoch: 2),
+      kind: LegacyCloudKitDeletionKind.message,
+      recordId: 'message-pending',
+      now: _time(3),
+    );
+
+    expect(
+      deletionStore.quarantineStale(
+        scope: scope,
+        currentWriterEpoch: 2,
+        now: _time(4),
+      ),
+      1,
+    );
+    expect(deletionStore.pendingCountForScope(scope), 1);
+  });
+
+  test('pending count is zero when the scope has no pending rows', () {
+    expect(deletionStore.pendingCountForScope(_scope('A')), 0);
+  });
 }
 
-CloudKitWriterScope _scope(String suffix) => CloudKitWriterScope(
+CloudKitWriterScope _scope(
+  String suffix, {
+  String container = 'com.apple.messages.cloud',
+}) => CloudKitWriterScope(
   accountFingerprint: suffix == 'A'
       ? 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
       : 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+  container: container,
 );
 
 DateTime _time(int seconds) =>

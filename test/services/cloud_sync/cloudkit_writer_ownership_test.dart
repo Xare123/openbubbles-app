@@ -61,7 +61,22 @@ void main() {
 
   test('beta canary does not select any CloudKit writer', () {
     final workflow = File('.github/workflows/build.yml').readAsStringSync();
-    expect(workflow, isNot(contains('OPENBUBBLES_CLOUDKIT_WRITER_OWNER=')));
+    final betaStart = workflow.indexOf(
+      'Build Beta Debug APK with the Cloud Sync V2 sampler',
+    );
+    final evidenceStart = workflow.indexOf(
+      'Build developer-only CloudKit V2 Evidence Canary APK',
+      betaStart,
+    );
+    expect(betaStart, greaterThanOrEqualTo(0));
+    expect(evidenceStart, greaterThan(betaStart));
+    final betaBuild = workflow.substring(betaStart, evidenceStart);
+    expect(betaBuild, isNot(contains('OPENBUBBLES_CLOUDKIT_WRITER_OWNER=')));
+    final evidenceBuild = workflow.substring(evidenceStart);
+    expect(
+      evidenceBuild,
+      isNot(contains('OPENBUBBLES_CLOUDKIT_WRITER_OWNER=')),
+    );
   });
 
   test('encrypted-data reset uses the shared destructive interlock', () {
@@ -76,9 +91,6 @@ void main() {
     );
     expect(wrapper, greaterThanOrEqualTo(0));
     expect(resetCall - wrapper, lessThan(200));
-    expect(
-      source,
-      contains('kind: CloudKitOperationKind.destructiveReset'),
-    );
+    expect(source, contains('kind: CloudKitOperationKind.destructiveReset'));
   });
 }

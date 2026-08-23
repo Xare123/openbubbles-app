@@ -80,6 +80,14 @@ abstract interface class CloudSyncObserver {
   void onEvent(CloudSyncEvent event);
 }
 
+abstract interface class FlushableCloudSyncObserver
+    implements CloudSyncObserver {
+  Future<void> flush();
+}
+
+typedef CloudSyncObserverFactory =
+    Future<CloudSyncObserver> Function(CloudSyncScope scope);
+
 class NoopCloudSyncObserver implements CloudSyncObserver {
   const NoopCloudSyncObserver();
 

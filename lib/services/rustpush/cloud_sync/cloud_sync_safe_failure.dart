@@ -1,9 +1,27 @@
 import 'cloud_sync_shadow_report_file.dart';
+import 'cloud_sync_models.dart';
 import 'cloudkit_operation_interlock.dart';
+import 'cloudkit_writer_authority.dart';
 
 const _cloudSyncV2SafeFailureCodes = <String>{
   'account_changed',
   'account_unavailable',
+  'cloud_sync_outbound_canary_active',
+  'cloud_sync_outbound_canary_admission_invalid',
+  'cloud_sync_outbound_canary_already_armed',
+  'cloud_sync_outbound_canary_confirmation_expired',
+  'cloud_sync_outbound_canary_confirmation_invalid',
+  'cloud_sync_outbound_canary_disabled',
+  'cloud_sync_outbound_canary_message_time_invalid',
+  'cloud_sync_outbound_canary_outbox_invalid',
+  'cloud_sync_outbound_canary_postflight_invalid',
+  'cloud_sync_outbound_canary_quiescing',
+  'cloud_sync_outbound_canary_recovery_invalid',
+  'cloud_sync_outbound_canary_tripwire',
+  'cloud_sync_outbound_canary_unavailable',
+  'cloud_sync_outbound_canary_writer_disabled',
+  'cloud_sync_outbound_candidate_selection_failed',
+  'cloud_sync_outbound_quiescence_timeout',
   'cloud_sync_developer_mode_required',
   'cloud_sync_private_storage_unavailable',
   'cloud_sync_report_already_exists',
@@ -36,8 +54,22 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloudkit_interlock_profile_mismatch',
   'cloudkit_interlock_storage_unavailable',
   'cloudkit_interlock_unavailable',
+  'cloudkit_writer_authority_requires_manual_recovery',
+  'cloudkit_writer_build_owner_mismatch',
+  'cloudkit_writer_identity_changed',
+  'cloudkit_writer_identity_revalidation_failed',
+  'cloudkit_writer_legacy_queue_quarantine_failed',
+  'cloudkit_writer_migration_commit_precondition_failed',
+  'cloudkit_writer_provisioning_measurements_invalid',
+  'cloudkit_writer_provisioning_probe_failed',
+  'cloudkit_writer_transition_evidence_incomplete',
+  'cloudkit_writer_transition_evidence_untrusted',
+  'cloudkit_writer_transition_precondition_failed',
+  'cloudkit_writer_v2_readback_failed',
+  'cloudkit_writer_v2_restore_precondition_failed',
   'coordinator_active',
   'legacy_sync_active',
+  'legacy_cloudkit_blocked_by_v2_writer',
   'logout_active',
   'not_ui_isolate',
   'objectbox_not_ready',
@@ -56,7 +88,9 @@ const _cloudSyncV2SafeFailureCodes = <String>{
 String cloudSyncV2SafeFailureCode(Object error) {
   final String? candidate = switch (error) {
     CloudSyncShadowReportFileException() => error.safeCode,
+    CloudSyncFailure() => error.safeCode,
     CloudKitOperationInterlockException() => error.safeCode,
+    CloudKitWriterAuthorityFailure() => error.safeCode,
     StateError() => error.message.toString(),
     _ => null,
   };

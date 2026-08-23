@@ -243,6 +243,15 @@ class CloudSyncEngine {
     if (this.config.flags.saves && _writeTransport == null) {
       throw ArgumentError('cloud_sync_write_preflight_transport_required');
     }
+    if (this.config.flags.saves &&
+        _writeTransport != null &&
+        _protectedLeaseTransportFor(transport) != null &&
+        (_protectedPageLeaseLifecycle == null ||
+            store is! CloudProtectedOutboundLeaseAdoptionStore)) {
+      throw ArgumentError(
+        'cloud_sync_native_protected_writer_recovery_required',
+      );
+    }
   }
 
   final CloudSyncScope scope;
@@ -1021,6 +1030,13 @@ class CloudSyncEngine {
   }) async {
     var counters = const CloudSyncRunCounters();
 
+    // A push-only localOutbox run bypasses _pullChanges, which is otherwise
+    // where the protected-store lifecycle recovers crash leftovers. Recovery
+    // must therefore happen at the start of every protected native flush,
+    // before either ambiguity reconciliation or write preflight can inspect
+    // protected references.
+    await _ensureProtectedStoreRecoveredBeforeOutboxFlush();
+
     final pausedCategories = await _store.readPausedOutboxFailureCategories(
       scope,
       now: _clock(),
@@ -1060,15 +1076,21 @@ class CloudSyncEngine {
       }
     }
 
-    final reconciliationCounters = await _reconcileUnknownOutcomes(
+    final reconciliation = await _reconcileUnknownOutcomes(
       runNumber: runNumber,
       cancellationToken: cancellationToken,
     );
+    final reconciliationCounters = reconciliation.counters;
     counters = counters.add(
       confirmed: reconciliationCounters.confirmed,
       quarantined: reconciliationCounters.quarantined,
       retried: reconciliationCounters.retried,
     );
+
+    // Clearing an earlier submission identity is a durable decision boundary,
+    // not permission to submit the operation again immediately. A later,
+    // separately triggered run must make that new submission decision.
+    if (reconciliation.requiresNewSubmissionDecision) return counters;
 
     final allowedActions = <CloudOutboxAction>{
       CloudOutboxAction.save,
@@ -1284,6 +1306,10 @@ class CloudSyncEngine {
         transitions: transitions,
         now: _clock(),
       );
+      await _acknowledgeDurableTerminalOutboxReceipts(
+        operations: leased,
+        transitions: transitions,
+      );
       _emit(
         CloudSyncEventType.outboxFlushed,
         at: _clock(),
@@ -1293,11 +1319,17 @@ class CloudSyncEngine {
     return counters;
   }
 
-  Future<CloudSyncRunCounters> _reconcileUnknownOutcomes({
+  Future<void> _ensureProtectedStoreRecoveredBeforeOutboxFlush() async {
+    await _protectedPageLeaseLifecycle?.ensureRecoveredBeforeWrite();
+  }
+
+  Future<({CloudSyncRunCounters counters, bool requiresNewSubmissionDecision})>
+  _reconcileUnknownOutcomes({
     required int runNumber,
     CloudSyncCancellationToken? cancellationToken,
   }) async {
     var counters = const CloudSyncRunCounters();
+    var requiresNewSubmissionDecision = false;
     for (
       var batchIndex = 0;
       batchIndex < config.maximumOutboxBatchesPerRun &&
@@ -1348,6 +1380,9 @@ class CloudSyncEngine {
           );
         }
         transitions.add(transition);
+        requiresNewSubmissionDecision |=
+            transition.type == CloudOutboxTransitionType.retryable &&
+            transition.clearSubmissionIdentity;
         counters = _countOutboxTransition(counters, transition);
       }
 
@@ -1357,8 +1392,34 @@ class CloudSyncEngine {
         transitions: transitions,
         now: _clock(),
       );
+      await _acknowledgeDurableTerminalOutboxReceipts(
+        operations: operations,
+        transitions: transitions,
+      );
     }
-    return counters;
+    return (
+      counters: counters,
+      requiresNewSubmissionDecision: requiresNewSubmissionDecision,
+    );
+  }
+
+  Future<void> _acknowledgeDurableTerminalOutboxReceipts({
+    required List<CloudOutboxOperation> operations,
+    required List<CloudOutboxTransition> transitions,
+  }) async {
+    final transport = _writeTransport;
+    if (transport is! CloudSyncWriteReceiptFinalizer) return;
+    try {
+      await (transport as CloudSyncWriteReceiptFinalizer)
+          .acknowledgeDurableTerminalOperations(
+            scope,
+            operations: operations,
+            transitions: transitions,
+          );
+    } catch (_) {
+      // The outbox transition is already durable. A receipt leak is safe and
+      // bounded recovery removes it after the terminal row leaves adoption.
+    }
   }
 
   Future<CloudOutboxTransition> _transitionForUnknownResolution(

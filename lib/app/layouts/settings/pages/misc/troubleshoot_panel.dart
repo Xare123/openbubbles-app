@@ -306,7 +306,8 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                   ]),
 
                 if ((CloudSyncDevGate.manualShadowSamplerEnabled ||
-                        CloudSyncDevGate.manualSemanticPullEnabled) &&
+                        CloudSyncDevGate.manualSemanticPullEnabled ||
+                        CloudSyncDevGate.protocolEvidenceAvailable) &&
                     ss.settings.developerEnabled.value &&
                     (Platform.isAndroid || Platform.isWindows))
                   SettingsHeader(
@@ -315,12 +316,25 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                     text: "Cloud Sync V2",
                   ),
                 if ((CloudSyncDevGate.manualShadowSamplerEnabled ||
-                        CloudSyncDevGate.manualSemanticPullEnabled) &&
+                        CloudSyncDevGate.manualSemanticPullEnabled ||
+                        CloudSyncDevGate.protocolEvidenceAvailable) &&
                     ss.settings.developerEnabled.value &&
                     (Platform.isAndroid || Platform.isWindows))
                   SettingsSection(
                     backgroundColor: tileColor,
                     children: [
+                      if (CloudSyncDevGate.protocolEvidenceAvailable)
+                        Obx(() => SettingsSwitch(
+                          initialVal: ss.settings.cloudSyncV2EvidenceEnabled.value,
+                          onChanged: (bool val) async {
+                            ss.settings.cloudSyncV2EvidenceEnabled.value = val;
+                            await ss.settings.saveOne('cloudSyncV2EvidenceEnabled');
+                          },
+                          title: "Record CloudKit protocol evidence",
+                          subtitle: "Local-only, bounded structural diagnostics for the CloudKit canary. Never records message text, contacts, credentials, keys, raw records, or change tokens.",
+                          isThreeLine: true,
+                          backgroundColor: tileColor,
+                        )),
                       if (CloudSyncDevGate.manualShadowSamplerEnabled)
                         Obx(() => SettingsTile(
                         leading: const SettingsLeadingIcon(
@@ -868,9 +882,11 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                         ss.settings.developerEnabled.value = val;
                         if (!val) {
                           ss.settings.faceTimeDiagnosticsEnabled.value = false;
+                          ss.settings.cloudSyncV2EvidenceEnabled.value = false;
                           await ss.settings.saveMany([
                             'developerEnabled',
                             'faceTimeDiagnosticsEnabled',
+                            'cloudSyncV2EvidenceEnabled',
                           ]);
                         } else {
                           await ss.settings.saveOne('developerEnabled');

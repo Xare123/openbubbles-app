@@ -117,6 +117,91 @@ void main() {
   );
 
   test(
+    'outbound receipts participate in recovery but page cleanup never acknowledges them',
+    () async {
+      store = _AdoptionStore(
+        {_leaseA},
+        outboundAdopted: {_leaseB},
+        timeline: timeline,
+      );
+      lifecycle = CloudProtectedPageLeaseLifecycle(
+        store: store,
+        transport: transport,
+      );
+
+      await lifecycle.ensureRecoveredBeforeFetch();
+
+      expect(transport.recoverySets.single, {_leaseA, _leaseB});
+      expect(store.adopted, isEmpty);
+      expect(store.outboundAdopted, {_leaseB});
+      expect(transport.events.where((event) => event.startsWith('ack:')), [
+        'ack:$_leaseA',
+      ]);
+    },
+  );
+
+  test(
+    'missing outbound receipt fails closed without releasing adoption',
+    () async {
+      store = _AdoptionStore(
+        const {},
+        outboundAdopted: {_leaseB},
+        timeline: timeline,
+      );
+      transport.absentRecoveryReferences.add(_leaseB);
+      lifecycle = CloudProtectedPageLeaseLifecycle(
+        store: store,
+        transport: transport,
+      );
+
+      await expectLater(
+        lifecycle.ensureRecoveredBeforeFetch(),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'protected_outbound_lease_missing',
+          ),
+        ),
+      );
+      expect(store.outboundAdopted, {_leaseB});
+      expect(
+        transport.events.where((event) => event.startsWith('ack:')),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'page and outbound lease namespace collision fails before native recovery',
+    () async {
+      store = _AdoptionStore(
+        {_leaseA},
+        outboundAdopted: {_leaseA},
+        timeline: timeline,
+      );
+      lifecycle = CloudProtectedPageLeaseLifecycle(
+        store: store,
+        transport: transport,
+      );
+
+      await expectLater(
+        lifecycle.ensureRecoveredBeforeFetch(),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'protected_lease_namespace_collision',
+          ),
+        ),
+      );
+      expect(transport.recoverySets, isEmpty);
+      expect(store.adopted, {_leaseA});
+      expect(store.outboundAdopted, {_leaseA});
+    },
+  );
+
+  test(
     'rolling back more than one page of unadopted manifests is progress',
     () async {
       store = _AdoptionStore({}, timeline: timeline);
@@ -439,11 +524,19 @@ CloudFetchedChange _change({
 String _reference(String character) =>
     'obcs2.ref.${List.filled(43, character).join()}';
 
-final class _AdoptionStore implements CloudProtectedPageLeaseAdoptionStore {
-  _AdoptionStore(Set<String> adopted, {required this.timeline})
-    : adopted = {...adopted};
+final class _AdoptionStore
+    implements
+        CloudProtectedPageLeaseAdoptionStore,
+        CloudProtectedOutboundLeaseAdoptionStore {
+  _AdoptionStore(
+    Set<String> adopted, {
+    Set<String> outboundAdopted = const {},
+    required this.timeline,
+  }) : adopted = {...adopted},
+       outboundAdopted = {...outboundAdopted};
 
   final Set<String> adopted;
+  final Set<String> outboundAdopted;
   final List<String> timeline;
   final List<String> events = [];
   Set<String> liveReferences = {};
@@ -458,6 +551,14 @@ final class _AdoptionStore implements CloudProtectedPageLeaseAdoptionStore {
     timeline.add('read-adopted');
     if (adopted.length > maximumCount) throw StateError('bounded');
     return Set.unmodifiable(adopted);
+  }
+
+  @override
+  Future<Set<String>> readNonterminalProtectedOutboundLeaseReferences({
+    required int maximumCount,
+  }) async {
+    if (outboundAdopted.length > maximumCount) throw StateError('bounded');
+    return Set.unmodifiable(outboundAdopted);
   }
 
   @override

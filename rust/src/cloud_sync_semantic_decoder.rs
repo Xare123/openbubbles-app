@@ -49,7 +49,6 @@ impl CloudSemanticStream {
     }
 }
 
-
 /// A transport-validated change shape. Apple may omit `RecordChange.type`, so
 /// the semantic boundary must not require the numeric value after the
 /// transport has proven whether the change carries a record or a tombstone.
@@ -112,7 +111,6 @@ impl std::fmt::Debug for CloudSemanticTombstone {
         formatter.write_str("CloudSemanticTombstone(redacted)")
     }
 }
-
 
 /// Classifies one envelope before any PCS decryption. This is intentionally
 /// strict: an unexpected type, missing raw-reference, or contradictory change

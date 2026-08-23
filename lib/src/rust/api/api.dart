@@ -9,10 +9,10 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'api.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `bin_deserialize_16`, `cloud_sync_failure_category`, `cloud_sync_retry_after_seconds`, `cloud_sync_transient_empty_result`, `config`, `encrypt`, `get_login_config`, `get_password`, `handle_2fa`, `handle_circle`, `handle_photostream`, `is_cloud_sync_protected_source_reference`, `local_cloud_sync_protected_failure`, `map_cloud_sync_protected_category`, `map_cloud_sync_protected_change`, `map_cloud_sync_protected_failure`, `map_cloud_sync_protected_page`, `map_cloud_sync_protected_safe_code`, `map_cloud_sync_raw_page`, `map_cloud_sync_transient_attributed_body`, `map_cloud_sync_transient_chat_style`, `map_cloud_sync_transient_deferred`, `map_cloud_sync_transient_entity_kind`, `map_cloud_sync_transient_failure`, `map_cloud_sync_transient_field_state`, `map_cloud_sync_transient_known_flags`, `map_cloud_sync_transient_message_edit`, `map_cloud_sync_transient_payload`, `map_cloud_sync_transient_quarantine`, `map_cloud_sync_transient_reaction_kind`, `map_cloud_sync_transient_service`, `map_cloud_sync_transient_snapshot`, `map_cloud_sync_transient_text_run`, `migrate`, `plist_to_bin`, `plist_to_buf`, `plist_to_string`, `reset_user`, `shared_items`, `subscribe_streams`, `unmap_cloud_sync_transient_entity_kind`, `wrap_sink`
+// These functions are ignored because they are not marked as `pub`: `bin_deserialize_16`, `cloud_sync_failure_category`, `cloud_sync_outbound_failure_result`, `cloud_sync_prepare_failure`, `cloud_sync_reconcile_failure`, `cloud_sync_retry_after_seconds`, `cloud_sync_transient_empty_result`, `config`, `encrypt`, `get_login_config`, `get_password`, `handle_2fa`, `handle_circle`, `handle_photostream`, `is_cloud_sync_hex_digest`, `is_cloud_sync_keyed_hash`, `is_cloud_sync_lease_reference`, `is_cloud_sync_operation_id`, `is_cloud_sync_protected_reference`, `is_cloud_sync_protected_source_reference`, `local_cloud_sync_protected_failure`, `map_cloud_sync_outbound_failure_class`, `map_cloud_sync_outbound_failure`, `map_cloud_sync_protected_category`, `map_cloud_sync_protected_change`, `map_cloud_sync_protected_failure`, `map_cloud_sync_protected_page`, `map_cloud_sync_protected_safe_code`, `map_cloud_sync_raw_page`, `map_cloud_sync_transient_attributed_body`, `map_cloud_sync_transient_chat_style`, `map_cloud_sync_transient_deferred`, `map_cloud_sync_transient_entity_kind`, `map_cloud_sync_transient_failure`, `map_cloud_sync_transient_field_state`, `map_cloud_sync_transient_known_flags`, `map_cloud_sync_transient_message_edit`, `map_cloud_sync_transient_payload`, `map_cloud_sync_transient_quarantine`, `map_cloud_sync_transient_reaction_kind`, `map_cloud_sync_transient_service`, `map_cloud_sync_transient_snapshot`, `map_cloud_sync_transient_text_run`, `migrate`, `plist_to_bin`, `plist_to_buf`, `plist_to_string`, `reset_user`, `shared_items`, `subscribe_streams`, `unmap_cloud_sync_transient_entity_kind`, `wrap_sink`
 // These functions are ignored because they have generic arguments: `bin_deserialize`, `bin_serialize`
 // These types are ignored because they are not used by any `pub` functions: `AnisetteState`, `DaemonData`, `FLUTTER_RUST_BRIDGE_HANDLER`, `GSAConfig`, `NSArrayClass`, `NSArrayIconArray`, `NSArrayImageArray`, `ProvisionedAnisette`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `deref`, `deref`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `get_files`, `initialize`, `spawn`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `deref`, `deref`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `get_files`, `initialize`, `spawn`
 
 ChatProto decodeChatproto({required GZipWrapperChatProto wrapped}) =>
     RustLib.instance.api.crateApiApiDecodeChatproto(wrapped: wrapped);
@@ -136,6 +136,69 @@ Future<CloudSyncNativeAuthMetadata> cloudSyncCaptureAuthSnapshot({
 }) => RustLib.instance.api.crateApiApiCloudSyncCaptureAuthSnapshot(
   cloudMessagesClient: cloudMessagesClient,
   storageDirectory: storageDirectory,
+);
+
+/// Converts one transient outgoing iMessage into a protected, crash-recoverable
+/// outbox payload and stable server-record mapping. Message content and the raw
+/// server record name remain native-only.
+Future<CloudSyncProtectedOutboundStageResult> cloudSyncStageOutboundMessage({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required String expectedProtectedStoreIdentity,
+  required CloudMessage message,
+}) => RustLib.instance.api.crateApiApiCloudSyncStageOutboundMessage(
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
+  expectedAccountFingerprint: expectedAccountFingerprint,
+  expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+  message: message,
+);
+
+/// Prepares a create-only CloudKit request without performing remote I/O. The
+/// returned opaque handle owns PCS material, prepared authentication, exact
+/// request identity, and all operations. It can be consumed only once.
+Future<CloudSyncPreparedMessageCreateResult> cloudSyncPrepareMessageCreate({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required String expectedProtectedStoreIdentity,
+  required String requestUuid,
+  required BigInt requestTimeoutSeconds,
+  required List<CloudSyncPreparedMessageCreateInput> inputs,
+}) => RustLib.instance.api.crateApiApiCloudSyncPrepareMessageCreate(
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
+  expectedAccountFingerprint: expectedAccountFingerprint,
+  expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+  requestUuid: requestUuid,
+  requestTimeoutSeconds: requestTimeoutSeconds,
+  inputs: inputs,
+);
+
+Future<CloudSyncOutboundConsumeResult> cloudSyncConsumePreparedMessageCreate({
+  required CloudSyncPreparedMessageCreateHandle handle,
+}) => RustLib.instance.api.crateApiApiCloudSyncConsumePreparedMessageCreate(
+  handle: handle,
+);
+
+/// Reconciles one ambiguous create by fetching its stable CloudKit record name
+/// and comparing the decrypted server message with the exact protected payload
+/// staged before submission. Only explicit record absence permits replay.
+Future<CloudSyncOutboundReconcileResult> cloudSyncReconcileMessageCreate({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required String expectedProtectedStoreIdentity,
+  required String requestUuid,
+  required CloudSyncPreparedMessageCreateInput input,
+}) => RustLib.instance.api.crateApiApiCloudSyncReconcileMessageCreate(
+  cloudMessagesClient: cloudMessagesClient,
+  storageDirectory: storageDirectory,
+  expectedAccountFingerprint: expectedAccountFingerprint,
+  expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+  requestUuid: requestUuid,
+  input: input,
 );
 
 /// Fetches and protects one bounded CloudKit page without allowing raw record
@@ -1677,6 +1740,10 @@ abstract class ChannelInterestToken implements RustOpaqueInterface {}
 abstract class CircleClientSessionDefaultAnisetteProvider
     implements RustOpaqueInterface {}
 
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<CloudSyncPreparedMessageCreateHandle>>
+abstract class CloudSyncPreparedMessageCreateHandle
+    implements RustOpaqueInterface {}
+
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<ConversationLink>>
 abstract class ConversationLink implements RustOpaqueInterface {}
 
@@ -2623,6 +2690,193 @@ class CloudSyncNativeAuthMetadata {
           protectedStoreIdentity == other.protectedStoreIdentity;
 }
 
+class CloudSyncOutboundConsumeResult {
+  final List<CloudSyncOutboundSaveOutcome> outcomes;
+  final CloudSyncOutboundSafeCode? failure;
+
+  const CloudSyncOutboundConsumeResult({required this.outcomes, this.failure});
+
+  @override
+  int get hashCode => outcomes.hashCode ^ failure.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncOutboundConsumeResult &&
+          runtimeType == other.runtimeType &&
+          outcomes == other.outcomes &&
+          failure == other.failure;
+}
+
+enum CloudSyncOutboundFailureClass {
+  throttled,
+  transientServer,
+  authentication,
+  conflict,
+  resetRequired,
+  permanent,
+  unknown,
+}
+
+enum CloudSyncOutboundReconcileDisposition {
+  committed,
+  notApplied,
+  diverged,
+  unresolved,
+}
+
+class CloudSyncOutboundReconcileResult {
+  final CloudSyncOutboundReconcileDisposition? disposition;
+  final String? protectedProofReference;
+  final CloudSyncOutboundFailureClass? failureClass;
+  final BigInt? retryAfterSeconds;
+  final CloudSyncOutboundSafeCode? failure;
+
+  const CloudSyncOutboundReconcileResult({
+    this.disposition,
+    this.protectedProofReference,
+    this.failureClass,
+    this.retryAfterSeconds,
+    this.failure,
+  });
+
+  @override
+  int get hashCode =>
+      disposition.hashCode ^
+      protectedProofReference.hashCode ^
+      failureClass.hashCode ^
+      retryAfterSeconds.hashCode ^
+      failure.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncOutboundReconcileResult &&
+          runtimeType == other.runtimeType &&
+          disposition == other.disposition &&
+          protectedProofReference == other.protectedProofReference &&
+          failureClass == other.failureClass &&
+          retryAfterSeconds == other.retryAfterSeconds &&
+          failure == other.failure;
+}
+
+enum CloudSyncOutboundSafeCode {
+  invalidScope,
+  invalidRequest,
+  unsupportedMessage,
+  malformedMessage,
+  oversizedMessage,
+  protectedStorage,
+  bindingMismatch,
+  nativeAuthUnavailable,
+  nativePrepareFailed,
+  alreadyConsumed,
+  correlationMismatch,
+}
+
+enum CloudSyncOutboundSaveDisposition { succeeded, unknownOutcome, failed }
+
+class CloudSyncOutboundSaveOutcome {
+  final String localOperationId;
+  final String appleOperationUuid;
+  final CloudSyncOutboundSaveDisposition disposition;
+  final CloudSyncOutboundFailureClass? failureClass;
+  final BigInt? retryAfterSeconds;
+
+  const CloudSyncOutboundSaveOutcome({
+    required this.localOperationId,
+    required this.appleOperationUuid,
+    required this.disposition,
+    this.failureClass,
+    this.retryAfterSeconds,
+  });
+
+  @override
+  int get hashCode =>
+      localOperationId.hashCode ^
+      appleOperationUuid.hashCode ^
+      disposition.hashCode ^
+      failureClass.hashCode ^
+      retryAfterSeconds.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncOutboundSaveOutcome &&
+          runtimeType == other.runtimeType &&
+          localOperationId == other.localOperationId &&
+          appleOperationUuid == other.appleOperationUuid &&
+          disposition == other.disposition &&
+          failureClass == other.failureClass &&
+          retryAfterSeconds == other.retryAfterSeconds;
+}
+
+class CloudSyncPreparedMessageCreateInput {
+  final String localOperationId;
+  final String logicalEntityKeyHash;
+  final String protectedLeaseReference;
+  final String protectedPayloadReference;
+  final String payloadSha256;
+  final String protectedServerRecordReference;
+  final String serverRecordIdHash;
+  final String appleOperationUuid;
+
+  const CloudSyncPreparedMessageCreateInput({
+    required this.localOperationId,
+    required this.logicalEntityKeyHash,
+    required this.protectedLeaseReference,
+    required this.protectedPayloadReference,
+    required this.payloadSha256,
+    required this.protectedServerRecordReference,
+    required this.serverRecordIdHash,
+    required this.appleOperationUuid,
+  });
+
+  @override
+  int get hashCode =>
+      localOperationId.hashCode ^
+      logicalEntityKeyHash.hashCode ^
+      protectedLeaseReference.hashCode ^
+      protectedPayloadReference.hashCode ^
+      payloadSha256.hashCode ^
+      protectedServerRecordReference.hashCode ^
+      serverRecordIdHash.hashCode ^
+      appleOperationUuid.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncPreparedMessageCreateInput &&
+          runtimeType == other.runtimeType &&
+          localOperationId == other.localOperationId &&
+          logicalEntityKeyHash == other.logicalEntityKeyHash &&
+          protectedLeaseReference == other.protectedLeaseReference &&
+          protectedPayloadReference == other.protectedPayloadReference &&
+          payloadSha256 == other.payloadSha256 &&
+          protectedServerRecordReference ==
+              other.protectedServerRecordReference &&
+          serverRecordIdHash == other.serverRecordIdHash &&
+          appleOperationUuid == other.appleOperationUuid;
+}
+
+class CloudSyncPreparedMessageCreateResult {
+  final CloudSyncPreparedMessageCreateHandle? handle;
+  final CloudSyncOutboundSafeCode? failure;
+
+  const CloudSyncPreparedMessageCreateResult({this.handle, this.failure});
+
+  @override
+  int get hashCode => handle.hashCode ^ failure.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncPreparedMessageCreateResult &&
+          runtimeType == other.runtimeType &&
+          handle == other.handle &&
+          failure == other.failure;
+}
+
 /// One protected CloudKit change. Every string is either a fixed-format digest
 /// or an opaque `obcs2.ref.*` capability. No Apple identifier or record body is
 /// present.
@@ -2820,6 +3074,68 @@ class CloudSyncProtectedLeaseResult {
       identical(this, other) ||
       other is CloudSyncProtectedLeaseResult &&
           runtimeType == other.runtimeType &&
+          failure == other.failure;
+}
+
+class CloudSyncProtectedOutboundStage {
+  final String logicalEntityKeyHash;
+  final String protectedPayloadReference;
+  final String payloadSha256;
+  final BigInt payloadLength;
+  final String protectedServerRecordReference;
+  final String serverRecordIdHash;
+  final String leaseReference;
+
+  const CloudSyncProtectedOutboundStage({
+    required this.logicalEntityKeyHash,
+    required this.protectedPayloadReference,
+    required this.payloadSha256,
+    required this.payloadLength,
+    required this.protectedServerRecordReference,
+    required this.serverRecordIdHash,
+    required this.leaseReference,
+  });
+
+  @override
+  int get hashCode =>
+      logicalEntityKeyHash.hashCode ^
+      protectedPayloadReference.hashCode ^
+      payloadSha256.hashCode ^
+      payloadLength.hashCode ^
+      protectedServerRecordReference.hashCode ^
+      serverRecordIdHash.hashCode ^
+      leaseReference.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncProtectedOutboundStage &&
+          runtimeType == other.runtimeType &&
+          logicalEntityKeyHash == other.logicalEntityKeyHash &&
+          protectedPayloadReference == other.protectedPayloadReference &&
+          payloadSha256 == other.payloadSha256 &&
+          payloadLength == other.payloadLength &&
+          protectedServerRecordReference ==
+              other.protectedServerRecordReference &&
+          serverRecordIdHash == other.serverRecordIdHash &&
+          leaseReference == other.leaseReference;
+}
+
+class CloudSyncProtectedOutboundStageResult {
+  final CloudSyncProtectedOutboundStage? stage;
+  final CloudSyncOutboundSafeCode? failure;
+
+  const CloudSyncProtectedOutboundStageResult({this.stage, this.failure});
+
+  @override
+  int get hashCode => stage.hashCode ^ failure.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncProtectedOutboundStageResult &&
+          runtimeType == other.runtimeType &&
+          stage == other.stage &&
           failure == other.failure;
 }
 

@@ -1060,7 +1060,7 @@
     },
     {
       "id": "19:6209808242097333245",
-      "lastPropertyId": "25:593864995002474100",
+      "lastPropertyId": "26:4302324668053862926",
       "name": "CloudOutboxOperationEntity",
       "properties": [
         {
@@ -1201,6 +1201,11 @@
         {
           "id": "25:593864995002474100",
           "name": "appleOperationUuid",
+          "type": 9
+        },
+        {
+          "id": "26:4302324668053862926",
+          "name": "protectedLeaseReference",
           "type": 9
         }
       ],

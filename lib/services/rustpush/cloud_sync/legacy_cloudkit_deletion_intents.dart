@@ -328,6 +328,48 @@ final class LegacyCloudKitDeletionIntentStore {
 
   int get pendingCount => _countIntentsWithState(_pendingState);
 
+  /// Counts values still present in the three pre-V2 preference queues.
+  /// Malformed values count as one blocking entry and are never ignored.
+  int legacySharedPreferenceQueueEntryCount(SharedPreferences prefs) {
+    var count = 0;
+    for (final sourceKey in const [
+      legacyMessageKey,
+      legacyAttachmentKey,
+      legacyChatKey,
+    ]) {
+      final value = prefs.get(sourceKey);
+      if (value == null) continue;
+      if (value is List && value.every((item) => item is String)) {
+        count += value.length;
+      } else {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /// Returns the number of pending deletion intents for exactly one CloudKit
+  /// scope. This is a read-only inventory probe: it deliberately does not
+  /// consult writer ownership or epoch, and it does not quarantine or mutate
+  /// any row.
+  int pendingCountForScope(CloudKitWriterScope scope) {
+    final query = _intents
+        .query(
+          CloudKitDeletionIntentEntity_.accountFingerprint.equals(
+                scope.accountFingerprint,
+              ) &
+              CloudKitDeletionIntentEntity_.container.equals(scope.container) &
+              CloudKitDeletionIntentEntity_.database.equals(scope.database) &
+              CloudKitDeletionIntentEntity_.state.equals(_pendingState),
+        )
+        .build();
+    try {
+      return query.count();
+    } finally {
+      query.close();
+    }
+  }
+
   int get quarantinedIntentCount => _countIntentsWithState(_quarantinedState);
 
   int get quarantineEvidenceCount => _quarantines.count();

@@ -113,6 +113,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       wire.rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCircleClientSessionDefaultAnisetteProvider;
 
   CrossPlatformFinalizerArg
+  get rust_arc_decrement_strong_count_CloudSyncPreparedMessageCreateHandlePtr =>
+      wire.rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle;
+
+  CrossPlatformFinalizerArg
   get rust_arc_decrement_strong_count_ConversationLinkPtr => wire
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink;
 
@@ -361,6 +365,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CircleClientSessionDefaultAnisetteProvider
   dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCircleClientSessionDefaultAnisetteProvider(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncPreparedMessageCreateHandle
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
     dynamic raw,
   );
 
@@ -685,6 +695,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   ArcTokenProviderDefaultAnisetteProvider
   dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcTokenProviderDefaultAnisetteProvider(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncPreparedMessageCreateHandle
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
     dynamic raw,
   );
 
@@ -1054,6 +1070,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncPreparedMessageCreateHandle
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    dynamic raw,
+  );
+
+  @protected
   ConversationLink
   dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     dynamic raw,
@@ -1339,6 +1361,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncPreparedMessageCreateHandle
+  dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    dynamic raw,
+  );
+
+  @protected
   ConversationLink
   dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     dynamic raw,
@@ -1479,6 +1507,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CloudProp dco_decode_box_autoadd_cloud_prop(dynamic raw);
 
   @protected
+  CloudSyncOutboundFailureClass
+  dco_decode_box_autoadd_cloud_sync_outbound_failure_class(dynamic raw);
+
+  @protected
+  CloudSyncOutboundReconcileDisposition
+  dco_decode_box_autoadd_cloud_sync_outbound_reconcile_disposition(dynamic raw);
+
+  @protected
+  CloudSyncOutboundSafeCode
+  dco_decode_box_autoadd_cloud_sync_outbound_safe_code(dynamic raw);
+
+  @protected
+  CloudSyncPreparedMessageCreateInput
+  dco_decode_box_autoadd_cloud_sync_prepared_message_create_input(dynamic raw);
+
+  @protected
   CloudSyncProtectedFailure dco_decode_box_autoadd_cloud_sync_protected_failure(
     dynamic raw,
   );
@@ -1486,6 +1530,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncProtectedGarbageCollection
   dco_decode_box_autoadd_cloud_sync_protected_garbage_collection(dynamic raw);
+
+  @protected
+  CloudSyncProtectedOutboundStage
+  dco_decode_box_autoadd_cloud_sync_protected_outbound_stage(dynamic raw);
 
   @protected
   CloudSyncProtectedPage dco_decode_box_autoadd_cloud_sync_protected_page(
@@ -1905,6 +1953,46 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncOutboundConsumeResult dco_decode_cloud_sync_outbound_consume_result(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncOutboundFailureClass dco_decode_cloud_sync_outbound_failure_class(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncOutboundReconcileDisposition
+  dco_decode_cloud_sync_outbound_reconcile_disposition(dynamic raw);
+
+  @protected
+  CloudSyncOutboundReconcileResult
+  dco_decode_cloud_sync_outbound_reconcile_result(dynamic raw);
+
+  @protected
+  CloudSyncOutboundSafeCode dco_decode_cloud_sync_outbound_safe_code(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncOutboundSaveDisposition
+  dco_decode_cloud_sync_outbound_save_disposition(dynamic raw);
+
+  @protected
+  CloudSyncOutboundSaveOutcome dco_decode_cloud_sync_outbound_save_outcome(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncPreparedMessageCreateInput
+  dco_decode_cloud_sync_prepared_message_create_input(dynamic raw);
+
+  @protected
+  CloudSyncPreparedMessageCreateResult
+  dco_decode_cloud_sync_prepared_message_create_result(dynamic raw);
+
+  @protected
   CloudSyncProtectedChange dco_decode_cloud_sync_protected_change(dynamic raw);
 
   @protected
@@ -1938,6 +2026,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CloudSyncProtectedLeaseResult dco_decode_cloud_sync_protected_lease_result(
     dynamic raw,
   );
+
+  @protected
+  CloudSyncProtectedOutboundStage
+  dco_decode_cloud_sync_protected_outbound_stage(dynamic raw);
+
+  @protected
+  CloudSyncProtectedOutboundStageResult
+  dco_decode_cloud_sync_protected_outbound_stage_result(dynamic raw);
 
   @protected
   CloudSyncProtectedPage dco_decode_cloud_sync_protected_page(dynamic raw);
@@ -2216,6 +2312,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<CloudParticipant> dco_decode_list_cloud_participant(dynamic raw);
+
+  @protected
+  List<CloudSyncOutboundSaveOutcome>
+  dco_decode_list_cloud_sync_outbound_save_outcome(dynamic raw);
+
+  @protected
+  List<CloudSyncPreparedMessageCreateInput>
+  dco_decode_list_cloud_sync_prepared_message_create_input(dynamic raw);
 
   @protected
   List<CloudSyncProtectedChange> dco_decode_list_cloud_sync_protected_change(
@@ -2612,6 +2716,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncPreparedMessageCreateHandle?
+  dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    dynamic raw,
+  );
+
+  @protected
   ConversationLink?
   dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     dynamic raw,
@@ -2737,6 +2847,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CloudProp? dco_decode_opt_box_autoadd_cloud_prop(dynamic raw);
 
   @protected
+  CloudSyncOutboundFailureClass?
+  dco_decode_opt_box_autoadd_cloud_sync_outbound_failure_class(dynamic raw);
+
+  @protected
+  CloudSyncOutboundReconcileDisposition?
+  dco_decode_opt_box_autoadd_cloud_sync_outbound_reconcile_disposition(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncOutboundSafeCode?
+  dco_decode_opt_box_autoadd_cloud_sync_outbound_safe_code(dynamic raw);
+
+  @protected
   CloudSyncProtectedFailure?
   dco_decode_opt_box_autoadd_cloud_sync_protected_failure(dynamic raw);
 
@@ -2745,6 +2869,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_opt_box_autoadd_cloud_sync_protected_garbage_collection(
     dynamic raw,
   );
+
+  @protected
+  CloudSyncProtectedOutboundStage?
+  dco_decode_opt_box_autoadd_cloud_sync_protected_outbound_stage(dynamic raw);
 
   @protected
   CloudSyncProtectedPage? dco_decode_opt_box_autoadd_cloud_sync_protected_page(
@@ -3610,6 +3738,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncPreparedMessageCreateHandle
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ConversationLink
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     SseDeserializer deserializer,
@@ -3930,6 +4064,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   ArcTokenProviderDefaultAnisetteProvider
   sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcTokenProviderDefaultAnisetteProvider(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncPreparedMessageCreateHandle
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
     SseDeserializer deserializer,
   );
 
@@ -4323,6 +4463,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncPreparedMessageCreateHandle
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ConversationLink
   sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     SseDeserializer deserializer,
@@ -4616,6 +4762,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncPreparedMessageCreateHandle
+  sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ConversationLink
   sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     SseDeserializer deserializer,
@@ -4772,6 +4924,30 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CloudProp sse_decode_box_autoadd_cloud_prop(SseDeserializer deserializer);
 
   @protected
+  CloudSyncOutboundFailureClass
+  sse_decode_box_autoadd_cloud_sync_outbound_failure_class(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncOutboundReconcileDisposition
+  sse_decode_box_autoadd_cloud_sync_outbound_reconcile_disposition(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncOutboundSafeCode
+  sse_decode_box_autoadd_cloud_sync_outbound_safe_code(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncPreparedMessageCreateInput
+  sse_decode_box_autoadd_cloud_sync_prepared_message_create_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncProtectedFailure sse_decode_box_autoadd_cloud_sync_protected_failure(
     SseDeserializer deserializer,
   );
@@ -4779,6 +4955,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncProtectedGarbageCollection
   sse_decode_box_autoadd_cloud_sync_protected_garbage_collection(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncProtectedOutboundStage
+  sse_decode_box_autoadd_cloud_sync_protected_outbound_stage(
     SseDeserializer deserializer,
   );
 
@@ -5326,6 +5508,52 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncOutboundConsumeResult sse_decode_cloud_sync_outbound_consume_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncOutboundFailureClass sse_decode_cloud_sync_outbound_failure_class(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncOutboundReconcileDisposition
+  sse_decode_cloud_sync_outbound_reconcile_disposition(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncOutboundReconcileResult
+  sse_decode_cloud_sync_outbound_reconcile_result(SseDeserializer deserializer);
+
+  @protected
+  CloudSyncOutboundSafeCode sse_decode_cloud_sync_outbound_safe_code(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncOutboundSaveDisposition
+  sse_decode_cloud_sync_outbound_save_disposition(SseDeserializer deserializer);
+
+  @protected
+  CloudSyncOutboundSaveOutcome sse_decode_cloud_sync_outbound_save_outcome(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncPreparedMessageCreateInput
+  sse_decode_cloud_sync_prepared_message_create_input(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncPreparedMessageCreateResult
+  sse_decode_cloud_sync_prepared_message_create_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncProtectedChange sse_decode_cloud_sync_protected_change(
     SseDeserializer deserializer,
   );
@@ -5365,6 +5593,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CloudSyncProtectedLeaseResult sse_decode_cloud_sync_protected_lease_result(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncProtectedOutboundStage
+  sse_decode_cloud_sync_protected_outbound_stage(SseDeserializer deserializer);
+
+  @protected
+  CloudSyncProtectedOutboundStageResult
+  sse_decode_cloud_sync_protected_outbound_stage_result(
     SseDeserializer deserializer,
   );
 
@@ -5687,6 +5925,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<CloudParticipant> sse_decode_list_cloud_participant(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<CloudSyncOutboundSaveOutcome>
+  sse_decode_list_cloud_sync_outbound_save_outcome(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<CloudSyncPreparedMessageCreateInput>
+  sse_decode_list_cloud_sync_prepared_message_create_input(
     SseDeserializer deserializer,
   );
 
@@ -6147,6 +6397,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncPreparedMessageCreateHandle?
+  sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   ConversationLink?
   sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     SseDeserializer deserializer,
@@ -6286,6 +6542,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncOutboundFailureClass?
+  sse_decode_opt_box_autoadd_cloud_sync_outbound_failure_class(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncOutboundReconcileDisposition?
+  sse_decode_opt_box_autoadd_cloud_sync_outbound_reconcile_disposition(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncOutboundSafeCode?
+  sse_decode_opt_box_autoadd_cloud_sync_outbound_safe_code(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncProtectedFailure?
   sse_decode_opt_box_autoadd_cloud_sync_protected_failure(
     SseDeserializer deserializer,
@@ -6294,6 +6568,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncProtectedGarbageCollection?
   sse_decode_opt_box_autoadd_cloud_sync_protected_garbage_collection(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncProtectedOutboundStage?
+  sse_decode_opt_box_autoadd_cloud_sync_protected_outbound_stage(
     SseDeserializer deserializer,
   );
 
@@ -7340,6 +7620,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    CloudSyncPreparedMessageCreateHandle self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     ConversationLink self,
     SseSerializer serializer,
@@ -7713,6 +8000,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void
   sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcTokenProviderDefaultAnisetteProvider(
     ArcTokenProviderDefaultAnisetteProvider self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    CloudSyncPreparedMessageCreateHandle self,
     SseSerializer serializer,
   );
 
@@ -8176,6 +8470,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    CloudSyncPreparedMessageCreateHandle self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     ConversationLink self,
     SseSerializer serializer,
@@ -8520,6 +8821,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    CloudSyncPreparedMessageCreateHandle self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     ConversationLink self,
     SseSerializer serializer,
@@ -8711,6 +9019,30 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_outbound_failure_class(
+    CloudSyncOutboundFailureClass self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_cloud_sync_outbound_reconcile_disposition(
+    CloudSyncOutboundReconcileDisposition self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_cloud_sync_outbound_safe_code(
+    CloudSyncOutboundSafeCode self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_cloud_sync_prepared_message_create_input(
+    CloudSyncPreparedMessageCreateInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_protected_failure(
     CloudSyncProtectedFailure self,
     SseSerializer serializer,
@@ -8719,6 +9051,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_cloud_sync_protected_garbage_collection(
     CloudSyncProtectedGarbageCollection self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_cloud_sync_protected_outbound_stage(
+    CloudSyncProtectedOutboundStage self,
     SseSerializer serializer,
   );
 
@@ -9387,6 +9725,60 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_cloud_sync_outbound_consume_result(
+    CloudSyncOutboundConsumeResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_outbound_failure_class(
+    CloudSyncOutboundFailureClass self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_outbound_reconcile_disposition(
+    CloudSyncOutboundReconcileDisposition self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_outbound_reconcile_result(
+    CloudSyncOutboundReconcileResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_outbound_safe_code(
+    CloudSyncOutboundSafeCode self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_outbound_save_disposition(
+    CloudSyncOutboundSaveDisposition self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_outbound_save_outcome(
+    CloudSyncOutboundSaveOutcome self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_prepared_message_create_input(
+    CloudSyncPreparedMessageCreateInput self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_prepared_message_create_result(
+    CloudSyncPreparedMessageCreateResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cloud_sync_protected_change(
     CloudSyncProtectedChange self,
     SseSerializer serializer,
@@ -9431,6 +9823,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_protected_lease_result(
     CloudSyncProtectedLeaseResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_protected_outbound_stage(
+    CloudSyncProtectedOutboundStage self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_protected_outbound_stage_result(
+    CloudSyncProtectedOutboundStageResult self,
     SseSerializer serializer,
   );
 
@@ -9812,6 +10216,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_cloud_participant(
     List<CloudParticipant> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_cloud_sync_outbound_save_outcome(
+    List<CloudSyncOutboundSaveOutcome> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_cloud_sync_prepared_message_create_input(
+    List<CloudSyncPreparedMessageCreateInput> self,
     SseSerializer serializer,
   );
 
@@ -10372,6 +10788,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
+  sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    CloudSyncPreparedMessageCreateHandle? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
   sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     ConversationLink? self,
     SseSerializer serializer,
@@ -10539,6 +10962,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_outbound_failure_class(
+    CloudSyncOutboundFailureClass? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_outbound_reconcile_disposition(
+    CloudSyncOutboundReconcileDisposition? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_outbound_safe_code(
+    CloudSyncOutboundSafeCode? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_cloud_sync_protected_failure(
     CloudSyncProtectedFailure? self,
     SseSerializer serializer,
@@ -10547,6 +10988,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_cloud_sync_protected_garbage_collection(
     CloudSyncProtectedGarbageCollection? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_protected_outbound_stage(
+    CloudSyncProtectedOutboundStage? self,
     SseSerializer serializer,
   );
 
@@ -11954,6 +12401,22 @@ class RustLibWire implements BaseWire {
       );
 
   void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+        ptr,
+      );
+
+  void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    int ptr,
+  ) => wasmModule
+      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+        ptr,
+      );
+
+  void
   rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerConversationLink(
     int ptr,
   ) => wasmModule
@@ -12635,6 +13098,16 @@ extension type RustLibWasmModule._(JSObject _) implements JSObject {
 
   external void
   rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCircleClientSessionDefaultAnisetteProvider(
+    int ptr,
+  );
+
+  external void
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
+    int ptr,
+  );
+
+  external void
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerCloudSyncPreparedMessageCreateHandle(
     int ptr,
   );
 

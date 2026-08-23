@@ -295,6 +295,15 @@ abstract interface class CloudProtectedPageLeaseAdoptionStore {
   );
 }
 
+/// Optional capability for native protected leases owned by non-terminal
+/// outbound operations. These are intentionally separate from page leases so
+/// page cleanup can never acknowledge an outbox receipt prematurely.
+abstract interface class CloudProtectedOutboundLeaseAdoptionStore {
+  Future<Set<String>> readNonterminalProtectedOutboundLeaseReferences({
+    required int maximumCount,
+  });
+}
+
 final class CloudProtectedReferenceSnapshot {
   CloudProtectedReferenceSnapshot({
     required Iterable<String> references,

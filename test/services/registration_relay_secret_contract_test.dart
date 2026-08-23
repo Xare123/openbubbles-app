@@ -26,7 +26,10 @@ void main() {
       RegExp(
         r'--dart-define=OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN=',
       ).allMatches(workflow).length,
-      3,
+      4,
+      reason:
+          'Every Android artifact that initializes rustpush, including the '
+          'separate CloudKit canary, must receive the build-time relay secret.',
     );
   });
 }

@@ -4,9 +4,12 @@ import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:bluebubbles/src/rust/frb_generated.dart';
 import 'package:bluebubbles/src/rust/lib.dart' as frb_lib;
 
+import 'cloud_operation_identity.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_outbound_staging.dart';
 import 'cloud_sync_store.dart';
 import 'cloud_sync_transport.dart';
+import 'cloud_sync_write_transport.dart';
 
 const int _maximumChangesPerPage = 200;
 const int _maximumProtectedReferencesPerLease =
@@ -17,6 +20,7 @@ const int _maximumRecoveryResultsPerPass = 64;
 const int _maximumLiveProtectedReferences = 131072;
 const int _maximumGarbageCollectionResultsPerPass = 64;
 const int _maximumProtectedStoreOperationsPerIdentity = 64;
+const int _maximumRetryAfterSeconds = 7 * 24 * 60 * 60;
 
 final RegExp _nativeDigestPattern = RegExp(r'^[A-Za-z0-9_-]{43}$');
 final RegExp _contentDigestPattern = RegExp(r'^[0-9a-f]{64}$');
@@ -24,6 +28,10 @@ final RegExp _protectedReferencePattern = RegExp(
   r'^obcs2\.ref\.[A-Za-z0-9_-]{43}$',
 );
 final RegExp _leaseReferencePattern = RegExp(r'^obcs2\.lease\.[0-9a-f]{32}$');
+final RegExp _outboundOperationIdPattern = RegExp(r'^op1:[0-9a-f]{64}$');
+final RegExp _canonicalAppleUuidPattern = RegExp(
+  r'^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$',
+);
 final RegExp _nativeStoreIdentityPattern = RegExp(
   r'^obcs2\.store\.[A-Za-z0-9_-]{43}$',
 );
@@ -305,7 +313,58 @@ abstract interface class NativeProtectedCloudSyncBindings {
   });
 }
 
-/// Default-off, read-only Cloud Sync V2 transport whose bridge surface contains
+abstract interface class NativeProtectedCloudSyncWriteBindings {
+  Future<frb_api.CloudSyncProtectedOutboundStageResult> stageOutboundMessage({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required frb_api.CloudMessage message,
+  });
+
+  Future<frb_api.CloudSyncPreparedMessageCreateResult> prepareMessageCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required Duration requestTimeout,
+    required List<frb_api.CloudSyncPreparedMessageCreateInput> inputs,
+  });
+
+  Future<frb_api.CloudSyncOutboundConsumeResult> consumePreparedMessageCreate({
+    required frb_api.CloudSyncPreparedMessageCreateHandle handle,
+  });
+
+  Future<frb_api.CloudSyncOutboundReconcileResult> reconcileMessageCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  });
+}
+
+final class _NativeCloudSyncPreparedSubmission
+    extends CloudSyncPreparedSubmission {
+  // Named superclass construction keeps the native handle explicit here.
+  // ignore: use_super_parameters
+  _NativeCloudSyncPreparedSubmission({
+    required CloudSyncScope scope,
+    required CloudOutboxSubmissionIdentity identity,
+    required List<CloudSyncProtectedWriteOperation> operations,
+    required this.handle,
+  }) : super.fromProtectedPreflight(
+         scope: scope,
+         identity: identity,
+         operations: operations,
+       );
+
+  final frb_api.CloudSyncPreparedMessageCreateHandle handle;
+}
+
+/// Default-off Cloud Sync V2 transport whose bridge surface contains
 /// only keyed hashes and opaque protected-local references.
 ///
 /// This class is intentionally absent from production runtime composition.
@@ -315,6 +374,9 @@ final class NativeProtectedCloudSyncTransport
     implements
         CloudSyncTransport,
         CloudProtectedPageLeaseTransport,
+        CloudSyncOutboundStagingTransport,
+        CloudSyncWriteTransport,
+        CloudSyncWriteReceiptFinalizer,
         CloudSyncNativeOperationQuiescence {
   NativeProtectedCloudSyncTransport({
     required this._cloudMessagesClient,
@@ -346,6 +408,10 @@ final class NativeProtectedCloudSyncTransport
 
   @override
   String get protectedPageLeaseRecoveryIdentity => _protectedStoreIdentity;
+
+  @override
+  Future<T> runOutboundAdmissionExclusive<T>(Future<T> Function() action) =>
+      runProtectedStoreExclusive(action);
 
   @override
   Future<T> runProtectedStoreExclusive<T>(Future<T> Function() action) =>
@@ -384,6 +450,329 @@ final class NativeProtectedCloudSyncTransport
   Future<void> quiesceNativeOperations() {
     _nativeAdmissionClosed = true;
     return _nativeQuiescence ??= _waitForNativeQuiescence();
+  }
+
+  NativeProtectedCloudSyncWriteBindings _requireWriteBindings() {
+    final bindings = _bindings;
+    if (bindings is! NativeProtectedCloudSyncWriteBindings) {
+      throw _readOnlyFailure();
+    }
+    return bindings as NativeProtectedCloudSyncWriteBindings;
+  }
+
+  @override
+  Future<CloudSyncProtectedOutboundStageData> stageOutboundMessage(
+    CloudSyncScope scope, {
+    required frb_api.CloudMessage message,
+  }) async {
+    _validateOutboundMessageScope(scope);
+    final result = await _runProtectedStoreOperation(
+      () => _requireWriteBindings().stageOutboundMessage(
+        cloudMessagesClient: _cloudMessagesClient,
+        storageDirectory: _storageDirectory,
+        expectedAccountFingerprint: scope.accountFingerprint,
+        expectedProtectedStoreIdentity: _protectedStoreIdentity,
+        message: message,
+      ),
+    );
+    if ((result.stage == null) == (result.failure == null)) {
+      throw _localStorage('cloud_sync_outbound_stage_envelope_invalid');
+    }
+    if (result.failure case final failure?) {
+      throw _mapOutboundFailure(failure);
+    }
+    final stage = result.stage!;
+    if (!_nativeDigestPattern.hasMatch(stage.logicalEntityKeyHash) ||
+        !_protectedReferencePattern.hasMatch(stage.protectedPayloadReference) ||
+        stage.protectedPayloadReference !=
+            stage.protectedServerRecordReference ||
+        !_contentDigestPattern.hasMatch(stage.payloadSha256) ||
+        !_nativeDigestPattern.hasMatch(stage.serverRecordIdHash) ||
+        !_leaseReferencePattern.hasMatch(stage.leaseReference) ||
+        stage.payloadLength <= BigInt.zero ||
+        stage.payloadLength > BigInt.from(_maximumAdmittedRawPageBytes)) {
+      throw _localStorage('cloud_sync_outbound_stage_invalid');
+    }
+    return CloudSyncProtectedOutboundStageData(
+      logicalEntityKeyHash: stage.logicalEntityKeyHash,
+      protectedEnvelopeReference: stage.protectedPayloadReference,
+      payloadSha256: stage.payloadSha256,
+      serverRecordIdHash: stage.serverRecordIdHash,
+      leaseReference: stage.leaseReference,
+    );
+  }
+
+  @override
+  Future<void> commitOutboundLease(
+    String leaseReference,
+    String protectedEnvelopeReference,
+  ) => commitProtectedPageLease(leaseReference, {protectedEnvelopeReference});
+
+  @override
+  Future<void> rollbackOutboundLease(String leaseReference) =>
+      rollbackProtectedPageLease(leaseReference);
+
+  @override
+  Future<CloudSyncPreparedSubmission> prepareSubmission(
+    CloudSyncScope scope, {
+    required CloudOutboxSubmissionIdentity submissionIdentity,
+    required List<CloudSyncProtectedWriteOperation> operations,
+  }) async {
+    _validateOutboundMessageScope(scope);
+    if (operations.isEmpty ||
+        operations.length > _maximumChangesPerPage ||
+        operations.any(
+          (operation) =>
+              operation.action != CloudOutboxAction.save ||
+              !_isInitialCreateOperationIdentity(
+                scope,
+                operationId: operation.operationId,
+                logicalEntityKeyHash: operation.logicalEntityKeyHash,
+                payloadVersion: 1,
+              ) ||
+              operation.protectedPayloadReference == null ||
+              operation.payloadSha256 == null ||
+              operation.protectedPayloadReference !=
+                  operation.protectedServerRecordIdReference,
+        )) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.cancelled,
+        safeCode: 'cloud_sync_outbound_create_only',
+      );
+    }
+    submissionIdentity.validateOperationIds(
+      operations.map((operation) => operation.operationId),
+    );
+    final result = await _runProtectedStoreOperation(
+      () => _requireWriteBindings().prepareMessageCreate(
+        cloudMessagesClient: _cloudMessagesClient,
+        storageDirectory: _storageDirectory,
+        expectedAccountFingerprint: scope.accountFingerprint,
+        expectedProtectedStoreIdentity: _protectedStoreIdentity,
+        requestUuid: submissionIdentity.requestUuid,
+        requestTimeout: const Duration(seconds: 45),
+        inputs: operations
+            .map(
+              (operation) => frb_api.CloudSyncPreparedMessageCreateInput(
+                localOperationId: operation.operationId,
+                logicalEntityKeyHash: operation.logicalEntityKeyHash,
+                protectedLeaseReference: operation.protectedLeaseReference!,
+                protectedPayloadReference: operation.protectedPayloadReference!,
+                payloadSha256: operation.payloadSha256!,
+                protectedServerRecordReference:
+                    operation.protectedServerRecordIdReference,
+                serverRecordIdHash: operation.serverRecordIdHash,
+                appleOperationUuid:
+                    submissionIdentity.operationUuids[operation.operationId]!,
+              ),
+            )
+            .toList(growable: false),
+      ),
+    );
+    if ((result.handle == null) == (result.failure == null)) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.localStorage,
+        safeCode: 'cloud_sync_outbound_prepare_envelope_invalid',
+      );
+    }
+    if (result.failure case final failure?) {
+      throw _mapOutboundFailure(failure);
+    }
+    return _NativeCloudSyncPreparedSubmission(
+      scope: scope,
+      identity: submissionIdentity,
+      operations: operations,
+      handle: result.handle!,
+    );
+  }
+
+  @override
+  Future<CloudPushBatchResult> consumePreparedSubmission(
+    CloudSyncScope scope, {
+    required CloudSyncPreparedSubmission preparedSubmission,
+    required CloudOutboxSubmissionIdentity persistedIdentity,
+    required List<CloudSyncProtectedWriteOperation> protectedOperations,
+    required List<CloudOutboxOperation> operations,
+  }) async {
+    _validateOutboundMessageScope(scope);
+    if (preparedSubmission is! _NativeCloudSyncPreparedSubmission) {
+      throw ArgumentError('cloud_sync_native_prepared_submission_required');
+    }
+    preparedSubmission.claimForConsumption(
+      scope,
+      persistedIdentity: persistedIdentity,
+      protectedOperations: protectedOperations,
+    );
+    final result = await _runProtectedStoreOperation(
+      () => _requireWriteBindings().consumePreparedMessageCreate(
+        handle: preparedSubmission.handle,
+      ),
+    );
+    if (result.failure case final failure?) {
+      throw _mapOutboundFailure(failure);
+    }
+    if (result.outcomes.length != operations.length) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.unknown,
+        safeCode: 'cloud_sync_outbound_correlation_mismatch',
+      );
+    }
+    final outcomes = <CloudPushOutcome>[];
+    final seen = <String>{};
+    for (final outcome in result.outcomes) {
+      if (!seen.add(outcome.localOperationId) ||
+          persistedIdentity.operationUuids[outcome.localOperationId] !=
+              outcome.appleOperationUuid) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.unknown,
+          safeCode: 'cloud_sync_outbound_correlation_mismatch',
+        );
+      }
+      outcomes.add(_mapOutboundOutcome(outcome));
+    }
+    return CloudPushBatchResult(outcomes: outcomes);
+  }
+
+  CloudSyncFailure _mapOutboundFailure(
+    frb_api.CloudSyncOutboundSafeCode failure,
+  ) {
+    final category = switch (failure) {
+      frb_api.CloudSyncOutboundSafeCode.invalidScope ||
+      frb_api.CloudSyncOutboundSafeCode.nativeAuthUnavailable =>
+        CloudFailureCategory.authorization,
+      frb_api.CloudSyncOutboundSafeCode.protectedStorage =>
+        CloudFailureCategory.localStorage,
+      frb_api.CloudSyncOutboundSafeCode.nativePrepareFailed =>
+        CloudFailureCategory.server,
+      frb_api.CloudSyncOutboundSafeCode.alreadyConsumed ||
+      frb_api.CloudSyncOutboundSafeCode.correlationMismatch =>
+        CloudFailureCategory.unknown,
+      _ => CloudFailureCategory.cancelled,
+    };
+    return CloudSyncFailure(
+      category: category,
+      safeCode: 'cloud_sync_outbound_${failure.name}',
+    );
+  }
+
+  CloudPushOutcome _mapOutboundOutcome(
+    frb_api.CloudSyncOutboundSaveOutcome outcome,
+  ) {
+    final retryAfter = _boundedRetryAfter(outcome.retryAfterSeconds);
+    return switch (outcome.disposition) {
+      frb_api.CloudSyncOutboundSaveDisposition.succeeded => CloudPushOutcome(
+        operationId: outcome.localOperationId,
+        disposition: CloudPushDisposition.confirmed,
+      ),
+      frb_api.CloudSyncOutboundSaveDisposition.unknownOutcome =>
+        CloudPushOutcome(
+          operationId: outcome.localOperationId,
+          disposition: CloudPushDisposition.unknownOutcome,
+          failureCategory: CloudFailureCategory.unknown,
+          retryAfter: retryAfter,
+        ),
+      frb_api.CloudSyncOutboundSaveDisposition.failed =>
+        _mapProvenFailedOutboundOutcome(outcome, retryAfter),
+    };
+  }
+
+  Duration? _boundedRetryAfter(BigInt? seconds) {
+    if (seconds == null) return null;
+    if (seconds < BigInt.zero) {
+      throw _localStorage('cloud_sync_outbound_retry_after_invalid');
+    }
+    final maximum = BigInt.from(_maximumRetryAfterSeconds);
+    final bounded = seconds > maximum ? maximum : seconds;
+    return Duration(seconds: bounded.toInt());
+  }
+
+  CloudPushOutcome _mapProvenFailedOutboundOutcome(
+    frb_api.CloudSyncOutboundSaveOutcome outcome,
+    Duration? retryAfter,
+  ) {
+    final operationId = outcome.localOperationId;
+    return switch (outcome.failureClass) {
+      frb_api.CloudSyncOutboundFailureClass.throttled => CloudPushOutcome(
+        operationId: operationId,
+        disposition: CloudPushDisposition.retryable,
+        failureCategory: CloudFailureCategory.throttled,
+        retryAfter: retryAfter,
+      ),
+      frb_api.CloudSyncOutboundFailureClass.transientServer => CloudPushOutcome(
+        operationId: operationId,
+        disposition: CloudPushDisposition.retryable,
+        failureCategory: CloudFailureCategory.server,
+        retryAfter: retryAfter,
+      ),
+      frb_api.CloudSyncOutboundFailureClass.authentication => CloudPushOutcome(
+        operationId: operationId,
+        disposition: CloudPushDisposition.unauthorized,
+        failureCategory: CloudFailureCategory.authorization,
+      ),
+      frb_api.CloudSyncOutboundFailureClass.conflict => CloudPushOutcome(
+        operationId: operationId,
+        disposition: CloudPushDisposition.serverRecordChanged,
+        failureCategory: CloudFailureCategory.conflict,
+      ),
+      frb_api.CloudSyncOutboundFailureClass.resetRequired => CloudPushOutcome(
+        operationId: operationId,
+        disposition: CloudPushDisposition.pcsUnavailable,
+        failureCategory: CloudFailureCategory.pcsUnavailable,
+      ),
+      _ => CloudPushOutcome(
+        operationId: operationId,
+        disposition: CloudPushDisposition.unknownOutcome,
+        failureCategory: CloudFailureCategory.unknown,
+      ),
+    };
+  }
+
+  @override
+  Future<void> acknowledgeDurableTerminalOperations(
+    CloudSyncScope scope, {
+    required List<CloudOutboxOperation> operations,
+    required List<CloudOutboxTransition> transitions,
+  }) async {
+    final operationsById = <String, CloudOutboxOperation>{};
+    for (final operation in operations) {
+      if (operation.scope != scope ||
+          operationsById.containsKey(operation.operationId)) {
+        throw _localStorage('cloud_sync_outbound_receipt_scope_invalid');
+      }
+      operationsById[operation.operationId] = operation;
+    }
+    final seenTransitionIds = <String>{};
+    for (final transition in transitions) {
+      if (!seenTransitionIds.add(transition.operationId) ||
+          !operationsById.containsKey(transition.operationId)) {
+        throw _localStorage('cloud_sync_outbound_receipt_transition_invalid');
+      }
+    }
+    final terminalIds = transitions
+        .where(
+          (transition) =>
+              transition.type == CloudOutboxTransitionType.confirmed ||
+              transition.type == CloudOutboxTransitionType.quarantined,
+        )
+        .map((transition) => transition.operationId)
+        .toSet();
+    final leases = operations
+        .where((operation) => terminalIds.contains(operation.operationId))
+        .map((operation) => operation.protectedLeaseReference)
+        .whereType<String>()
+        .toSet();
+    for (final lease in leases) {
+      _validateLeaseReference(lease);
+      final result = await _runProtectedStoreOperation(
+        () => _bindings.acknowledgeCommittedPageLease(
+          storageDirectory: _storageDirectory,
+          leaseReference: lease,
+        ),
+      );
+      if (result.failure != null) {
+        throw _mapFailure(result.failure!);
+      }
+    }
   }
 
   Future<void> _waitForNativeQuiescence() async {
@@ -722,6 +1111,51 @@ final class NativeProtectedCloudSyncTransport
     }
   }
 
+  void _validateOutboundMessageScope(CloudSyncScope scope) {
+    if (_validateScopeAndStream(scope) != 'messages') {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.cancelled,
+        safeCode: 'unsupported_protected_outbound_scope',
+      );
+    }
+  }
+
+  bool _isInitialCreateOperationIdentity(
+    CloudSyncScope scope, {
+    required String operationId,
+    required String logicalEntityKeyHash,
+    required int payloadVersion,
+  }) {
+    if (!_outboundOperationIdPattern.hasMatch(operationId) ||
+        !_nativeDigestPattern.hasMatch(logicalEntityKeyHash)) {
+      return false;
+    }
+    return operationId ==
+        CloudOperationIdentity.forInitialCreate(
+          scope: scope,
+          logicalEntityKeyHash: logicalEntityKeyHash,
+          payloadVersion: payloadVersion,
+        );
+  }
+
+  CloudFailureCategory _mapOutboundFailureClass(
+    frb_api.CloudSyncOutboundFailureClass? failure,
+  ) => switch (failure) {
+    frb_api.CloudSyncOutboundFailureClass.throttled =>
+      CloudFailureCategory.throttled,
+    frb_api.CloudSyncOutboundFailureClass.transientServer =>
+      CloudFailureCategory.server,
+    frb_api.CloudSyncOutboundFailureClass.authentication =>
+      CloudFailureCategory.authorization,
+    frb_api.CloudSyncOutboundFailureClass.conflict =>
+      CloudFailureCategory.conflict,
+    frb_api.CloudSyncOutboundFailureClass.resetRequired =>
+      CloudFailureCategory.pcsUnavailable,
+    frb_api.CloudSyncOutboundFailureClass.permanent ||
+    frb_api.CloudSyncOutboundFailureClass.unknown ||
+    null => CloudFailureCategory.unknown,
+  };
+
   String _validateScopeAndStream(CloudSyncScope scope) {
     if (!_nativeDigestPattern.hasMatch(scope.accountFingerprint) ||
         scope.container != 'com.apple.messages.cloud' ||
@@ -807,7 +1241,120 @@ final class NativeProtectedCloudSyncTransport
   Future<CloudUnknownOutcomeResolution> reconcileUnknownOutcome(
     CloudSyncScope scope, {
     required CloudOutboxOperation operation,
-  }) => throw _readOnlyFailure();
+  }) async {
+    _validateOutboundMessageScope(scope);
+    final payloadReference = operation.encryptedPayloadReference;
+    final payloadSha256 = operation.payloadSha256;
+    final serverRecordIdHash = operation.serverRecordIdHash;
+    final leaseReference = operation.protectedLeaseReference;
+    final requestUuid = operation.appleRequestUuid;
+    final operationUuid = operation.appleOperationUuid;
+    if (operation.scope != scope ||
+        operation.status != CloudOutboxStatus.unknownOutcome ||
+        operation.action != CloudOutboxAction.save ||
+        operation.payloadVersion != 1 ||
+        !_isInitialCreateOperationIdentity(
+          scope,
+          operationId: operation.operationId,
+          logicalEntityKeyHash: operation.logicalEntityKeyHash,
+          payloadVersion: operation.payloadVersion,
+        ) ||
+        payloadReference == null ||
+        !_protectedReferencePattern.hasMatch(payloadReference) ||
+        payloadSha256 == null ||
+        !_contentDigestPattern.hasMatch(payloadSha256) ||
+        serverRecordIdHash == null ||
+        !_nativeDigestPattern.hasMatch(serverRecordIdHash) ||
+        leaseReference == null ||
+        !_leaseReferencePattern.hasMatch(leaseReference) ||
+        requestUuid == null ||
+        !_canonicalAppleUuidPattern.hasMatch(requestUuid) ||
+        operationUuid == null ||
+        !_canonicalAppleUuidPattern.hasMatch(operationUuid) ||
+        requestUuid == operationUuid) {
+      throw _localStorage('cloud_sync_outbound_reconcile_operation_invalid');
+    }
+
+    final result = await _runProtectedStoreOperation(
+      () => _requireWriteBindings().reconcileMessageCreate(
+        cloudMessagesClient: _cloudMessagesClient,
+        storageDirectory: _storageDirectory,
+        expectedAccountFingerprint: scope.accountFingerprint,
+        expectedProtectedStoreIdentity: _protectedStoreIdentity,
+        requestUuid: requestUuid,
+        input: frb_api.CloudSyncPreparedMessageCreateInput(
+          localOperationId: operation.operationId,
+          logicalEntityKeyHash: operation.logicalEntityKeyHash,
+          protectedLeaseReference: leaseReference,
+          protectedPayloadReference: payloadReference,
+          payloadSha256: payloadSha256,
+          protectedServerRecordReference: payloadReference,
+          serverRecordIdHash: serverRecordIdHash,
+          appleOperationUuid: operationUuid,
+        ),
+      ),
+    );
+    if (result.failure case final failure?) {
+      if (result.disposition != null ||
+          result.protectedProofReference != null ||
+          result.failureClass != null ||
+          result.retryAfterSeconds != null) {
+        throw _localStorage('cloud_sync_outbound_reconcile_envelope_invalid');
+      }
+      throw _mapOutboundFailure(failure);
+    }
+    final disposition = result.disposition;
+    if (disposition == null) {
+      throw _localStorage('cloud_sync_outbound_reconcile_envelope_invalid');
+    }
+    final decisive =
+        disposition != frb_api.CloudSyncOutboundReconcileDisposition.unresolved;
+    if ((decisive && result.protectedProofReference != payloadReference) ||
+        (!decisive && result.protectedProofReference != null) ||
+        (disposition !=
+                frb_api.CloudSyncOutboundReconcileDisposition.unresolved &&
+            result.retryAfterSeconds != null) ||
+        ((disposition ==
+                    frb_api.CloudSyncOutboundReconcileDisposition.committed ||
+                disposition ==
+                    frb_api.CloudSyncOutboundReconcileDisposition.notApplied) &&
+            result.failureClass != null) ||
+        (disposition ==
+                frb_api.CloudSyncOutboundReconcileDisposition.diverged &&
+            result.failureClass !=
+                frb_api.CloudSyncOutboundFailureClass.conflict)) {
+      throw _localStorage('cloud_sync_outbound_reconcile_envelope_invalid');
+    }
+
+    CloudUnknownOutcomeProof proof() => CloudUnknownOutcomeProof(
+      operationId: operation.operationId,
+      appleRequestUuid: requestUuid,
+      appleOperationUuid: operationUuid,
+      scopeStorageKey: scope.storageKey,
+      checkpointGeneration: operation.checkpointGeneration,
+      logicalEntityKeyHash: operation.logicalEntityKeyHash,
+      serverRecordIdHash: serverRecordIdHash,
+      action: operation.action,
+      expectedPayloadSha256: payloadSha256,
+      protectedProofReference: result.protectedProofReference!,
+    );
+
+    return switch (disposition) {
+      frb_api.CloudSyncOutboundReconcileDisposition.committed =>
+        CloudUnknownOutcomeResolution.committed(proof: proof()),
+      frb_api.CloudSyncOutboundReconcileDisposition.notApplied =>
+        CloudUnknownOutcomeResolution.notApplied(proof: proof()),
+      frb_api.CloudSyncOutboundReconcileDisposition.diverged =>
+        const CloudUnknownOutcomeResolution.quarantined(
+          failureCategory: CloudFailureCategory.conflict,
+        ),
+      frb_api.CloudSyncOutboundReconcileDisposition.unresolved =>
+        CloudUnknownOutcomeResolution.unresolved(
+          failureCategory: _mapOutboundFailureClass(result.failureClass),
+          retryAfter: _boundedRetryAfter(result.retryAfterSeconds),
+        ),
+    };
+  }
 
   @override
   Future<CloudRecordMapEntry> allocateServerRecordMapping(
@@ -829,12 +1376,70 @@ final class NativeProtectedCloudSyncTransport
 
 /// Typed façade over the generated protected FRB surface.
 final class FrbNativeProtectedCloudSyncBindings
-    implements NativeProtectedCloudSyncBindings {
+    implements
+        NativeProtectedCloudSyncBindings,
+        NativeProtectedCloudSyncWriteBindings {
   FrbNativeProtectedCloudSyncBindings({RustLibApi? api})
     // ignore: invalid_use_of_internal_member
     : _api = api ?? RustLib.instance.api;
 
   final RustLibApi _api;
+
+  @override
+  Future<frb_api.CloudSyncProtectedOutboundStageResult> stageOutboundMessage({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required frb_api.CloudMessage message,
+  }) => _api.crateApiApiCloudSyncStageOutboundMessage(
+    cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+    storageDirectory: storageDirectory,
+    expectedAccountFingerprint: expectedAccountFingerprint,
+    expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+    message: message,
+  );
+
+  @override
+  Future<frb_api.CloudSyncPreparedMessageCreateResult> prepareMessageCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required Duration requestTimeout,
+    required List<frb_api.CloudSyncPreparedMessageCreateInput> inputs,
+  }) => _api.crateApiApiCloudSyncPrepareMessageCreate(
+    cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+    storageDirectory: storageDirectory,
+    expectedAccountFingerprint: expectedAccountFingerprint,
+    expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+    requestUuid: requestUuid,
+    requestTimeoutSeconds: BigInt.from(requestTimeout.inSeconds),
+    inputs: inputs,
+  );
+
+  @override
+  Future<frb_api.CloudSyncOutboundConsumeResult> consumePreparedMessageCreate({
+    required frb_api.CloudSyncPreparedMessageCreateHandle handle,
+  }) => _api.crateApiApiCloudSyncConsumePreparedMessageCreate(handle: handle);
+
+  @override
+  Future<frb_api.CloudSyncOutboundReconcileResult> reconcileMessageCreate({
+    required Object cloudMessagesClient,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String expectedProtectedStoreIdentity,
+    required String requestUuid,
+    required frb_api.CloudSyncPreparedMessageCreateInput input,
+  }) => _api.crateApiApiCloudSyncReconcileMessageCreate(
+    cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+    storageDirectory: storageDirectory,
+    expectedAccountFingerprint: expectedAccountFingerprint,
+    expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+    requestUuid: requestUuid,
+    input: input,
+  );
 
   @override
   Future<NativeProtectedFetchResult> fetchProtectedPage({

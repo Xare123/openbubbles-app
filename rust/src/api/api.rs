@@ -394,6 +394,123 @@ pub struct CloudSyncProtectedGarbageCollectionResult {
 }
 // CLOUD_SYNC_PROTECTED_DTO_END
 
+// CLOUD_SYNC_OUTBOUND_DTO_BEGIN
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CloudSyncOutboundSafeCode {
+    InvalidScope,
+    InvalidRequest,
+    UnsupportedMessage,
+    MalformedMessage,
+    OversizedMessage,
+    ProtectedStorage,
+    BindingMismatch,
+    NativeAuthUnavailable,
+    NativePrepareFailed,
+    AlreadyConsumed,
+    CorrelationMismatch,
+}
+
+#[derive(Clone, Debug)]
+pub struct CloudSyncProtectedOutboundStage {
+    pub logical_entity_key_hash: String,
+    pub protected_payload_reference: String,
+    pub payload_sha256: String,
+    pub payload_length: u64,
+    pub protected_server_record_reference: String,
+    pub server_record_id_hash: String,
+    pub lease_reference: String,
+}
+
+#[derive(Debug)]
+pub struct CloudSyncProtectedOutboundStageResult {
+    pub stage: Option<CloudSyncProtectedOutboundStage>,
+    pub failure: Option<CloudSyncOutboundSafeCode>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CloudSyncPreparedMessageCreateInput {
+    pub local_operation_id: String,
+    pub logical_entity_key_hash: String,
+    pub protected_lease_reference: String,
+    pub protected_payload_reference: String,
+    pub payload_sha256: String,
+    pub protected_server_record_reference: String,
+    pub server_record_id_hash: String,
+    pub apple_operation_uuid: String,
+}
+
+#[frb(opaque)]
+pub struct CloudSyncPreparedMessageCreateHandle {
+    prepared: tokio::sync::Mutex<
+        Option<
+            rustpush::cloud_messages::CloudMessagesPreparedSaveSubmission<DefaultAnisetteProvider>,
+        >,
+    >,
+}
+
+impl std::fmt::Debug for CloudSyncPreparedMessageCreateHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("CloudSyncPreparedMessageCreateHandle(redacted)")
+    }
+}
+
+#[derive(Debug)]
+pub struct CloudSyncPreparedMessageCreateResult {
+    pub handle: Option<CloudSyncPreparedMessageCreateHandle>,
+    pub failure: Option<CloudSyncOutboundSafeCode>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CloudSyncOutboundSaveDisposition {
+    Succeeded,
+    UnknownOutcome,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CloudSyncOutboundFailureClass {
+    Throttled,
+    TransientServer,
+    Authentication,
+    Conflict,
+    ResetRequired,
+    Permanent,
+    Unknown,
+}
+
+#[derive(Clone, Debug)]
+pub struct CloudSyncOutboundSaveOutcome {
+    pub local_operation_id: String,
+    pub apple_operation_uuid: String,
+    pub disposition: CloudSyncOutboundSaveDisposition,
+    pub failure_class: Option<CloudSyncOutboundFailureClass>,
+    pub retry_after_seconds: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CloudSyncOutboundConsumeResult {
+    pub outcomes: Vec<CloudSyncOutboundSaveOutcome>,
+    pub failure: Option<CloudSyncOutboundSafeCode>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CloudSyncOutboundReconcileDisposition {
+    Committed,
+    NotApplied,
+    Diverged,
+    Unresolved,
+}
+
+#[derive(Clone, Debug)]
+pub struct CloudSyncOutboundReconcileResult {
+    pub disposition: Option<CloudSyncOutboundReconcileDisposition>,
+    pub protected_proof_reference: Option<String>,
+    pub failure_class: Option<CloudSyncOutboundFailureClass>,
+    pub retry_after_seconds: Option<u64>,
+    pub failure: Option<CloudSyncOutboundSafeCode>,
+}
+// CLOUD_SYNC_OUTBOUND_DTO_END
+
 // CLOUD_SYNC_TRANSIENT_DTO_BEGIN
 /// D1-only entity vocabulary. These values are safe fixed discriminants.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -704,6 +821,734 @@ pub struct CloudSyncTransientDecodeResult {
     pub failure_code: Option<CloudSyncTransientFailureCode>,
 }
 // CLOUD_SYNC_TRANSIENT_DTO_END
+
+fn map_cloud_sync_outbound_failure(
+    failure: crate::cloud_sync_outbound::CloudSyncOutboundFailure,
+) -> CloudSyncOutboundSafeCode {
+    use crate::cloud_sync_outbound::CloudSyncOutboundFailure as Native;
+    match failure {
+        Native::UnsupportedMessage => CloudSyncOutboundSafeCode::UnsupportedMessage,
+        Native::MalformedMessage => CloudSyncOutboundSafeCode::MalformedMessage,
+        Native::OversizedMessage => CloudSyncOutboundSafeCode::OversizedMessage,
+        Native::ProtectedStorage => CloudSyncOutboundSafeCode::ProtectedStorage,
+        Native::BindingMismatch => CloudSyncOutboundSafeCode::BindingMismatch,
+    }
+}
+
+fn map_cloud_sync_outbound_failure_class(
+    failure: rustpush::cloudkit::CloudKitFailureClass,
+) -> CloudSyncOutboundFailureClass {
+    use rustpush::cloudkit::CloudKitFailureClass as Native;
+    match failure {
+        Native::Throttled => CloudSyncOutboundFailureClass::Throttled,
+        Native::TransientServer => CloudSyncOutboundFailureClass::TransientServer,
+        Native::Authentication => CloudSyncOutboundFailureClass::Authentication,
+        Native::Conflict => CloudSyncOutboundFailureClass::Conflict,
+        Native::ResetRequired => CloudSyncOutboundFailureClass::ResetRequired,
+        Native::Permanent => CloudSyncOutboundFailureClass::Permanent,
+        Native::Unknown => CloudSyncOutboundFailureClass::Unknown,
+    }
+}
+
+fn cloud_sync_outbound_failure_result(
+    failure: CloudSyncOutboundSafeCode,
+) -> CloudSyncProtectedOutboundStageResult {
+    CloudSyncProtectedOutboundStageResult {
+        stage: None,
+        failure: Some(failure),
+    }
+}
+
+/// Converts one transient outgoing iMessage into a protected, crash-recoverable
+/// outbox payload and stable server-record mapping. Message content and the raw
+/// server record name remain native-only.
+pub async fn cloud_sync_stage_outbound_message(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    expected_protected_store_identity: String,
+    message: CloudMessage,
+) -> CloudSyncProtectedOutboundStageResult {
+    let auth =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_outbound_failure_result(
+                    CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+                )
+            }
+        };
+    if expected_account_fingerprint != auth.account_fingerprint
+        || expected_protected_store_identity != auth.protected_store_identity
+    {
+        return cloud_sync_outbound_failure_result(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+    match crate::cloud_sync_outbound::stage_outbound_message(
+        PathBuf::from(storage_directory),
+        auth.account_fingerprint,
+        message,
+    ) {
+        Ok(stage) => CloudSyncProtectedOutboundStageResult {
+            stage: Some(CloudSyncProtectedOutboundStage {
+                logical_entity_key_hash: stage.logical_entity_key_hash,
+                protected_payload_reference: stage.protected_payload_reference,
+                payload_sha256: stage.payload_sha256,
+                payload_length: stage.payload_length,
+                protected_server_record_reference: stage.protected_server_record_reference,
+                server_record_id_hash: stage.server_record_id_hash,
+                lease_reference: stage.lease_reference,
+            }),
+            failure: None,
+        },
+        Err(failure) => {
+            cloud_sync_outbound_failure_result(map_cloud_sync_outbound_failure(failure))
+        }
+    }
+}
+
+fn cloud_sync_prepare_failure(
+    failure: CloudSyncOutboundSafeCode,
+) -> CloudSyncPreparedMessageCreateResult {
+    CloudSyncPreparedMessageCreateResult {
+        handle: None,
+        failure: Some(failure),
+    }
+}
+
+fn is_cloud_sync_hex_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
+fn is_cloud_sync_operation_id(value: &str) -> bool {
+    value.len() == 68
+        && value.starts_with("op1:")
+        && value[4..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
+fn is_cloud_sync_keyed_hash(value: &str) -> bool {
+    value.len() == 43
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn is_cloud_sync_protected_reference(value: &str) -> bool {
+    value.len() == 53 && value.starts_with("obcs2.ref.") && is_cloud_sync_keyed_hash(&value[10..])
+}
+
+fn is_cloud_sync_lease_reference(value: &str) -> bool {
+    value.len() == 44
+        && value.starts_with("obcs2.lease.")
+        && value[12..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
+/// Prepares a create-only CloudKit request without performing remote I/O. The
+/// returned opaque handle owns PCS material, prepared authentication, exact
+/// request identity, and all operations. It can be consumed only once.
+#[allow(clippy::too_many_arguments)]
+pub async fn cloud_sync_prepare_message_create(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    expected_protected_store_identity: String,
+    request_uuid: String,
+    request_timeout_seconds: u64,
+    inputs: Vec<CloudSyncPreparedMessageCreateInput>,
+) -> CloudSyncPreparedMessageCreateResult {
+    if inputs.is_empty()
+        || inputs.len() > 200
+        || request_timeout_seconds == 0
+        || request_timeout_seconds > 300
+    {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidRequest);
+    }
+    let auth =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativeAuthUnavailable)
+            }
+        };
+    if auth.account_fingerprint != expected_account_fingerprint
+        || auth.protected_store_identity != expected_protected_store_identity
+    {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+
+    let mut local_ids = HashSet::with_capacity(inputs.len());
+    let mut lease_references = HashSet::with_capacity(inputs.len());
+    let mut payload_references = HashSet::with_capacity(inputs.len());
+    let mut server_references = HashSet::with_capacity(inputs.len());
+    let mut server_hashes = HashSet::with_capacity(inputs.len());
+    if inputs.iter().any(|input| {
+        !is_cloud_sync_operation_id(&input.local_operation_id)
+            || crate::cloud_sync_outbound::initial_message_create_operation_id(
+                &expected_account_fingerprint,
+                &input.logical_entity_key_hash,
+            )
+            .as_deref()
+                != Ok(input.local_operation_id.as_str())
+            || !is_cloud_sync_keyed_hash(&input.logical_entity_key_hash)
+            || !is_cloud_sync_lease_reference(&input.protected_lease_reference)
+            || !is_cloud_sync_protected_reference(&input.protected_payload_reference)
+            || !is_cloud_sync_hex_digest(&input.payload_sha256)
+            || !is_cloud_sync_protected_reference(&input.protected_server_record_reference)
+            || !is_cloud_sync_keyed_hash(&input.server_record_id_hash)
+            || input.protected_payload_reference != input.protected_server_record_reference
+            || !local_ids.insert(input.local_operation_id.as_str())
+            || !lease_references.insert(input.protected_lease_reference.as_str())
+            || !payload_references.insert(input.protected_payload_reference.as_str())
+            || !server_references.insert(input.protected_server_record_reference.as_str())
+            || !server_hashes.insert(input.server_record_id_hash.as_str())
+    }) {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidRequest);
+    }
+
+    let operation_uuids = inputs
+        .iter()
+        .map(|input| input.apple_operation_uuid.clone())
+        .collect::<Vec<_>>();
+    if operation_uuids.iter().any(|uuid| uuid == &request_uuid) {
+        return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidRequest);
+    }
+    let request_identity =
+        match rustpush::cloudkit::CloudKitRequestIdentity::new(request_uuid, operation_uuids) {
+            Ok(identity) => identity,
+            Err(_) => return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::InvalidRequest),
+        };
+    let hasher =
+        match crate::cloud_sync_protector::semantic_identifier_hasher(storage_directory.clone()) {
+            Ok(hasher) => hasher,
+            Err(_) => {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::ProtectedStorage)
+            }
+        };
+
+    let storage_path = PathBuf::from(&storage_directory);
+    let mut messages = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        if crate::cloud_sync_native_fetch::cloud_sync_verify_committed_lease_exact(
+            storage_path.clone(),
+            &input.protected_lease_reference,
+            std::slice::from_ref(&input.protected_payload_reference),
+        )
+        .is_err()
+        {
+            return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::ProtectedStorage);
+        }
+        let message = match crate::cloud_sync_outbound::open_staged_outbound_message(
+            storage_path.clone(),
+            auth.account_fingerprint.clone(),
+            &input.protected_payload_reference,
+            &input.payload_sha256,
+        ) {
+            Ok(message) => message,
+            Err(failure) => {
+                return cloud_sync_prepare_failure(map_cloud_sync_outbound_failure(failure))
+            }
+        };
+        let logical_hash = match hasher.canonical_entity_key_hash(
+            crate::cloud_sync_canonical_dto::CloudCanonicalEntityKind::Message,
+            &message.guid,
+        ) {
+            Ok(hash) => hash,
+            Err(_) => {
+                return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::BindingMismatch)
+            }
+        };
+        if logical_hash.value() != input.logical_entity_key_hash {
+            return cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::BindingMismatch);
+        }
+        let server_record_name = match crate::cloud_sync_outbound::open_staged_server_record_name(
+            storage_path.clone(),
+            auth.account_fingerprint.clone(),
+            &input.protected_server_record_reference,
+            &input.server_record_id_hash,
+        ) {
+            Ok(record_name) => record_name,
+            Err(failure) => {
+                return cloud_sync_prepare_failure(map_cloud_sync_outbound_failure(failure))
+            }
+        };
+        messages.push(rustpush::cloud_messages::CloudMessageSaveInput {
+            local_operation_id: input.local_operation_id,
+            server_record_name,
+            apple_operation_uuid: input.apple_operation_uuid,
+            message,
+        });
+    }
+
+    match cloud_messages_client
+        .prepare_message_save_submission(
+            messages,
+            request_identity,
+            Duration::from_secs(request_timeout_seconds),
+        )
+        .await
+    {
+        Ok(prepared) => CloudSyncPreparedMessageCreateResult {
+            handle: Some(CloudSyncPreparedMessageCreateHandle {
+                prepared: tokio::sync::Mutex::new(Some(prepared)),
+            }),
+            failure: None,
+        },
+        Err(_) => cloud_sync_prepare_failure(CloudSyncOutboundSafeCode::NativePrepareFailed),
+    }
+}
+
+pub async fn cloud_sync_consume_prepared_message_create(
+    handle: &CloudSyncPreparedMessageCreateHandle,
+) -> CloudSyncOutboundConsumeResult {
+    let prepared = {
+        let mut guard = handle.prepared.lock().await;
+        guard.take()
+    };
+    let Some(prepared) = prepared else {
+        return CloudSyncOutboundConsumeResult {
+            outcomes: vec![],
+            failure: Some(CloudSyncOutboundSafeCode::AlreadyConsumed),
+        };
+    };
+    let outcomes = match prepared.consume_once().await {
+        Ok(outcomes) => outcomes,
+        Err(_) => {
+            return CloudSyncOutboundConsumeResult {
+                outcomes: vec![],
+                failure: Some(CloudSyncOutboundSafeCode::CorrelationMismatch),
+            }
+        }
+    };
+    CloudSyncOutboundConsumeResult {
+        outcomes: outcomes
+            .into_iter()
+            .map(|outcome| {
+                use rustpush::cloud_messages::CloudMessagesSaveResult as NativeResult;
+                let (disposition, failure_class, retry_after_seconds) = match outcome.result {
+                    NativeResult::Succeeded => {
+                        (CloudSyncOutboundSaveDisposition::Succeeded, None, None)
+                    }
+                    NativeResult::UnknownOutcome {
+                        failure_class,
+                        retry_after,
+                    } => (
+                        CloudSyncOutboundSaveDisposition::UnknownOutcome,
+                        failure_class.map(map_cloud_sync_outbound_failure_class),
+                        retry_after.map(|value| value.as_secs()),
+                    ),
+                    NativeResult::Failed {
+                        failure_class,
+                        retry_after,
+                        ..
+                    } => (
+                        CloudSyncOutboundSaveDisposition::Failed,
+                        failure_class.map(map_cloud_sync_outbound_failure_class),
+                        retry_after.map(|value| value.as_secs()),
+                    ),
+                };
+                CloudSyncOutboundSaveOutcome {
+                    local_operation_id: outcome.local_operation_id,
+                    apple_operation_uuid: outcome.apple_operation_uuid,
+                    disposition,
+                    failure_class,
+                    retry_after_seconds,
+                }
+            })
+            .collect(),
+        failure: None,
+    }
+}
+
+fn cloud_sync_reconcile_failure(
+    failure: CloudSyncOutboundSafeCode,
+) -> CloudSyncOutboundReconcileResult {
+    CloudSyncOutboundReconcileResult {
+        disposition: None,
+        protected_proof_reference: None,
+        failure_class: None,
+        retry_after_seconds: None,
+        failure: Some(failure),
+    }
+}
+
+fn is_valid_cloud_sync_reconcile_message_create_input(
+    expected_account_fingerprint: &str,
+    request_uuid: &str,
+    input: &CloudSyncPreparedMessageCreateInput,
+) -> bool {
+    is_cloud_sync_operation_id(&input.local_operation_id)
+        && crate::cloud_sync_outbound::initial_message_create_operation_id(
+            expected_account_fingerprint,
+            &input.logical_entity_key_hash,
+        )
+        .as_deref()
+            == Ok(input.local_operation_id.as_str())
+        && is_cloud_sync_keyed_hash(&input.logical_entity_key_hash)
+        && is_cloud_sync_lease_reference(&input.protected_lease_reference)
+        && is_cloud_sync_protected_reference(&input.protected_payload_reference)
+        && is_cloud_sync_hex_digest(&input.payload_sha256)
+        && is_cloud_sync_protected_reference(&input.protected_server_record_reference)
+        && is_cloud_sync_keyed_hash(&input.server_record_id_hash)
+        && input.protected_payload_reference == input.protected_server_record_reference
+        && request_uuid != input.apple_operation_uuid
+        && rustpush::cloudkit::CloudKitRequestIdentity::new(
+            request_uuid.to_owned(),
+            vec![input.apple_operation_uuid.clone()],
+        )
+        .is_ok()
+}
+
+enum CloudSyncReconcileObservation {
+    FoundPayloadDigest(String),
+    DivergedRecord,
+    NotFound,
+    Unresolved {
+        failure_class: Option<CloudKitFailureClass>,
+        retry_after: Option<Duration>,
+    },
+    UnknownFailure,
+}
+
+fn classify_cloud_sync_reconcile_observation(
+    observation: CloudSyncReconcileObservation,
+    expected_payload_sha256: &str,
+    protected_proof_reference: String,
+) -> CloudSyncOutboundReconcileResult {
+    let (disposition, failure_class, retry_after_seconds, decisive) = match observation {
+        CloudSyncReconcileObservation::FoundPayloadDigest(observed_digest)
+            if observed_digest == expected_payload_sha256 =>
+        {
+            (
+                CloudSyncOutboundReconcileDisposition::Committed,
+                None,
+                None,
+                true,
+            )
+        }
+        CloudSyncReconcileObservation::FoundPayloadDigest(_)
+        | CloudSyncReconcileObservation::DivergedRecord => (
+            CloudSyncOutboundReconcileDisposition::Diverged,
+            Some(CloudSyncOutboundFailureClass::Conflict),
+            None,
+            true,
+        ),
+        CloudSyncReconcileObservation::NotFound => (
+            CloudSyncOutboundReconcileDisposition::NotApplied,
+            None,
+            None,
+            true,
+        ),
+        CloudSyncReconcileObservation::Unresolved {
+            failure_class,
+            retry_after,
+        } => (
+            CloudSyncOutboundReconcileDisposition::Unresolved,
+            failure_class.map(map_cloud_sync_outbound_failure_class),
+            retry_after.map(|value| value.as_secs()),
+            false,
+        ),
+        CloudSyncReconcileObservation::UnknownFailure => (
+            CloudSyncOutboundReconcileDisposition::Unresolved,
+            Some(CloudSyncOutboundFailureClass::Unknown),
+            None,
+            false,
+        ),
+    };
+    CloudSyncOutboundReconcileResult {
+        disposition: Some(disposition),
+        protected_proof_reference: decisive.then_some(protected_proof_reference),
+        failure_class,
+        retry_after_seconds,
+        failure: None,
+    }
+}
+
+/// Reconciles one ambiguous create by fetching its stable CloudKit record name
+/// and comparing the decrypted server message with the exact protected payload
+/// staged before submission. Only explicit record absence permits replay.
+#[allow(clippy::too_many_arguments)]
+pub async fn cloud_sync_reconcile_message_create(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    expected_protected_store_identity: String,
+    request_uuid: String,
+    input: CloudSyncPreparedMessageCreateInput,
+) -> CloudSyncOutboundReconcileResult {
+    if !is_valid_cloud_sync_reconcile_message_create_input(
+        &expected_account_fingerprint,
+        &request_uuid,
+        &input,
+    ) {
+        return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::InvalidRequest);
+    }
+    let auth =
+        match cloud_sync_capture_auth_snapshot(cloud_messages_client, storage_directory.clone())
+            .await
+        {
+            Ok(auth) => auth,
+            Err(_) => {
+                return cloud_sync_reconcile_failure(
+                    CloudSyncOutboundSafeCode::NativeAuthUnavailable,
+                )
+            }
+        };
+    if auth.account_fingerprint != expected_account_fingerprint
+        || auth.protected_store_identity != expected_protected_store_identity
+    {
+        return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::InvalidScope);
+    }
+
+    let storage_path = PathBuf::from(&storage_directory);
+    if crate::cloud_sync_native_fetch::cloud_sync_verify_committed_lease_exact(
+        storage_path.clone(),
+        &input.protected_lease_reference,
+        std::slice::from_ref(&input.protected_payload_reference),
+    )
+    .is_err()
+    {
+        return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::ProtectedStorage);
+    }
+    let expected_message = match crate::cloud_sync_outbound::open_staged_outbound_message(
+        storage_path.clone(),
+        auth.account_fingerprint.clone(),
+        &input.protected_payload_reference,
+        &input.payload_sha256,
+    ) {
+        Ok(message) => message,
+        Err(failure) => {
+            return cloud_sync_reconcile_failure(map_cloud_sync_outbound_failure(failure))
+        }
+    };
+    let hasher =
+        match crate::cloud_sync_protector::semantic_identifier_hasher(storage_directory.clone()) {
+            Ok(hasher) => hasher,
+            Err(_) => {
+                return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::ProtectedStorage)
+            }
+        };
+    let logical_hash = match hasher.canonical_entity_key_hash(
+        crate::cloud_sync_canonical_dto::CloudCanonicalEntityKind::Message,
+        &expected_message.guid,
+    ) {
+        Ok(hash) => hash,
+        Err(_) => return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::BindingMismatch),
+    };
+    if logical_hash.value() != input.logical_entity_key_hash {
+        return cloud_sync_reconcile_failure(CloudSyncOutboundSafeCode::BindingMismatch);
+    }
+    let server_record_name = match crate::cloud_sync_outbound::open_staged_server_record_name(
+        storage_path,
+        auth.account_fingerprint,
+        &input.protected_server_record_reference,
+        &input.server_record_id_hash,
+    ) {
+        Ok(record_name) => record_name,
+        Err(failure) => {
+            return cloud_sync_reconcile_failure(map_cloud_sync_outbound_failure(failure))
+        }
+    };
+
+    use rustpush::cloud_messages::CloudMessageRecordLookup;
+    let observation = match cloud_messages_client
+        .lookup_message_record(&server_record_name)
+        .await
+    {
+        Ok(CloudMessageRecordLookup::Found(message)) => {
+            match crate::cloud_sync_outbound::outbound_message_payload_sha256(
+                message,
+                &server_record_name,
+            ) {
+                Ok(digest) => CloudSyncReconcileObservation::FoundPayloadDigest(digest),
+                Err(_) => CloudSyncReconcileObservation::DivergedRecord,
+            }
+        }
+        Ok(CloudMessageRecordLookup::NotFound) => CloudSyncReconcileObservation::NotFound,
+        Ok(CloudMessageRecordLookup::Unresolved {
+            failure_class,
+            retry_after,
+        }) => CloudSyncReconcileObservation::Unresolved {
+            failure_class,
+            retry_after,
+        },
+        Err(_) => CloudSyncReconcileObservation::UnknownFailure,
+    };
+    classify_cloud_sync_reconcile_observation(
+        observation,
+        &input.payload_sha256,
+        input.protected_payload_reference,
+    )
+}
+
+#[cfg(test)]
+mod cloud_sync_outbound_reconcile_contract_tests {
+    use super::*;
+
+    const REQUEST_UUID: &str = "11111111-2222-4ABC-8DEF-555555555555";
+    const OPERATION_UUID: &str = "AAAAAAAA-BBBB-4CCC-8DDD-000000000001";
+
+    fn account() -> String {
+        "A".repeat(43)
+    }
+
+    fn input() -> CloudSyncPreparedMessageCreateInput {
+        let logical_entity_key_hash = "L".repeat(43);
+        CloudSyncPreparedMessageCreateInput {
+            local_operation_id: crate::cloud_sync_outbound::initial_message_create_operation_id(
+                &account(),
+                &logical_entity_key_hash,
+            )
+            .unwrap(),
+            logical_entity_key_hash,
+            protected_lease_reference: format!("obcs2.lease.{}", "a".repeat(32)),
+            protected_payload_reference: format!("obcs2.ref.{}", "P".repeat(43)),
+            payload_sha256: "b".repeat(64),
+            protected_server_record_reference: format!("obcs2.ref.{}", "P".repeat(43)),
+            server_record_id_hash: "S".repeat(43),
+            apple_operation_uuid: OPERATION_UUID.to_owned(),
+        }
+    }
+
+    #[test]
+    fn reconciliation_input_binds_the_semantic_operation_and_both_uuids() {
+        let valid = input();
+        assert!(is_valid_cloud_sync_reconcile_message_create_input(
+            &account(),
+            REQUEST_UUID,
+            &valid
+        ));
+
+        let mut wrong_operation_id = valid.clone();
+        wrong_operation_id.local_operation_id = format!("op1:{}", "f".repeat(64));
+        assert!(!is_valid_cloud_sync_reconcile_message_create_input(
+            &account(),
+            REQUEST_UUID,
+            &wrong_operation_id
+        ));
+
+        assert!(!is_valid_cloud_sync_reconcile_message_create_input(
+            &"B".repeat(43),
+            REQUEST_UUID,
+            &valid
+        ));
+        assert!(!is_valid_cloud_sync_reconcile_message_create_input(
+            &account(),
+            OPERATION_UUID,
+            &valid
+        ));
+
+        let mut malformed_operation_uuid = valid;
+        malformed_operation_uuid.apple_operation_uuid = OPERATION_UUID.to_lowercase();
+        assert!(!is_valid_cloud_sync_reconcile_message_create_input(
+            &account(),
+            REQUEST_UUID,
+            &malformed_operation_uuid
+        ));
+    }
+
+    #[test]
+    fn exact_digest_commits_and_explicit_absence_is_the_only_replay_proof() {
+        let protected_reference = format!("obcs2.ref.{}", "P".repeat(43));
+        let expected_digest = "b".repeat(64);
+        let committed = classify_cloud_sync_reconcile_observation(
+            CloudSyncReconcileObservation::FoundPayloadDigest(expected_digest.clone()),
+            &expected_digest,
+            protected_reference.clone(),
+        );
+        assert_eq!(
+            committed.disposition,
+            Some(CloudSyncOutboundReconcileDisposition::Committed)
+        );
+        assert_eq!(
+            committed.protected_proof_reference,
+            Some(protected_reference.clone())
+        );
+        assert_eq!(committed.failure_class, None);
+
+        let absent = classify_cloud_sync_reconcile_observation(
+            CloudSyncReconcileObservation::NotFound,
+            &expected_digest,
+            protected_reference.clone(),
+        );
+        assert_eq!(
+            absent.disposition,
+            Some(CloudSyncOutboundReconcileDisposition::NotApplied)
+        );
+        assert_eq!(absent.protected_proof_reference, Some(protected_reference));
+        assert_eq!(absent.failure_class, None);
+    }
+
+    #[test]
+    fn divergent_or_malformed_found_records_quarantine_as_conflicts() {
+        for observation in [
+            CloudSyncReconcileObservation::FoundPayloadDigest("c".repeat(64)),
+            CloudSyncReconcileObservation::DivergedRecord,
+        ] {
+            let result = classify_cloud_sync_reconcile_observation(
+                observation,
+                &"b".repeat(64),
+                format!("obcs2.ref.{}", "P".repeat(43)),
+            );
+            assert_eq!(
+                result.disposition,
+                Some(CloudSyncOutboundReconcileDisposition::Diverged)
+            );
+            assert_eq!(
+                result.failure_class,
+                Some(CloudSyncOutboundFailureClass::Conflict)
+            );
+            assert!(result.protected_proof_reference.is_some());
+            assert_eq!(result.retry_after_seconds, None);
+        }
+    }
+
+    #[test]
+    fn transient_and_transport_or_decrypt_failures_never_emit_a_proof() {
+        let transient = classify_cloud_sync_reconcile_observation(
+            CloudSyncReconcileObservation::Unresolved {
+                failure_class: Some(CloudKitFailureClass::TransientServer),
+                retry_after: Some(Duration::from_secs(901)),
+            },
+            &"b".repeat(64),
+            format!("obcs2.ref.{}", "P".repeat(43)),
+        );
+        assert_eq!(
+            transient.disposition,
+            Some(CloudSyncOutboundReconcileDisposition::Unresolved)
+        );
+        assert_eq!(
+            transient.failure_class,
+            Some(CloudSyncOutboundFailureClass::TransientServer)
+        );
+        assert_eq!(transient.retry_after_seconds, Some(901));
+        assert_eq!(transient.protected_proof_reference, None);
+
+        let failed = classify_cloud_sync_reconcile_observation(
+            CloudSyncReconcileObservation::UnknownFailure,
+            &"b".repeat(64),
+            format!("obcs2.ref.{}", "P".repeat(43)),
+        );
+        assert_eq!(
+            failed.disposition,
+            Some(CloudSyncOutboundReconcileDisposition::Unresolved)
+        );
+        assert_eq!(
+            failed.failure_class,
+            Some(CloudSyncOutboundFailureClass::Unknown)
+        );
+        assert_eq!(failed.protected_proof_reference, None);
+    }
+}
 
 fn map_cloud_sync_protected_category(
     category: crate::cloud_sync_native_fetch::CloudNativeFailureCategory,
@@ -1722,9 +2567,31 @@ pub async fn cloud_sync_decode_protected_change(
 #[cfg(test)]
 mod cloud_sync_protected_bridge_contract_tests {
     use super::{
-        cloud_sync_transient_empty_result, is_cloud_sync_protected_source_reference,
+        cloud_sync_transient_empty_result, is_cloud_sync_lease_reference,
+        is_cloud_sync_protected_reference, is_cloud_sync_protected_source_reference,
         CloudSyncTransientFailureCode,
     };
+
+    #[test]
+    fn outbound_capabilities_require_exact_bounded_formats() {
+        assert!(is_cloud_sync_protected_reference(&format!(
+            "obcs2.ref.{}",
+            "A".repeat(43)
+        )));
+        assert!(!is_cloud_sync_protected_reference("obcs2.ref.short"));
+        assert!(!is_cloud_sync_protected_reference(&format!(
+            "obcs2.ref.{}extra",
+            "A".repeat(43)
+        )));
+        assert!(is_cloud_sync_lease_reference(&format!(
+            "obcs2.lease.{}",
+            "a".repeat(32)
+        )));
+        assert!(!is_cloud_sync_lease_reference(&format!(
+            "obcs2.lease.{}",
+            "A".repeat(32)
+        )));
+    }
 
     #[test]
     fn protected_dtos_contain_only_hashes_opaque_references_and_safe_scalars() {

@@ -36,6 +36,15 @@ final class CloudProtectedPageLeaseLifecycle {
   Future<void> ensureRecoveredBeforeFetch() {
     final existing = _recoveries[_recoveryIdentity];
     if (existing != null) return existing;
+    return _startRecovery();
+  }
+
+  /// Writes need a fresh recovery pass even when startup recovery succeeded.
+  /// A native lease commit can fail later in the same process, leaving a new
+  /// durable outbound adoption marker that the cached startup pass never saw.
+  Future<void> ensureRecoveredBeforeWrite() => _startRecovery();
+
+  Future<void> _startRecovery() {
     final recovery = _recover();
     _recoveries[_recoveryIdentity] = recovery;
     recovery.catchError((Object _) {
@@ -50,9 +59,30 @@ final class CloudProtectedPageLeaseLifecycle {
       runProtectedStoreExclusive(_recoverWhileStoreExclusive);
 
   Future<void> _recoverWhileStoreExclusive() async {
-    final adopted = await _store.readAdoptedProtectedPageLeaseReferences(
+    final adoptedPages = await _store.readAdoptedProtectedPageLeaseReferences(
       maximumCount: maximumAdoptedLeases,
     );
+    final outboundStore = _store;
+    final adoptedOutbound =
+        outboundStore is CloudProtectedOutboundLeaseAdoptionStore
+        ? await (outboundStore as CloudProtectedOutboundLeaseAdoptionStore)
+              .readNonterminalProtectedOutboundLeaseReferences(
+                maximumCount: maximumAdoptedLeases,
+              )
+        : const <String>{};
+    if (adoptedPages.intersection(adoptedOutbound).isNotEmpty) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.localStorage,
+        safeCode: 'protected_lease_namespace_collision',
+      );
+    }
+    final adopted = {...adoptedPages, ...adoptedOutbound};
+    if (adopted.length > maximumAdoptedLeases) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.localStorage,
+        safeCode: 'protected_lease_recovery_bound_exceeded',
+      );
+    }
     final live = await _readCompleteLivenessSnapshot();
     final remaining = adopted.toSet();
     var passes = 0;
@@ -87,21 +117,34 @@ final class CloudProtectedPageLeaseLifecycle {
           safeCode: 'protected_page_lease_recovery_result_invalid',
         );
       }
+      final absentOutbound = result.absentAdoptedLeaseReferences.intersection(
+        adoptedOutbound,
+      );
+      if (absentOutbound.isNotEmpty) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'protected_outbound_lease_missing',
+        );
+      }
       if (resolved.isNotEmpty) {
-        try {
-          await _store.releaseAdoptedProtectedPageLeaseReferences(resolved);
-        } catch (_) {
-          _recoveries.remove(_recoveryIdentity);
-          rethrow;
-        }
-        for (final leaseReference in resolved) {
+        final resolvedPages = resolved.intersection(adoptedPages);
+        if (resolvedPages.isNotEmpty) {
           try {
-            await _transport.acknowledgeCommittedPageLease(leaseReference);
+            await _store.releaseAdoptedProtectedPageLeaseReferences(
+              resolvedPages,
+            );
           } catch (_) {
-            // The receipt contains only opaque references and is safe to leak.
-            // Invalidate the process cache so the next fetch runs bounded
-            // recovery and removes receipts with no adoption marker.
             _recoveries.remove(_recoveryIdentity);
+            rethrow;
+          }
+          for (final leaseReference in resolvedPages) {
+            try {
+              await _transport.acknowledgeCommittedPageLease(leaseReference);
+            } catch (_) {
+              // The receipt contains only opaque references and is safe to
+              // leak. Outbound receipts are never acknowledged here.
+              _recoveries.remove(_recoveryIdentity);
+            }
           }
         }
         remaining.removeAll(resolved);

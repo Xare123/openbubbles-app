@@ -292,6 +292,7 @@ impl Debug for CloudNativeProtectionScope {
 enum CloudNativeProtectionPurpose {
     CheckpointToken,
     ServerRecordId,
+    OutboundMessage,
     RawRecord,
 }
 
@@ -300,6 +301,7 @@ impl CloudNativeProtectionPurpose {
         match self {
             Self::CheckpointToken => "checkpointToken",
             Self::ServerRecordId => "serverRecordId",
+            Self::OutboundMessage => "outboundMessage",
             Self::RawRecord => "rawRecord",
         }
     }
@@ -1066,6 +1068,55 @@ impl PlatformCloudNativeProtectedStore {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(_) => Err(CloudNativeStoreFailure::Io),
         }
+    }
+
+    fn verify_committed_lease_exact_unlocked(
+        &self,
+        lease: &CloudNativePageLease,
+        retained_references: &HashSet<String>,
+    ) -> Result<(), CloudNativeStoreFailure> {
+        Self::validate_reference_set(retained_references, MAX_LEASE_FILES)?;
+        if retained_references.is_empty() {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        // A receipt written before the active manifest is retired represents
+        // an interrupted commit, not a lease that is safe to submit. Recovery
+        // or an idempotent commit must finish that transition first.
+        if self
+            .lease_path(lease)?
+            .try_exists()
+            .map_err(|_| CloudNativeStoreFailure::Io)?
+        {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        let receipt_path = self.committed_lease_path(lease)?;
+        if !receipt_path
+            .try_exists()
+            .map_err(|_| CloudNativeStoreFailure::Io)?
+        {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        let receipt = self.read_committed_receipt(&receipt_path)?;
+        let receipt_references = receipt
+            .iter()
+            .map(|entry| entry.reference.value().to_owned())
+            .collect::<HashSet<_>>();
+        if &receipt_references != retained_references {
+            return Err(CloudNativeStoreFailure::InvalidReference);
+        }
+        for entry in &receipt {
+            self.verify_retained_entry(entry)?;
+        }
+        Ok(())
+    }
+
+    fn verify_committed_lease_exact(
+        &self,
+        lease: &CloudNativePageLease,
+        retained_references: &HashSet<String>,
+    ) -> Result<(), CloudNativeStoreFailure> {
+        let _guard = Self::operation_guard()?;
+        self.verify_committed_lease_exact_unlocked(lease, retained_references)
     }
 
     fn reference_file_matches(reference: &CloudCanonicalProtectedReference, bytes: &[u8]) -> bool {
@@ -3232,6 +3283,99 @@ pub(crate) fn cloud_sync_commit_protected_page_lease(
         .map_err(map_store_failure)
 }
 
+pub(crate) fn cloud_sync_verify_committed_lease_exact(
+    storage_directory: PathBuf,
+    lease_reference: &str,
+    retained_references: &[String],
+) -> Result<(), CloudNativeFetchFailure> {
+    let lease = CloudNativePageLease::parse(lease_reference)?;
+    let retained = parse_protected_reference_set(retained_references)?;
+    PlatformCloudNativeProtectedStore::new(storage_directory)
+        .verify_committed_lease_exact(&lease, &retained)
+        .map_err(map_store_failure)
+}
+
+/// Native-only result of staging one outbound message and its stable CloudKit
+/// record name in a single crash-recoverable protected-store lease.
+pub(crate) struct CloudNativeProtectedOutboundStage {
+    pub(crate) protected_envelope_reference: String,
+    pub(crate) lease_reference: String,
+}
+
+/// Stages the outbound payload and server record identity together. Neither
+/// plaintext value is returned through Flutter Rust Bridge; callers receive
+/// only opaque capabilities and adopt them in their local journal before
+/// committing the lease.
+pub(crate) fn cloud_sync_stage_protected_outbound_envelope(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    outbound_envelope: String,
+) -> Result<CloudNativeProtectedOutboundStage, CloudNativeFetchFailure> {
+    if outbound_envelope.is_empty() {
+        return Err(CloudNativeFetchFailure::new(
+            CloudNativeFailureCategory::MalformedRecord,
+            CloudNativeSafeCode::InvalidRequest,
+            None,
+        ));
+    }
+    let scope = CloudNativeProtectionScope::new(account_fingerprint, CloudNativeStream::Messages)?;
+    let store = PlatformCloudNativeProtectedStore::new(storage_directory);
+    let batch = store
+        .protect_batch(
+            &scope,
+            &[CloudNativePlaintext {
+                purpose: CloudNativeProtectionPurpose::OutboundMessage,
+                value: outbound_envelope,
+            }],
+        )
+        .map_err(map_store_failure)?;
+    if batch.references.len() != 1 {
+        let _ = store.rollback_lease(&batch.lease);
+        return Err(CloudNativeFetchFailure::new(
+            CloudNativeFailureCategory::LocalStorage,
+            CloudNativeSafeCode::ProtectionFailed,
+            None,
+        ));
+    }
+    Ok(CloudNativeProtectedOutboundStage {
+        protected_envelope_reference: batch.references[0].value().to_owned(),
+        lease_reference: batch.lease.value().to_owned(),
+    })
+}
+
+pub(crate) fn cloud_sync_open_protected_outbound_message(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    protected_reference: &str,
+) -> Result<String, CloudNativeFetchFailure> {
+    cloud_sync_open_protected_outbound_value(
+        storage_directory,
+        account_fingerprint,
+        protected_reference,
+        CloudNativeProtectionPurpose::OutboundMessage,
+    )
+}
+
+fn cloud_sync_open_protected_outbound_value(
+    storage_directory: PathBuf,
+    account_fingerprint: String,
+    protected_reference: &str,
+    purpose: CloudNativeProtectionPurpose,
+) -> Result<String, CloudNativeFetchFailure> {
+    let scope = CloudNativeProtectionScope::new(account_fingerprint, CloudNativeStream::Messages)?;
+    let reference =
+        CloudCanonicalProtectedReference::new(protected_reference.to_owned()).map_err(|_| {
+            CloudNativeFetchFailure::new(
+                CloudNativeFailureCategory::LocalStorage,
+                CloudNativeSafeCode::InvalidRequest,
+                None,
+            )
+        })?;
+    PlatformCloudNativeProtectedStore::new(storage_directory)
+        .unprotect(&scope, purpose, &reference)
+        .map_err(map_store_failure)
+}
+
 pub(crate) fn cloud_sync_acknowledge_committed_page_lease(
     storage_directory: PathBuf,
     page_lease_reference: &str,
@@ -4279,6 +4423,41 @@ mod tests {
             after_ack.absent_adopted_lease_references,
             vec![batch.lease.reference.clone()]
         );
+    }
+
+    #[test]
+    fn outbound_submission_requires_an_exact_fully_committed_lease() {
+        let directory = tempdir().expect("temp directory");
+        let store = PlatformCloudNativeProtectedStore::new(directory.path().to_path_buf());
+        let batch = store
+            .persist_batch(&[
+                "retained-outbound-envelope".to_owned(),
+                "unretained-fixture".to_owned(),
+            ])
+            .expect("persist protected batch");
+        let retained = HashSet::from([batch.references[0].value().to_owned()]);
+
+        assert!(matches!(
+            store.verify_committed_lease_exact(&batch.lease, &retained),
+            Err(CloudNativeStoreFailure::InvalidReference)
+        ));
+
+        store
+            .commit_lease(&batch.lease, &retained)
+            .expect("commit exact outbound capability");
+        store
+            .verify_committed_lease_exact(&batch.lease, &retained)
+            .expect("verify committed outbound capability");
+
+        let wrong = HashSet::from([batch.references[1].value().to_owned()]);
+        assert!(matches!(
+            store.verify_committed_lease_exact(&batch.lease, &wrong),
+            Err(CloudNativeStoreFailure::InvalidReference)
+        ));
+        assert!(matches!(
+            store.verify_committed_lease_exact(&batch.lease, &HashSet::new()),
+            Err(CloudNativeStoreFailure::InvalidReference)
+        ));
     }
 
     #[test]

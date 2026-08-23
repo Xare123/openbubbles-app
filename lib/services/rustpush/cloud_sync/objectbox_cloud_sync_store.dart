@@ -19,7 +19,8 @@ class ObjectBoxCloudSyncStore
     implements
         CloudSyncStore,
         CloudSyncUnknownOutcomeLeasingStore,
-        CloudProtectedPageLeaseAdoptionStore {
+        CloudProtectedPageLeaseAdoptionStore,
+        CloudProtectedOutboundLeaseAdoptionStore {
   ObjectBoxCloudSyncStore({
     required Store store,
     required this._protector,
@@ -443,6 +444,42 @@ class ObjectBoxCloudSyncStore
     });
   }
 
+  /// Returns protected outbound lease references adopted by non-terminal
+  /// outbox rows.
+  ///
+  /// These references are intentionally returned separately from page leases:
+  /// page-lease cleanup must not acknowledge or release an outbound receipt.
+  /// Existing rows without the not-yet-generated schema property are treated
+  /// as having no outbound lease reference.
+  @override
+  Future<Set<String>> readNonterminalProtectedOutboundLeaseReferences({
+    required int maximumCount,
+  }) async {
+    if (maximumCount <= 0 || maximumCount > 4096) {
+      throw ArgumentError.value(maximumCount, 'maximumCount');
+    }
+    return _store.runInTransaction(TxMode.read, () {
+      final references = <String>{};
+      for (final entity in _outbox.getAll()) {
+        if (!_isBlockingOutboxStatus(_outboxStatusFromInt(entity.state))) {
+          continue;
+        }
+        final reference = entity.protectedLeaseReference;
+        if (reference == null) continue;
+        if (!_isProtectedPageLease(reference)) {
+          throw _storageFailure('protected_outbound_lease_corrupt');
+        }
+        references.add(reference);
+        if (references.length > maximumCount) {
+          throw _storageFailure(
+            'protected_outbound_lease_recovery_bound_exceeded',
+          );
+        }
+      }
+      return Set<String>.unmodifiable(references);
+    });
+  }
+
   @override
   Future<CloudProtectedReferenceSnapshot> readLiveProtectedReferences({
     required int maximumCount,
@@ -823,10 +860,137 @@ class ObjectBoxCloudSyncStore
         encryptedPayloadReference: draft.encryptedPayloadReference,
         payloadSha256: draft.payloadSha256,
         serverRecordIdHash: draft.serverRecordIdHash,
+        protectedLeaseReference: draft.protectedLeaseReference,
         dependencyOperationIds: draft.dependencyOperationIds,
         createdAt: draft.createdAt,
       );
       _enqueueOutboxLocked(operation);
+      return operation;
+    });
+  }
+
+  /// Atomically adopts one protected create envelope into both the outbox and
+  /// its stable server-record mapping. Native lease commit happens only after
+  /// this transaction returns successfully.
+  Future<CloudOutboxOperation> admitProtectedOutboundCreate({
+    required CloudOutboxDraft draft,
+    required CloudRecordMapEntry recordMapping,
+  }) async {
+    if (draft.action != CloudOutboxAction.save ||
+        draft.payloadVersion != 1 ||
+        draft.dependencyOperationIds.isNotEmpty ||
+        draft.protectedLeaseReference == null ||
+        !_isProtectedPageLease(draft.protectedLeaseReference!) ||
+        draft.encryptedPayloadReference == null ||
+        !_isNativeProtectedReference(draft.encryptedPayloadReference!) ||
+        draft.payloadSha256 == null ||
+        !_isContentDigest(draft.payloadSha256!) ||
+        draft.serverRecordIdHash == null ||
+        !_isNativeDigest(draft.logicalEntityKeyHash) ||
+        !_isNativeDigest(draft.serverRecordIdHash!) ||
+        recordMapping.scope != draft.scope ||
+        recordMapping.logicalEntityKeyHash != draft.logicalEntityKeyHash ||
+        recordMapping.serverRecordIdHash != draft.serverRecordIdHash ||
+        recordMapping.encryptedServerRecordId !=
+            draft.encryptedPayloadReference ||
+        recordMapping.etagHash != null ||
+        recordMapping.encryptedRawRecordReference != null) {
+      throw _storageFailure('protected_outbound_admission_invalid');
+    }
+    return _store.runInTransaction(TxMode.write, () {
+      final nowMs = draft.createdAt.millisecondsSinceEpoch;
+      final checkpoint = _checkpointLocked(draft.scope, nowMs: nowMs);
+      _fenceStaleOutboxLocked(
+        draft.scope,
+        checkpoint: checkpoint,
+        nowMs: nowMs,
+      );
+      final operationId = CloudOperationIdentity.forInitialCreate(
+        scope: draft.scope,
+        logicalEntityKeyHash: draft.logicalEntityKeyHash,
+        payloadVersion: draft.payloadVersion,
+      );
+      final existingOperation = _findOutboxByOperationIdLocked(operationId);
+      if (existingOperation != null) {
+        final existing = _outboxFromEntity(draft.scope, existingOperation);
+        if (existing.scope != draft.scope ||
+            existing.logicalEntityKeyHash != draft.logicalEntityKeyHash ||
+            existing.action != CloudOutboxAction.save ||
+            existing.payloadVersion != draft.payloadVersion ||
+            existing.payloadSha256 != draft.payloadSha256) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.conflict,
+            safeCode: 'protected_outbound_retry_payload_changed',
+          );
+        }
+        return existing;
+      }
+
+      final mapKey = _scopedDigest(
+        draft.scope,
+        'record-map',
+        draft.logicalEntityKeyHash,
+      );
+      final existingMapping = _findRecordMapByKeyLocked(mapKey);
+      if (existingMapping != null &&
+          existingMapping.generation == checkpoint.generation &&
+          existingMapping.serverRecordIdHash !=
+              recordMapping.serverRecordIdHash) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'server_mapping_changed',
+        );
+      }
+      final reverseCollision = _findRecordMapsForScopeLocked(draft.scope).any(
+        (entity) =>
+            entity.generation == checkpoint.generation &&
+            entity.serverRecordIdHash == recordMapping.serverRecordIdHash &&
+            entity.logicalEntityKeyHash != draft.logicalEntityKeyHash,
+      );
+      if (reverseCollision) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'server_mapping_reverse_collision',
+        );
+      }
+
+      final revision = checkpoint.mutationRevisionCounter + 1;
+      checkpoint
+        ..mutationRevisionCounter = revision
+        ..updatedAtMs = nowMs;
+      _checkpoints.put(checkpoint);
+      final operation = CloudOutboxOperation(
+        scope: draft.scope,
+        operationId: operationId,
+        logicalEntityKeyHash: draft.logicalEntityKeyHash,
+        action: CloudOutboxAction.save,
+        payloadVersion: draft.payloadVersion,
+        mutationRevision: revision,
+        checkpointGeneration: checkpoint.generation,
+        encryptedPayloadReference: draft.encryptedPayloadReference,
+        payloadSha256: draft.payloadSha256,
+        serverRecordIdHash: draft.serverRecordIdHash,
+        protectedLeaseReference: draft.protectedLeaseReference,
+        dependencyOperationIds: draft.dependencyOperationIds,
+        createdAt: draft.createdAt,
+      );
+      _enqueueOutboxLocked(operation);
+      _recordMaps.put(
+        CloudRecordMapEntity(
+          id: existingMapping?.id ?? 0,
+          mapKey: mapKey,
+          scopeKey: _scopeKey(draft.scope),
+          accountFingerprint: draft.scope.accountFingerprint,
+          zone: draft.scope.zone,
+          logicalEntityKeyHash: draft.logicalEntityKeyHash,
+          serverRecordIdHash: recordMapping.serverRecordIdHash,
+          generation: checkpoint.generation,
+          encryptedServerRecordId: recordMapping.encryptedServerRecordId,
+          etagHash: recordMapping.etagHash,
+          encryptedRawRecordRef: recordMapping.encryptedRawRecordReference,
+          updatedAtMs: nowMs,
+        ),
+      );
       return operation;
     });
   }
@@ -1336,6 +1500,27 @@ class ObjectBoxCloudSyncStore
     });
   }
 
+  /// Read-only, exact-scope inspection used by the manual one-row canary and
+  /// its process-death recovery path. No row is leased or mutated.
+  Future<List<CloudOutboxOperation>> readOutboxEntries(
+    CloudSyncScope scope,
+  ) async {
+    return _store.runInTransaction(TxMode.read, () {
+      final entries = _findOutboxForScopeLocked(scope)
+          .map((entity) => _outboxFromEntity(scope, entity))
+          .toList(growable: false);
+      entries.sort((left, right) {
+        final revision = left.mutationRevision.compareTo(
+          right.mutationRevision,
+        );
+        return revision != 0
+            ? revision
+            : left.operationId.compareTo(right.operationId);
+      });
+      return entries;
+    });
+  }
+
   @override
   Future<int> postponeEligiblePausedOutbox(
     CloudSyncScope scope, {
@@ -1712,6 +1897,7 @@ class ObjectBoxCloudSyncStore
       encryptedPayloadReference: entity.encryptedPayloadRef,
       payloadSha256: entity.payloadSha256,
       serverRecordIdHash: entity.serverRecordIdHash,
+      protectedLeaseReference: entity.protectedLeaseReference,
       appleRequestUuid: entity.appleRequestUuid,
       appleOperationUuid: entity.appleOperationUuid,
       dependencyOperationIds: _decodeDependencies(
@@ -1812,6 +1998,7 @@ class ObjectBoxCloudSyncStore
       checkpointGeneration: operation.checkpointGeneration,
       encryptedPayloadRef: operation.encryptedPayloadReference,
       payloadSha256: operation.payloadSha256,
+      protectedLeaseReference: operation.protectedLeaseReference,
       state: _outboxStatusToInt(operation.status),
       attemptCount: operation.attemptCount,
       nextEligibleAtMs: operation.nextEligibleAt?.millisecondsSinceEpoch ?? 0,
@@ -2176,6 +2363,12 @@ class ObjectBoxCloudSyncStore
 
   bool _isNativeProtectedReference(String value) =>
       RegExp(r'^obcs2\.ref\.[A-Za-z0-9_-]{43}$').hasMatch(value);
+
+  bool _isNativeDigest(String value) =>
+      RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(value);
+
+  bool _isContentDigest(String value) =>
+      RegExp(r'^[a-f0-9]{64}$').hasMatch(value);
 
   CloudSyncScope _scopeFromCheckpointEntity(CloudSyncCheckpointEntity entity) {
     final stream = CloudSyncStreamKind.values

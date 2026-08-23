@@ -331,7 +331,7 @@ class FakeCloudSyncTransport
     return CloudRecordMapEntry(
       scope: scope,
       logicalEntityKeyHash: logicalEntityKeyHash,
-      serverRecordIdHash: List.filled(64, marker).join(),
+      serverRecordIdHash: List.filled(43, marker).join(),
       encryptedServerRecordId: 'obcs2.ref.${List.filled(43, marker).join()}',
       updatedAt: DateTime.utc(2026),
     );
