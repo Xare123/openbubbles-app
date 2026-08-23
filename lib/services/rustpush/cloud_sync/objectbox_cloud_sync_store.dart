@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'cloud_operation_identity.dart';
 import 'cloud_shadow_journal_budget.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_protector.dart';
 import 'cloud_sync_store.dart';
 
@@ -2403,8 +2404,7 @@ class ObjectBoxCloudSyncStore
   CloudRecordMapEntity? _findRecordMapByKeyLocked(String mapKey) =>
       _findRecordMapByKey(mapKey);
 
-  String _scopeKey(CloudSyncScope scope) =>
-      'scope2:${_digest(scope.storageKey)}';
+  String _scopeKey(CloudSyncScope scope) => cloudSyncPersistentScopeKey(scope);
 
   String _scopedDigest(CloudSyncScope scope, String purpose, String value) =>
       '$purpose:${_digest('${scope.storageKey}\u001f$purpose\u001f$value')}';

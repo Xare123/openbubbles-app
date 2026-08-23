@@ -1,7 +1,10 @@
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_preflight.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_preflight.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:universal_io/io.dart';
 
@@ -107,26 +110,29 @@ void main() {
       expect(state.outboxCount, -1);
     },
   );
-  test('the operation interlock fence does not block its own operation', () {
-    // The interlock holds this lease for the whole guarded operation, including
-    // while that operation runs this probe. Counting it made every manual
-    // shadow run fail closed with coordinator_active before any network call.
-    store.box<CloudSyncLeaseEntity>().put(
-      CloudSyncLeaseEntity(
-        leaseKey: 'interlock-fence',
-        scopeKey: CloudKitOperationInterlock.fenceScopeKey,
-        accountFingerprint: _fingerprint,
-        ownerIdHash: 'owner',
-        generation: 1,
-        acquiredAtMs: now.millisecondsSinceEpoch,
-        expiresAtMs: now
-            .add(const Duration(minutes: 5))
-            .millisecondsSinceEpoch,
-      ),
-    );
+  test(
+    'the persisted operation fence does not block its own operation',
+    () async {
+      final cloudStore = ObjectBoxCloudSyncStore(
+        store: store,
+        protector: const _PassThroughProtector(),
+      );
+      final interlock = CloudKitOperationInterlock(
+        privateStorageDirectory: temporaryDirectory.path,
+        fenceStore: cloudStore,
+      );
 
-    expect(reader.read().coordinatorLeaseActive, isFalse);
-  });
+      await interlock.runExclusive(
+        kind: CloudKitOperationKind.v2ShadowRead,
+        action: () async {
+          // Acquire through the real ObjectBox adapter so this test exercises
+          // the canonical persisted scope key rather than hand-writing a raw
+          // CloudSyncScope.storageKey.
+          expect(reader.read().coordinatorLeaseActive, isFalse);
+        },
+      );
+    },
+  );
 
   test('a real coordinator lease still blocks alongside the fence', () {
     final leases = store.box<CloudSyncLeaseEntity>();
@@ -161,3 +167,25 @@ void main() {
 }
 
 const _fingerprint = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+
+final class _PassThroughProtector implements CloudSyncProtector {
+  const _PassThroughProtector();
+
+  @override
+  Future<String> protect({
+    required CloudSyncScope scope,
+    required CloudSyncProtectedValueKind kind,
+    required String plaintext,
+  }) async => plaintext;
+
+  @override
+  Future<String> unprotect({
+    required CloudSyncScope scope,
+    required CloudSyncProtectedValueKind kind,
+    required String ciphertext,
+  }) async => ciphertext;
+
+  @override
+  Future<String> fingerprintAccount(String rawAccountIdentifier) async =>
+      _fingerprint;
+}

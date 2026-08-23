@@ -6,6 +6,7 @@ import 'package:path/path.dart' as path;
 import 'package:universal_io/io.dart';
 
 import 'cloud_sync_models.dart';
+import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_store.dart';
 
 enum CloudKitOperationKind {
@@ -74,7 +75,7 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
   /// coordinator-lease probe must exclude this key, because a mutual-exclusion
   /// fence is not another sync coordinator and an operation must not observe
   /// itself as one.
-  static String get fenceScopeKey => _fenceScope.storageKey;
+  static String get fenceScopeKey => cloudSyncPersistentScopeKey(_fenceScope);
 
   static final Object _zoneLeaseKey = Object();
   static final Set<String> _locallyReservedPaths = <String>{};
