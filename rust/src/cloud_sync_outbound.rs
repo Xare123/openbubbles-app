@@ -37,6 +37,16 @@ const MAX_IDENTIFIER_BYTES: usize = 4 * 1024;
 const MAX_PROTO_BYTES: usize = 1024 * 1024;
 const MAX_TEXT_BYTES: usize = 256 * 1024;
 const MAX_ATTRIBUTED_BODY_BYTES: usize = 1024 * 1024;
+// This is the exact ordinary sent-from-me shape emitted by Message.toCloud.
+// Delivered/read/forward are ordinary optional state; every other bit is
+// outside the first plain-text V2 canary.
+const ORDINARY_OUTBOUND_FLAG_BITS: i64 = MessageFlags::IS_FINISHED.bits()
+    | MessageFlags::IS_FROM_ME.bits()
+    | MessageFlags::IS_DELIVERED.bits()
+    | MessageFlags::IS_READ.bits()
+    | MessageFlags::IS_SENT.bits()
+    | MessageFlags::IS_FORWARD.bits()
+    | MessageFlags::WAS_DATA_DETECTED.bits();
 const CLOUD_SYNC_SCOPE_SEPARATOR: char = '\u{001f}';
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -343,11 +353,16 @@ fn validate_cloud_message(message: &CloudMessage) -> Result<(), CloudSyncOutboun
         || message.guid.is_empty()
         || message.time <= 0
         || !message.sender.is_empty()
+        || !message.flags.contains(MessageFlags::IS_FINISHED)
         || !message.flags.contains(MessageFlags::IS_FROM_ME)
         || !message.flags.contains(MessageFlags::IS_SENT)
+        || !message.flags.contains(MessageFlags::WAS_DATA_DETECTED)
         || message.error != 0
     {
         return Err(CloudSyncOutboundFailure::MalformedMessage);
+    }
+    if (message.flags.bits() & !ORDINARY_OUTBOUND_FLAG_BITS) != 0 {
+        return Err(CloudSyncOutboundFailure::UnsupportedMessage);
     }
     for value in [
         message.chat_id.as_str(),
@@ -383,6 +398,11 @@ fn validate_cloud_message(message: &CloudMessage) -> Result<(), CloudSyncOutboun
             .is_some_and(|value| value.len() > MAX_ATTRIBUTED_BODY_BYTES)
     {
         return Err(CloudSyncOutboundFailure::OversizedMessage);
+    }
+    // The first canary is plain text only. An attributed body is a separate
+    // NSKeyedArchiver/styling payload and must not enter this encoder yet.
+    if proto.attributed_body.as_ref().is_some_and(|value| !value.is_empty()) {
+        return Err(CloudSyncOutboundFailure::UnsupportedMessage);
     }
     if proto.unk1 != 1
         || proto.unk10.is_some_and(|value| value != 0)
@@ -432,6 +452,9 @@ fn validate_cloud_message(message: &CloudMessage) -> Result<(), CloudSyncOutboun
             return Err(CloudSyncOutboundFailure::UnsupportedMessage);
         }
         if let Some(group_id) = proto4.group_id.as_deref() {
+            // TODO: Message.toCloud currently emits groupId for DMs. Do not
+            // infer one-to-one versus group chat from its presence until the
+            // V2 wire contract is defined and covered by a real fixture.
             validate_identifier(group_id)?;
         }
     }
@@ -464,7 +487,10 @@ mod tests {
                 text: Some("fixture".to_owned()),
                 ..Default::default()
             }),
-            flags: MessageFlags::IS_FROM_ME | MessageFlags::IS_SENT,
+            flags: MessageFlags::IS_FINISHED
+                | MessageFlags::IS_FROM_ME
+                | MessageFlags::IS_SENT
+                | MessageFlags::WAS_DATA_DETECTED,
             guid: "fixture-guid".to_owned(),
             msg_proto_3: Some(GZipWrapper(MessageProto3::default())),
             service: "iMessage".to_owned(),
@@ -560,6 +586,49 @@ mod tests {
             encode_outbound_message(sms, "SERVER-RECORD").unwrap_err(),
             CloudSyncOutboundFailure::UnsupportedMessage
         );
+    }
+
+    #[test]
+    fn outbound_gate_rejects_nonempty_attributed_body() {
+        let mut styled = fixture();
+        styled.msg_proto.0.attributed_body = Some(vec![0x80, 0x01]);
+        assert_eq!(
+            encode_outbound_message(styled, "SERVER-RECORD").unwrap_err(),
+            CloudSyncOutboundFailure::UnsupportedMessage
+        );
+    }
+
+    #[test]
+    fn outbound_gate_rejects_unsupported_and_unknown_flag_bits() {
+        for flag in [
+            MessageFlags::IS_AUDIO_MESSAGE,
+            MessageFlags::IS_SYSTEM_MESSAGE,
+            MessageFlags::IS_DELAYED,
+        ] {
+            let mut unsupported = fixture();
+            unsupported.flags |= flag;
+            assert_eq!(
+                encode_outbound_message(unsupported, "SERVER-RECORD").unwrap_err(),
+                CloudSyncOutboundFailure::UnsupportedMessage
+            );
+        }
+
+        let mut unknown = fixture();
+        unknown.flags = MessageFlags::from_bits_retain(unknown.flags.bits() | (1_i64 << 62));
+        assert_eq!(
+            encode_outbound_message(unknown, "SERVER-RECORD").unwrap_err(),
+            CloudSyncOutboundFailure::UnsupportedMessage
+        );
+    }
+
+    #[test]
+    fn outbound_gate_keeps_group_id_contract_explicitly_unresolved() {
+        // Message.toCloud emits groupId for current DM records. This test
+        // deliberately documents acceptance, not a group-chat classification
+        // rule, until the V2 one-to-one wire contract has a real fixture.
+        let mut message = fixture();
+        message.msg_proto_4.as_mut().unwrap().0.group_id = Some("dm-wire-id".to_owned());
+        assert!(encode_outbound_message(message, "SERVER-RECORD").is_ok());
     }
 
     #[test]
