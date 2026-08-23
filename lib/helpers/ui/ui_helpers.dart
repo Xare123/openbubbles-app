@@ -348,7 +348,88 @@ IconData getAttachmentIcon(String mimeType) {
   return ss.settings.skin.value == Skins.iOS ? CupertinoIcons.arrow_up_right_square : Icons.open_in_new;
 }
 
+bool _hasUsableSnackbarOverlay() {
+  final lifecycleState = WidgetsBinding.instance.lifecycleState;
+  final overlay = Get.key.currentState?.overlay;
+  final hasUsableOverlay = overlay?.mounted == true;
+
+  if (lifecycleState != AppLifecycleState.resumed || !hasUsableOverlay) {
+    Logger.debug(
+      "Skipped snackbar: lifecycle=$lifecycleState overlay=$hasUsableOverlay",
+      tag: "UI",
+    );
+    return false;
+  }
+
+  return true;
+}
+
+bool _canUseGetSnackbarOverlay() {
+  final overlayContext = Get.overlayContext;
+  return overlayContext != null && Overlay.maybeOf(overlayContext) != null;
+}
+
+void _showScaffoldSnackbar(
+  String title,
+  String message, {
+  required int durationMs,
+  Function(GetSnackBar)? onTap,
+  TextButton? button,
+}) {
+  final messenger = Get.rootController.scaffoldMessengerKey.currentState;
+  if (messenger == null) {
+    Logger.debug("Skipped snackbar: root messenger unavailable", tag: "UI");
+    return;
+  }
+
+  final fallbackBar = GetSnackBar(title: title, message: message);
+  Widget content = Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: <Widget>[
+      Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+      Text(message),
+    ],
+  );
+  if (button != null) {
+    content = Row(
+      children: <Widget>[
+        Expanded(child: content),
+        button,
+      ],
+    );
+  }
+  if (onTap != null) {
+    content = GestureDetector(
+      onTap: () => onTap(fallbackBar),
+      child: content,
+    );
+  }
+
+  messenger.showSnackBar(
+    SnackBar(
+      content: content,
+      behavior: SnackBarBehavior.floating,
+      margin: const EdgeInsets.only(bottom: 10),
+      duration: Duration(milliseconds: durationMs),
+    ),
+  );
+}
+
 void showSnackbar(String title, String message, {int animationMs = 250, int durationMs = 1500, Function(GetSnackBar)? onTap, TextButton? button}) {
+  if (!_hasUsableSnackbarOverlay()) return;
+
+  if (!_canUseGetSnackbarOverlay()) {
+    _showScaffoldSnackbar(
+      title,
+      message,
+      durationMs: durationMs,
+      onTap: onTap,
+      button: button,
+    );
+    return;
+  }
+
   Get.snackbar(
     title,
     message,

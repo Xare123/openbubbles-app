@@ -28,6 +28,7 @@
 .pub-cache/
 .pub/
 /build/
+/build-*/
 pubspeck.lock
 
 # Web related
@@ -44,6 +45,8 @@ pubspeck.lock
 .dart_tool/*
 !.dart_tool/build
 .dart_tool/build/entrypoint
+.dart_tool/build/asset_graph.json
+.dart_tool/build/lock/
 .dart_tool/build/*/error_cache/**
 .dart_tool/build/generated
 !.dart_tool/build/generated/*/*.info
@@ -58,3 +61,6 @@ native-lib/target/**
 
 /rust/src/api/hw_testing.plist
 /rust/src/api/id_testing.plist
+/rust/cloud_sync_protector_harness/target/
+/rust/target-cloudsync-check/
+/ios/Flutter/ephemeral/

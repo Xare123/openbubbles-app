@@ -16,6 +16,7 @@ import 'package:objectbox_flutter_libs/objectbox_flutter_libs.dart';
 
 import 'database/io/attachment.dart';
 import 'database/io/chat.dart';
+import 'database/io/cloud_sync_records.dart';
 import 'database/io/contact.dart';
 import 'database/io/fcm_data.dart';
 import 'database/io/handle.dart';
@@ -28,898 +29,2532 @@ export 'package:objectbox/objectbox.dart'; // so that callers only have to impor
 
 final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
-      id: const obx_int.IdUid(1, 2065429213543838585),
-      name: 'Attachment',
-      lastPropertyId: const obx_int.IdUid(20, 4318192841720051066),
-      flags: 0,
-      properties: <obx_int.ModelProperty>[
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(1, 1511554263230297197),
-            name: 'id',
-            type: 6,
-            flags: 1),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(2, 2178477183992316459),
-            name: 'originalROWID',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(3, 895699641082029197),
-            name: 'guid',
-            type: 9,
-            flags: 40,
-            indexId: const obx_int.IdUid(1, 1274831956298930522)),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(4, 6047065591027683672),
-            name: 'uti',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(5, 8856072667843358452),
-            name: 'mimeType',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(7, 2217746424870068461),
-            name: 'isOutgoing',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(8, 5943814485048944977),
-            name: 'transferName',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(9, 2227654525168892418),
-            name: 'totalBytes',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(13, 171869175523313868),
-            name: 'height',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(14, 2450795986531805384),
-            name: 'width',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(16, 396659320299238462),
-            name: 'webUrl',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(17, 5777776419087046056),
-            name: 'messageId',
-            type: 11,
-            flags: 520,
-            indexId: const obx_int.IdUid(8, 2010461783272999439),
-            relationTarget: 'Message'),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(18, 4627777114429677812),
-            name: 'dbMetadata',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(19, 2980761301143366690),
-            name: 'hasLivePhoto',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(20, 4318192841720051066),
-            name: 'ckRecordId',
-            type: 9,
-            flags: 0)
-      ],
-      relations: <obx_int.ModelRelation>[],
-      backlinks: <obx_int.ModelBacklink>[]),
+    id: const obx_int.IdUid(1, 2065429213543838585),
+    name: 'Attachment',
+    lastPropertyId: const obx_int.IdUid(21, 3774502131190190769),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 1511554263230297197),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 2178477183992316459),
+        name: 'originalROWID',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 895699641082029197),
+        name: 'guid',
+        type: 9,
+        flags: 40,
+        indexId: const obx_int.IdUid(1, 1274831956298930522),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 6047065591027683672),
+        name: 'uti',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 8856072667843358452),
+        name: 'mimeType',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 2217746424870068461),
+        name: 'isOutgoing',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 5943814485048944977),
+        name: 'transferName',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 2227654525168892418),
+        name: 'totalBytes',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(13, 171869175523313868),
+        name: 'height',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(14, 2450795986531805384),
+        name: 'width',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(16, 396659320299238462),
+        name: 'webUrl',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(17, 5777776419087046056),
+        name: 'messageId',
+        type: 11,
+        flags: 520,
+        indexId: const obx_int.IdUid(8, 2010461783272999439),
+        relationField: 'message',
+        relationTarget: 'Message',
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(18, 4627777114429677812),
+        name: 'dbMetadata',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(19, 2980761301143366690),
+        name: 'hasLivePhoto',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(20, 4318192841720051066),
+        name: 'ckRecordId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(21, 3774502131190190769),
+        name: 'metadata',
+        type: 13,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
   obx_int.ModelEntity(
-      id: const obx_int.IdUid(3, 9017250848141753702),
-      name: 'Chat',
-      lastPropertyId: const obx_int.IdUid(48, 6101265134976618931),
-      flags: 0,
-      properties: <obx_int.ModelProperty>[
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(1, 297833828287439140),
-            name: 'id',
-            type: 6,
-            flags: 1),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(3, 318412581013308394),
-            name: 'guid',
-            type: 9,
-            flags: 40,
-            indexId: const obx_int.IdUid(2, 4712841847590882583)),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(5, 9099706644901956287),
-            name: 'chatIdentifier',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(6, 9117376896883192460),
-            name: 'isArchived',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(8, 2937507201037513710),
-            name: 'muteType',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(9, 3354772670242853270),
-            name: 'muteArgs',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(10, 3734639758158862923),
-            name: 'isPinned',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(11, 2937716363156975856),
-            name: 'hasUnreadMessage',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(12, 526293286661780207),
-            name: 'dbOnlyLatestMessageDate',
-            type: 10,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(15, 4266631519717388837),
-            name: 'title',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(16, 1181486482872028222),
-            name: 'displayName',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(18, 3666111733726849006),
-            name: 'customAvatarPath',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(19, 4234470006262207812),
-            name: 'pinIndex',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(20, 2695161584801983484),
-            name: 'autoSendReadReceipts',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(21, 55197157095191277),
-            name: 'autoSendTypingIndicators',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(22, 8357397541593794158),
-            name: 'textFieldText',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(23, 7756745453707268462),
-            name: 'textFieldAttachments',
-            type: 30,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(24, 1609660383308913679),
-            name: 'dateDeleted',
-            type: 10,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(25, 2054740103145852197),
-            name: 'style',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(26, 4203733486781204313),
-            name: 'lockChatName',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(27, 5967587520649064381),
-            name: 'lockChatIcon',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(28, 3841196368520260614),
-            name: 'lastReadMessageGuid',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(29, 419554443603699639),
-            name: 'groupVersion',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(30, 4623900363927990505),
-            name: 'usingHandle',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(31, 2890558203307402859),
-            name: 'apnTitle',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(32, 3790179132714024264),
-            name: 'isRpSms',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(33, 7747554395546158964),
-            name: 'guidRefs',
-            type: 30,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(34, 6743935942891315857),
-            name: 'telephonyId',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(35, 7774397079877699895),
-            name: 'textFieldAnnotations',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(36, 7143894652284556003),
-            name: 'shareZenMode',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(37, 420507915079790972),
-            name: 'notifsSilenced',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(38, 7629993644602445500),
-            name: 'dateNotifiedAnyways',
-            type: 10,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(39, 1450447556768339740),
-            name: 'zenModeIsShared',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(40, 5580492826274966240),
-            name: 'senderIsKnown',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(41, 7342392293130604386),
-            name: 'isRoutingStub',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(42, 4361624812823479978),
-            name: 'transcriptPosterPath',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(43, 9027611778744022691),
-            name: 'transcriptBackgroundVersion',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(44, 6303048169382671264),
-            name: 'cloudData',
-            type: 23,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(45, 3549423414997445177),
-            name: 'ckRecordId',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(46, 2938538298825979541),
-            name: 'ckSyncState',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(47, 3819874096338136746),
-            name: 'photoAttachmentGuid',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(48, 6101265134976618931),
-            name: 'cloudGuid',
-            type: 9,
-            flags: 0)
-      ],
-      relations: <obx_int.ModelRelation>[
-        obx_int.ModelRelation(
-            id: const obx_int.IdUid(1, 7492985733214117623),
-            name: 'handles',
-            targetId: const obx_int.IdUid(7, 1716592500251888002))
-      ],
-      backlinks: <obx_int.ModelBacklink>[
-        obx_int.ModelBacklink(
-            name: 'messages', srcEntity: 'Message', srcField: 'chat')
-      ]),
+    id: const obx_int.IdUid(3, 9017250848141753702),
+    name: 'Chat',
+    lastPropertyId: const obx_int.IdUid(48, 6101265134976618931),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 297833828287439140),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 318412581013308394),
+        name: 'guid',
+        type: 9,
+        flags: 40,
+        indexId: const obx_int.IdUid(2, 4712841847590882583),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 9099706644901956287),
+        name: 'chatIdentifier',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 9117376896883192460),
+        name: 'isArchived',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 2937507201037513710),
+        name: 'muteType',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 3354772670242853270),
+        name: 'muteArgs',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 3734639758158862923),
+        name: 'isPinned',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 2937716363156975856),
+        name: 'hasUnreadMessage',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 526293286661780207),
+        name: 'dbOnlyLatestMessageDate',
+        type: 10,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(15, 4266631519717388837),
+        name: 'title',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(16, 1181486482872028222),
+        name: 'displayName',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(18, 3666111733726849006),
+        name: 'customAvatarPath',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(19, 4234470006262207812),
+        name: 'pinIndex',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(20, 2695161584801983484),
+        name: 'autoSendReadReceipts',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(21, 55197157095191277),
+        name: 'autoSendTypingIndicators',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(22, 8357397541593794158),
+        name: 'textFieldText',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(23, 7756745453707268462),
+        name: 'textFieldAttachments',
+        type: 30,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(24, 1609660383308913679),
+        name: 'dateDeleted',
+        type: 10,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(25, 2054740103145852197),
+        name: 'style',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(26, 4203733486781204313),
+        name: 'lockChatName',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(27, 5967587520649064381),
+        name: 'lockChatIcon',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(28, 3841196368520260614),
+        name: 'lastReadMessageGuid',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(29, 419554443603699639),
+        name: 'groupVersion',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(30, 4623900363927990505),
+        name: 'usingHandle',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(31, 2890558203307402859),
+        name: 'apnTitle',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(32, 3790179132714024264),
+        name: 'isRpSms',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(33, 7747554395546158964),
+        name: 'guidRefs',
+        type: 30,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(34, 6743935942891315857),
+        name: 'telephonyId',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(35, 7774397079877699895),
+        name: 'textFieldAnnotations',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(36, 7143894652284556003),
+        name: 'shareZenMode',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(37, 420507915079790972),
+        name: 'notifsSilenced',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(38, 7629993644602445500),
+        name: 'dateNotifiedAnyways',
+        type: 10,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(39, 1450447556768339740),
+        name: 'zenModeIsShared',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(40, 5580492826274966240),
+        name: 'senderIsKnown',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(41, 7342392293130604386),
+        name: 'isRoutingStub',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(42, 4361624812823479978),
+        name: 'transcriptPosterPath',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(43, 9027611778744022691),
+        name: 'transcriptBackgroundVersion',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(44, 6303048169382671264),
+        name: 'cloudData',
+        type: 23,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(45, 3549423414997445177),
+        name: 'ckRecordId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(46, 2938538298825979541),
+        name: 'ckSyncState',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(47, 3819874096338136746),
+        name: 'photoAttachmentGuid',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(48, 6101265134976618931),
+        name: 'cloudGuid',
+        type: 9,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[
+      obx_int.ModelRelation(
+        id: const obx_int.IdUid(1, 7492985733214117623),
+        name: 'handles',
+        targetId: const obx_int.IdUid(7, 1716592500251888002),
+      ),
+    ],
+    backlinks: <obx_int.ModelBacklink>[
+      obx_int.ModelBacklink(
+        name: 'messages',
+        srcEntity: 'Message',
+        srcField: 'chat',
+      ),
+    ],
+  ),
   obx_int.ModelEntity(
-      id: const obx_int.IdUid(6, 5390756932993878582),
-      name: 'FCMData',
-      lastPropertyId: const obx_int.IdUid(7, 4724783625435560776),
-      flags: 0,
-      properties: <obx_int.ModelProperty>[
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(1, 843767696595301490),
-            name: 'id',
-            type: 6,
-            flags: 1),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(2, 4393840145875077709),
-            name: 'projectID',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(3, 7264245173656870052),
-            name: 'storageBucket',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(4, 3998672972942379984),
-            name: 'apiKey',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(5, 3295687739104688136),
-            name: 'firebaseURL',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(6, 8856592728926530171),
-            name: 'clientID',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(7, 4724783625435560776),
-            name: 'applicationID',
-            type: 9,
-            flags: 0)
-      ],
-      relations: <obx_int.ModelRelation>[],
-      backlinks: <obx_int.ModelBacklink>[]),
+    id: const obx_int.IdUid(6, 5390756932993878582),
+    name: 'FCMData',
+    lastPropertyId: const obx_int.IdUid(7, 4724783625435560776),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 843767696595301490),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 4393840145875077709),
+        name: 'projectID',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 7264245173656870052),
+        name: 'storageBucket',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 3998672972942379984),
+        name: 'apiKey',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 3295687739104688136),
+        name: 'firebaseURL',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 8856592728926530171),
+        name: 'clientID',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 4724783625435560776),
+        name: 'applicationID',
+        type: 9,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
   obx_int.ModelEntity(
-      id: const obx_int.IdUid(7, 1716592500251888002),
-      name: 'Handle',
-      lastPropertyId: const obx_int.IdUid(15, 3522348185317901483),
-      flags: 0,
-      properties: <obx_int.ModelProperty>[
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(1, 683096758365457558),
-            name: 'id',
-            type: 6,
-            flags: 1),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(2, 191994702917313644),
-            name: 'originalROWID',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(3, 2544513926695389102),
-            name: 'address',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(4, 8884526609844353946),
-            name: 'country',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(5, 3522974353771163433),
-            name: 'color',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(6, 57094839621772204),
-            name: 'defaultPhone',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(8, 9192015144235467286),
-            name: 'defaultEmail',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(9, 7485620678567449081),
-            name: 'formattedAddress',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(11, 6784884866959942259),
-            name: 'contactRelationId',
-            type: 11,
-            flags: 520,
-            indexId: const obx_int.IdUid(14, 1213475652575340910),
-            relationTarget: 'Contact'),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(12, 7288262795934250307),
-            name: 'uniqueAddressAndService',
-            type: 9,
-            flags: 2080,
-            indexId: const obx_int.IdUid(15, 2647319022047266708)),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(13, 2987973275926761435),
-            name: 'service',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(14, 7319540363051031629),
-            name: 'posterPath',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(15, 3522348185317901483),
-            name: 'blocked',
-            type: 1,
-            flags: 0)
-      ],
-      relations: <obx_int.ModelRelation>[],
-      backlinks: <obx_int.ModelBacklink>[]),
+    id: const obx_int.IdUid(7, 1716592500251888002),
+    name: 'Handle',
+    lastPropertyId: const obx_int.IdUid(15, 3522348185317901483),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 683096758365457558),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 191994702917313644),
+        name: 'originalROWID',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 2544513926695389102),
+        name: 'address',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 8884526609844353946),
+        name: 'country',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 3522974353771163433),
+        name: 'color',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 57094839621772204),
+        name: 'defaultPhone',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 9192015144235467286),
+        name: 'defaultEmail',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 7485620678567449081),
+        name: 'formattedAddress',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 6784884866959942259),
+        name: 'contactRelationId',
+        type: 11,
+        flags: 520,
+        indexId: const obx_int.IdUid(14, 1213475652575340910),
+        relationField: 'contactRelation',
+        relationTarget: 'Contact',
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 7288262795934250307),
+        name: 'uniqueAddressAndService',
+        type: 9,
+        flags: 2080,
+        indexId: const obx_int.IdUid(15, 2647319022047266708),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(13, 2987973275926761435),
+        name: 'service',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(14, 7319540363051031629),
+        name: 'posterPath',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(15, 3522348185317901483),
+        name: 'blocked',
+        type: 1,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
   obx_int.ModelEntity(
-      id: const obx_int.IdUid(10, 7380334062783734091),
-      name: 'ThemeEntry',
-      lastPropertyId: const obx_int.IdUid(8, 4809686302323910258),
-      flags: 0,
-      properties: <obx_int.ModelProperty>[
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(1, 3364349183457626105),
-            name: 'id',
-            type: 6,
-            flags: 1),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(2, 378260260370164099),
-            name: 'themeId',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(3, 1711484628702995090),
-            name: 'name',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(4, 5820153989252425651),
-            name: 'isFont',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(5, 357044983311472123),
-            name: 'fontSize',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(6, 205399809771216750),
-            name: 'dbColor',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(7, 2424613981822393823),
-            name: 'fontWeight',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(8, 4809686302323910258),
-            name: 'themeObjectId',
-            type: 11,
-            flags: 520,
-            indexId: const obx_int.IdUid(10, 9160679880876705382),
-            relationTarget: 'ThemeObject')
-      ],
-      relations: <obx_int.ModelRelation>[],
-      backlinks: <obx_int.ModelBacklink>[]),
+    id: const obx_int.IdUid(10, 7380334062783734091),
+    name: 'ThemeEntry',
+    lastPropertyId: const obx_int.IdUid(8, 4809686302323910258),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 3364349183457626105),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 378260260370164099),
+        name: 'themeId',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 1711484628702995090),
+        name: 'name',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 5820153989252425651),
+        name: 'isFont',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 357044983311472123),
+        name: 'fontSize',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 205399809771216750),
+        name: 'dbColor',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 2424613981822393823),
+        name: 'fontWeight',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 4809686302323910258),
+        name: 'themeObjectId',
+        type: 11,
+        flags: 520,
+        indexId: const obx_int.IdUid(10, 9160679880876705382),
+        relationField: 'themeObject',
+        relationTarget: 'ThemeObject',
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
   obx_int.ModelEntity(
-      id: const obx_int.IdUid(13, 4148278195232901830),
-      name: 'Message',
-      lastPropertyId: const obx_int.IdUid(59, 8549583242275112644),
-      flags: 0,
-      properties: <obx_int.ModelProperty>[
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(1, 2871568629586737055),
-            name: 'id',
-            type: 6,
-            flags: 1),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(2, 1582361484724166619),
-            name: 'originalROWID',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(3, 8669586978455730639),
-            name: 'guid',
-            type: 9,
-            flags: 40,
-            indexId: const obx_int.IdUid(6, 4451778671291639024)),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(4, 9142895361605464091),
-            name: 'handleId',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(5, 7874018753129857845),
-            name: 'otherHandle',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(6, 4547092920121180060),
-            name: 'text',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(7, 2233028199063732172),
-            name: 'subject',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(8, 3994409138392851632),
-            name: 'country',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(9, 5531207057664871058),
-            name: 'dateCreated',
-            type: 10,
-            flags: 8,
-            indexId: const obx_int.IdUid(16, 4323200293672047337)),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(10, 3811604236432549817),
-            name: 'dateRead',
-            type: 10,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(11, 7356445736232735146),
-            name: 'dateDelivered',
-            type: 10,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(12, 626638148258506930),
-            name: 'isFromMe',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(19, 5938275663538454436),
-            name: 'hasDdResults',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(22, 8082781591108942969),
-            name: 'datePlayed',
-            type: 10,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(23, 7621327072355688575),
-            name: 'itemType',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(24, 7649146516477763838),
-            name: 'groupTitle',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(25, 1515848557190125128),
-            name: 'groupActionType',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(27, 4765948580516232913),
-            name: 'balloonBundleId',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(28, 8696985708980146227),
-            name: 'associatedMessageGuid',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(29, 574575341112766208),
-            name: 'associatedMessageType',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(30, 7125401610778464945),
-            name: 'expressiveSendStyleId',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(32, 397296906153054772),
-            name: 'hasAttachments',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(33, 3092611940313786692),
-            name: 'hasReactions',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(34, 3672248506437712660),
-            name: 'dateDeleted',
-            type: 10,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(35, 5022296267274326910),
-            name: 'threadOriginatorGuid',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(36, 2742958821028567046),
-            name: 'threadOriginatorPart',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(37, 5359949882738167432),
-            name: 'bigEmoji',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(38, 2993306046047010488),
-            name: 'error',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(39, 1372898255926257108),
-            name: 'chatId',
-            type: 11,
-            flags: 520,
-            indexId: const obx_int.IdUid(9, 1947853053588120767),
-            relationTarget: 'Chat'),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(40, 5039085638407799291),
-            name: 'dbAttributedBody',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(41, 4740279940509235463),
-            name: 'associatedMessagePart',
-            type: 6,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(42, 5528059355711105816),
-            name: 'hasApplePayloadData',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(43, 3013626603452809145),
-            name: 'dateEdited',
-            type: 10,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(44, 317511503043460053),
-            name: 'dbMessageSummaryInfo',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(45, 9157460167218193355),
-            name: 'dbPayloadData',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(46, 55112057161128513),
-            name: 'dbMetadata',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(47, 2946661728932667087),
-            name: 'wasDeliveredQuietly',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(48, 8353240741127563871),
-            name: 'didNotifyRecipient',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(49, 4357660909480898880),
-            name: 'isBookmarked',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(50, 6516059048310614016),
-            name: 'hasBeenForwarded',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(51, 2206983384887094884),
-            name: 'stagingGuid',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(52, 2416690828698123601),
-            name: 'amkSessionId',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(53, 2179513762379822209),
-            name: 'isDelivered',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(54, 684200636816633360),
-            name: 'verificationFailed',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(55, 5249321850957672701),
-            name: 'sendingServiceId',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(56, 1614237679156627573),
-            name: 'associatedMessageEmoji',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(57, 5276795239995260938),
-            name: 'dateScheduled',
-            type: 10,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(58, 5464844875358527751),
-            name: 'ckRecordId',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(59, 8549583242275112644),
-            name: 'ckSyncState',
-            type: 1,
-            flags: 0)
-      ],
-      relations: <obx_int.ModelRelation>[],
-      backlinks: <obx_int.ModelBacklink>[
-        obx_int.ModelBacklink(
-            name: 'dbAttachments', srcEntity: 'Attachment', srcField: 'message')
-      ]),
+    id: const obx_int.IdUid(13, 4148278195232901830),
+    name: 'Message',
+    lastPropertyId: const obx_int.IdUid(60, 2236183729631725046),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 2871568629586737055),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 1582361484724166619),
+        name: 'originalROWID',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 8669586978455730639),
+        name: 'guid',
+        type: 9,
+        flags: 40,
+        indexId: const obx_int.IdUid(6, 4451778671291639024),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 9142895361605464091),
+        name: 'handleId',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 7874018753129857845),
+        name: 'otherHandle',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 4547092920121180060),
+        name: 'text',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 2233028199063732172),
+        name: 'subject',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 3994409138392851632),
+        name: 'country',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 5531207057664871058),
+        name: 'dateCreated',
+        type: 10,
+        flags: 8,
+        indexId: const obx_int.IdUid(16, 4323200293672047337),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 3811604236432549817),
+        name: 'dateRead',
+        type: 10,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 7356445736232735146),
+        name: 'dateDelivered',
+        type: 10,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 626638148258506930),
+        name: 'isFromMe',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(19, 5938275663538454436),
+        name: 'hasDdResults',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(22, 8082781591108942969),
+        name: 'datePlayed',
+        type: 10,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(23, 7621327072355688575),
+        name: 'itemType',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(24, 7649146516477763838),
+        name: 'groupTitle',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(25, 1515848557190125128),
+        name: 'groupActionType',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(27, 4765948580516232913),
+        name: 'balloonBundleId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(28, 8696985708980146227),
+        name: 'associatedMessageGuid',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(29, 574575341112766208),
+        name: 'associatedMessageType',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(30, 7125401610778464945),
+        name: 'expressiveSendStyleId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(32, 397296906153054772),
+        name: 'hasAttachments',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(33, 3092611940313786692),
+        name: 'hasReactions',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(34, 3672248506437712660),
+        name: 'dateDeleted',
+        type: 10,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(35, 5022296267274326910),
+        name: 'threadOriginatorGuid',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(36, 2742958821028567046),
+        name: 'threadOriginatorPart',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(37, 5359949882738167432),
+        name: 'bigEmoji',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(38, 2993306046047010488),
+        name: 'error',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(39, 1372898255926257108),
+        name: 'chatId',
+        type: 11,
+        flags: 520,
+        indexId: const obx_int.IdUid(9, 1947853053588120767),
+        relationField: 'chat',
+        relationTarget: 'Chat',
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(40, 5039085638407799291),
+        name: 'dbAttributedBody',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(41, 4740279940509235463),
+        name: 'associatedMessagePart',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(42, 5528059355711105816),
+        name: 'hasApplePayloadData',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(43, 3013626603452809145),
+        name: 'dateEdited',
+        type: 10,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(44, 317511503043460053),
+        name: 'dbMessageSummaryInfo',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(45, 9157460167218193355),
+        name: 'dbPayloadData',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(46, 55112057161128513),
+        name: 'dbMetadata',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(47, 2946661728932667087),
+        name: 'wasDeliveredQuietly',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(48, 8353240741127563871),
+        name: 'didNotifyRecipient',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(49, 4357660909480898880),
+        name: 'isBookmarked',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(50, 6516059048310614016),
+        name: 'hasBeenForwarded',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(51, 2206983384887094884),
+        name: 'stagingGuid',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(52, 2416690828698123601),
+        name: 'amkSessionId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(53, 2179513762379822209),
+        name: 'isDelivered',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(54, 684200636816633360),
+        name: 'verificationFailed',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(55, 5249321850957672701),
+        name: 'sendingServiceId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(56, 1614237679156627573),
+        name: 'associatedMessageEmoji',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(57, 5276795239995260938),
+        name: 'dateScheduled',
+        type: 10,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(58, 5464844875358527751),
+        name: 'ckRecordId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(59, 8549583242275112644),
+        name: 'ckSyncState',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(60, 2236183729631725046),
+        name: 'metadata',
+        type: 13,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[
+      obx_int.ModelBacklink(
+        name: 'dbAttachments',
+        srcEntity: 'Attachment',
+        srcField: 'message',
+      ),
+    ],
+  ),
   obx_int.ModelEntity(
-      id: const obx_int.IdUid(15, 7753273527865539946),
-      name: 'ThemeObject',
-      lastPropertyId: const obx_int.IdUid(7, 7718171125722310355),
-      flags: 0,
-      properties: <obx_int.ModelProperty>[
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(1, 7682268131019867778),
-            name: 'id',
-            type: 6,
-            flags: 1),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(2, 3805851416487185429),
-            name: 'name',
-            type: 9,
-            flags: 2080,
-            indexId: const obx_int.IdUid(7, 6926665461572101158)),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(3, 621312794123477095),
-            name: 'selectedLightTheme',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(4, 2380808371075786065),
-            name: 'selectedDarkTheme',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(5, 7474338997382293502),
-            name: 'gradientBg',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(6, 7459499326275659791),
-            name: 'previousLightTheme',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(7, 7718171125722310355),
-            name: 'previousDarkTheme',
-            type: 1,
-            flags: 0)
-      ],
-      relations: <obx_int.ModelRelation>[],
-      backlinks: <obx_int.ModelBacklink>[
-        obx_int.ModelBacklink(
-            name: 'themeEntries',
-            srcEntity: 'ThemeEntry',
-            srcField: 'themeObject')
-      ]),
+    id: const obx_int.IdUid(15, 7753273527865539946),
+    name: 'ThemeObject',
+    lastPropertyId: const obx_int.IdUid(7, 7718171125722310355),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 7682268131019867778),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 3805851416487185429),
+        name: 'name',
+        type: 9,
+        flags: 2080,
+        indexId: const obx_int.IdUid(7, 6926665461572101158),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 621312794123477095),
+        name: 'selectedLightTheme',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 2380808371075786065),
+        name: 'selectedDarkTheme',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 7474338997382293502),
+        name: 'gradientBg',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 7459499326275659791),
+        name: 'previousLightTheme',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 7718171125722310355),
+        name: 'previousDarkTheme',
+        type: 1,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[
+      obx_int.ModelBacklink(
+        name: 'themeEntries',
+        srcEntity: 'ThemeEntry',
+        srcField: 'themeObject',
+      ),
+    ],
+  ),
   obx_int.ModelEntity(
-      id: const obx_int.IdUid(16, 1815690088052698449),
-      name: 'ThemeStruct',
-      lastPropertyId: const obx_int.IdUid(5, 5263969220071020408),
-      flags: 0,
-      properties: <obx_int.ModelProperty>[
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(1, 7043518911115753096),
-            name: 'id',
-            type: 6,
-            flags: 1),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(2, 6644283342768530799),
-            name: 'name',
-            type: 9,
-            flags: 2080,
-            indexId: const obx_int.IdUid(11, 8452066780532720626)),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(3, 8412087896868925153),
-            name: 'gradientBg',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(4, 1129102363347301238),
-            name: 'dbThemeData',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(5, 5263969220071020408),
-            name: 'googleFont',
-            type: 9,
-            flags: 0)
-      ],
-      relations: <obx_int.ModelRelation>[],
-      backlinks: <obx_int.ModelBacklink>[]),
+    id: const obx_int.IdUid(16, 1815690088052698449),
+    name: 'ThemeStruct',
+    lastPropertyId: const obx_int.IdUid(5, 5263969220071020408),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 7043518911115753096),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 6644283342768530799),
+        name: 'name',
+        type: 9,
+        flags: 2080,
+        indexId: const obx_int.IdUid(11, 8452066780532720626),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 8412087896868925153),
+        name: 'gradientBg',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 1129102363347301238),
+        name: 'dbThemeData',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 5263969220071020408),
+        name: 'googleFont',
+        type: 9,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
   obx_int.ModelEntity(
-      id: const obx_int.IdUid(17, 2547083341603323785),
-      name: 'Contact',
-      lastPropertyId: const obx_int.IdUid(13, 6585143364094241703),
-      flags: 0,
-      properties: <obx_int.ModelProperty>[
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(1, 755766469677376751),
-            name: 'dbId',
-            type: 6,
-            flags: 1),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(2, 708918913606465689),
-            name: 'id',
-            type: 9,
-            flags: 2048,
-            indexId: const obx_int.IdUid(12, 8665353868334070555)),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(3, 3572501485957552445),
-            name: 'displayName',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(4, 4938259396546143140),
-            name: 'phones',
-            type: 30,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(6, 2909427687923431080),
-            name: 'emails',
-            type: 30,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(8, 765867408744391809),
-            name: 'avatar',
-            type: 23,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(10, 3612117664568604198),
-            name: 'dbStructuredName',
-            type: 9,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(11, 3140177684889918471),
-            name: 'isShared',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(12, 761555548860852325),
-            name: 'isDismissed',
-            type: 1,
-            flags: 0),
-        obx_int.ModelProperty(
-            id: const obx_int.IdUid(13, 6585143364094241703),
-            name: 'posterPath',
-            type: 9,
-            flags: 0)
-      ],
-      relations: <obx_int.ModelRelation>[],
-      backlinks: <obx_int.ModelBacklink>[])
+    id: const obx_int.IdUid(17, 2547083341603323785),
+    name: 'Contact',
+    lastPropertyId: const obx_int.IdUid(13, 6585143364094241703),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 755766469677376751),
+        name: 'dbId',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 708918913606465689),
+        name: 'id',
+        type: 9,
+        flags: 2048,
+        indexId: const obx_int.IdUid(12, 8665353868334070555),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 3572501485957552445),
+        name: 'displayName',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 4938259396546143140),
+        name: 'phones',
+        type: 30,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 2909427687923431080),
+        name: 'emails',
+        type: 30,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 765867408744391809),
+        name: 'avatar',
+        type: 23,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 3612117664568604198),
+        name: 'dbStructuredName',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 3140177684889918471),
+        name: 'isShared',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 761555548860852325),
+        name: 'isDismissed',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(13, 6585143364094241703),
+        name: 'posterPath',
+        type: 9,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(18, 6719772093493207335),
+    name: 'CloudInboxChangeEntity',
+    lastPropertyId: const obx_int.IdUid(25, 4451177903685227588),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 1895907410778974924),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 4032652183471247709),
+        name: 'changeKey',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(17, 5174860094616047747),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 5983731795781636076),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(18, 7783959298344182122),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 8678544169124423987),
+        name: 'zone',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(19, 821204552706254830),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 2136167124009199311),
+        name: 'serverRecordIdHash',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(20, 6843515083576547121),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 617092932104382307),
+        name: 'etagHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 64019184264750896),
+        name: 'changeType',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 2328711545206180923),
+        name: 'encryptedPayloadRef',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 3676607222232263),
+        name: 'payloadSha256',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 1669804813770590457),
+        name: 'fetchSequence',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(21, 2885795424266777500),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 5135084822522519610),
+        name: 'status',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(22, 7905330438985774204),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 8575275500382195174),
+        name: 'isTombstone',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(13, 5224296750110920597),
+        name: 'failureCategory',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(14, 9109742928607863948),
+        name: 'retryCount',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(15, 2122087258225924885),
+        name: 'createdAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(16, 8310828696055987169),
+        name: 'updatedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(17, 2385681725155050415),
+        name: 'scopeKey',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(39, 3360430129523727354),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(18, 942265256405421186),
+        name: 'encryptedServerRecordId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(19, 1452880395700277269),
+        name: 'protectedSystemFieldsRef',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(20, 1370342980241388939),
+        name: 'batchId',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(40, 8891088444757782392),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(21, 8085608731784905006),
+        name: 'generation',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(22, 7803520175828220783),
+        name: 'nextEligibleAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(23, 2359335986298063461),
+        name: 'serverModifiedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(24, 5348089514051084893),
+        name: 'completedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(25, 4451177903685227588),
+        name: 'changeIdHash',
+        type: 9,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(19, 6209808242097333245),
+    name: 'CloudOutboxOperationEntity',
+    lastPropertyId: const obx_int.IdUid(26, 4302324668053862926),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 1453923979681070039),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 5482215586868617465),
+        name: 'operationId',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(23, 2902044484437898756),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 7822186106200261916),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(24, 1438057816700047656),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 9073324705939660391),
+        name: 'zone',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(25, 4176121958468359790),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 5030438638097882343),
+        name: 'logicalEntityKeyHash',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(26, 1229409407214613375),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 3360967592185918908),
+        name: 'action',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 8739970205884330074),
+        name: 'dependencyOperationIdsJson',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 4164289290106487159),
+        name: 'payloadVersion',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 2114718060008374593),
+        name: 'encryptedPayloadRef',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 7424732699000879073),
+        name: 'payloadSha256',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 6365640570467255843),
+        name: 'state',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(27, 28639336516046221),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 8957972381723831102),
+        name: 'attemptCount',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(13, 6974379095018398482),
+        name: 'nextEligibleAtMs',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(28, 3434010190981668931),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(14, 1713088269741338724),
+        name: 'lastErrorCategory',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(15, 3023724616636969011),
+        name: 'serverRecordIdHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(16, 908674649408606076),
+        name: 'createdAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(17, 2395909016293033875),
+        name: 'updatedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(18, 7045932923442181147),
+        name: 'scopeKey',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(41, 7669028522258602254),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(19, 8671106639445127584),
+        name: 'mutationRevision',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(20, 8829434107583151203),
+        name: 'leaseIdHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(21, 8352574949953478905),
+        name: 'leaseExpiresAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(22, 1517823970736287654),
+        name: 'confirmedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(23, 3453625028306797643),
+        name: 'checkpointGeneration',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(24, 2838853240019164046),
+        name: 'appleRequestUuid',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(25, 593864995002474100),
+        name: 'appleOperationUuid',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(26, 4302324668053862926),
+        name: 'protectedLeaseReference',
+        type: 9,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(20, 8623084761715763815),
+    name: 'CloudRecordMapEntity',
+    lastPropertyId: const obx_int.IdUid(12, 7135872154167319448),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 9097529941931140001),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 3528403730967002101),
+        name: 'mapKey',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(29, 471127199829308194),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 8031419087023122271),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(30, 6809918130192761355),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 596246986889589728),
+        name: 'zone',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(31, 6419846787958831018),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 3866959842373768393),
+        name: 'logicalEntityKeyHash',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(32, 5741250032786933729),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 1720064144660637343),
+        name: 'serverRecordIdHash',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(33, 2137526312204345044),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 7059827757810134893),
+        name: 'encryptedServerRecordId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 6064824751437364913),
+        name: 'etagHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 3511222388893390366),
+        name: 'encryptedRawRecordRef',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 4476992720778999527),
+        name: 'updatedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 6045468503885689678),
+        name: 'scopeKey',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(42, 8580390230204763517),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 7135872154167319448),
+        name: 'generation',
+        type: 6,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(21, 4610418443336266937),
+    name: 'CloudSyncCheckpointEntity',
+    lastPropertyId: const obx_int.IdUid(20, 469503483284611167),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 1503513831301718558),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 4028596345806531255),
+        name: 'checkpointKey',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(34, 1579181902505607669),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 5485993030475628060),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(35, 4382044364901605135),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 575887715290289427),
+        name: 'container',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 8918464312948592927),
+        name: 'database',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 4967773343283709776),
+        name: 'zone',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(36, 1694676353845812008),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 8851160100117306846),
+        name: 'schemaVersion',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 8714485857066159220),
+        name: 'fetchedTokenCiphertext',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 9039140338019416063),
+        name: 'fetchedSequence',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 461883346597482809),
+        name: 'appliedSequence',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 7559900551993333666),
+        name: 'lastSuccessfulAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 1542051308030024045),
+        name: 'lastAttemptAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(13, 6338716602832862273),
+        name: 'lastErrorCategory',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(14, 4946610067634546596),
+        name: 'backoffAttempt',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(15, 3803599633056384253),
+        name: 'nextEligibleAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(16, 3893748363581671178),
+        name: 'updatedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(17, 7898159843947289985),
+        name: 'streamKind',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(18, 5644534535062464011),
+        name: 'generation',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(19, 3704484740564181784),
+        name: 'lastBatchId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(20, 469503483284611167),
+        name: 'mutationRevisionCounter',
+        type: 6,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(22, 259334693033865836),
+    name: 'CloudSyncRunEntity',
+    lastPropertyId: const obx_int.IdUid(16, 6257537762912465363),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 1782232589038116265),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 2420496326771660332),
+        name: 'runId',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(37, 5579835729402978725),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 5578798528327770139),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(38, 1353148650192326406),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 7951416976844075650),
+        name: 'trigger',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 1210921649776027278),
+        name: 'architecture',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 2764764522538084616),
+        name: 'mode',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 2688680483849660813),
+        name: 'fetchedCount',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 6162153589821911026),
+        name: 'appliedCount',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 791556381302722054),
+        name: 'quarantinedCount',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 1390082525507774243),
+        name: 'confirmedCount',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 4541580426093217663),
+        name: 'retriedCount',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 857320526491939146),
+        name: 'startedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(13, 3056229026698237423),
+        name: 'finishedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(14, 9083894370969100067),
+        name: 'failureCategory',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(15, 1232110106438769869),
+        name: 'scopeKey',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(47, 3060485928735691412),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(16, 6257537762912465363),
+        name: 'deferredCount',
+        type: 6,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(23, 4070283325319950409),
+    name: 'CloudSyncLeaseEntity',
+    lastPropertyId: const obx_int.IdUid(8, 5690477582462752090),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 2729282918387786382),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 2769029684737707461),
+        name: 'leaseKey',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(43, 637443236713783532),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 8190732138318068473),
+        name: 'scopeKey',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(44, 9151336404221461594),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 8073672003493449321),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(45, 5155866284077893836),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 8728846936974993304),
+        name: 'ownerIdHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 772462836942356017),
+        name: 'generation',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 2572401958863969816),
+        name: 'acquiredAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 5690477582462752090),
+        name: 'expiresAtMs',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(46, 649461146512244572),
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(24, 6298856735630642402),
+    name: 'CloudAttachmentMaterializationEntity',
+    lastPropertyId: const obx_int.IdUid(16, 115530251783195004),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 1733707656886255486),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 2829480575482014625),
+        name: 'transferKey',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(48, 8511204723626225136),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 3054457580958471772),
+        name: 'scopeKey',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(49, 3868889113762672438),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 7527309380540369961),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(50, 9057833165170278504),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 5122274897448961713),
+        name: 'zone',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(51, 8904544591634042596),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 8957933126875551600),
+        name: 'generation',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 4815227610925886891),
+        name: 'logicalEntityKeyHash',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(52, 8064650573204067089),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 350444312191614898),
+        name: 'expectedBytes',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 4652270939056213993),
+        name: 'expectedIntegrityTagHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 6314008561402639966),
+        name: 'stage',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(53, 3559574499631432073),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 3947295453349546213),
+        name: 'verifiedBytes',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 4286934476255007712),
+        name: 'protectedTempReference',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(13, 6102671074598874882),
+        name: 'protectedResumeManifestReference',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(14, 5110684721177215462),
+        name: 'protectedContentVerificationReference',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(15, 531054111286031189),
+        name: 'protectedFinalReference',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(16, 115530251783195004),
+        name: 'updatedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(25, 2707792941267997758),
+    name: 'CloudSemanticReplayEntity',
+    lastPropertyId: const obx_int.IdUid(24, 6134120491357238156),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 3880903860070244039),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 2817476290092230342),
+        name: 'replayKey',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(54, 2661950643500352932),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 5845736057897842633),
+        name: 'scopeGenerationKey',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(55, 6656797492340960508),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 1353183097380652891),
+        name: 'scopeKey',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(56, 7550401169650593817),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 1580690780664760772),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(57, 1758564168966321462),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 7674256512701354196),
+        name: 'container',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 3735485937229566834),
+        name: 'database',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 1239116557652113152),
+        name: 'zone',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(58, 1437734903549199516),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 2503794915196890881),
+        name: 'streamKind',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 8528671671014893912),
+        name: 'schemaVersion',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 9103596916327534004),
+        name: 'generation',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 5062059703884467225),
+        name: 'changeIdHash',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(59, 8454019426905867269),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(16, 7486724007131892173),
+        name: 'updatedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(17, 3765812835902269445),
+        name: 'serverRecordIdHash',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(66, 6913311950121421051),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(18, 8462982952394987262),
+        name: 'logicalEntityKeyHash',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(67, 9016942969599814282),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(19, 1416321247527772100),
+        name: 'payloadSha256',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(20, 1168518400042208803),
+        name: 'protectedPayloadReferenceHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(21, 2926325749401488941),
+        name: 'inboxSequence',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(22, 5443645776082689040),
+        name: 'changeType',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(23, 5938564578107542446),
+        name: 'terminalOutcome',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(68, 3019787364371978747),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(24, 6134120491357238156),
+        name: 'terminalSafeCode',
+        type: 9,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(26, 7701837625666464233),
+    name: 'CloudSemanticSnapshotEntity',
+    lastPropertyId: const obx_int.IdUid(24, 5035678304275097058),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 8520227360481418389),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 7488477600905998136),
+        name: 'snapshotKey',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(60, 5644677902998818408),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 7329013381340357172),
+        name: 'scopeGenerationKey',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(61, 1226266756750185226),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 6401139088990627667),
+        name: 'scopeKey',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(62, 2298928435832767244),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 5773934355110739738),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(63, 3017974133359173059),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 2192943532550866420),
+        name: 'container',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 4243885286916349439),
+        name: 'database',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 1122439571203719362),
+        name: 'zone',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(64, 6674403394799987160),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 8532578789865062424),
+        name: 'streamKind',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 6974539497241102296),
+        name: 'schemaVersion',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 1250931896109604799),
+        name: 'generation',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 1451806406255824259),
+        name: 'entityKind',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(13, 3131079412139954216),
+        name: 'logicalEntityKeyHash',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(65, 7107073535763836024),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(14, 9116431593188019474),
+        name: 'parentLogicalKeyHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(15, 5647270430356373616),
+        name: 'immutableContentDigest',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(16, 3489430996458561289),
+        name: 'createdAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(17, 8182786500145730176),
+        name: 'readAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(18, 3348921457693473272),
+        name: 'deliveredAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(19, 2070179914062438898),
+        name: 'editPartsJson',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(20, 2837338191269536128),
+        name: 'retractedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(21, 5535400344419239642),
+        name: 'groupVersion',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(22, 236557598042741275),
+        name: 'groupMetadataDigest',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(23, 4137057345787739447),
+        name: 'etagHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(24, 5035678304275097058),
+        name: 'updatedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(27, 4280538170716883312),
+    name: 'CloudProtectedPageLeaseEntity',
+    lastPropertyId: const obx_int.IdUid(9, 7761394260513099254),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 1759726867224472058),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 3492550884558884121),
+        name: 'leaseReference',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(69, 435771699388467906),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 1803024814487980708),
+        name: 'scopeKey',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(70, 3620302744458223619),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 657197473658330316),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(71, 9143856129043954915),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 913730073842346540),
+        name: 'generation',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 6474542508711130616),
+        name: 'batchIdHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 5246214786452390887),
+        name: 'adoptedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 2103033795181318938),
+        name: 'finalizeAttemptCount',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 7761394260513099254),
+        name: 'nextFinalizeEligibleAtMs',
+        type: 6,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(28, 889478301778181246),
+    name: 'CloudKitWriterAuthorityEntity',
+    lastPropertyId: const obx_int.IdUid(14, 4174520670149979908),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 5473247877995585615),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 1642692165078650755),
+        name: 'authorityKey',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(72, 6121958980954465281),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 5104060885702386570),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(73, 5488879845786692064),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 1430241371294861401),
+        name: 'container',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 4032154290354580986),
+        name: 'database',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 2423775511408165446),
+        name: 'owner',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 1072554348408456591),
+        name: 'state',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 7868095992651810717),
+        name: 'targetOwner',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 676908442821730166),
+        name: 'epoch',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 151617614527735346),
+        name: 'updatedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 5989769012840038573),
+        name: 'transitionIdHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 9160103618601374829),
+        name: 'resetScopeKeyHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(13, 2198164706224214236),
+        name: 'resetGeneration',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(14, 4174520670149979908),
+        name: 'resetProofReferenceHash',
+        type: 9,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(29, 3887662870209685934),
+    name: 'CloudKitDeletionIntentEntity',
+    lastPropertyId: const obx_int.IdUid(12, 4810596780446149463),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 4826700441964631379),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 3159247580443387695),
+        name: 'intentKey',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(74, 8915222881106965724),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 6722727339572908414),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(75, 3577054364456742958),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 458894881388309981),
+        name: 'container',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 6503045858666304076),
+        name: 'database',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 9128063155847659726),
+        name: 'writerEpoch',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 8745333787754726390),
+        name: 'kind',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 8231123974175741804),
+        name: 'recordId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 8313675762076426993),
+        name: 'state',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(76, 4653884840954261598),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 1791582430176981252),
+        name: 'quarantineReason',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 6754220496000410228),
+        name: 'createdAtMs',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 4810596780446149463),
+        name: 'updatedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(30, 156682190547124916),
+    name: 'CloudKitDeletionQuarantineEntity',
+    lastPropertyId: const obx_int.IdUid(6, 7608873074433568741),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 9016454772102266426),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 6218233504524201595),
+        name: 'quarantineKey',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(77, 1999680227156715272),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 5288728045287545979),
+        name: 'sourceKey',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 7940712078234941674),
+        name: 'recordId',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 8871707048403049958),
+        name: 'reason',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 7608873074433568741),
+        name: 'createdAtMs',
+        type: 6,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
 ];
 
 /// Shortcut for [obx.Store.new] that passes [getObjectBoxModel] and for Flutter
@@ -933,1205 +2568,3468 @@ final _entities = <obx_int.ModelEntity>[
 /// For Flutter apps, also calls `loadObjectBoxLibraryAndroidCompat()` from
 /// the ObjectBox Flutter library to fix loading the native ObjectBox library
 /// on Android 6 and older.
-Future<obx.Store> openStore(
-    {String? directory,
-    int? maxDBSizeInKB,
-    int? maxDataSizeInKB,
-    int? fileMode,
-    int? maxReaders,
-    bool queriesCaseSensitiveDefault = true,
-    String? macosApplicationGroup}) async {
+Future<obx.Store> openStore({
+  String? directory,
+  int? maxDBSizeInKB,
+  int? maxDataSizeInKB,
+  int? fileMode,
+  int? maxReaders,
+  bool queriesCaseSensitiveDefault = true,
+  String? macosApplicationGroup,
+}) async {
   await loadObjectBoxLibraryAndroidCompat();
-  return obx.Store(getObjectBoxModel(),
-      directory: directory ?? (await defaultStoreDirectory()).path,
-      maxDBSizeInKB: maxDBSizeInKB,
-      maxDataSizeInKB: maxDataSizeInKB,
-      fileMode: fileMode,
-      maxReaders: maxReaders,
-      queriesCaseSensitiveDefault: queriesCaseSensitiveDefault,
-      macosApplicationGroup: macosApplicationGroup);
+  return obx.Store(
+    getObjectBoxModel(),
+    directory: directory ?? (await defaultStoreDirectory()).path,
+    maxDBSizeInKB: maxDBSizeInKB,
+    maxDataSizeInKB: maxDataSizeInKB,
+    fileMode: fileMode,
+    maxReaders: maxReaders,
+    queriesCaseSensitiveDefault: queriesCaseSensitiveDefault,
+    macosApplicationGroup: macosApplicationGroup,
+  );
 }
 
 /// Returns the ObjectBox model definition for this project for use with
 /// [obx.Store.new].
 obx_int.ModelDefinition getObjectBoxModel() {
   final model = obx_int.ModelInfo(
-      entities: _entities,
-      lastEntityId: const obx_int.IdUid(17, 2547083341603323785),
-      lastIndexId: const obx_int.IdUid(16, 4323200293672047337),
-      lastRelationId: const obx_int.IdUid(1, 7492985733214117623),
-      lastSequenceId: const obx_int.IdUid(0, 0),
-      retiredEntityUids: const [
-        7018417362319461469,
-        2687525031757751054,
-        1550674322389882817,
-        1619417403499629985,
-        4450451951397945314,
-        1700370751061310153,
-        3483028772414651169,
-        4579555475244243263
-      ],
-      retiredIndexUids: const [8277667704777683261, 9132680703832217528],
-      retiredPropertyUids: const [
-        8075530627827069587,
-        614139107975861462,
-        4854433937459051257,
-        5895852794473158582,
-        3012867958425492030,
-        7948534483488402365,
-        7283017531024613481,
-        6884032144126638879,
-        6176853844548763600,
-        9009878668681532753,
-        7709208038424465489,
-        3701890428713468427,
-        735091670169932122,
-        3235490937430157681,
-        8126854405033462697,
-        82657294837234349,
-        8117526523647192200,
-        8413228078295213488,
-        6626097234365517692,
-        939052079357746566,
-        3171806281750931518,
-        4464802064429422611,
-        5542585324402061600,
-        572939669859263693,
-        3185617998247778963,
-        769751664576031863,
-        4077882089992206144,
-        7238968990385881383,
-        2316337434845256835,
-        3331740086129339824,
-        4741144250901643688,
-        1646799728535719055,
-        2482744653836740926,
-        3558704390717166171,
-        6156393125011218685,
-        861137718943970360,
-        4613854641642738901,
-        5956431335972854454,
-        8252934173466443273,
-        7658149783933949012,
-        7323923293952799044,
-        115725376021487478,
-        8802290647274083834,
-        5487740941825196608,
-        2406258303326474883,
-        245348312617052981,
-        3858153704624052397,
-        63810393639568631,
-        977456607049558352,
-        2275379924137725049,
-        6032584536718919119,
-        7725198227526963956,
-        4236934751716676271,
-        8224006478743498888,
-        7392117204304535224,
-        5590979280237537790,
-        4510870919779209192,
-        5203631054946486128,
-        2649653758394363860,
-        1439376349402210172,
-        8308083337629235136,
-        790519381961958997,
-        5176315239890900498,
-        4255445772578528269,
-        4403726864971073396,
-        2957720185959973011,
-        226618350909080419,
-        7216531465575414151,
-        8776591297555015451,
-        549408491521049277,
-        6839394073781850549,
-        4584830839955803056,
-        5300777612659164835,
-        7579043230224812288,
-        5309991997782167547,
-        6035615005231958928,
-        457159365740007120,
-        6085502636952418888,
-        7378813296315172429,
-        7968765094195569385,
-        8252364803444354563,
-        4143511131199296878,
-        172817608355620424,
-        130925169208448361,
-        4983193271800913860,
-        4810718806330671770,
-        8558367758823185430,
-        7997144491374144435,
-        1278586999912993922,
-        696004914151488398,
-        5516087858141459065
-      ],
-      retiredRelationUids: const [],
-      modelVersion: 5,
-      modelVersionParserMinimum: 5,
-      version: 1);
+    // If this version is not found, it means that this file was generated
+    // with an older version of the ObjectBox Dart generator.
+    // Please regenerate this file with the current generator version.
+    // Typically, this is done with `dart run build_runner build`.
+    generatorVersion: obx_int.GeneratorVersion.v2025_12_16,
+    entities: _entities,
+    lastEntityId: const obx_int.IdUid(30, 156682190547124916),
+    lastIndexId: const obx_int.IdUid(77, 1999680227156715272),
+    lastRelationId: const obx_int.IdUid(1, 7492985733214117623),
+    lastSequenceId: const obx_int.IdUid(0, 0),
+    retiredEntityUids: const [
+      7018417362319461469,
+      2687525031757751054,
+      1550674322389882817,
+      1619417403499629985,
+      4450451951397945314,
+      1700370751061310153,
+      3483028772414651169,
+      4579555475244243263,
+    ],
+    retiredIndexUids: const [8277667704777683261, 9132680703832217528],
+    retiredPropertyUids: const [
+      8075530627827069587,
+      614139107975861462,
+      4854433937459051257,
+      5895852794473158582,
+      3012867958425492030,
+      7948534483488402365,
+      7283017531024613481,
+      6884032144126638879,
+      6176853844548763600,
+      9009878668681532753,
+      7709208038424465489,
+      3701890428713468427,
+      735091670169932122,
+      3235490937430157681,
+      8126854405033462697,
+      82657294837234349,
+      8117526523647192200,
+      8413228078295213488,
+      6626097234365517692,
+      939052079357746566,
+      3171806281750931518,
+      4464802064429422611,
+      5542585324402061600,
+      572939669859263693,
+      3185617998247778963,
+      769751664576031863,
+      4077882089992206144,
+      7238968990385881383,
+      2316337434845256835,
+      3331740086129339824,
+      4741144250901643688,
+      1646799728535719055,
+      2482744653836740926,
+      3558704390717166171,
+      6156393125011218685,
+      861137718943970360,
+      4613854641642738901,
+      5956431335972854454,
+      8252934173466443273,
+      7658149783933949012,
+      7323923293952799044,
+      115725376021487478,
+      8802290647274083834,
+      5487740941825196608,
+      2406258303326474883,
+      245348312617052981,
+      3858153704624052397,
+      63810393639568631,
+      977456607049558352,
+      2275379924137725049,
+      6032584536718919119,
+      7725198227526963956,
+      4236934751716676271,
+      8224006478743498888,
+      7392117204304535224,
+      5590979280237537790,
+      4510870919779209192,
+      5203631054946486128,
+      2649653758394363860,
+      1439376349402210172,
+      8308083337629235136,
+      790519381961958997,
+      5176315239890900498,
+      4255445772578528269,
+      4403726864971073396,
+      2957720185959973011,
+      226618350909080419,
+      7216531465575414151,
+      8776591297555015451,
+      549408491521049277,
+      6839394073781850549,
+      4584830839955803056,
+      5300777612659164835,
+      7579043230224812288,
+      5309991997782167547,
+      6035615005231958928,
+      457159365740007120,
+      6085502636952418888,
+      7378813296315172429,
+      7968765094195569385,
+      8252364803444354563,
+      4143511131199296878,
+      172817608355620424,
+      130925169208448361,
+      4983193271800913860,
+      4810718806330671770,
+      8558367758823185430,
+      7997144491374144435,
+      1278586999912993922,
+      696004914151488398,
+      5516087858141459065,
+      7269255294897696731,
+      8215014452962792686,
+      1551080847505267540,
+    ],
+    retiredRelationUids: const [],
+    modelVersion: 5,
+    modelVersionParserMinimum: 5,
+    version: 1,
+  );
 
   final bindings = <Type, obx_int.EntityDefinition>{
     Attachment: obx_int.EntityDefinition<Attachment>(
-        model: _entities[0],
-        toOneRelations: (Attachment object) => [object.message],
-        toManyRelations: (Attachment object) => {},
-        getId: (Attachment object) => object.id,
-        setId: (Attachment object, int id) {
-          object.id = id;
-        },
-        objectToFB: (Attachment object, fb.Builder fbb) {
-          final guidOffset =
-              object.guid == null ? null : fbb.writeString(object.guid!);
-          final utiOffset =
-              object.uti == null ? null : fbb.writeString(object.uti!);
-          final mimeTypeOffset = object.mimeType == null
-              ? null
-              : fbb.writeString(object.mimeType!);
-          final transferNameOffset = object.transferName == null
-              ? null
-              : fbb.writeString(object.transferName!);
-          final webUrlOffset =
-              object.webUrl == null ? null : fbb.writeString(object.webUrl!);
-          final dbMetadataOffset = object.dbMetadata == null
-              ? null
-              : fbb.writeString(object.dbMetadata!);
-          final ckRecordIdOffset = object.ckRecordId == null
-              ? null
-              : fbb.writeString(object.ckRecordId!);
-          fbb.startTable(21);
-          fbb.addInt64(0, object.id ?? 0);
-          fbb.addInt64(1, object.originalROWID);
-          fbb.addOffset(2, guidOffset);
-          fbb.addOffset(3, utiOffset);
-          fbb.addOffset(4, mimeTypeOffset);
-          fbb.addBool(6, object.isOutgoing);
-          fbb.addOffset(7, transferNameOffset);
-          fbb.addInt64(8, object.totalBytes);
-          fbb.addInt64(12, object.height);
-          fbb.addInt64(13, object.width);
-          fbb.addOffset(15, webUrlOffset);
-          fbb.addInt64(16, object.message.targetId);
-          fbb.addOffset(17, dbMetadataOffset);
-          fbb.addBool(18, object.hasLivePhoto);
-          fbb.addOffset(19, ckRecordIdOffset);
-          fbb.finish(fbb.endTable());
-          return object.id ?? 0;
-        },
-        objectFromFB: (obx.Store store, ByteData fbData) {
-          final buffer = fb.BufferContext(fbData);
-          final rootOffset = buffer.derefObject(0);
-          final idParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 4);
-          final originalROWIDParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 6);
-          final guidParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 8);
-          final utiParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 10);
-          final mimeTypeParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 12);
-          final isOutgoingParam =
-              const fb.BoolReader().vTableGetNullable(buffer, rootOffset, 16);
-          final transferNameParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 18);
-          final totalBytesParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 20);
-          final heightParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 28);
-          final widthParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 30);
-          final webUrlParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 34);
-          final hasLivePhotoParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 40, false);
-          final object = Attachment(
-              id: idParam,
-              originalROWID: originalROWIDParam,
-              guid: guidParam,
-              uti: utiParam,
-              mimeType: mimeTypeParam,
-              isOutgoing: isOutgoingParam,
-              transferName: transferNameParam,
-              totalBytes: totalBytesParam,
-              height: heightParam,
-              width: widthParam,
-              webUrl: webUrlParam,
-              hasLivePhoto: hasLivePhotoParam)
-            ..dbMetadata = const fb.StringReader(asciiOptimization: true)
-                .vTableGetNullable(buffer, rootOffset, 38)
-            ..ckRecordId = const fb.StringReader(asciiOptimization: true)
-                .vTableGetNullable(buffer, rootOffset, 42);
-          object.message.targetId =
-              const fb.Int64Reader().vTableGet(buffer, rootOffset, 36, 0);
-          object.message.attach(store);
-          return object;
-        }),
+      model: _entities[0],
+      toOneRelations: (Attachment object) => [object.message],
+      toManyRelations: (Attachment object) => {},
+      getId: (Attachment object) => object.id,
+      setId: (Attachment object, int id) {
+        object.id = id;
+      },
+      objectToFB: (Attachment object, fb.Builder fbb) {
+        final guidOffset = object.guid == null
+            ? null
+            : fbb.writeString(object.guid!);
+        final utiOffset = object.uti == null
+            ? null
+            : fbb.writeString(object.uti!);
+        final mimeTypeOffset = object.mimeType == null
+            ? null
+            : fbb.writeString(object.mimeType!);
+        final transferNameOffset = object.transferName == null
+            ? null
+            : fbb.writeString(object.transferName!);
+        final webUrlOffset = object.webUrl == null
+            ? null
+            : fbb.writeString(object.webUrl!);
+        final dbMetadataOffset = object.dbMetadata == null
+            ? null
+            : fbb.writeString(object.dbMetadata!);
+        final ckRecordIdOffset = object.ckRecordId == null
+            ? null
+            : fbb.writeString(object.ckRecordId!);
+        final metadataOffset = object.metadata == null
+            ? null
+            : fbb.writeListInt8(obx_int.toFlexBuffer(object.metadata!));
+        fbb.startTable(22);
+        fbb.addInt64(0, object.id ?? 0);
+        fbb.addInt64(1, object.originalROWID);
+        fbb.addOffset(2, guidOffset);
+        fbb.addOffset(3, utiOffset);
+        fbb.addOffset(4, mimeTypeOffset);
+        fbb.addBool(6, object.isOutgoing);
+        fbb.addOffset(7, transferNameOffset);
+        fbb.addInt64(8, object.totalBytes);
+        fbb.addInt64(12, object.height);
+        fbb.addInt64(13, object.width);
+        fbb.addOffset(15, webUrlOffset);
+        fbb.addInt64(16, object.message.targetId);
+        fbb.addOffset(17, dbMetadataOffset);
+        fbb.addBool(18, object.hasLivePhoto);
+        fbb.addOffset(19, ckRecordIdOffset);
+        fbb.addOffset(20, metadataOffset);
+        fbb.finish(fbb.endTable());
+        return object.id ?? 0;
+      },
+      objectFromFB: (obx.Store store, ByteData fbData) {
+        final buffer = fb.BufferContext(fbData);
+        final rootOffset = buffer.derefObject(0);
+        final idParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          4,
+        );
+        final originalROWIDParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          6,
+        );
+        final guidParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 8);
+        final utiParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 10);
+        final mimeTypeParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 12);
+        final isOutgoingParam = const fb.BoolReader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          16,
+        );
+        final transferNameParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 18);
+        final totalBytesParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          20,
+        );
+        final heightParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          28,
+        );
+        final widthParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          30,
+        );
+        final metadataParam = obx_int.flexBufferToMap(buffer, rootOffset, 44);
+        final webUrlParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 34);
+        final hasLivePhotoParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          40,
+          false,
+        );
+        final object =
+            Attachment(
+                id: idParam,
+                originalROWID: originalROWIDParam,
+                guid: guidParam,
+                uti: utiParam,
+                mimeType: mimeTypeParam,
+                isOutgoing: isOutgoingParam,
+                transferName: transferNameParam,
+                totalBytes: totalBytesParam,
+                height: heightParam,
+                width: widthParam,
+                metadata: metadataParam,
+                webUrl: webUrlParam,
+                hasLivePhoto: hasLivePhotoParam,
+              )
+              ..dbMetadata = const fb.StringReader(
+                asciiOptimization: true,
+              ).vTableGetNullable(buffer, rootOffset, 38)
+              ..ckRecordId = const fb.StringReader(
+                asciiOptimization: true,
+              ).vTableGetNullable(buffer, rootOffset, 42);
+        object.message.targetId = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          36,
+          0,
+        );
+        object.message.attach(store);
+        return object;
+      },
+    ),
     Chat: obx_int.EntityDefinition<Chat>(
-        model: _entities[1],
-        toOneRelations: (Chat object) => [],
-        toManyRelations: (Chat object) => {
-              obx_int.RelInfo<Chat>.toMany(1, object.id!): object.handles,
-              obx_int.RelInfo<Message>.toOneBacklink(
-                      39, object.id!, (Message srcObject) => srcObject.chat):
-                  object.messages
-            },
-        getId: (Chat object) => object.id,
-        setId: (Chat object, int id) {
-          object.id = id;
-        },
-        objectToFB: (Chat object, fb.Builder fbb) {
-          final guidOffset = fbb.writeString(object.guid);
-          final chatIdentifierOffset = object.chatIdentifier == null
-              ? null
-              : fbb.writeString(object.chatIdentifier!);
-          final muteTypeOffset = object.muteType == null
-              ? null
-              : fbb.writeString(object.muteType!);
-          final muteArgsOffset = object.muteArgs == null
-              ? null
-              : fbb.writeString(object.muteArgs!);
-          final titleOffset =
-              object.title == null ? null : fbb.writeString(object.title!);
-          final displayNameOffset = object.displayName == null
-              ? null
-              : fbb.writeString(object.displayName!);
-          final customAvatarPathOffset = object.customAvatarPath == null
-              ? null
-              : fbb.writeString(object.customAvatarPath!);
-          final textFieldTextOffset = object.textFieldText == null
-              ? null
-              : fbb.writeString(object.textFieldText!);
-          final textFieldAttachmentsOffset = fbb.writeList(object
-              .textFieldAttachments
+      model: _entities[1],
+      toOneRelations: (Chat object) => [],
+      toManyRelations: (Chat object) => {
+        obx_int.RelInfo<Chat>.toMany(1, object.id!): object.handles,
+        obx_int.RelInfo<Message>.toOneBacklink(
+          39,
+          object.id!,
+          (Message srcObject) => srcObject.chat,
+        ): object.messages,
+      },
+      getId: (Chat object) => object.id,
+      setId: (Chat object, int id) {
+        object.id = id;
+      },
+      objectToFB: (Chat object, fb.Builder fbb) {
+        final guidOffset = fbb.writeString(object.guid);
+        final chatIdentifierOffset = object.chatIdentifier == null
+            ? null
+            : fbb.writeString(object.chatIdentifier!);
+        final muteTypeOffset = object.muteType == null
+            ? null
+            : fbb.writeString(object.muteType!);
+        final muteArgsOffset = object.muteArgs == null
+            ? null
+            : fbb.writeString(object.muteArgs!);
+        final titleOffset = object.title == null
+            ? null
+            : fbb.writeString(object.title!);
+        final displayNameOffset = object.displayName == null
+            ? null
+            : fbb.writeString(object.displayName!);
+        final customAvatarPathOffset = object.customAvatarPath == null
+            ? null
+            : fbb.writeString(object.customAvatarPath!);
+        final textFieldTextOffset = object.textFieldText == null
+            ? null
+            : fbb.writeString(object.textFieldText!);
+        final textFieldAttachmentsOffset = fbb.writeList(
+          object.textFieldAttachments
               .map(fbb.writeString)
-              .toList(growable: false));
-          final lastReadMessageGuidOffset = object.lastReadMessageGuid == null
-              ? null
-              : fbb.writeString(object.lastReadMessageGuid!);
-          final usingHandleOffset = object.usingHandle == null
-              ? null
-              : fbb.writeString(object.usingHandle!);
-          final apnTitleOffset = object.apnTitle == null
-              ? null
-              : fbb.writeString(object.apnTitle!);
-          final guidRefsOffset = fbb.writeList(
-              object.guidRefs.map(fbb.writeString).toList(growable: false));
-          final textFieldAnnotationsOffset = object.textFieldAnnotations == null
-              ? null
-              : fbb.writeString(object.textFieldAnnotations!);
-          final transcriptPosterPathOffset = object.transcriptPosterPath == null
-              ? null
-              : fbb.writeString(object.transcriptPosterPath!);
-          final cloudDataOffset = object.cloudData == null
-              ? null
-              : fbb.writeListInt8(object.cloudData!);
-          final ckRecordIdOffset = object.ckRecordId == null
-              ? null
-              : fbb.writeString(object.ckRecordId!);
-          final photoAttachmentGuidOffset = object.photoAttachmentGuid == null
-              ? null
-              : fbb.writeString(object.photoAttachmentGuid!);
-          final cloudGuidOffset = object.cloudGuid == null
-              ? null
-              : fbb.writeString(object.cloudGuid!);
-          fbb.startTable(49);
-          fbb.addInt64(0, object.id ?? 0);
-          fbb.addOffset(2, guidOffset);
-          fbb.addOffset(4, chatIdentifierOffset);
-          fbb.addBool(5, object.isArchived);
-          fbb.addOffset(7, muteTypeOffset);
-          fbb.addOffset(8, muteArgsOffset);
-          fbb.addBool(9, object.isPinned);
-          fbb.addBool(10, object.hasUnreadMessage);
-          fbb.addInt64(
-              11, object.dbOnlyLatestMessageDate?.millisecondsSinceEpoch);
-          fbb.addOffset(14, titleOffset);
-          fbb.addOffset(15, displayNameOffset);
-          fbb.addOffset(17, customAvatarPathOffset);
-          fbb.addInt64(18, object.pinIndex);
-          fbb.addBool(19, object.autoSendReadReceipts);
-          fbb.addBool(20, object.autoSendTypingIndicators);
-          fbb.addOffset(21, textFieldTextOffset);
-          fbb.addOffset(22, textFieldAttachmentsOffset);
-          fbb.addInt64(23, object.dateDeleted?.millisecondsSinceEpoch);
-          fbb.addInt64(24, object.style);
-          fbb.addBool(25, object.lockChatName);
-          fbb.addBool(26, object.lockChatIcon);
-          fbb.addOffset(27, lastReadMessageGuidOffset);
-          fbb.addInt64(28, object.groupVersion);
-          fbb.addOffset(29, usingHandleOffset);
-          fbb.addOffset(30, apnTitleOffset);
-          fbb.addBool(31, object.isRpSms);
-          fbb.addOffset(32, guidRefsOffset);
-          fbb.addInt64(33, object.telephonyId);
-          fbb.addOffset(34, textFieldAnnotationsOffset);
-          fbb.addBool(35, object.shareZenMode);
-          fbb.addBool(36, object.notifsSilenced);
-          fbb.addInt64(37, object.dateNotifiedAnyways?.millisecondsSinceEpoch);
-          fbb.addInt64(38, object.zenModeIsShared);
-          fbb.addBool(39, object.senderIsKnown);
-          fbb.addBool(40, object.isRoutingStub);
-          fbb.addOffset(41, transcriptPosterPathOffset);
-          fbb.addInt64(42, object.transcriptBackgroundVersion);
-          fbb.addOffset(43, cloudDataOffset);
-          fbb.addOffset(44, ckRecordIdOffset);
-          fbb.addBool(45, object.ckSyncState);
-          fbb.addOffset(46, photoAttachmentGuidOffset);
-          fbb.addOffset(47, cloudGuidOffset);
-          fbb.finish(fbb.endTable());
-          return object.id ?? 0;
-        },
-        objectFromFB: (obx.Store store, ByteData fbData) {
-          final buffer = fb.BufferContext(fbData);
-          final rootOffset = buffer.derefObject(0);
-          final dbOnlyLatestMessageDateValue =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 26);
-          final dateDeletedValue =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 50);
-          final dateNotifiedAnywaysValue =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 78);
-          final idParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 4);
-          final guidParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGet(buffer, rootOffset, 8, '');
-          final chatIdentifierParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 12);
-          final isArchivedParam =
-              const fb.BoolReader().vTableGetNullable(buffer, rootOffset, 14);
-          final isPinnedParam =
-              const fb.BoolReader().vTableGetNullable(buffer, rootOffset, 22);
-          final muteTypeParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 18);
-          final muteArgsParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 20);
-          final hasUnreadMessageParam =
-              const fb.BoolReader().vTableGetNullable(buffer, rootOffset, 24);
-          final displayNameParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 34);
-          final autoSendReadReceiptsParam =
-              const fb.BoolReader().vTableGetNullable(buffer, rootOffset, 42);
-          final autoSendTypingIndicatorsParam =
-              const fb.BoolReader().vTableGetNullable(buffer, rootOffset, 44);
-          final textFieldTextParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 46);
-          final textFieldAnnotationsParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 72);
-          final textFieldAttachmentsParam = const fb.ListReader<String>(
-                  fb.StringReader(asciiOptimization: true),
-                  lazy: false)
-              .vTableGet(buffer, rootOffset, 48, []);
-          final dateDeletedParam = dateDeletedValue == null
-              ? null
-              : DateTime.fromMillisecondsSinceEpoch(dateDeletedValue);
-          final styleParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 52);
-          final lockChatNameParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 54, false);
-          final lockChatIconParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 56, false);
-          final lastReadMessageGuidParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 58);
-          final usingHandleParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 62);
-          final isRpSmsParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 66, false);
-          final telephonyIdParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 70);
-          final shareZenModeParam =
-              const fb.BoolReader().vTableGetNullable(buffer, rootOffset, 74);
-          final notifsSilencedParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 76, false);
-          final dateNotifiedAnywaysParam = dateNotifiedAnywaysValue == null
-              ? null
-              : DateTime.fromMillisecondsSinceEpoch(dateNotifiedAnywaysValue);
-          final zenModeIsSharedParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 80);
-          final senderIsKnownParam =
-              const fb.BoolReader().vTableGetNullable(buffer, rootOffset, 82);
-          final isRoutingStubParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 84, false);
-          final guidRefsParam = const fb.ListReader<String>(
-                  fb.StringReader(asciiOptimization: true),
-                  lazy: false)
-              .vTableGet(buffer, rootOffset, 68, []);
-          final object = Chat(
-              id: idParam,
-              guid: guidParam,
-              chatIdentifier: chatIdentifierParam,
-              isArchived: isArchivedParam,
-              isPinned: isPinnedParam,
-              muteType: muteTypeParam,
-              muteArgs: muteArgsParam,
-              hasUnreadMessage: hasUnreadMessageParam,
-              displayName: displayNameParam,
-              autoSendReadReceipts: autoSendReadReceiptsParam,
-              autoSendTypingIndicators: autoSendTypingIndicatorsParam,
-              textFieldText: textFieldTextParam,
-              textFieldAnnotations: textFieldAnnotationsParam,
-              textFieldAttachments: textFieldAttachmentsParam,
-              dateDeleted: dateDeletedParam,
-              style: styleParam,
-              lockChatName: lockChatNameParam,
-              lockChatIcon: lockChatIconParam,
-              lastReadMessageGuid: lastReadMessageGuidParam,
-              usingHandle: usingHandleParam,
-              isRpSms: isRpSmsParam,
-              telephonyId: telephonyIdParam,
-              shareZenMode: shareZenModeParam,
-              notifsSilenced: notifsSilencedParam,
-              dateNotifiedAnyways: dateNotifiedAnywaysParam,
-              zenModeIsShared: zenModeIsSharedParam,
-              senderIsKnown: senderIsKnownParam,
-              isRoutingStub: isRoutingStubParam,
-              guidRefs: guidRefsParam)
-            ..dbOnlyLatestMessageDate = dbOnlyLatestMessageDateValue == null
-                ? null
-                : DateTime.fromMillisecondsSinceEpoch(
-                    dbOnlyLatestMessageDateValue)
-            ..title = const fb.StringReader(asciiOptimization: true)
-                .vTableGetNullable(buffer, rootOffset, 32)
-            ..customAvatarPath = const fb.StringReader(asciiOptimization: true)
-                .vTableGetNullable(buffer, rootOffset, 38)
-            ..pinIndex =
-                const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 40)
-            ..groupVersion =
-                const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 60)
-            ..apnTitle = const fb.StringReader(asciiOptimization: true)
-                .vTableGetNullable(buffer, rootOffset, 64)
-            ..transcriptPosterPath =
-                const fb.StringReader(asciiOptimization: true)
-                    .vTableGetNullable(buffer, rootOffset, 86)
-            ..transcriptBackgroundVersion =
-                const fb.Int64Reader().vTableGet(buffer, rootOffset, 88, 0)
-            ..cloudData = const fb.Uint8ListReader(lazy: false)
-                .vTableGetNullable(buffer, rootOffset, 90) as Uint8List?
-            ..ckRecordId = const fb.StringReader(asciiOptimization: true)
-                .vTableGetNullable(buffer, rootOffset, 92)
-            ..ckSyncState =
-                const fb.BoolReader().vTableGet(buffer, rootOffset, 94, false)
-            ..photoAttachmentGuid =
-                const fb.StringReader(asciiOptimization: true)
-                    .vTableGetNullable(buffer, rootOffset, 96)
-            ..cloudGuid = const fb.StringReader(asciiOptimization: true)
-                .vTableGetNullable(buffer, rootOffset, 98);
-          obx_int.InternalToManyAccess.setRelInfo<Chat>(object.handles, store,
-              obx_int.RelInfo<Chat>.toMany(1, object.id!));
-          obx_int.InternalToManyAccess.setRelInfo<Chat>(
-              object.messages,
-              store,
-              obx_int.RelInfo<Message>.toOneBacklink(
-                  39, object.id!, (Message srcObject) => srcObject.chat));
-          return object;
-        }),
+              .toList(growable: false),
+        );
+        final lastReadMessageGuidOffset = object.lastReadMessageGuid == null
+            ? null
+            : fbb.writeString(object.lastReadMessageGuid!);
+        final usingHandleOffset = object.usingHandle == null
+            ? null
+            : fbb.writeString(object.usingHandle!);
+        final apnTitleOffset = object.apnTitle == null
+            ? null
+            : fbb.writeString(object.apnTitle!);
+        final guidRefsOffset = fbb.writeList(
+          object.guidRefs.map(fbb.writeString).toList(growable: false),
+        );
+        final textFieldAnnotationsOffset = object.textFieldAnnotations == null
+            ? null
+            : fbb.writeString(object.textFieldAnnotations!);
+        final transcriptPosterPathOffset = object.transcriptPosterPath == null
+            ? null
+            : fbb.writeString(object.transcriptPosterPath!);
+        final cloudDataOffset = object.cloudData == null
+            ? null
+            : fbb.writeListInt8(object.cloudData!);
+        final ckRecordIdOffset = object.ckRecordId == null
+            ? null
+            : fbb.writeString(object.ckRecordId!);
+        final photoAttachmentGuidOffset = object.photoAttachmentGuid == null
+            ? null
+            : fbb.writeString(object.photoAttachmentGuid!);
+        final cloudGuidOffset = object.cloudGuid == null
+            ? null
+            : fbb.writeString(object.cloudGuid!);
+        fbb.startTable(49);
+        fbb.addInt64(0, object.id ?? 0);
+        fbb.addOffset(2, guidOffset);
+        fbb.addOffset(4, chatIdentifierOffset);
+        fbb.addBool(5, object.isArchived);
+        fbb.addOffset(7, muteTypeOffset);
+        fbb.addOffset(8, muteArgsOffset);
+        fbb.addBool(9, object.isPinned);
+        fbb.addBool(10, object.hasUnreadMessage);
+        fbb.addInt64(
+          11,
+          object.dbOnlyLatestMessageDate?.millisecondsSinceEpoch,
+        );
+        fbb.addOffset(14, titleOffset);
+        fbb.addOffset(15, displayNameOffset);
+        fbb.addOffset(17, customAvatarPathOffset);
+        fbb.addInt64(18, object.pinIndex);
+        fbb.addBool(19, object.autoSendReadReceipts);
+        fbb.addBool(20, object.autoSendTypingIndicators);
+        fbb.addOffset(21, textFieldTextOffset);
+        fbb.addOffset(22, textFieldAttachmentsOffset);
+        fbb.addInt64(23, object.dateDeleted?.millisecondsSinceEpoch);
+        fbb.addInt64(24, object.style);
+        fbb.addBool(25, object.lockChatName);
+        fbb.addBool(26, object.lockChatIcon);
+        fbb.addOffset(27, lastReadMessageGuidOffset);
+        fbb.addInt64(28, object.groupVersion);
+        fbb.addOffset(29, usingHandleOffset);
+        fbb.addOffset(30, apnTitleOffset);
+        fbb.addBool(31, object.isRpSms);
+        fbb.addOffset(32, guidRefsOffset);
+        fbb.addInt64(33, object.telephonyId);
+        fbb.addOffset(34, textFieldAnnotationsOffset);
+        fbb.addBool(35, object.shareZenMode);
+        fbb.addBool(36, object.notifsSilenced);
+        fbb.addInt64(37, object.dateNotifiedAnyways?.millisecondsSinceEpoch);
+        fbb.addInt64(38, object.zenModeIsShared);
+        fbb.addBool(39, object.senderIsKnown);
+        fbb.addBool(40, object.isRoutingStub);
+        fbb.addOffset(41, transcriptPosterPathOffset);
+        fbb.addInt64(42, object.transcriptBackgroundVersion);
+        fbb.addOffset(43, cloudDataOffset);
+        fbb.addOffset(44, ckRecordIdOffset);
+        fbb.addBool(45, object.ckSyncState);
+        fbb.addOffset(46, photoAttachmentGuidOffset);
+        fbb.addOffset(47, cloudGuidOffset);
+        fbb.finish(fbb.endTable());
+        return object.id ?? 0;
+      },
+      objectFromFB: (obx.Store store, ByteData fbData) {
+        final buffer = fb.BufferContext(fbData);
+        final rootOffset = buffer.derefObject(0);
+        final dbOnlyLatestMessageDateValue = const fb.Int64Reader()
+            .vTableGetNullable(buffer, rootOffset, 26);
+        final dateDeletedValue = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          50,
+        );
+        final dateNotifiedAnywaysValue = const fb.Int64Reader()
+            .vTableGetNullable(buffer, rootOffset, 78);
+        final idParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          4,
+        );
+        final guidParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 8, '');
+        final chatIdentifierParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 12);
+        final isArchivedParam = const fb.BoolReader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          14,
+        );
+        final isPinnedParam = const fb.BoolReader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          22,
+        );
+        final muteTypeParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 18);
+        final muteArgsParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 20);
+        final hasUnreadMessageParam = const fb.BoolReader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          24,
+        );
+        final displayNameParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 34);
+        final autoSendReadReceiptsParam = const fb.BoolReader()
+            .vTableGetNullable(buffer, rootOffset, 42);
+        final autoSendTypingIndicatorsParam = const fb.BoolReader()
+            .vTableGetNullable(buffer, rootOffset, 44);
+        final textFieldTextParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 46);
+        final textFieldAnnotationsParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 72);
+        final textFieldAttachmentsParam = const fb.ListReader<String>(
+          fb.StringReader(asciiOptimization: true),
+          lazy: false,
+        ).vTableGet(buffer, rootOffset, 48, []);
+        final dateDeletedParam = dateDeletedValue == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(dateDeletedValue);
+        final styleParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          52,
+        );
+        final lockChatNameParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          54,
+          false,
+        );
+        final lockChatIconParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          56,
+          false,
+        );
+        final lastReadMessageGuidParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 58);
+        final usingHandleParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 62);
+        final isRpSmsParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          66,
+          false,
+        );
+        final telephonyIdParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          70,
+        );
+        final shareZenModeParam = const fb.BoolReader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          74,
+        );
+        final notifsSilencedParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          76,
+          false,
+        );
+        final dateNotifiedAnywaysParam = dateNotifiedAnywaysValue == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(dateNotifiedAnywaysValue);
+        final zenModeIsSharedParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          80,
+        );
+        final senderIsKnownParam = const fb.BoolReader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          82,
+        );
+        final isRoutingStubParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          84,
+          false,
+        );
+        final guidRefsParam = const fb.ListReader<String>(
+          fb.StringReader(asciiOptimization: true),
+          lazy: false,
+        ).vTableGet(buffer, rootOffset, 68, []);
+        final object =
+            Chat(
+                id: idParam,
+                guid: guidParam,
+                chatIdentifier: chatIdentifierParam,
+                isArchived: isArchivedParam,
+                isPinned: isPinnedParam,
+                muteType: muteTypeParam,
+                muteArgs: muteArgsParam,
+                hasUnreadMessage: hasUnreadMessageParam,
+                displayName: displayNameParam,
+                autoSendReadReceipts: autoSendReadReceiptsParam,
+                autoSendTypingIndicators: autoSendTypingIndicatorsParam,
+                textFieldText: textFieldTextParam,
+                textFieldAnnotations: textFieldAnnotationsParam,
+                textFieldAttachments: textFieldAttachmentsParam,
+                dateDeleted: dateDeletedParam,
+                style: styleParam,
+                lockChatName: lockChatNameParam,
+                lockChatIcon: lockChatIconParam,
+                lastReadMessageGuid: lastReadMessageGuidParam,
+                usingHandle: usingHandleParam,
+                isRpSms: isRpSmsParam,
+                telephonyId: telephonyIdParam,
+                shareZenMode: shareZenModeParam,
+                notifsSilenced: notifsSilencedParam,
+                dateNotifiedAnyways: dateNotifiedAnywaysParam,
+                zenModeIsShared: zenModeIsSharedParam,
+                senderIsKnown: senderIsKnownParam,
+                isRoutingStub: isRoutingStubParam,
+                guidRefs: guidRefsParam,
+              )
+              ..dbOnlyLatestMessageDate = dbOnlyLatestMessageDateValue == null
+                  ? null
+                  : DateTime.fromMillisecondsSinceEpoch(
+                      dbOnlyLatestMessageDateValue,
+                    )
+              ..title = const fb.StringReader(
+                asciiOptimization: true,
+              ).vTableGetNullable(buffer, rootOffset, 32)
+              ..customAvatarPath = const fb.StringReader(
+                asciiOptimization: true,
+              ).vTableGetNullable(buffer, rootOffset, 38)
+              ..pinIndex = const fb.Int64Reader().vTableGetNullable(
+                buffer,
+                rootOffset,
+                40,
+              )
+              ..groupVersion = const fb.Int64Reader().vTableGetNullable(
+                buffer,
+                rootOffset,
+                60,
+              )
+              ..apnTitle = const fb.StringReader(
+                asciiOptimization: true,
+              ).vTableGetNullable(buffer, rootOffset, 64)
+              ..transcriptPosterPath = const fb.StringReader(
+                asciiOptimization: true,
+              ).vTableGetNullable(buffer, rootOffset, 86)
+              ..transcriptBackgroundVersion = const fb.Int64Reader().vTableGet(
+                buffer,
+                rootOffset,
+                88,
+                0,
+              )
+              ..cloudData =
+                  const fb.Uint8ListReader(
+                        lazy: false,
+                      ).vTableGetNullable(buffer, rootOffset, 90)
+                      as Uint8List?
+              ..ckRecordId = const fb.StringReader(
+                asciiOptimization: true,
+              ).vTableGetNullable(buffer, rootOffset, 92)
+              ..ckSyncState = const fb.BoolReader().vTableGet(
+                buffer,
+                rootOffset,
+                94,
+                false,
+              )
+              ..photoAttachmentGuid = const fb.StringReader(
+                asciiOptimization: true,
+              ).vTableGetNullable(buffer, rootOffset, 96)
+              ..cloudGuid = const fb.StringReader(
+                asciiOptimization: true,
+              ).vTableGetNullable(buffer, rootOffset, 98);
+        obx_int.InternalToManyAccess.setRelInfo<Chat>(
+          object.handles,
+          store,
+          obx_int.RelInfo<Chat>.toMany(1, object.id!),
+        );
+        obx_int.InternalToManyAccess.setRelInfo<Chat>(
+          object.messages,
+          store,
+          obx_int.RelInfo<Message>.toOneBacklink(
+            39,
+            object.id!,
+            (Message srcObject) => srcObject.chat,
+          ),
+        );
+        return object;
+      },
+    ),
     FCMData: obx_int.EntityDefinition<FCMData>(
-        model: _entities[2],
-        toOneRelations: (FCMData object) => [],
-        toManyRelations: (FCMData object) => {},
-        getId: (FCMData object) => object.id,
-        setId: (FCMData object, int id) {
-          object.id = id;
-        },
-        objectToFB: (FCMData object, fb.Builder fbb) {
-          final projectIDOffset = object.projectID == null
-              ? null
-              : fbb.writeString(object.projectID!);
-          final storageBucketOffset = object.storageBucket == null
-              ? null
-              : fbb.writeString(object.storageBucket!);
-          final apiKeyOffset =
-              object.apiKey == null ? null : fbb.writeString(object.apiKey!);
-          final firebaseURLOffset = object.firebaseURL == null
-              ? null
-              : fbb.writeString(object.firebaseURL!);
-          final clientIDOffset = object.clientID == null
-              ? null
-              : fbb.writeString(object.clientID!);
-          final applicationIDOffset = object.applicationID == null
-              ? null
-              : fbb.writeString(object.applicationID!);
-          fbb.startTable(8);
-          fbb.addInt64(0, object.id ?? 0);
-          fbb.addOffset(1, projectIDOffset);
-          fbb.addOffset(2, storageBucketOffset);
-          fbb.addOffset(3, apiKeyOffset);
-          fbb.addOffset(4, firebaseURLOffset);
-          fbb.addOffset(5, clientIDOffset);
-          fbb.addOffset(6, applicationIDOffset);
-          fbb.finish(fbb.endTable());
-          return object.id ?? 0;
-        },
-        objectFromFB: (obx.Store store, ByteData fbData) {
-          final buffer = fb.BufferContext(fbData);
-          final rootOffset = buffer.derefObject(0);
-          final idParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 4);
-          final projectIDParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 6);
-          final storageBucketParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 8);
-          final apiKeyParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 10);
-          final firebaseURLParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 12);
-          final clientIDParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 14);
-          final applicationIDParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 16);
-          final object = FCMData(
-              id: idParam,
-              projectID: projectIDParam,
-              storageBucket: storageBucketParam,
-              apiKey: apiKeyParam,
-              firebaseURL: firebaseURLParam,
-              clientID: clientIDParam,
-              applicationID: applicationIDParam);
+      model: _entities[2],
+      toOneRelations: (FCMData object) => [],
+      toManyRelations: (FCMData object) => {},
+      getId: (FCMData object) => object.id,
+      setId: (FCMData object, int id) {
+        object.id = id;
+      },
+      objectToFB: (FCMData object, fb.Builder fbb) {
+        final projectIDOffset = object.projectID == null
+            ? null
+            : fbb.writeString(object.projectID!);
+        final storageBucketOffset = object.storageBucket == null
+            ? null
+            : fbb.writeString(object.storageBucket!);
+        final apiKeyOffset = object.apiKey == null
+            ? null
+            : fbb.writeString(object.apiKey!);
+        final firebaseURLOffset = object.firebaseURL == null
+            ? null
+            : fbb.writeString(object.firebaseURL!);
+        final clientIDOffset = object.clientID == null
+            ? null
+            : fbb.writeString(object.clientID!);
+        final applicationIDOffset = object.applicationID == null
+            ? null
+            : fbb.writeString(object.applicationID!);
+        fbb.startTable(8);
+        fbb.addInt64(0, object.id ?? 0);
+        fbb.addOffset(1, projectIDOffset);
+        fbb.addOffset(2, storageBucketOffset);
+        fbb.addOffset(3, apiKeyOffset);
+        fbb.addOffset(4, firebaseURLOffset);
+        fbb.addOffset(5, clientIDOffset);
+        fbb.addOffset(6, applicationIDOffset);
+        fbb.finish(fbb.endTable());
+        return object.id ?? 0;
+      },
+      objectFromFB: (obx.Store store, ByteData fbData) {
+        final buffer = fb.BufferContext(fbData);
+        final rootOffset = buffer.derefObject(0);
+        final idParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          4,
+        );
+        final projectIDParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 6);
+        final storageBucketParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 8);
+        final apiKeyParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 10);
+        final firebaseURLParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 12);
+        final clientIDParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 14);
+        final applicationIDParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 16);
+        final object = FCMData(
+          id: idParam,
+          projectID: projectIDParam,
+          storageBucket: storageBucketParam,
+          apiKey: apiKeyParam,
+          firebaseURL: firebaseURLParam,
+          clientID: clientIDParam,
+          applicationID: applicationIDParam,
+        );
 
-          return object;
-        }),
+        return object;
+      },
+    ),
     Handle: obx_int.EntityDefinition<Handle>(
-        model: _entities[3],
-        toOneRelations: (Handle object) => [object.contactRelation],
-        toManyRelations: (Handle object) => {},
-        getId: (Handle object) => object.id,
-        setId: (Handle object, int id) {
-          object.id = id;
-        },
-        objectToFB: (Handle object, fb.Builder fbb) {
-          final addressOffset = fbb.writeString(object.address);
-          final countryOffset =
-              object.country == null ? null : fbb.writeString(object.country!);
-          final colorOffset =
-              object.color == null ? null : fbb.writeString(object.color!);
-          final defaultPhoneOffset = object.defaultPhone == null
-              ? null
-              : fbb.writeString(object.defaultPhone!);
-          final defaultEmailOffset = object.defaultEmail == null
-              ? null
-              : fbb.writeString(object.defaultEmail!);
-          final formattedAddressOffset = object.formattedAddress == null
-              ? null
-              : fbb.writeString(object.formattedAddress!);
-          final uniqueAddressAndServiceOffset =
-              fbb.writeString(object.uniqueAddressAndService);
-          final serviceOffset = fbb.writeString(object.service);
-          final posterPathOffset = object.posterPath == null
-              ? null
-              : fbb.writeString(object.posterPath!);
-          fbb.startTable(16);
-          fbb.addInt64(0, object.id ?? 0);
-          fbb.addInt64(1, object.originalROWID);
-          fbb.addOffset(2, addressOffset);
-          fbb.addOffset(3, countryOffset);
-          fbb.addOffset(4, colorOffset);
-          fbb.addOffset(5, defaultPhoneOffset);
-          fbb.addOffset(7, defaultEmailOffset);
-          fbb.addOffset(8, formattedAddressOffset);
-          fbb.addInt64(10, object.contactRelation.targetId);
-          fbb.addOffset(11, uniqueAddressAndServiceOffset);
-          fbb.addOffset(12, serviceOffset);
-          fbb.addOffset(13, posterPathOffset);
-          fbb.addBool(14, object.blocked);
-          fbb.finish(fbb.endTable());
-          return object.id ?? 0;
-        },
-        objectFromFB: (obx.Store store, ByteData fbData) {
-          final buffer = fb.BufferContext(fbData);
-          final rootOffset = buffer.derefObject(0);
-          final idParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 4);
-          final originalROWIDParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 6);
-          final addressParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGet(buffer, rootOffset, 8, '');
-          final formattedAddressParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 20);
-          final serviceParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGet(buffer, rootOffset, 28, '');
-          final uniqueAddressAndServiceParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGet(buffer, rootOffset, 26, '');
-          final countryParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 10);
-          final defaultEmailParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 18);
-          final defaultPhoneParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 14);
-          final blockedParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 32, false);
-          final object = Handle(
-              id: idParam,
-              originalROWID: originalROWIDParam,
-              address: addressParam,
-              formattedAddress: formattedAddressParam,
-              service: serviceParam,
-              uniqueAddressAndService: uniqueAddressAndServiceParam,
-              country: countryParam,
-              defaultEmail: defaultEmailParam,
-              defaultPhone: defaultPhoneParam,
-              blocked: blockedParam)
-            ..color = const fb.StringReader(asciiOptimization: true)
-                .vTableGetNullable(buffer, rootOffset, 12)
-            ..posterPath = const fb.StringReader(asciiOptimization: true)
-                .vTableGetNullable(buffer, rootOffset, 30);
-          object.contactRelation.targetId =
-              const fb.Int64Reader().vTableGet(buffer, rootOffset, 24, 0);
-          object.contactRelation.attach(store);
-          return object;
-        }),
+      model: _entities[3],
+      toOneRelations: (Handle object) => [object.contactRelation],
+      toManyRelations: (Handle object) => {},
+      getId: (Handle object) => object.id,
+      setId: (Handle object, int id) {
+        object.id = id;
+      },
+      objectToFB: (Handle object, fb.Builder fbb) {
+        final addressOffset = fbb.writeString(object.address);
+        final countryOffset = object.country == null
+            ? null
+            : fbb.writeString(object.country!);
+        final colorOffset = object.color == null
+            ? null
+            : fbb.writeString(object.color!);
+        final defaultPhoneOffset = object.defaultPhone == null
+            ? null
+            : fbb.writeString(object.defaultPhone!);
+        final defaultEmailOffset = object.defaultEmail == null
+            ? null
+            : fbb.writeString(object.defaultEmail!);
+        final formattedAddressOffset = object.formattedAddress == null
+            ? null
+            : fbb.writeString(object.formattedAddress!);
+        final uniqueAddressAndServiceOffset = fbb.writeString(
+          object.uniqueAddressAndService,
+        );
+        final serviceOffset = fbb.writeString(object.service);
+        final posterPathOffset = object.posterPath == null
+            ? null
+            : fbb.writeString(object.posterPath!);
+        fbb.startTable(16);
+        fbb.addInt64(0, object.id ?? 0);
+        fbb.addInt64(1, object.originalROWID);
+        fbb.addOffset(2, addressOffset);
+        fbb.addOffset(3, countryOffset);
+        fbb.addOffset(4, colorOffset);
+        fbb.addOffset(5, defaultPhoneOffset);
+        fbb.addOffset(7, defaultEmailOffset);
+        fbb.addOffset(8, formattedAddressOffset);
+        fbb.addInt64(10, object.contactRelation.targetId);
+        fbb.addOffset(11, uniqueAddressAndServiceOffset);
+        fbb.addOffset(12, serviceOffset);
+        fbb.addOffset(13, posterPathOffset);
+        fbb.addBool(14, object.blocked);
+        fbb.finish(fbb.endTable());
+        return object.id ?? 0;
+      },
+      objectFromFB: (obx.Store store, ByteData fbData) {
+        final buffer = fb.BufferContext(fbData);
+        final rootOffset = buffer.derefObject(0);
+        final idParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          4,
+        );
+        final originalROWIDParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          6,
+        );
+        final addressParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 8, '');
+        final formattedAddressParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 20);
+        final serviceParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 28, '');
+        final uniqueAddressAndServiceParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 26, '');
+        final countryParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 10);
+        final defaultEmailParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 18);
+        final defaultPhoneParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 14);
+        final blockedParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          32,
+          false,
+        );
+        final object =
+            Handle(
+                id: idParam,
+                originalROWID: originalROWIDParam,
+                address: addressParam,
+                formattedAddress: formattedAddressParam,
+                service: serviceParam,
+                uniqueAddressAndService: uniqueAddressAndServiceParam,
+                country: countryParam,
+                defaultEmail: defaultEmailParam,
+                defaultPhone: defaultPhoneParam,
+                blocked: blockedParam,
+              )
+              ..color = const fb.StringReader(
+                asciiOptimization: true,
+              ).vTableGetNullable(buffer, rootOffset, 12)
+              ..posterPath = const fb.StringReader(
+                asciiOptimization: true,
+              ).vTableGetNullable(buffer, rootOffset, 30);
+        object.contactRelation.targetId = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          24,
+          0,
+        );
+        object.contactRelation.attach(store);
+        return object;
+      },
+    ),
     ThemeEntry: obx_int.EntityDefinition<ThemeEntry>(
-        model: _entities[4],
-        toOneRelations: (ThemeEntry object) => [object.themeObject],
-        toManyRelations: (ThemeEntry object) => {},
-        getId: (ThemeEntry object) => object.id,
-        setId: (ThemeEntry object, int id) {
-          object.id = id;
-        },
-        objectToFB: (ThemeEntry object, fb.Builder fbb) {
-          final nameOffset =
-              object.name == null ? null : fbb.writeString(object.name!);
-          final dbColorOffset =
-              object.dbColor == null ? null : fbb.writeString(object.dbColor!);
-          fbb.startTable(9);
-          fbb.addInt64(0, object.id ?? 0);
-          fbb.addInt64(1, object.themeId);
-          fbb.addOffset(2, nameOffset);
-          fbb.addBool(3, object.isFont);
-          fbb.addInt64(4, object.fontSize);
-          fbb.addOffset(5, dbColorOffset);
-          fbb.addInt64(6, object.fontWeight);
-          fbb.addInt64(7, object.themeObject.targetId);
-          fbb.finish(fbb.endTable());
-          return object.id ?? 0;
-        },
-        objectFromFB: (obx.Store store, ByteData fbData) {
-          final buffer = fb.BufferContext(fbData);
-          final rootOffset = buffer.derefObject(0);
-          final idParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 4);
-          final themeIdParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 6);
-          final nameParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 8);
-          final isFontParam =
-              const fb.BoolReader().vTableGetNullable(buffer, rootOffset, 10);
-          final fontSizeParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 12);
-          final fontWeightParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 16);
-          final object = ThemeEntry(
-              id: idParam,
-              themeId: themeIdParam,
-              name: nameParam,
-              isFont: isFontParam,
-              fontSize: fontSizeParam,
-              fontWeight: fontWeightParam)
-            ..dbColor = const fb.StringReader(asciiOptimization: true)
-                .vTableGetNullable(buffer, rootOffset, 14);
-          object.themeObject.targetId =
-              const fb.Int64Reader().vTableGet(buffer, rootOffset, 18, 0);
-          object.themeObject.attach(store);
-          return object;
-        }),
+      model: _entities[4],
+      toOneRelations: (ThemeEntry object) => [object.themeObject],
+      toManyRelations: (ThemeEntry object) => {},
+      getId: (ThemeEntry object) => object.id,
+      setId: (ThemeEntry object, int id) {
+        object.id = id;
+      },
+      objectToFB: (ThemeEntry object, fb.Builder fbb) {
+        final nameOffset = object.name == null
+            ? null
+            : fbb.writeString(object.name!);
+        final dbColorOffset = object.dbColor == null
+            ? null
+            : fbb.writeString(object.dbColor!);
+        fbb.startTable(9);
+        fbb.addInt64(0, object.id ?? 0);
+        fbb.addInt64(1, object.themeId);
+        fbb.addOffset(2, nameOffset);
+        fbb.addBool(3, object.isFont);
+        fbb.addInt64(4, object.fontSize);
+        fbb.addOffset(5, dbColorOffset);
+        fbb.addInt64(6, object.fontWeight);
+        fbb.addInt64(7, object.themeObject.targetId);
+        fbb.finish(fbb.endTable());
+        return object.id ?? 0;
+      },
+      objectFromFB: (obx.Store store, ByteData fbData) {
+        final buffer = fb.BufferContext(fbData);
+        final rootOffset = buffer.derefObject(0);
+        final idParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          4,
+        );
+        final themeIdParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          6,
+        );
+        final nameParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 8);
+        final isFontParam = const fb.BoolReader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          10,
+        );
+        final fontSizeParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          12,
+        );
+        final fontWeightParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          16,
+        );
+        final object =
+            ThemeEntry(
+                id: idParam,
+                themeId: themeIdParam,
+                name: nameParam,
+                isFont: isFontParam,
+                fontSize: fontSizeParam,
+                fontWeight: fontWeightParam,
+              )
+              ..dbColor = const fb.StringReader(
+                asciiOptimization: true,
+              ).vTableGetNullable(buffer, rootOffset, 14);
+        object.themeObject.targetId = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          18,
+          0,
+        );
+        object.themeObject.attach(store);
+        return object;
+      },
+    ),
     Message: obx_int.EntityDefinition<Message>(
-        model: _entities[5],
-        toOneRelations: (Message object) => [object.chat],
-        toManyRelations: (Message object) => {
-              obx_int.RelInfo<Attachment>.toOneBacklink(17, object.id!,
-                      (Attachment srcObject) => srcObject.message):
-                  object.dbAttachments
-            },
-        getId: (Message object) => object.id,
-        setId: (Message object, int id) {
-          object.id = id;
-        },
-        objectToFB: (Message object, fb.Builder fbb) {
-          final guidOffset =
-              object.guid == null ? null : fbb.writeString(object.guid!);
-          final textOffset =
-              object.text == null ? null : fbb.writeString(object.text!);
-          final subjectOffset =
-              object.subject == null ? null : fbb.writeString(object.subject!);
-          final countryOffset =
-              object.country == null ? null : fbb.writeString(object.country!);
-          final groupTitleOffset = object.groupTitle == null
-              ? null
-              : fbb.writeString(object.groupTitle!);
-          final balloonBundleIdOffset = object.balloonBundleId == null
-              ? null
-              : fbb.writeString(object.balloonBundleId!);
-          final associatedMessageGuidOffset =
-              object.associatedMessageGuid == null
-                  ? null
-                  : fbb.writeString(object.associatedMessageGuid!);
-          final associatedMessageTypeOffset =
-              object.associatedMessageType == null
-                  ? null
-                  : fbb.writeString(object.associatedMessageType!);
-          final expressiveSendStyleIdOffset =
-              object.expressiveSendStyleId == null
-                  ? null
-                  : fbb.writeString(object.expressiveSendStyleId!);
-          final threadOriginatorGuidOffset = object.threadOriginatorGuid == null
-              ? null
-              : fbb.writeString(object.threadOriginatorGuid!);
-          final threadOriginatorPartOffset = object.threadOriginatorPart == null
-              ? null
-              : fbb.writeString(object.threadOriginatorPart!);
-          final dbAttributedBodyOffset = object.dbAttributedBody == null
-              ? null
-              : fbb.writeString(object.dbAttributedBody!);
-          final dbMessageSummaryInfoOffset = object.dbMessageSummaryInfo == null
-              ? null
-              : fbb.writeString(object.dbMessageSummaryInfo!);
-          final dbPayloadDataOffset = object.dbPayloadData == null
-              ? null
-              : fbb.writeString(object.dbPayloadData!);
-          final dbMetadataOffset = object.dbMetadata == null
-              ? null
-              : fbb.writeString(object.dbMetadata!);
-          final stagingGuidOffset = object.stagingGuid == null
-              ? null
-              : fbb.writeString(object.stagingGuid!);
-          final amkSessionIdOffset = object.amkSessionId == null
-              ? null
-              : fbb.writeString(object.amkSessionId!);
-          final sendingServiceIdOffset = object.sendingServiceId == null
-              ? null
-              : fbb.writeString(object.sendingServiceId!);
-          final associatedMessageEmojiOffset =
-              object.associatedMessageEmoji == null
-                  ? null
-                  : fbb.writeString(object.associatedMessageEmoji!);
-          final ckRecordIdOffset = object.ckRecordId == null
-              ? null
-              : fbb.writeString(object.ckRecordId!);
-          fbb.startTable(60);
-          fbb.addInt64(0, object.id ?? 0);
-          fbb.addInt64(1, object.originalROWID);
-          fbb.addOffset(2, guidOffset);
-          fbb.addInt64(3, object.handleId);
-          fbb.addInt64(4, object.otherHandle);
-          fbb.addOffset(5, textOffset);
-          fbb.addOffset(6, subjectOffset);
-          fbb.addOffset(7, countryOffset);
-          fbb.addInt64(8, object.dateCreated?.millisecondsSinceEpoch);
-          fbb.addInt64(9, object.dateRead?.millisecondsSinceEpoch);
-          fbb.addInt64(10, object.dateDelivered?.millisecondsSinceEpoch);
-          fbb.addBool(11, object.isFromMe);
-          fbb.addBool(18, object.hasDdResults);
-          fbb.addInt64(21, object.datePlayed?.millisecondsSinceEpoch);
-          fbb.addInt64(22, object.itemType);
-          fbb.addOffset(23, groupTitleOffset);
-          fbb.addInt64(24, object.groupActionType);
-          fbb.addOffset(26, balloonBundleIdOffset);
-          fbb.addOffset(27, associatedMessageGuidOffset);
-          fbb.addOffset(28, associatedMessageTypeOffset);
-          fbb.addOffset(29, expressiveSendStyleIdOffset);
-          fbb.addBool(31, object.hasAttachments);
-          fbb.addBool(32, object.hasReactions);
-          fbb.addInt64(33, object.dateDeleted?.millisecondsSinceEpoch);
-          fbb.addOffset(34, threadOriginatorGuidOffset);
-          fbb.addOffset(35, threadOriginatorPartOffset);
-          fbb.addBool(36, object.bigEmoji);
-          fbb.addInt64(37, object.error);
-          fbb.addInt64(38, object.chat.targetId);
-          fbb.addOffset(39, dbAttributedBodyOffset);
-          fbb.addInt64(40, object.associatedMessagePart);
-          fbb.addBool(41, object.hasApplePayloadData);
-          fbb.addInt64(42, object.dateEdited?.millisecondsSinceEpoch);
-          fbb.addOffset(43, dbMessageSummaryInfoOffset);
-          fbb.addOffset(44, dbPayloadDataOffset);
-          fbb.addOffset(45, dbMetadataOffset);
-          fbb.addBool(46, object.wasDeliveredQuietly);
-          fbb.addBool(47, object.didNotifyRecipient);
-          fbb.addBool(48, object.isBookmarked);
-          fbb.addBool(49, object.hasBeenForwarded);
-          fbb.addOffset(50, stagingGuidOffset);
-          fbb.addOffset(51, amkSessionIdOffset);
-          fbb.addBool(52, object.isDelivered);
-          fbb.addBool(53, object.verificationFailed);
-          fbb.addOffset(54, sendingServiceIdOffset);
-          fbb.addOffset(55, associatedMessageEmojiOffset);
-          fbb.addInt64(56, object.dateScheduled?.millisecondsSinceEpoch);
-          fbb.addOffset(57, ckRecordIdOffset);
-          fbb.addBool(58, object.ckSyncState);
-          fbb.finish(fbb.endTable());
-          return object.id ?? 0;
-        },
-        objectFromFB: (obx.Store store, ByteData fbData) {
-          final buffer = fb.BufferContext(fbData);
-          final rootOffset = buffer.derefObject(0);
-          final dateCreatedValue =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 20);
-          final dateReadValue =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 22);
-          final dateDeliveredValue =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 24);
-          final datePlayedValue =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 46);
-          final dateDeletedValue =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 70);
-          final dateEditedValue =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 88);
-          final dateScheduledValue =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 116);
-          final idParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 4);
-          final originalROWIDParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 6);
-          final guidParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 8);
-          final handleIdParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 10);
-          final otherHandleParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 12);
-          final textParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 14);
-          final subjectParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 16);
-          final countryParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 18);
-          final errorParam =
-              const fb.Int64Reader().vTableGet(buffer, rootOffset, 78, 0);
-          final dateCreatedParam = dateCreatedValue == null
-              ? null
-              : DateTime.fromMillisecondsSinceEpoch(dateCreatedValue);
-          final dateReadParam = dateReadValue == null
-              ? null
-              : DateTime.fromMillisecondsSinceEpoch(dateReadValue);
-          final dateDeliveredParam = dateDeliveredValue == null
-              ? null
-              : DateTime.fromMillisecondsSinceEpoch(dateDeliveredValue);
-          final isFromMeParam =
-              const fb.BoolReader().vTableGetNullable(buffer, rootOffset, 26);
-          final hasDdResultsParam =
-              const fb.BoolReader().vTableGetNullable(buffer, rootOffset, 40);
-          final datePlayedParam = datePlayedValue == null
-              ? null
-              : DateTime.fromMillisecondsSinceEpoch(datePlayedValue);
-          final itemTypeParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 48);
-          final groupTitleParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 50);
-          final groupActionTypeParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 52);
-          final balloonBundleIdParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 56);
-          final associatedMessageGuidParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 58);
-          final associatedMessagePartParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 84);
-          final associatedMessageTypeParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 60);
-          final expressiveSendStyleIdParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 62);
-          final hasAttachmentsParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 66, false);
-          final hasReactionsParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 68, false);
-          final dateDeletedParam = dateDeletedValue == null
-              ? null
-              : DateTime.fromMillisecondsSinceEpoch(dateDeletedValue);
-          final threadOriginatorGuidParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 72);
-          final threadOriginatorPartParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 74);
-          final hasApplePayloadDataParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 86, false);
-          final dateEditedParam = dateEditedValue == null
-              ? null
-              : DateTime.fromMillisecondsSinceEpoch(dateEditedValue);
-          final wasDeliveredQuietlyParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 96, false);
-          final didNotifyRecipientParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 98, false);
-          final isBookmarkedParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 100, false);
-          final hasBeenForwardedParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 102, false);
-          final stagingGuidParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 104);
-          final amkSessionIdParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 106);
-          final verificationFailedParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 110, false);
-          final sendingServiceIdParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 112);
-          final associatedMessageEmojiParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGetNullable(buffer, rootOffset, 114);
-          final dateScheduledParam = dateScheduledValue == null
-              ? null
-              : DateTime.fromMillisecondsSinceEpoch(dateScheduledValue);
-          final ckRecordIdParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 118);
-          final object = Message(
-              id: idParam,
-              originalROWID: originalROWIDParam,
-              guid: guidParam,
-              handleId: handleIdParam,
-              otherHandle: otherHandleParam,
-              text: textParam,
-              subject: subjectParam,
-              country: countryParam,
-              error: errorParam,
-              dateCreated: dateCreatedParam,
-              dateRead: dateReadParam,
-              dateDelivered: dateDeliveredParam,
-              isFromMe: isFromMeParam,
-              hasDdResults: hasDdResultsParam,
-              datePlayed: datePlayedParam,
-              itemType: itemTypeParam,
-              groupTitle: groupTitleParam,
-              groupActionType: groupActionTypeParam,
-              balloonBundleId: balloonBundleIdParam,
-              associatedMessageGuid: associatedMessageGuidParam,
-              associatedMessagePart: associatedMessagePartParam,
-              associatedMessageType: associatedMessageTypeParam,
-              expressiveSendStyleId: expressiveSendStyleIdParam,
-              hasAttachments: hasAttachmentsParam,
-              hasReactions: hasReactionsParam,
-              dateDeleted: dateDeletedParam,
-              threadOriginatorGuid: threadOriginatorGuidParam,
-              threadOriginatorPart: threadOriginatorPartParam,
-              hasApplePayloadData: hasApplePayloadDataParam,
-              dateEdited: dateEditedParam,
-              wasDeliveredQuietly: wasDeliveredQuietlyParam,
-              didNotifyRecipient: didNotifyRecipientParam,
-              isBookmarked: isBookmarkedParam,
-              hasBeenForwarded: hasBeenForwardedParam,
-              stagingGuid: stagingGuidParam,
-              amkSessionId: amkSessionIdParam,
-              verificationFailed: verificationFailedParam,
-              sendingServiceId: sendingServiceIdParam,
-              associatedMessageEmoji: associatedMessageEmojiParam,
-              dateScheduled: dateScheduledParam,
-              ckRecordId: ckRecordIdParam)
-            ..bigEmoji =
-                const fb.BoolReader().vTableGetNullable(buffer, rootOffset, 76)
-            ..dbAttributedBody = const fb.StringReader(asciiOptimization: true)
-                .vTableGetNullable(buffer, rootOffset, 82)
-            ..dbMessageSummaryInfo =
-                const fb.StringReader(asciiOptimization: true)
-                    .vTableGetNullable(buffer, rootOffset, 90)
-            ..dbPayloadData = const fb.StringReader(asciiOptimization: true)
-                .vTableGetNullable(buffer, rootOffset, 92)
-            ..dbMetadata = const fb.StringReader(asciiOptimization: true)
-                .vTableGetNullable(buffer, rootOffset, 94)
-            ..isDelivered =
-                const fb.BoolReader().vTableGet(buffer, rootOffset, 108, false)
-            ..ckSyncState =
-                const fb.BoolReader().vTableGet(buffer, rootOffset, 120, false);
-          object.chat.targetId =
-              const fb.Int64Reader().vTableGet(buffer, rootOffset, 80, 0);
-          object.chat.attach(store);
-          obx_int.InternalToManyAccess.setRelInfo<Message>(
-              object.dbAttachments,
-              store,
-              obx_int.RelInfo<Attachment>.toOneBacklink(
-                  17, object.id!, (Attachment srcObject) => srcObject.message));
-          return object;
-        }),
+      model: _entities[5],
+      toOneRelations: (Message object) => [object.chat],
+      toManyRelations: (Message object) => {
+        obx_int.RelInfo<Attachment>.toOneBacklink(
+          17,
+          object.id!,
+          (Attachment srcObject) => srcObject.message,
+        ): object.dbAttachments,
+      },
+      getId: (Message object) => object.id,
+      setId: (Message object, int id) {
+        object.id = id;
+      },
+      objectToFB: (Message object, fb.Builder fbb) {
+        final guidOffset = object.guid == null
+            ? null
+            : fbb.writeString(object.guid!);
+        final textOffset = object.text == null
+            ? null
+            : fbb.writeString(object.text!);
+        final subjectOffset = object.subject == null
+            ? null
+            : fbb.writeString(object.subject!);
+        final countryOffset = object.country == null
+            ? null
+            : fbb.writeString(object.country!);
+        final groupTitleOffset = object.groupTitle == null
+            ? null
+            : fbb.writeString(object.groupTitle!);
+        final balloonBundleIdOffset = object.balloonBundleId == null
+            ? null
+            : fbb.writeString(object.balloonBundleId!);
+        final associatedMessageGuidOffset = object.associatedMessageGuid == null
+            ? null
+            : fbb.writeString(object.associatedMessageGuid!);
+        final associatedMessageTypeOffset = object.associatedMessageType == null
+            ? null
+            : fbb.writeString(object.associatedMessageType!);
+        final expressiveSendStyleIdOffset = object.expressiveSendStyleId == null
+            ? null
+            : fbb.writeString(object.expressiveSendStyleId!);
+        final threadOriginatorGuidOffset = object.threadOriginatorGuid == null
+            ? null
+            : fbb.writeString(object.threadOriginatorGuid!);
+        final threadOriginatorPartOffset = object.threadOriginatorPart == null
+            ? null
+            : fbb.writeString(object.threadOriginatorPart!);
+        final dbAttributedBodyOffset = object.dbAttributedBody == null
+            ? null
+            : fbb.writeString(object.dbAttributedBody!);
+        final dbMessageSummaryInfoOffset = object.dbMessageSummaryInfo == null
+            ? null
+            : fbb.writeString(object.dbMessageSummaryInfo!);
+        final dbPayloadDataOffset = object.dbPayloadData == null
+            ? null
+            : fbb.writeString(object.dbPayloadData!);
+        final dbMetadataOffset = object.dbMetadata == null
+            ? null
+            : fbb.writeString(object.dbMetadata!);
+        final stagingGuidOffset = object.stagingGuid == null
+            ? null
+            : fbb.writeString(object.stagingGuid!);
+        final amkSessionIdOffset = object.amkSessionId == null
+            ? null
+            : fbb.writeString(object.amkSessionId!);
+        final sendingServiceIdOffset = object.sendingServiceId == null
+            ? null
+            : fbb.writeString(object.sendingServiceId!);
+        final associatedMessageEmojiOffset =
+            object.associatedMessageEmoji == null
+            ? null
+            : fbb.writeString(object.associatedMessageEmoji!);
+        final ckRecordIdOffset = object.ckRecordId == null
+            ? null
+            : fbb.writeString(object.ckRecordId!);
+        final metadataOffset = object.metadata == null
+            ? null
+            : fbb.writeListInt8(obx_int.toFlexBuffer(object.metadata!));
+        fbb.startTable(61);
+        fbb.addInt64(0, object.id ?? 0);
+        fbb.addInt64(1, object.originalROWID);
+        fbb.addOffset(2, guidOffset);
+        fbb.addInt64(3, object.handleId);
+        fbb.addInt64(4, object.otherHandle);
+        fbb.addOffset(5, textOffset);
+        fbb.addOffset(6, subjectOffset);
+        fbb.addOffset(7, countryOffset);
+        fbb.addInt64(8, object.dateCreated?.millisecondsSinceEpoch);
+        fbb.addInt64(9, object.dateRead?.millisecondsSinceEpoch);
+        fbb.addInt64(10, object.dateDelivered?.millisecondsSinceEpoch);
+        fbb.addBool(11, object.isFromMe);
+        fbb.addBool(18, object.hasDdResults);
+        fbb.addInt64(21, object.datePlayed?.millisecondsSinceEpoch);
+        fbb.addInt64(22, object.itemType);
+        fbb.addOffset(23, groupTitleOffset);
+        fbb.addInt64(24, object.groupActionType);
+        fbb.addOffset(26, balloonBundleIdOffset);
+        fbb.addOffset(27, associatedMessageGuidOffset);
+        fbb.addOffset(28, associatedMessageTypeOffset);
+        fbb.addOffset(29, expressiveSendStyleIdOffset);
+        fbb.addBool(31, object.hasAttachments);
+        fbb.addBool(32, object.hasReactions);
+        fbb.addInt64(33, object.dateDeleted?.millisecondsSinceEpoch);
+        fbb.addOffset(34, threadOriginatorGuidOffset);
+        fbb.addOffset(35, threadOriginatorPartOffset);
+        fbb.addBool(36, object.bigEmoji);
+        fbb.addInt64(37, object.error);
+        fbb.addInt64(38, object.chat.targetId);
+        fbb.addOffset(39, dbAttributedBodyOffset);
+        fbb.addInt64(40, object.associatedMessagePart);
+        fbb.addBool(41, object.hasApplePayloadData);
+        fbb.addInt64(42, object.dateEdited?.millisecondsSinceEpoch);
+        fbb.addOffset(43, dbMessageSummaryInfoOffset);
+        fbb.addOffset(44, dbPayloadDataOffset);
+        fbb.addOffset(45, dbMetadataOffset);
+        fbb.addBool(46, object.wasDeliveredQuietly);
+        fbb.addBool(47, object.didNotifyRecipient);
+        fbb.addBool(48, object.isBookmarked);
+        fbb.addBool(49, object.hasBeenForwarded);
+        fbb.addOffset(50, stagingGuidOffset);
+        fbb.addOffset(51, amkSessionIdOffset);
+        fbb.addBool(52, object.isDelivered);
+        fbb.addBool(53, object.verificationFailed);
+        fbb.addOffset(54, sendingServiceIdOffset);
+        fbb.addOffset(55, associatedMessageEmojiOffset);
+        fbb.addInt64(56, object.dateScheduled?.millisecondsSinceEpoch);
+        fbb.addOffset(57, ckRecordIdOffset);
+        fbb.addBool(58, object.ckSyncState);
+        fbb.addOffset(59, metadataOffset);
+        fbb.finish(fbb.endTable());
+        return object.id ?? 0;
+      },
+      objectFromFB: (obx.Store store, ByteData fbData) {
+        final buffer = fb.BufferContext(fbData);
+        final rootOffset = buffer.derefObject(0);
+        final dateCreatedValue = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          20,
+        );
+        final dateReadValue = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          22,
+        );
+        final dateDeliveredValue = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          24,
+        );
+        final datePlayedValue = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          46,
+        );
+        final dateDeletedValue = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          70,
+        );
+        final dateEditedValue = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          88,
+        );
+        final dateScheduledValue = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          116,
+        );
+        final idParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          4,
+        );
+        final originalROWIDParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          6,
+        );
+        final guidParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 8);
+        final handleIdParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          10,
+        );
+        final otherHandleParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          12,
+        );
+        final textParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 14);
+        final subjectParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 16);
+        final countryParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 18);
+        final errorParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          78,
+          0,
+        );
+        final dateCreatedParam = dateCreatedValue == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(dateCreatedValue);
+        final dateReadParam = dateReadValue == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(dateReadValue);
+        final dateDeliveredParam = dateDeliveredValue == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(dateDeliveredValue);
+        final isFromMeParam = const fb.BoolReader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          26,
+        );
+        final hasDdResultsParam = const fb.BoolReader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          40,
+        );
+        final datePlayedParam = datePlayedValue == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(datePlayedValue);
+        final itemTypeParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          48,
+        );
+        final groupTitleParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 50);
+        final groupActionTypeParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          52,
+        );
+        final balloonBundleIdParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 56);
+        final associatedMessageGuidParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 58);
+        final associatedMessagePartParam = const fb.Int64Reader()
+            .vTableGetNullable(buffer, rootOffset, 84);
+        final associatedMessageTypeParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 60);
+        final expressiveSendStyleIdParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 62);
+        final hasAttachmentsParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          66,
+          false,
+        );
+        final hasReactionsParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          68,
+          false,
+        );
+        final dateDeletedParam = dateDeletedValue == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(dateDeletedValue);
+        final metadataParam = obx_int.flexBufferToMap(buffer, rootOffset, 122);
+        final threadOriginatorGuidParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 72);
+        final threadOriginatorPartParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 74);
+        final hasApplePayloadDataParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          86,
+          false,
+        );
+        final dateEditedParam = dateEditedValue == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(dateEditedValue);
+        final wasDeliveredQuietlyParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          96,
+          false,
+        );
+        final didNotifyRecipientParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          98,
+          false,
+        );
+        final isBookmarkedParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          100,
+          false,
+        );
+        final hasBeenForwardedParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          102,
+          false,
+        );
+        final stagingGuidParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 104);
+        final amkSessionIdParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 106);
+        final verificationFailedParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          110,
+          false,
+        );
+        final sendingServiceIdParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 112);
+        final associatedMessageEmojiParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 114);
+        final dateScheduledParam = dateScheduledValue == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(dateScheduledValue);
+        final ckRecordIdParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 118);
+        final object =
+            Message(
+                id: idParam,
+                originalROWID: originalROWIDParam,
+                guid: guidParam,
+                handleId: handleIdParam,
+                otherHandle: otherHandleParam,
+                text: textParam,
+                subject: subjectParam,
+                country: countryParam,
+                error: errorParam,
+                dateCreated: dateCreatedParam,
+                dateRead: dateReadParam,
+                dateDelivered: dateDeliveredParam,
+                isFromMe: isFromMeParam,
+                hasDdResults: hasDdResultsParam,
+                datePlayed: datePlayedParam,
+                itemType: itemTypeParam,
+                groupTitle: groupTitleParam,
+                groupActionType: groupActionTypeParam,
+                balloonBundleId: balloonBundleIdParam,
+                associatedMessageGuid: associatedMessageGuidParam,
+                associatedMessagePart: associatedMessagePartParam,
+                associatedMessageType: associatedMessageTypeParam,
+                expressiveSendStyleId: expressiveSendStyleIdParam,
+                hasAttachments: hasAttachmentsParam,
+                hasReactions: hasReactionsParam,
+                dateDeleted: dateDeletedParam,
+                metadata: metadataParam,
+                threadOriginatorGuid: threadOriginatorGuidParam,
+                threadOriginatorPart: threadOriginatorPartParam,
+                hasApplePayloadData: hasApplePayloadDataParam,
+                dateEdited: dateEditedParam,
+                wasDeliveredQuietly: wasDeliveredQuietlyParam,
+                didNotifyRecipient: didNotifyRecipientParam,
+                isBookmarked: isBookmarkedParam,
+                hasBeenForwarded: hasBeenForwardedParam,
+                stagingGuid: stagingGuidParam,
+                amkSessionId: amkSessionIdParam,
+                verificationFailed: verificationFailedParam,
+                sendingServiceId: sendingServiceIdParam,
+                associatedMessageEmoji: associatedMessageEmojiParam,
+                dateScheduled: dateScheduledParam,
+                ckRecordId: ckRecordIdParam,
+              )
+              ..bigEmoji = const fb.BoolReader().vTableGetNullable(
+                buffer,
+                rootOffset,
+                76,
+              )
+              ..dbAttributedBody = const fb.StringReader(
+                asciiOptimization: true,
+              ).vTableGetNullable(buffer, rootOffset, 82)
+              ..dbMessageSummaryInfo = const fb.StringReader(
+                asciiOptimization: true,
+              ).vTableGetNullable(buffer, rootOffset, 90)
+              ..dbPayloadData = const fb.StringReader(
+                asciiOptimization: true,
+              ).vTableGetNullable(buffer, rootOffset, 92)
+              ..dbMetadata = const fb.StringReader(
+                asciiOptimization: true,
+              ).vTableGetNullable(buffer, rootOffset, 94)
+              ..isDelivered = const fb.BoolReader().vTableGet(
+                buffer,
+                rootOffset,
+                108,
+                false,
+              )
+              ..ckSyncState = const fb.BoolReader().vTableGet(
+                buffer,
+                rootOffset,
+                120,
+                false,
+              );
+        object.chat.targetId = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          80,
+          0,
+        );
+        object.chat.attach(store);
+        obx_int.InternalToManyAccess.setRelInfo<Message>(
+          object.dbAttachments,
+          store,
+          obx_int.RelInfo<Attachment>.toOneBacklink(
+            17,
+            object.id!,
+            (Attachment srcObject) => srcObject.message,
+          ),
+        );
+        return object;
+      },
+    ),
     ThemeObject: obx_int.EntityDefinition<ThemeObject>(
-        model: _entities[6],
-        toOneRelations: (ThemeObject object) => [],
-        toManyRelations: (ThemeObject object) => {
-              obx_int.RelInfo<ThemeEntry>.toOneBacklink(8, object.id!,
-                      (ThemeEntry srcObject) => srcObject.themeObject):
-                  object.themeEntries
-            },
-        getId: (ThemeObject object) => object.id,
-        setId: (ThemeObject object, int id) {
-          object.id = id;
-        },
-        objectToFB: (ThemeObject object, fb.Builder fbb) {
-          final nameOffset =
-              object.name == null ? null : fbb.writeString(object.name!);
-          fbb.startTable(8);
-          fbb.addInt64(0, object.id ?? 0);
-          fbb.addOffset(1, nameOffset);
-          fbb.addBool(2, object.selectedLightTheme);
-          fbb.addBool(3, object.selectedDarkTheme);
-          fbb.addBool(4, object.gradientBg);
-          fbb.addBool(5, object.previousLightTheme);
-          fbb.addBool(6, object.previousDarkTheme);
-          fbb.finish(fbb.endTable());
-          return object.id ?? 0;
-        },
-        objectFromFB: (obx.Store store, ByteData fbData) {
-          final buffer = fb.BufferContext(fbData);
-          final rootOffset = buffer.derefObject(0);
-          final idParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 4);
-          final nameParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 6);
-          final selectedLightThemeParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 8, false);
-          final selectedDarkThemeParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 10, false);
-          final gradientBgParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 12, false);
-          final previousLightThemeParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 14, false);
-          final previousDarkThemeParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 16, false);
-          final object = ThemeObject(
-              id: idParam,
-              name: nameParam,
-              selectedLightTheme: selectedLightThemeParam,
-              selectedDarkTheme: selectedDarkThemeParam,
-              gradientBg: gradientBgParam,
-              previousLightTheme: previousLightThemeParam,
-              previousDarkTheme: previousDarkThemeParam);
-          obx_int.InternalToManyAccess.setRelInfo<ThemeObject>(
-              object.themeEntries,
-              store,
-              obx_int.RelInfo<ThemeEntry>.toOneBacklink(8, object.id!,
-                  (ThemeEntry srcObject) => srcObject.themeObject));
-          return object;
-        }),
+      model: _entities[6],
+      toOneRelations: (ThemeObject object) => [],
+      toManyRelations: (ThemeObject object) => {
+        obx_int.RelInfo<ThemeEntry>.toOneBacklink(
+          8,
+          object.id!,
+          (ThemeEntry srcObject) => srcObject.themeObject,
+        ): object.themeEntries,
+      },
+      getId: (ThemeObject object) => object.id,
+      setId: (ThemeObject object, int id) {
+        object.id = id;
+      },
+      objectToFB: (ThemeObject object, fb.Builder fbb) {
+        final nameOffset = object.name == null
+            ? null
+            : fbb.writeString(object.name!);
+        fbb.startTable(8);
+        fbb.addInt64(0, object.id ?? 0);
+        fbb.addOffset(1, nameOffset);
+        fbb.addBool(2, object.selectedLightTheme);
+        fbb.addBool(3, object.selectedDarkTheme);
+        fbb.addBool(4, object.gradientBg);
+        fbb.addBool(5, object.previousLightTheme);
+        fbb.addBool(6, object.previousDarkTheme);
+        fbb.finish(fbb.endTable());
+        return object.id ?? 0;
+      },
+      objectFromFB: (obx.Store store, ByteData fbData) {
+        final buffer = fb.BufferContext(fbData);
+        final rootOffset = buffer.derefObject(0);
+        final idParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          4,
+        );
+        final nameParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 6);
+        final selectedLightThemeParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          8,
+          false,
+        );
+        final selectedDarkThemeParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          10,
+          false,
+        );
+        final gradientBgParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          12,
+          false,
+        );
+        final previousLightThemeParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          14,
+          false,
+        );
+        final previousDarkThemeParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          16,
+          false,
+        );
+        final object = ThemeObject(
+          id: idParam,
+          name: nameParam,
+          selectedLightTheme: selectedLightThemeParam,
+          selectedDarkTheme: selectedDarkThemeParam,
+          gradientBg: gradientBgParam,
+          previousLightTheme: previousLightThemeParam,
+          previousDarkTheme: previousDarkThemeParam,
+        );
+        obx_int.InternalToManyAccess.setRelInfo<ThemeObject>(
+          object.themeEntries,
+          store,
+          obx_int.RelInfo<ThemeEntry>.toOneBacklink(
+            8,
+            object.id!,
+            (ThemeEntry srcObject) => srcObject.themeObject,
+          ),
+        );
+        return object;
+      },
+    ),
     ThemeStruct: obx_int.EntityDefinition<ThemeStruct>(
-        model: _entities[7],
-        toOneRelations: (ThemeStruct object) => [],
-        toManyRelations: (ThemeStruct object) => {},
-        getId: (ThemeStruct object) => object.id,
-        setId: (ThemeStruct object, int id) {
-          object.id = id;
-        },
-        objectToFB: (ThemeStruct object, fb.Builder fbb) {
-          final nameOffset = fbb.writeString(object.name);
-          final dbThemeDataOffset = fbb.writeString(object.dbThemeData);
-          final googleFontOffset = fbb.writeString(object.googleFont);
-          fbb.startTable(6);
-          fbb.addInt64(0, object.id ?? 0);
-          fbb.addOffset(1, nameOffset);
-          fbb.addBool(2, object.gradientBg);
-          fbb.addOffset(3, dbThemeDataOffset);
-          fbb.addOffset(4, googleFontOffset);
-          fbb.finish(fbb.endTable());
-          return object.id ?? 0;
-        },
-        objectFromFB: (obx.Store store, ByteData fbData) {
-          final buffer = fb.BufferContext(fbData);
-          final rootOffset = buffer.derefObject(0);
-          final idParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 4);
-          final nameParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGet(buffer, rootOffset, 6, '');
-          final gradientBgParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 8, false);
-          final googleFontParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGet(buffer, rootOffset, 12, '');
-          final object = ThemeStruct(
-              id: idParam,
-              name: nameParam,
-              gradientBg: gradientBgParam,
-              googleFont: googleFontParam)
-            ..dbThemeData = const fb.StringReader(asciiOptimization: true)
-                .vTableGet(buffer, rootOffset, 10, '');
+      model: _entities[7],
+      toOneRelations: (ThemeStruct object) => [],
+      toManyRelations: (ThemeStruct object) => {},
+      getId: (ThemeStruct object) => object.id,
+      setId: (ThemeStruct object, int id) {
+        object.id = id;
+      },
+      objectToFB: (ThemeStruct object, fb.Builder fbb) {
+        final nameOffset = fbb.writeString(object.name);
+        final dbThemeDataOffset = fbb.writeString(object.dbThemeData);
+        final googleFontOffset = fbb.writeString(object.googleFont);
+        fbb.startTable(6);
+        fbb.addInt64(0, object.id ?? 0);
+        fbb.addOffset(1, nameOffset);
+        fbb.addBool(2, object.gradientBg);
+        fbb.addOffset(3, dbThemeDataOffset);
+        fbb.addOffset(4, googleFontOffset);
+        fbb.finish(fbb.endTable());
+        return object.id ?? 0;
+      },
+      objectFromFB: (obx.Store store, ByteData fbData) {
+        final buffer = fb.BufferContext(fbData);
+        final rootOffset = buffer.derefObject(0);
+        final idParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          4,
+        );
+        final nameParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 6, '');
+        final gradientBgParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          8,
+          false,
+        );
+        final googleFontParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 12, '');
+        final object =
+            ThemeStruct(
+                id: idParam,
+                name: nameParam,
+                gradientBg: gradientBgParam,
+                googleFont: googleFontParam,
+              )
+              ..dbThemeData = const fb.StringReader(
+                asciiOptimization: true,
+              ).vTableGet(buffer, rootOffset, 10, '');
 
-          return object;
-        }),
+        return object;
+      },
+    ),
     Contact: obx_int.EntityDefinition<Contact>(
-        model: _entities[8],
-        toOneRelations: (Contact object) => [],
-        toManyRelations: (Contact object) => {},
-        getId: (Contact object) => object.dbId,
-        setId: (Contact object, int id) {
-          object.dbId = id;
-        },
-        objectToFB: (Contact object, fb.Builder fbb) {
-          final idOffset = fbb.writeString(object.id);
-          final displayNameOffset = fbb.writeString(object.displayName);
-          final phonesOffset = fbb.writeList(
-              object.phones.map(fbb.writeString).toList(growable: false));
-          final emailsOffset = fbb.writeList(
-              object.emails.map(fbb.writeString).toList(growable: false));
-          final avatarOffset =
-              object.avatar == null ? null : fbb.writeListInt8(object.avatar!);
-          final dbStructuredNameOffset = object.dbStructuredName == null
-              ? null
-              : fbb.writeString(object.dbStructuredName!);
-          final posterPathOffset = object.posterPath == null
-              ? null
-              : fbb.writeString(object.posterPath!);
-          fbb.startTable(14);
-          fbb.addInt64(0, object.dbId ?? 0);
-          fbb.addOffset(1, idOffset);
-          fbb.addOffset(2, displayNameOffset);
-          fbb.addOffset(3, phonesOffset);
-          fbb.addOffset(5, emailsOffset);
-          fbb.addOffset(7, avatarOffset);
-          fbb.addOffset(9, dbStructuredNameOffset);
-          fbb.addBool(10, object.isShared);
-          fbb.addBool(11, object.isDismissed);
-          fbb.addOffset(12, posterPathOffset);
-          fbb.finish(fbb.endTable());
-          return object.dbId ?? 0;
-        },
-        objectFromFB: (obx.Store store, ByteData fbData) {
-          final buffer = fb.BufferContext(fbData);
-          final rootOffset = buffer.derefObject(0);
-          final dbIdParam =
-              const fb.Int64Reader().vTableGetNullable(buffer, rootOffset, 4);
-          final idParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGet(buffer, rootOffset, 6, '');
-          final displayNameParam =
-              const fb.StringReader(asciiOptimization: true)
-                  .vTableGet(buffer, rootOffset, 8, '');
-          final phonesParam = const fb.ListReader<String>(
-                  fb.StringReader(asciiOptimization: true),
-                  lazy: false)
-              .vTableGet(buffer, rootOffset, 10, []);
-          final emailsParam = const fb.ListReader<String>(
-                  fb.StringReader(asciiOptimization: true),
-                  lazy: false)
-              .vTableGet(buffer, rootOffset, 14, []);
-          final avatarParam = const fb.Uint8ListReader(lazy: false)
-              .vTableGetNullable(buffer, rootOffset, 18) as Uint8List?;
-          final isSharedParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 24, false);
-          final isDismissedParam =
-              const fb.BoolReader().vTableGet(buffer, rootOffset, 26, false);
-          final posterPathParam = const fb.StringReader(asciiOptimization: true)
-              .vTableGetNullable(buffer, rootOffset, 28);
-          final object = Contact(
-              dbId: dbIdParam,
-              id: idParam,
-              displayName: displayNameParam,
-              phones: phonesParam,
-              emails: emailsParam,
-              avatar: avatarParam,
-              isShared: isSharedParam,
-              isDismissed: isDismissedParam,
-              posterPath: posterPathParam)
-            ..dbStructuredName = const fb.StringReader(asciiOptimization: true)
-                .vTableGetNullable(buffer, rootOffset, 22);
+      model: _entities[8],
+      toOneRelations: (Contact object) => [],
+      toManyRelations: (Contact object) => {},
+      getId: (Contact object) => object.dbId,
+      setId: (Contact object, int id) {
+        object.dbId = id;
+      },
+      objectToFB: (Contact object, fb.Builder fbb) {
+        final idOffset = fbb.writeString(object.id);
+        final displayNameOffset = fbb.writeString(object.displayName);
+        final phonesOffset = fbb.writeList(
+          object.phones.map(fbb.writeString).toList(growable: false),
+        );
+        final emailsOffset = fbb.writeList(
+          object.emails.map(fbb.writeString).toList(growable: false),
+        );
+        final avatarOffset = object.avatar == null
+            ? null
+            : fbb.writeListInt8(object.avatar!);
+        final dbStructuredNameOffset = object.dbStructuredName == null
+            ? null
+            : fbb.writeString(object.dbStructuredName!);
+        final posterPathOffset = object.posterPath == null
+            ? null
+            : fbb.writeString(object.posterPath!);
+        fbb.startTable(14);
+        fbb.addInt64(0, object.dbId ?? 0);
+        fbb.addOffset(1, idOffset);
+        fbb.addOffset(2, displayNameOffset);
+        fbb.addOffset(3, phonesOffset);
+        fbb.addOffset(5, emailsOffset);
+        fbb.addOffset(7, avatarOffset);
+        fbb.addOffset(9, dbStructuredNameOffset);
+        fbb.addBool(10, object.isShared);
+        fbb.addBool(11, object.isDismissed);
+        fbb.addOffset(12, posterPathOffset);
+        fbb.finish(fbb.endTable());
+        return object.dbId ?? 0;
+      },
+      objectFromFB: (obx.Store store, ByteData fbData) {
+        final buffer = fb.BufferContext(fbData);
+        final rootOffset = buffer.derefObject(0);
+        final dbIdParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          4,
+        );
+        final idParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 6, '');
+        final displayNameParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 8, '');
+        final phonesParam = const fb.ListReader<String>(
+          fb.StringReader(asciiOptimization: true),
+          lazy: false,
+        ).vTableGet(buffer, rootOffset, 10, []);
+        final emailsParam = const fb.ListReader<String>(
+          fb.StringReader(asciiOptimization: true),
+          lazy: false,
+        ).vTableGet(buffer, rootOffset, 14, []);
+        final avatarParam =
+            const fb.Uint8ListReader(
+                  lazy: false,
+                ).vTableGetNullable(buffer, rootOffset, 18)
+                as Uint8List?;
+        final isSharedParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          24,
+          false,
+        );
+        final isDismissedParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          26,
+          false,
+        );
+        final posterPathParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 28);
+        final object =
+            Contact(
+                dbId: dbIdParam,
+                id: idParam,
+                displayName: displayNameParam,
+                phones: phonesParam,
+                emails: emailsParam,
+                avatar: avatarParam,
+                isShared: isSharedParam,
+                isDismissed: isDismissedParam,
+                posterPath: posterPathParam,
+              )
+              ..dbStructuredName = const fb.StringReader(
+                asciiOptimization: true,
+              ).vTableGetNullable(buffer, rootOffset, 22);
 
-          return object;
-        })
+        return object;
+      },
+    ),
+    CloudInboxChangeEntity: obx_int.EntityDefinition<CloudInboxChangeEntity>(
+      model: _entities[9],
+      toOneRelations: (CloudInboxChangeEntity object) => [],
+      toManyRelations: (CloudInboxChangeEntity object) => {},
+      getId: (CloudInboxChangeEntity object) => object.id,
+      setId: (CloudInboxChangeEntity object, int id) {
+        object.id = id;
+      },
+      objectToFB: (CloudInboxChangeEntity object, fb.Builder fbb) {
+        final changeKeyOffset = fbb.writeString(object.changeKey);
+        final accountFingerprintOffset = fbb.writeString(
+          object.accountFingerprint,
+        );
+        final zoneOffset = fbb.writeString(object.zone);
+        final serverRecordIdHashOffset = fbb.writeString(
+          object.serverRecordIdHash,
+        );
+        final etagHashOffset = object.etagHash == null
+            ? null
+            : fbb.writeString(object.etagHash!);
+        final changeTypeOffset = fbb.writeString(object.changeType);
+        final encryptedPayloadRefOffset = object.encryptedPayloadRef == null
+            ? null
+            : fbb.writeString(object.encryptedPayloadRef!);
+        final payloadSha256Offset = object.payloadSha256 == null
+            ? null
+            : fbb.writeString(object.payloadSha256!);
+        final failureCategoryOffset = object.failureCategory == null
+            ? null
+            : fbb.writeString(object.failureCategory!);
+        final scopeKeyOffset = fbb.writeString(object.scopeKey);
+        final encryptedServerRecordIdOffset =
+            object.encryptedServerRecordId == null
+            ? null
+            : fbb.writeString(object.encryptedServerRecordId!);
+        final protectedSystemFieldsRefOffset =
+            object.protectedSystemFieldsRef == null
+            ? null
+            : fbb.writeString(object.protectedSystemFieldsRef!);
+        final batchIdOffset = fbb.writeString(object.batchId);
+        final changeIdHashOffset = fbb.writeString(object.changeIdHash);
+        fbb.startTable(26);
+        fbb.addInt64(0, object.id);
+        fbb.addOffset(1, changeKeyOffset);
+        fbb.addOffset(2, accountFingerprintOffset);
+        fbb.addOffset(3, zoneOffset);
+        fbb.addOffset(4, serverRecordIdHashOffset);
+        fbb.addOffset(5, etagHashOffset);
+        fbb.addOffset(6, changeTypeOffset);
+        fbb.addOffset(7, encryptedPayloadRefOffset);
+        fbb.addOffset(8, payloadSha256Offset);
+        fbb.addInt64(9, object.fetchSequence);
+        fbb.addInt64(10, object.status);
+        fbb.addBool(11, object.isTombstone);
+        fbb.addOffset(12, failureCategoryOffset);
+        fbb.addInt64(13, object.retryCount);
+        fbb.addInt64(14, object.createdAtMs);
+        fbb.addInt64(15, object.updatedAtMs);
+        fbb.addOffset(16, scopeKeyOffset);
+        fbb.addOffset(17, encryptedServerRecordIdOffset);
+        fbb.addOffset(18, protectedSystemFieldsRefOffset);
+        fbb.addOffset(19, batchIdOffset);
+        fbb.addInt64(20, object.generation);
+        fbb.addInt64(21, object.nextEligibleAtMs);
+        fbb.addInt64(22, object.serverModifiedAtMs);
+        fbb.addInt64(23, object.completedAtMs);
+        fbb.addOffset(24, changeIdHashOffset);
+        fbb.finish(fbb.endTable());
+        return object.id;
+      },
+      objectFromFB: (obx.Store store, ByteData fbData) {
+        final buffer = fb.BufferContext(fbData);
+        final rootOffset = buffer.derefObject(0);
+        final idParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          4,
+          0,
+        );
+        final changeKeyParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 6, '');
+        final changeIdHashParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 52, '');
+        final scopeKeyParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 36, '');
+        final accountFingerprintParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 8, '');
+        final zoneParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 10, '');
+        final serverRecordIdHashParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 12, '');
+        final etagHashParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 14);
+        final changeTypeParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 16, '');
+        final encryptedServerRecordIdParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 38);
+        final protectedSystemFieldsRefParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 40);
+        final encryptedPayloadRefParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 18);
+        final payloadSha256Param = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 20);
+        final batchIdParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 42, '');
+        final generationParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          44,
+          0,
+        );
+        final fetchSequenceParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          22,
+          0,
+        );
+        final statusParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          24,
+          0,
+        );
+        final isTombstoneParam = const fb.BoolReader().vTableGet(
+          buffer,
+          rootOffset,
+          26,
+          false,
+        );
+        final failureCategoryParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 28);
+        final retryCountParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          30,
+          0,
+        );
+        final nextEligibleAtMsParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          46,
+          0,
+        );
+        final serverModifiedAtMsParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          48,
+          0,
+        );
+        final createdAtMsParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          32,
+          0,
+        );
+        final updatedAtMsParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          34,
+          0,
+        );
+        final completedAtMsParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          50,
+          0,
+        );
+        final object = CloudInboxChangeEntity(
+          id: idParam,
+          changeKey: changeKeyParam,
+          changeIdHash: changeIdHashParam,
+          scopeKey: scopeKeyParam,
+          accountFingerprint: accountFingerprintParam,
+          zone: zoneParam,
+          serverRecordIdHash: serverRecordIdHashParam,
+          etagHash: etagHashParam,
+          changeType: changeTypeParam,
+          encryptedServerRecordId: encryptedServerRecordIdParam,
+          protectedSystemFieldsRef: protectedSystemFieldsRefParam,
+          encryptedPayloadRef: encryptedPayloadRefParam,
+          payloadSha256: payloadSha256Param,
+          batchId: batchIdParam,
+          generation: generationParam,
+          fetchSequence: fetchSequenceParam,
+          status: statusParam,
+          isTombstone: isTombstoneParam,
+          failureCategory: failureCategoryParam,
+          retryCount: retryCountParam,
+          nextEligibleAtMs: nextEligibleAtMsParam,
+          serverModifiedAtMs: serverModifiedAtMsParam,
+          createdAtMs: createdAtMsParam,
+          updatedAtMs: updatedAtMsParam,
+          completedAtMs: completedAtMsParam,
+        );
+
+        return object;
+      },
+    ),
+    CloudOutboxOperationEntity:
+        obx_int.EntityDefinition<CloudOutboxOperationEntity>(
+          model: _entities[10],
+          toOneRelations: (CloudOutboxOperationEntity object) => [],
+          toManyRelations: (CloudOutboxOperationEntity object) => {},
+          getId: (CloudOutboxOperationEntity object) => object.id,
+          setId: (CloudOutboxOperationEntity object, int id) {
+            object.id = id;
+          },
+          objectToFB: (CloudOutboxOperationEntity object, fb.Builder fbb) {
+            final operationIdOffset = fbb.writeString(object.operationId);
+            final accountFingerprintOffset = fbb.writeString(
+              object.accountFingerprint,
+            );
+            final zoneOffset = fbb.writeString(object.zone);
+            final logicalEntityKeyHashOffset = fbb.writeString(
+              object.logicalEntityKeyHash,
+            );
+            final dependencyOperationIdsJsonOffset = fbb.writeString(
+              object.dependencyOperationIdsJson,
+            );
+            final encryptedPayloadRefOffset = object.encryptedPayloadRef == null
+                ? null
+                : fbb.writeString(object.encryptedPayloadRef!);
+            final payloadSha256Offset = object.payloadSha256 == null
+                ? null
+                : fbb.writeString(object.payloadSha256!);
+            final lastErrorCategoryOffset = object.lastErrorCategory == null
+                ? null
+                : fbb.writeString(object.lastErrorCategory!);
+            final serverRecordIdHashOffset = object.serverRecordIdHash == null
+                ? null
+                : fbb.writeString(object.serverRecordIdHash!);
+            final scopeKeyOffset = fbb.writeString(object.scopeKey);
+            final leaseIdHashOffset = object.leaseIdHash == null
+                ? null
+                : fbb.writeString(object.leaseIdHash!);
+            final appleRequestUuidOffset = object.appleRequestUuid == null
+                ? null
+                : fbb.writeString(object.appleRequestUuid!);
+            final appleOperationUuidOffset = object.appleOperationUuid == null
+                ? null
+                : fbb.writeString(object.appleOperationUuid!);
+            final protectedLeaseReferenceOffset =
+                object.protectedLeaseReference == null
+                ? null
+                : fbb.writeString(object.protectedLeaseReference!);
+            fbb.startTable(27);
+            fbb.addInt64(0, object.id);
+            fbb.addOffset(1, operationIdOffset);
+            fbb.addOffset(2, accountFingerprintOffset);
+            fbb.addOffset(3, zoneOffset);
+            fbb.addOffset(4, logicalEntityKeyHashOffset);
+            fbb.addInt64(5, object.action);
+            fbb.addOffset(6, dependencyOperationIdsJsonOffset);
+            fbb.addInt64(7, object.payloadVersion);
+            fbb.addOffset(8, encryptedPayloadRefOffset);
+            fbb.addOffset(9, payloadSha256Offset);
+            fbb.addInt64(10, object.state);
+            fbb.addInt64(11, object.attemptCount);
+            fbb.addInt64(12, object.nextEligibleAtMs);
+            fbb.addOffset(13, lastErrorCategoryOffset);
+            fbb.addOffset(14, serverRecordIdHashOffset);
+            fbb.addInt64(15, object.createdAtMs);
+            fbb.addInt64(16, object.updatedAtMs);
+            fbb.addOffset(17, scopeKeyOffset);
+            fbb.addInt64(18, object.mutationRevision);
+            fbb.addOffset(19, leaseIdHashOffset);
+            fbb.addInt64(20, object.leaseExpiresAtMs);
+            fbb.addInt64(21, object.confirmedAtMs);
+            fbb.addInt64(22, object.checkpointGeneration);
+            fbb.addOffset(23, appleRequestUuidOffset);
+            fbb.addOffset(24, appleOperationUuidOffset);
+            fbb.addOffset(25, protectedLeaseReferenceOffset);
+            fbb.finish(fbb.endTable());
+            return object.id;
+          },
+          objectFromFB: (obx.Store store, ByteData fbData) {
+            final buffer = fb.BufferContext(fbData);
+            final rootOffset = buffer.derefObject(0);
+            final idParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              4,
+              0,
+            );
+            final operationIdParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 6, '');
+            final scopeKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 38, '');
+            final accountFingerprintParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 8, '');
+            final zoneParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 10, '');
+            final logicalEntityKeyHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 12, '');
+            final actionParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              14,
+              0,
+            );
+            final dependencyOperationIdsJsonParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 16, '');
+            final payloadVersionParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              18,
+              0,
+            );
+            final mutationRevisionParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              40,
+              0,
+            );
+            final checkpointGenerationParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              48,
+              0,
+            );
+            final appleRequestUuidParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 50);
+            final appleOperationUuidParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 52);
+            final encryptedPayloadRefParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 20);
+            final payloadSha256Param = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 22);
+            final protectedLeaseReferenceParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 54);
+            final stateParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              24,
+              0,
+            );
+            final attemptCountParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              26,
+              0,
+            );
+            final nextEligibleAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              28,
+              0,
+            );
+            final lastErrorCategoryParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 30);
+            final serverRecordIdHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 32);
+            final leaseIdHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 42);
+            final leaseExpiresAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              44,
+              0,
+            );
+            final confirmedAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              46,
+              0,
+            );
+            final createdAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              34,
+              0,
+            );
+            final updatedAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              36,
+              0,
+            );
+            final object = CloudOutboxOperationEntity(
+              id: idParam,
+              operationId: operationIdParam,
+              scopeKey: scopeKeyParam,
+              accountFingerprint: accountFingerprintParam,
+              zone: zoneParam,
+              logicalEntityKeyHash: logicalEntityKeyHashParam,
+              action: actionParam,
+              dependencyOperationIdsJson: dependencyOperationIdsJsonParam,
+              payloadVersion: payloadVersionParam,
+              mutationRevision: mutationRevisionParam,
+              checkpointGeneration: checkpointGenerationParam,
+              appleRequestUuid: appleRequestUuidParam,
+              appleOperationUuid: appleOperationUuidParam,
+              encryptedPayloadRef: encryptedPayloadRefParam,
+              payloadSha256: payloadSha256Param,
+              protectedLeaseReference: protectedLeaseReferenceParam,
+              state: stateParam,
+              attemptCount: attemptCountParam,
+              nextEligibleAtMs: nextEligibleAtMsParam,
+              lastErrorCategory: lastErrorCategoryParam,
+              serverRecordIdHash: serverRecordIdHashParam,
+              leaseIdHash: leaseIdHashParam,
+              leaseExpiresAtMs: leaseExpiresAtMsParam,
+              confirmedAtMs: confirmedAtMsParam,
+              createdAtMs: createdAtMsParam,
+              updatedAtMs: updatedAtMsParam,
+            );
+
+            return object;
+          },
+        ),
+    CloudRecordMapEntity: obx_int.EntityDefinition<CloudRecordMapEntity>(
+      model: _entities[11],
+      toOneRelations: (CloudRecordMapEntity object) => [],
+      toManyRelations: (CloudRecordMapEntity object) => {},
+      getId: (CloudRecordMapEntity object) => object.id,
+      setId: (CloudRecordMapEntity object, int id) {
+        object.id = id;
+      },
+      objectToFB: (CloudRecordMapEntity object, fb.Builder fbb) {
+        final mapKeyOffset = fbb.writeString(object.mapKey);
+        final accountFingerprintOffset = fbb.writeString(
+          object.accountFingerprint,
+        );
+        final zoneOffset = fbb.writeString(object.zone);
+        final logicalEntityKeyHashOffset = fbb.writeString(
+          object.logicalEntityKeyHash,
+        );
+        final serverRecordIdHashOffset = fbb.writeString(
+          object.serverRecordIdHash,
+        );
+        final encryptedServerRecordIdOffset = fbb.writeString(
+          object.encryptedServerRecordId,
+        );
+        final etagHashOffset = object.etagHash == null
+            ? null
+            : fbb.writeString(object.etagHash!);
+        final encryptedRawRecordRefOffset = object.encryptedRawRecordRef == null
+            ? null
+            : fbb.writeString(object.encryptedRawRecordRef!);
+        final scopeKeyOffset = fbb.writeString(object.scopeKey);
+        fbb.startTable(13);
+        fbb.addInt64(0, object.id);
+        fbb.addOffset(1, mapKeyOffset);
+        fbb.addOffset(2, accountFingerprintOffset);
+        fbb.addOffset(3, zoneOffset);
+        fbb.addOffset(4, logicalEntityKeyHashOffset);
+        fbb.addOffset(5, serverRecordIdHashOffset);
+        fbb.addOffset(6, encryptedServerRecordIdOffset);
+        fbb.addOffset(7, etagHashOffset);
+        fbb.addOffset(8, encryptedRawRecordRefOffset);
+        fbb.addInt64(9, object.updatedAtMs);
+        fbb.addOffset(10, scopeKeyOffset);
+        fbb.addInt64(11, object.generation);
+        fbb.finish(fbb.endTable());
+        return object.id;
+      },
+      objectFromFB: (obx.Store store, ByteData fbData) {
+        final buffer = fb.BufferContext(fbData);
+        final rootOffset = buffer.derefObject(0);
+        final idParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          4,
+          0,
+        );
+        final mapKeyParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 6, '');
+        final scopeKeyParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 24, '');
+        final accountFingerprintParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 8, '');
+        final zoneParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 10, '');
+        final logicalEntityKeyHashParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 12, '');
+        final serverRecordIdHashParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 14, '');
+        final generationParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          26,
+          0,
+        );
+        final encryptedServerRecordIdParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 16, '');
+        final etagHashParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 18);
+        final encryptedRawRecordRefParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 20);
+        final updatedAtMsParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          22,
+          0,
+        );
+        final object = CloudRecordMapEntity(
+          id: idParam,
+          mapKey: mapKeyParam,
+          scopeKey: scopeKeyParam,
+          accountFingerprint: accountFingerprintParam,
+          zone: zoneParam,
+          logicalEntityKeyHash: logicalEntityKeyHashParam,
+          serverRecordIdHash: serverRecordIdHashParam,
+          generation: generationParam,
+          encryptedServerRecordId: encryptedServerRecordIdParam,
+          etagHash: etagHashParam,
+          encryptedRawRecordRef: encryptedRawRecordRefParam,
+          updatedAtMs: updatedAtMsParam,
+        );
+
+        return object;
+      },
+    ),
+    CloudSyncCheckpointEntity:
+        obx_int.EntityDefinition<CloudSyncCheckpointEntity>(
+          model: _entities[12],
+          toOneRelations: (CloudSyncCheckpointEntity object) => [],
+          toManyRelations: (CloudSyncCheckpointEntity object) => {},
+          getId: (CloudSyncCheckpointEntity object) => object.id,
+          setId: (CloudSyncCheckpointEntity object, int id) {
+            object.id = id;
+          },
+          objectToFB: (CloudSyncCheckpointEntity object, fb.Builder fbb) {
+            final checkpointKeyOffset = fbb.writeString(object.checkpointKey);
+            final accountFingerprintOffset = fbb.writeString(
+              object.accountFingerprint,
+            );
+            final containerOffset = fbb.writeString(object.container);
+            final databaseOffset = fbb.writeString(object.database);
+            final zoneOffset = fbb.writeString(object.zone);
+            final fetchedTokenCiphertextOffset =
+                object.fetchedTokenCiphertext == null
+                ? null
+                : fbb.writeString(object.fetchedTokenCiphertext!);
+            final lastErrorCategoryOffset = object.lastErrorCategory == null
+                ? null
+                : fbb.writeString(object.lastErrorCategory!);
+            final streamKindOffset = fbb.writeString(object.streamKind);
+            final lastBatchIdOffset = object.lastBatchId == null
+                ? null
+                : fbb.writeString(object.lastBatchId!);
+            fbb.startTable(21);
+            fbb.addInt64(0, object.id);
+            fbb.addOffset(1, checkpointKeyOffset);
+            fbb.addOffset(2, accountFingerprintOffset);
+            fbb.addOffset(3, containerOffset);
+            fbb.addOffset(4, databaseOffset);
+            fbb.addOffset(5, zoneOffset);
+            fbb.addInt64(6, object.schemaVersion);
+            fbb.addOffset(7, fetchedTokenCiphertextOffset);
+            fbb.addInt64(8, object.fetchedSequence);
+            fbb.addInt64(9, object.appliedSequence);
+            fbb.addInt64(10, object.lastSuccessfulAtMs);
+            fbb.addInt64(11, object.lastAttemptAtMs);
+            fbb.addOffset(12, lastErrorCategoryOffset);
+            fbb.addInt64(13, object.backoffAttempt);
+            fbb.addInt64(14, object.nextEligibleAtMs);
+            fbb.addInt64(15, object.updatedAtMs);
+            fbb.addOffset(16, streamKindOffset);
+            fbb.addInt64(17, object.generation);
+            fbb.addOffset(18, lastBatchIdOffset);
+            fbb.addInt64(19, object.mutationRevisionCounter);
+            fbb.finish(fbb.endTable());
+            return object.id;
+          },
+          objectFromFB: (obx.Store store, ByteData fbData) {
+            final buffer = fb.BufferContext(fbData);
+            final rootOffset = buffer.derefObject(0);
+            final idParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              4,
+              0,
+            );
+            final checkpointKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 6, '');
+            final accountFingerprintParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 8, '');
+            final containerParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 10, '');
+            final databaseParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 12, '');
+            final zoneParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 14, '');
+            final streamKindParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 36, '');
+            final schemaVersionParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              16,
+              0,
+            );
+            final fetchedTokenCiphertextParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 18);
+            final generationParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              38,
+              0,
+            );
+            final lastBatchIdParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 40);
+            final fetchedSequenceParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              20,
+              0,
+            );
+            final appliedSequenceParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              22,
+              0,
+            );
+            final lastSuccessfulAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              24,
+              0,
+            );
+            final lastAttemptAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              26,
+              0,
+            );
+            final lastErrorCategoryParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 28);
+            final backoffAttemptParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              30,
+              0,
+            );
+            final nextEligibleAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              32,
+              0,
+            );
+            final mutationRevisionCounterParam = const fb.Int64Reader()
+                .vTableGet(buffer, rootOffset, 42, 0);
+            final updatedAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              34,
+              0,
+            );
+            final object = CloudSyncCheckpointEntity(
+              id: idParam,
+              checkpointKey: checkpointKeyParam,
+              accountFingerprint: accountFingerprintParam,
+              container: containerParam,
+              database: databaseParam,
+              zone: zoneParam,
+              streamKind: streamKindParam,
+              schemaVersion: schemaVersionParam,
+              fetchedTokenCiphertext: fetchedTokenCiphertextParam,
+              generation: generationParam,
+              lastBatchId: lastBatchIdParam,
+              fetchedSequence: fetchedSequenceParam,
+              appliedSequence: appliedSequenceParam,
+              lastSuccessfulAtMs: lastSuccessfulAtMsParam,
+              lastAttemptAtMs: lastAttemptAtMsParam,
+              lastErrorCategory: lastErrorCategoryParam,
+              backoffAttempt: backoffAttemptParam,
+              nextEligibleAtMs: nextEligibleAtMsParam,
+              mutationRevisionCounter: mutationRevisionCounterParam,
+              updatedAtMs: updatedAtMsParam,
+            );
+
+            return object;
+          },
+        ),
+    CloudSyncRunEntity: obx_int.EntityDefinition<CloudSyncRunEntity>(
+      model: _entities[13],
+      toOneRelations: (CloudSyncRunEntity object) => [],
+      toManyRelations: (CloudSyncRunEntity object) => {},
+      getId: (CloudSyncRunEntity object) => object.id,
+      setId: (CloudSyncRunEntity object, int id) {
+        object.id = id;
+      },
+      objectToFB: (CloudSyncRunEntity object, fb.Builder fbb) {
+        final runIdOffset = fbb.writeString(object.runId);
+        final accountFingerprintOffset = fbb.writeString(
+          object.accountFingerprint,
+        );
+        final triggerOffset = fbb.writeString(object.trigger);
+        final architectureOffset = fbb.writeString(object.architecture);
+        final modeOffset = fbb.writeString(object.mode);
+        final failureCategoryOffset = object.failureCategory == null
+            ? null
+            : fbb.writeString(object.failureCategory!);
+        final scopeKeyOffset = fbb.writeString(object.scopeKey);
+        fbb.startTable(17);
+        fbb.addInt64(0, object.id);
+        fbb.addOffset(1, runIdOffset);
+        fbb.addOffset(2, accountFingerprintOffset);
+        fbb.addOffset(3, triggerOffset);
+        fbb.addOffset(4, architectureOffset);
+        fbb.addOffset(5, modeOffset);
+        fbb.addInt64(6, object.fetchedCount);
+        fbb.addInt64(7, object.appliedCount);
+        fbb.addInt64(8, object.quarantinedCount);
+        fbb.addInt64(9, object.confirmedCount);
+        fbb.addInt64(10, object.retriedCount);
+        fbb.addInt64(11, object.startedAtMs);
+        fbb.addInt64(12, object.finishedAtMs);
+        fbb.addOffset(13, failureCategoryOffset);
+        fbb.addOffset(14, scopeKeyOffset);
+        fbb.addInt64(15, object.deferredCount);
+        fbb.finish(fbb.endTable());
+        return object.id;
+      },
+      objectFromFB: (obx.Store store, ByteData fbData) {
+        final buffer = fb.BufferContext(fbData);
+        final rootOffset = buffer.derefObject(0);
+        final idParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          4,
+          0,
+        );
+        final runIdParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 6, '');
+        final scopeKeyParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 32, '');
+        final accountFingerprintParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 8, '');
+        final triggerParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 10, '');
+        final architectureParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 12, '');
+        final modeParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 14, '');
+        final fetchedCountParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          16,
+          0,
+        );
+        final appliedCountParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          18,
+          0,
+        );
+        final deferredCountParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          34,
+          0,
+        );
+        final quarantinedCountParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          20,
+          0,
+        );
+        final confirmedCountParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          22,
+          0,
+        );
+        final retriedCountParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          24,
+          0,
+        );
+        final startedAtMsParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          26,
+          0,
+        );
+        final finishedAtMsParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          28,
+          0,
+        );
+        final failureCategoryParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 30);
+        final object = CloudSyncRunEntity(
+          id: idParam,
+          runId: runIdParam,
+          scopeKey: scopeKeyParam,
+          accountFingerprint: accountFingerprintParam,
+          trigger: triggerParam,
+          architecture: architectureParam,
+          mode: modeParam,
+          fetchedCount: fetchedCountParam,
+          appliedCount: appliedCountParam,
+          deferredCount: deferredCountParam,
+          quarantinedCount: quarantinedCountParam,
+          confirmedCount: confirmedCountParam,
+          retriedCount: retriedCountParam,
+          startedAtMs: startedAtMsParam,
+          finishedAtMs: finishedAtMsParam,
+          failureCategory: failureCategoryParam,
+        );
+
+        return object;
+      },
+    ),
+    CloudSyncLeaseEntity: obx_int.EntityDefinition<CloudSyncLeaseEntity>(
+      model: _entities[14],
+      toOneRelations: (CloudSyncLeaseEntity object) => [],
+      toManyRelations: (CloudSyncLeaseEntity object) => {},
+      getId: (CloudSyncLeaseEntity object) => object.id,
+      setId: (CloudSyncLeaseEntity object, int id) {
+        object.id = id;
+      },
+      objectToFB: (CloudSyncLeaseEntity object, fb.Builder fbb) {
+        final leaseKeyOffset = fbb.writeString(object.leaseKey);
+        final scopeKeyOffset = fbb.writeString(object.scopeKey);
+        final accountFingerprintOffset = fbb.writeString(
+          object.accountFingerprint,
+        );
+        final ownerIdHashOffset = fbb.writeString(object.ownerIdHash);
+        fbb.startTable(9);
+        fbb.addInt64(0, object.id);
+        fbb.addOffset(1, leaseKeyOffset);
+        fbb.addOffset(2, scopeKeyOffset);
+        fbb.addOffset(3, accountFingerprintOffset);
+        fbb.addOffset(4, ownerIdHashOffset);
+        fbb.addInt64(5, object.generation);
+        fbb.addInt64(6, object.acquiredAtMs);
+        fbb.addInt64(7, object.expiresAtMs);
+        fbb.finish(fbb.endTable());
+        return object.id;
+      },
+      objectFromFB: (obx.Store store, ByteData fbData) {
+        final buffer = fb.BufferContext(fbData);
+        final rootOffset = buffer.derefObject(0);
+        final idParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          4,
+          0,
+        );
+        final leaseKeyParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 6, '');
+        final scopeKeyParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 8, '');
+        final accountFingerprintParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 10, '');
+        final ownerIdHashParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 12, '');
+        final generationParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          14,
+          0,
+        );
+        final acquiredAtMsParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          16,
+          0,
+        );
+        final expiresAtMsParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          18,
+          0,
+        );
+        final object = CloudSyncLeaseEntity(
+          id: idParam,
+          leaseKey: leaseKeyParam,
+          scopeKey: scopeKeyParam,
+          accountFingerprint: accountFingerprintParam,
+          ownerIdHash: ownerIdHashParam,
+          generation: generationParam,
+          acquiredAtMs: acquiredAtMsParam,
+          expiresAtMs: expiresAtMsParam,
+        );
+
+        return object;
+      },
+    ),
+    CloudAttachmentMaterializationEntity:
+        obx_int.EntityDefinition<CloudAttachmentMaterializationEntity>(
+          model: _entities[15],
+          toOneRelations: (CloudAttachmentMaterializationEntity object) => [],
+          toManyRelations: (CloudAttachmentMaterializationEntity object) => {},
+          getId: (CloudAttachmentMaterializationEntity object) => object.id,
+          setId: (CloudAttachmentMaterializationEntity object, int id) {
+            object.id = id;
+          },
+          objectToFB:
+              (CloudAttachmentMaterializationEntity object, fb.Builder fbb) {
+                final transferKeyOffset = fbb.writeString(object.transferKey);
+                final scopeKeyOffset = fbb.writeString(object.scopeKey);
+                final accountFingerprintOffset = fbb.writeString(
+                  object.accountFingerprint,
+                );
+                final zoneOffset = fbb.writeString(object.zone);
+                final logicalEntityKeyHashOffset = fbb.writeString(
+                  object.logicalEntityKeyHash,
+                );
+                final expectedIntegrityTagHashOffset = fbb.writeString(
+                  object.expectedIntegrityTagHash,
+                );
+                final protectedTempReferenceOffset =
+                    object.protectedTempReference == null
+                    ? null
+                    : fbb.writeString(object.protectedTempReference!);
+                final protectedResumeManifestReferenceOffset =
+                    object.protectedResumeManifestReference == null
+                    ? null
+                    : fbb.writeString(object.protectedResumeManifestReference!);
+                final protectedContentVerificationReferenceOffset =
+                    object.protectedContentVerificationReference == null
+                    ? null
+                    : fbb.writeString(
+                        object.protectedContentVerificationReference!,
+                      );
+                final protectedFinalReferenceOffset =
+                    object.protectedFinalReference == null
+                    ? null
+                    : fbb.writeString(object.protectedFinalReference!);
+                fbb.startTable(17);
+                fbb.addInt64(0, object.id);
+                fbb.addOffset(1, transferKeyOffset);
+                fbb.addOffset(2, scopeKeyOffset);
+                fbb.addOffset(3, accountFingerprintOffset);
+                fbb.addOffset(4, zoneOffset);
+                fbb.addInt64(5, object.generation);
+                fbb.addOffset(6, logicalEntityKeyHashOffset);
+                fbb.addInt64(7, object.expectedBytes);
+                fbb.addOffset(8, expectedIntegrityTagHashOffset);
+                fbb.addInt64(9, object.stage);
+                fbb.addInt64(10, object.verifiedBytes);
+                fbb.addOffset(11, protectedTempReferenceOffset);
+                fbb.addOffset(12, protectedResumeManifestReferenceOffset);
+                fbb.addOffset(13, protectedContentVerificationReferenceOffset);
+                fbb.addOffset(14, protectedFinalReferenceOffset);
+                fbb.addInt64(15, object.updatedAtMs);
+                fbb.finish(fbb.endTable());
+                return object.id;
+              },
+          objectFromFB: (obx.Store store, ByteData fbData) {
+            final buffer = fb.BufferContext(fbData);
+            final rootOffset = buffer.derefObject(0);
+            final idParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              4,
+              0,
+            );
+            final transferKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 6, '');
+            final scopeKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 8, '');
+            final accountFingerprintParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 10, '');
+            final zoneParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 12, '');
+            final generationParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              14,
+              0,
+            );
+            final logicalEntityKeyHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 16, '');
+            final expectedBytesParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              18,
+              0,
+            );
+            final expectedIntegrityTagHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 20, '');
+            final stageParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              22,
+              0,
+            );
+            final verifiedBytesParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              24,
+              0,
+            );
+            final protectedTempReferenceParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 26);
+            final protectedResumeManifestReferenceParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 28);
+            final protectedContentVerificationReferenceParam =
+                const fb.StringReader(
+                  asciiOptimization: true,
+                ).vTableGetNullable(buffer, rootOffset, 30);
+            final protectedFinalReferenceParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 32);
+            final updatedAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              34,
+              0,
+            );
+            final object = CloudAttachmentMaterializationEntity(
+              id: idParam,
+              transferKey: transferKeyParam,
+              scopeKey: scopeKeyParam,
+              accountFingerprint: accountFingerprintParam,
+              zone: zoneParam,
+              generation: generationParam,
+              logicalEntityKeyHash: logicalEntityKeyHashParam,
+              expectedBytes: expectedBytesParam,
+              expectedIntegrityTagHash: expectedIntegrityTagHashParam,
+              stage: stageParam,
+              verifiedBytes: verifiedBytesParam,
+              protectedTempReference: protectedTempReferenceParam,
+              protectedResumeManifestReference:
+                  protectedResumeManifestReferenceParam,
+              protectedContentVerificationReference:
+                  protectedContentVerificationReferenceParam,
+              protectedFinalReference: protectedFinalReferenceParam,
+              updatedAtMs: updatedAtMsParam,
+            );
+
+            return object;
+          },
+        ),
+    CloudSemanticReplayEntity:
+        obx_int.EntityDefinition<CloudSemanticReplayEntity>(
+          model: _entities[16],
+          toOneRelations: (CloudSemanticReplayEntity object) => [],
+          toManyRelations: (CloudSemanticReplayEntity object) => {},
+          getId: (CloudSemanticReplayEntity object) => object.id,
+          setId: (CloudSemanticReplayEntity object, int id) {
+            object.id = id;
+          },
+          objectToFB: (CloudSemanticReplayEntity object, fb.Builder fbb) {
+            final replayKeyOffset = fbb.writeString(object.replayKey);
+            final scopeGenerationKeyOffset = fbb.writeString(
+              object.scopeGenerationKey,
+            );
+            final scopeKeyOffset = fbb.writeString(object.scopeKey);
+            final accountFingerprintOffset = fbb.writeString(
+              object.accountFingerprint,
+            );
+            final containerOffset = fbb.writeString(object.container);
+            final databaseOffset = fbb.writeString(object.database);
+            final zoneOffset = fbb.writeString(object.zone);
+            final streamKindOffset = fbb.writeString(object.streamKind);
+            final changeIdHashOffset = fbb.writeString(object.changeIdHash);
+            final serverRecordIdHashOffset = fbb.writeString(
+              object.serverRecordIdHash,
+            );
+            final logicalEntityKeyHashOffset =
+                object.logicalEntityKeyHash == null
+                ? null
+                : fbb.writeString(object.logicalEntityKeyHash!);
+            final payloadSha256Offset = object.payloadSha256 == null
+                ? null
+                : fbb.writeString(object.payloadSha256!);
+            final protectedPayloadReferenceHashOffset =
+                object.protectedPayloadReferenceHash == null
+                ? null
+                : fbb.writeString(object.protectedPayloadReferenceHash!);
+            final changeTypeOffset = fbb.writeString(object.changeType);
+            final terminalOutcomeOffset = fbb.writeString(
+              object.terminalOutcome,
+            );
+            final terminalSafeCodeOffset = object.terminalSafeCode == null
+                ? null
+                : fbb.writeString(object.terminalSafeCode!);
+            fbb.startTable(25);
+            fbb.addInt64(0, object.id);
+            fbb.addOffset(1, replayKeyOffset);
+            fbb.addOffset(2, scopeGenerationKeyOffset);
+            fbb.addOffset(3, scopeKeyOffset);
+            fbb.addOffset(4, accountFingerprintOffset);
+            fbb.addOffset(5, containerOffset);
+            fbb.addOffset(6, databaseOffset);
+            fbb.addOffset(7, zoneOffset);
+            fbb.addOffset(8, streamKindOffset);
+            fbb.addInt64(9, object.schemaVersion);
+            fbb.addInt64(10, object.generation);
+            fbb.addOffset(11, changeIdHashOffset);
+            fbb.addInt64(15, object.updatedAtMs);
+            fbb.addOffset(16, serverRecordIdHashOffset);
+            fbb.addOffset(17, logicalEntityKeyHashOffset);
+            fbb.addOffset(18, payloadSha256Offset);
+            fbb.addOffset(19, protectedPayloadReferenceHashOffset);
+            fbb.addInt64(20, object.inboxSequence);
+            fbb.addOffset(21, changeTypeOffset);
+            fbb.addOffset(22, terminalOutcomeOffset);
+            fbb.addOffset(23, terminalSafeCodeOffset);
+            fbb.finish(fbb.endTable());
+            return object.id;
+          },
+          objectFromFB: (obx.Store store, ByteData fbData) {
+            final buffer = fb.BufferContext(fbData);
+            final rootOffset = buffer.derefObject(0);
+            final idParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              4,
+              0,
+            );
+            final replayKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 6, '');
+            final scopeGenerationKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 8, '');
+            final scopeKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 10, '');
+            final accountFingerprintParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 12, '');
+            final containerParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 14, '');
+            final databaseParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 16, '');
+            final zoneParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 18, '');
+            final streamKindParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 20, '');
+            final schemaVersionParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              22,
+              0,
+            );
+            final generationParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              24,
+              0,
+            );
+            final changeIdHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 26, '');
+            final serverRecordIdHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 36, '');
+            final logicalEntityKeyHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 38);
+            final payloadSha256Param = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 40);
+            final protectedPayloadReferenceHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 42);
+            final inboxSequenceParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              44,
+              0,
+            );
+            final changeTypeParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 46, '');
+            final terminalOutcomeParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 48, '');
+            final terminalSafeCodeParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 50);
+            final updatedAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              34,
+              0,
+            );
+            final object = CloudSemanticReplayEntity(
+              id: idParam,
+              replayKey: replayKeyParam,
+              scopeGenerationKey: scopeGenerationKeyParam,
+              scopeKey: scopeKeyParam,
+              accountFingerprint: accountFingerprintParam,
+              container: containerParam,
+              database: databaseParam,
+              zone: zoneParam,
+              streamKind: streamKindParam,
+              schemaVersion: schemaVersionParam,
+              generation: generationParam,
+              changeIdHash: changeIdHashParam,
+              serverRecordIdHash: serverRecordIdHashParam,
+              logicalEntityKeyHash: logicalEntityKeyHashParam,
+              payloadSha256: payloadSha256Param,
+              protectedPayloadReferenceHash: protectedPayloadReferenceHashParam,
+              inboxSequence: inboxSequenceParam,
+              changeType: changeTypeParam,
+              terminalOutcome: terminalOutcomeParam,
+              terminalSafeCode: terminalSafeCodeParam,
+              updatedAtMs: updatedAtMsParam,
+            );
+
+            return object;
+          },
+        ),
+    CloudSemanticSnapshotEntity:
+        obx_int.EntityDefinition<CloudSemanticSnapshotEntity>(
+          model: _entities[17],
+          toOneRelations: (CloudSemanticSnapshotEntity object) => [],
+          toManyRelations: (CloudSemanticSnapshotEntity object) => {},
+          getId: (CloudSemanticSnapshotEntity object) => object.id,
+          setId: (CloudSemanticSnapshotEntity object, int id) {
+            object.id = id;
+          },
+          objectToFB: (CloudSemanticSnapshotEntity object, fb.Builder fbb) {
+            final snapshotKeyOffset = fbb.writeString(object.snapshotKey);
+            final scopeGenerationKeyOffset = fbb.writeString(
+              object.scopeGenerationKey,
+            );
+            final scopeKeyOffset = fbb.writeString(object.scopeKey);
+            final accountFingerprintOffset = fbb.writeString(
+              object.accountFingerprint,
+            );
+            final containerOffset = fbb.writeString(object.container);
+            final databaseOffset = fbb.writeString(object.database);
+            final zoneOffset = fbb.writeString(object.zone);
+            final streamKindOffset = fbb.writeString(object.streamKind);
+            final entityKindOffset = fbb.writeString(object.entityKind);
+            final logicalEntityKeyHashOffset = fbb.writeString(
+              object.logicalEntityKeyHash,
+            );
+            final parentLogicalKeyHashOffset =
+                object.parentLogicalKeyHash == null
+                ? null
+                : fbb.writeString(object.parentLogicalKeyHash!);
+            final immutableContentDigestOffset =
+                object.immutableContentDigest == null
+                ? null
+                : fbb.writeString(object.immutableContentDigest!);
+            final editPartsJsonOffset = fbb.writeString(object.editPartsJson);
+            final groupMetadataDigestOffset = object.groupMetadataDigest == null
+                ? null
+                : fbb.writeString(object.groupMetadataDigest!);
+            final etagHashOffset = object.etagHash == null
+                ? null
+                : fbb.writeString(object.etagHash!);
+            fbb.startTable(25);
+            fbb.addInt64(0, object.id);
+            fbb.addOffset(1, snapshotKeyOffset);
+            fbb.addOffset(2, scopeGenerationKeyOffset);
+            fbb.addOffset(3, scopeKeyOffset);
+            fbb.addOffset(4, accountFingerprintOffset);
+            fbb.addOffset(5, containerOffset);
+            fbb.addOffset(6, databaseOffset);
+            fbb.addOffset(7, zoneOffset);
+            fbb.addOffset(8, streamKindOffset);
+            fbb.addInt64(9, object.schemaVersion);
+            fbb.addInt64(10, object.generation);
+            fbb.addOffset(11, entityKindOffset);
+            fbb.addOffset(12, logicalEntityKeyHashOffset);
+            fbb.addOffset(13, parentLogicalKeyHashOffset);
+            fbb.addOffset(14, immutableContentDigestOffset);
+            fbb.addInt64(15, object.createdAtMs);
+            fbb.addInt64(16, object.readAtMs);
+            fbb.addInt64(17, object.deliveredAtMs);
+            fbb.addOffset(18, editPartsJsonOffset);
+            fbb.addInt64(19, object.retractedAtMs);
+            fbb.addInt64(20, object.groupVersion);
+            fbb.addOffset(21, groupMetadataDigestOffset);
+            fbb.addOffset(22, etagHashOffset);
+            fbb.addInt64(23, object.updatedAtMs);
+            fbb.finish(fbb.endTable());
+            return object.id;
+          },
+          objectFromFB: (obx.Store store, ByteData fbData) {
+            final buffer = fb.BufferContext(fbData);
+            final rootOffset = buffer.derefObject(0);
+            final idParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              4,
+              0,
+            );
+            final snapshotKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 6, '');
+            final scopeGenerationKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 8, '');
+            final scopeKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 10, '');
+            final accountFingerprintParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 12, '');
+            final containerParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 14, '');
+            final databaseParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 16, '');
+            final zoneParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 18, '');
+            final streamKindParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 20, '');
+            final schemaVersionParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              22,
+              0,
+            );
+            final generationParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              24,
+              0,
+            );
+            final entityKindParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 26, '');
+            final logicalEntityKeyHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 28, '');
+            final parentLogicalKeyHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 30);
+            final immutableContentDigestParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 32);
+            final createdAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              34,
+              0,
+            );
+            final readAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              36,
+              0,
+            );
+            final deliveredAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              38,
+              0,
+            );
+            final editPartsJsonParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 40, '');
+            final retractedAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              42,
+              0,
+            );
+            final groupVersionParam = const fb.Int64Reader().vTableGetNullable(
+              buffer,
+              rootOffset,
+              44,
+            );
+            final groupMetadataDigestParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 46);
+            final etagHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 48);
+            final updatedAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              50,
+              0,
+            );
+            final object = CloudSemanticSnapshotEntity(
+              id: idParam,
+              snapshotKey: snapshotKeyParam,
+              scopeGenerationKey: scopeGenerationKeyParam,
+              scopeKey: scopeKeyParam,
+              accountFingerprint: accountFingerprintParam,
+              container: containerParam,
+              database: databaseParam,
+              zone: zoneParam,
+              streamKind: streamKindParam,
+              schemaVersion: schemaVersionParam,
+              generation: generationParam,
+              entityKind: entityKindParam,
+              logicalEntityKeyHash: logicalEntityKeyHashParam,
+              parentLogicalKeyHash: parentLogicalKeyHashParam,
+              immutableContentDigest: immutableContentDigestParam,
+              createdAtMs: createdAtMsParam,
+              readAtMs: readAtMsParam,
+              deliveredAtMs: deliveredAtMsParam,
+              editPartsJson: editPartsJsonParam,
+              retractedAtMs: retractedAtMsParam,
+              groupVersion: groupVersionParam,
+              groupMetadataDigest: groupMetadataDigestParam,
+              etagHash: etagHashParam,
+              updatedAtMs: updatedAtMsParam,
+            );
+
+            return object;
+          },
+        ),
+    CloudProtectedPageLeaseEntity:
+        obx_int.EntityDefinition<CloudProtectedPageLeaseEntity>(
+          model: _entities[18],
+          toOneRelations: (CloudProtectedPageLeaseEntity object) => [],
+          toManyRelations: (CloudProtectedPageLeaseEntity object) => {},
+          getId: (CloudProtectedPageLeaseEntity object) => object.id,
+          setId: (CloudProtectedPageLeaseEntity object, int id) {
+            object.id = id;
+          },
+          objectToFB: (CloudProtectedPageLeaseEntity object, fb.Builder fbb) {
+            final leaseReferenceOffset = fbb.writeString(object.leaseReference);
+            final scopeKeyOffset = fbb.writeString(object.scopeKey);
+            final accountFingerprintOffset = fbb.writeString(
+              object.accountFingerprint,
+            );
+            final batchIdHashOffset = fbb.writeString(object.batchIdHash);
+            fbb.startTable(10);
+            fbb.addInt64(0, object.id);
+            fbb.addOffset(1, leaseReferenceOffset);
+            fbb.addOffset(2, scopeKeyOffset);
+            fbb.addOffset(3, accountFingerprintOffset);
+            fbb.addInt64(4, object.generation);
+            fbb.addOffset(5, batchIdHashOffset);
+            fbb.addInt64(6, object.adoptedAtMs);
+            fbb.addInt64(7, object.finalizeAttemptCount);
+            fbb.addInt64(8, object.nextFinalizeEligibleAtMs);
+            fbb.finish(fbb.endTable());
+            return object.id;
+          },
+          objectFromFB: (obx.Store store, ByteData fbData) {
+            final buffer = fb.BufferContext(fbData);
+            final rootOffset = buffer.derefObject(0);
+            final idParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              4,
+              0,
+            );
+            final leaseReferenceParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 6, '');
+            final scopeKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 8, '');
+            final accountFingerprintParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 10, '');
+            final generationParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              12,
+              0,
+            );
+            final batchIdHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 14, '');
+            final adoptedAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              16,
+              0,
+            );
+            final finalizeAttemptCountParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              18,
+              0,
+            );
+            final nextFinalizeEligibleAtMsParam = const fb.Int64Reader()
+                .vTableGet(buffer, rootOffset, 20, 0);
+            final object = CloudProtectedPageLeaseEntity(
+              id: idParam,
+              leaseReference: leaseReferenceParam,
+              scopeKey: scopeKeyParam,
+              accountFingerprint: accountFingerprintParam,
+              generation: generationParam,
+              batchIdHash: batchIdHashParam,
+              adoptedAtMs: adoptedAtMsParam,
+              finalizeAttemptCount: finalizeAttemptCountParam,
+              nextFinalizeEligibleAtMs: nextFinalizeEligibleAtMsParam,
+            );
+
+            return object;
+          },
+        ),
+    CloudKitWriterAuthorityEntity:
+        obx_int.EntityDefinition<CloudKitWriterAuthorityEntity>(
+          model: _entities[19],
+          toOneRelations: (CloudKitWriterAuthorityEntity object) => [],
+          toManyRelations: (CloudKitWriterAuthorityEntity object) => {},
+          getId: (CloudKitWriterAuthorityEntity object) => object.id,
+          setId: (CloudKitWriterAuthorityEntity object, int id) {
+            object.id = id;
+          },
+          objectToFB: (CloudKitWriterAuthorityEntity object, fb.Builder fbb) {
+            final authorityKeyOffset = fbb.writeString(object.authorityKey);
+            final accountFingerprintOffset = fbb.writeString(
+              object.accountFingerprint,
+            );
+            final containerOffset = fbb.writeString(object.container);
+            final databaseOffset = fbb.writeString(object.database);
+            final transitionIdHashOffset = object.transitionIdHash == null
+                ? null
+                : fbb.writeString(object.transitionIdHash!);
+            final resetScopeKeyHashOffset = object.resetScopeKeyHash == null
+                ? null
+                : fbb.writeString(object.resetScopeKeyHash!);
+            final resetProofReferenceHashOffset =
+                object.resetProofReferenceHash == null
+                ? null
+                : fbb.writeString(object.resetProofReferenceHash!);
+            fbb.startTable(15);
+            fbb.addInt64(0, object.id);
+            fbb.addOffset(1, authorityKeyOffset);
+            fbb.addOffset(2, accountFingerprintOffset);
+            fbb.addOffset(3, containerOffset);
+            fbb.addOffset(4, databaseOffset);
+            fbb.addInt64(5, object.owner);
+            fbb.addInt64(6, object.state);
+            fbb.addInt64(7, object.targetOwner);
+            fbb.addInt64(8, object.epoch);
+            fbb.addInt64(9, object.updatedAtMs);
+            fbb.addOffset(10, transitionIdHashOffset);
+            fbb.addOffset(11, resetScopeKeyHashOffset);
+            fbb.addInt64(12, object.resetGeneration);
+            fbb.addOffset(13, resetProofReferenceHashOffset);
+            fbb.finish(fbb.endTable());
+            return object.id;
+          },
+          objectFromFB: (obx.Store store, ByteData fbData) {
+            final buffer = fb.BufferContext(fbData);
+            final rootOffset = buffer.derefObject(0);
+            final idParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              4,
+              0,
+            );
+            final authorityKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 6, '');
+            final accountFingerprintParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 8, '');
+            final containerParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 10, '');
+            final databaseParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 12, '');
+            final ownerParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              14,
+              0,
+            );
+            final stateParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              16,
+              0,
+            );
+            final targetOwnerParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              18,
+              0,
+            );
+            final epochParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              20,
+              0,
+            );
+            final transitionIdHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 24);
+            final resetScopeKeyHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 26);
+            final resetProofReferenceHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 30);
+            final resetGenerationParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              28,
+              0,
+            );
+            final updatedAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              22,
+              0,
+            );
+            final object = CloudKitWriterAuthorityEntity(
+              id: idParam,
+              authorityKey: authorityKeyParam,
+              accountFingerprint: accountFingerprintParam,
+              container: containerParam,
+              database: databaseParam,
+              owner: ownerParam,
+              state: stateParam,
+              targetOwner: targetOwnerParam,
+              epoch: epochParam,
+              transitionIdHash: transitionIdHashParam,
+              resetScopeKeyHash: resetScopeKeyHashParam,
+              resetProofReferenceHash: resetProofReferenceHashParam,
+              resetGeneration: resetGenerationParam,
+              updatedAtMs: updatedAtMsParam,
+            );
+
+            return object;
+          },
+        ),
+    CloudKitDeletionIntentEntity:
+        obx_int.EntityDefinition<CloudKitDeletionIntentEntity>(
+          model: _entities[20],
+          toOneRelations: (CloudKitDeletionIntentEntity object) => [],
+          toManyRelations: (CloudKitDeletionIntentEntity object) => {},
+          getId: (CloudKitDeletionIntentEntity object) => object.id,
+          setId: (CloudKitDeletionIntentEntity object, int id) {
+            object.id = id;
+          },
+          objectToFB: (CloudKitDeletionIntentEntity object, fb.Builder fbb) {
+            final intentKeyOffset = fbb.writeString(object.intentKey);
+            final accountFingerprintOffset = fbb.writeString(
+              object.accountFingerprint,
+            );
+            final containerOffset = fbb.writeString(object.container);
+            final databaseOffset = fbb.writeString(object.database);
+            final recordIdOffset = fbb.writeString(object.recordId);
+            final quarantineReasonOffset = object.quarantineReason == null
+                ? null
+                : fbb.writeString(object.quarantineReason!);
+            fbb.startTable(13);
+            fbb.addInt64(0, object.id);
+            fbb.addOffset(1, intentKeyOffset);
+            fbb.addOffset(2, accountFingerprintOffset);
+            fbb.addOffset(3, containerOffset);
+            fbb.addOffset(4, databaseOffset);
+            fbb.addInt64(5, object.writerEpoch);
+            fbb.addInt64(6, object.kind);
+            fbb.addOffset(7, recordIdOffset);
+            fbb.addInt64(8, object.state);
+            fbb.addOffset(9, quarantineReasonOffset);
+            fbb.addInt64(10, object.createdAtMs);
+            fbb.addInt64(11, object.updatedAtMs);
+            fbb.finish(fbb.endTable());
+            return object.id;
+          },
+          objectFromFB: (obx.Store store, ByteData fbData) {
+            final buffer = fb.BufferContext(fbData);
+            final rootOffset = buffer.derefObject(0);
+            final idParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              4,
+              0,
+            );
+            final intentKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 6, '');
+            final accountFingerprintParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 8, '');
+            final containerParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 10, '');
+            final databaseParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 12, '');
+            final writerEpochParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              14,
+              0,
+            );
+            final kindParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              16,
+              0,
+            );
+            final recordIdParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 18, '');
+            final stateParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              20,
+              0,
+            );
+            final quarantineReasonParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 22);
+            final createdAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              24,
+              0,
+            );
+            final updatedAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              26,
+              0,
+            );
+            final object = CloudKitDeletionIntentEntity(
+              id: idParam,
+              intentKey: intentKeyParam,
+              accountFingerprint: accountFingerprintParam,
+              container: containerParam,
+              database: databaseParam,
+              writerEpoch: writerEpochParam,
+              kind: kindParam,
+              recordId: recordIdParam,
+              state: stateParam,
+              quarantineReason: quarantineReasonParam,
+              createdAtMs: createdAtMsParam,
+              updatedAtMs: updatedAtMsParam,
+            );
+
+            return object;
+          },
+        ),
+    CloudKitDeletionQuarantineEntity:
+        obx_int.EntityDefinition<CloudKitDeletionQuarantineEntity>(
+          model: _entities[21],
+          toOneRelations: (CloudKitDeletionQuarantineEntity object) => [],
+          toManyRelations: (CloudKitDeletionQuarantineEntity object) => {},
+          getId: (CloudKitDeletionQuarantineEntity object) => object.id,
+          setId: (CloudKitDeletionQuarantineEntity object, int id) {
+            object.id = id;
+          },
+          objectToFB:
+              (CloudKitDeletionQuarantineEntity object, fb.Builder fbb) {
+                final quarantineKeyOffset = fbb.writeString(
+                  object.quarantineKey,
+                );
+                final sourceKeyOffset = fbb.writeString(object.sourceKey);
+                final recordIdOffset = fbb.writeString(object.recordId);
+                final reasonOffset = fbb.writeString(object.reason);
+                fbb.startTable(7);
+                fbb.addInt64(0, object.id);
+                fbb.addOffset(1, quarantineKeyOffset);
+                fbb.addOffset(2, sourceKeyOffset);
+                fbb.addOffset(3, recordIdOffset);
+                fbb.addOffset(4, reasonOffset);
+                fbb.addInt64(5, object.createdAtMs);
+                fbb.finish(fbb.endTable());
+                return object.id;
+              },
+          objectFromFB: (obx.Store store, ByteData fbData) {
+            final buffer = fb.BufferContext(fbData);
+            final rootOffset = buffer.derefObject(0);
+            final idParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              4,
+              0,
+            );
+            final quarantineKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 6, '');
+            final sourceKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 8, '');
+            final recordIdParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 10, '');
+            final reasonParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 12, '');
+            final createdAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              14,
+              0,
+            );
+            final object = CloudKitDeletionQuarantineEntity(
+              id: idParam,
+              quarantineKey: quarantineKeyParam,
+              sourceKey: sourceKeyParam,
+              recordId: recordIdParam,
+              reason: reasonParam,
+              createdAtMs: createdAtMsParam,
+            );
+
+            return object;
+          },
+        ),
   };
 
   return obx_int.ModelDefinition(model, bindings);
@@ -2140,64 +6038,79 @@ obx_int.ModelDefinition getObjectBoxModel() {
 /// [Attachment] entity fields to define ObjectBox queries.
 class Attachment_ {
   /// See [Attachment.id].
-  static final id =
-      obx.QueryIntegerProperty<Attachment>(_entities[0].properties[0]);
+  static final id = obx.QueryIntegerProperty<Attachment>(
+    _entities[0].properties[0],
+  );
 
   /// See [Attachment.originalROWID].
-  static final originalROWID =
-      obx.QueryIntegerProperty<Attachment>(_entities[0].properties[1]);
+  static final originalROWID = obx.QueryIntegerProperty<Attachment>(
+    _entities[0].properties[1],
+  );
 
   /// See [Attachment.guid].
-  static final guid =
-      obx.QueryStringProperty<Attachment>(_entities[0].properties[2]);
+  static final guid = obx.QueryStringProperty<Attachment>(
+    _entities[0].properties[2],
+  );
 
   /// See [Attachment.uti].
-  static final uti =
-      obx.QueryStringProperty<Attachment>(_entities[0].properties[3]);
+  static final uti = obx.QueryStringProperty<Attachment>(
+    _entities[0].properties[3],
+  );
 
   /// See [Attachment.mimeType].
-  static final mimeType =
-      obx.QueryStringProperty<Attachment>(_entities[0].properties[4]);
+  static final mimeType = obx.QueryStringProperty<Attachment>(
+    _entities[0].properties[4],
+  );
 
   /// See [Attachment.isOutgoing].
-  static final isOutgoing =
-      obx.QueryBooleanProperty<Attachment>(_entities[0].properties[5]);
+  static final isOutgoing = obx.QueryBooleanProperty<Attachment>(
+    _entities[0].properties[5],
+  );
 
   /// See [Attachment.transferName].
-  static final transferName =
-      obx.QueryStringProperty<Attachment>(_entities[0].properties[6]);
+  static final transferName = obx.QueryStringProperty<Attachment>(
+    _entities[0].properties[6],
+  );
 
   /// See [Attachment.totalBytes].
-  static final totalBytes =
-      obx.QueryIntegerProperty<Attachment>(_entities[0].properties[7]);
+  static final totalBytes = obx.QueryIntegerProperty<Attachment>(
+    _entities[0].properties[7],
+  );
 
   /// See [Attachment.height].
-  static final height =
-      obx.QueryIntegerProperty<Attachment>(_entities[0].properties[8]);
+  static final height = obx.QueryIntegerProperty<Attachment>(
+    _entities[0].properties[8],
+  );
 
   /// See [Attachment.width].
-  static final width =
-      obx.QueryIntegerProperty<Attachment>(_entities[0].properties[9]);
+  static final width = obx.QueryIntegerProperty<Attachment>(
+    _entities[0].properties[9],
+  );
 
   /// See [Attachment.webUrl].
-  static final webUrl =
-      obx.QueryStringProperty<Attachment>(_entities[0].properties[10]);
+  static final webUrl = obx.QueryStringProperty<Attachment>(
+    _entities[0].properties[10],
+  );
 
   /// See [Attachment.message].
-  static final message =
-      obx.QueryRelationToOne<Attachment, Message>(_entities[0].properties[11]);
+  static final message = obx.QueryRelationToOne<Attachment, Message>(
+    _entities[0].properties[11],
+  );
 
   /// See [Attachment.dbMetadata].
-  static final dbMetadata =
-      obx.QueryStringProperty<Attachment>(_entities[0].properties[12]);
+  static final dbMetadata = obx.QueryStringProperty<Attachment>(
+    _entities[0].properties[12],
+  );
 
   /// See [Attachment.hasLivePhoto].
-  static final hasLivePhoto =
-      obx.QueryBooleanProperty<Attachment>(_entities[0].properties[13]);
+  static final hasLivePhoto = obx.QueryBooleanProperty<Attachment>(
+    _entities[0].properties[13],
+  );
 
   /// See [Attachment.ckRecordId].
-  static final ckRecordId =
-      obx.QueryStringProperty<Attachment>(_entities[0].properties[14]);
+  static final ckRecordId = obx.QueryStringProperty<Attachment>(
+    _entities[0].properties[14],
+  );
 }
 
 /// [Chat] entity fields to define ObjectBox queries.
@@ -2209,168 +6122,209 @@ class Chat_ {
   static final guid = obx.QueryStringProperty<Chat>(_entities[1].properties[1]);
 
   /// See [Chat.chatIdentifier].
-  static final chatIdentifier =
-      obx.QueryStringProperty<Chat>(_entities[1].properties[2]);
+  static final chatIdentifier = obx.QueryStringProperty<Chat>(
+    _entities[1].properties[2],
+  );
 
   /// See [Chat.isArchived].
-  static final isArchived =
-      obx.QueryBooleanProperty<Chat>(_entities[1].properties[3]);
+  static final isArchived = obx.QueryBooleanProperty<Chat>(
+    _entities[1].properties[3],
+  );
 
   /// See [Chat.muteType].
-  static final muteType =
-      obx.QueryStringProperty<Chat>(_entities[1].properties[4]);
+  static final muteType = obx.QueryStringProperty<Chat>(
+    _entities[1].properties[4],
+  );
 
   /// See [Chat.muteArgs].
-  static final muteArgs =
-      obx.QueryStringProperty<Chat>(_entities[1].properties[5]);
+  static final muteArgs = obx.QueryStringProperty<Chat>(
+    _entities[1].properties[5],
+  );
 
   /// See [Chat.isPinned].
-  static final isPinned =
-      obx.QueryBooleanProperty<Chat>(_entities[1].properties[6]);
+  static final isPinned = obx.QueryBooleanProperty<Chat>(
+    _entities[1].properties[6],
+  );
 
   /// See [Chat.hasUnreadMessage].
-  static final hasUnreadMessage =
-      obx.QueryBooleanProperty<Chat>(_entities[1].properties[7]);
+  static final hasUnreadMessage = obx.QueryBooleanProperty<Chat>(
+    _entities[1].properties[7],
+  );
 
   /// See [Chat.dbOnlyLatestMessageDate].
-  static final dbOnlyLatestMessageDate =
-      obx.QueryDateProperty<Chat>(_entities[1].properties[8]);
+  static final dbOnlyLatestMessageDate = obx.QueryDateProperty<Chat>(
+    _entities[1].properties[8],
+  );
 
   /// See [Chat.title].
-  static final title =
-      obx.QueryStringProperty<Chat>(_entities[1].properties[9]);
+  static final title = obx.QueryStringProperty<Chat>(
+    _entities[1].properties[9],
+  );
 
   /// See [Chat.displayName].
-  static final displayName =
-      obx.QueryStringProperty<Chat>(_entities[1].properties[10]);
+  static final displayName = obx.QueryStringProperty<Chat>(
+    _entities[1].properties[10],
+  );
 
   /// See [Chat.customAvatarPath].
-  static final customAvatarPath =
-      obx.QueryStringProperty<Chat>(_entities[1].properties[11]);
+  static final customAvatarPath = obx.QueryStringProperty<Chat>(
+    _entities[1].properties[11],
+  );
 
   /// See [Chat.pinIndex].
-  static final pinIndex =
-      obx.QueryIntegerProperty<Chat>(_entities[1].properties[12]);
+  static final pinIndex = obx.QueryIntegerProperty<Chat>(
+    _entities[1].properties[12],
+  );
 
   /// See [Chat.autoSendReadReceipts].
-  static final autoSendReadReceipts =
-      obx.QueryBooleanProperty<Chat>(_entities[1].properties[13]);
+  static final autoSendReadReceipts = obx.QueryBooleanProperty<Chat>(
+    _entities[1].properties[13],
+  );
 
   /// See [Chat.autoSendTypingIndicators].
-  static final autoSendTypingIndicators =
-      obx.QueryBooleanProperty<Chat>(_entities[1].properties[14]);
+  static final autoSendTypingIndicators = obx.QueryBooleanProperty<Chat>(
+    _entities[1].properties[14],
+  );
 
   /// See [Chat.textFieldText].
-  static final textFieldText =
-      obx.QueryStringProperty<Chat>(_entities[1].properties[15]);
+  static final textFieldText = obx.QueryStringProperty<Chat>(
+    _entities[1].properties[15],
+  );
 
   /// See [Chat.textFieldAttachments].
-  static final textFieldAttachments =
-      obx.QueryStringVectorProperty<Chat>(_entities[1].properties[16]);
+  static final textFieldAttachments = obx.QueryStringVectorProperty<Chat>(
+    _entities[1].properties[16],
+  );
 
   /// See [Chat.dateDeleted].
-  static final dateDeleted =
-      obx.QueryDateProperty<Chat>(_entities[1].properties[17]);
+  static final dateDeleted = obx.QueryDateProperty<Chat>(
+    _entities[1].properties[17],
+  );
 
   /// See [Chat.style].
-  static final style =
-      obx.QueryIntegerProperty<Chat>(_entities[1].properties[18]);
+  static final style = obx.QueryIntegerProperty<Chat>(
+    _entities[1].properties[18],
+  );
 
   /// See [Chat.lockChatName].
-  static final lockChatName =
-      obx.QueryBooleanProperty<Chat>(_entities[1].properties[19]);
+  static final lockChatName = obx.QueryBooleanProperty<Chat>(
+    _entities[1].properties[19],
+  );
 
   /// See [Chat.lockChatIcon].
-  static final lockChatIcon =
-      obx.QueryBooleanProperty<Chat>(_entities[1].properties[20]);
+  static final lockChatIcon = obx.QueryBooleanProperty<Chat>(
+    _entities[1].properties[20],
+  );
 
   /// See [Chat.lastReadMessageGuid].
-  static final lastReadMessageGuid =
-      obx.QueryStringProperty<Chat>(_entities[1].properties[21]);
+  static final lastReadMessageGuid = obx.QueryStringProperty<Chat>(
+    _entities[1].properties[21],
+  );
 
   /// See [Chat.groupVersion].
-  static final groupVersion =
-      obx.QueryIntegerProperty<Chat>(_entities[1].properties[22]);
+  static final groupVersion = obx.QueryIntegerProperty<Chat>(
+    _entities[1].properties[22],
+  );
 
   /// See [Chat.usingHandle].
-  static final usingHandle =
-      obx.QueryStringProperty<Chat>(_entities[1].properties[23]);
+  static final usingHandle = obx.QueryStringProperty<Chat>(
+    _entities[1].properties[23],
+  );
 
   /// See [Chat.apnTitle].
-  static final apnTitle =
-      obx.QueryStringProperty<Chat>(_entities[1].properties[24]);
+  static final apnTitle = obx.QueryStringProperty<Chat>(
+    _entities[1].properties[24],
+  );
 
   /// See [Chat.isRpSms].
-  static final isRpSms =
-      obx.QueryBooleanProperty<Chat>(_entities[1].properties[25]);
+  static final isRpSms = obx.QueryBooleanProperty<Chat>(
+    _entities[1].properties[25],
+  );
 
   /// See [Chat.guidRefs].
-  static final guidRefs =
-      obx.QueryStringVectorProperty<Chat>(_entities[1].properties[26]);
+  static final guidRefs = obx.QueryStringVectorProperty<Chat>(
+    _entities[1].properties[26],
+  );
 
   /// See [Chat.telephonyId].
-  static final telephonyId =
-      obx.QueryIntegerProperty<Chat>(_entities[1].properties[27]);
+  static final telephonyId = obx.QueryIntegerProperty<Chat>(
+    _entities[1].properties[27],
+  );
 
   /// See [Chat.textFieldAnnotations].
-  static final textFieldAnnotations =
-      obx.QueryStringProperty<Chat>(_entities[1].properties[28]);
+  static final textFieldAnnotations = obx.QueryStringProperty<Chat>(
+    _entities[1].properties[28],
+  );
 
   /// See [Chat.shareZenMode].
-  static final shareZenMode =
-      obx.QueryBooleanProperty<Chat>(_entities[1].properties[29]);
+  static final shareZenMode = obx.QueryBooleanProperty<Chat>(
+    _entities[1].properties[29],
+  );
 
   /// See [Chat.notifsSilenced].
-  static final notifsSilenced =
-      obx.QueryBooleanProperty<Chat>(_entities[1].properties[30]);
+  static final notifsSilenced = obx.QueryBooleanProperty<Chat>(
+    _entities[1].properties[30],
+  );
 
   /// See [Chat.dateNotifiedAnyways].
-  static final dateNotifiedAnyways =
-      obx.QueryDateProperty<Chat>(_entities[1].properties[31]);
+  static final dateNotifiedAnyways = obx.QueryDateProperty<Chat>(
+    _entities[1].properties[31],
+  );
 
   /// See [Chat.zenModeIsShared].
-  static final zenModeIsShared =
-      obx.QueryIntegerProperty<Chat>(_entities[1].properties[32]);
+  static final zenModeIsShared = obx.QueryIntegerProperty<Chat>(
+    _entities[1].properties[32],
+  );
 
   /// See [Chat.senderIsKnown].
-  static final senderIsKnown =
-      obx.QueryBooleanProperty<Chat>(_entities[1].properties[33]);
+  static final senderIsKnown = obx.QueryBooleanProperty<Chat>(
+    _entities[1].properties[33],
+  );
 
   /// See [Chat.isRoutingStub].
-  static final isRoutingStub =
-      obx.QueryBooleanProperty<Chat>(_entities[1].properties[34]);
+  static final isRoutingStub = obx.QueryBooleanProperty<Chat>(
+    _entities[1].properties[34],
+  );
 
   /// See [Chat.transcriptPosterPath].
-  static final transcriptPosterPath =
-      obx.QueryStringProperty<Chat>(_entities[1].properties[35]);
+  static final transcriptPosterPath = obx.QueryStringProperty<Chat>(
+    _entities[1].properties[35],
+  );
 
   /// See [Chat.transcriptBackgroundVersion].
-  static final transcriptBackgroundVersion =
-      obx.QueryIntegerProperty<Chat>(_entities[1].properties[36]);
+  static final transcriptBackgroundVersion = obx.QueryIntegerProperty<Chat>(
+    _entities[1].properties[36],
+  );
 
   /// See [Chat.cloudData].
-  static final cloudData =
-      obx.QueryByteVectorProperty<Chat>(_entities[1].properties[37]);
+  static final cloudData = obx.QueryByteVectorProperty<Chat>(
+    _entities[1].properties[37],
+  );
 
   /// See [Chat.ckRecordId].
-  static final ckRecordId =
-      obx.QueryStringProperty<Chat>(_entities[1].properties[38]);
+  static final ckRecordId = obx.QueryStringProperty<Chat>(
+    _entities[1].properties[38],
+  );
 
   /// See [Chat.ckSyncState].
-  static final ckSyncState =
-      obx.QueryBooleanProperty<Chat>(_entities[1].properties[39]);
+  static final ckSyncState = obx.QueryBooleanProperty<Chat>(
+    _entities[1].properties[39],
+  );
 
   /// See [Chat.photoAttachmentGuid].
-  static final photoAttachmentGuid =
-      obx.QueryStringProperty<Chat>(_entities[1].properties[40]);
+  static final photoAttachmentGuid = obx.QueryStringProperty<Chat>(
+    _entities[1].properties[40],
+  );
 
   /// See [Chat.cloudGuid].
-  static final cloudGuid =
-      obx.QueryStringProperty<Chat>(_entities[1].properties[41]);
+  static final cloudGuid = obx.QueryStringProperty<Chat>(
+    _entities[1].properties[41],
+  );
 
   /// see [Chat.handles]
-  static final handles =
-      obx.QueryRelationToMany<Chat, Handle>(_entities[1].relations[0]);
+  static final handles = obx.QueryRelationToMany<Chat, Handle>(
+    _entities[1].relations[0],
+  );
 
   /// see [Chat.messages]
   static final messages = obx.QueryBacklinkToMany<Message, Chat>(Message_.chat);
@@ -2379,424 +6333,1732 @@ class Chat_ {
 /// [FCMData] entity fields to define ObjectBox queries.
 class FCMData_ {
   /// See [FCMData.id].
-  static final id =
-      obx.QueryIntegerProperty<FCMData>(_entities[2].properties[0]);
+  static final id = obx.QueryIntegerProperty<FCMData>(
+    _entities[2].properties[0],
+  );
 
   /// See [FCMData.projectID].
-  static final projectID =
-      obx.QueryStringProperty<FCMData>(_entities[2].properties[1]);
+  static final projectID = obx.QueryStringProperty<FCMData>(
+    _entities[2].properties[1],
+  );
 
   /// See [FCMData.storageBucket].
-  static final storageBucket =
-      obx.QueryStringProperty<FCMData>(_entities[2].properties[2]);
+  static final storageBucket = obx.QueryStringProperty<FCMData>(
+    _entities[2].properties[2],
+  );
 
   /// See [FCMData.apiKey].
-  static final apiKey =
-      obx.QueryStringProperty<FCMData>(_entities[2].properties[3]);
+  static final apiKey = obx.QueryStringProperty<FCMData>(
+    _entities[2].properties[3],
+  );
 
   /// See [FCMData.firebaseURL].
-  static final firebaseURL =
-      obx.QueryStringProperty<FCMData>(_entities[2].properties[4]);
+  static final firebaseURL = obx.QueryStringProperty<FCMData>(
+    _entities[2].properties[4],
+  );
 
   /// See [FCMData.clientID].
-  static final clientID =
-      obx.QueryStringProperty<FCMData>(_entities[2].properties[5]);
+  static final clientID = obx.QueryStringProperty<FCMData>(
+    _entities[2].properties[5],
+  );
 
   /// See [FCMData.applicationID].
-  static final applicationID =
-      obx.QueryStringProperty<FCMData>(_entities[2].properties[6]);
+  static final applicationID = obx.QueryStringProperty<FCMData>(
+    _entities[2].properties[6],
+  );
 }
 
 /// [Handle] entity fields to define ObjectBox queries.
 class Handle_ {
   /// See [Handle.id].
-  static final id =
-      obx.QueryIntegerProperty<Handle>(_entities[3].properties[0]);
+  static final id = obx.QueryIntegerProperty<Handle>(
+    _entities[3].properties[0],
+  );
 
   /// See [Handle.originalROWID].
-  static final originalROWID =
-      obx.QueryIntegerProperty<Handle>(_entities[3].properties[1]);
+  static final originalROWID = obx.QueryIntegerProperty<Handle>(
+    _entities[3].properties[1],
+  );
 
   /// See [Handle.address].
-  static final address =
-      obx.QueryStringProperty<Handle>(_entities[3].properties[2]);
+  static final address = obx.QueryStringProperty<Handle>(
+    _entities[3].properties[2],
+  );
 
   /// See [Handle.country].
-  static final country =
-      obx.QueryStringProperty<Handle>(_entities[3].properties[3]);
+  static final country = obx.QueryStringProperty<Handle>(
+    _entities[3].properties[3],
+  );
 
   /// See [Handle.color].
-  static final color =
-      obx.QueryStringProperty<Handle>(_entities[3].properties[4]);
+  static final color = obx.QueryStringProperty<Handle>(
+    _entities[3].properties[4],
+  );
 
   /// See [Handle.defaultPhone].
-  static final defaultPhone =
-      obx.QueryStringProperty<Handle>(_entities[3].properties[5]);
+  static final defaultPhone = obx.QueryStringProperty<Handle>(
+    _entities[3].properties[5],
+  );
 
   /// See [Handle.defaultEmail].
-  static final defaultEmail =
-      obx.QueryStringProperty<Handle>(_entities[3].properties[6]);
+  static final defaultEmail = obx.QueryStringProperty<Handle>(
+    _entities[3].properties[6],
+  );
 
   /// See [Handle.formattedAddress].
-  static final formattedAddress =
-      obx.QueryStringProperty<Handle>(_entities[3].properties[7]);
+  static final formattedAddress = obx.QueryStringProperty<Handle>(
+    _entities[3].properties[7],
+  );
 
   /// See [Handle.contactRelation].
-  static final contactRelation =
-      obx.QueryRelationToOne<Handle, Contact>(_entities[3].properties[8]);
+  static final contactRelation = obx.QueryRelationToOne<Handle, Contact>(
+    _entities[3].properties[8],
+  );
 
   /// See [Handle.uniqueAddressAndService].
-  static final uniqueAddressAndService =
-      obx.QueryStringProperty<Handle>(_entities[3].properties[9]);
+  static final uniqueAddressAndService = obx.QueryStringProperty<Handle>(
+    _entities[3].properties[9],
+  );
 
   /// See [Handle.service].
-  static final service =
-      obx.QueryStringProperty<Handle>(_entities[3].properties[10]);
+  static final service = obx.QueryStringProperty<Handle>(
+    _entities[3].properties[10],
+  );
 
   /// See [Handle.posterPath].
-  static final posterPath =
-      obx.QueryStringProperty<Handle>(_entities[3].properties[11]);
+  static final posterPath = obx.QueryStringProperty<Handle>(
+    _entities[3].properties[11],
+  );
 
   /// See [Handle.blocked].
-  static final blocked =
-      obx.QueryBooleanProperty<Handle>(_entities[3].properties[12]);
+  static final blocked = obx.QueryBooleanProperty<Handle>(
+    _entities[3].properties[12],
+  );
 }
 
 /// [ThemeEntry] entity fields to define ObjectBox queries.
 class ThemeEntry_ {
   /// See [ThemeEntry.id].
-  static final id =
-      obx.QueryIntegerProperty<ThemeEntry>(_entities[4].properties[0]);
+  static final id = obx.QueryIntegerProperty<ThemeEntry>(
+    _entities[4].properties[0],
+  );
 
   /// See [ThemeEntry.themeId].
-  static final themeId =
-      obx.QueryIntegerProperty<ThemeEntry>(_entities[4].properties[1]);
+  static final themeId = obx.QueryIntegerProperty<ThemeEntry>(
+    _entities[4].properties[1],
+  );
 
   /// See [ThemeEntry.name].
-  static final name =
-      obx.QueryStringProperty<ThemeEntry>(_entities[4].properties[2]);
+  static final name = obx.QueryStringProperty<ThemeEntry>(
+    _entities[4].properties[2],
+  );
 
   /// See [ThemeEntry.isFont].
-  static final isFont =
-      obx.QueryBooleanProperty<ThemeEntry>(_entities[4].properties[3]);
+  static final isFont = obx.QueryBooleanProperty<ThemeEntry>(
+    _entities[4].properties[3],
+  );
 
   /// See [ThemeEntry.fontSize].
-  static final fontSize =
-      obx.QueryIntegerProperty<ThemeEntry>(_entities[4].properties[4]);
+  static final fontSize = obx.QueryIntegerProperty<ThemeEntry>(
+    _entities[4].properties[4],
+  );
 
   /// See [ThemeEntry.dbColor].
-  static final dbColor =
-      obx.QueryStringProperty<ThemeEntry>(_entities[4].properties[5]);
+  static final dbColor = obx.QueryStringProperty<ThemeEntry>(
+    _entities[4].properties[5],
+  );
 
   /// See [ThemeEntry.fontWeight].
-  static final fontWeight =
-      obx.QueryIntegerProperty<ThemeEntry>(_entities[4].properties[6]);
+  static final fontWeight = obx.QueryIntegerProperty<ThemeEntry>(
+    _entities[4].properties[6],
+  );
 
   /// See [ThemeEntry.themeObject].
   static final themeObject = obx.QueryRelationToOne<ThemeEntry, ThemeObject>(
-      _entities[4].properties[7]);
+    _entities[4].properties[7],
+  );
 }
 
 /// [Message] entity fields to define ObjectBox queries.
 class Message_ {
   /// See [Message.id].
-  static final id =
-      obx.QueryIntegerProperty<Message>(_entities[5].properties[0]);
+  static final id = obx.QueryIntegerProperty<Message>(
+    _entities[5].properties[0],
+  );
 
   /// See [Message.originalROWID].
-  static final originalROWID =
-      obx.QueryIntegerProperty<Message>(_entities[5].properties[1]);
+  static final originalROWID = obx.QueryIntegerProperty<Message>(
+    _entities[5].properties[1],
+  );
 
   /// See [Message.guid].
-  static final guid =
-      obx.QueryStringProperty<Message>(_entities[5].properties[2]);
+  static final guid = obx.QueryStringProperty<Message>(
+    _entities[5].properties[2],
+  );
 
   /// See [Message.handleId].
-  static final handleId =
-      obx.QueryIntegerProperty<Message>(_entities[5].properties[3]);
+  static final handleId = obx.QueryIntegerProperty<Message>(
+    _entities[5].properties[3],
+  );
 
   /// See [Message.otherHandle].
-  static final otherHandle =
-      obx.QueryIntegerProperty<Message>(_entities[5].properties[4]);
+  static final otherHandle = obx.QueryIntegerProperty<Message>(
+    _entities[5].properties[4],
+  );
 
   /// See [Message.text].
-  static final text =
-      obx.QueryStringProperty<Message>(_entities[5].properties[5]);
+  static final text = obx.QueryStringProperty<Message>(
+    _entities[5].properties[5],
+  );
 
   /// See [Message.subject].
-  static final subject =
-      obx.QueryStringProperty<Message>(_entities[5].properties[6]);
+  static final subject = obx.QueryStringProperty<Message>(
+    _entities[5].properties[6],
+  );
 
   /// See [Message.country].
-  static final country =
-      obx.QueryStringProperty<Message>(_entities[5].properties[7]);
+  static final country = obx.QueryStringProperty<Message>(
+    _entities[5].properties[7],
+  );
 
   /// See [Message.dateCreated].
-  static final dateCreated =
-      obx.QueryDateProperty<Message>(_entities[5].properties[8]);
+  static final dateCreated = obx.QueryDateProperty<Message>(
+    _entities[5].properties[8],
+  );
 
   /// See [Message.dateRead].
-  static final dateRead =
-      obx.QueryDateProperty<Message>(_entities[5].properties[9]);
+  static final dateRead = obx.QueryDateProperty<Message>(
+    _entities[5].properties[9],
+  );
 
   /// See [Message.dateDelivered].
-  static final dateDelivered =
-      obx.QueryDateProperty<Message>(_entities[5].properties[10]);
+  static final dateDelivered = obx.QueryDateProperty<Message>(
+    _entities[5].properties[10],
+  );
 
   /// See [Message.isFromMe].
-  static final isFromMe =
-      obx.QueryBooleanProperty<Message>(_entities[5].properties[11]);
+  static final isFromMe = obx.QueryBooleanProperty<Message>(
+    _entities[5].properties[11],
+  );
 
   /// See [Message.hasDdResults].
-  static final hasDdResults =
-      obx.QueryBooleanProperty<Message>(_entities[5].properties[12]);
+  static final hasDdResults = obx.QueryBooleanProperty<Message>(
+    _entities[5].properties[12],
+  );
 
   /// See [Message.datePlayed].
-  static final datePlayed =
-      obx.QueryDateProperty<Message>(_entities[5].properties[13]);
+  static final datePlayed = obx.QueryDateProperty<Message>(
+    _entities[5].properties[13],
+  );
 
   /// See [Message.itemType].
-  static final itemType =
-      obx.QueryIntegerProperty<Message>(_entities[5].properties[14]);
+  static final itemType = obx.QueryIntegerProperty<Message>(
+    _entities[5].properties[14],
+  );
 
   /// See [Message.groupTitle].
-  static final groupTitle =
-      obx.QueryStringProperty<Message>(_entities[5].properties[15]);
+  static final groupTitle = obx.QueryStringProperty<Message>(
+    _entities[5].properties[15],
+  );
 
   /// See [Message.groupActionType].
-  static final groupActionType =
-      obx.QueryIntegerProperty<Message>(_entities[5].properties[16]);
+  static final groupActionType = obx.QueryIntegerProperty<Message>(
+    _entities[5].properties[16],
+  );
 
   /// See [Message.balloonBundleId].
-  static final balloonBundleId =
-      obx.QueryStringProperty<Message>(_entities[5].properties[17]);
+  static final balloonBundleId = obx.QueryStringProperty<Message>(
+    _entities[5].properties[17],
+  );
 
   /// See [Message.associatedMessageGuid].
-  static final associatedMessageGuid =
-      obx.QueryStringProperty<Message>(_entities[5].properties[18]);
+  static final associatedMessageGuid = obx.QueryStringProperty<Message>(
+    _entities[5].properties[18],
+  );
 
   /// See [Message.associatedMessageType].
-  static final associatedMessageType =
-      obx.QueryStringProperty<Message>(_entities[5].properties[19]);
+  static final associatedMessageType = obx.QueryStringProperty<Message>(
+    _entities[5].properties[19],
+  );
 
   /// See [Message.expressiveSendStyleId].
-  static final expressiveSendStyleId =
-      obx.QueryStringProperty<Message>(_entities[5].properties[20]);
+  static final expressiveSendStyleId = obx.QueryStringProperty<Message>(
+    _entities[5].properties[20],
+  );
 
   /// See [Message.hasAttachments].
-  static final hasAttachments =
-      obx.QueryBooleanProperty<Message>(_entities[5].properties[21]);
+  static final hasAttachments = obx.QueryBooleanProperty<Message>(
+    _entities[5].properties[21],
+  );
 
   /// See [Message.hasReactions].
-  static final hasReactions =
-      obx.QueryBooleanProperty<Message>(_entities[5].properties[22]);
+  static final hasReactions = obx.QueryBooleanProperty<Message>(
+    _entities[5].properties[22],
+  );
 
   /// See [Message.dateDeleted].
-  static final dateDeleted =
-      obx.QueryDateProperty<Message>(_entities[5].properties[23]);
+  static final dateDeleted = obx.QueryDateProperty<Message>(
+    _entities[5].properties[23],
+  );
 
   /// See [Message.threadOriginatorGuid].
-  static final threadOriginatorGuid =
-      obx.QueryStringProperty<Message>(_entities[5].properties[24]);
+  static final threadOriginatorGuid = obx.QueryStringProperty<Message>(
+    _entities[5].properties[24],
+  );
 
   /// See [Message.threadOriginatorPart].
-  static final threadOriginatorPart =
-      obx.QueryStringProperty<Message>(_entities[5].properties[25]);
+  static final threadOriginatorPart = obx.QueryStringProperty<Message>(
+    _entities[5].properties[25],
+  );
 
   /// See [Message.bigEmoji].
-  static final bigEmoji =
-      obx.QueryBooleanProperty<Message>(_entities[5].properties[26]);
+  static final bigEmoji = obx.QueryBooleanProperty<Message>(
+    _entities[5].properties[26],
+  );
 
   /// See [Message.error].
-  static final error =
-      obx.QueryIntegerProperty<Message>(_entities[5].properties[27]);
+  static final error = obx.QueryIntegerProperty<Message>(
+    _entities[5].properties[27],
+  );
 
   /// See [Message.chat].
-  static final chat =
-      obx.QueryRelationToOne<Message, Chat>(_entities[5].properties[28]);
+  static final chat = obx.QueryRelationToOne<Message, Chat>(
+    _entities[5].properties[28],
+  );
 
   /// See [Message.dbAttributedBody].
-  static final dbAttributedBody =
-      obx.QueryStringProperty<Message>(_entities[5].properties[29]);
+  static final dbAttributedBody = obx.QueryStringProperty<Message>(
+    _entities[5].properties[29],
+  );
 
   /// See [Message.associatedMessagePart].
-  static final associatedMessagePart =
-      obx.QueryIntegerProperty<Message>(_entities[5].properties[30]);
+  static final associatedMessagePart = obx.QueryIntegerProperty<Message>(
+    _entities[5].properties[30],
+  );
 
   /// See [Message.hasApplePayloadData].
-  static final hasApplePayloadData =
-      obx.QueryBooleanProperty<Message>(_entities[5].properties[31]);
+  static final hasApplePayloadData = obx.QueryBooleanProperty<Message>(
+    _entities[5].properties[31],
+  );
 
   /// See [Message.dateEdited].
-  static final dateEdited =
-      obx.QueryDateProperty<Message>(_entities[5].properties[32]);
+  static final dateEdited = obx.QueryDateProperty<Message>(
+    _entities[5].properties[32],
+  );
 
   /// See [Message.dbMessageSummaryInfo].
-  static final dbMessageSummaryInfo =
-      obx.QueryStringProperty<Message>(_entities[5].properties[33]);
+  static final dbMessageSummaryInfo = obx.QueryStringProperty<Message>(
+    _entities[5].properties[33],
+  );
 
   /// See [Message.dbPayloadData].
-  static final dbPayloadData =
-      obx.QueryStringProperty<Message>(_entities[5].properties[34]);
+  static final dbPayloadData = obx.QueryStringProperty<Message>(
+    _entities[5].properties[34],
+  );
 
   /// See [Message.dbMetadata].
-  static final dbMetadata =
-      obx.QueryStringProperty<Message>(_entities[5].properties[35]);
+  static final dbMetadata = obx.QueryStringProperty<Message>(
+    _entities[5].properties[35],
+  );
 
   /// See [Message.wasDeliveredQuietly].
-  static final wasDeliveredQuietly =
-      obx.QueryBooleanProperty<Message>(_entities[5].properties[36]);
+  static final wasDeliveredQuietly = obx.QueryBooleanProperty<Message>(
+    _entities[5].properties[36],
+  );
 
   /// See [Message.didNotifyRecipient].
-  static final didNotifyRecipient =
-      obx.QueryBooleanProperty<Message>(_entities[5].properties[37]);
+  static final didNotifyRecipient = obx.QueryBooleanProperty<Message>(
+    _entities[5].properties[37],
+  );
 
   /// See [Message.isBookmarked].
-  static final isBookmarked =
-      obx.QueryBooleanProperty<Message>(_entities[5].properties[38]);
+  static final isBookmarked = obx.QueryBooleanProperty<Message>(
+    _entities[5].properties[38],
+  );
 
   /// See [Message.hasBeenForwarded].
-  static final hasBeenForwarded =
-      obx.QueryBooleanProperty<Message>(_entities[5].properties[39]);
+  static final hasBeenForwarded = obx.QueryBooleanProperty<Message>(
+    _entities[5].properties[39],
+  );
 
   /// See [Message.stagingGuid].
-  static final stagingGuid =
-      obx.QueryStringProperty<Message>(_entities[5].properties[40]);
+  static final stagingGuid = obx.QueryStringProperty<Message>(
+    _entities[5].properties[40],
+  );
 
   /// See [Message.amkSessionId].
-  static final amkSessionId =
-      obx.QueryStringProperty<Message>(_entities[5].properties[41]);
+  static final amkSessionId = obx.QueryStringProperty<Message>(
+    _entities[5].properties[41],
+  );
 
   /// See [Message.isDelivered].
-  static final isDelivered =
-      obx.QueryBooleanProperty<Message>(_entities[5].properties[42]);
+  static final isDelivered = obx.QueryBooleanProperty<Message>(
+    _entities[5].properties[42],
+  );
 
   /// See [Message.verificationFailed].
-  static final verificationFailed =
-      obx.QueryBooleanProperty<Message>(_entities[5].properties[43]);
+  static final verificationFailed = obx.QueryBooleanProperty<Message>(
+    _entities[5].properties[43],
+  );
 
   /// See [Message.sendingServiceId].
-  static final sendingServiceId =
-      obx.QueryStringProperty<Message>(_entities[5].properties[44]);
+  static final sendingServiceId = obx.QueryStringProperty<Message>(
+    _entities[5].properties[44],
+  );
 
   /// See [Message.associatedMessageEmoji].
-  static final associatedMessageEmoji =
-      obx.QueryStringProperty<Message>(_entities[5].properties[45]);
+  static final associatedMessageEmoji = obx.QueryStringProperty<Message>(
+    _entities[5].properties[45],
+  );
 
   /// See [Message.dateScheduled].
-  static final dateScheduled =
-      obx.QueryDateProperty<Message>(_entities[5].properties[46]);
+  static final dateScheduled = obx.QueryDateProperty<Message>(
+    _entities[5].properties[46],
+  );
 
   /// See [Message.ckRecordId].
-  static final ckRecordId =
-      obx.QueryStringProperty<Message>(_entities[5].properties[47]);
+  static final ckRecordId = obx.QueryStringProperty<Message>(
+    _entities[5].properties[47],
+  );
 
   /// See [Message.ckSyncState].
-  static final ckSyncState =
-      obx.QueryBooleanProperty<Message>(_entities[5].properties[48]);
+  static final ckSyncState = obx.QueryBooleanProperty<Message>(
+    _entities[5].properties[48],
+  );
 
   /// see [Message.dbAttachments]
-  static final dbAttachments =
-      obx.QueryBacklinkToMany<Attachment, Message>(Attachment_.message);
+  static final dbAttachments = obx.QueryBacklinkToMany<Attachment, Message>(
+    Attachment_.message,
+  );
 }
 
 /// [ThemeObject] entity fields to define ObjectBox queries.
 class ThemeObject_ {
   /// See [ThemeObject.id].
-  static final id =
-      obx.QueryIntegerProperty<ThemeObject>(_entities[6].properties[0]);
+  static final id = obx.QueryIntegerProperty<ThemeObject>(
+    _entities[6].properties[0],
+  );
 
   /// See [ThemeObject.name].
-  static final name =
-      obx.QueryStringProperty<ThemeObject>(_entities[6].properties[1]);
+  static final name = obx.QueryStringProperty<ThemeObject>(
+    _entities[6].properties[1],
+  );
 
   /// See [ThemeObject.selectedLightTheme].
-  static final selectedLightTheme =
-      obx.QueryBooleanProperty<ThemeObject>(_entities[6].properties[2]);
+  static final selectedLightTheme = obx.QueryBooleanProperty<ThemeObject>(
+    _entities[6].properties[2],
+  );
 
   /// See [ThemeObject.selectedDarkTheme].
-  static final selectedDarkTheme =
-      obx.QueryBooleanProperty<ThemeObject>(_entities[6].properties[3]);
+  static final selectedDarkTheme = obx.QueryBooleanProperty<ThemeObject>(
+    _entities[6].properties[3],
+  );
 
   /// See [ThemeObject.gradientBg].
-  static final gradientBg =
-      obx.QueryBooleanProperty<ThemeObject>(_entities[6].properties[4]);
+  static final gradientBg = obx.QueryBooleanProperty<ThemeObject>(
+    _entities[6].properties[4],
+  );
 
   /// See [ThemeObject.previousLightTheme].
-  static final previousLightTheme =
-      obx.QueryBooleanProperty<ThemeObject>(_entities[6].properties[5]);
+  static final previousLightTheme = obx.QueryBooleanProperty<ThemeObject>(
+    _entities[6].properties[5],
+  );
 
   /// See [ThemeObject.previousDarkTheme].
-  static final previousDarkTheme =
-      obx.QueryBooleanProperty<ThemeObject>(_entities[6].properties[6]);
+  static final previousDarkTheme = obx.QueryBooleanProperty<ThemeObject>(
+    _entities[6].properties[6],
+  );
 
   /// see [ThemeObject.themeEntries]
-  static final themeEntries =
-      obx.QueryBacklinkToMany<ThemeEntry, ThemeObject>(ThemeEntry_.themeObject);
+  static final themeEntries = obx.QueryBacklinkToMany<ThemeEntry, ThemeObject>(
+    ThemeEntry_.themeObject,
+  );
 }
 
 /// [ThemeStruct] entity fields to define ObjectBox queries.
 class ThemeStruct_ {
   /// See [ThemeStruct.id].
-  static final id =
-      obx.QueryIntegerProperty<ThemeStruct>(_entities[7].properties[0]);
+  static final id = obx.QueryIntegerProperty<ThemeStruct>(
+    _entities[7].properties[0],
+  );
 
   /// See [ThemeStruct.name].
-  static final name =
-      obx.QueryStringProperty<ThemeStruct>(_entities[7].properties[1]);
+  static final name = obx.QueryStringProperty<ThemeStruct>(
+    _entities[7].properties[1],
+  );
 
   /// See [ThemeStruct.gradientBg].
-  static final gradientBg =
-      obx.QueryBooleanProperty<ThemeStruct>(_entities[7].properties[2]);
+  static final gradientBg = obx.QueryBooleanProperty<ThemeStruct>(
+    _entities[7].properties[2],
+  );
 
   /// See [ThemeStruct.dbThemeData].
-  static final dbThemeData =
-      obx.QueryStringProperty<ThemeStruct>(_entities[7].properties[3]);
+  static final dbThemeData = obx.QueryStringProperty<ThemeStruct>(
+    _entities[7].properties[3],
+  );
 
   /// See [ThemeStruct.googleFont].
-  static final googleFont =
-      obx.QueryStringProperty<ThemeStruct>(_entities[7].properties[4]);
+  static final googleFont = obx.QueryStringProperty<ThemeStruct>(
+    _entities[7].properties[4],
+  );
 }
 
 /// [Contact] entity fields to define ObjectBox queries.
 class Contact_ {
   /// See [Contact.dbId].
-  static final dbId =
-      obx.QueryIntegerProperty<Contact>(_entities[8].properties[0]);
+  static final dbId = obx.QueryIntegerProperty<Contact>(
+    _entities[8].properties[0],
+  );
 
   /// See [Contact.id].
-  static final id =
-      obx.QueryStringProperty<Contact>(_entities[8].properties[1]);
+  static final id = obx.QueryStringProperty<Contact>(
+    _entities[8].properties[1],
+  );
 
   /// See [Contact.displayName].
-  static final displayName =
-      obx.QueryStringProperty<Contact>(_entities[8].properties[2]);
+  static final displayName = obx.QueryStringProperty<Contact>(
+    _entities[8].properties[2],
+  );
 
   /// See [Contact.phones].
-  static final phones =
-      obx.QueryStringVectorProperty<Contact>(_entities[8].properties[3]);
+  static final phones = obx.QueryStringVectorProperty<Contact>(
+    _entities[8].properties[3],
+  );
 
   /// See [Contact.emails].
-  static final emails =
-      obx.QueryStringVectorProperty<Contact>(_entities[8].properties[4]);
+  static final emails = obx.QueryStringVectorProperty<Contact>(
+    _entities[8].properties[4],
+  );
 
   /// See [Contact.avatar].
-  static final avatar =
-      obx.QueryByteVectorProperty<Contact>(_entities[8].properties[5]);
+  static final avatar = obx.QueryByteVectorProperty<Contact>(
+    _entities[8].properties[5],
+  );
 
   /// See [Contact.dbStructuredName].
-  static final dbStructuredName =
-      obx.QueryStringProperty<Contact>(_entities[8].properties[6]);
+  static final dbStructuredName = obx.QueryStringProperty<Contact>(
+    _entities[8].properties[6],
+  );
 
   /// See [Contact.isShared].
-  static final isShared =
-      obx.QueryBooleanProperty<Contact>(_entities[8].properties[7]);
+  static final isShared = obx.QueryBooleanProperty<Contact>(
+    _entities[8].properties[7],
+  );
 
   /// See [Contact.isDismissed].
-  static final isDismissed =
-      obx.QueryBooleanProperty<Contact>(_entities[8].properties[8]);
+  static final isDismissed = obx.QueryBooleanProperty<Contact>(
+    _entities[8].properties[8],
+  );
 
   /// See [Contact.posterPath].
-  static final posterPath =
-      obx.QueryStringProperty<Contact>(_entities[8].properties[9]);
+  static final posterPath = obx.QueryStringProperty<Contact>(
+    _entities[8].properties[9],
+  );
+}
+
+/// [CloudInboxChangeEntity] entity fields to define ObjectBox queries.
+class CloudInboxChangeEntity_ {
+  /// See [CloudInboxChangeEntity.id].
+  static final id = obx.QueryIntegerProperty<CloudInboxChangeEntity>(
+    _entities[9].properties[0],
+  );
+
+  /// See [CloudInboxChangeEntity.changeKey].
+  static final changeKey = obx.QueryStringProperty<CloudInboxChangeEntity>(
+    _entities[9].properties[1],
+  );
+
+  /// See [CloudInboxChangeEntity.accountFingerprint].
+  static final accountFingerprint =
+      obx.QueryStringProperty<CloudInboxChangeEntity>(
+        _entities[9].properties[2],
+      );
+
+  /// See [CloudInboxChangeEntity.zone].
+  static final zone = obx.QueryStringProperty<CloudInboxChangeEntity>(
+    _entities[9].properties[3],
+  );
+
+  /// See [CloudInboxChangeEntity.serverRecordIdHash].
+  static final serverRecordIdHash =
+      obx.QueryStringProperty<CloudInboxChangeEntity>(
+        _entities[9].properties[4],
+      );
+
+  /// See [CloudInboxChangeEntity.etagHash].
+  static final etagHash = obx.QueryStringProperty<CloudInboxChangeEntity>(
+    _entities[9].properties[5],
+  );
+
+  /// See [CloudInboxChangeEntity.changeType].
+  static final changeType = obx.QueryStringProperty<CloudInboxChangeEntity>(
+    _entities[9].properties[6],
+  );
+
+  /// See [CloudInboxChangeEntity.encryptedPayloadRef].
+  static final encryptedPayloadRef =
+      obx.QueryStringProperty<CloudInboxChangeEntity>(
+        _entities[9].properties[7],
+      );
+
+  /// See [CloudInboxChangeEntity.payloadSha256].
+  static final payloadSha256 = obx.QueryStringProperty<CloudInboxChangeEntity>(
+    _entities[9].properties[8],
+  );
+
+  /// See [CloudInboxChangeEntity.fetchSequence].
+  static final fetchSequence = obx.QueryIntegerProperty<CloudInboxChangeEntity>(
+    _entities[9].properties[9],
+  );
+
+  /// See [CloudInboxChangeEntity.status].
+  static final status = obx.QueryIntegerProperty<CloudInboxChangeEntity>(
+    _entities[9].properties[10],
+  );
+
+  /// See [CloudInboxChangeEntity.isTombstone].
+  static final isTombstone = obx.QueryBooleanProperty<CloudInboxChangeEntity>(
+    _entities[9].properties[11],
+  );
+
+  /// See [CloudInboxChangeEntity.failureCategory].
+  static final failureCategory =
+      obx.QueryStringProperty<CloudInboxChangeEntity>(
+        _entities[9].properties[12],
+      );
+
+  /// See [CloudInboxChangeEntity.retryCount].
+  static final retryCount = obx.QueryIntegerProperty<CloudInboxChangeEntity>(
+    _entities[9].properties[13],
+  );
+
+  /// See [CloudInboxChangeEntity.createdAtMs].
+  static final createdAtMs = obx.QueryIntegerProperty<CloudInboxChangeEntity>(
+    _entities[9].properties[14],
+  );
+
+  /// See [CloudInboxChangeEntity.updatedAtMs].
+  static final updatedAtMs = obx.QueryIntegerProperty<CloudInboxChangeEntity>(
+    _entities[9].properties[15],
+  );
+
+  /// See [CloudInboxChangeEntity.scopeKey].
+  static final scopeKey = obx.QueryStringProperty<CloudInboxChangeEntity>(
+    _entities[9].properties[16],
+  );
+
+  /// See [CloudInboxChangeEntity.encryptedServerRecordId].
+  static final encryptedServerRecordId =
+      obx.QueryStringProperty<CloudInboxChangeEntity>(
+        _entities[9].properties[17],
+      );
+
+  /// See [CloudInboxChangeEntity.protectedSystemFieldsRef].
+  static final protectedSystemFieldsRef =
+      obx.QueryStringProperty<CloudInboxChangeEntity>(
+        _entities[9].properties[18],
+      );
+
+  /// See [CloudInboxChangeEntity.batchId].
+  static final batchId = obx.QueryStringProperty<CloudInboxChangeEntity>(
+    _entities[9].properties[19],
+  );
+
+  /// See [CloudInboxChangeEntity.generation].
+  static final generation = obx.QueryIntegerProperty<CloudInboxChangeEntity>(
+    _entities[9].properties[20],
+  );
+
+  /// See [CloudInboxChangeEntity.nextEligibleAtMs].
+  static final nextEligibleAtMs =
+      obx.QueryIntegerProperty<CloudInboxChangeEntity>(
+        _entities[9].properties[21],
+      );
+
+  /// See [CloudInboxChangeEntity.serverModifiedAtMs].
+  static final serverModifiedAtMs =
+      obx.QueryIntegerProperty<CloudInboxChangeEntity>(
+        _entities[9].properties[22],
+      );
+
+  /// See [CloudInboxChangeEntity.completedAtMs].
+  static final completedAtMs = obx.QueryIntegerProperty<CloudInboxChangeEntity>(
+    _entities[9].properties[23],
+  );
+
+  /// See [CloudInboxChangeEntity.changeIdHash].
+  static final changeIdHash = obx.QueryStringProperty<CloudInboxChangeEntity>(
+    _entities[9].properties[24],
+  );
+}
+
+/// [CloudOutboxOperationEntity] entity fields to define ObjectBox queries.
+class CloudOutboxOperationEntity_ {
+  /// See [CloudOutboxOperationEntity.id].
+  static final id = obx.QueryIntegerProperty<CloudOutboxOperationEntity>(
+    _entities[10].properties[0],
+  );
+
+  /// See [CloudOutboxOperationEntity.operationId].
+  static final operationId =
+      obx.QueryStringProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[1],
+      );
+
+  /// See [CloudOutboxOperationEntity.accountFingerprint].
+  static final accountFingerprint =
+      obx.QueryStringProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[2],
+      );
+
+  /// See [CloudOutboxOperationEntity.zone].
+  static final zone = obx.QueryStringProperty<CloudOutboxOperationEntity>(
+    _entities[10].properties[3],
+  );
+
+  /// See [CloudOutboxOperationEntity.logicalEntityKeyHash].
+  static final logicalEntityKeyHash =
+      obx.QueryStringProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[4],
+      );
+
+  /// See [CloudOutboxOperationEntity.action].
+  static final action = obx.QueryIntegerProperty<CloudOutboxOperationEntity>(
+    _entities[10].properties[5],
+  );
+
+  /// See [CloudOutboxOperationEntity.dependencyOperationIdsJson].
+  static final dependencyOperationIdsJson =
+      obx.QueryStringProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[6],
+      );
+
+  /// See [CloudOutboxOperationEntity.payloadVersion].
+  static final payloadVersion =
+      obx.QueryIntegerProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[7],
+      );
+
+  /// See [CloudOutboxOperationEntity.encryptedPayloadRef].
+  static final encryptedPayloadRef =
+      obx.QueryStringProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[8],
+      );
+
+  /// See [CloudOutboxOperationEntity.payloadSha256].
+  static final payloadSha256 =
+      obx.QueryStringProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[9],
+      );
+
+  /// See [CloudOutboxOperationEntity.state].
+  static final state = obx.QueryIntegerProperty<CloudOutboxOperationEntity>(
+    _entities[10].properties[10],
+  );
+
+  /// See [CloudOutboxOperationEntity.attemptCount].
+  static final attemptCount =
+      obx.QueryIntegerProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[11],
+      );
+
+  /// See [CloudOutboxOperationEntity.nextEligibleAtMs].
+  static final nextEligibleAtMs =
+      obx.QueryIntegerProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[12],
+      );
+
+  /// See [CloudOutboxOperationEntity.lastErrorCategory].
+  static final lastErrorCategory =
+      obx.QueryStringProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[13],
+      );
+
+  /// See [CloudOutboxOperationEntity.serverRecordIdHash].
+  static final serverRecordIdHash =
+      obx.QueryStringProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[14],
+      );
+
+  /// See [CloudOutboxOperationEntity.createdAtMs].
+  static final createdAtMs =
+      obx.QueryIntegerProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[15],
+      );
+
+  /// See [CloudOutboxOperationEntity.updatedAtMs].
+  static final updatedAtMs =
+      obx.QueryIntegerProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[16],
+      );
+
+  /// See [CloudOutboxOperationEntity.scopeKey].
+  static final scopeKey = obx.QueryStringProperty<CloudOutboxOperationEntity>(
+    _entities[10].properties[17],
+  );
+
+  /// See [CloudOutboxOperationEntity.mutationRevision].
+  static final mutationRevision =
+      obx.QueryIntegerProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[18],
+      );
+
+  /// See [CloudOutboxOperationEntity.leaseIdHash].
+  static final leaseIdHash =
+      obx.QueryStringProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[19],
+      );
+
+  /// See [CloudOutboxOperationEntity.leaseExpiresAtMs].
+  static final leaseExpiresAtMs =
+      obx.QueryIntegerProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[20],
+      );
+
+  /// See [CloudOutboxOperationEntity.confirmedAtMs].
+  static final confirmedAtMs =
+      obx.QueryIntegerProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[21],
+      );
+
+  /// See [CloudOutboxOperationEntity.checkpointGeneration].
+  static final checkpointGeneration =
+      obx.QueryIntegerProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[22],
+      );
+
+  /// See [CloudOutboxOperationEntity.appleRequestUuid].
+  static final appleRequestUuid =
+      obx.QueryStringProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[23],
+      );
+
+  /// See [CloudOutboxOperationEntity.appleOperationUuid].
+  static final appleOperationUuid =
+      obx.QueryStringProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[24],
+      );
+
+  /// See [CloudOutboxOperationEntity.protectedLeaseReference].
+  static final protectedLeaseReference =
+      obx.QueryStringProperty<CloudOutboxOperationEntity>(
+        _entities[10].properties[25],
+      );
+}
+
+/// [CloudRecordMapEntity] entity fields to define ObjectBox queries.
+class CloudRecordMapEntity_ {
+  /// See [CloudRecordMapEntity.id].
+  static final id = obx.QueryIntegerProperty<CloudRecordMapEntity>(
+    _entities[11].properties[0],
+  );
+
+  /// See [CloudRecordMapEntity.mapKey].
+  static final mapKey = obx.QueryStringProperty<CloudRecordMapEntity>(
+    _entities[11].properties[1],
+  );
+
+  /// See [CloudRecordMapEntity.accountFingerprint].
+  static final accountFingerprint =
+      obx.QueryStringProperty<CloudRecordMapEntity>(
+        _entities[11].properties[2],
+      );
+
+  /// See [CloudRecordMapEntity.zone].
+  static final zone = obx.QueryStringProperty<CloudRecordMapEntity>(
+    _entities[11].properties[3],
+  );
+
+  /// See [CloudRecordMapEntity.logicalEntityKeyHash].
+  static final logicalEntityKeyHash =
+      obx.QueryStringProperty<CloudRecordMapEntity>(
+        _entities[11].properties[4],
+      );
+
+  /// See [CloudRecordMapEntity.serverRecordIdHash].
+  static final serverRecordIdHash =
+      obx.QueryStringProperty<CloudRecordMapEntity>(
+        _entities[11].properties[5],
+      );
+
+  /// See [CloudRecordMapEntity.encryptedServerRecordId].
+  static final encryptedServerRecordId =
+      obx.QueryStringProperty<CloudRecordMapEntity>(
+        _entities[11].properties[6],
+      );
+
+  /// See [CloudRecordMapEntity.etagHash].
+  static final etagHash = obx.QueryStringProperty<CloudRecordMapEntity>(
+    _entities[11].properties[7],
+  );
+
+  /// See [CloudRecordMapEntity.encryptedRawRecordRef].
+  static final encryptedRawRecordRef =
+      obx.QueryStringProperty<CloudRecordMapEntity>(
+        _entities[11].properties[8],
+      );
+
+  /// See [CloudRecordMapEntity.updatedAtMs].
+  static final updatedAtMs = obx.QueryIntegerProperty<CloudRecordMapEntity>(
+    _entities[11].properties[9],
+  );
+
+  /// See [CloudRecordMapEntity.scopeKey].
+  static final scopeKey = obx.QueryStringProperty<CloudRecordMapEntity>(
+    _entities[11].properties[10],
+  );
+
+  /// See [CloudRecordMapEntity.generation].
+  static final generation = obx.QueryIntegerProperty<CloudRecordMapEntity>(
+    _entities[11].properties[11],
+  );
+}
+
+/// [CloudSyncCheckpointEntity] entity fields to define ObjectBox queries.
+class CloudSyncCheckpointEntity_ {
+  /// See [CloudSyncCheckpointEntity.id].
+  static final id = obx.QueryIntegerProperty<CloudSyncCheckpointEntity>(
+    _entities[12].properties[0],
+  );
+
+  /// See [CloudSyncCheckpointEntity.checkpointKey].
+  static final checkpointKey =
+      obx.QueryStringProperty<CloudSyncCheckpointEntity>(
+        _entities[12].properties[1],
+      );
+
+  /// See [CloudSyncCheckpointEntity.accountFingerprint].
+  static final accountFingerprint =
+      obx.QueryStringProperty<CloudSyncCheckpointEntity>(
+        _entities[12].properties[2],
+      );
+
+  /// See [CloudSyncCheckpointEntity.container].
+  static final container = obx.QueryStringProperty<CloudSyncCheckpointEntity>(
+    _entities[12].properties[3],
+  );
+
+  /// See [CloudSyncCheckpointEntity.database].
+  static final database = obx.QueryStringProperty<CloudSyncCheckpointEntity>(
+    _entities[12].properties[4],
+  );
+
+  /// See [CloudSyncCheckpointEntity.zone].
+  static final zone = obx.QueryStringProperty<CloudSyncCheckpointEntity>(
+    _entities[12].properties[5],
+  );
+
+  /// See [CloudSyncCheckpointEntity.schemaVersion].
+  static final schemaVersion =
+      obx.QueryIntegerProperty<CloudSyncCheckpointEntity>(
+        _entities[12].properties[6],
+      );
+
+  /// See [CloudSyncCheckpointEntity.fetchedTokenCiphertext].
+  static final fetchedTokenCiphertext =
+      obx.QueryStringProperty<CloudSyncCheckpointEntity>(
+        _entities[12].properties[7],
+      );
+
+  /// See [CloudSyncCheckpointEntity.fetchedSequence].
+  static final fetchedSequence =
+      obx.QueryIntegerProperty<CloudSyncCheckpointEntity>(
+        _entities[12].properties[8],
+      );
+
+  /// See [CloudSyncCheckpointEntity.appliedSequence].
+  static final appliedSequence =
+      obx.QueryIntegerProperty<CloudSyncCheckpointEntity>(
+        _entities[12].properties[9],
+      );
+
+  /// See [CloudSyncCheckpointEntity.lastSuccessfulAtMs].
+  static final lastSuccessfulAtMs =
+      obx.QueryIntegerProperty<CloudSyncCheckpointEntity>(
+        _entities[12].properties[10],
+      );
+
+  /// See [CloudSyncCheckpointEntity.lastAttemptAtMs].
+  static final lastAttemptAtMs =
+      obx.QueryIntegerProperty<CloudSyncCheckpointEntity>(
+        _entities[12].properties[11],
+      );
+
+  /// See [CloudSyncCheckpointEntity.lastErrorCategory].
+  static final lastErrorCategory =
+      obx.QueryStringProperty<CloudSyncCheckpointEntity>(
+        _entities[12].properties[12],
+      );
+
+  /// See [CloudSyncCheckpointEntity.backoffAttempt].
+  static final backoffAttempt =
+      obx.QueryIntegerProperty<CloudSyncCheckpointEntity>(
+        _entities[12].properties[13],
+      );
+
+  /// See [CloudSyncCheckpointEntity.nextEligibleAtMs].
+  static final nextEligibleAtMs =
+      obx.QueryIntegerProperty<CloudSyncCheckpointEntity>(
+        _entities[12].properties[14],
+      );
+
+  /// See [CloudSyncCheckpointEntity.updatedAtMs].
+  static final updatedAtMs =
+      obx.QueryIntegerProperty<CloudSyncCheckpointEntity>(
+        _entities[12].properties[15],
+      );
+
+  /// See [CloudSyncCheckpointEntity.streamKind].
+  static final streamKind = obx.QueryStringProperty<CloudSyncCheckpointEntity>(
+    _entities[12].properties[16],
+  );
+
+  /// See [CloudSyncCheckpointEntity.generation].
+  static final generation = obx.QueryIntegerProperty<CloudSyncCheckpointEntity>(
+    _entities[12].properties[17],
+  );
+
+  /// See [CloudSyncCheckpointEntity.lastBatchId].
+  static final lastBatchId = obx.QueryStringProperty<CloudSyncCheckpointEntity>(
+    _entities[12].properties[18],
+  );
+
+  /// See [CloudSyncCheckpointEntity.mutationRevisionCounter].
+  static final mutationRevisionCounter =
+      obx.QueryIntegerProperty<CloudSyncCheckpointEntity>(
+        _entities[12].properties[19],
+      );
+}
+
+/// [CloudSyncRunEntity] entity fields to define ObjectBox queries.
+class CloudSyncRunEntity_ {
+  /// See [CloudSyncRunEntity.id].
+  static final id = obx.QueryIntegerProperty<CloudSyncRunEntity>(
+    _entities[13].properties[0],
+  );
+
+  /// See [CloudSyncRunEntity.runId].
+  static final runId = obx.QueryStringProperty<CloudSyncRunEntity>(
+    _entities[13].properties[1],
+  );
+
+  /// See [CloudSyncRunEntity.accountFingerprint].
+  static final accountFingerprint = obx.QueryStringProperty<CloudSyncRunEntity>(
+    _entities[13].properties[2],
+  );
+
+  /// See [CloudSyncRunEntity.trigger].
+  static final trigger = obx.QueryStringProperty<CloudSyncRunEntity>(
+    _entities[13].properties[3],
+  );
+
+  /// See [CloudSyncRunEntity.architecture].
+  static final architecture = obx.QueryStringProperty<CloudSyncRunEntity>(
+    _entities[13].properties[4],
+  );
+
+  /// See [CloudSyncRunEntity.mode].
+  static final mode = obx.QueryStringProperty<CloudSyncRunEntity>(
+    _entities[13].properties[5],
+  );
+
+  /// See [CloudSyncRunEntity.fetchedCount].
+  static final fetchedCount = obx.QueryIntegerProperty<CloudSyncRunEntity>(
+    _entities[13].properties[6],
+  );
+
+  /// See [CloudSyncRunEntity.appliedCount].
+  static final appliedCount = obx.QueryIntegerProperty<CloudSyncRunEntity>(
+    _entities[13].properties[7],
+  );
+
+  /// See [CloudSyncRunEntity.quarantinedCount].
+  static final quarantinedCount = obx.QueryIntegerProperty<CloudSyncRunEntity>(
+    _entities[13].properties[8],
+  );
+
+  /// See [CloudSyncRunEntity.confirmedCount].
+  static final confirmedCount = obx.QueryIntegerProperty<CloudSyncRunEntity>(
+    _entities[13].properties[9],
+  );
+
+  /// See [CloudSyncRunEntity.retriedCount].
+  static final retriedCount = obx.QueryIntegerProperty<CloudSyncRunEntity>(
+    _entities[13].properties[10],
+  );
+
+  /// See [CloudSyncRunEntity.startedAtMs].
+  static final startedAtMs = obx.QueryIntegerProperty<CloudSyncRunEntity>(
+    _entities[13].properties[11],
+  );
+
+  /// See [CloudSyncRunEntity.finishedAtMs].
+  static final finishedAtMs = obx.QueryIntegerProperty<CloudSyncRunEntity>(
+    _entities[13].properties[12],
+  );
+
+  /// See [CloudSyncRunEntity.failureCategory].
+  static final failureCategory = obx.QueryStringProperty<CloudSyncRunEntity>(
+    _entities[13].properties[13],
+  );
+
+  /// See [CloudSyncRunEntity.scopeKey].
+  static final scopeKey = obx.QueryStringProperty<CloudSyncRunEntity>(
+    _entities[13].properties[14],
+  );
+
+  /// See [CloudSyncRunEntity.deferredCount].
+  static final deferredCount = obx.QueryIntegerProperty<CloudSyncRunEntity>(
+    _entities[13].properties[15],
+  );
+}
+
+/// [CloudSyncLeaseEntity] entity fields to define ObjectBox queries.
+class CloudSyncLeaseEntity_ {
+  /// See [CloudSyncLeaseEntity.id].
+  static final id = obx.QueryIntegerProperty<CloudSyncLeaseEntity>(
+    _entities[14].properties[0],
+  );
+
+  /// See [CloudSyncLeaseEntity.leaseKey].
+  static final leaseKey = obx.QueryStringProperty<CloudSyncLeaseEntity>(
+    _entities[14].properties[1],
+  );
+
+  /// See [CloudSyncLeaseEntity.scopeKey].
+  static final scopeKey = obx.QueryStringProperty<CloudSyncLeaseEntity>(
+    _entities[14].properties[2],
+  );
+
+  /// See [CloudSyncLeaseEntity.accountFingerprint].
+  static final accountFingerprint =
+      obx.QueryStringProperty<CloudSyncLeaseEntity>(
+        _entities[14].properties[3],
+      );
+
+  /// See [CloudSyncLeaseEntity.ownerIdHash].
+  static final ownerIdHash = obx.QueryStringProperty<CloudSyncLeaseEntity>(
+    _entities[14].properties[4],
+  );
+
+  /// See [CloudSyncLeaseEntity.generation].
+  static final generation = obx.QueryIntegerProperty<CloudSyncLeaseEntity>(
+    _entities[14].properties[5],
+  );
+
+  /// See [CloudSyncLeaseEntity.acquiredAtMs].
+  static final acquiredAtMs = obx.QueryIntegerProperty<CloudSyncLeaseEntity>(
+    _entities[14].properties[6],
+  );
+
+  /// See [CloudSyncLeaseEntity.expiresAtMs].
+  static final expiresAtMs = obx.QueryIntegerProperty<CloudSyncLeaseEntity>(
+    _entities[14].properties[7],
+  );
+}
+
+/// [CloudAttachmentMaterializationEntity] entity fields to define ObjectBox queries.
+class CloudAttachmentMaterializationEntity_ {
+  /// See [CloudAttachmentMaterializationEntity.id].
+  static final id =
+      obx.QueryIntegerProperty<CloudAttachmentMaterializationEntity>(
+        _entities[15].properties[0],
+      );
+
+  /// See [CloudAttachmentMaterializationEntity.transferKey].
+  static final transferKey =
+      obx.QueryStringProperty<CloudAttachmentMaterializationEntity>(
+        _entities[15].properties[1],
+      );
+
+  /// See [CloudAttachmentMaterializationEntity.scopeKey].
+  static final scopeKey =
+      obx.QueryStringProperty<CloudAttachmentMaterializationEntity>(
+        _entities[15].properties[2],
+      );
+
+  /// See [CloudAttachmentMaterializationEntity.accountFingerprint].
+  static final accountFingerprint =
+      obx.QueryStringProperty<CloudAttachmentMaterializationEntity>(
+        _entities[15].properties[3],
+      );
+
+  /// See [CloudAttachmentMaterializationEntity.zone].
+  static final zone =
+      obx.QueryStringProperty<CloudAttachmentMaterializationEntity>(
+        _entities[15].properties[4],
+      );
+
+  /// See [CloudAttachmentMaterializationEntity.generation].
+  static final generation =
+      obx.QueryIntegerProperty<CloudAttachmentMaterializationEntity>(
+        _entities[15].properties[5],
+      );
+
+  /// See [CloudAttachmentMaterializationEntity.logicalEntityKeyHash].
+  static final logicalEntityKeyHash =
+      obx.QueryStringProperty<CloudAttachmentMaterializationEntity>(
+        _entities[15].properties[6],
+      );
+
+  /// See [CloudAttachmentMaterializationEntity.expectedBytes].
+  static final expectedBytes =
+      obx.QueryIntegerProperty<CloudAttachmentMaterializationEntity>(
+        _entities[15].properties[7],
+      );
+
+  /// See [CloudAttachmentMaterializationEntity.expectedIntegrityTagHash].
+  static final expectedIntegrityTagHash =
+      obx.QueryStringProperty<CloudAttachmentMaterializationEntity>(
+        _entities[15].properties[8],
+      );
+
+  /// See [CloudAttachmentMaterializationEntity.stage].
+  static final stage =
+      obx.QueryIntegerProperty<CloudAttachmentMaterializationEntity>(
+        _entities[15].properties[9],
+      );
+
+  /// See [CloudAttachmentMaterializationEntity.verifiedBytes].
+  static final verifiedBytes =
+      obx.QueryIntegerProperty<CloudAttachmentMaterializationEntity>(
+        _entities[15].properties[10],
+      );
+
+  /// See [CloudAttachmentMaterializationEntity.protectedTempReference].
+  static final protectedTempReference =
+      obx.QueryStringProperty<CloudAttachmentMaterializationEntity>(
+        _entities[15].properties[11],
+      );
+
+  /// See [CloudAttachmentMaterializationEntity.protectedResumeManifestReference].
+  static final protectedResumeManifestReference =
+      obx.QueryStringProperty<CloudAttachmentMaterializationEntity>(
+        _entities[15].properties[12],
+      );
+
+  /// See [CloudAttachmentMaterializationEntity.protectedContentVerificationReference].
+  static final protectedContentVerificationReference =
+      obx.QueryStringProperty<CloudAttachmentMaterializationEntity>(
+        _entities[15].properties[13],
+      );
+
+  /// See [CloudAttachmentMaterializationEntity.protectedFinalReference].
+  static final protectedFinalReference =
+      obx.QueryStringProperty<CloudAttachmentMaterializationEntity>(
+        _entities[15].properties[14],
+      );
+
+  /// See [CloudAttachmentMaterializationEntity.updatedAtMs].
+  static final updatedAtMs =
+      obx.QueryIntegerProperty<CloudAttachmentMaterializationEntity>(
+        _entities[15].properties[15],
+      );
+}
+
+/// [CloudSemanticReplayEntity] entity fields to define ObjectBox queries.
+class CloudSemanticReplayEntity_ {
+  /// See [CloudSemanticReplayEntity.id].
+  static final id = obx.QueryIntegerProperty<CloudSemanticReplayEntity>(
+    _entities[16].properties[0],
+  );
+
+  /// See [CloudSemanticReplayEntity.replayKey].
+  static final replayKey = obx.QueryStringProperty<CloudSemanticReplayEntity>(
+    _entities[16].properties[1],
+  );
+
+  /// See [CloudSemanticReplayEntity.scopeGenerationKey].
+  static final scopeGenerationKey =
+      obx.QueryStringProperty<CloudSemanticReplayEntity>(
+        _entities[16].properties[2],
+      );
+
+  /// See [CloudSemanticReplayEntity.scopeKey].
+  static final scopeKey = obx.QueryStringProperty<CloudSemanticReplayEntity>(
+    _entities[16].properties[3],
+  );
+
+  /// See [CloudSemanticReplayEntity.accountFingerprint].
+  static final accountFingerprint =
+      obx.QueryStringProperty<CloudSemanticReplayEntity>(
+        _entities[16].properties[4],
+      );
+
+  /// See [CloudSemanticReplayEntity.container].
+  static final container = obx.QueryStringProperty<CloudSemanticReplayEntity>(
+    _entities[16].properties[5],
+  );
+
+  /// See [CloudSemanticReplayEntity.database].
+  static final database = obx.QueryStringProperty<CloudSemanticReplayEntity>(
+    _entities[16].properties[6],
+  );
+
+  /// See [CloudSemanticReplayEntity.zone].
+  static final zone = obx.QueryStringProperty<CloudSemanticReplayEntity>(
+    _entities[16].properties[7],
+  );
+
+  /// See [CloudSemanticReplayEntity.streamKind].
+  static final streamKind = obx.QueryStringProperty<CloudSemanticReplayEntity>(
+    _entities[16].properties[8],
+  );
+
+  /// See [CloudSemanticReplayEntity.schemaVersion].
+  static final schemaVersion =
+      obx.QueryIntegerProperty<CloudSemanticReplayEntity>(
+        _entities[16].properties[9],
+      );
+
+  /// See [CloudSemanticReplayEntity.generation].
+  static final generation = obx.QueryIntegerProperty<CloudSemanticReplayEntity>(
+    _entities[16].properties[10],
+  );
+
+  /// See [CloudSemanticReplayEntity.changeIdHash].
+  static final changeIdHash =
+      obx.QueryStringProperty<CloudSemanticReplayEntity>(
+        _entities[16].properties[11],
+      );
+
+  /// See [CloudSemanticReplayEntity.updatedAtMs].
+  static final updatedAtMs =
+      obx.QueryIntegerProperty<CloudSemanticReplayEntity>(
+        _entities[16].properties[12],
+      );
+
+  /// See [CloudSemanticReplayEntity.serverRecordIdHash].
+  static final serverRecordIdHash =
+      obx.QueryStringProperty<CloudSemanticReplayEntity>(
+        _entities[16].properties[13],
+      );
+
+  /// See [CloudSemanticReplayEntity.logicalEntityKeyHash].
+  static final logicalEntityKeyHash =
+      obx.QueryStringProperty<CloudSemanticReplayEntity>(
+        _entities[16].properties[14],
+      );
+
+  /// See [CloudSemanticReplayEntity.payloadSha256].
+  static final payloadSha256 =
+      obx.QueryStringProperty<CloudSemanticReplayEntity>(
+        _entities[16].properties[15],
+      );
+
+  /// See [CloudSemanticReplayEntity.protectedPayloadReferenceHash].
+  static final protectedPayloadReferenceHash =
+      obx.QueryStringProperty<CloudSemanticReplayEntity>(
+        _entities[16].properties[16],
+      );
+
+  /// See [CloudSemanticReplayEntity.inboxSequence].
+  static final inboxSequence =
+      obx.QueryIntegerProperty<CloudSemanticReplayEntity>(
+        _entities[16].properties[17],
+      );
+
+  /// See [CloudSemanticReplayEntity.changeType].
+  static final changeType = obx.QueryStringProperty<CloudSemanticReplayEntity>(
+    _entities[16].properties[18],
+  );
+
+  /// See [CloudSemanticReplayEntity.terminalOutcome].
+  static final terminalOutcome =
+      obx.QueryStringProperty<CloudSemanticReplayEntity>(
+        _entities[16].properties[19],
+      );
+
+  /// See [CloudSemanticReplayEntity.terminalSafeCode].
+  static final terminalSafeCode =
+      obx.QueryStringProperty<CloudSemanticReplayEntity>(
+        _entities[16].properties[20],
+      );
+}
+
+/// [CloudSemanticSnapshotEntity] entity fields to define ObjectBox queries.
+class CloudSemanticSnapshotEntity_ {
+  /// See [CloudSemanticSnapshotEntity.id].
+  static final id = obx.QueryIntegerProperty<CloudSemanticSnapshotEntity>(
+    _entities[17].properties[0],
+  );
+
+  /// See [CloudSemanticSnapshotEntity.snapshotKey].
+  static final snapshotKey =
+      obx.QueryStringProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[1],
+      );
+
+  /// See [CloudSemanticSnapshotEntity.scopeGenerationKey].
+  static final scopeGenerationKey =
+      obx.QueryStringProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[2],
+      );
+
+  /// See [CloudSemanticSnapshotEntity.scopeKey].
+  static final scopeKey = obx.QueryStringProperty<CloudSemanticSnapshotEntity>(
+    _entities[17].properties[3],
+  );
+
+  /// See [CloudSemanticSnapshotEntity.accountFingerprint].
+  static final accountFingerprint =
+      obx.QueryStringProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[4],
+      );
+
+  /// See [CloudSemanticSnapshotEntity.container].
+  static final container = obx.QueryStringProperty<CloudSemanticSnapshotEntity>(
+    _entities[17].properties[5],
+  );
+
+  /// See [CloudSemanticSnapshotEntity.database].
+  static final database = obx.QueryStringProperty<CloudSemanticSnapshotEntity>(
+    _entities[17].properties[6],
+  );
+
+  /// See [CloudSemanticSnapshotEntity.zone].
+  static final zone = obx.QueryStringProperty<CloudSemanticSnapshotEntity>(
+    _entities[17].properties[7],
+  );
+
+  /// See [CloudSemanticSnapshotEntity.streamKind].
+  static final streamKind =
+      obx.QueryStringProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[8],
+      );
+
+  /// See [CloudSemanticSnapshotEntity.schemaVersion].
+  static final schemaVersion =
+      obx.QueryIntegerProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[9],
+      );
+
+  /// See [CloudSemanticSnapshotEntity.generation].
+  static final generation =
+      obx.QueryIntegerProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[10],
+      );
+
+  /// See [CloudSemanticSnapshotEntity.entityKind].
+  static final entityKind =
+      obx.QueryStringProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[11],
+      );
+
+  /// See [CloudSemanticSnapshotEntity.logicalEntityKeyHash].
+  static final logicalEntityKeyHash =
+      obx.QueryStringProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[12],
+      );
+
+  /// See [CloudSemanticSnapshotEntity.parentLogicalKeyHash].
+  static final parentLogicalKeyHash =
+      obx.QueryStringProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[13],
+      );
+
+  /// See [CloudSemanticSnapshotEntity.immutableContentDigest].
+  static final immutableContentDigest =
+      obx.QueryStringProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[14],
+      );
+
+  /// See [CloudSemanticSnapshotEntity.createdAtMs].
+  static final createdAtMs =
+      obx.QueryIntegerProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[15],
+      );
+
+  /// See [CloudSemanticSnapshotEntity.readAtMs].
+  static final readAtMs = obx.QueryIntegerProperty<CloudSemanticSnapshotEntity>(
+    _entities[17].properties[16],
+  );
+
+  /// See [CloudSemanticSnapshotEntity.deliveredAtMs].
+  static final deliveredAtMs =
+      obx.QueryIntegerProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[17],
+      );
+
+  /// See [CloudSemanticSnapshotEntity.editPartsJson].
+  static final editPartsJson =
+      obx.QueryStringProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[18],
+      );
+
+  /// See [CloudSemanticSnapshotEntity.retractedAtMs].
+  static final retractedAtMs =
+      obx.QueryIntegerProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[19],
+      );
+
+  /// See [CloudSemanticSnapshotEntity.groupVersion].
+  static final groupVersion =
+      obx.QueryIntegerProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[20],
+      );
+
+  /// See [CloudSemanticSnapshotEntity.groupMetadataDigest].
+  static final groupMetadataDigest =
+      obx.QueryStringProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[21],
+      );
+
+  /// See [CloudSemanticSnapshotEntity.etagHash].
+  static final etagHash = obx.QueryStringProperty<CloudSemanticSnapshotEntity>(
+    _entities[17].properties[22],
+  );
+
+  /// See [CloudSemanticSnapshotEntity.updatedAtMs].
+  static final updatedAtMs =
+      obx.QueryIntegerProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[23],
+      );
+}
+
+/// [CloudProtectedPageLeaseEntity] entity fields to define ObjectBox queries.
+class CloudProtectedPageLeaseEntity_ {
+  /// See [CloudProtectedPageLeaseEntity.id].
+  static final id = obx.QueryIntegerProperty<CloudProtectedPageLeaseEntity>(
+    _entities[18].properties[0],
+  );
+
+  /// See [CloudProtectedPageLeaseEntity.leaseReference].
+  static final leaseReference =
+      obx.QueryStringProperty<CloudProtectedPageLeaseEntity>(
+        _entities[18].properties[1],
+      );
+
+  /// See [CloudProtectedPageLeaseEntity.scopeKey].
+  static final scopeKey =
+      obx.QueryStringProperty<CloudProtectedPageLeaseEntity>(
+        _entities[18].properties[2],
+      );
+
+  /// See [CloudProtectedPageLeaseEntity.accountFingerprint].
+  static final accountFingerprint =
+      obx.QueryStringProperty<CloudProtectedPageLeaseEntity>(
+        _entities[18].properties[3],
+      );
+
+  /// See [CloudProtectedPageLeaseEntity.generation].
+  static final generation =
+      obx.QueryIntegerProperty<CloudProtectedPageLeaseEntity>(
+        _entities[18].properties[4],
+      );
+
+  /// See [CloudProtectedPageLeaseEntity.batchIdHash].
+  static final batchIdHash =
+      obx.QueryStringProperty<CloudProtectedPageLeaseEntity>(
+        _entities[18].properties[5],
+      );
+
+  /// See [CloudProtectedPageLeaseEntity.adoptedAtMs].
+  static final adoptedAtMs =
+      obx.QueryIntegerProperty<CloudProtectedPageLeaseEntity>(
+        _entities[18].properties[6],
+      );
+
+  /// See [CloudProtectedPageLeaseEntity.finalizeAttemptCount].
+  static final finalizeAttemptCount =
+      obx.QueryIntegerProperty<CloudProtectedPageLeaseEntity>(
+        _entities[18].properties[7],
+      );
+
+  /// See [CloudProtectedPageLeaseEntity.nextFinalizeEligibleAtMs].
+  static final nextFinalizeEligibleAtMs =
+      obx.QueryIntegerProperty<CloudProtectedPageLeaseEntity>(
+        _entities[18].properties[8],
+      );
+}
+
+/// [CloudKitWriterAuthorityEntity] entity fields to define ObjectBox queries.
+class CloudKitWriterAuthorityEntity_ {
+  /// See [CloudKitWriterAuthorityEntity.id].
+  static final id = obx.QueryIntegerProperty<CloudKitWriterAuthorityEntity>(
+    _entities[19].properties[0],
+  );
+
+  /// See [CloudKitWriterAuthorityEntity.authorityKey].
+  static final authorityKey =
+      obx.QueryStringProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[1],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.accountFingerprint].
+  static final accountFingerprint =
+      obx.QueryStringProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[2],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.container].
+  static final container =
+      obx.QueryStringProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[3],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.database].
+  static final database =
+      obx.QueryStringProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[4],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.owner].
+  static final owner = obx.QueryIntegerProperty<CloudKitWriterAuthorityEntity>(
+    _entities[19].properties[5],
+  );
+
+  /// See [CloudKitWriterAuthorityEntity.state].
+  static final state = obx.QueryIntegerProperty<CloudKitWriterAuthorityEntity>(
+    _entities[19].properties[6],
+  );
+
+  /// See [CloudKitWriterAuthorityEntity.targetOwner].
+  static final targetOwner =
+      obx.QueryIntegerProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[7],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.epoch].
+  static final epoch = obx.QueryIntegerProperty<CloudKitWriterAuthorityEntity>(
+    _entities[19].properties[8],
+  );
+
+  /// See [CloudKitWriterAuthorityEntity.updatedAtMs].
+  static final updatedAtMs =
+      obx.QueryIntegerProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[9],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.transitionIdHash].
+  static final transitionIdHash =
+      obx.QueryStringProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[10],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.resetScopeKeyHash].
+  static final resetScopeKeyHash =
+      obx.QueryStringProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[11],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.resetGeneration].
+  static final resetGeneration =
+      obx.QueryIntegerProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[12],
+      );
+
+  /// See [CloudKitWriterAuthorityEntity.resetProofReferenceHash].
+  static final resetProofReferenceHash =
+      obx.QueryStringProperty<CloudKitWriterAuthorityEntity>(
+        _entities[19].properties[13],
+      );
+}
+
+/// [CloudKitDeletionIntentEntity] entity fields to define ObjectBox queries.
+class CloudKitDeletionIntentEntity_ {
+  /// See [CloudKitDeletionIntentEntity.id].
+  static final id = obx.QueryIntegerProperty<CloudKitDeletionIntentEntity>(
+    _entities[20].properties[0],
+  );
+
+  /// See [CloudKitDeletionIntentEntity.intentKey].
+  static final intentKey =
+      obx.QueryStringProperty<CloudKitDeletionIntentEntity>(
+        _entities[20].properties[1],
+      );
+
+  /// See [CloudKitDeletionIntentEntity.accountFingerprint].
+  static final accountFingerprint =
+      obx.QueryStringProperty<CloudKitDeletionIntentEntity>(
+        _entities[20].properties[2],
+      );
+
+  /// See [CloudKitDeletionIntentEntity.container].
+  static final container =
+      obx.QueryStringProperty<CloudKitDeletionIntentEntity>(
+        _entities[20].properties[3],
+      );
+
+  /// See [CloudKitDeletionIntentEntity.database].
+  static final database = obx.QueryStringProperty<CloudKitDeletionIntentEntity>(
+    _entities[20].properties[4],
+  );
+
+  /// See [CloudKitDeletionIntentEntity.writerEpoch].
+  static final writerEpoch =
+      obx.QueryIntegerProperty<CloudKitDeletionIntentEntity>(
+        _entities[20].properties[5],
+      );
+
+  /// See [CloudKitDeletionIntentEntity.kind].
+  static final kind = obx.QueryIntegerProperty<CloudKitDeletionIntentEntity>(
+    _entities[20].properties[6],
+  );
+
+  /// See [CloudKitDeletionIntentEntity.recordId].
+  static final recordId = obx.QueryStringProperty<CloudKitDeletionIntentEntity>(
+    _entities[20].properties[7],
+  );
+
+  /// See [CloudKitDeletionIntentEntity.state].
+  static final state = obx.QueryIntegerProperty<CloudKitDeletionIntentEntity>(
+    _entities[20].properties[8],
+  );
+
+  /// See [CloudKitDeletionIntentEntity.quarantineReason].
+  static final quarantineReason =
+      obx.QueryStringProperty<CloudKitDeletionIntentEntity>(
+        _entities[20].properties[9],
+      );
+
+  /// See [CloudKitDeletionIntentEntity.createdAtMs].
+  static final createdAtMs =
+      obx.QueryIntegerProperty<CloudKitDeletionIntentEntity>(
+        _entities[20].properties[10],
+      );
+
+  /// See [CloudKitDeletionIntentEntity.updatedAtMs].
+  static final updatedAtMs =
+      obx.QueryIntegerProperty<CloudKitDeletionIntentEntity>(
+        _entities[20].properties[11],
+      );
+}
+
+/// [CloudKitDeletionQuarantineEntity] entity fields to define ObjectBox queries.
+class CloudKitDeletionQuarantineEntity_ {
+  /// See [CloudKitDeletionQuarantineEntity.id].
+  static final id = obx.QueryIntegerProperty<CloudKitDeletionQuarantineEntity>(
+    _entities[21].properties[0],
+  );
+
+  /// See [CloudKitDeletionQuarantineEntity.quarantineKey].
+  static final quarantineKey =
+      obx.QueryStringProperty<CloudKitDeletionQuarantineEntity>(
+        _entities[21].properties[1],
+      );
+
+  /// See [CloudKitDeletionQuarantineEntity.sourceKey].
+  static final sourceKey =
+      obx.QueryStringProperty<CloudKitDeletionQuarantineEntity>(
+        _entities[21].properties[2],
+      );
+
+  /// See [CloudKitDeletionQuarantineEntity.recordId].
+  static final recordId =
+      obx.QueryStringProperty<CloudKitDeletionQuarantineEntity>(
+        _entities[21].properties[3],
+      );
+
+  /// See [CloudKitDeletionQuarantineEntity.reason].
+  static final reason =
+      obx.QueryStringProperty<CloudKitDeletionQuarantineEntity>(
+        _entities[21].properties[4],
+      );
+
+  /// See [CloudKitDeletionQuarantineEntity.createdAtMs].
+  static final createdAtMs =
+      obx.QueryIntegerProperty<CloudKitDeletionQuarantineEntity>(
+        _entities[21].properties[5],
+      );
 }

@@ -20,6 +20,21 @@ class ReactionTypes {
   // ignore: non_constant_identifier_names
   static const String STICKERBACK = "stickerback";
 
+  /// Maps Apple's `associatedMessageType` to a reaction name, or null when this
+  /// build has no name for it.
+  ///
+  /// Apple uses 2000+ for an applied reaction and 3000+ for a removed one, but
+  /// it can send an index beyond the names below. Callers must treat null as
+  /// "not a reaction" rather than indexing [toList] directly, which throws a
+  /// RangeError on an unknown type.
+  static String? fromAssociatedMessageType(int associatedMessageType) {
+    final removed = associatedMessageType >= 3000;
+    final index = associatedMessageType - (removed ? 3000 : 2000);
+    final names = toList();
+    if (index < 0 || index >= names.length) return null;
+    return removed ? "-${names[index]}" : names[index];
+  }
+
   static List<String> toList() {
     return [
       LOVE,
@@ -80,14 +95,19 @@ List<Message> getUniqueReactionMessages(List<Message> messages) {
   messages.sort(Message.sort);
   // Iterate over the messages and insert the latest reaction for each user
   for (Message msg in messages) {
+    final reactionType = msg.associatedMessageType;
+    // Old databases can contain rows written before unknown CloudKit reaction
+    // types were rejected. They are ordinary messages, not renderable
+    // reactions, and must not crash this view.
+    if (reactionType == null) continue;
     int cache = msg.isFromMe! ? 0 : msg.handleId ?? 0;
     if (!handleCache.contains(cache) && !kIsWeb) {
       handleCache.add(cache);
       // Only add the reaction if it's not a "negative"
-      if (!msg.associatedMessageType!.startsWith("-")) {
+      if (!reactionType.startsWith("-")) {
         output.add(msg);
       }
-    } else if (kIsWeb && !msg.associatedMessageType!.startsWith("-")) {
+    } else if (kIsWeb && !reactionType.startsWith("-")) {
       output.add(msg);
     }
   }

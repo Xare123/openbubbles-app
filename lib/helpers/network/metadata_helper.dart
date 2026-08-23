@@ -21,22 +21,34 @@ class MetadataHelper {
 
   static final Map<String, Completer<Metadata?>> _metaCache = {};
 
-  static Future<Metadata?> fetchMetadata(Message message) async {
+  /// Fetches link preview metadata for [previewUrl], falling back to the first
+  /// URL in the message when no URL is given.
+  ///
+  /// [previewUrl] exists because a message can carry more than one link. The
+  /// cache used to be keyed by message GUID alone and the URL was always
+  /// `message.url`, which is the *first* URL in the whole message text. A
+  /// message with three links therefore fetched the first link three times and
+  /// shared a single cache entry between all three previews, so the second and
+  /// third rendered as empty boxes.
+  static Future<Metadata?> fetchMetadata(Message message, {String? previewUrl}) async {
     Metadata? data;
+
+    // Get the URL
+    final url = _resolveUrl(previewUrl) ?? _resolveUrl(message.url);
+    if (url == null) return null;
+
+    // Key on the message and the URL together. Keying on the message alone
+    // made every link in a multi-link message collide.
+    final cacheKey = "${message.guid}|$url";
+
     // If we have a cached item for this already, return that future
-    if (_metaCache.containsKey(message.guid)) {
-      return _metaCache[message.guid]!.future;
+    if (_metaCache.containsKey(cacheKey)) {
+      return _metaCache[cacheKey]!.future;
     }
 
     // Create a new completer for this request
     Completer<Metadata?> completer = Completer();
-    _metaCache[message.guid!] = completer;
-
-    // Get the URL
-    String url = message.url!;
-    if (!url.startsWith("http")) {
-      url = "https://$url";
-    }
+    _metaCache[cacheKey] = completer;
     try {
       data = await MetadataFetch.extract(url);
     } catch (ex, stack) {
@@ -48,10 +60,22 @@ class MetadataHelper {
       data = await MetadataHelper._manuallyGetMetadata(url);
     }
 
-    // If the URL is supposedly to an actual image, set the image to the URL manually
-    RegExp exp = RegExp(r"(.png|.jpg|.gif|.tiff|.jpeg)$");
-    if (data?.image == null && data?.title == null && data!.url != null && exp.hasMatch(data.url!)) {
-      data.image = data.url;
+    // If the URL points at an actual image, use it as the preview image.
+    //
+    // This used to test `data.url`, which is not assigned until the bottom of
+    // this method, so for a bare image link it was still null here and the
+    // check could never fire. A link straight to a .jpg has no HTML metadata
+    // to scrape, so this fallback is the only thing that gives it a preview,
+    // and it rendered as an empty card instead.
+    //
+    // The pattern is matched against the path so a query string does not
+    // defeat the anchor, and the dots are escaped: unescaped `.jpg` matches
+    // any character before "jpg".
+    final urlPath = Uri.tryParse(url)?.path ?? url;
+    final imageExtension = RegExp(r"\.(png|jpe?g|gif|tiff?|webp|heic|bmp)$", caseSensitive: false);
+    if (data?.image == null && data?.title == null && imageExtension.hasMatch(urlPath)) {
+      data ??= Metadata();
+      data.image = url;
       data.title = "Image Preview";
     }
 
@@ -75,14 +99,28 @@ class MetadataHelper {
 
     // Delete from the cache after 15 seconds (arbitrary)
     Future.delayed(const Duration(seconds: 15), () {
-      if (_metaCache.containsKey(message.guid)) {
-        _metaCache.remove(message.guid);
-      }
+      _metaCache.remove(cacheKey);
     });
 
     // Tell everyone that it's complete
     completer.complete(data);
     return completer.future;
+  }
+
+  static String? _resolveUrl(String? candidate) {
+    final value = candidate?.trim();
+    if (value == null || value.isEmpty || value.contains(RegExp(r"\s")) || !value.hasUrl) {
+      return null;
+    }
+
+    final parsed = Uri.tryParse(value);
+    final normalized = parsed?.hasScheme == true ? value : "https://$value";
+    final normalizedUri = Uri.tryParse(normalized);
+    if (normalizedUri == null || normalizedUri.host.isEmpty ||
+        !["http", "https"].contains(normalizedUri.scheme.toLowerCase())) {
+      return null;
+    }
+    return normalized;
   }
 
   /// Manually tries to parse out metadata from a given [url]

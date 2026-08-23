@@ -3,20 +3,22 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
-import 'package:encrypt/encrypt.dart' as encrypt;
+import 'package:pointycastle/export.dart';
 import 'package:tuple/tuple.dart';
 
 String encryptAESCryptoJS(Uint8List plainText, String passphrase) {
   try {
     final salt = genRandomWithNonZero(8);
     var keyndIV = deriveKeyAndIV(passphrase, salt);
-    final key = encrypt.Key(keyndIV.item1);
-    final iv = encrypt.IV(keyndIV.item2);
-
-    final encrypter = encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.cbc, padding: "PKCS7"));
-    final encrypted = encrypter.encryptBytes(plainText, iv: iv);
-    Uint8List encryptedBytesWithSalt =
-        Uint8List.fromList(createUint8ListFromString("Salted__") + salt + encrypted.bytes);
+    final encrypted = _processAesCbcPkcs7(
+      forEncryption: true,
+      input: plainText,
+      key: keyndIV.item1,
+      iv: keyndIV.item2,
+    );
+    Uint8List encryptedBytesWithSalt = Uint8List.fromList(
+      createUint8ListFromString("Salted__") + salt + encrypted,
+    );
     return base64.encode(encryptedBytesWithSalt);
   } catch (error) {
     rethrow;
@@ -27,18 +29,38 @@ List<int> decryptAESCryptoJS(String encrypted, String passphrase) {
   try {
     Uint8List encryptedBytesWithSalt = base64.decode(encrypted);
 
-    Uint8List encryptedBytes = encryptedBytesWithSalt.sublist(16, encryptedBytesWithSalt.length);
+    Uint8List encryptedBytes = encryptedBytesWithSalt.sublist(
+      16,
+      encryptedBytesWithSalt.length,
+    );
     final salt = encryptedBytesWithSalt.sublist(8, 16);
     var keyndIV = deriveKeyAndIV(passphrase, salt);
-    final key = encrypt.Key(keyndIV.item1);
-    final iv = encrypt.IV(keyndIV.item2);
-
-    final encrypter = encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.cbc, padding: "PKCS7"));
-    final decrypted = encrypter.decryptBytes(encrypt.Encrypted(encryptedBytes), iv: iv);
-    return decrypted;
+    return _processAesCbcPkcs7(
+      forEncryption: false,
+      input: encryptedBytes,
+      key: keyndIV.item1,
+      iv: keyndIV.item2,
+    );
   } catch (error) {
     rethrow;
   }
+}
+
+Uint8List _processAesCbcPkcs7({
+  required bool forEncryption,
+  required Uint8List input,
+  required Uint8List key,
+  required Uint8List iv,
+}) {
+  final cipher = PaddedBlockCipher('AES/CBC/PKCS7')
+    ..init(
+      forEncryption,
+      PaddedBlockCipherParameters<ParametersWithIV<KeyParameter>, Null>(
+        ParametersWithIV<KeyParameter>(KeyParameter(key), iv),
+        null,
+      ),
+    );
+  return cipher.process(input);
 }
 
 Tuple2<Uint8List, Uint8List> deriveKeyAndIV(String passphrase, Uint8List salt) {

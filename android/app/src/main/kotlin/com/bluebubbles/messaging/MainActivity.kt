@@ -29,6 +29,8 @@ class MainActivity : FlutterFragmentActivity(), ComponentCallbacks2 {
         var engine_ready = false
     }
 
+    private var activityEngine: FlutterEngine? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -40,15 +42,22 @@ class MainActivity : FlutterFragmentActivity(), ComponentCallbacks2 {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         engine_ready = false
+        activityEngine = flutterEngine
         engine = flutterEngine
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, Constants.methodChannel).setMethodCallHandler { call, result ->
             if (call.method == "engine-done") {
                 Log.i("BBEngine", "Destroyed");
                 // this must be here in case another engine has been spawned in the meantime
-                flutterEngine.destroy()
-                if (engine == flutterEngine)
+                if (engine === flutterEngine) {
+                    engine_ready = false
                     engine = null
+                    APNService.onMainEngineUnavailable()
+                }
+                if (activityEngine === flutterEngine) {
+                    activityEngine = null
+                }
+                flutterEngine.destroy()
             }
             MethodCallHandler().methodCallHandler(call, result, this)
         }
@@ -58,7 +67,12 @@ class MainActivity : FlutterFragmentActivity(), ComponentCallbacks2 {
 
     override fun onDestroy() {
         Log.d(Constants.logTag, "BlueBubbles MainActivity is being destroyed")
-        engine = null
+        if (engine === activityEngine) {
+            engine_ready = false
+            engine = null
+            APNService.onMainEngineUnavailable()
+        }
+        activityEngine = null
 
         // If we are finishing "gracefully", the dart code would have started the foreground service.
         // If we are finishing because the system is destroying the activity, we need to start the foreground service

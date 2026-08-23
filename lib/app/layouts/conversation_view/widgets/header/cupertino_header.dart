@@ -55,10 +55,6 @@ class CupertinoHeader extends StatelessWidget implements PreferredSizeWidget {
         SystemNavigator.pop();
         return;
       }
-      controller.close();
-      if (Get.isSnackbarOpen) {
-        Get.closeAllSnackbars();
-      }
       Navigator.of(context).pop();
     }
 

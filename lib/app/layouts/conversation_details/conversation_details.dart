@@ -44,12 +44,13 @@ class _ConversationDetailsState extends OptimizedState<ConversationDetails> with
   bool showMoreParticipants = false;
   late Chat chat = widget.chat;
   late StreamSubscription sub;
+  late final ConversationMediaPager mediaPager;
+  bool _attachmentsLoaded = false;
+  bool _fetchingAttachments = false;
   final RxList<String> selected = <String>[].obs;
 
   bool get shouldShowMore => chat.participants.length > 5;
-  List<Handle> get clippedParticipants => showMoreParticipants
-      ? chat.participants
-      : chat.participants.take(5).toList();
+  List<Handle> get clippedParticipants => showMoreParticipants ? chat.participants : chat.participants.take(5).toList();
 
   List<String> ftSupportedParticipants = [];
 
@@ -60,11 +61,13 @@ class _ConversationDetailsState extends OptimizedState<ConversationDetails> with
     cm.setActiveToDead();
 
     cvc(widget.chat).showingOverlays = true;
+    mediaPager = ConversationMediaPager(chat: chat)..addListener(_onMediaChanged);
 
     (() async {
       var data = await chat.getConversationData();
-      ftSupportedParticipants = await api.validateTargetsFacetime(state: pushService.state!.client, targets: data.participants, sender: await chat.ensureHandle());
-      setState(() { });
+      ftSupportedParticipants = await api.validateTargetsFacetime(
+          state: pushService.state!.client, targets: data.participants, sender: await chat.ensureHandle());
+      setState(() {});
     })();
 
     if (!kIsWeb) {
@@ -102,6 +105,9 @@ class _ConversationDetailsState extends OptimizedState<ConversationDetails> with
   @override
   void dispose() {
     sub.cancel();
+    mediaPager
+      ..removeListener(_onMediaChanged)
+      ..dispose();
     cvc(widget.chat).showingOverlays = false;
     if (cm.activeChat != null) {
       cm.setActiveToAlive();
@@ -110,39 +116,55 @@ class _ConversationDetailsState extends OptimizedState<ConversationDetails> with
     super.dispose();
   }
 
-  void fetchAttachments() {
-    if (kIsWeb) return;
-    chat.getAttachmentsAsync().then((value) {
-      final _media = value.where((e) => !(e.message.target?.isGroupEvent ?? true)
-          && !(e.message.target?.isInteractive ?? true)
-          && (e.mimeStart == "image" || e.mimeStart == "video")).take(24);
-      final _docs = value.where((e) => !(e.message.target?.isGroupEvent ?? true)
-          && !(e.message.target?.isInteractive ?? true)
-          && e.mimeStart != "image" && e.mimeStart != "video" && !(e.mimeType ?? "").contains("location")).take(24);
-      final _locations = value.where((e) => (e.mimeType ?? "").contains("location")).take(10);
-      for (Attachment a in _media) {
-        a.message.target?.handle = chat.participants.firstWhereOrNull((e) => e.originalROWID == a.message.target?.handleId);
+  void _onMediaChanged() {
+    if (!mounted) return;
+    final updated = mediaPager.items;
+    for (final attachment in updated) {
+      _attachHandle(attachment);
+    }
+    setState(() => media = updated);
+  }
+
+  void _attachHandle(Attachment attachment) {
+    attachment.message.target?.handle = chat.participants.firstWhereOrNull(
+      (handle) => handle.originalROWID == attachment.message.target?.handleId,
+    );
+  }
+
+  Future<void> fetchAttachments() async {
+    if (kIsWeb || _fetchingAttachments) return;
+    _fetchingAttachments = true;
+    try {
+      final overviewFuture = chat.getAttachmentOverviewAsync();
+      if (_attachmentsLoaded) {
+        await mediaPager.refreshNewer();
+      } else {
+        await mediaPager.loadInitial();
       }
-      for (Attachment a in _docs) {
-        a.message.target?.handle = chat.participants.firstWhereOrNull((e) => e.originalROWID == a.message.target?.handleId);
+      final overview = await overviewFuture;
+      for (final attachment in [
+        ...overview.documents,
+        ...overview.locations,
+      ]) {
+        _attachHandle(attachment);
       }
-      for (Attachment a in _locations) {
-        a.message.target?.handle = chat.participants.firstWhereOrNull((e) => e.originalROWID == a.message.target?.handleId);
-      }
+      if (!mounted) return;
       setState(() {
-        media = _media.toList();
-        docs = _docs.toList();
-        locations = _locations.toList();
+        docs = overview.documents;
+        locations = overview.locations;
+        _attachmentsLoaded = true;
       });
-    });
+    } finally {
+      _fetchingAttachments = false;
+    }
   }
 
   void fetchLinks() {
-    final query = (Database.messages.query(Message_.dateDeleted.isNull()
-      & Message_.dbPayloadData.notNull()
-      & Message_.balloonBundleId.contains("URLBalloonProvider"))
-      ..link(Message_.chat, Chat_.id.equals(chat.id!))
-      ..order(Message_.dateCreated, flags: Order.descending))
+    final query = (Database.messages.query(Message_.dateDeleted.isNull() &
+            Message_.dbPayloadData.notNull() &
+            Message_.balloonBundleId.contains("URLBalloonProvider"))
+          ..link(Message_.chat, Chat_.id.equals(chat.id!))
+          ..order(Message_.dateCreated, flags: Order.descending))
         .build();
     query.limit = 20;
     links = query.find();
@@ -153,186 +175,180 @@ class _ConversationDetailsState extends OptimizedState<ConversationDetails> with
   Widget build(BuildContext context) {
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle(
-        systemNavigationBarColor: ss.settings.immersiveMode.value ? Colors.transparent : context.theme.colorScheme.background, // navigation bar color
+        systemNavigationBarColor: ss.settings.immersiveMode.value
+            ? Colors.transparent
+            : context.theme.colorScheme.background, // navigation bar color
         systemNavigationBarIconBrightness: context.theme.colorScheme.brightness.opposite,
         statusBarColor: Colors.transparent, // status bar color
         statusBarIconBrightness: context.theme.colorScheme.brightness.opposite,
       ),
       child: Theme(
-        data: context.theme.copyWith(
-          // in case some components still use legacy theming
-          primaryColor: context.theme.colorScheme.bubble(context, chat.isIMessage),
-          colorScheme: context.theme.colorScheme.copyWith(
-            primary: context.theme.colorScheme.bubble(context, chat.isIMessage),
-            onPrimary: context.theme.colorScheme.onBubble(context, chat.isIMessage),
-            surface: ss.settings.monetTheming.value == Monet.full
-                ? null
-                : (context.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
-            onSurface: ss.settings.monetTheming.value == Monet.full
-                ? null
-                : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
-          ),
-        ),
-        child: Obx(() {
-          var actions = [
-            Obx(() {
-              if (selected.isNotEmpty) {
-                return IconButton(
-                  icon: Icon(iOS ? CupertinoIcons.xmark : Icons.close, color: context.theme.colorScheme.onBackground),
-                  onPressed: () {
-                    selected.clear();
-                  },
-                );
-              } else {
-                return const SizedBox.shrink();
-              }
-            }),
-            Obx(() {
-              if (selected.isNotEmpty) {
-                return IconButton(
-                  icon: Icon(iOS ? CupertinoIcons.cloud_download : Icons.file_download, color: context.theme.colorScheme.onBackground),
-                  onPressed: () {
-                    final attachments = media.where((e) => selected.contains(e.guid!));
-                    for (Attachment a in attachments) {
-                      final file = as.getContent(a, autoDownload: false);
-                      if (file is PlatformFile) {
-                        as.saveToDisk(file);
-                      }
-                    }
-                  },
-                );
-              } else {
-                return const SizedBox.shrink();
-              }
-            }),
-          ];
-
-          var slivers = [
-            if (chat.isGroup)
-            SliverToBoxAdapter(
-              child: ChatInfo(chat: chat, ftSupportedParticipants: ftSupportedParticipants,),
+          data: context.theme.copyWith(
+            // in case some components still use legacy theming
+            primaryColor: context.theme.colorScheme.bubble(context, chat.isIMessage),
+            colorScheme: context.theme.colorScheme.copyWith(
+              primary: context.theme.colorScheme.bubble(context, chat.isIMessage),
+              onPrimary: context.theme.colorScheme.onBubble(context, chat.isIMessage),
+              surface: ss.settings.monetTheming.value == Monet.full
+                  ? null
+                  : (context.theme.extensions[BubbleColors] as BubbleColors?)?.receivedBubbleColor,
+              onSurface: ss.settings.monetTheming.value == Monet.full
+                  ? null
+                  : (context.theme.extensions[BubbleColors] as BubbleColors?)?.onReceivedBubbleColor,
             ),
-            if (chat.isGroup)
-              SliverList(
-                delegate: SliverChildBuilderDelegate((context, index) {
-                  final addMember = ListTile(
-                    mouseCursor: MouseCursor.defer,
-                    title: Text("Add ${iOS ? "Member" : "people"}", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
-                    leading: Container(
-                      width: 40 * ss.settings.avatarScale.value,
-                      height: 40 * ss.settings.avatarScale.value,
-                      decoration: BoxDecoration(
-                        color: !iOS ? null : context.theme.colorScheme.properSurface,
-                        shape: BoxShape.circle,
-                        border: iOS ? null : Border.all(color: context.theme.colorScheme.primary, width: 3)
-                      ),
-                      child: Icon(
-                        Icons.add,
-                        color: context.theme.colorScheme.primary,
-                        size: 20
-                      ),
-                    ),
-                    onTap: () {
-                      showAddParticipant(context, chat);
+          ),
+          child: Obx(() {
+            var actions = [
+              Obx(() {
+                if (selected.isNotEmpty) {
+                  return IconButton(
+                    icon: Icon(iOS ? CupertinoIcons.xmark : Icons.close, color: context.theme.colorScheme.onBackground),
+                    onPressed: () {
+                      selected.clear();
                     },
                   );
-
-                  if (index > clippedParticipants.length) {
-                    if (ss.settings.enablePrivateAPI.value && chat.isIMessage && chat.isGroup && shouldShowMore) {
-                      return addMember;
-                    } else {
-                      return const SizedBox.shrink();
-                    }
-                  }
-                  if (index == clippedParticipants.length) {
-                    if (shouldShowMore) {
-                      return ListTile(
-                        mouseCursor: SystemMouseCursors.click,
-                        onTap: () {
-                          setState(() {
-                            showMoreParticipants = !showMoreParticipants;
-                          });
-                        },
-                        title: Text(
-                          showMoreParticipants ? "Show less" : "Show more",
-                          style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary),
-                        ),
-                        leading: Container(
-                          width: 40 * ss.settings.avatarScale.value,
-                          height: 40 * ss.settings.avatarScale.value,
-                          decoration: BoxDecoration(
-                              color: !iOS ? null : context.theme.colorScheme.properSurface,
-                              shape: BoxShape.circle,
-                              border: iOS ? null : Border.all(color: context.theme.colorScheme.primary, width: 3)
-                          ),
-                          child: Icon(
-                            Icons.more_horiz,
-                            color: context.theme.colorScheme.primary,
-                            size: 20
-                          ),
-                        ),
-                      );
-                    } else if (ss.settings.enablePrivateAPI.value && chat.isIMessage && chat.isGroup) {
-                      return addMember;
-                    } else {
-                      return const SizedBox.shrink();
-                    }
-                  }
-
-                  return ContactTile(
-                    key: Key(chat.participants[index].address),
-                    handle: chat.participants[index],
-                    chat: chat,
-                    canBeRemoved: chat.participants.length > 1
-                        && ss.settings.enablePrivateAPI.value
-                        && chat.isIMessage,
-                    facetimeSupported: ftSupportedParticipants.contains(RustPushBBUtils.bbHandleToRust(chat.participants[index])),
+                } else {
+                  return const SizedBox.shrink();
+                }
+              }),
+              Obx(() {
+                if (selected.isNotEmpty) {
+                  return IconButton(
+                    icon: Icon(iOS ? CupertinoIcons.cloud_download : Icons.file_download,
+                        color: context.theme.colorScheme.onBackground),
+                    onPressed: () {
+                      final attachments = media.where((e) => selected.contains(e.guid!));
+                      for (Attachment a in attachments) {
+                        final file = as.getContent(a, autoDownload: false);
+                        if (file is PlatformFile) {
+                          as.saveToDisk(file);
+                        }
+                      }
+                    },
                   );
-                }, childCount: clippedParticipants.length + 2),
-              ),
-            if (ss.settings.enablePrivateAPI.value && chat.participants.length > 2 && backend.canLeaveChat()) // evaluate this first to make GetX happy
-              SliverToBoxAdapter(
-                child: Builder(
-                  builder: (context) {
-                    return ListTile(
+                } else {
+                  return const SizedBox.shrink();
+                }
+              }),
+            ];
+
+            var slivers = [
+              if (chat.isGroup)
+                SliverToBoxAdapter(
+                  child: ChatInfo(
+                    chat: chat,
+                    ftSupportedParticipants: ftSupportedParticipants,
+                  ),
+                ),
+              if (chat.isGroup)
+                SliverList(
+                  delegate: SliverChildBuilderDelegate((context, index) {
+                    final addMember = ListTile(
                       mouseCursor: MouseCursor.defer,
-                      title: Text("Leave ${iOS ? "Chat" : "chat"}", style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.error)),
+                      title: Text("Add ${iOS ? "Member" : "people"}",
+                          style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
                       leading: Container(
                         width: 40 * ss.settings.avatarScale.value,
                         height: 40 * ss.settings.avatarScale.value,
                         decoration: BoxDecoration(
-                          color: !iOS ? null : context.theme.colorScheme.properSurface,
-                          shape: BoxShape.circle,
-                          border: iOS ? null : Border.all(color: context.theme.colorScheme.error, width: 3)
-                        ),
-                        child: Icon(
-                          Icons.error_outline,
-                          color: context.theme.colorScheme.error,
-                          size: 20
-                        ),
+                            color: !iOS ? null : context.theme.colorScheme.properSurface,
+                            shape: BoxShape.circle,
+                            border: iOS ? null : Border.all(color: context.theme.colorScheme.primary, width: 3)),
+                        child: Icon(Icons.add, color: context.theme.colorScheme.primary, size: 20),
+                      ),
+                      onTap: () {
+                        showAddParticipant(context, chat);
+                      },
+                    );
+
+                    if (index > clippedParticipants.length) {
+                      if (ss.settings.enablePrivateAPI.value && chat.isIMessage && chat.isGroup && shouldShowMore) {
+                        return addMember;
+                      } else {
+                        return const SizedBox.shrink();
+                      }
+                    }
+                    if (index == clippedParticipants.length) {
+                      if (shouldShowMore) {
+                        return ListTile(
+                          mouseCursor: SystemMouseCursors.click,
+                          onTap: () {
+                            setState(() {
+                              showMoreParticipants = !showMoreParticipants;
+                            });
+                          },
+                          title: Text(
+                            showMoreParticipants ? "Show less" : "Show more",
+                            style:
+                                context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary),
+                          ),
+                          leading: Container(
+                            width: 40 * ss.settings.avatarScale.value,
+                            height: 40 * ss.settings.avatarScale.value,
+                            decoration: BoxDecoration(
+                                color: !iOS ? null : context.theme.colorScheme.properSurface,
+                                shape: BoxShape.circle,
+                                border: iOS ? null : Border.all(color: context.theme.colorScheme.primary, width: 3)),
+                            child: Icon(Icons.more_horiz, color: context.theme.colorScheme.primary, size: 20),
+                          ),
+                        );
+                      } else if (ss.settings.enablePrivateAPI.value && chat.isIMessage && chat.isGroup) {
+                        return addMember;
+                      } else {
+                        return const SizedBox.shrink();
+                      }
+                    }
+
+                    return ContactTile(
+                      key: Key(chat.participants[index].address),
+                      handle: chat.participants[index],
+                      chat: chat,
+                      canBeRemoved:
+                          chat.participants.length > 1 && ss.settings.enablePrivateAPI.value && chat.isIMessage,
+                      facetimeSupported:
+                          ftSupportedParticipants.contains(RustPushBBUtils.bbHandleToRust(chat.participants[index])),
+                    );
+                  }, childCount: clippedParticipants.length + 2),
+                ),
+              if (ss.settings.enablePrivateAPI.value &&
+                  chat.participants.length > 2 &&
+                  backend.canLeaveChat()) // evaluate this first to make GetX happy
+                SliverToBoxAdapter(
+                  child: Builder(builder: (context) {
+                    return ListTile(
+                      mouseCursor: MouseCursor.defer,
+                      title: Text("Leave ${iOS ? "Chat" : "chat"}",
+                          style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.error)),
+                      leading: Container(
+                        width: 40 * ss.settings.avatarScale.value,
+                        height: 40 * ss.settings.avatarScale.value,
+                        decoration: BoxDecoration(
+                            color: !iOS ? null : context.theme.colorScheme.properSurface,
+                            shape: BoxShape.circle,
+                            border: iOS ? null : Border.all(color: context.theme.colorScheme.error, width: 3)),
+                        child: Icon(Icons.error_outline, color: context.theme.colorScheme.error, size: 20),
                       ),
                       onTap: () async {
                         showDialog(
-                          context: context,
-                          builder: (BuildContext context) {
-                            return AlertDialog(
-                              backgroundColor: context.theme.colorScheme.properSurface,
-                              title: Text(
-                                "Leaving chat...",
-                                style: context.theme.textTheme.titleLarge,
-                              ),
-                              content: Container(
-                                height: 70,
-                                child: Center(
-                                  child: CircularProgressIndicator(
-                                    backgroundColor: context.theme.colorScheme.properSurface,
-                                    valueColor: AlwaysStoppedAnimation<Color>(context.theme.colorScheme.primary),
+                            context: context,
+                            builder: (BuildContext context) {
+                              return AlertDialog(
+                                backgroundColor: context.theme.colorScheme.properSurface,
+                                title: Text(
+                                  "Leaving chat...",
+                                  style: context.theme.textTheme.titleLarge,
+                                ),
+                                content: Container(
+                                  height: 70,
+                                  child: Center(
+                                    child: CircularProgressIndicator(
+                                      backgroundColor: context.theme.colorScheme.properSurface,
+                                      valueColor: AlwaysStoppedAnimation<Color>(context.theme.colorScheme.primary),
+                                    ),
                                   ),
                                 ),
-                              ),
-                            );
-                          }
-                        );
+                              );
+                            });
                         final response = await backend.leaveChat(chat);
                         if (response) {
                           Get.back();
@@ -343,239 +359,243 @@ class _ConversationDetailsState extends OptimizedState<ConversationDetails> with
                         }
                       },
                     );
-                  }
+                  }),
                 ),
+              const SliverPadding(
+                padding: EdgeInsets.symmetric(vertical: 10),
               ),
-            const SliverPadding(
-              padding: EdgeInsets.symmetric(vertical: 10),
-            ),
-            ChatOptions(chat: chat),
-            if (!kIsWeb && media.isNotEmpty)
-              SliverPadding(
-                padding: const EdgeInsets.only(top: 20, bottom: 10, left: 15),
-                sliver: SliverToBoxAdapter(
-                  child: Text("IMAGES & VIDEOS", style: context.theme.textTheme.bodyMedium!.copyWith(color: context.theme.colorScheme.outline)),
-                ),
-              ),
-            if (!kIsWeb && media.isNotEmpty)
-              SliverPadding(
-                padding: const EdgeInsets.all(10),
-                sliver: SliverGrid(
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: max(2, ns.width(context) ~/ 200),
-                    mainAxisSpacing: 10,
-                    crossAxisSpacing: 10
-                  ),
-                  delegate: SliverChildBuilderDelegate(
-                    (context, int index) {
-                      return Obx(() => AnimatedContainer(
-                        duration: const Duration(milliseconds: 250),
-                        margin: EdgeInsets.all(selected.contains(media[index].guid) ? 10 : 0),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        clipBehavior: Clip.antiAlias,
-                        child: GestureDetector(
-                          onTap: selected.isNotEmpty ? () {
-                            if (selected.contains(media[index].guid)) {
-                              selected.remove(media[index].guid!);
-                            } else {
-                              selected.add(media[index].guid!);
-                            }
-                          } : null,
-                          onLongPress: () {
-                            if (selected.contains(media[index].guid)) {
-                              selected.remove(media[index].guid!);
-                            } else {
-                              selected.add(media[index].guid!);
-                            }
-                          },
-                          child: AbsorbPointer(
-                            absorbing: selected.isNotEmpty,
-                            child: Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                MediaGalleryCard(
-                                  attachment: media[index],
-                                ),
-                                if (selected.contains(media[index].guid))
-                                  Container(
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: context.theme.colorScheme.primary
-                                    ),
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(5.0),
-                                      child: Icon(
-                                        iOS ? CupertinoIcons.check_mark : Icons.check,
-                                        color: context.theme.colorScheme.onPrimary,
-                                        size: 18,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ));
-                    },
-                    childCount: media.length,
+              ChatOptions(chat: chat),
+              if (!kIsWeb && media.isNotEmpty)
+                SliverPadding(
+                  padding: const EdgeInsets.only(top: 20, bottom: 10, left: 15),
+                  sliver: SliverToBoxAdapter(
+                    child: Text("IMAGES & VIDEOS",
+                        style: context.theme.textTheme.bodyMedium!.copyWith(color: context.theme.colorScheme.outline)),
                   ),
                 ),
-              ),
-            if (!kIsWeb && links.isNotEmpty)
-              SliverPadding(
-                padding: const EdgeInsets.only(top: 20, bottom: 10, left: 15),
-                sliver: SliverToBoxAdapter(
-                  child: Text("LINKS", style: context.theme.textTheme.bodyMedium!.copyWith(color: context.theme.colorScheme.outline)),
-                ),
-              ),
-            if (!kIsWeb && links.isNotEmpty)
-              SliverPadding(
-                padding: const EdgeInsets.all(10),
-                sliver: SliverToBoxAdapter(
-                  child: MasonryGridView.count(
-                    crossAxisCount: max(2, ns.width(context) ~/ 200),
-                    mainAxisSpacing: 10,
-                    crossAxisSpacing: 10,
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemBuilder: (context, index) {
-                      if (links[index].payloadData?.urlData?.firstOrNull == null) {
-                        return const Text("Failed to load link!");
-                      }
-                      return Material(
-                        color: context.theme.colorScheme.properSurface,
-                        borderRadius: BorderRadius.circular(20),
-                        clipBehavior: Clip.antiAlias,
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(20),
-                          onTap: () async {
-                            final data = links[index].payloadData!.urlData!.first;
-                            if ((data.url ?? data.originalUrl) == null) return;
-                            await launchUrl(
-                                Uri.parse((data.url ?? data.originalUrl)!),
-                                mode: LaunchMode.externalApplication
-                            );
-                          },
-                          child: Center(
-                            child: UrlPreview(
-                              data: links[index].payloadData!.urlData!.first,
-                              message: links[index],
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                    itemCount: links.length,
-                  ),
-                ),
-              ),
-            if (!kIsWeb && locations.isNotEmpty)
-              SliverPadding(
-                padding: const EdgeInsets.only(top: 20, bottom: 10, left: 15),
-                sliver: SliverToBoxAdapter(
-                  child: Text("LOCATIONS", style: context.theme.textTheme.bodyMedium!.copyWith(color: context.theme.colorScheme.outline)),
-                ),
-              ),
-            if (!kIsWeb && locations.isNotEmpty)
-              SliverPadding(
-                padding: const EdgeInsets.all(10),
-                sliver: SliverToBoxAdapter(
-                  child: MasonryGridView.count(
-                    crossAxisCount: max(2, ns.width(context) ~/ 200),
-                    mainAxisSpacing: 10,
-                    crossAxisSpacing: 10,
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemBuilder: (context, index) {
-                      if (as.getContent(locations[index]) is! PlatformFile) {
-                        return const Text("Failed to load location!");
-                      }
-                      return Material(
-                        color: context.theme.colorScheme.properSurface,
-                        borderRadius: BorderRadius.circular(20),
-                        clipBehavior: Clip.antiAlias,
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(20),
-                          onTap: () async {
-                            final data = links[index].payloadData!.urlData!.first;
-                            if ((data.url ?? data.originalUrl) == null) return;
-                            await launchUrl(
-                                Uri.parse((data.url ?? data.originalUrl)!),
-                                mode: LaunchMode.externalApplication
-                            );
-                          },
-                          child: Center(
-                            child: UrlPreview(
-                              data: UrlPreviewData(
-                                title: "Location from ${DateFormat.yMd().format(locations[index].message.target!.dateCreated!)}",
-                                siteName: "Tap to open",
+              if (!kIsWeb && media.isNotEmpty)
+                SliverPadding(
+                  padding: const EdgeInsets.all(10),
+                  sliver: SliverGrid(
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: max(2, ns.width(context) ~/ 200), mainAxisSpacing: 10, crossAxisSpacing: 10),
+                    delegate: SliverChildBuilderDelegate(
+                      (context, int index) {
+                        if (index >= media.length - 4 && mediaPager.hasOlder && !mediaPager.loadingOlder) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            mediaPager.loadOlder();
+                          });
+                        }
+                        return Obx(() => AnimatedContainer(
+                              duration: const Duration(milliseconds: 250),
+                              margin: EdgeInsets.all(selected.contains(media[index].guid) ? 10 : 0),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(20),
                               ),
-                              message: locations[index].message.target!,
-                              file: as.getContent(locations[index]),
+                              clipBehavior: Clip.antiAlias,
+                              child: GestureDetector(
+                                onTap: selected.isNotEmpty
+                                    ? () {
+                                        if (selected.contains(media[index].guid)) {
+                                          selected.remove(media[index].guid!);
+                                        } else {
+                                          selected.add(media[index].guid!);
+                                        }
+                                      }
+                                    : null,
+                                onLongPress: () {
+                                  if (selected.contains(media[index].guid)) {
+                                    selected.remove(media[index].guid!);
+                                  } else {
+                                    selected.add(media[index].guid!);
+                                  }
+                                },
+                                child: AbsorbPointer(
+                                  absorbing: selected.isNotEmpty,
+                                  child: Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      MediaGalleryCard(
+                                        attachment: media[index],
+                                        mediaPager: mediaPager,
+                                      ),
+                                      if (selected.contains(media[index].guid))
+                                        Container(
+                                          decoration: BoxDecoration(
+                                              shape: BoxShape.circle, color: context.theme.colorScheme.primary),
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(5.0),
+                                            child: Icon(
+                                              iOS ? CupertinoIcons.check_mark : Icons.check,
+                                              color: context.theme.colorScheme.onPrimary,
+                                              size: 18,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ));
+                      },
+                      childCount: media.length,
+                    ),
+                  ),
+                ),
+              if (!kIsWeb && links.isNotEmpty)
+                SliverPadding(
+                  padding: const EdgeInsets.only(top: 20, bottom: 10, left: 15),
+                  sliver: SliverToBoxAdapter(
+                    child: Text("LINKS",
+                        style: context.theme.textTheme.bodyMedium!.copyWith(color: context.theme.colorScheme.outline)),
+                  ),
+                ),
+              if (!kIsWeb && links.isNotEmpty)
+                SliverPadding(
+                  padding: const EdgeInsets.all(10),
+                  sliver: SliverToBoxAdapter(
+                    child: MasonryGridView.count(
+                      crossAxisCount: max(2, ns.width(context) ~/ 200),
+                      mainAxisSpacing: 10,
+                      crossAxisSpacing: 10,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemBuilder: (context, index) {
+                        if (links[index].payloadData?.urlData?.firstOrNull == null) {
+                          return const Text("Failed to load link!");
+                        }
+                        return Material(
+                          color: context.theme.colorScheme.properSurface,
+                          borderRadius: BorderRadius.circular(20),
+                          clipBehavior: Clip.antiAlias,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(20),
+                            onTap: () async {
+                              final data = links[index].payloadData!.urlData!.first;
+                              if ((data.url ?? data.originalUrl) == null) return;
+                              await launchUrl(Uri.parse((data.url ?? data.originalUrl)!),
+                                  mode: LaunchMode.externalApplication);
+                            },
+                            child: Center(
+                              child: UrlPreview(
+                                data: links[index].payloadData!.urlData!.first,
+                                message: links[index],
+                              ),
                             ),
                           ),
-                        ),
-                      );
-                    },
-                    itemCount: locations.length,
+                        );
+                      },
+                      itemCount: links.length,
+                    ),
                   ),
                 ),
-              ),
-            if (!kIsWeb && docs.isNotEmpty)
-              SliverPadding(
-                padding: const EdgeInsets.only(top: 20, bottom: 10, left: 15),
-                sliver: SliverToBoxAdapter(
-                  child: Text("OTHER FILES", style: context.theme.textTheme.bodyMedium!.copyWith(color: context.theme.colorScheme.outline)),
-                ),
-              ),
-            if (!kIsWeb && docs.isNotEmpty)
-              SliverPadding(
-                padding: const EdgeInsets.all(10),
-                sliver: SliverGrid(
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: max(2, ns.width(context) ~/ 200),
-                    mainAxisSpacing: 10,
-                    crossAxisSpacing: 10,
-                    childAspectRatio: 1.75,
-                  ),
-                  delegate: SliverChildBuilderDelegate(
-                        (context, int index) {
-                      return MediaGalleryCard(
-                        attachment: docs[index],
-                      );
-                    },
-                    childCount: docs.length,
+              if (!kIsWeb && locations.isNotEmpty)
+                SliverPadding(
+                  padding: const EdgeInsets.only(top: 20, bottom: 10, left: 15),
+                  sliver: SliverToBoxAdapter(
+                    child: Text("LOCATIONS",
+                        style: context.theme.textTheme.bodyMedium!.copyWith(color: context.theme.colorScheme.outline)),
                   ),
                 ),
+              if (!kIsWeb && locations.isNotEmpty)
+                SliverPadding(
+                  padding: const EdgeInsets.all(10),
+                  sliver: SliverToBoxAdapter(
+                    child: MasonryGridView.count(
+                      crossAxisCount: max(2, ns.width(context) ~/ 200),
+                      mainAxisSpacing: 10,
+                      crossAxisSpacing: 10,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemBuilder: (context, index) {
+                        if (as.getContent(locations[index]) is! PlatformFile) {
+                          return const Text("Failed to load location!");
+                        }
+                        return Material(
+                          color: context.theme.colorScheme.properSurface,
+                          borderRadius: BorderRadius.circular(20),
+                          clipBehavior: Clip.antiAlias,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(20),
+                            onTap: () async {
+                              final data = links[index].payloadData!.urlData!.first;
+                              if ((data.url ?? data.originalUrl) == null) return;
+                              await launchUrl(Uri.parse((data.url ?? data.originalUrl)!),
+                                  mode: LaunchMode.externalApplication);
+                            },
+                            child: Center(
+                              child: UrlPreview(
+                                data: UrlPreviewData(
+                                  title:
+                                      "Location from ${DateFormat.yMd().format(locations[index].message.target!.dateCreated!)}",
+                                  siteName: "Tap to open",
+                                ),
+                                message: locations[index].message.target!,
+                                file: as.getContent(locations[index]),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                      itemCount: locations.length,
+                    ),
+                  ),
+                ),
+              if (!kIsWeb && docs.isNotEmpty)
+                SliverPadding(
+                  padding: const EdgeInsets.only(top: 20, bottom: 10, left: 15),
+                  sliver: SliverToBoxAdapter(
+                    child: Text("OTHER FILES",
+                        style: context.theme.textTheme.bodyMedium!.copyWith(color: context.theme.colorScheme.outline)),
+                  ),
+                ),
+              if (!kIsWeb && docs.isNotEmpty)
+                SliverPadding(
+                  padding: const EdgeInsets.all(10),
+                  sliver: SliverGrid(
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: max(2, ns.width(context) ~/ 200),
+                      mainAxisSpacing: 10,
+                      crossAxisSpacing: 10,
+                      childAspectRatio: 1.75,
+                    ),
+                    delegate: SliverChildBuilderDelegate(
+                      (context, int index) {
+                        return MediaGalleryCard(
+                          attachment: docs[index],
+                        );
+                      },
+                      childCount: docs.length,
+                    ),
+                  ),
+                ),
+              const SliverPadding(
+                padding: EdgeInsets.only(top: 50),
               ),
-            const SliverPadding(
-              padding: EdgeInsets.only(top: 50),
-            ),
-          ];
-          
-          if (!chat.isGroup) {
-            return ProfileScaffold(
-              bodySlivers: slivers,
-              handle: chat.participants[0],
-              actions: actions,
-              chatOptions: ChatInfo(chat: chat, ftSupportedParticipants: ftSupportedParticipants,),
-            );
-          }
+            ];
 
-          return SettingsScaffold(
-            headerColor: headerColor,
-            title: "Details",
-            tileColor: tileColor,
-            initialHeader: null,
-            iosSubtitle: iosSubtitle,
-            materialSubtitle: materialSubtitle,
-            actions: actions,
-            bodySlivers: slivers
-          );
-        })
-      ),
+            if (!chat.isGroup) {
+              return ProfileScaffold(
+                bodySlivers: slivers,
+                handle: chat.participants[0],
+                actions: actions,
+                chatOptions: ChatInfo(
+                  chat: chat,
+                  ftSupportedParticipants: ftSupportedParticipants,
+                ),
+              );
+            }
+
+            return SettingsScaffold(
+                headerColor: headerColor,
+                title: "Details",
+                tileColor: tileColor,
+                initialHeader: null,
+                iosSubtitle: iosSubtitle,
+                materialSubtitle: materialSubtitle,
+                actions: actions,
+                bodySlivers: slivers);
+          })),
     );
   }
 }

@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:async_task/async_task.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
+import 'package:bluebubbles/utils/attachment_guid_utils.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
@@ -60,6 +62,65 @@ const IS_SOS                    = 1 << 39;
 const IS_PENDING_SATELLITE_SEND = 1 << 41;
 const NEEDS_RELAY               = 1 << 42;
 const SENT_OR_RECEIVED_OFF_GRID = 1 << 43;
+
+enum CloudAssociationImportFailure {
+  unknownType,
+  missingParent,
+  malformedParent,
+}
+
+final class CloudAssociationImportException implements Exception {
+  const CloudAssociationImportException(this.failure);
+
+  final CloudAssociationImportFailure failure;
+
+  @override
+  String toString() => 'CloudAssociationImportException($failure)';
+}
+
+final class CloudAssociationImport {
+  const CloudAssociationImport({
+    required this.type,
+    required this.parent,
+  });
+
+  final String type;
+  final CloudAssociatedMessageParentReference parent;
+}
+
+CloudAssociationImport? parseCloudAssociation({
+  required int? associatedMessageType,
+  required String? associatedMessageGuid,
+}) {
+  if (associatedMessageType == null) return null;
+
+  final type = associatedMessageType == 2
+      ? 'sticker'
+      : ReactionTypes.fromAssociatedMessageType(associatedMessageType);
+  if (type == null) {
+    throw const CloudAssociationImportException(
+      CloudAssociationImportFailure.unknownType,
+    );
+  }
+  if (associatedMessageGuid == null) {
+    throw const CloudAssociationImportException(
+      CloudAssociationImportFailure.missingParent,
+    );
+  }
+
+  try {
+    return CloudAssociationImport(
+      type: type,
+      parent: CloudAssociatedMessageParentReference.parse(
+        associatedMessageGuid,
+      ),
+    );
+  } on CloudAssociatedMessageParentReferenceFormatException {
+    throw const CloudAssociationImportException(
+      CloudAssociationImportFailure.malformedParent,
+    );
+  }
+}
 
 /// Async method to fetch attachments
 class GetMessageAttachments extends AsyncTask<List<dynamic>, Map<String, List<Attachment?>>> {
@@ -757,7 +818,12 @@ class Message {
 
   /// Save a single message - prefer [bulkSave] for multiple messages rather
   /// than iterating through them
-  Message save({Chat? chat, bool updateIsBookmarked = false, bool updateSendingServiceId = false}) {
+  Message save({
+    Chat? chat,
+    bool updateIsBookmarked = false,
+    bool updateSendingServiceId = false,
+    bool throwOnUniqueViolation = false,
+  }) {
     if (kIsWeb || temp) return this;
     Database.runInTransaction(TxMode.write, () {
       Message? existing = Message.findOne(guid: guid);
@@ -801,7 +867,16 @@ class Message {
       try {
         if (chat != null) this.chat.target = chat;
         id = Database.messages.put(this);
-      } on UniqueViolationException catch (_) {}
+      } on UniqueViolationException catch (ex, stack) {
+        // Still swallowed, because callers rely on save() not throwing. But no
+        // longer silent: on this path `id` stays null and the message is
+        // returned as though it had been persisted, so nothing downstream can
+        // distinguish a saved message from a dropped one. replaceMessage
+        // already logs this exact constraint below; these two sites did not.
+        Logger.error('Failed to save message! This is likely due to a unique constraint being violated.',
+            error: ex, trace: stack);
+        if (throwOnUniqueViolation) rethrow;
+      }
     });
     return this;
   }
@@ -867,7 +942,13 @@ class Message {
         for (int i = 0; i < messages.length; i++) {
           messages[i].id = ids[i];
         }
-      } on UniqueViolationException catch (_) {}
+      } on UniqueViolationException catch (ex, stack) {
+        // The reaction-linking pass above did not persist. The ids assigned by
+        // the earlier putMany still stand, so this is narrower than the save()
+        // case, but it is the same invisible failure and worth seeing.
+        Logger.error('Failed to bulk save messages! This is likely due to a unique constraint being violated.',
+            error: ex, trace: stack);
+      }
     });
     return messages;
   }
@@ -948,19 +1029,10 @@ class Message {
     });
   }
 
-  String convertAttachmentGuid(String guid) {
-    if (guid.startsWith("at")) {
-      var items = guid.split("_");
-      guid = "${items[2]}_${items[1]}";
-    }
-    return guid;
-  }
+  String convertAttachmentGuid(String guid) => convertAppleAttachmentGuid(guid);
 
-  String unconvertAttachmentGuid(String guid) {
-    var items = guid.split("_");
-    if (items.length == 1) return guid;
-    return "at_${items[1]}_${items[0]}";
-  }
+  String unconvertAttachmentGuid(String guid) =>
+      unconvertAppleAttachmentGuid(guid);
 
   Uint8List? encodeAttributedBody(List<AttributedBody> body, bool noAttachments) {
     if (body.isEmpty) return null;
@@ -1077,7 +1149,15 @@ class Message {
         dateDelivered: dateDelivered != null ? RustPushBBUtils.nsSinceAppleEpoch(dateDelivered!) : 0,
         unk14: 0,
         associatedMessageType: amt,
-        associatedMessageGuid: associatedMessageGuid != null ? "p:$associatedMessagePart/$associatedMessageGuid" : null,
+        // Emit the bare GUID when there is no part. Interpolating a null part
+        // produced the literal "p:null/<guid>", which Apple never sends and
+        // which both of this app's parsers reject, so a round trip through the
+        // uploader could not be read back.
+        associatedMessageGuid: associatedMessageGuid == null
+            ? null
+            : (associatedMessagePart == null
+                ? associatedMessageGuid
+                : "p:$associatedMessagePart/$associatedMessageGuid"),
         associatedMessageRangeLength: associatedMessagePart != null ? Message.findOne(guid: associatedMessageGuid!)?.attributedBody[0].runs.firstWhere((r) => r.attributes!.messagePart == associatedMessagePart).range[1] : null,
         associatedMessageRangeLocation: associatedMessagePart != null ? Message.findOne(guid: associatedMessageGuid!)?.attributedBody[0].runs.firstWhere((r) => r.attributes!.messagePart == associatedMessagePart).range[0] : null
       )),
@@ -1104,7 +1184,7 @@ class Message {
     );
   }
 
-  void applyFromCloud(api.CloudMessage c, String cloudkitId) {
+  bool applyFromCloud(api.CloudMessage c, String cloudkitId) {
     Chat? chat;
     if (c.chatId.contains(";")) {
       final query = Database.chats.query(Chat_.chatIdentifier.equals(c.chatId.split(";")[2])).build();
@@ -1118,9 +1198,12 @@ class Message {
       chat ??= Chat.findByRustGuid(c.chatId);
     }
 
-    if (chat?.isRpSms ?? true) return;
+    if (chat == null || chat.isRpSms) {
+      throw StateError('Cloud message has no eligible local iMessage chat');
+    }
 
     ckRecordId = cloudkitId;
+    ckSyncState = true;
 
     error = c.error;
     handle = RustPushBBUtils.rustHandleToBB(c.sender);
@@ -1163,17 +1246,20 @@ class Message {
     expressiveSendStyleId = proto1.effect;
     dateRead = proto1.dateRead == null || proto1.dateRead == 0 ? null : RustPushBBUtils.fromNsSinceAppleEpoch(proto1.dateRead!);
     dateDelivered = proto1.dateDelivered == null || proto1.dateDelivered == 0 ? null : RustPushBBUtils.fromNsSinceAppleEpoch(proto1.dateDelivered!);
-    if (proto1.associatedMessageType != null) {
-      if (proto1.associatedMessageType == 2) {
-        associatedMessageType = "sticker";
-      } else if (proto1.associatedMessageType! >= 2000 && proto1.associatedMessageType! < 3000) {
-        associatedMessageType = ReactionTypes.toList()[proto1.associatedMessageType! - 2000];
-      } else if (proto1.associatedMessageType! >= 3000 && proto1.associatedMessageType! < 4000) {
-        associatedMessageType = "-${ReactionTypes.toList()[proto1.associatedMessageType! - 3000]}";
-      }
-    }
-    associatedMessageGuid = proto1.associatedMessageGuid;
-    associatedMessagePart = attributedBody.firstOrNull?.runs.firstWhereOrNull((b) => b.range[0] == proto1.associatedMessageRangeLocation && b.range[1] == proto1.associatedMessageRangeLength)?.attributes?.messagePart;
+    final association = parseCloudAssociation(
+      associatedMessageType: proto1.associatedMessageType,
+      associatedMessageGuid: proto1.associatedMessageGuid,
+    );
+    associatedMessageType = association?.type;
+    // Apple sends the parent as `p:<part>/<guid>`, or as a bare GUID when the
+    // reaction targets no particular part. This previously stored that value
+    // verbatim, so a wrapped parent never matched Message_.guid and every
+    // CloudKit reaction stayed orphaned from its parent. The part was also
+    // derived from the reaction's own attributed body, which the canonical
+    // mapping explicitly forbids: the associated range is validation evidence,
+    // not the source of the part.
+    associatedMessageGuid = association?.parent.localMessageGuid;
+    associatedMessagePart = association?.parent.part;
     guid = c.guid;
     var bits = c.flags.bits();
     isFromMe = (bits & IS_FROM_ME) != 0;
@@ -1192,7 +1278,8 @@ class Message {
       associatedMessageEmoji = proto4.associatedMessageEmoji;
     }
     
-    save(chat: chat);
+    save(chat: chat, throwOnUniqueViolation: true);
+    return true;
   }
 
   /// Fetch reactions
@@ -1253,19 +1340,26 @@ class Message {
   /// Delete a message and remove all instances of that message in the DB
   static void delete(String guid) {
     if (kIsWeb) return;
+    String? cloudRecordId;
     Database.runInTransaction(TxMode.write, () {
       final query = Database.messages.query(Message_.guid.equals(guid)).build();
       final result = query.findFirst();
       query.close();
       if (result?.id != null) {
         if (result?.ckRecordId != null && !pushService.syncStopDelete) {
-          var list = ss.prefs.getStringList("messageDeletionIds-1") ?? [];
-          list.add(result!.ckRecordId!);
-          ss.prefs.setStringList("messageDeletionIds-1", list);
+          cloudRecordId = result!.ckRecordId;
         }
         Database.messages.remove(result!.id!);
       }
     });
+    if (cloudRecordId != null) {
+      unawaited(
+        pushService.queueLegacyCloudKitDeletion(
+          kind: LegacyCloudKitDeletionKind.message,
+          recordId: cloudRecordId!,
+        ),
+      );
+    }
   }
 
   static void softDelete(String guid) async {

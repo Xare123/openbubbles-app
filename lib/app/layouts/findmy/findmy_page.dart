@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:ui';
 
 import 'package:bitsdojo_window/bitsdojo_window.dart';
+import 'package:collection/collection.dart';
 import 'package:bluebubbles/app/components/avatars/contact_avatar_widget.dart';
 import 'package:bluebubbles/app/layouts/findmy/findmy_location_clipper.dart';
 import 'package:bluebubbles/app/layouts/findmy/findmy_pin_clipper.dart';
@@ -29,11 +30,45 @@ import 'package:flutter_map_marker_popup/flutter_map_marker_popup.dart';
 import 'package:get/get.dart' hide Response;
 import 'package:latlong2/latlong.dart';
 import 'package:maps_launcher/maps_launcher.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:sliding_up_panel2/sliding_up_panel2.dart';
 import 'package:tuple/tuple.dart';
 import 'package:universal_io/io.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:url_launcher/url_launcher.dart';
+
+@visibleForTesting
+bool canPlayFindMySound({required String? deviceId, required bool isCloudManaged}) {
+  return deviceId != null && deviceId.isNotEmpty && isCloudManaged;
+}
+
+@visibleForTesting
+bool canPlayNearbyFindMySound({required bool isAccessory, required bool isAndroid}) {
+  return isAccessory && isAndroid;
+}
+
+@visibleForTesting
+bool canScanNearbyFindMyTrackers({required bool isAndroid}) => isAndroid;
+
+@visibleForTesting
+String nearbyTrackerSignalLabel(Map<String, dynamic> tracker) {
+  final signal = tracker["signal"]?.toString() ?? "unknown";
+  final rssi = tracker["rssi"];
+  final readableSignal = signal.isEmpty ? "Unknown" : "${signal[0].toUpperCase()}${signal.substring(1)}";
+  return rssi is num ? "$readableSignal signal (${rssi.toInt()} dBm)" : "$readableSignal signal";
+}
+
+@visibleForTesting
+String findMyCloudFailureMessage(Object error) {
+  final message = error.toString().toLowerCase();
+  if (message.contains("relay device offline")) {
+    return "Your relay device is offline. Cloud Find My will resume when it reconnects.";
+  }
+  if (error is TimeoutException || message.contains("timeoutexception")) {
+    return "Cloud Find My timed out. Check the relay connection and try again.";
+  }
+  return "Cloud Find My is unavailable right now.";
+}
 
 class FindMyPage extends StatefulWidget {
   FindMyPage({super.key, this.defaultFriend});
@@ -67,6 +102,13 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   bool refreshing2 = false;
   bool canRefresh = false;
   bool isInClique = true;
+  final Set<String> soundingDevices = {};
+  bool nearbyAccessoryBusy = false;
+  bool locationsRequestInFlight = false;
+  bool currentLocationRequestInFlight = false;
+  String? cloudFindMyError;
+  DateTime? automaticCloudRetryAfter;
+  Completer<void>? fmipRequest;
 
   Map<(double, double), Address> cachedAddresses = {};
 
@@ -78,6 +120,209 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   api.FindMyFriendsClientDefaultAnisetteProvider? fmfClient;
   api.FindMyPhoneClientDefaultAnisetteProvider? fmipClient;
 
+  Future<T> withFmipLock<T>(Future<T> Function() operation) async {
+    while (fmipRequest != null) {
+      await fmipRequest!.future;
+    }
+    final request = Completer<void>();
+    fmipRequest = request;
+    try {
+      return await operation();
+    } finally {
+      request.complete();
+      if (identical(fmipRequest, request)) fmipRequest = null;
+    }
+  }
+
+  Future<void> playSound(FindMyDevice device) async {
+    final deviceId = device.id;
+    if (deviceId == null || deviceId.isEmpty || fmipClient == null || soundingDevices.contains(deviceId)) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Play Sound?"),
+        content: Text(
+          "${ss.settings.redactedMode.value ? "This device" : (device.name ?? "This device")} will play a Find My alert.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text("Play Sound"),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => soundingDevices.add(deviceId));
+    try {
+      await withFmipLock(() => api.playFindMySound(
+            config: pushService.state!.osConfig,
+            client: fmipClient!,
+            deviceId: deviceId,
+          ));
+      if (mounted) showSnackbar("Find My", "Sound request sent.");
+    } catch (e, s) {
+      Logger.warn("Find My Play Sound request failed", error: e, trace: s);
+      if (mounted) showSnackbar("Error", "Could not play sound on this device.");
+    } finally {
+      if (mounted) setState(() => soundingDevices.remove(deviceId));
+    }
+  }
+
+  String nearbyTrackerLabel(String protocol) {
+    switch (protocol) {
+      case "dult":
+        return "Compatible tracker";
+      case "find_my":
+        return "Find My accessory";
+      case "airtag":
+        return "AirTag";
+      default:
+        return "Nearby tracker";
+    }
+  }
+
+  Future<void> playNearbyAccessorySound() async {
+    if (nearbyAccessoryBusy || !Platform.isAndroid) return;
+
+    final permissions = await [Permission.bluetoothScan, Permission.bluetoothConnect].request();
+    if (permissions.values.any((status) => !status.isGranted)) {
+      if (mounted) {
+        final permanentlyDenied = permissions.values.any((status) => status.isPermanentlyDenied);
+        showSnackbar(
+          "Bluetooth required",
+          permanentlyDenied
+              ? "Enable Nearby devices for OpenBubbles in Android settings."
+              : "Allow nearby-device access to find and play a tracker sound.",
+        );
+      }
+      return;
+    }
+
+    if (mounted) setState(() => nearbyAccessoryBusy = true);
+    try {
+      final raw = await mcs.invokeMethod("scanNearbyFindMyAccessories", {"scanDurationMs": 8000});
+      final trackers = (raw as List?)
+              ?.whereType<Map>()
+              .map((entry) => entry.cast<String, dynamic>())
+              .where((entry) => entry["token"] is String)
+              .toList() ??
+          <Map<String, dynamic>>[];
+      if (!mounted) return;
+      if (trackers.isEmpty) {
+        showSnackbar("No tracker found", "Keep the accessory close to this phone and try again.");
+        return;
+      }
+
+      final selected = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text("Play a nearby tracker sound"),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  "Choose a tracker near this phone. Apple rotates Bluetooth identifiers, so Android cannot prove which iCloud item is selected on the map.",
+                ),
+                const SizedBox(height: 12),
+                Flexible(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: trackers.length,
+                    itemBuilder: (context, index) {
+                      final tracker = trackers[index];
+                      final protocol = tracker["protocol"]?.toString() ?? "unknown";
+                      return ListTile(
+                        leading: const Icon(Icons.bluetooth_searching),
+                        title: Text("${nearbyTrackerLabel(protocol)} candidate ${index + 1}"),
+                        subtitle: Text(index == 0
+                            ? "Closest detected • ${nearbyTrackerSignalLabel(tracker)}"
+                            : nearbyTrackerSignalLabel(tracker)),
+                        trailing: const Icon(Icons.volume_up),
+                        onTap: () => Navigator.of(context).pop(tracker),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text("Cancel")),
+          ],
+        ),
+      );
+      if (selected == null || !mounted) return;
+
+      await mcs.invokeMethod("playNearbyFindMyAccessorySound", {"token": selected["token"]});
+      if (mounted) showSnackbar("Find My", "Nearby sound command sent.");
+    } on PlatformException catch (e) {
+      Logger.warn("Nearby Find My sound failed (${e.code})");
+      if (mounted) {
+        final message = e.code == "BLUETOOTH_DISABLED"
+            ? "Turn on Bluetooth and try again."
+            : e.code == "TOKEN_EXPIRED" || e.code == "TRACKER_EXPIRED"
+                ? "That nearby tracker expired. Scan again."
+                : "Could not play a sound on the nearby tracker.";
+        showSnackbar("Find My", message);
+      }
+    } catch (e, s) {
+      Logger.warn("Nearby Find My sound failed", error: e, trace: s);
+      if (mounted) showSnackbar("Find My", "Could not play a sound on the nearby tracker.");
+    } finally {
+      if (mounted) setState(() => nearbyAccessoryBusy = false);
+    }
+  }
+
+  Widget deviceActions(FindMyDevice item) {
+    final deviceId = item.id;
+    // FMIP devices, including AirPods, are returned without a beacon role and
+    // are accepted by the cloud playSound endpoint. Beacon-backed accessories
+    // (AirTags and compatible trackers) use the separate nearby BLE action.
+    final isCloudManaged = item.role == null;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (canPlayFindMySound(deviceId: deviceId, isCloudManaged: isCloudManaged))
+          IconButton(
+            tooltip: "Play Sound",
+            onPressed: soundingDevices.contains(deviceId) ? null : () => playSound(item),
+            icon: soundingDevices.contains(deviceId)
+                ? buildProgressIndicator(context, size: 18)
+                : const Icon(Icons.volume_up, size: 20),
+          ),
+        if (canPlayNearbyFindMySound(isAccessory: item.isConsideredAccessory, isAndroid: Platform.isAndroid))
+          IconButton(
+            tooltip: "Play Nearby Tracker Sound",
+            onPressed: nearbyAccessoryBusy ? null : playNearbyAccessorySound,
+            icon: nearbyAccessoryBusy
+                ? buildProgressIndicator(context, size: 18)
+                : const Icon(Icons.bluetooth_searching, size: 20),
+          ),
+        if (item.location?.latitude != null && item.location?.longitude != null)
+          TextButton(
+            style: TextButton.styleFrom(
+              shape: const CircleBorder(),
+              backgroundColor: context.theme.colorScheme.primaryContainer,
+            ),
+            onPressed: () async {
+              await MapsLauncher.launchCoordinates(item.location!.latitude!, item.location!.longitude!);
+            },
+            child: const Icon(Icons.directions, size: 20),
+          ),
+      ],
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -87,7 +332,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
     }
     getLocations();
 
-    myTimer = Timer.periodic(const Duration(seconds: 5), (timer) => getLocations());
+    myTimer = Timer.periodic(const Duration(seconds: 30), (timer) => getLocations());
 
     socket.socket.on("new-findmy-location", (data) {
       try {
@@ -125,14 +370,50 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
   /// however, the refresh friends endpoint does. The way this was coded assumes that the server
   /// will return the data for both endpoints. A server update will fix this, but for now,
   /// we will "patch" it by only "refreshing" devices when the user manually refreshes the data.
-  void getLocations({bool refreshFriends = true, bool refreshDevices = true}) async {
-    if (!(Platform.isLinux && !kIsWeb)) {
+  Future<void> getLocations({
+    bool refreshFriends = true,
+    bool refreshDevices = true,
+    bool userInitiated = false,
+  }) async {
+    if (locationsRequestInFlight) return;
+    if (!userInitiated && automaticCloudRetryAfter?.isAfter(DateTime.now()) == true) return;
+
+    locationsRequestInFlight = true;
+    unawaited(refreshCurrentLocation(refreshFriends: refreshFriends));
+    try {
+      await getCloudLocations(refreshFriends: refreshFriends, refreshDevices: refreshDevices);
+      automaticCloudRetryAfter = null;
+      if (mounted && cloudFindMyError != null) {
+        setState(() => cloudFindMyError = null);
+      }
+    } catch (e) {
+      automaticCloudRetryAfter = DateTime.now().add(const Duration(minutes: 1));
+      locationsRequestInFlight = false;
+      if (mounted) {
+        setState(() {
+          cloudFindMyError = findMyCloudFailureMessage(e);
+          fetching = null;
+          fetching2 = null;
+          refreshing = false;
+          refreshing2 = false;
+        });
+      }
+    } finally {
+      locationsRequestInFlight = false;
+      if (mounted && !canRefresh) setState(() => canRefresh = true);
+    }
+  }
+
+  Future<void> refreshCurrentLocation({required bool refreshFriends}) async {
+    if (currentLocationRequestInFlight || (Platform.isLinux && !kIsWeb)) return;
+    currentLocationRequestInFlight = true;
+    try {
       LocationPermission granted = await Geolocator.checkPermission();
       if (granted == LocationPermission.denied) {
         granted = await Geolocator.requestPermission();
       }
       if (granted == LocationPermission.whileInUse || granted == LocationPermission.always) {
-        Geolocator.getCurrentPosition(locationSettings: const LocationSettings(timeLimit: Duration(seconds: 30))).then((loc) {
+        final loc = await Geolocator.getCurrentPosition(locationSettings: const LocationSettings(timeLimit: Duration(seconds: 30)));
           if (!mounted) return;
           if (ss.settings.lastLocation.value == null) {
             mapController.move(LatLng(loc.latitude, loc.longitude), 10);
@@ -140,23 +421,33 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
           ss.settings.lastLocation.value = "${loc.latitude},${loc.longitude}";
           ss.saveSettings();
           location = loc;
-          buildLocationMarker(location!);
+          setState(() => buildLocationMarker(loc));
           if (!kIsDesktop && locationSub == null) {
             locationSub = Geolocator.getPositionStream().listen((event) {
+              if (!mounted) return;
               ss.settings.lastLocation.value = "${event.latitude},${event.longitude}";
               ss.saveSettings();
               setState(() {
                 buildLocationMarker(event);
               });
+            }, onError: (Object error, StackTrace trace) {
+              Logger.warn("Find My location stream failed", error: error, trace: trace);
             });
           }
           if (!refreshFriends) {
-            mapController.move(LatLng(location!.latitude, location!.longitude), 10);
+            mapController.move(LatLng(loc.latitude, loc.longitude), 10);
           }
-        });
       }
+    } on TimeoutException {
+      Logger.info("Find My current-location request timed out");
+    } catch (e, s) {
+      Logger.warn("Find My current-location request failed", error: e, trace: s);
+    } finally {
+      currentLocationRequestInFlight = false;
     }
+  }
 
+  Future<void> getCloudLocations({bool refreshFriends = true, bool refreshDevices = true}) async {
     var isNew = fmfClient == null;
     fmfClient ??= await api.makeFindMyFriends(
       path: pushService.statePath,
@@ -216,8 +507,9 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
 
           if (friend.latitude != null) {
 
-            final marker = markers.values.firstWhere(
+            final marker = markers.values.firstWhereOrNull(
                 (e) => (e.key as ValueKey?)?.value == "friend-${friend.handle?.uniqueAddressAndService}");
+            if (marker == null) return;
             popupController.showPopupsOnlyFor([marker]);
             mapController.move(LatLng(friend.latitude!, friend.longitude!), 10);
 
@@ -226,11 +518,13 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       }
     } catch (e, s) {
       Logger.error("Failed to parse FindMy Friends location data!", error: e, trace: s);
-      setState(() {
-        fetching2 = null;
-        refreshing2 = false;
-      });
-      return;
+      if (mounted) {
+        setState(() {
+          fetching2 = null;
+          refreshing2 = false;
+        });
+      }
+      rethrow;
     }
 
     var isNewi = fmipClient == null;
@@ -245,7 +539,10 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
 
     try {
       if (refreshDevices && !isNewi) {
-        await api.refreshDevices(config: pushService.state!.osConfig, client: fmipClient!);
+        await withFmipLock(() => api.refreshDevices(
+              config: pushService.state!.osConfig,
+              client: fmipClient!,
+            ));
       }
 
       var following = await api.getDevices(client: fmipClient!);
@@ -482,11 +779,13 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
       });
     } catch (e, s) {
       Logger.error("Failed to parse FindMy Devices location data!", error: e, trace: s);
-      setState(() {
-        fetching = null;
-        refreshing = false;
-      });
-      return;
+      if (mounted) {
+        setState(() {
+          fetching = null;
+          refreshing = false;
+        });
+      }
+      rethrow;
     }
     
 
@@ -620,17 +919,32 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
     final devicesBodySlivers = [
       SliverList(
         delegate: SliverChildListDelegate([
+          if (canScanNearbyFindMyTrackers(isAndroid: Platform.isAndroid))
+            SettingsHeader(iosSubtitle: iosSubtitle, materialSubtitle: materialSubtitle, text: "Nearby Trackers"),
+          if (canScanNearbyFindMyTrackers(isAndroid: Platform.isAndroid))
+            SettingsSection(
+              backgroundColor: tileColor,
+              children: [
+                SettingsTile(
+                  title: "Scan Nearby Trackers",
+                  subtitle: "Find and play a sound on a nearby compatible tracker. This works without the cloud relay.",
+                  leading: const Icon(Icons.bluetooth_searching),
+                  trailing: nearbyAccessoryBusy ? buildProgressIndicator(context, size: 18) : const NextButton(),
+                  onTap: nearbyAccessoryBusy ? null : playNearbyAccessorySound,
+                ),
+              ],
+            ),
           if (fetching == null || fetching == true || (fetching == false && devices.isEmpty))
             Center(
               child: Padding(
-                padding: const EdgeInsets.only(top: 100),
+                padding: const EdgeInsets.only(top: 32, bottom: 16),
                 child: Column(
                   children: [
                     Padding(
                       padding: const EdgeInsets.all(8.0),
                       child: Text(
                         fetching == null
-                            ? "Something went wrong!"
+                            ? (cloudFindMyError ?? "Cloud Find My is unavailable right now.")
                             : fetching == false
                                 ? "You have no devices."
                                 : "Getting FindMy data...",
@@ -638,6 +952,12 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                       ),
                     ),
                     if (fetching == true) buildProgressIndicator(context, size: 15),
+                    if (fetching == null)
+                      TextButton.icon(
+                        onPressed: locationsRequestInFlight ? null : () => getLocations(userInitiated: true),
+                        icon: const Icon(Icons.refresh),
+                        label: const Text("Retry Cloud Find My"),
+                      ),
                   ],
                 ),
               ),
@@ -667,29 +987,15 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                                   await panelController.close();
                                 }
                                 await completer.future;
-                                final marker = markers.values.firstWhere((e) =>
+                                final marker = markers.values.firstWhereOrNull((e) =>
                                     e.point.latitude == item.location?.latitude &&
                                     e.point.longitude == item.location?.longitude);
+                                if (marker == null) return;
                                 popupController.showPopupsOnlyFor([marker]);
                                 mapController.move(LatLng(item.location!.latitude!, item.location!.longitude!), 10);
                               }
                             : null,
-                        trailing: item.location?.latitude != null && item.location?.longitude != null ? ButtonTheme(
-                          minWidth: 1,
-                          child: TextButton(
-                            style: TextButton.styleFrom(
-                              shape: const CircleBorder(),
-                              backgroundColor: context.theme.colorScheme.primaryContainer,
-                            ),
-                            onPressed: () async {
-                              await MapsLauncher.launchCoordinates(item.location!.latitude!, item.location!.longitude!);
-                            },
-                            child: const Icon(
-                                Icons.directions,
-                                size: 20
-                            ),
-                          ),
-                        ) : null,
+                        trailing: deviceActions(item),
                         onLongPress: () async {
                           const encoder = JsonEncoder.withIndent("     ");
                           final str = encoder.convert(item.toJson());
@@ -832,9 +1138,10 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                                   await panelController.close();
                                 }
                                 await completer.future;
-                                final marker = markers.values.firstWhere((e) =>
+                                final marker = markers.values.firstWhereOrNull((e) =>
                                       e.point.latitude == item.location?.latitude &&
                                       e.point.longitude == item.location?.longitude);
+                                  if (marker == null) return;
                                   popupController.showPopupsOnlyFor([marker]);
                                 mapController.move(LatLng(item.location!.latitude!, item.location!.longitude!), 10);
                               }
@@ -904,15 +1211,17 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                             var tile = ListTile(
                                 title: Text(ss.settings.redactedMode.value ? "Device" : (item.name ?? "Unknown Device")),
                                 subtitle: Text(ss.settings.redactedMode.value ? "Location" : (item.address?.label ?? item.address?.mapItemFullAddress ?? "No location found")),
+                                trailing: deviceActions(item),
                                 onTap: item.location?.latitude != null && item.location?.longitude != null
                                     ? () async {
                                         if (context.isPhone) {
                                           await panelController.close();
                                         }
                                         await completer.future;
-                                        final marker = markers.values.firstWhere((e) =>
+                                        final marker = markers.values.firstWhereOrNull((e) =>
                                             e.point.latitude == item.location?.latitude &&
                                             e.point.longitude == item.location?.longitude);
+                                        if (marker == null) return;
                                         popupController.showPopupsOnlyFor([marker]);
                                         mapController.move(
                                             LatLng(item.location!.latitude!, item.location!.longitude!), 10);
@@ -1045,8 +1354,9 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                             await panelController.close();
                           }
                           await completer.future;
-                          final marker = markers.values.firstWhere(
+                          final marker = markers.values.firstWhereOrNull(
                               (e) => e.point.latitude == item.latitude && e.point.longitude == item.longitude);
+                          if (marker == null) return;
                           popupController.showPopupsOnlyFor([marker]);
                           mapController.move(LatLng(item.latitude!, item.longitude!), 10);
                         },
@@ -1416,6 +1726,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
           children: [
             SlidingUpPanel(
               controller: panelController,
+              scrollController: controller1,
               color: Theme.of(context).colorScheme.surface,
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(25.0),
@@ -1454,6 +1765,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                       if (ss.settings.skin.value != Skins.Samsung || kIsWeb || kIsDesktop) return false;
                       final scrollDistance = context.height / 3 - 57;
 
+                      if (!controller1.hasClients) return false;
                       if (controller1.offset > 0 && controller1.offset < scrollDistance) {
                         final double snapOffset = controller1.offset / scrollDistance > 0.5 ? scrollDistance : 0;
 
@@ -1498,6 +1810,7 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                       if (ss.settings.skin.value != Skins.Samsung || kIsWeb || kIsDesktop) return false;
                       final scrollDistance = context.height / 3 - 57;
 
+                      if (!controller2.hasClients) return false;
                       if (controller2.offset > 0 && controller2.offset < scrollDistance) {
                         final double snapOffset = controller2.offset / scrollDistance > 0.5 ? scrollDistance : 0;
 
@@ -1770,9 +2083,14 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
         PopupMarkerLayer(
           options: PopupMarkerLayerOptions(
             onPopupEvent: (ev, m) async {
-              final item = m.isEmpty ? null : friends
-                      .firstWhere((e) => e.latitude == m[0].point.latitude && e.longitude == m[0].point.longitude).id;
-              await api.selectFriend(config: pushService.state!.osConfig, client: fmfClient!, friend: item);
+              final friend = m.isEmpty
+                  ? null
+                  : friends.firstWhereOrNull(
+                      (e) => e.latitude == m[0].point.latitude && e.longitude == m[0].point.longitude);
+              if (fmfClient != null) {
+                await api.selectFriend(
+                    config: pushService.state!.osConfig, client: fmfClient!, friend: friend?.id);
+              }
             },
             popupController: popupController,
             markers: markers.values.toList(),
@@ -1782,7 +2100,8 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                 if (key?.value == "current") return const SizedBox();
                 if (key?.value.contains("device")) {
                   String prefix = key!.value.replaceFirst("device-", "");
-                  final item = devices.firstWhere((e) => e.id == prefix);
+                  final item = devices.firstWhereOrNull((e) => e.id == prefix);
+                  if (item == null) return const SizedBox();
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 5.0),
                     child: Container(
@@ -1826,7 +2145,8 @@ class _FindMyPageState extends OptimizedState<FindMyPage> with SingleTickerProvi
                   );
                 } else {
                   String prefix = key!.value.replaceFirst("friend-", "");
-                  final item = friends.firstWhere((e) => e.handle?.uniqueAddressAndService == prefix);
+                  final item = friends.firstWhereOrNull((e) => e.handle?.uniqueAddressAndService == prefix);
+                  if (item == null) return const SizedBox();
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 5.0),
                     child: Container(

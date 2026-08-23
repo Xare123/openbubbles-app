@@ -17,7 +17,6 @@ import "package:languagetool_textfield/core/enums/mistake_type.dart";
 import 'package:languagetool_textfield/languagetool_textfield.dart';
 import "package:languagetool_textfield/utils/closed_range.dart";
 import "package:languagetool_textfield/utils/keep_latest_response_service.dart";
-import 'package:tuple/tuple.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 
 class Mentionable {
@@ -39,6 +38,70 @@ class Mentionable {
 
   @override
   String toString() => displayName;
+}
+
+/// Repairs the annotation partition after keyboards or IMEs report an editing
+/// delta that does not line up exactly with the previous selection.
+///
+/// Composer annotations are expected to cover the text once, without gaps or
+/// overlaps. Preserve valid formatting, clip overlaps, and fill uncovered text
+/// with a plain annotation.
+void normalizeComposerAnnotationCoverage(
+    List<Annotation> annotations, int textLength) {
+  if (textLength <= 0) {
+    annotations.clear();
+    return;
+  }
+
+  final candidates = annotations.where((annotation) {
+    if (annotation.range.length < 2) return false;
+    final start = annotation.range[0].clamp(0, textLength);
+    final end = annotation.range[1].clamp(0, textLength);
+    annotation.range = [start, end];
+    return end > start;
+  }).toList()
+    ..sort((a, b) {
+      final startComparison = a.range[0].compareTo(b.range[0]);
+      return startComparison != 0
+          ? startComparison
+          : a.range[1].compareTo(b.range[1]);
+    });
+
+  final repaired = <Annotation>[];
+  var pointer = 0;
+
+  void append(Annotation annotation) {
+    final last = repaired.lastOrNull;
+    if (last != null &&
+        last.range[1] == annotation.range[0] &&
+        last.eqUnranged(annotation)) {
+      last.range[1] = annotation.range[1];
+    } else {
+      repaired.add(annotation);
+    }
+  }
+
+  for (final annotation in candidates) {
+    final end = annotation.range[1];
+    if (end <= pointer) continue;
+
+    final start = max(pointer, annotation.range[0]);
+    if (start > pointer) {
+      append(Annotation(range: [pointer, start]));
+    }
+
+    annotation.range = [start, end];
+    append(annotation);
+    pointer = end;
+  }
+
+  if (pointer < textLength) {
+    append(Annotation(range: [pointer, textLength]));
+  }
+
+  annotations
+    ..clear()
+    ..addAll(repaired);
 }
 
 class SpellCheckTextEditingController extends TextEditingController {
@@ -442,14 +505,13 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
   @override
   void notifyListeners() {
     super.notifyListeners();
-    Logger.info("a $lastText $text");
     if (lastText != text) {
       // something changed, compute deltas
       // use text diff because some keyboards can bump the cursor forward into an existing space when typing a period during an autocorrect.
       int caret = min(selection.baseOffset, selection.extentOffset) - min(oldTextFieldSelection.baseOffset, oldTextFieldSelection.extentOffset);
       var textdiff = text.length - lastText.length;
       if (caret != textdiff) {
-        Logger.info("Caret diff $caret $textdiff");
+        Logger.debug("Caret diff $caret $textdiff");
       }
       try {
         mutateRange(oldTextFieldSelection, oldTextFieldSelection.isCollapsed ? textdiff : caret);
@@ -509,30 +571,7 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
   bool changeLock = false;
 
   void validateRange() {
-    annotations.sort((a, b) => a.range[0].compareTo(b.range[0]));
-    if (text.isEmpty) {
-      assert(annotations.isEmpty);
-    }
-    Annotation? lastAnnotation;
-    var pointer = 0;
-    while (pointer < text.length) {
-      var annotation = annotations.firstWhere((a) => a.range[0] == pointer);
-      // do we overlap with any other annotation?
-      assert(!annotations.any((a) => ((a.range[0] >= annotation.range[0] && a.range[0] < annotation.range[1]) ||
-          (a.range[1] > annotation.range[0] && a.range[1] <= annotation.range[1])) && annotation != a));
-      // we cannot have zero length
-      assert(annotation.range[0] != annotation.range[1]);
-      pointer = annotation.range[1];
-
-      if (lastAnnotation?.eqUnranged(annotation) ?? false) {
-        lastAnnotation!.range[1] = annotation.range[1]; // merge equal annotations
-        annotations.remove(annotation);
-      } else {
-        lastAnnotation = annotation;
-      }
-    }
-    assert(pointer == text.length);
-    assert(lastAnnotation == annotations.lastOrNull);
+    normalizeComposerAnnotationCoverage(annotations, text.length);
   }
 
   List<Annotation> annotationsForRange(TextSelection range) {
@@ -545,7 +584,6 @@ class MentionTextEditingController extends SpellCheckTextEditingController {
   }
 
   void mutateRange(TextSelection collapse, int length, { Annotation? newAnnotation }) {
-    Logger.info("annotations ${annotations.map((a) => a.toMap()).toList()}");
     // base < offset
     if (collapse.baseOffset > collapse.extentOffset) {
       collapse = TextSelection(baseOffset: collapse.extentOffset, extentOffset: collapse.baseOffset);

@@ -152,6 +152,9 @@ class MessagesService extends GetxController {
     struct.removeMessage(oldGuid ?? updated.guid!);
     struct.removeAttachments(toUpdate.attachments.map((e) => e!.guid!));
     struct.addMessages([updated]);
+    if (updated.associatedMessageGuid != null) {
+      getActiveMwc(updated.associatedMessageGuid!)?.updateAssociatedMessage(updated);
+    }
     updateFunc.call(updated, oldGuid: oldGuid);
   }
 

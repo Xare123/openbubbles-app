@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package openbubbles.cloudsync.outbound;
+
+// Versioned native-only envelope for one outbound MessageEncryptedV3 record.
+// It is encoded and platform-protected before any durable Dart-visible state
+// is written. No instance of this protobuf crosses Flutter Rust Bridge.
+message CloudSyncOutboundMessageV1 {
+  uint32 schema_version = 1;
+  bool has_utm = 2;
+  int64 utm_seconds = 3;
+  uint32 utm_nanos = 4;
+  int64 message_type = 5;
+  int64 error = 6;
+  string chat_id = 7;
+  string sender = 8;
+  int64 time = 9;
+  optional bytes msg_proto_2 = 10;
+  string destination_caller_id = 11;
+  bytes msg_proto = 12;
+  int64 flags = 13;
+  string guid = 14;
+  optional bytes msg_proto_3 = 15;
+  string service = 16;
+  optional bytes msg_proto_4 = 17;
+  string server_record_name = 18;
+}

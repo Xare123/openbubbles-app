@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
 import 'dart:convert';
 
 import 'package:bluebubbles/helpers/backend/settings_helpers.dart';
@@ -12,7 +11,6 @@ import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
-import 'package:bluebubbles/src/rust/api/api.dart' as api;
 
 MethodChannelService mcs = Get.isRegistered<MethodChannelService>() ? Get.find<MethodChannelService>() : Get.put(MethodChannelService());
 
@@ -85,9 +83,9 @@ class MethodChannelService extends GetxService {
         try {
           String pointer = call.arguments["pointer"];
           String retry = call.arguments["retry"];
-          Logger.info("got message $pointer $retry");
+          Logger.info("rustpush_receive dispatch_start retry=$retry");
           await pushService.recievedMsgPointer(pointer, retry);
-          Logger.info("finish message $pointer $retry");
+          Logger.info("rustpush_receive dispatch_complete retry=$retry");
         } catch (e, s) {
           Logger.error("APN MSG error", error: e, trace: s);
           rethrow;

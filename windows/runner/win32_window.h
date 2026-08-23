@@ -91,11 +91,15 @@ class Win32Window {
   static void UpdateTheme(HWND const window);
 
   // Dispatches link if any.
-  // This method enables our app to be with a single instance too.
-  // This is mandatory if you want to catch further links in same app.
+  // This also atomically claims and retains the process single-instance mutex.
+  // Returns true when this process must not create another app window.
   bool SendAppLinkToInstance(const std::wstring& title);
 
   bool quit_on_close_ = false;
+
+  // Kept open for this Win32Window's lifetime so a second official runner
+  // cannot open the same application profile.
+  HANDLE single_instance_mutex_ = nullptr;
 
   // window handle for top level window.
   HWND window_handle_ = nullptr;

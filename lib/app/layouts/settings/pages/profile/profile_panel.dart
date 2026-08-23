@@ -81,7 +81,7 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
     if (pushService.relayReachable.value == false) {
       final lastSuccessSuffix =
           successText == null ? "" : " Last successful check: $successText.";
-      return "Unavailable${checkedText == null ? "" : " as of $checkedText"}.$lastSuccessSuffix Turn on the relay and tap to retry.";
+      return "Relay service unavailable${checkedText == null ? "" : " as of $checkedText"}.$lastSuccessSuffix Open ValidationRelay on the iPhone, verify its Wi-Fi/tunnel, then tap to retry.";
     }
     return "Not checked yet. Tap to verify the iPhone is online before registration renewal.";
   }
@@ -740,11 +740,12 @@ class _ProfilePanelState extends OptimizedState<ProfilePanel> with WidgetsBindin
                                     final result =
                                         await pushService.checkRelayHealth();
                                     if (result == true) {
+                                      getDetails();
                                       showSnackbar("iPhone Relay",
-                                          "The relay is online and responding.");
+                                          "The relay service is responding. Registration recovery was started if needed.");
                                     } else if (result == false) {
                                       showSnackbar("iPhone Relay",
-                                          "The relay could not be reached. Check its power, Wi-Fi, and ValidationRelay status.");
+                                          "The relay service could not be reached, even if the iPhone is powered on. Open ValidationRelay and check its Wi-Fi and tunnel status.");
                                     }
                                   },
                           );

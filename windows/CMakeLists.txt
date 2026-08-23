@@ -3,6 +3,13 @@ project(bluebubbles_app LANGUAGES CXX)
 
 set(BINARY_NAME "bluebubbles_app")
 
+# CMake reports the ARM64 host processor even when Visual Studio is generating
+# an x64 target. Plugins such as ObjectBox use CMAKE_SYSTEM_PROCESSOR to select
+# their runtime archive, so normalize it to the requested generator platform.
+if(CMAKE_GENERATOR_PLATFORM STREQUAL "x64")
+  set(CMAKE_SYSTEM_PROCESSOR "AMD64")
+endif()
+
 cmake_policy(SET CMP0063 NEW)
 
 set(CMAKE_INSTALL_RPATH "$ORIGIN/lib")
@@ -50,6 +57,34 @@ add_subdirectory("runner")
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# media_kit_libs_windows_video 1.0.10 bundles an isolated debug-runtime
+# cluster from its ANGLE archive. None of these files is imported by libmpv,
+# ANGLE, the media plugins, or the runner, and the debug files depend on the
+# non-redistributable MSVCP140D runtime. Keep them out of release bundles.
+set(OPENBUBBLES_UNUSED_MEDIA_RUNTIME_NAMES
+  "libc++.dll"
+  "zlib.dll"
+  "ucrtbased.dll"
+  "vccorlib140d.dll"
+  "vcruntime140d.dll"
+  "vcruntime140_1d.dll"
+)
+foreach(BUNDLED_LIBRARY IN LISTS PLUGIN_BUNDLED_LIBRARIES)
+  get_filename_component(BUNDLED_LIBRARY_NAME "${BUNDLED_LIBRARY}" NAME)
+  if(BUNDLED_LIBRARY_NAME IN_LIST OPENBUBBLES_UNUSED_MEDIA_RUNTIME_NAMES)
+    list(REMOVE_ITEM PLUGIN_BUNDLED_LIBRARIES "${BUNDLED_LIBRARY}")
+  endif()
+endforeach()
+
+# The desktop OAuth and in-app WebView plugins link WebView2Loader.dll through
+# NuGet targets, but neither declares it as a Flutter bundled library. The
+# post-build copy reaches the normal runner directory but not an explicit
+# install/package prefix, so add the target-architecture loader directly.
+string(TOLOWER "${CMAKE_GENERATOR_PLATFORM}" WEBVIEW2_ARCH_DIRECTORY)
+list(APPEND PLUGIN_BUNDLED_LIBRARIES
+  "${CMAKE_BINARY_DIR}/packages/Microsoft.Web.WebView2/build/native/${WEBVIEW2_ARCH_DIRECTORY}/WebView2Loader.dll"
+)
+
 
 # === Installation ===
 # Support files are copied into place next to the executable, so that it can
@@ -58,12 +93,39 @@ include(flutter/generated_plugins.cmake)
 set(BUILD_BUNDLE_DIR "$<TARGET_FILE_DIR:${BINARY_NAME}>")
 # Make the "install" step default, as it's required to run.
 set(CMAKE_VS_INCLUDE_INSTALL_TO_DEFAULT_BUILD 1)
-if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+# CMake 3.31 can leave INITIALIZED_TO_DEFAULT false while retaining this
+# generated Visual Studio default. Treat only that exact path as the default;
+# preserve any explicit custom install prefix.
+if(
+  CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT
+  OR CMAKE_INSTALL_PREFIX STREQUAL "C:/Program Files/${PROJECT_NAME}"
+)
   set(CMAKE_INSTALL_PREFIX "${BUILD_BUNDLE_DIR}" CACHE PATH "..." FORCE)
 endif()
 
 set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
+
+if(
+  NOT media_kit_libs_windows_video_portable_evidence_files
+  OR NOT media_kit_libs_windows_video_angle_license_directory
+)
+  message(
+    FATAL_ERROR
+    "The local architecture-aware media package did not expose its required "
+    "portable provenance and license inventory."
+  )
+endif()
+install(
+  FILES ${media_kit_libs_windows_video_portable_evidence_files}
+  DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/native-media"
+  COMPONENT Runtime
+)
+install(
+  DIRECTORY "${media_kit_libs_windows_video_angle_license_directory}/"
+  DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/native-media/angle-licenses"
+  COMPONENT Runtime
+)
 
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)

@@ -5,17 +5,16 @@ import 'dart:ui';
 
 import 'package:async_task/async_task_extension.dart';
 import 'package:audio_waveforms/audio_waveforms.dart';
-import 'package:bluebubbles/app/components/custom_text_editing_controllers.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/misc/tail_clipper.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/utils/attachment_mime_utils.dart';
 import 'package:dotted_border/dotted_border.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:mime_type/mime_type.dart';
 import 'package:simple_animations/simple_animations.dart';
 import 'package:tuple/tuple.dart';
 
@@ -76,6 +75,7 @@ class _SendAnimationState
       final file = attachments[i];
       String data = await DefaultAssetBundle.of(Get.context!).loadString("assets/rustpush/uti-map.json");
       final utiMap = jsonDecode(data);
+      final attachmentMimeType = resolveAttachmentMimeType(file.name, file.path);
 
       final message = Message(
         text: "",
@@ -85,8 +85,8 @@ class _SendAnimationState
         attachments: [
           Attachment(
             isOutgoing: true,
-            mimeType: mime(file.path ?? file.name),
-            uti: utiMap[mime(file.path ?? file.name)] ?? "public.data",
+            mimeType: attachmentMimeType,
+            uti: utiMap[attachmentMimeType] ?? "public.data",
             bytes: file.bytes,
             transferName: file.name,
             totalBytes: file.size,
@@ -148,7 +148,7 @@ class _SendAnimationState
         ],
       );
       _message.generateTempGuid();
-      outq.queue(OutgoingItem(
+      await outq.queue(OutgoingItem(
         type: QueueType.sendMessage,
         chat: controller.chat,
         message: _message,

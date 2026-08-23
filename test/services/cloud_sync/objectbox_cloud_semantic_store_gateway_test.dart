@@ -1,0 +1,1478 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
+import 'package:crypto/crypto.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  final now = DateTime.utc(2026, 8, 1, 12);
+  final scope = _scope();
+  const leaseFence = CloudCoordinatorLeaseFence(
+    ownerId: 'semantic-test-owner',
+    generation: 4,
+  );
+  late Directory directory;
+  late Store objectBox;
+  late _ObjectBoxTestCanonicalAdapter adapter;
+  late ObjectBoxCloudSemanticStoreGateway gateway;
+
+  setUp(() async {
+    directory = await Directory.systemTemp.createTemp(
+      'openbubbles-cloud-semantic-gateway-',
+    );
+    objectBox = await openStore(directory: directory.path);
+    adapter = _ObjectBoxTestCanonicalAdapter(objectBox)
+      ..activeScope = scope
+      ..activeGeneration = 7
+      ..existingEntities.add((CloudEntityKind.chat, _digestValue('H')));
+    gateway = ObjectBoxCloudSemanticStoreGateway(
+      store: objectBox,
+      canonicalAdapter: adapter,
+      clock: () => now,
+    );
+  });
+
+  tearDown(() async {
+    objectBox.close();
+    if (directory.existsSync()) await directory.delete(recursive: true);
+  });
+
+  test(
+    'atomically commits canonical, snapshot, map, replay, and inbox',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+
+      final result = await gateway.writeTransaction<CloudInboxApplyResult>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: (transaction) {
+          _applyMessage(transaction);
+          transaction.markChangeApplied(entry.change.changeId);
+          return const CloudInboxApplyResult.applied(
+            inboxStatusPersisted: true,
+          );
+        },
+      );
+
+      expect(result.inboxStatusPersisted, isTrue);
+      expect(adapter.entityApplyCalls, 1);
+      expect(objectBox.box<CloudSyncRunEntity>().count(), 1);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 1);
+      expect(objectBox.box<CloudRecordMapEntity>().count(), 1);
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 1);
+
+      final map = objectBox.box<CloudRecordMapEntity>().getAll().single;
+      expect(map.logicalEntityKeyHash, _digestValue('L'));
+      expect(map.serverRecordIdHash, entry.change.recordIdHash);
+      expect(map.encryptedServerRecordId, _protectedReference('S'));
+      expect(map.encryptedRawRecordRef, _protectedReference('W'));
+
+      final replay = objectBox.box<CloudSemanticReplayEntity>().getAll().single;
+      expect(replay.terminalOutcome, 'applied');
+      expect(replay.terminalSafeCode, isNull);
+      expect(replay.serverRecordIdHash, entry.change.recordIdHash);
+      expect(replay.logicalEntityKeyHash, _digestValue('L'));
+      expect(replay.payloadSha256, entry.change.payloadSha256);
+      expect(replay.inboxSequence, entry.sequence);
+      expect(replay.changeType, entry.change.type.name);
+
+      final inbox = objectBox.box<CloudInboxChangeEntity>().getAll().single;
+      expect(inbox.status, CloudInboxStatus.applied.index);
+      expect(inbox.completedAtMs, now.millisecondsSinceEpoch);
+      final checkpoint = objectBox
+          .box<CloudSyncCheckpointEntity>()
+          .getAll()
+          .single;
+      expect(checkpoint.appliedSequence, 1);
+    },
+  );
+
+  test('rejects legacy transport grammar before opening a transaction', () async {
+    final entry = _entry(
+      scope: scope,
+      changeId:
+          'change2:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      recordIdHash:
+          'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      etagHash:
+          'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+      encryptedServerRecordId: _protectedReference('S'),
+      protectedSystemFieldsReference: null,
+      encryptedPayloadReference: _protectedReference('W'),
+    );
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+
+    expect(
+      () => gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: _applyAndMark(entry),
+      ),
+      throwsA(_failureCode('semantic_digest_invalid')),
+    );
+    _expectNoSemanticMutation(objectBox, adapter);
+  });
+
+  test(
+    'durable metadata never stores transient payload identity or content',
+    () async {
+      const secretBody = 'PRIVATE BODY 97213';
+      const secretSender = 'private.sender@example.com';
+      const secretMessageGuid = 'PRIVATE-MESSAGE-GUID-97213';
+      const secretChatIdentifier = 'iMessage;-;PRIVATE-CHAT-97213';
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+
+      await gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: (transaction) {
+          transaction.applyEntity(
+            payload: CloudMessageEntityPayload(
+              logicalEntityKeyHash: _digestValue('L'),
+              canonicalGuid: secretMessageGuid,
+              chatAliasKeyHash: _digestValue('H'),
+              chatIdentifier: secretChatIdentifier,
+              body: secretBody,
+              senderHandle: secretSender,
+            ),
+            snapshot: _snapshot(),
+          );
+          transaction.markChangeApplied(entry.change.changeId);
+        },
+      );
+
+      final durable = <String>[
+        ...objectBox.box<CloudSemanticSnapshotEntity>().getAll().expand(
+          (row) => [
+            row.snapshotKey,
+            row.scopeGenerationKey,
+            row.scopeKey,
+            row.accountFingerprint,
+            row.logicalEntityKeyHash,
+            row.editPartsJson,
+          ],
+        ),
+        ...objectBox.box<CloudSemanticReplayEntity>().getAll().expand(
+          (row) => [
+            row.replayKey,
+            row.scopeGenerationKey,
+            row.scopeKey,
+            row.accountFingerprint,
+            row.changeIdHash,
+            row.serverRecordIdHash,
+            row.logicalEntityKeyHash ?? '',
+            row.payloadSha256 ?? '',
+            row.terminalOutcome,
+            row.terminalSafeCode ?? '',
+          ],
+        ),
+        ...objectBox.box<CloudRecordMapEntity>().getAll().expand(
+          (row) => [
+            row.mapKey,
+            row.logicalEntityKeyHash,
+            row.serverRecordIdHash,
+            row.encryptedServerRecordId,
+            row.encryptedRawRecordRef ?? '',
+          ],
+        ),
+      ].join('\n');
+      expect(durable, isNot(contains(secretBody)));
+      expect(durable, isNot(contains(secretSender)));
+      expect(durable, isNot(contains(secretMessageGuid)));
+      expect(durable, isNot(contains(secretChatIdentifier)));
+    },
+  );
+
+  test('semantic metadata and protected record map survive reopen', () async {
+    final entry = _entry(scope: scope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    await gateway.writeTransaction<void>(
+      entry: entry,
+      leaseFence: leaseFence,
+      action: _applyAndMark(entry),
+    );
+
+    objectBox.close();
+    objectBox = await openStore(directory: directory.path);
+    adapter = _ObjectBoxTestCanonicalAdapter(objectBox)
+      ..activeScope = scope
+      ..activeGeneration = 7
+      ..existingEntities.add((CloudEntityKind.chat, _digestValue('H')));
+    gateway = ObjectBoxCloudSemanticStoreGateway(
+      store: objectBox,
+      canonicalAdapter: adapter,
+      clock: () => now,
+    );
+
+    final replay = objectBox.box<CloudSemanticReplayEntity>().getAll().single;
+    final map = objectBox.box<CloudRecordMapEntity>().getAll().single;
+    expect(replay.terminalOutcome, 'applied');
+    expect(replay.logicalEntityKeyHash, _digestValue('L'));
+    expect(map.encryptedRawRecordRef, _protectedReference('W'));
+  });
+
+  test('lease takeover fails before canonical mutation', () async {
+    final entry = _entry(scope: scope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: const CloudCoordinatorLeaseFence(
+        ownerId: 'new-owner',
+        generation: 5,
+      ),
+      now: now,
+    );
+
+    await expectLater(
+      gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: _applyAndMark(entry),
+      ),
+      throwsA(_failureCode('semantic_coordinator_lease_fence_lost')),
+    );
+    _expectNoSemanticMutation(objectBox, adapter);
+  });
+
+  test('expired lease fails before canonical mutation', () async {
+    final entry = _entry(scope: scope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+      expiresAt: now,
+    );
+
+    await expectLater(
+      gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: _applyAndMark(entry),
+      ),
+      throwsA(_failureCode('semantic_coordinator_lease_fence_lost')),
+    );
+    _expectNoSemanticMutation(objectBox, adapter);
+  });
+
+  test('account switch fails before canonical mutation', () async {
+    final entry = _entry(scope: scope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    adapter.activeScope = _scope(account: _digestValue('B'));
+
+    await expectLater(
+      gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: _applyAndMark(entry),
+      ),
+      throwsA(_failureCode('semantic_active_account_scope_changed')),
+    );
+    _expectNoSemanticMutation(objectBox, adapter);
+  });
+
+  test('generation reset fails before canonical mutation', () async {
+    final entry = _entry(scope: scope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+      checkpointGeneration: 8,
+    );
+
+    await expectLater(
+      gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: _applyAndMark(entry),
+      ),
+      throwsA(_failureCode('semantic_checkpoint_fence_lost')),
+    );
+    _expectNoSemanticMutation(objectBox, adapter);
+  });
+
+  test('exact inbox digest and sequence are fenced', () async {
+    final entry = _entry(scope: scope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    final row = objectBox.box<CloudInboxChangeEntity>().getAll().single
+      ..payloadSha256 = _digestValue('X');
+    objectBox.box<CloudInboxChangeEntity>().put(row);
+
+    await expectLater(
+      gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: _applyAndMark(entry),
+      ),
+      throwsA(_failureCode('semantic_inbox_fence_lost')),
+    );
+    _expectNoSemanticMutation(objectBox, adapter);
+  });
+
+  test('captured transaction is inactive after callback returns', () async {
+    final entry = _entry(scope: scope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    late CloudSemanticStoreTransaction escaped;
+
+    await gateway.writeTransaction<void>(
+      entry: entry,
+      leaseFence: leaseFence,
+      action: (transaction) {
+        escaped = transaction;
+      },
+    );
+
+    expect(
+      () => escaped.entityExists(
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: _digestValue('L'),
+      ),
+      throwsA(_failureCode('semantic_transaction_inactive')),
+    );
+  });
+
+  test('scheduled microtask cannot use a committed transaction', () async {
+    final entry = _entry(scope: scope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    late Future<Object> deferredUse;
+
+    await gateway.writeTransaction<void>(
+      entry: entry,
+      leaseFence: leaseFence,
+      action: (transaction) {
+        deferredUse = Future<Object>.microtask(() {
+          try {
+            transaction.entityExists(
+              kind: CloudEntityKind.message,
+              logicalEntityKeyHash: _digestValue('L'),
+            );
+            return StateError('transaction unexpectedly remained active');
+          } catch (error) {
+            return error;
+          }
+        });
+      },
+    );
+
+    final error = await deferredUse;
+    expect(error, _failureCode('semantic_transaction_inactive'));
+  });
+
+  test(
+    'discarded nested gateway call aborts and rolls back outer transaction',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+
+      await expectLater(
+        gateway.writeTransaction<void>(
+          entry: entry,
+          leaseFence: leaseFence,
+          action: (transaction) {
+            transaction.applyEntity(payload: _payload(), snapshot: _snapshot());
+            gateway.writeTransaction<void>(
+              entry: entry,
+              leaseFence: leaseFence,
+              action: (_) {},
+            );
+          },
+        ),
+        throwsA(_failureCode('semantic_nested_transaction_forbidden')),
+      );
+      _expectNoSemanticMutation(objectBox, adapter);
+    },
+  );
+
+  test('missing terminal outcome rolls back canonical state', () async {
+    final entry = _entry(scope: scope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+
+    await expectLater(
+      gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: (transaction) {
+          transaction.applyEntity(payload: _payload(), snapshot: _snapshot());
+        },
+      ),
+      throwsA(_failureCode('semantic_terminal_outcome_missing')),
+    );
+    _expectNoSemanticMutation(objectBox, adapter);
+  });
+
+  test('record binding without a terminal outcome rolls back', () async {
+    final entry = _entry(scope: scope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+
+    await expectLater(
+      gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: (transaction) {
+          transaction.bindRecordIdentity(
+            logicalEntityKeyHash: _digestValue('L'),
+            encryptedRawRecordReference: _protectedReference('W'),
+          );
+        },
+      ),
+      throwsA(_failureCode('semantic_terminal_outcome_missing')),
+    );
+    _expectNoSemanticMutation(objectBox, adapter);
+  });
+
+  test(
+    'quarantine after a canonical mutation is forbidden and rolls back',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+
+      await expectLater(
+        gateway.writeTransaction<void>(
+          entry: entry,
+          leaseFence: leaseFence,
+          action: (transaction) {
+            _applyMessage(transaction);
+            transaction.quarantineChange(
+              entry.change.changeId,
+              'late_quarantine',
+            );
+          },
+        ),
+        throwsA(_failureCode('semantic_quarantine_after_mutation_forbidden')),
+      );
+      _expectNoSemanticMutation(objectBox, adapter);
+    },
+  );
+
+  test(
+    'a terminal transaction rejects any later mutation and rolls back',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+
+      await expectLater(
+        gateway.writeTransaction<void>(
+          entry: entry,
+          leaseFence: leaseFence,
+          action: (transaction) {
+            transaction.bindRecordIdentity(
+              logicalEntityKeyHash: _digestValue('L'),
+              encryptedRawRecordReference: _protectedReference('W'),
+            );
+            transaction.markChangeApplied(entry.change.changeId);
+            _applyMessage(transaction);
+          },
+        ),
+        throwsA(_failureCode('semantic_transaction_terminal')),
+      );
+      _expectNoSemanticMutation(objectBox, adapter);
+    },
+  );
+
+  test('decoder raw-envelope or etag substitution rolls back', () async {
+    for (final snapshot in [
+      _snapshot().copyWith(
+        encryptedRawRecordReference: _protectedReference('X'),
+      ),
+      _snapshot().copyWith(etagHash: _digestValue('X')),
+    ]) {
+      final entry = _entry(
+        scope: _scope(
+          account: snapshot.etagHash == _digestValue('X')
+              ? _digestValue('F')
+              : _digestValue('G'),
+        ),
+      );
+      adapter.activeScope = entry.scope;
+      adapter.existingEntities.add((CloudEntityKind.chat, _digestValue('H')));
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      await expectLater(
+        gateway.writeTransaction<void>(
+          entry: entry,
+          leaseFence: leaseFence,
+          action: (transaction) {
+            transaction.applyEntity(payload: _payload(), snapshot: snapshot);
+          },
+        ),
+        throwsA(_failureCode('semantic_snapshot_envelope_mismatch')),
+      );
+    }
+    expect(objectBox.box<CloudSyncRunEntity>().count(), 0);
+    expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 0);
+    expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+    expect(objectBox.box<CloudSemanticReplayEntity>().count(), 0);
+  });
+
+  test(
+    'ambiguous contiguous inbox sequence aborts checkpoint advancement',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final original = objectBox.box<CloudInboxChangeEntity>().getAll().single;
+      objectBox.box<CloudInboxChangeEntity>().put(
+        _copyInbox(original, changeKey: 'duplicate:${_sha256('sequence-1')}'),
+      );
+
+      await expectLater(
+        gateway.writeTransaction<void>(
+          entry: entry,
+          leaseFence: leaseFence,
+          action: _applyAndMark(entry),
+        ),
+        throwsA(_failureCode('semantic_inbox_sequence_ambiguous')),
+      );
+      expect(objectBox.box<CloudSyncRunEntity>().count(), 0);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 0);
+      expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 0);
+      expect(
+        objectBox
+            .box<CloudInboxChangeEntity>()
+            .getAll()
+            .where((row) => row.changeKey == original.changeKey)
+            .single
+            .status,
+        CloudInboxStatus.pending.index,
+      );
+    },
+  );
+
+  test('checkpoint cannot claim an applied sequence beyond fetched', () async {
+    final entry = _entry(scope: scope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    final checkpoint =
+        objectBox.box<CloudSyncCheckpointEntity>().getAll().single
+          ..appliedSequence = 2;
+    objectBox.box<CloudSyncCheckpointEntity>().put(checkpoint);
+
+    await expectLater(
+      gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: _applyAndMark(entry),
+      ),
+      throwsA(_failureCode('semantic_checkpoint_fence_lost')),
+    );
+    _expectNoSemanticMutation(objectBox, adapter);
+  });
+
+  test(
+    'record-map conflict fails closed and rolls back canonical state',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      objectBox.box<CloudRecordMapEntity>().put(
+        CloudRecordMapEntity(
+          mapKey: _recordMapKey(scope, _digestValue('L')),
+          scopeKey: _scopeKey(scope),
+          accountFingerprint: scope.accountFingerprint,
+          zone: scope.zone,
+          logicalEntityKeyHash: _digestValue('L'),
+          serverRecordIdHash: _digestValue('Z'),
+          encryptedServerRecordId: _protectedReference('O'),
+          updatedAtMs: now.millisecondsSinceEpoch,
+        ),
+      );
+
+      await expectLater(
+        gateway.writeTransaction<void>(
+          entry: entry,
+          leaseFence: leaseFence,
+          action: _applyAndMark(entry),
+        ),
+        throwsA(_failureCode('semantic_record_mapping_conflict')),
+      );
+      expect(objectBox.box<CloudSyncRunEntity>().count(), 0);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 0);
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 0);
+      expect(objectBox.box<CloudRecordMapEntity>().count(), 1);
+    },
+  );
+
+  test(
+    'required payload parents must exactly match snapshot parents',
+    () async {
+      final cases =
+          <
+            (
+              CloudSyncScope,
+              CloudSemanticEntityPayload,
+              CloudSemanticSnapshot,
+              String,
+            )
+          >[
+            (
+              _scope(account: _digestValue('B'), zone: 'messageManateeZone'),
+              CloudMessageEntityPayload(
+                logicalEntityKeyHash: _digestValue('L'),
+                canonicalGuid: 'message-guid',
+                chatAliasKeyHash: _digestValue('P'),
+                chatIdentifier: 'iMessage;-;chat',
+                body: 'message',
+                senderHandle: 'sender',
+              ),
+              CloudSemanticSnapshot(
+                kind: CloudEntityKind.message,
+                logicalEntityKeyHash: _digestValue('L'),
+                parentLogicalKeyHash: _digestValue('Q'),
+              ),
+              'semantic_parent_identity_invalid',
+            ),
+            (
+              _scope(account: _digestValue('C'), zone: 'messageManateeZone'),
+              CloudReactionEntityPayload(
+                logicalEntityKeyHash: _digestValue('Y'),
+                canonicalGuid: 'reaction-guid',
+                parentLogicalKeyHash: _digestValue('P'),
+                parentCanonicalGuid: 'parent-message-guid',
+                parentPart: 0,
+                senderHandle: 'sender',
+                reactionType: 'like',
+              ),
+              CloudSemanticSnapshot(
+                kind: CloudEntityKind.reaction,
+                logicalEntityKeyHash: _digestValue('Y'),
+              ),
+              'semantic_parent_identity_mismatch',
+            ),
+            (
+              _scope(account: _digestValue('D'), zone: 'attachmentManateeZone'),
+              CloudAttachmentEntityPayload(
+                logicalEntityKeyHash: _digestValue('T'),
+                canonicalGuid: 'attachment-guid',
+                ownerLogicalKeyHash: _digestValue('P'),
+                ownerCanonicalGuid: 'owner-message-guid',
+                ownerPart: 0,
+                fileName: 'photo.jpg',
+                mimeType: 'image/jpeg',
+                protectedLocalReference: _protectedReference('A'),
+              ),
+              CloudSemanticSnapshot(
+                kind: CloudEntityKind.attachment,
+                logicalEntityKeyHash: _digestValue('T'),
+                parentLogicalKeyHash: _digestValue('Q'),
+              ),
+              'semantic_parent_identity_mismatch',
+            ),
+            (
+              _scope(account: _digestValue('E'), zone: 'chatManateeZone'),
+              CloudGroupPhotoEntityPayload(
+                logicalEntityKeyHash: _digestValue('G'),
+                ownerLogicalKeyHash: _digestValue('P'),
+                photoGuid: 'group-photo-guid',
+                protectedLocalReference: _protectedReference('G'),
+              ),
+              CloudSemanticSnapshot(
+                kind: CloudEntityKind.groupPhoto,
+                logicalEntityKeyHash: _digestValue('G'),
+                parentLogicalKeyHash: _digestValue('Q'),
+              ),
+              'semantic_parent_identity_mismatch',
+            ),
+          ];
+
+      for (final (caseScope, payload, snapshot, safeCode) in cases) {
+        final entry = _entry(scope: caseScope);
+        adapter.activeScope = caseScope;
+        _seedDurableFence(
+          objectBox,
+          entry: entry,
+          leaseFence: leaseFence,
+          now: now,
+        );
+        await expectLater(
+          gateway.writeTransaction<void>(
+            entry: entry,
+            leaseFence: leaseFence,
+            action: (transaction) {
+              transaction.applyEntity(payload: payload, snapshot: snapshot);
+            },
+          ),
+          throwsA(_failureCode(safeCode)),
+        );
+      }
+      expect(objectBox.box<CloudSyncRunEntity>().count(), 0);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 0);
+      expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 0);
+      expect(
+        objectBox.box<CloudInboxChangeEntity>().getAll().every(
+          (row) => row.status == CloudInboxStatus.pending.index,
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'accepts a reply message with the exact existing snapshot parent',
+    () async {
+      final entry = _entry(scope: scope);
+      final parentKey = _digestValue('P');
+      adapter.existingEntities.add((CloudEntityKind.message, parentKey));
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+
+      await gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: (transaction) {
+          transaction.applyEntity(
+            payload: CloudMessageEntityPayload(
+              logicalEntityKeyHash: _digestValue('L'),
+              canonicalGuid: 'reply-message-guid',
+              chatAliasKeyHash: _digestValue('H'),
+              chatIdentifier: 'iMessage;-;chat',
+              body: 'reply',
+              senderHandle: 'sender',
+              replyParentLogicalKeyHash: parentKey,
+              replyParentCanonicalGuid: 'parent-message-guid',
+              replyParentPart: '0',
+            ),
+            snapshot: CloudSemanticSnapshot(
+              kind: CloudEntityKind.message,
+              logicalEntityKeyHash: _digestValue('L'),
+              parentLogicalKeyHash: parentKey,
+              etagHash: entry.change.etagHash,
+              encryptedRawRecordReference:
+                  entry.change.encryptedPayloadReference,
+            ),
+          );
+          transaction.markChangeApplied(entry.change.changeId);
+        },
+      );
+
+      expect(adapter.entityApplyCalls, 1);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 1);
+      expect(
+        objectBox.box<CloudInboxChangeEntity>().getAll().single.status,
+        CloudInboxStatus.applied.index,
+      );
+    },
+  );
+
+  test('message and profile streams reject the wrong entity kinds', () async {
+    final entry = _entry(scope: scope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+
+    await expectLater(
+      gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: (transaction) {
+          transaction.applyEntity(
+            payload: CloudProfileEntityPayload(
+              logicalEntityKeyHash: _digestValue('F'),
+              displayName: 'Profile',
+              handle: 'profile@example.com',
+            ),
+            snapshot: CloudSemanticSnapshot(
+              kind: CloudEntityKind.sharedProfile,
+              logicalEntityKeyHash: _digestValue('F'),
+            ),
+          );
+        },
+      ),
+      throwsA(_failureCode('semantic_stream_entity_mismatch')),
+    );
+    _expectNoSemanticMutation(objectBox, adapter);
+  });
+
+  test(
+    'replay outcome is bound to payload, record, generation, and sequence',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      await gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: _applyAndMark(entry),
+      );
+
+      final inbox = objectBox.box<CloudInboxChangeEntity>().getAll().single
+        ..status = CloudInboxStatus.pending.index
+        ..payloadSha256 = _digestValue('X');
+      objectBox.box<CloudInboxChangeEntity>().put(inbox);
+      final changedEntry = _entry(
+        scope: scope,
+        payloadSha256: _digestValue('X'),
+      );
+
+      await expectLater(
+        gateway.writeTransaction<void>(
+          entry: changedEntry,
+          leaseFence: leaseFence,
+          action: (transaction) {
+            transaction.hasAppliedChange(changedEntry.change.changeId);
+          },
+        ),
+        throwsA(_failureCode('semantic_replay_binding_mismatch')),
+      );
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 1);
+    },
+  );
+
+  test(
+    'replay rejects a corrupted protected record-map binding after reopen',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      await gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: _applyAndMark(entry),
+      );
+
+      final inbox = objectBox.box<CloudInboxChangeEntity>().getAll().single
+        ..status = CloudInboxStatus.pending.index;
+      objectBox.box<CloudInboxChangeEntity>().put(inbox);
+      final map = objectBox.box<CloudRecordMapEntity>().getAll().single
+        ..encryptedRawRecordRef = _protectedReference('X');
+      objectBox.box<CloudRecordMapEntity>().put(map);
+
+      objectBox.close();
+      objectBox = await openStore(directory: directory.path);
+      adapter = _ObjectBoxTestCanonicalAdapter(objectBox)
+        ..activeScope = scope
+        ..activeGeneration = 7
+        ..existingEntities.add((CloudEntityKind.chat, _digestValue('H')));
+      gateway = ObjectBoxCloudSemanticStoreGateway(
+        store: objectBox,
+        canonicalAdapter: adapter,
+        clock: () => now,
+      );
+
+      await expectLater(
+        gateway.writeTransaction<void>(
+          entry: entry,
+          leaseFence: leaseFence,
+          action: (transaction) {
+            transaction.hasAppliedChange(entry.change.changeId);
+          },
+        ),
+        throwsA(_failureCode('semantic_replay_record_binding_mismatch')),
+      );
+    },
+  );
+
+  test('one explicit applied-with-conflict outcome is persisted', () async {
+    final entry = _entry(scope: scope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+
+    await gateway.writeTransaction<void>(
+      entry: entry,
+      leaseFence: leaseFence,
+      action: (transaction) {
+        transaction.bindRecordIdentity(
+          logicalEntityKeyHash: _digestValue('L'),
+          encryptedRawRecordReference: _protectedReference('W'),
+        );
+        transaction.recordConflict(
+          entry.change.changeId,
+          'equal_group_version_mismatch',
+        );
+        transaction.markChangeApplied(entry.change.changeId);
+      },
+    );
+
+    final replay = objectBox.box<CloudSemanticReplayEntity>().getAll().single;
+    expect(replay.terminalOutcome, 'appliedWithConflict');
+    expect(replay.terminalSafeCode, 'equal_group_version_mismatch');
+    expect(
+      objectBox.box<CloudInboxChangeEntity>().getAll().single.status,
+      CloudInboxStatus.applied.index,
+    );
+  });
+
+  test('one explicit quarantined outcome is persisted', () async {
+    final entry = _entry(scope: scope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+
+    await gateway.writeTransaction<void>(
+      entry: entry,
+      leaseFence: leaseFence,
+      action: (transaction) {
+        transaction.quarantineChange(
+          entry.change.changeId,
+          'immutable_content_mismatch',
+        );
+      },
+    );
+
+    final replay = objectBox.box<CloudSemanticReplayEntity>().getAll().single;
+    expect(replay.terminalOutcome, 'quarantined');
+    expect(replay.terminalSafeCode, 'immutable_content_mismatch');
+    expect(
+      objectBox.box<CloudInboxChangeEntity>().getAll().single.status,
+      CloudInboxStatus.quarantined.index,
+    );
+    expect(
+      objectBox
+          .box<CloudSyncCheckpointEntity>()
+          .getAll()
+          .single
+          .appliedSequence,
+      1,
+    );
+  });
+
+  test(
+    'raw email, GUID, body, uppercase hex, and delimiter scope are rejected',
+    () async {
+      expect(() => _scope(account: 'raw@example.com'), throwsArgumentError);
+      final validEntry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: validEntry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      for (final invalid in [
+        '550e8400-e29b-41d4-a716-446655440000',
+        'secret body text',
+        List.filled(64, 'A').join(),
+      ]) {
+        await expectLater(
+          gateway.writeTransaction<void>(
+            entry: validEntry,
+            leaseFence: leaseFence,
+            action: (transaction) {
+              transaction.bindRecordIdentity(logicalEntityKeyHash: invalid);
+            },
+          ),
+          throwsA(_failureCode('semantic_digest_invalid')),
+        );
+      }
+      expect(
+        () => CloudSyncScope(
+          accountFingerprint: _digestValue('A'),
+          container: 'container\u001fcollision',
+          database: 'private',
+          zone: 'zone',
+        ),
+        throwsArgumentError,
+      );
+    },
+  );
+
+  test(
+    'secret-bearing adapter exception is sanitized and fully rolled back',
+    () async {
+      const secret = 'TOP SECRET MESSAGE BODY';
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      adapter.throwAfterCanonicalWrite = Exception(secret);
+
+      try {
+        await gateway.writeTransaction<void>(
+          entry: entry,
+          leaseFence: leaseFence,
+          action: _applyAndMark(entry),
+        );
+        fail('expected sanitized failure');
+      } catch (error) {
+        expect(error, isA<CloudSyncFailure>());
+        expect(error.toString(), isNot(contains(secret)));
+        expect(
+          (error as CloudSyncFailure).safeCode,
+          'semantic_canonical_write_failed',
+        );
+      }
+      _expectNoSemanticMutation(objectBox, adapter);
+    },
+  );
+
+  test('tombstones remain disabled in the durable gateway', () async {
+    final entry = _entry(scope: scope, tombstone: true);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+
+    await expectLater(
+      gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: (transaction) {
+          transaction.applyTombstone(
+            CloudSemanticTombstone(
+              kind: CloudEntityKind.message,
+              logicalEntityKeyHash: _digestValue('L'),
+              deletedAt: now,
+              serverConfirmed: true,
+            ),
+          );
+        },
+      ),
+      throwsA(_failureCode('semantic_tombstones_disabled')),
+    );
+    _expectNoSemanticMutation(objectBox, adapter);
+  });
+}
+
+CloudSyncScope _scope({String? account, String zone = 'messageManateeZone'}) {
+  return CloudSyncScope(
+    accountFingerprint: account ?? _digestValue('A'),
+    container: 'com.apple.messages.cloud',
+    database: 'private',
+    zone: zone,
+    streamKind: CloudSyncStreamKind.messages,
+    schemaVersion: 2,
+  );
+}
+
+CloudInboxEntry _entry({
+  required CloudSyncScope scope,
+  bool tombstone = false,
+  String? payloadSha256,
+  String? changeId,
+  String? recordIdHash,
+  String? etagHash,
+  String? encryptedServerRecordId,
+  String? protectedSystemFieldsReference,
+  String? encryptedPayloadReference,
+}) {
+  final change = CloudFetchedChange(
+    changeId: changeId ?? _digestValue('C'),
+    recordIdHash: recordIdHash ?? _digestValue('R'),
+    etagHash: tombstone ? null : etagHash ?? _digestValue('E'),
+    type: tombstone ? CloudChangeType.delete : CloudChangeType.save,
+    encryptedServerRecordId:
+        encryptedServerRecordId ?? _protectedReference('S'),
+    protectedSystemFieldsReference:
+        protectedSystemFieldsReference ?? _protectedReference('F'),
+    encryptedPayloadReference:
+        encryptedPayloadReference ?? _protectedReference('W'),
+    payloadSha256: tombstone ? null : payloadSha256 ?? _sha256('payload'),
+    isTombstone: tombstone,
+  );
+  return CloudInboxEntry(
+    scope: scope,
+    sequence: 1,
+    change: change,
+    status: CloudInboxStatus.pending,
+    attemptCount: 0,
+    createdAt: DateTime.utc(2026, 8, 1, 11),
+    batchId: 'batch-1',
+    generation: 7,
+  );
+}
+
+CloudSemanticSnapshot _snapshot() {
+  return CloudSemanticSnapshot(
+    kind: CloudEntityKind.message,
+    logicalEntityKeyHash: _digestValue('L'),
+    immutableContentDigest: _digestValue('I'),
+    createdAt: DateTime.utc(2026, 7, 31, 10),
+    readAt: DateTime.utc(2026, 7, 31, 11),
+    editParts: {
+      _digestValue('K'): CloudEditPart(
+        partKeyHash: _digestValue('K'),
+        revision: 1,
+        contentDigest: _digestValue('D'),
+        modifiedAt: DateTime.utc(2026, 7, 31, 11, 30),
+      ),
+    },
+    etagHash: _digestValue('E'),
+    encryptedRawRecordReference: _protectedReference('W'),
+  );
+}
+
+CloudMessageEntityPayload _payload() {
+  return CloudMessageEntityPayload(
+    logicalEntityKeyHash: _digestValue('L'),
+    canonicalGuid: 'message-guid',
+    chatAliasKeyHash: _digestValue('H'),
+    chatIdentifier: 'iMessage;-;chat',
+    body: 'secret message body',
+    senderHandle: 'secret@example.com',
+  );
+}
+
+void _applyMessage(CloudSemanticStoreTransaction transaction) {
+  transaction.applyEntity(payload: _payload(), snapshot: _snapshot());
+}
+
+void Function(CloudSemanticStoreTransaction) _applyAndMark(
+  CloudInboxEntry entry,
+) {
+  return (transaction) {
+    _applyMessage(transaction);
+    transaction.markChangeApplied(entry.change.changeId);
+  };
+}
+
+void _seedDurableFence(
+  Store store, {
+  required CloudInboxEntry entry,
+  required CloudCoordinatorLeaseFence leaseFence,
+  required DateTime now,
+  DateTime? expiresAt,
+  int? checkpointGeneration,
+}) {
+  final scope = entry.scope;
+  final scopeKey = _scopeKey(scope);
+  store.runInTransaction(TxMode.write, () {
+    store.box<CloudSyncCheckpointEntity>().put(
+      CloudSyncCheckpointEntity(
+        checkpointKey: scopeKey,
+        accountFingerprint: scope.accountFingerprint,
+        container: scope.container,
+        database: scope.database,
+        zone: scope.zone,
+        streamKind: scope.streamKind.name,
+        schemaVersion: scope.schemaVersion,
+        generation: checkpointGeneration ?? entry.generation,
+        lastBatchId: entry.batchId,
+        fetchedSequence: entry.sequence,
+        updatedAtMs: now.millisecondsSinceEpoch,
+      ),
+    );
+    store.box<CloudSyncLeaseEntity>().put(
+      CloudSyncLeaseEntity(
+        leaseKey: _scopedDigest(scope, 'coordinator-lease', 'v1'),
+        scopeKey: scopeKey,
+        accountFingerprint: scope.accountFingerprint,
+        ownerIdHash: _sha256('coordinator-owner\u001f${leaseFence.ownerId}'),
+        generation: leaseFence.generation,
+        acquiredAtMs: now
+            .subtract(const Duration(seconds: 1))
+            .millisecondsSinceEpoch,
+        expiresAtMs: (expiresAt ?? now.add(const Duration(minutes: 1)))
+            .millisecondsSinceEpoch,
+      ),
+    );
+    final change = entry.change;
+    store.box<CloudInboxChangeEntity>().put(
+      CloudInboxChangeEntity(
+        changeKey: _scopedDigest(scope, 'change', change.changeId),
+        changeIdHash: change.changeId,
+        scopeKey: scopeKey,
+        accountFingerprint: scope.accountFingerprint,
+        zone: scope.zone,
+        serverRecordIdHash: change.recordIdHash,
+        etagHash: change.etagHash,
+        changeType: change.type.name,
+        encryptedServerRecordId: change.encryptedServerRecordId,
+        protectedSystemFieldsRef: change.protectedSystemFieldsReference,
+        encryptedPayloadRef: change.encryptedPayloadReference,
+        payloadSha256: change.payloadSha256,
+        batchId: entry.batchId,
+        generation: entry.generation,
+        fetchSequence: entry.sequence,
+        status: CloudInboxStatus.pending.index,
+        isTombstone: change.isTombstone,
+        createdAtMs: entry.createdAt.millisecondsSinceEpoch,
+        updatedAtMs: now.millisecondsSinceEpoch,
+      ),
+    );
+  });
+}
+
+CloudInboxChangeEntity _copyInbox(
+  CloudInboxChangeEntity source, {
+  required String changeKey,
+}) {
+  return CloudInboxChangeEntity(
+    changeKey: changeKey,
+    changeIdHash: source.changeIdHash,
+    scopeKey: source.scopeKey,
+    accountFingerprint: source.accountFingerprint,
+    zone: source.zone,
+    serverRecordIdHash: source.serverRecordIdHash,
+    etagHash: source.etagHash,
+    changeType: source.changeType,
+    encryptedServerRecordId: source.encryptedServerRecordId,
+    protectedSystemFieldsRef: source.protectedSystemFieldsRef,
+    encryptedPayloadRef: source.encryptedPayloadRef,
+    payloadSha256: source.payloadSha256,
+    batchId: source.batchId,
+    generation: source.generation,
+    fetchSequence: source.fetchSequence,
+    status: source.status,
+    isTombstone: source.isTombstone,
+    failureCategory: source.failureCategory,
+    retryCount: source.retryCount,
+    nextEligibleAtMs: source.nextEligibleAtMs,
+    serverModifiedAtMs: source.serverModifiedAtMs,
+    createdAtMs: source.createdAtMs,
+    updatedAtMs: source.updatedAtMs,
+    completedAtMs: source.completedAtMs,
+  );
+}
+
+void _expectNoSemanticMutation(Store store, _ObjectBoxTestCanonicalAdapter _) {
+  expect(store.box<CloudSyncRunEntity>().count(), 0);
+  expect(store.box<CloudSemanticSnapshotEntity>().count(), 0);
+  expect(store.box<CloudRecordMapEntity>().count(), 0);
+  expect(store.box<CloudSemanticReplayEntity>().count(), 0);
+  expect(
+    store.box<CloudInboxChangeEntity>().getAll().single.status,
+    CloudInboxStatus.pending.index,
+  );
+}
+
+Matcher _failureCode(String safeCode) {
+  return isA<CloudSyncFailure>().having(
+    (failure) => failure.safeCode,
+    'safeCode',
+    safeCode,
+  );
+}
+
+String _scopeKey(CloudSyncScope scope) => 'scope2:${_sha256(scope.storageKey)}';
+
+String _recordMapKey(CloudSyncScope scope, String logicalEntityKeyHash) =>
+    _scopedDigest(scope, 'record-map', logicalEntityKeyHash);
+
+String _scopedDigest(CloudSyncScope scope, String purpose, String value) =>
+    '$purpose:${_sha256('${scope.storageKey}\u001f$purpose\u001f$value')}';
+
+String _sha256(String value) => sha256.convert(utf8.encode(value)).toString();
+
+String _digestValue(String character) => List.filled(43, character).join();
+
+String _protectedReference(String character) =>
+    'obcs2.ref.${_digestValue(character)}';
+
+final class _ObjectBoxTestCanonicalAdapter
+    implements CloudCanonicalSemanticEntityAdapter {
+  _ObjectBoxTestCanonicalAdapter(this.store)
+    : _canonical = store.box<CloudSyncRunEntity>();
+
+  @override
+  final Store store;
+  final Box<CloudSyncRunEntity> _canonical;
+  CloudSyncScope? activeScope;
+  int? activeGeneration;
+  int entityApplyCalls = 0;
+  int tombstoneCalls = 0;
+  Object? throwAfterCanonicalWrite;
+  final existingEntities = <(CloudEntityKind, String)>{};
+
+  @override
+  bool isActiveAccountScope({
+    required CloudSyncScope scope,
+    required int generation,
+  }) => activeScope == scope && activeGeneration == generation;
+
+  @override
+  bool entityExists({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudEntityKind kind,
+    required String logicalEntityKeyHash,
+  }) =>
+      existingEntities.contains((kind, logicalEntityKeyHash)) ||
+      _find(scope, generation, kind, logicalEntityKeyHash) != null;
+
+  @override
+  CloudCanonicalSemanticMutationReceipt applyEntity({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudSemanticEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  }) {
+    entityApplyCalls++;
+    final existing = _find(
+      scope,
+      generation,
+      snapshot.kind,
+      snapshot.logicalEntityKeyHash,
+    );
+    _canonical.put(
+      CloudSyncRunEntity(
+        id: existing?.id ?? 0,
+        runId: _key(
+          scope,
+          generation,
+          snapshot.kind,
+          snapshot.logicalEntityKeyHash,
+        ),
+        scopeKey: 'canonical-test-scope',
+        accountFingerprint: scope.accountFingerprint,
+        trigger: 'canonical-test',
+        architecture: 'test',
+        mode: 'semantic',
+        startedAtMs: 1,
+      ),
+    );
+    final failure = throwAfterCanonicalWrite;
+    if (failure != null) throw failure;
+    return CloudCanonicalSemanticMutationReceipt.committed;
+  }
+
+  @override
+  CloudCanonicalSemanticMutationReceipt applyTombstone({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudSemanticTombstone tombstone,
+  }) {
+    tombstoneCalls++;
+    final existing = _find(
+      scope,
+      generation,
+      tombstone.kind,
+      tombstone.logicalEntityKeyHash,
+    );
+    if (existing != null) _canonical.remove(existing.id);
+    return CloudCanonicalSemanticMutationReceipt.committed;
+  }
+
+  CloudSyncRunEntity? _find(
+    CloudSyncScope scope,
+    int generation,
+    CloudEntityKind kind,
+    String logicalEntityKeyHash,
+  ) {
+    final query =
+        _canonical
+            .query(
+              CloudSyncRunEntity_.runId.equals(
+                _key(scope, generation, kind, logicalEntityKeyHash),
+              ),
+            )
+            .build()
+          ..limit = 1;
+    try {
+      return query.findFirst();
+    } finally {
+      query.close();
+    }
+  }
+
+  String _key(
+    CloudSyncScope scope,
+    int generation,
+    CloudEntityKind kind,
+    String logicalEntityKeyHash,
+  ) =>
+      'canonical-test:${scope.accountFingerprint}:$generation:'
+      '${kind.name}:$logicalEntityKeyHash';
+}

@@ -1,6 +1,7 @@
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/header/cupertino_header.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/header/material_header.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/text_field/conversation_text_field.dart';
+import 'package:bluebubbles/app/layouts/conversation_view/pages/conversation_keyboard_policy.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/posterkit.dart';
 import 'package:bluebubbles/app/wrappers/gradient_background_wrapper.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
@@ -61,6 +62,10 @@ class ConversationViewState extends OptimizedState<ConversationView> {
   @override
   void dispose() {
     controller.saveReplyToMessageState(); // P8bda
+    // Keep the controller alive until the route and its scrollable children
+    // have actually been disposed. Deleting it from a back-button callback
+    // leaves the mounted transcript using a disposed scroll controller.
+    controller.close();
     super.dispose();
   }
 
@@ -113,9 +118,9 @@ class ConversationViewState extends OptimizedState<ConversationView> {
             }
             if (ls.isBubble) {
               SystemNavigator.pop();
+              controller.close();
+              return;
             }
-            controller.close();
-            if (ls.isBubble) return;
             return Navigator.of(context).pop();
           },
           child: SafeArea(
@@ -166,9 +171,12 @@ class ConversationViewState extends OptimizedState<ConversationView> {
                                   Listener(
                                     behavior: HitTestBehavior.translucent,
                                     onPointerDown: (_) {
-                                      if (controller.keyboardOpen ||
-                                          controller.focusNode.hasFocus ||
-                                          controller.subjectFocusNode.hasFocus) {
+                                      if (shouldDismissKeyboardFromTranscript(
+                                        hasActiveMessageEdit: controller.editing.isNotEmpty,
+                                        keyboardOpen: controller.keyboardOpen,
+                                        composerHasFocus: controller.focusNode.hasFocus,
+                                        subjectHasFocus: controller.subjectFocusNode.hasFocus,
+                                      )) {
                                         controller.dismissKeyboard();
                                       }
                                     },

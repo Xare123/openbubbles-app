@@ -186,6 +186,10 @@ class ConversationViewController extends StatefulController
       }
       if (sharedContact != null && !sharedContact.isDismissed) {
         suggestedContact.value = sharedContact;
+        Logger.info(
+            "Shared profile prompt available hasImage=${sharedContact.avatar?.isNotEmpty ?? false}");
+      } else if (sharedContact?.isDismissed ?? false) {
+        Logger.info("Shared profile prompt suppressed reason=dismissed");
       }
 
       // (not in our contacts or contact sharing disabled) and not shared
@@ -336,10 +340,20 @@ class ConversationViewController extends StatefulController
     headerBackFocusNode.dispose();
     shareSubscription?.cancel();
     keyboardVisibilitySubscription?.cancel();
+    for (final entry in editing) {
+      final editController = entry.item3;
+      editController.focusNode?.dispose();
+      editController.focusNode = null;
+      editController.dispose();
+    }
+    editing.clear();
     super.onClose();
   }
 
   void dismissKeyboard() {
+    for (final entry in editing) {
+      entry.item3.focusNode?.unfocus();
+    }
     focusNode.unfocus();
     subjectFocusNode.unfocus();
     SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
@@ -385,7 +399,11 @@ class ConversationViewController extends StatefulController
       PayloadData? payload,
       bool isAudioMessage,
       DateTime? scheduledDate) async {
-    sendFunc?.call(
+    final callback = sendFunc;
+    if (callback == null) {
+      throw StateError("Conversation send handler is not ready");
+    }
+    await callback(
         Tuple7(attachments, text, subject, replyGuid, replyPart, effectId,
             payload),
         isAudioMessage,
@@ -481,7 +499,61 @@ class ConversationViewController extends StatefulController
         null;
   }
 
+  MentionTextEditingController startEditing(Message message, MessagePart part) {
+    final existing = editing.firstWhereOrNull((entry) =>
+        entry.item1.guid == message.guid && entry.item2.part == part.part);
+    if (existing != null) {
+      existing.item3.focusNode?.requestFocus();
+      return existing.item3;
+    }
+
+    final focusNode =
+        FocusNode(debugLabel: "message-edit-${message.guid}-${part.part}");
+    final controller =
+        MentionTextEditingController(text: "", focusNode: focusNode)
+          ..importMessagePart(part);
+    editing.add(Tuple3(message, part, controller));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final isStillEditing = editing.any((entry) =>
+          identical(entry.item3, controller) &&
+          entry.item1.guid == message.guid &&
+          entry.item2.part == part.part);
+      if (isStillEditing && focusNode.canRequestFocus) {
+        focusNode.requestFocus();
+      }
+    });
+    return controller;
+  }
+
+  void stopEditing(String guid, int part, {bool restoreInputFocus = false}) {
+    final removed = editing
+        .where((entry) => entry.item1.guid == guid && entry.item2.part == part)
+        .toList(growable: false);
+    if (removed.isEmpty) return;
+
+    editing.removeWhere(
+        (entry) => entry.item1.guid == guid && entry.item2.part == part);
+
+    if (restoreInputFocus) {
+      if (editing.isEmpty) {
+        lastFocusedNode.requestFocus();
+      } else {
+        editing.last.item3.focusNode?.requestFocus();
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      for (final entry in removed) {
+        final editController = entry.item3;
+        editController.focusNode?.dispose();
+        editController.focusNode = null;
+        editController.dispose();
+      }
+    });
+  }
+
   void close() {
+    if (_isClosed) return;
     eventDispatcher.emit("update-highlight", null);
     cm.setAllInactiveSync();
     Get.delete<ConversationViewController>(tag: tag);

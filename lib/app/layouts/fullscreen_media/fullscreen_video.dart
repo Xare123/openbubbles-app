@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:bluebubbles/app/layouts/fullscreen_media/dialogs/metadata_dialog.dart';
+import 'package:bluebubbles/app/layouts/fullscreen_media/fullscreen_video_page_swipe.dart';
 import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
@@ -22,6 +23,8 @@ class FullscreenVideo extends StatefulWidget {
     required this.file,
     required this.attachment,
     required this.showInteractions,
+    this.isActive = true,
+    this.onPageSwipe,
     this.videoController,
     this.mute,
   });
@@ -29,6 +32,8 @@ class FullscreenVideo extends StatefulWidget {
   final PlatformFile file;
   final Attachment attachment;
   final bool showInteractions;
+  final bool isActive;
+  final ValueChanged<FullscreenVideoPageSwipeDirection>? onPageSwipe;
 
   final VideoController? videoController;
   final RxBool? mute;
@@ -90,6 +95,39 @@ class _FullscreenVideoState extends OptimizedState<FullscreenVideo>
     createListener(videoController);
     showPlayPauseOverlay.value = true;
     setState(() {});
+  }
+
+  @override
+  void didUpdateWidget(covariant FullscreenVideo oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isActive != widget.isActive) {
+      updateKeepAlive();
+    }
+    if (oldWidget.isActive && !widget.isActive) {
+      unawaited(_pauseWhenInactive());
+    }
+  }
+
+  Future<void> _pauseWhenInactive() async {
+    final initialization = _initialization;
+    if (initialization != null) {
+      try {
+        await initialization;
+      } catch (_) {
+        return;
+      }
+    }
+    if (hasDisposed || widget.isActive) return;
+    await videoController.player.pause();
+    if (hasDisposed || widget.isActive) return;
+    showPlayPauseOverlay.value = true;
+  }
+
+  void _handlePageSwipe(FullscreenVideoPageSwipeDirection direction) {
+    if (!widget.isActive || widget.onPageSwipe == null) return;
+    unawaited(videoController.player.pause());
+    showPlayPauseOverlay.value = true;
+    widget.onPageSwipe!(direction);
   }
 
   void createListener(VideoController controller) {
@@ -185,7 +223,7 @@ class _FullscreenVideoState extends OptimizedState<FullscreenVideo>
   }
 
   @override
-  bool get wantKeepAlive => true;
+  bool get wantKeepAlive => widget.isActive;
 
   @override
   Widget build(BuildContext context) {
@@ -283,18 +321,43 @@ class _FullscreenVideoState extends OptimizedState<FullscreenVideo>
                   child: Stack(
                     alignment: Alignment.center,
                     children: <Widget>[
-                      Video(
+                      FullscreenVideoPageSwipeSurface(
+                        onPageSwipe: widget.onPageSwipe == null
+                            ? null
+                            : _handlePageSwipe,
+                        child: Video(
                           controller: videoController,
-                          controls: (state) => Padding(
-                                padding: EdgeInsets.all(
-                                        !kIsWeb && !kIsDesktop ? 0 : 20)
-                                    .copyWith(
-                                        bottom:
-                                            !kIsWeb && !kIsDesktop ? 10 : 0),
-                                child: media_kit_video_controls
-                                    .AdaptiveVideoControls(state),
-                              ),
-                          filterQuality: FilterQuality.medium),
+                          controls: (state) {
+                            Widget controls = Padding(
+                              padding: EdgeInsets.all(
+                                      !kIsWeb && !kIsDesktop ? 0 : 20)
+                                  .copyWith(
+                                      bottom: !kIsWeb && !kIsDesktop ? 10 : 0),
+                              child: media_kit_video_controls
+                                  .AdaptiveVideoControls(state),
+                            );
+
+                            if (widget.onPageSwipe != null &&
+                                !kIsWeb &&
+                                !kIsDesktop) {
+                              // Preserve timeline scrubbing while yielding
+                              // full-surface horizontal swipes to the pager.
+                              controls = media_kit_video_controls
+                                  .MaterialVideoControlsTheme(
+                                normal: media_kit_video_controls
+                                    .kDefaultMaterialVideoControlsThemeData
+                                    .copyWith(seekGesture: false),
+                                fullscreen: media_kit_video_controls
+                                    .kDefaultMaterialVideoControlsThemeDataFullscreen
+                                    .copyWith(seekGesture: false),
+                                child: controls,
+                              );
+                            }
+                            return controls;
+                          },
+                          filterQuality: FilterQuality.medium,
+                        ),
+                      ),
                       if (kIsWeb || kIsDesktop)
                         Obx(() {
                           return MouseRegion(
@@ -329,7 +392,7 @@ class _FullscreenVideoState extends OptimizedState<FullscreenVideo>
                                       width: 75,
                                       decoration: BoxDecoration(
                                         color: context
-                                            .theme.colorScheme.background
+                                            .theme.colorScheme.surface
                                             .withOpacity(0.5),
                                         borderRadius: BorderRadius.circular(40),
                                       ),

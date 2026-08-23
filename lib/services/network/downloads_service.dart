@@ -1,4 +1,5 @@
 import 'package:bluebubbles/services/network/backend_service.dart';
+import 'package:bluebubbles/services/network/download_file_utils.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
@@ -114,8 +115,20 @@ class AttachmentDownloadController extends GetxController {
     stopwatch.start();
     PlatformFile response;
     try {
-        response = await backend.downloadAttachment(attachment,
-          onReceiveProgress: (count, total) => setProgress(kIsWeb ? (count / total) : (count / attachment.totalBytes!)));
+      response = await backend.downloadAttachment(
+        attachment,
+        onReceiveProgress: (count, total) => setProgress(
+          kIsWeb ? (count / total) : (count / attachment.totalBytes!),
+        ),
+      );
+      if (!kIsWeb) {
+        final file = await materializeDownloadedFile(
+          targetPath: attachment.path,
+          bytes: response.bytes,
+          sourcePath: response.path,
+        );
+        response.path = file.path;
+      }
     } catch (e, stack) {
       Logger.error("Attachment fetch error", error: e, trace: stack);
       if (!kIsWeb) {
@@ -131,11 +144,6 @@ class AttachmentDownloadController extends GetxController {
       error.value = true;
       attachmentDownloader._removeFromQueue(this);
       return;
-    }
-    if (!kIsWeb && !kIsDesktop && response.path == null) {
-      File _file = await File(attachment.path).create(recursive: true);
-      await _file.writeAsBytes(response.bytes!);
-      response.path = attachment.path;
     }
     Logger.info("Finished fetching attachment");
     stopwatch.stop();
@@ -158,12 +166,6 @@ class AttachmentDownloadController extends GetxController {
     file.value = response;
     for (Function f in completeFuncs) {
       f.call(file.value);
-    }
-    if (kIsDesktop) {
-      if (attachment.bytes != null) {
-        File _file = await File(attachment.path).create(recursive: true);
-        await _file.writeAsBytes(attachment.bytes!.toList());
-      }
     }
     if (ss.settings.autoSave.value
         && !kIsWeb

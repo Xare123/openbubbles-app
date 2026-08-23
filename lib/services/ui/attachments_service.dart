@@ -25,19 +25,14 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:vcf_dart/vcf_dart.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 
-AttachmentsService as = Get.isRegistered<AttachmentsService>()
-    ? Get.find<AttachmentsService>()
-    : Get.put(AttachmentsService());
+AttachmentsService as =
+    Get.isRegistered<AttachmentsService>() ? Get.find<AttachmentsService>() : Get.put(AttachmentsService());
 
 class AttachmentsService extends GetxService {
   dynamic getContent(Attachment attachment,
-      {String? path,
-      bool? autoDownload,
-      Function(PlatformFile)? onComplete,
-      bool forExtension = false}) {
+      {String? path, bool? autoDownload, Function(PlatformFile)? onComplete, bool forExtension = false}) {
     if ((attachment.guid?.startsWith("temp") ?? false) && !forExtension) {
-      final sendProgress = ah.attachmentProgress
-          .firstWhereOrNull((e) => e.item1 == attachment.guid);
+      final sendProgress = ah.attachmentProgress.firstWhereOrNull((e) => e.item1 == attachment.guid);
       if (sendProgress != null) {
         return sendProgress;
       } else {
@@ -53,10 +48,8 @@ class AttachmentsService extends GetxService {
       );
     }
     if (kIsWeb || (attachment.guid == null && attachment.bytes != null)) {
-      if (attachment.bytes == null &&
-          (autoDownload ?? ss.settings.autoDownload.value)) {
-        return attachmentDownloader.startDownload(attachment,
-            onComplete: onComplete);
+      if (attachment.bytes == null && (autoDownload ?? ss.settings.autoDownload.value)) {
+        return attachmentDownloader.startDownload(attachment, onComplete: onComplete);
       } else {
         return PlatformFile(
           name: attachment.transferName!,
@@ -79,8 +72,7 @@ class AttachmentsService extends GetxService {
         size: attachment.totalBytes ?? 0,
       );
     } else if (autoDownload ?? ss.settings.autoDownload.value) {
-      return attachmentDownloader.startDownload(attachment,
-          onComplete: onComplete);
+      return attachmentDownloader.startDownload(attachment, onComplete: onComplete);
     } else {
       return attachment;
     }
@@ -114,59 +106,30 @@ class AttachmentsService extends GetxService {
     final contact = VCardStack.fromData(appleContact).items.first;
     final c = Contact(
       id: randomString(8),
-      displayName: contact
-              .findFirstProperty(VConstants.formattedName)
-              ?.values
-              .firstOrNull ??
-          "Unknown",
+      displayName: contact.findFirstProperty(VConstants.formattedName)?.values.firstOrNull ?? "Unknown",
       phones: contact.findFirstProperty(VConstants.phone)?.values ?? [],
       emails: contact.findFirstProperty(VConstants.email)?.values ?? [],
       structuredName: StructuredName(
-        namePrefix: contact
-                .findFirstProperty(VConstants.name)
-                ?.values
-                .elementAtOrNull(3) ??
-            "",
-        familyName: contact
-                .findFirstProperty(VConstants.name)
-                ?.values
-                .elementAtOrNull(0) ??
-            "",
-        givenName: contact
-                .findFirstProperty(VConstants.name)
-                ?.values
-                .elementAtOrNull(1) ??
-            "",
-        middleName: contact
-                .findFirstProperty(VConstants.name)
-                ?.values
-                .elementAtOrNull(2) ??
-            "",
-        nameSuffix: contact
-                .findFirstProperty(VConstants.name)
-                ?.values
-                .elementAtOrNull(4) ??
-            "",
+        namePrefix: contact.findFirstProperty(VConstants.name)?.values.elementAtOrNull(3) ?? "",
+        familyName: contact.findFirstProperty(VConstants.name)?.values.elementAtOrNull(0) ?? "",
+        givenName: contact.findFirstProperty(VConstants.name)?.values.elementAtOrNull(1) ?? "",
+        middleName: contact.findFirstProperty(VConstants.name)?.values.elementAtOrNull(2) ?? "",
+        nameSuffix: contact.findFirstProperty(VConstants.name)?.values.elementAtOrNull(4) ?? "",
       ),
     );
     try {
       // contact_card.dart does real avatar parsing since no plugins can parse the photo correctly when the base64 is multiline
-      c.avatar = (isNullOrEmpty(
-              contact.findFirstProperty(VConstants.photo)?.values.firstOrNull)
-          ? null
-          : [0]) as Uint8List?;
+      c.avatar =
+          (isNullOrEmpty(contact.findFirstProperty(VConstants.photo)?.values.firstOrNull) ? null : [0]) as Uint8List?;
     } catch (_) {}
     return c;
   }
 
-  Future<void> saveToDisk(PlatformFile file,
-      {bool isAutoDownload = false, bool isDocument = false}) async {
+  Future<void> saveToDisk(PlatformFile file, {bool isAutoDownload = false, bool isDocument = false}) async {
     if (kIsWeb) {
       final content = base64.encode(file.bytes!);
       // create a fake download element and "click" it
-      html.AnchorElement(
-          href:
-              "data:application/octet-stream;charset=utf-16le;base64,$content")
+      html.AnchorElement(href: "data:application/octet-stream;charset=utf-16le;base64,$content")
         ..setAttribute("download", file.name)
         ..click();
     } else if (kIsDesktop) {
@@ -191,23 +154,20 @@ class AttachmentsService extends GetxService {
                 "Confirm save",
                 style: context.theme.textTheme.titleLarge,
               ),
-              content: Text(
-                  "This file already exists.\nAre you sure you want to overwrite it?",
+              content: Text("This file already exists.\nAre you sure you want to overwrite it?",
                   style: context.theme.textTheme.bodyLarge),
               backgroundColor: context.theme.colorScheme.properSurface,
               actions: <Widget>[
                 TextButton(
                   child: Text("No",
-                      style: context.theme.textTheme.bodyLarge!
-                          .copyWith(color: context.theme.colorScheme.primary)),
+                      style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
                   onPressed: () {
                     Navigator.of(context).pop();
                   },
                 ),
                 TextButton(
                   child: Text("Yes",
-                      style: context.theme.textTheme.bodyLarge!
-                          .copyWith(color: context.theme.colorScheme.primary)),
+                      style: context.theme.textTheme.bodyLarge!.copyWith(color: context.theme.colorScheme.primary)),
                   onPressed: () async {
                     if (file.path != null) {
                       await File(file.path!).copy(savePath);
@@ -226,9 +186,7 @@ class AttachmentsService extends GetxService {
                         onPressed: () {
                           launchUrl(Uri.file(savePath));
                         },
-                        child: Text("OPEN FILE",
-                            style: TextStyle(
-                                color: Get.theme.colorScheme.onSurfaceVariant)),
+                        child: Text("OPEN FILE", style: TextStyle(color: Get.theme.colorScheme.onSurfaceVariant)),
                       ),
                     );
                   },
@@ -254,9 +212,7 @@ class AttachmentsService extends GetxService {
             onPressed: () {
               launchUrl(Uri.file(savePath));
             },
-            child: Text("OPEN FILE",
-                style:
-                    TextStyle(color: Get.theme.colorScheme.onSurfaceVariant)),
+            child: Text("OPEN FILE", style: TextStyle(color: Get.theme.colorScheme.onSurfaceVariant)),
           ),
         );
       }
@@ -271,9 +227,8 @@ class AttachmentsService extends GetxService {
             "name": file.name,
           });
         } else {
-          final bytes = file.bytes != null && file.bytes!.isNotEmpty
-              ? file.bytes!
-              : await File(file.path!).readAsBytes();
+          final bytes =
+              file.bytes != null && file.bytes!.isNotEmpty ? file.bytes! : await File(file.path!).readAsBytes();
           await FilePicker.platform.saveFile(
             initialDirectory: ss.settings.autoSaveDocsLocation.value,
             dialogTitle: 'Choose a location to save this file',
@@ -285,8 +240,7 @@ class AttachmentsService extends GetxService {
       } else {
         try {
           if (file.name.toLowerCase().endsWith(".mov")) {
-            savePath = join(
-                "/storage/emulated/0/", ss.settings.autoSavePicsLocation.value);
+            savePath = join("/storage/emulated/0/", ss.settings.autoSavePicsLocation.value);
           } else {
             if (!isDocument) {
               try {
@@ -294,15 +248,13 @@ class AttachmentsService extends GetxService {
                   await SaverGallery.saveImage(file.bytes!,
                       quality: 100,
                       name: file.name,
-                      androidRelativePath:
-                          ss.settings.autoSavePicsLocation.value,
+                      androidRelativePath: ss.settings.autoSavePicsLocation.value,
                       androidExistNotSave: false);
                 } else {
                   await SaverGallery.saveFile(
                       file: file.path!,
                       name: file.name,
-                      androidRelativePath:
-                          ss.settings.autoSavePicsLocation.value,
+                      androidRelativePath: ss.settings.autoSavePicsLocation.value,
                       androidExistNotSave: false);
                 }
                 return showSnackbar('Success', 'Saved attachment to gallery!');
@@ -315,8 +267,7 @@ class AttachmentsService extends GetxService {
           } else {
             await File(file.path!).copy(join(savePath, file.name));
           }
-          showSnackbar('Success',
-              'Saved attachment to ${savePath.replaceAll("/storage/emulated/0/", "")} folder!');
+          showSnackbar('Success', 'Saved attachment to ${savePath.replaceAll("/storage/emulated/0/", "")} folder!');
         } catch (e) {
           if (Platform.isAndroid && file.path != null) {
             await mcs.invokeMethod("create-document", {
@@ -339,8 +290,7 @@ class AttachmentsService extends GetxService {
       if (!ss.settings.onlyWifiDownload.value) {
         return true;
       } else {
-        List<ConnectivityResult> status =
-            await (Connectivity().checkConnectivity());
+        List<ConnectivityResult> status = await (Connectivity().checkConnectivity());
         return status.contains(ConnectivityResult.wifi);
       }
     }
@@ -353,38 +303,35 @@ class AttachmentsService extends GetxService {
       final pngFile = File(attachment.convertedPath);
       final thumbnail = File("${attachment.path}.thumbnail");
       final pngThumbnail = File("${attachment.convertedPath}.thumbnail");
+      final galleryThumbnail = File("${attachment.path}.gallery-thumbnail.jpg");
 
       try {
         await file.delete();
         await pngFile.delete();
         await thumbnail.delete();
         await pngThumbnail.delete();
+        await galleryThumbnail.delete();
       } catch (_) {}
     }
 
     Get.put(
         AttachmentDownloadController(
-            attachment: attachment,
-            onComplete: (file) => onComplete?.call(file),
-            onError: onError),
+            attachment: attachment, onComplete: (file) => onComplete?.call(file), onError: onError),
         tag: attachment.guid);
   }
 
   Future<Size> getImageSizing(String filePath, Attachment attachment) async {
     try {
       dynamic file = File(filePath);
-      isg.Size size =
-          await isg.ImageSizeGetter.getSizeAsync(AsyncInput(FileInput(file)));
-      return Size(
-          size.needRotate ? size.height.toDouble() : size.width.toDouble(),
+      isg.Size size = await isg.ImageSizeGetter.getSizeAsync(AsyncInput(FileInput(file)));
+      return Size(size.needRotate ? size.height.toDouble() : size.width.toDouble(),
           size.needRotate ? size.width.toDouble() : size.height.toDouble());
     } catch (ex) {
       return const Size(0, 0);
     }
   }
 
-  Future<Uint8List?> getVideoThumbnail(String filePath,
-      {bool useCachedFile = true}) async {
+  Future<Uint8List?> getVideoThumbnail(String filePath, {bool useCachedFile = true}) async {
     final cachedFile = File("$filePath.thumbnail");
     if (useCachedFile) {
       try {
@@ -395,8 +342,7 @@ class AttachmentsService extends GetxService {
     final thumbnail = await VideoThumbnail.thumbnailData(
       video: filePath,
       imageFormat: ImageFormat.PNG,
-      maxWidth:
-          128, // specify the width of the thumbnail, let the height auto-scaled to keep the source aspect ratio
+      maxWidth: 128, // specify the width of the thumbnail, let the height auto-scaled to keep the source aspect ratio
       quality: 25,
     );
 
@@ -407,18 +353,46 @@ class AttachmentsService extends GetxService {
     return thumbnail;
   }
 
+  Future<String?> getImageGalleryThumbnail(String filePath) async {
+    final thumbnail = File("$filePath.gallery-thumbnail.jpg");
+    try {
+      if (await thumbnail.exists() && await thumbnail.length() > 0) {
+        return thumbnail.path;
+      }
+      final result = await FlutterImageCompress.compressAndGetFile(
+        filePath,
+        thumbnail.path,
+        minWidth: 640,
+        minHeight: 640,
+        quality: 70,
+        format: CompressFormat.jpeg,
+        keepExif: false,
+      );
+      return result?.path;
+    } catch (error, trace) {
+      Logger.warn(
+        "Failed to create gallery thumbnail",
+        error: error,
+        trace: trace,
+      );
+      try {
+        if (await thumbnail.exists()) await thumbnail.delete();
+      } catch (_) {}
+      return null;
+    }
+  }
+
   Future<Uint8List?> loadAndGetProperties(Attachment attachment,
-      {bool onlyFetchData = false,
-      String? actualPath,
-      bool isPreview = false}) async {
-    if (kIsWeb ||
-        attachment.mimeType == null ||
-        !["image", "video"].contains(attachment.mimeStart)) return null;
+      {bool onlyFetchData = false, String? actualPath, bool isPreview = false}) async {
+    if (kIsWeb || attachment.mimeType == null || !["image", "video"].contains(attachment.mimeStart)) return null;
 
     final filePath = actualPath ?? attachment.path;
     File originalFile = File(filePath);
-    if (kIsDesktop) {
-      await originalFile.create(recursive: true);
+    if (!await originalFile.exists() || await originalFile.length() == 0) {
+      throw FileSystemException(
+        "Attachment file is missing or empty",
+        filePath,
+      );
     }
 
     // Handle getting heic and tiff images
@@ -493,8 +467,7 @@ class AttachmentsService extends GetxService {
           }
           attachment.save(null);
         } catch (ex, stack) {
-          Logger.error('Failed to get GIF dimensions!',
-              error: ex, trace: stack);
+          Logger.error('Failed to get GIF dimensions!', error: ex, trace: stack);
         }
       } else if (attachment.mimeStart == "image") {
         try {
@@ -505,8 +478,7 @@ class AttachmentsService extends GetxService {
           }
           attachment.save(null);
         } catch (ex, stack) {
-          Logger.error('Failed to get Image Properties!',
-              error: ex, trace: stack);
+          Logger.error('Failed to get Image Properties!', error: ex, trace: stack);
         }
       }
     }

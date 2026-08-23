@@ -3,7 +3,10 @@ name: Build
 jobs:
   build:
     name: OpenBubbles APK
-    runs-on: ubuntu-latest
+    # Pinned rather than ubuntu-latest so the image cannot drift underneath the
+    # gates. ubuntu-latest moved to an image without PowerShell, which silently
+    # broke the protected-data logging scan below.
+    runs-on: ubuntu-24.04
     steps:
       - name: Free Disk Space (Ubuntu)
         uses: jlumbroso/free-disk-space@main
@@ -15,23 +18,21 @@ jobs:
           large-packages: true
           swap-storage: true
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
       - name: Set up Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.24.0
+          flutter-version: 3.44.8
 
       - name: Set up Java
-        uses: actions/setup-java@v2
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -64,28 +65,361 @@ jobs:
               cp rustpush/certs/legacy-fairplay/fairplay.crt rustpush/certs/fairplay/$name.crt
           done
 
-      - name: Run focused message helper tests
-        run: flutter test test/helpers/message_helper_test.dart
+      # The Dart test host loads the ObjectBox C library from the system loader
+      # path, and the runner image does not ship one. Without this the Cloud
+      # Sync suite fails 63 ObjectBox-backed tests with a dynamic-library error
+      # that names nothing about the real cause. The version must track the
+      # objectbox trio pinned in pubspec.yaml, and the archive is hash-checked
+      # because the upstream download script is unpinned.
+      - name: Install ObjectBox C library
+        env:
+          OBJECTBOX_VERSION: 5.3.2
+          OBJECTBOX_SHA256: 6dbb5450c36dd11ee9074f16ecc61e79b45ff43c2082934601f3166b39c8a613
+        run: |
+          set -euo pipefail
+          pinned="$(grep -oP '^\s{2}objectbox:\s*\K\d+\.\d+\.\d+' pubspec.yaml)"
+          if [ "$pinned" != "$OBJECTBOX_VERSION" ]; then
+            echo "pubspec pins objectbox $pinned but this step installs $OBJECTBOX_VERSION" >&2
+            exit 1
+          fi
+          archive="objectbox-linux-x64.tar.gz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/objectbox/objectbox-c/releases/download/v${OBJECTBOX_VERSION}/${archive}"
+          echo "${OBJECTBOX_SHA256}  ${archive}" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/objectbox"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/objectbox"
+          library="$(find "$RUNNER_TEMP/objectbox" -name libobjectbox.so -print -quit)"
+          if [ -z "$library" ]; then
+            echo "libobjectbox.so was not present in $archive" >&2
+            exit 1
+          fi
+          echo "LD_LIBRARY_PATH=$(dirname "$library")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
 
-      - name: Run bounded memory cache tests
+      # Deliberately the whole suite rather than an enumerated list. The list
+      # had drifted: eleven test files were never executed by any workflow,
+      # including the only coverage for the attachment-GUID parser and the
+      # reaction-type mapper. A test that cannot fail a build is not a gate.
+      - name: Run the Dart test suite
+        run: flutter test
+
+      # This gate is a .ps1 shared with local Windows runs, so install pwsh
+      # rather than forking the scan logic into a second implementation that
+      # could drift. Guarded so a runner image that already ships PowerShell
+      # costs nothing.
+      - name: Ensure PowerShell is available
+        run: |
+          set -euo pipefail
+          if command -v pwsh >/dev/null 2>&1; then
+            pwsh --version
+            exit 0
+          fi
+          sudo snap install powershell --classic
+          pwsh --version
+
+      - name: Scan Rust diagnostics for protected-data logging
+        shell: pwsh
         run: >-
-          flutter test
-          test/helpers/memory/bounded_byte_cache_test.dart
-          test/helpers/memory/bounded_lru_map_test.dart
+          ./tooling/cloud_sync/check_sensitive_rust_logs.ps1
+          -RepositoryRoot $env:GITHUB_WORKSPACE
 
-      # First run is expected to fail until ffmpeg_kit_flutter_new is fixed.
+      # android/.gitignore excludes /gradlew and gradle-wrapper.jar, and upstream
+      # tracks neither, so ./gradlew does not exist in a fresh checkout and this
+      # step exited 127. Only gradle-wrapper.properties is tracked, so install
+      # exactly the distribution it pins and drive Gradle directly. The version
+      # is cross-checked against that file so the two cannot drift, and the
+      # archive is hash-verified against Gradle's published checksum.
+      - name: Install pinned Gradle
+        env:
+          GRADLE_VERSION: 8.9
+          GRADLE_SHA256: d725d707bfabd4dfdc958c624003b3c80accc03f7037b5122c4b1d0ef15cecab
+        run: |
+          set -euo pipefail
+          pinned="$(sed -n 's|^distributionUrl=.*/gradle-\([0-9.]*\)-bin\.zip$|\1|p' \
+            android/gradle/wrapper/gradle-wrapper.properties)"
+          if [ "$pinned" != "$GRADLE_VERSION" ]; then
+            echo "wrapper pins Gradle $pinned but this step installs $GRADLE_VERSION" >&2
+            exit 1
+          fi
+          archive="gradle-${GRADLE_VERSION}-bin.zip"
+          curl -fsSL -o "$archive" \
+            "https://services.gradle.org/distributions/${archive}"
+          echo "${GRADLE_SHA256}  ${archive}" | sha256sum --check --strict
+          unzip -q "$archive" -d "$RUNNER_TEMP/gradle"
+          echo "$RUNNER_TEMP/gradle/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH"
+
+      # Same vendored-CargoKit fix as the sampler job below. Without it the
+      # alpha APKs uploaded here install and hang on launch.
+      - name: Patch vendored CargoKit for the Flutter Kotlin plugin
+        run: |
+          set -euo pipefail
+          flutter pub get
+          bash ./tooling/android/patch_pub_cache_cargokit.sh
+
+      - name: Set up Node for FaceTime WebRTC replay tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run FaceTime WebRTC diagnostic replay tests
+        run: node --test tooling/facetime/web_rtc_diagnostic_bootstrap.test.mjs
+
+      # Slower than it used to be: CargoKit now actually applies, so this
+      # compile also builds the Rust bridge and vendored OpenSSL. That cost is
+      # the price of the APKs below containing a native library at all, since
+      # before the fix they were uploaded without one.
+      - name: Run Android cold-start delivery tests
+        working-directory: android
+        run: gradle --no-daemon :app:testAlphaDebugUnitTest :app:compileAlphaDebugKotlin
+
       - name: Build Alpha Profile APK
-        run: flutter build apk --flavor alpha --profile --target-platform android-arm64
+        env:
+          REGISTRATION_RELAY_ACCESS_TOKEN: ${{ secrets.REGISTRATION_RELAY_ACCESS_TOKEN }}
+        run: >-
+          flutter build apk --flavor alpha --profile --target-platform android-arm64
+          "--dart-define=OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN=$REGISTRATION_RELAY_ACCESS_TOKEN"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Alpha Profile APK
           path: build/app/outputs/flutter-apk/app-alpha-profile.apk
 
       - name: Build Alpha Debug APK
-        run: flutter build apk --flavor alpha --debug --target-platform android-arm64
+        env:
+          REGISTRATION_RELAY_ACCESS_TOKEN: ${{ secrets.REGISTRATION_RELAY_ACCESS_TOKEN }}
+        run: >-
+          flutter build apk --flavor alpha --debug --target-platform android-arm64
+          "--dart-define=OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN=$REGISTRATION_RELAY_ACCESS_TOKEN"
 
-      - uses: actions/upload-artifact@v4
+      - name: Verify the alpha APKs carry all native libraries
+        run: |
+          set -euo pipefail
+          for apk in \
+            build/app/outputs/flutter-apk/app-alpha-profile.apk \
+            build/app/outputs/flutter-apk/app-alpha-debug.apk; do
+            for entry in \
+              lib/arm64-v8a/libflutter.so \
+              lib/arm64-v8a/librust_lib_bluebubbles.so \
+              lib/arm64-v8a/libirondash_engine_context_native.so \
+              lib/arm64-v8a/libsuper_native_extensions.so; do
+              if ! unzip -l "$apk" | grep -q "$entry"; then
+                echo "$apk is missing $entry" >&2
+                unzip -l "$apk" | grep 'lib/' >&2 || true
+                exit 1
+              fi
+            done
+          done
+
+      - uses: actions/upload-artifact@v7
         with:
           name: Alpha Debug APK
           path: build/app/outputs/flutter-apk/app-alpha-debug.apk
+
+  # Separate job so the developer sampler APK is not queued behind the full
+  # test suite and the two alpha APK builds, each of which now pays its own
+  # CargoKit Rust and vendored-OpenSSL compile. Setup mirrors the APK job above,
+  # including the Fairplay fixtures the Rust build needs.
+  sampler-apk:
+    name: Beta Sampler APK
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.8
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: amyu/setup-android@v5
+
+      - name: Install Protobuf compiler
+        run: sudo apt-get install -y protobuf-compiler
+
+      - name: Set up fake Fairplay keys
+        run: |
+          mkdir -p rustpush/certs/fairplay
+
+          cert_names=(
+            "4056631661436364584235346952193"
+            "4056631661436364584235346952194"
+            "4056631661436364584235346952195"
+            "4056631661436364584235346952196"
+            "4056631661436364584235346952197"
+            "4056631661436364584235346952198"
+            "4056631661436364584235346952199"
+            "4056631661436364584235346952200"
+            "4056631661436364584235346952201"
+            "4056631661436364584235346952208"
+          )
+
+          for name in "${cert_names[@]}"; do
+              cp rustpush/certs/legacy-fairplay/fairplay.pem rustpush/certs/fairplay/$name.pem
+              cp rustpush/certs/legacy-fairplay/fairplay.crt rustpush/certs/fairplay/$name.crt
+          done
+
+      # irondash_engine_context and super_native_extensions each vendor their
+      # own CargoKit, and neither can see Flutter 3.44.8's Kotlin plugin, so
+      # their Rust is never built. The resulting APK installs and then hangs on
+      # launch: the missing libirondash_engine_context_native.so throws
+      # UnsatisfiedLinkError from a static initializer inside
+      # GeneratedPluginRegistrant.registerWith, which aborts registration for
+      # every other plugin, so path_provider has no channel and the app dies
+      # during startup behind an error that names none of this. Those copies
+      # live in the pub cache and cannot be fixed by a committed edit.
+      - name: Patch vendored CargoKit for the Flutter Kotlin plugin
+        run: |
+          set -euo pipefail
+          flutter pub get
+          bash ./tooling/android/patch_pub_cache_cargokit.sh
+
+      # Developer-only build for the first live read-only Cloud Sync V2 run.
+      # The beta flavour is a separate applicationId, so it installs alongside
+      # alpha without touching its database. Debug rather than release because
+      # the beta release config needs a signing keystore, and because the shadow
+      # report has no in-app export and must be pulled with adb run-as, which a
+      # release build does not permit.
+      - name: Build Beta Debug APK with the Cloud Sync V2 sampler
+        env:
+          REGISTRATION_RELAY_ACCESS_TOKEN: ${{ secrets.REGISTRATION_RELAY_ACCESS_TOKEN }}
+        run: >-
+          flutter build apk --flavor beta --debug --target-platform android-arm64
+          --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true
+          --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true
+          --dart-define=OPENBUBBLES_BUILD_COMMIT=${{ github.sha }}
+          "--dart-define=OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN=$REGISTRATION_RELAY_ACCESS_TOKEN"
+
+      - name: Verify the beta APK carries the Rust bridge
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-beta-debug.apk
+          # CargoKit silently skipped the Rust build on Flutter 3.44.8 until the
+          # plugin-detection fix, producing a package that installs and cannot
+          # work. Fail here rather than ship that again.
+          # This is the complete set of CargoKit-built libraries the app loads,
+          # derived from GeneratedPluginRegistrant plus the app's own bridge,
+          # not from whichever one happened to crash last. A missing entry
+          # fails no build: it yields an APK that installs cleanly and dies on
+          # launch, because the loadLibrary throw happens inside
+          # GeneratedPluginRegistrant.registerWith and takes every other plugin
+          # down with it. Only an explicit assertion catches that.
+          for entry in \
+            lib/arm64-v8a/libflutter.so \
+            lib/arm64-v8a/librust_lib_bluebubbles.so \
+            lib/arm64-v8a/libirondash_engine_context_native.so \
+            lib/arm64-v8a/libsuper_native_extensions.so; do
+            if ! unzip -l "$apk" | grep -q "$entry"; then
+              echo "beta APK is missing $entry" >&2
+              unzip -l "$apk" | grep 'lib/' >&2 || true
+              exit 1
+            fi
+          done
+          unzip -l "$apk" | grep 'lib/arm64-v8a/'
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Beta Debug APK (Cloud Sync sampler)
+          path: build/app/outputs/flutter-apk/app-beta-debug.apk
+
+      # Separate applicationId for bounded, local-only protocol evidence. The
+      # audited outbound path remains compile-time absent until a remote-
+      # absence proof can prevent duplicate logical messages.
+      - name: Build developer-only CloudKit V2 Evidence Canary APK
+        env:
+          REGISTRATION_RELAY_ACCESS_TOKEN: ${{ secrets.REGISTRATION_RELAY_ACCESS_TOKEN }}
+        run: >-
+          flutter build apk --flavor canary --debug --target-platform android-arm64
+          --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true
+          --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true
+          --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE=true
+          --dart-define=OPENBUBBLES_BUILD_COMMIT=${{ github.sha }}
+          "--dart-define=OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN=$REGISTRATION_RELAY_ACCESS_TOKEN"
+
+      # Debug APKs otherwise use a runner-generated key that changes between
+      # jobs. A stable, Canary-only key permits safe in-place updates without
+      # sharing the production signing identity.
+      - name: Sign the evidence canary with its stable key
+        env:
+          CANARY_KEYSTORE_BASE64: ${{ secrets.CANARY_KEYSTORE_BASE64 }}
+          CANARY_KEYSTORE_PASSWORD: ${{ secrets.CANARY_KEYSTORE_PASSWORD }}
+          CANARY_KEY_PASSWORD: ${{ secrets.CANARY_KEY_PASSWORD }}
+          CANARY_KEY_ALIAS: ${{ secrets.CANARY_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-canary-debug.apk
+          keystore="$RUNNER_TEMP/cloudkit-canary.p12"
+          signed_apk="$RUNNER_TEMP/app-canary-debug-signed.apk"
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          apksigner="$(
+            find "$sdk_root/build-tools" -type f -name apksigner -print \
+              | sort -V \
+              | tail -n 1
+          )"
+
+          test -n "$CANARY_KEYSTORE_BASE64"
+          test -n "$CANARY_KEYSTORE_PASSWORD"
+          test -n "$CANARY_KEY_PASSWORD"
+          test -n "$CANARY_KEY_ALIAS"
+          test -x "$apksigner"
+          printf '%s' "$CANARY_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+
+          "$apksigner" sign \
+            --ks "$keystore" \
+            --ks-key-alias "$CANARY_KEY_ALIAS" \
+            --ks-pass env:CANARY_KEYSTORE_PASSWORD \
+            --key-pass env:CANARY_KEY_PASSWORD \
+            --out "$signed_apk" \
+            "$apk"
+          mv "$signed_apk" "$apk"
+
+          actual_fingerprint="$(
+            "$apksigner" verify --print-certs "$apk" \
+              | sed -n 's/^Signer #1 certificate SHA-256 digest: //p'
+          )"
+          expected_fingerprint='0ea17c1b67581ca79660d33db45af0a36b71ea36a4cbafec5293d3ae80570d79'
+          if [[ "$actual_fingerprint" != "$expected_fingerprint" ]]; then
+            echo "Unexpected Canary signing certificate: $actual_fingerprint" >&2
+            exit 1
+          fi
+
+      - name: Verify the evidence canary APK carries all native libraries
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-canary-debug.apk
+          for entry in \
+            lib/arm64-v8a/libflutter.so \
+            lib/arm64-v8a/librust_lib_bluebubbles.so \
+            lib/arm64-v8a/libirondash_engine_context_native.so \
+            lib/arm64-v8a/libsuper_native_extensions.so; do
+            if ! unzip -l "$apk" | grep -q "$entry"; then
+              echo "evidence canary APK is missing $entry" >&2
+              unzip -l "$apk" | grep 'lib/' >&2 || true
+              exit 1
+            fi
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: CloudKit V2 Evidence Canary APK
+          path: build/app/outputs/flutter-apk/app-canary-debug.apk

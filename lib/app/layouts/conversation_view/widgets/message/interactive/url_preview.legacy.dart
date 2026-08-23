@@ -13,9 +13,18 @@ import 'package:url_launcher/url_launcher.dart';
 class LegacyUrlPreview extends StatefulWidget {
   final Message message;
 
+  /// The URL this particular preview is for.
+  ///
+  /// A message can contain several links, and each one is rendered by its own
+  /// instance. Without this every instance fell back to `message.url`, which is
+  /// only ever the *first* URL in the message text, so the second and third
+  /// previews fetched the wrong page and rendered empty.
+  final String? previewUrl;
+
   LegacyUrlPreview({
     super.key,
     required this.message,
+    this.previewUrl,
   });
 
   @override
@@ -25,7 +34,18 @@ class LegacyUrlPreview extends StatefulWidget {
 class _LegacyUrlPreviewState extends OptimizedState<LegacyUrlPreview> with AutomaticKeepAliveClientMixin {
   Message get message => widget.message;
 
-  late Metadata? metadata = MetadataHelper.mapIsNotEmpty(message.metadata) ? Metadata.fromJson(message.metadata!) : null;
+  /// The URL this preview should resolve and open.
+  String? get effectiveUrl => widget.previewUrl ?? message.url;
+
+  /// `message.metadata` is a single blob per message, so it can only ever
+  /// describe one link. Only the message's primary URL may read or write it;
+  /// the other links in the same message stay in memory rather than
+  /// overwriting each other in the database.
+  bool get isPrimaryUrl => widget.previewUrl == null || widget.previewUrl == message.url;
+
+  late Metadata? metadata = isPrimaryUrl && MetadataHelper.mapIsNotEmpty(message.metadata)
+      ? Metadata.fromJson(message.metadata!)
+      : null;
 
   @override
   void initState() {
@@ -33,13 +53,13 @@ class _LegacyUrlPreviewState extends OptimizedState<LegacyUrlPreview> with Autom
     updateObx(() async {
       if (metadata == null) {
         try {
-          metadata = await MetadataHelper.fetchMetadata(message);
+          metadata = await MetadataHelper.fetchMetadata(message, previewUrl: widget.previewUrl);
         } catch (ex, stack) {
           Logger.error("Failed to fetch metadata!", error: ex, trace: stack);
           return;
         }
         // If the data isn't empty, save/update it in the DB
-        if (MetadataHelper.isNotEmpty(metadata)) {
+        if (isPrimaryUrl && MetadataHelper.isNotEmpty(metadata)) {
           message.updateMetadata(metadata);
         }
         setState(() {});
@@ -53,14 +73,21 @@ class _LegacyUrlPreviewState extends OptimizedState<LegacyUrlPreview> with Autom
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final siteText = Uri.tryParse(metadata?.url ?? message.text ?? "")?.host;
+    // Fall back to this preview's own URL rather than the whole message text.
+    // With several links in one message that text is not a parseable URI, so
+    // the host came back null and the card rendered with no site label at all.
+    final siteText = Uri.tryParse(metadata?.url ?? effectiveUrl ?? "")?.host;
     return InkWell(
       onTap: () async {
-        if ((metadata?.url ?? message.text) != null) {
-          await launchUrl(
-            Uri.parse((metadata?.url ?? message.text)!),
-            mode: LaunchMode.externalApplication,
-          );
+        final target = metadata?.url ?? effectiveUrl;
+        if (target != null) {
+          final parsed = Uri.tryParse(target);
+          if (parsed != null) {
+            await launchUrl(
+              parsed,
+              mode: LaunchMode.externalApplication,
+            );
+          }
         }
       },
       child: Column(

@@ -30,6 +30,7 @@ export 'ui/chat/conversation_view_controller.dart';
 export 'ui/chat/global_chat_service.dart';
 export 'ui/message/message_widget_controller.dart';
 export 'ui/message/messages_service.dart';
+export 'ui/media/conversation_media_pager.dart';
 export 'ui/navigator/navigator_service.dart';
 export 'ui/theme/themes_service.dart';
 export 'ui/attachments_service.dart';

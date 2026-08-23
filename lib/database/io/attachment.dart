@@ -1,11 +1,16 @@
 import 'dart:convert';
 
+import 'dart:async';
+
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/legacy_cloudkit_deletion_intents.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
+import 'package:bluebubbles/utils/attachment_guid_utils.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:mime_type/mime_type.dart';
@@ -54,7 +59,7 @@ class Attachment {
   set dbMetadata(String? json) => metadata = json == null
       ? null : jsonDecode(json) as Map<String, dynamic>;
   
-  void applyFromCloud(api.CloudAttachment c, String ckRecordId) {
+  bool applyFromCloud(api.CloudAttachment c, String ckRecordId) {
     this.ckRecordId = ckRecordId;
     var decoded = api.decodeAttachmentmeta(wrapped: c.cm);
     uti = decoded.uti;
@@ -64,23 +69,21 @@ class Attachment {
     totalBytes = decoded.totalBytes;
     metadata ??= {};
     metadata!["cloud"] = ckRecordId;
-    if (decoded.guid.startsWith("at")) {
-      var items = decoded.guid.split("_");
-      // format defined in indexedPartsToAttributedBodyDyn
-      var message = Message.findOne(guid: items[2]);
-      guid = "${items[2]}_${items[1]}";
-      save(message);
+    // format defined in indexedPartsToAttributedBodyDyn
+    var owned = parseAppleOwnedAttachmentGuid(decoded.guid);
+    if (owned != null) {
+      var message = Message.findOne(guid: owned.messageGuid);
+      guid = "${owned.messageGuid}_${owned.part}";
+      save(message, throwOnUniqueViolation: true);
     } else {
       guid = decoded.guid;
-      save(null);
+      save(null, throwOnUniqueViolation: true);
     }
+    return true;
   }
 
-  String unconvertAttachmentGuid(String guid) {
-    var items = guid.split("_");
-    if (items.length == 1) return guid;
-    return "at_${items[1]}_${items[0]}";
-  }
+  String unconvertAttachmentGuid(String guid) =>
+      unconvertAppleAttachmentGuid(guid);
 
   Future<api.AttachmentMeta> getAttachmentMeta() async {
     var sum = md5.convert(File(path).readAsBytesSync());
@@ -179,7 +182,10 @@ class Attachment {
   /// Save a new attachment or update an existing attachment on disk
   /// [message] is used to create a link between the attachment and message,
   /// when provided
-  Attachment save(Message? message) {
+  Attachment save(
+    Message? message, {
+    bool throwOnUniqueViolation = false,
+  }) {
     if (kIsWeb) return this;
     Database.runInTransaction(TxMode.write, () {
       /// Find an existing attachment and update the attachment ID if applicable
@@ -195,7 +201,14 @@ class Attachment {
         }
 
         id = Database.attachments.put(this);
-      } on UniqueViolationException catch (_) {}
+      } on UniqueViolationException catch (ex, stack) {
+        Logger.error(
+          'Failed to save attachment due to a unique constraint violation',
+          error: ex,
+          trace: stack,
+        );
+        if (throwOnUniqueViolation) rethrow;
+      }
     });
     return this;
   }
@@ -292,19 +305,26 @@ class Attachment {
   /// Delete an attachment and remove all instances of that attachment in the DB
   static void delete(String guid) {
     if (kIsWeb) return;
+    String? cloudRecordId;
     Database.runInTransaction(TxMode.write, () {
       final query = Database.attachments.query(Attachment_.guid.equals(guid)).build();
       final result = query.findFirst();
       query.close();
       if (result?.id != null) {
         if (result?.ckRecordId != null && !pushService.syncStopDelete) {
-          var list = ss.prefs.getStringList("attachmentDeletionIds-1") ?? [];
-          list.add(result!.ckRecordId!);
-          ss.prefs.setStringList("attachmentDeletionIds-1", list);
+          cloudRecordId = result!.ckRecordId;
         }
         Database.attachments.remove(result!.id!);
       }
     });
+    if (cloudRecordId != null) {
+      unawaited(
+        pushService.queueLegacyCloudKitDeletion(
+          kind: LegacyCloudKitDeletionKind.attachment,
+          recordId: cloudRecordId!,
+        ),
+      );
+    }
   }
 
   String getFriendlySize({decimals = 2}) {

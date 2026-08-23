@@ -210,6 +210,12 @@ class _InteractiveHolderState extends CustomState<InteractiveHolder, void, Messa
                                 if (payloadData == null) {
                                   return LegacyUrlPreview(
                                     message: message,
+                                    // Each part carries its own link. Without
+                                    // this the preview falls back to the first
+                                    // URL in the whole message, so every link
+                                    // in a multi-link message resolved the
+                                    // same page and the extras rendered empty.
+                                    previewUrl: part.url,
                                   );
                                 }
                                 return UrlPreview(

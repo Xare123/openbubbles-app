@@ -24,6 +24,7 @@ import com.bluebubbles.messaging.services.notifications.NotificationChannelHandl
 import com.bluebubbles.messaging.services.notifications.NotificationListenerPermissionRequestHandler
 import com.bluebubbles.messaging.services.notifications.StartNotificationListenerHandler
 import com.bluebubbles.messaging.services.notifications.UnifiedPushHandler
+import com.bluebubbles.messaging.services.rustpush.APNService
 import com.bluebubbles.messaging.services.rustpush.NotifyNativeConfiguredHandler
 import com.bluebubbles.messaging.services.rustpush.SIMInfoQuery
 import com.bluebubbles.messaging.services.rustpush.SMSAuthGateway
@@ -54,6 +55,7 @@ import com.bluebubbles.messaging.services.system.GetZenMode
 import com.bluebubbles.messaging.services.system.HeifDecoder
 import com.bluebubbles.messaging.services.system.HeifEncoder
 import com.bluebubbles.messaging.services.system.NativeSyncIsolateHandler
+import com.bluebubbles.messaging.services.system.NearbyFindMyAccessoryHandler
 import com.bluebubbles.messaging.services.system.OpenSMSAppHandler
 import com.bluebubbles.messaging.services.system.RecentContactsRequestHandler
 import com.bluebubbles.messaging.services.system.ShizukuGrantPermissionHandler
@@ -138,12 +140,17 @@ class MethodCallHandler {
             CircleProximitySessionHandler.tag -> CircleProximitySessionHandler().handleMethodCall(call, result, context)
             EnableBTHandler.tag -> EnableBTHandler().handleMethodCall(call, result, context)
             NativeSyncIsolateHandler.tag -> NativeSyncIsolateHandler().handleMethodCall(call, result, context)
+            NearbyFindMyAccessoryHandler.scanTag,
+            NearbyFindMyAccessoryHandler.playTag -> NearbyFindMyAccessoryHandler.instance.handleMethodCall(call, result, context)
             SMSLessAuthGateway.tag -> SMSLessAuthGateway().handleMethodCall(call, result, context)
             ShizukuGrantPermissionHandler.tag -> ShizukuGrantPermissionHandler().handleMethodCall(call, result, context)
             ProvisionNative.tag -> ProvisionNative().handleMethodCall(call, result, context)
             EAPAKAGateway.tag -> EAPAKAGateway().handleMethodCall(call, result, context)
             KeystoreUnlockHandler.tag -> KeystoreUnlockHandler().handleMethodCall(call, result, context)
-            "ready" -> { MainActivity.engine_ready = true }
+            "ready" -> {
+                MainActivity.engine_ready = true
+                APNService.onMainEngineReady()
+            }
             else -> {
                 val error = "Could not find method call handler for ${call.method}!"
                 Log.d(Constants.logTag, error)

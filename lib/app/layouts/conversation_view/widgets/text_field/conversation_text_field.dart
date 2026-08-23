@@ -6,7 +6,6 @@ import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:bluebubbles/app/components/custom/custom_bouncing_scroll_physics.dart';
 import 'package:bluebubbles/app/components/custom_text_editing_controllers.dart';
 import 'package:bluebubbles/app/layouts/conversation_details/dialogs/timeframe_picker.dart';
-import 'package:bluebubbles/app/layouts/conversation_view/dialogs/custom_mention_dialog.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/media_picker/text_field_attachment_picker.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/send_animation.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/text_field/picked_attachments_holder.dart';
@@ -40,7 +39,6 @@ import 'package:pasteboard/pasteboard.dart';
 import 'package:path/path.dart' hide context;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:supercharged/supercharged.dart';
-import 'package:tuple/tuple.dart';
 import 'package:universal_io/io.dart';
 
 class ConversationTextField extends CustomStateful<ConversationViewController> {
@@ -343,17 +341,42 @@ class ConversationTextFieldState extends CustomState<ConversationTextField, void
             break;
         }
       }
-      await controller.send(
-        controller.pickedApp.value?.$1 != null ? [controller.pickedApp.value!.$1!] : controller.pickedAttachments,
-        controller.textController.getFinalAnnotations(),
-        controller.subjectTextController.text,
-        controller.replyToMessage?.item1.threadOriginatorGuid ?? controller.replyToMessage?.item1.guid,
-        controller.replyToMessage?.item2,
-        effect,
-        controller.pickedApp.value?.$2,
-        false,
-        controller.scheduledDate.value
+      // Persist the draft before handing it to the asynchronous queue. Queue
+      // preparation can fail before a temporary message exists, so clearing the
+      // composer any earlier can permanently discard what the user typed.
+      chat.textFieldText = text;
+      chat.textFieldAnnotations = controller.textController.saveAnnotations();
+      chat.textFieldAttachments = controller.pickedAttachments
+          .where((attachment) => attachment.path != null)
+          .map((attachment) => attachment.path!)
+          .toList();
+      chat.save(
+        updateTextFieldText: true,
+        updateTextFieldAnnotations: true,
+        updateTextFieldAttachments: true,
       );
+
+      try {
+        await controller.send(
+          controller.pickedApp.value?.$1 != null ? [controller.pickedApp.value!.$1!] : controller.pickedAttachments,
+          controller.textController.getFinalAnnotations(),
+          controller.subjectTextController.text,
+          controller.replyToMessage?.item1.threadOriginatorGuid ?? controller.replyToMessage?.item1.guid,
+          controller.replyToMessage?.item2,
+          effect,
+          controller.pickedApp.value?.$2,
+          false,
+          controller.scheduledDate.value
+        );
+      } catch (error, stack) {
+        Logger.error(
+          "Failed to prepare outgoing message; composer preserved",
+          error: error,
+          trace: stack,
+        );
+        showSnackbar("Message not sent", "Your text was preserved. Please try again.");
+        return;
+      }
     controller.pickedApp.value = null;
     controller.pickedAttachments.clear();
     controller.textController.clear();
@@ -851,7 +874,8 @@ class TextFieldComponentState extends State<TextFieldComponent> {
     final txtController = controller?.textController ?? textController;
     final subjController = controller?.subjectTextController ?? subjectTextController;
     return Focus(
-      onKeyEvent: (_, ev) => handleKey(_, ev, context, isChatCreator),
+      onKeyEvent: (node, ev) =>
+          handleKey(node, ev, context, isChatCreator),
       child: Padding(
         padding: const EdgeInsets.only(right: 5.0),
         child: ValueListenableBuilder<bool>(
@@ -1143,13 +1167,8 @@ class TextFieldComponentState extends State<TextFieldComponent> {
           final parts = mwc(message).parts;
           final part = parts.filter((p) => p.text?.isNotEmpty ?? false).lastOrNull;
           if (part != null) {
-            final FocusNode? node = kIsDesktop || kIsWeb ? FocusNode() : null;
-
-            var e = MentionTextEditingController(text: "", focusNode: node);
-            e.importMessagePart(part);
-
-            controller!.editing.add(Tuple3(message, part, e));
-            node?.requestFocus();
+            final editController = controller!.startEditing(message, part);
+            editController.focusNode?.requestFocus();
             return KeyEventResult.handled;
           }
         }

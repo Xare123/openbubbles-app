@@ -8,9 +8,11 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.View
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -24,7 +26,60 @@ import java.io.File
 
 @SuppressLint("SetJavaScriptEnabled")
 class CachedWebview(context: Context, name: String?, desc: String, url: String) {
+    companion object {
+        private const val diagnosticTag = "FaceTimeDiag"
+
+        /**
+         * Return a JavaScript string literal for values supplied by the user.
+         *
+         * This deliberately follows JSON string escaping, which is also valid
+         * JavaScript, and additionally escapes the two Unicode line separators
+         * that are valid JSON but terminate a classic JavaScript string literal.
+         */
+        internal fun javascriptStringLiteral(value: String): String = buildString {
+            append('"')
+            var index = 0
+            while (index < value.length) {
+                val character = value[index]
+                when (character) {
+                    '"' -> append("\\\"")
+                    '\\' -> append("\\\\")
+                    '\b' -> append("\\b")
+                    '\u000C' -> append("\\f")
+                    '\n' -> append("\\n")
+                    '\r' -> append("\\r")
+                    '\t' -> append("\\t")
+                    '\u2028', '\u2029' -> append(
+                        "\\u${character.code.toString(16).padStart(4, '0')}"
+                    )
+                    in '\u0000'..'\u001F' -> append(
+                        "\\u${character.code.toString(16).padStart(4, '0')}"
+                    )
+                    in '\uD800'..'\uDBFF' -> {
+                        val lowSurrogate = value.getOrNull(index + 1)
+                        if (lowSurrogate != null && lowSurrogate in '\uDC00'..'\uDFFF') {
+                            append(character)
+                            append(lowSurrogate)
+                            index++
+                        } else {
+                            append("\\u${character.code.toString(16).padStart(4, '0')}")
+                        }
+                    }
+                    in '\uDC00'..'\uDFFF' -> append(
+                        "\\u${character.code.toString(16).padStart(4, '0')}"
+                    )
+                    else -> append(character)
+                }
+                index++
+            }
+            append('"')
+        }
+    }
+
     val webView = WebView(context)
+    private val applicationContext = context.applicationContext
+    private val callbackHandler = Handler(Looper.getMainLooper())
+    private var mirrorReadyRunnable: Runnable? = null
 
     var mirrorReady = false
     var mirrorReadyCall: (() -> Unit)? = null
@@ -36,8 +91,32 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
     val deferredRequests = arrayListOf<PermissionRequest>()
     var deferredRequestsUpdated: () -> Unit = {}
 
+    fun cancelCallbacks() {
+        mirrorReadyRunnable?.let(callbackHandler::removeCallbacks)
+        mirrorReadyRunnable = null
+        mirrorReadyCall = null
+        deferredRequestsUpdated = {}
+    }
+
+    private fun safeResourceLabel(requestUrl: String?): String {
+        if (requestUrl == null) return "unknown"
+        return try {
+            val uri = android.net.Uri.parse(requestUrl)
+            val segment = uri.lastPathSegment.orEmpty()
+            when {
+                segment.endsWith(".js", ignoreCase = true) -> "script"
+                segment.endsWith(".css", ignoreCase = true) -> "style"
+                else -> "page-or-media"
+            }
+        } catch (_: Exception) {
+            "unparseable"
+        }
+    }
+
+    private fun diagnosticsEnabled(): Boolean = FaceTimeDiagnostics.isEnabled(applicationContext)
+
     fun getScriptData(request: WebResourceRequest, client: OkHttpClient, name: String?, desc: String): String {
-        Log.i("FT", "Getting script")
+        if (diagnosticsEnabled()) Log.i(diagnosticTag, "getting main.js")
         // OKHTTP should handle caching for us
         val okhttp = Request.Builder()
             .method(request.method, null)
@@ -55,16 +134,171 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
         }
         val body = response.body() ?: throw Exception("Failed to load resource! Empty body!")
         var string = body.string()
+        val waitingPattern = """"GenericToast\.Waiting": *"Waiting to be let in…",""".toRegex()
+        val bannerPattern = """"SessionBanner\.FaceTime": *"FaceTime Call",""".toRegex()
+        val submitNamePattern = "(submitName: *([a-zA-Z]+?)[ a-zA-Z,}=:]*?;)".toRegex()
+        val diagnosticsEnabled = diagnosticsEnabled()
+        val waitingMatches = if (diagnosticsEnabled) waitingPattern.findAll(string).count() else 0
+        val bannerMatches = if (diagnosticsEnabled) bannerPattern.findAll(string).count() else 0
+        val leaveMatches = if (diagnosticsEnabled) "this.onLeave.notifyListeners()".toRegex().findAll(string).count() else 0
+        val submitNameMatches = if (diagnosticsEnabled && name != null) submitNamePattern.findAll(string).count() else 0
+
+        string = string
             .replace(""""GenericToast\.Waiting": *"Waiting to be let in…",""".toRegex(), """"GenericToast.Waiting":"Connecting…",""")
             .replace(""""SessionBanner\.FaceTime": *"FaceTime Call",""".toRegex(), """"SessionBanner.FaceTime":"$desc",""")
             .replace("this.onLeave.notifyListeners()", "Native.leave(), this.onLeave.notifyListeners()")
 
         if (name != null) {
-            string = string.replace("(submitName: *([a-zA-Z]+?)[ a-zA-Z,}=:]*?;)".toRegex(), "$1 $2(\"$name\").then(() => Native.mirrored());")
+            val javascriptName = javascriptStringLiteral(name)
+            string = string.replace(submitNamePattern) { match ->
+                "${match.groupValues[1]} ${match.groupValues[2]}($javascriptName).then(() => Native.mirrored());"
+            }
         }
 
-        return string
+        val patchCount = waitingMatches + bannerMatches + leaveMatches + submitNameMatches
+        if (diagnosticsEnabled) {
+            FaceTimeDiagnostics.logStage(
+                applicationContext,
+                FaceTimeDiagnosticStage.JS_PATCHED,
+                state = if (patchCount > 0) "true" else "false",
+                count = patchCount,
+            )
+        }
+
+        return webRtcDiagnosticBootstrap + string
     }
+
+    private val webRtcDiagnosticBootstrap = """
+        (() => {
+          if (window.__obFaceTimeDiagnostics) return;
+          const state = {
+            peers: [],
+            nextPeerId: 1,
+          };
+          const updateIceState = (peerState) => {
+            peerState.iceState = peerState.peer.iceConnectionState || peerState.peer.connectionState || "unknown";
+          };
+          const watchPeer = (pc) => {
+            const peerState = {
+              id: state.nextPeerId++,
+              peer: pc,
+              iceState: "unknown",
+              previousInboundBytes: null,
+              remoteAudioTracks: new Map(),
+              remoteVideoTracks: new Map()
+            };
+            state.peers.push(peerState);
+            updateIceState(peerState);
+            pc.addEventListener("iceconnectionstatechange", () => updateIceState(peerState));
+            pc.addEventListener("connectionstatechange", () => updateIceState(peerState));
+            pc.addEventListener("track", (event) => {
+              if (!event.track || !event.track.id) return;
+              const tracks = event.track.kind === "audio"
+                ? peerState.remoteAudioTracks
+                : event.track.kind === "video" ? peerState.remoteVideoTracks : null;
+              if (!tracks) return;
+              const track = event.track;
+              tracks.set(track.id, track);
+              track.addEventListener("ended", () => {
+                if (tracks.get(track.id) === track) tracks.delete(track.id);
+              });
+            });
+          };
+          const install = () => {
+            const original = window.RTCPeerConnection;
+            if (!original || window.__obFaceTimeRtcWrapped) return !!original;
+            window.__obFaceTimeRtcWrapped = true;
+            window.RTCPeerConnection = new Proxy(original, {
+              construct(target, args, newTarget) {
+                const peer = Reflect.construct(target, args, newTarget);
+                watchPeer(peer);
+                return peer;
+              }
+            });
+            return true;
+          };
+          const controlText = (button) =>
+            (button.innerText || button.textContent || button.getAttribute("aria-label") || "")
+              .trim()
+              .replace(/\s+/g, " ")
+              .toLowerCase();
+          const isVisible = (button) =>
+            button.hidden !== true &&
+            button.getAttribute("aria-hidden") !== "true" &&
+            button.offsetParent !== null;
+          const controlState = (names) => {
+            const matches = Array.from(document.querySelectorAll("button"))
+              .filter((button) => names.includes(controlText(button)));
+            const visible = matches.some((button) => isVisible(button));
+            const enabled = matches.some((button) =>
+              isVisible(button) &&
+              button.disabled !== true &&
+              button.getAttribute("aria-disabled") !== "true"
+            );
+            return { visible, enabled, count: matches.length };
+          };
+          install();
+          if (!window.__obFaceTimeRtcInstallTimer) {
+            window.__obFaceTimeRtcInstallTimer = window.setInterval(() => {
+              if (install()) window.clearInterval(window.__obFaceTimeRtcInstallTimer);
+            }, 100);
+          }
+          window.__obFaceTimeDiagnostics = {
+            snapshot: async () => {
+              const candidates = [];
+              for (const peerState of state.peers) {
+                updateIceState(peerState);
+                if (peerState.iceState === "closed") continue;
+                let bytes = 0;
+                let bytesObserved = false;
+                const peer = peerState.peer;
+                try {
+                  const reports = await peer.getStats();
+                  reports.forEach((report) => {
+                    if (report.type === "inbound-rtp" && typeof report.bytesReceived === "number") {
+                      bytes += report.bytesReceived;
+                      bytesObserved = true;
+                    }
+                  });
+                } catch (_) {}
+                const remoteAudioTracks = Array.from(peerState.remoteAudioTracks.values())
+                  .filter((track) => track.readyState !== "ended").length;
+                const remoteVideoTracks = Array.from(peerState.remoteVideoTracks.values())
+                  .filter((track) => track.readyState !== "ended").length;
+                const bytesAdvancing = bytesObserved &&
+                  peerState.previousInboundBytes !== null &&
+                  bytes > peerState.previousInboundBytes;
+                peerState.previousInboundBytes = bytesObserved ? bytes : null;
+                candidates.push({
+                  peerId: peerState.id,
+                  iceState: peerState.iceState,
+                  remoteAudioTracks,
+                  remoteVideoTracks,
+                  mediaBytes: bytesObserved ? bytes : null,
+                  bytesAdvancing,
+                });
+              }
+              const active = [...candidates].reverse().find((candidate) => candidate.bytesAdvancing)
+                || candidates.at(-1)
+                || null;
+              const controls = {
+                join: controlState(["join"]),
+                rejoin: controlState(["rejoin"]),
+                leave: controlState(["leave", "end call"]),
+              };
+              return JSON.stringify({
+                peerId: active ? active.peerId : null,
+                iceState: active ? active.iceState : "unknown",
+                remoteAudioTracks: active ? active.remoteAudioTracks : 0,
+                remoteVideoTracks: active ? active.remoteVideoTracks : 0,
+                mediaBytes: active ? active.mediaBytes : null,
+                webLeaveVisible: controls.leave.visible,
+                webControls: controls
+              });
+            }
+          };
+        })();
+    """.trimIndent()
 
     init {
         val client = OkHttpClient.Builder()
@@ -82,10 +316,25 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                 request: WebResourceRequest?
             ): WebResourceResponse? {
                 if (request == null) return null
-                if (!request.url.toString().endsWith("main.js")) return null
+                if (!request.url.toString().endsWith("main.js")) {
+                    if (diagnosticsEnabled() && request.url.lastPathSegment == "main.js") {
+                        Log.w(diagnosticTag, "main.js candidate was not intercepted because its URL has a suffix")
+                    }
+                    return null
+                }
                 // intercept and patch request
 
-                val scriptData = getScriptData(request, client, name, desc)
+                if (diagnosticsEnabled()) {
+                    Log.i(diagnosticTag, "intercepting ${safeResourceLabel(request.url.toString())}")
+                }
+                val scriptData = try {
+                    getScriptData(request, client, name, desc)
+                } catch (error: Exception) {
+                    if (diagnosticsEnabled()) {
+                        Log.e(diagnosticTag, "main.js interception failed: ${error.javaClass.simpleName}")
+                    }
+                    throw error
+                }
 
                 return WebResourceResponse(
                     "application/javascript",
@@ -93,32 +342,104 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                     ByteArrayInputStream(scriptData.encodeToByteArray())
                 )
             }
+
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                if (diagnosticsEnabled()) {
+                    Log.i(diagnosticTag, "page started ${safeResourceLabel(url)}")
+                }
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                if (diagnosticsEnabled()) {
+                    FaceTimeDiagnostics.logStage(
+                        applicationContext,
+                        FaceTimeDiagnosticStage.WEBVIEW_LOADED,
+                        state = "true",
+                    )
+                }
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?
+            ) {
+                if (diagnosticsEnabled()) {
+                    Log.w(
+                        diagnosticTag,
+                        "resource error mainFrame=${request?.isForMainFrame} code=${error?.errorCode} resource=${safeResourceLabel(request?.url?.toString())}"
+                    )
+                }
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                errorResponse: WebResourceResponse?
+            ) {
+                if (diagnosticsEnabled()) {
+                    Log.w(
+                        diagnosticTag,
+                        "http error mainFrame=${request?.isForMainFrame} status=${errorResponse?.statusCode} resource=${safeResourceLabel(request?.url?.toString())}"
+                    )
+                }
+            }
         }
         webView.setBackgroundColor(Color.BLACK)
 
         webView.addJavascriptInterface(object {
             @JavascriptInterface
             fun leave() {
-                endTask()
+                callbackHandler.post { endTask() }
             }
             @JavascriptInterface
             fun mirrored() {
+                if (mirrorReady || mirrorReadyRunnable != null) {
+                    if (diagnosticsEnabled()) {
+                        Log.i(diagnosticTag, "duplicate Native.mirrored ignored")
+                    }
+                    return
+                }
                 // takes a second for the mirror to be ready
-                Handler(Looper.getMainLooper()).postDelayed({
+                val runnable = Runnable {
+                    mirrorReadyRunnable = null
                     mirrorReady = true
                     mirrorReadyCall?.let {
                         it()
                     }
-                }, 250)
-                Log.i("Got Mirror", "")
+                }
+                mirrorReadyRunnable = runnable
+                callbackHandler.postDelayed(runnable, 250)
+                if (diagnosticsEnabled()) {
+                    Log.i(diagnosticTag, "Native.mirrored received; mirrorReady scheduled")
+                }
             }
         }, "Native")
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest?) {
                 if (request == null) return
+                if (diagnosticsEnabled()) {
+                    FaceTimeDiagnostics.logStage(
+                        applicationContext,
+                        FaceTimeDiagnosticStage.PERMISSIONS_REQUESTED,
+                        count = request.resources.size,
+                    )
+                }
                 deferredRequests.add(request)
                 deferredRequestsUpdated()
+            }
+
+            override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+                if (!diagnosticsEnabled() || consoleMessage == null) return false
+                if (consoleMessage.messageLevel() == ConsoleMessage.MessageLevel.ERROR ||
+                    consoleMessage.messageLevel() == ConsoleMessage.MessageLevel.WARNING) {
+                    Log.w(
+                        diagnosticTag,
+                        "console ${consoleMessage.messageLevel()} line=${consoleMessage.lineNumber()} source=${safeResourceLabel(consoleMessage.sourceId())} message=<omitted>"
+                    )
+                }
+                return false
             }
 
             override fun getDefaultVideoPoster(): Bitmap {

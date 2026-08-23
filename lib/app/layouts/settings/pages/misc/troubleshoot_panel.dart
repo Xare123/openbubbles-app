@@ -4,6 +4,9 @@ import 'package:bluebubbles/app/layouts/settings/widgets/content/next_button.dar
 import 'package:bluebubbles/helpers/backend/settings_helpers.dart';
 import 'package:bluebubbles/main.dart';
 import 'package:bluebubbles/services/backend/sync/chat_sync_manager.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
@@ -17,7 +20,6 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:path/path.dart';
 import 'package:universal_io/io.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
@@ -36,6 +38,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
   final RxInt logFileCount = 1.obs;
   final RxInt logFileSize = 0.obs;
   final RxBool optimizationsDisabled = false.obs;
+  final RxBool cloudSyncV2Running = false.obs;
   final TextEditingController participantController = TextEditingController();
 
   bool isExportingLogs = false;
@@ -302,6 +305,253 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                                 color: context.theme.colorScheme.outline))),
                   ]),
 
+                if ((CloudSyncDevGate.manualShadowSamplerEnabled ||
+                        CloudSyncDevGate.manualSemanticPullEnabled ||
+                        CloudSyncDevGate.protocolEvidenceAvailable) &&
+                    ss.settings.developerEnabled.value &&
+                    (Platform.isAndroid || Platform.isWindows))
+                  SettingsHeader(
+                    iosSubtitle: iosSubtitle,
+                    materialSubtitle: materialSubtitle,
+                    text: "Cloud Sync V2",
+                  ),
+                if ((CloudSyncDevGate.manualShadowSamplerEnabled ||
+                        CloudSyncDevGate.manualSemanticPullEnabled ||
+                        CloudSyncDevGate.protocolEvidenceAvailable) &&
+                    ss.settings.developerEnabled.value &&
+                    (Platform.isAndroid || Platform.isWindows))
+                  SettingsSection(
+                    backgroundColor: tileColor,
+                    children: [
+                      if (CloudSyncDevGate.protocolEvidenceAvailable)
+                        Obx(() => SettingsSwitch(
+                          initialVal: ss.settings.cloudSyncV2EvidenceEnabled.value,
+                          onChanged: (bool val) async {
+                            ss.settings.cloudSyncV2EvidenceEnabled.value = val;
+                            await ss.settings.saveOne('cloudSyncV2EvidenceEnabled');
+                          },
+                          title: "Record CloudKit protocol evidence",
+                          subtitle: "Local-only, bounded structural diagnostics for the CloudKit canary. Never records message text, contacts, credentials, keys, raw records, or change tokens.",
+                          isThreeLine: true,
+                          backgroundColor: tileColor,
+                        )),
+                      if (CloudSyncDevGate.manualShadowSamplerEnabled)
+                        Obx(() => SettingsTile(
+                        leading: const SettingsLeadingIcon(
+                          iosIcon: CupertinoIcons.cloud_download,
+                          materialIcon: Icons.cloud_download_outlined,
+                          containerColor: Colors.indigo,
+                        ),
+                        title: "Run Read-only Shadow Sample",
+                        subtitle: "Developer-only diagnostic. Fetches one bounded page per Messages in iCloud zone without CloudKit writes, semantic applies, or background scheduling. A protected local journal, checkpoint, and redacted report are saved in private app storage.",
+                        trailing: cloudSyncV2Running.value
+                            ? SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 3,
+                                  color: context.theme.colorScheme.primary,
+                                ),
+                              )
+                            : const NextButton(),
+                        onTap: () async {
+                          if (cloudSyncV2Running.value) return;
+                          if (!pushService.cloudSyncV2ManualShadowAvailable) {
+                            showSnackbar(
+                              "Cloud Sync V2 Blocked",
+                              "Finish OpenBubbles setup, enable Developer Mode on Android, turn off legacy Messages in iCloud sync, and wait for active sync or logout work to finish.",
+                            );
+                            return;
+                          }
+                          final confirmed = await showDialog<bool>(
+                            context: context,
+                            builder: (dialogContext) => AlertDialog(
+                              backgroundColor: context.theme.colorScheme.properSurface,
+                              title: Text(
+                                "Run read-only Cloud Sync sample?",
+                                style: context.theme.textTheme.titleLarge,
+                              ),
+                              content: Text(
+                                "This performs one manual, bounded CloudKit read for diagnostics. It will not apply messages, upload or delete records, enable background sync, or replace live IDS delivery.",
+                                style: context.theme.textTheme.bodyLarge,
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                                  child: const Text("Cancel"),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                                  child: const Text("Run Once"),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (confirmed != true) return;
+                          if (cloudSyncV2Running.value) return;
+                          cloudSyncV2Running.value = true;
+                          try {
+                            final report = await pushService.runCloudSyncV2ManualShadowConfirmed();
+                            final fetched = report.zones.fold<int>(
+                              0,
+                              (total, zone) => total + zone.fetched,
+                            );
+                            final journaled = report.zones.fold<int>(
+                              0,
+                              (total, zone) => total + zone.journaled,
+                            );
+                            if (report.isValidReadOnlySuccess) {
+                              showSnackbar(
+                                "Cloud Sync V2 Complete",
+                                "Read-only checks passed. Fetched $fetched and journaled $journaled protected change(s). A redacted report was saved in private app storage.",
+                              );
+                            } else {
+                              showSnackbar(
+                                "Cloud Sync V2 Stopped Safely",
+                                "One or more zones did not pass the read-only checks. No CloudKit writes or semantic applies were enabled.",
+                              );
+                            }
+                          } catch (error) {
+                            final safeCode =
+                                cloudSyncV2SafeFailureCode(error);
+                            Logger.warn(
+                              "Cloud Sync V2 shadow sample stopped safely code=$safeCode",
+                            );
+                            showSnackbar(
+                              "Cloud Sync V2 Stopped Safely",
+                              "Diagnostic code: $safeCode. No CloudKit writes or semantic applies were enabled.",
+                            );
+                          } finally {
+                            cloudSyncV2Running.value = false;
+                          }
+                        },
+                        )),
+                      if (CloudSyncDevGate.manualSemanticPullEnabled)
+                        Obx(() => SettingsTile(
+                          leading: const SettingsLeadingIcon(
+                            iosIcon: CupertinoIcons.cloud_download,
+                            materialIcon: Icons.cloud_sync,
+                            containerColor: Colors.teal,
+                          ),
+                          title: "Run Semantic Pull Canary",
+                          subtitle: "Developer-only bounded read. Local canonical chats, messages, reactions, and attachment metadata may be added or updated. No CloudKit uploads or deletes, no local message deletes, and tombstones are quarantined.",
+                          trailing: cloudSyncV2Running.value
+                              ? SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 3,
+                                    color: context.theme.colorScheme.primary,
+                                  ),
+                                )
+                              : const NextButton(),
+                          onTap: () async {
+                            if (cloudSyncV2Running.value) return;
+                            if (!pushService.cloudSyncV2ManualSemanticPullAvailable) {
+                              showSnackbar(
+                                "Cloud Sync V2 Blocked",
+                                "Finish OpenBubbles setup, enable Developer Mode, turn off legacy Messages in iCloud sync, and wait for active sync or logout work to finish.",
+                              );
+                              return;
+                            }
+                            final confirmed = await showDialog<bool>(
+                              context: context,
+                              builder: (dialogContext) => AlertDialog(
+                                backgroundColor: context.theme.colorScheme.properSurface,
+                                title: Text(
+                                  "Run semantic pull canary?",
+                                  style: context.theme.textTheme.titleLarge,
+                                ),
+                                content: Text(
+                                  "This performs one manual, bounded CloudKit read. Local canonical chats, messages, reactions, and attachment metadata may be added or updated. It will not upload or delete CloudKit records, delete local messages, or apply tombstones. Tombstones are quarantined. No background run is enabled.",
+                                  style: context.theme.textTheme.bodyLarge,
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.of(dialogContext).pop(false),
+                                    child: const Text("Cancel"),
+                                  ),
+                                  TextButton(
+                                    onPressed: () => Navigator.of(dialogContext).pop(true),
+                                    child: const Text("Run Once"),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirmed != true) return;
+                            if (cloudSyncV2Running.value) return;
+                            cloudSyncV2Running.value = true;
+                            try {
+                              final report = await pushService.runCloudSyncV2ManualSemanticPullConfirmed();
+                              final fetched = report.zones.fold<int>(
+                                0,
+                                (total, zone) => total + zone.fetched,
+                              );
+                              final applied = report.zones.fold<int>(
+                                0,
+                                (total, zone) => total + zone.applied,
+                              );
+                              final deferred = report.zones.fold<int>(
+                                0,
+                                (total, zone) => total + zone.deferred,
+                              );
+                              final quarantined = report.zones.fold<int>(
+                                0,
+                                (total, zone) => total + zone.quarantined,
+                              );
+                              final retried = report.zones.fold<int>(
+                                0,
+                                (total, zone) => total + zone.retried,
+                              );
+                              const expectedZones = <String>{
+                                "chats",
+                                "messages",
+                                "attachments",
+                              };
+                              final reportedZones = report.zones
+                                  .map((zone) => zone.zoneLabel)
+                                  .toSet();
+                              final canaryPassed =
+                                  report.zones.length == expectedZones.length &&
+                                  reportedZones.length == expectedZones.length &&
+                                  reportedZones.containsAll(expectedZones) &&
+                                  report.zones.every((zone) =>
+                                      zone.status ==
+                                      CloudSyncRunStatus.completed) &&
+                                  deferred == 0 &&
+                                  quarantined == 0 &&
+                                  retried == 0 &&
+                                  report.remoteWriteTripwiresIntact;
+                              final totals =
+                                  "Fetched $fetched, applied $applied, deferred $deferred, quarantined $quarantined, retried $retried.";
+                              if (canaryPassed) {
+                                showSnackbar(
+                                  "Cloud Sync V2 Complete",
+                                  "$totals No CloudKit uploads or deletes occurred.",
+                                );
+                              } else {
+                                showSnackbar(
+                                  "Cloud Sync V2 Stopped Safely",
+                                  "$totals Incomplete records/zone or a write tripwire was detected. No further work was allowed.",
+                                );
+                              }
+                            } catch (error) {
+                              final safeCode = cloudSyncV2SafeFailureCode(error);
+                              Logger.warn(
+                                "Cloud Sync V2 semantic pull stopped safely code=$safeCode",
+                              );
+                              showSnackbar(
+                                "Cloud Sync V2 Stopped Safely",
+                                "Diagnostic code: $safeCode. No CloudKit uploads or deletes were enabled.",
+                              );
+                            } finally {
+                              cloudSyncV2Running.value = false;
+                            }
+                          },
+                        )),
+                    ],
+                  ),
+
                 
                 SettingsHeader(
                   iosSubtitle: iosSubtitle,
@@ -332,7 +582,6 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                         var total = b.toBytes();
                         // Copy the file to downloads
 
-                        final Directory logDir = Directory(Logger.logDir);
                         final date = DateTime.now().toIso8601String().split('T').first;
                         final File logFile =
                             File("${fs.appDocDir.path}/openbubbles-logs-$date.log");
@@ -556,6 +805,33 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                           )) : Icon(Icons.check, color: context.theme.colorScheme.outline))
                       )
                   ]),
+                if (usingRustPush && Platform.isAndroid)
+                  Obx(() => ss.settings.developerEnabled.value
+                      ? SettingsHeader(
+                          iosSubtitle: iosSubtitle,
+                          materialSubtitle: materialSubtitle,
+                          text: "FaceTime Diagnostics",
+                        )
+                      : const SizedBox.shrink()),
+                if (usingRustPush && Platform.isAndroid)
+                  Obx(() => ss.settings.developerEnabled.value
+                      ? SettingsSection(
+                          backgroundColor: tileColor,
+                          children: [
+                            SettingsSwitch(
+                              initialVal: ss.settings.faceTimeDiagnosticsEnabled.value,
+                              onChanged: (bool val) async {
+                                ss.settings.faceTimeDiagnosticsEnabled.value = val;
+                                await ss.settings.saveOne('faceTimeDiagnosticsEnabled');
+                              },
+                              title: "Enable FaceTime diagnostics",
+                              subtitle: "Logs FaceTime WebView, join, permission, and media state for debugging. Join recovery and End Call remain enabled when this is off.",
+                              isThreeLine: true,
+                              backgroundColor: tileColor,
+                            ),
+                          ],
+                        )
+                      : const SizedBox.shrink()),
                 if(!kIsDesktop)
                 SettingsHeader(
                   iosSubtitle: iosSubtitle,
@@ -567,7 +843,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                   backgroundColor: tileColor,
                   children: [
                     Obx(() => SettingsSwitch(
-                      onChanged: (bool val) {
+                      onChanged: (bool val) async {
                         if (val) {
                           showDialog(
                             context: context,
@@ -604,7 +880,17 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                           return;
                         }
                         ss.settings.developerEnabled.value = val;
-                        ss.settings.save();
+                        if (!val) {
+                          ss.settings.faceTimeDiagnosticsEnabled.value = false;
+                          ss.settings.cloudSyncV2EvidenceEnabled.value = false;
+                          await ss.settings.saveMany([
+                            'developerEnabled',
+                            'faceTimeDiagnosticsEnabled',
+                            'cloudSyncV2EvidenceEnabled',
+                          ]);
+                        } else {
+                          await ss.settings.saveOne('developerEnabled');
+                        }
                         showSnackbar("Success", "Restart device or force quit OpenBubbles to unload extensions");
                       },
                       initialVal: ss.settings.developerEnabled.value,
