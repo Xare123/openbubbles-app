@@ -73,4 +73,18 @@ void main() {
       );
     });
   });
+
+  test('rejects an empty token from a nonterminal page', () {
+    expect(
+      () => LegacyCloudKitPageGuard.validate(
+        zone: 'message',
+        previousToken: null,
+        nextToken: const [],
+        state: 1,
+        hadItemFailure: false,
+        page: 1,
+      ),
+      throwsA(isA<StateError>()),
+    );
+  });
 }

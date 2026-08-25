@@ -32,6 +32,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.da
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector_health.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_report.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_report_file.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/legacy_cloud_chat_repair.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/legacy_cloudkit_page_guard.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_preflight.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart';
@@ -3713,6 +3714,45 @@ class RustPushService extends GetxService {
   Future<void> doCloudKitSyncPrivate() =>
       _runLegacyCloudKitOperation(_doCloudKitSyncPrivateUnlocked);
 
+  Future<void> _persistLegacyCloudKitToken(String key, String value) async {
+    final persisted = await ss.prefs.setString(key, value);
+    if (!persisted) {
+      throw StateError('Failed to persist the $key CloudKit cursor');
+    }
+  }
+
+  Future<Set<String>> _repairMissingLegacyCloudChats(Set<String> references) {
+    return LegacyCloudChatRepair.recover<api.CloudChat>(
+      unresolvedReferences: references,
+      isResolved: (reference) =>
+          Chat.findEligibleCloudMessageChat(reference) != null,
+      fetchPage: (continuationToken) async {
+        final (nextToken, items, state) = await api.syncChats(
+          cloudMessagesClient:
+              pushService.state!.icloudServices!.cloudMessagesClient!,
+          continuationToken: continuationToken == null
+              ? null
+              : Uint8List.fromList(continuationToken),
+        );
+        return LegacyCloudChatRepairPage<api.CloudChat>(
+          continuationToken: nextToken,
+          items: items,
+          state: state,
+        );
+      },
+      applyRecord: (recordId, cloudChat) async {
+        if (cloudChat.serviceName != 'iMessage') return;
+        final identities = <String>{
+          recordId,
+          ...Chat.cloudIdentityAliases(cloudChat),
+        };
+        if (!identities.any(references.contains)) return;
+        final chat = await Chat.findFromCloud(cloudChat);
+        chat.applyFromCloud(cloudChat, recordId);
+      },
+    );
+  }
+
   Future<void> _doCloudKitSyncPrivateUnlocked() async {
     isSyncing.value = "Syncing Now...";
 
@@ -3850,7 +3890,7 @@ class RustPushService extends GetxService {
         }
       }
 
-      ss.prefs.setString(
+      await _persistLegacyCloudKitToken(
         "chatSyncToken",
         LegacyCloudKitPageGuard.validate(
           zone: "chat",
@@ -3978,7 +4018,7 @@ class RustPushService extends GetxService {
       attCount += items3.length;
       isSyncing.value = "Downloaded $attCount attachments";
 
-      ss.prefs.setString(
+      await _persistLegacyCloudKitToken(
         "attachmentSyncToken",
         LegacyCloudKitPageGuard.validate(
           zone: "attachment",
@@ -4020,6 +4060,35 @@ class RustPushService extends GetxService {
         "Syncing group of ${items2.length} messages, total $totalMessages",
       );
       totalMessages += items2.length;
+
+      final missingChatReferences = items2.values
+          .whereType<api.CloudMessage>()
+          .map((message) => message.chatId)
+          .where(
+            (reference) => Chat.findEligibleCloudMessageChat(reference) == null,
+          )
+          .toSet();
+      if (missingChatReferences.isNotEmpty) {
+        Logger.warn(
+          'Repairing ${missingChatReferences.length} unresolved legacy '
+          'CloudKit chat references',
+        );
+        final unresolved = await _repairMissingLegacyCloudChats(
+          missingChatReferences,
+        );
+        if (unresolved.isNotEmpty) {
+          final shapes =
+              unresolved
+                  .map(Chat.cloudIdentityReferenceShape)
+                  .toSet()
+                  .toList(growable: false)
+                ..sort();
+          throw StateError(
+            'Legacy CloudKit chat repair could not resolve '
+            '${unresolved.length} references (shapes=${shapes.join(',')})',
+          );
+        }
+      }
 
       var processedInBatch = 0;
       for (var item in items2.entries) {
@@ -4113,7 +4182,7 @@ class RustPushService extends GetxService {
 
       isSyncing.value = "Downloaded $totalMessages messages";
 
-      ss.prefs.setString(
+      await _persistLegacyCloudKitToken(
         "messageSyncToken",
         LegacyCloudKitPageGuard.validate(
           zone: "message",
