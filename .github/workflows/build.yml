@@ -161,7 +161,17 @@ jobs:
       # before the fix they were uploaded without one.
       - name: Run Android cold-start delivery tests
         working-directory: android
-        run: gradle --no-daemon :app:testAlphaDebugUnitTest :app:compileAlphaDebugKotlin
+        # The hosted runner exhausted its Java heap transforming every Flutter
+        # engine architecture in parallel after the full Dart suite. These
+        # tests exercise Kotlin/Android behavior and the shipped Pixel target is
+        # ARM64, so avoid unrelated 32-bit/x64 engine transforms and cap worker
+        # concurrency without reducing test coverage.
+        run: >-
+          gradle --no-daemon
+          -Dorg.gradle.workers.max=2
+          -Ptarget-platform=android-arm64
+          :app:testAlphaDebugUnitTest
+          :app:compileAlphaDebugKotlin
 
       - name: Build Alpha Profile APK
         run: flutter build apk --flavor alpha --profile --target-platform android-arm64
