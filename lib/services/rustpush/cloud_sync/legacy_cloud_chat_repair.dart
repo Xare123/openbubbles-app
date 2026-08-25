@@ -17,22 +17,20 @@ class LegacyCloudChatRepairPage<T> {
 class LegacyCloudChatRepair {
   static const int maxPages = 1000;
 
-  static Future<Set<String>> recover<T>({
-    required Set<String> unresolvedReferences,
-    required bool Function(String reference) isResolved,
+  static Future<int> recover<T>({
+    required int Function() unresolvedCount,
     required Future<LegacyCloudChatRepairPage<T>> Function(
       List<int>? continuationToken,
     )
     fetchPage,
     required Future<void> Function(String recordId, T value) applyRecord,
   }) async {
-    final unresolved = Set<String>.of(unresolvedReferences)
-      ..removeWhere(isResolved);
+    var remaining = unresolvedCount();
     List<int>? continuationToken;
     var state = 0;
     var pageNumber = 0;
 
-    while (unresolved.isNotEmpty && state != 3) {
+    while (remaining != 0 && state != 3) {
       pageNumber++;
       if (pageNumber > maxPages) {
         throw StateError(
@@ -46,8 +44,8 @@ class LegacyCloudChatRepair {
         if (value != null) await applyRecord(item.key, value);
       }
 
-      unresolved.removeWhere(isResolved);
-      if (unresolved.isEmpty) return unresolved;
+      remaining = unresolvedCount();
+      if (remaining == 0) return 0;
 
       if (page.state != 3 &&
           _tokensEqual(continuationToken, page.continuationToken)) {
@@ -59,7 +57,7 @@ class LegacyCloudChatRepair {
       state = page.state;
     }
 
-    return unresolved;
+    return remaining;
   }
 
   static bool _tokensEqual(List<int>? left, List<int> right) {

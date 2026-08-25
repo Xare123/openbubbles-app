@@ -1090,6 +1090,118 @@ class Chat {
     return chat;
   }
 
+  /// Returns every stable identity a Messages in iCloud chat record may use
+  /// when its messages refer back to it. Older messages can retain an original
+  /// or legacy group identifier after the current chat record has moved on to
+  /// a newer group ID.
+  static List<String> cloudIdentityAliases(api.CloudChat chat) {
+    final aliases = <String>{};
+    void add(String value) {
+      if (value.trim().isEmpty) return;
+      aliases.addAll(cloudIdentityCandidates(value));
+    }
+
+    add(chat.groupId);
+    add(chat.originalGroupId);
+    add(chat.guid);
+    add(chat.chatIdentifier);
+    for (final legacy in chat.properties?.legacyGroupIdentifiers ?? const []) {
+      add(legacy);
+    }
+    return aliases.toList(growable: false);
+  }
+
+  static String normalizedCompositeChatIdentifier(String value) {
+    if (!value.startsWith('iMessage;')) return value;
+    final firstSeparator = value.indexOf(';');
+    final secondSeparator = value.indexOf(';', firstSeparator + 1);
+    if (secondSeparator == -1 || secondSeparator + 1 >= value.length) {
+      return value;
+    }
+    return value.substring(secondSeparator + 1);
+  }
+
+  static String normalizeCloudParticipantAddress(String value) {
+    return value.replaceFirst(
+      RegExp(r'^(?:tel:|mailto:)', caseSensitive: false),
+      '',
+    );
+  }
+
+  /// Expands a CloudKit chat reference without discarding its exact wire
+  /// identity. Some message records nest a `tel:` or `mailto:` URI inside an
+  /// `iMessage;+/-;` composite while chat records retain only the bare value.
+  static Set<String> cloudIdentityCandidates(String value) {
+    final exact = value.trim();
+    if (exact.isEmpty) return const <String>{};
+    final compositeTail = normalizedCompositeChatIdentifier(exact);
+    return <String>{
+      exact,
+      compositeTail,
+      normalizeCloudParticipantAddress(exact),
+      normalizeCloudParticipantAddress(compositeTail),
+    }..removeWhere((candidate) => candidate.isEmpty);
+  }
+
+  /// Returns a non-identifying shape for diagnostics. Never include the
+  /// reference itself because it can contain a phone number or email address.
+  static String cloudIdentityReferenceShape(String value) {
+    final composite = value.startsWith('iMessage;');
+    final tail = normalizedCompositeChatIdentifier(value);
+    final isTel = tail.toLowerCase().startsWith('tel:');
+    final isMail = tail.toLowerCase().startsWith('mailto:');
+    if (composite && isTel) return 'composite_tel';
+    if (composite && isMail) return 'composite_mailto';
+    if (composite) return 'composite_bare';
+    if (isTel) return 'tel';
+    if (isMail) return 'mailto';
+    return 'bare';
+  }
+
+  /// Resolves a CloudKit message's chat reference without ever selecting an
+  /// SMS routing stub. Apple can use the exact group ID, a legacy alias, or an
+  /// `iMessage;+/-;<chatIdentifier>` composite in the message record.
+  static Chat? findEligibleCloudMessageChat(
+    String reference, {
+    Box<Chat>? box,
+  }) => findEligibleCloudMessageChatReferences([reference], box: box);
+
+  static Chat? findEligibleCloudMessageChatReferences(
+    Iterable<String> references, {
+    Box<Chat>? box,
+  }) {
+    final chatsBox = box ?? Database.chats;
+    final candidates = references
+        .expand(cloudIdentityCandidates)
+        .toSet();
+
+    Chat? find(Condition<Chat> identity) {
+      final eligible = Chat_.isRpSms
+          .equals(false)
+          .and(Chat_.isRoutingStub.equals(false))
+          .and(Chat_.dateDeleted.isNull())
+          .and(identity);
+      final query = chatsBox.query(eligible).build();
+      try {
+        return query.findFirst();
+      } finally {
+        query.close();
+      }
+    }
+
+    for (final candidate in candidates) {
+      if (candidate.isEmpty) continue;
+      final match =
+          find(Chat_.cloudGuid.equals(candidate)) ??
+          find(Chat_.guid.equals(candidate)) ??
+          find(Chat_.chatIdentifier.equals(candidate)) ??
+          find(Chat_.guidRefs.containsElement(candidate)) ??
+          find(Chat_.ckRecordId.equals(candidate));
+      if (match != null) return match;
+    }
+    return null;
+  }
+
   Future<api.CloudChat> toCloud() async {
     api.CloudChat existing;
     if (cloudData != null) {
