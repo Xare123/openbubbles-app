@@ -68,6 +68,7 @@ class APNService : Service(), MsgReceiver {
     private val pendingMainEngineDispatches =
         PendingApnDispatchQueue(MAX_PENDING_ENGINE_DISPATCHES)
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var smsObserver: SMSObserver? = null
     private val job = SupervisorJob()
     val scope = CoroutineScope(Dispatchers.IO + job)
 
@@ -280,15 +281,19 @@ class APNService : Service(), MsgReceiver {
 
     fun launchAgent() {
         Log.i("launching agent", "herer")
-        SMSObserver.init(applicationContext) { context, map ->
-            if (MainActivity.engine != null && MainActivity.engine_ready) {
-                // app is alive, deliver directly there
-                MethodCallHandler.invokeMethod("SMSMsg", map)
-                return@init
+        if (smsObserver == null) {
+            smsObserver = SMSObserver.init(applicationContext) { _, map ->
+                if (MainActivity.engine != null && MainActivity.engine_ready) {
+                    // app is alive, deliver directly there
+                    MethodCallHandler.invokeMethod("SMSMsg", map)
+                    return@init
+                }
+                CoroutineScope(Dispatchers.Main).launch {
+                    DartWorker.callMethod(this@APNService, "SMSMsg", map)
+                }
             }
-            CoroutineScope(Dispatchers.Main).launch {
-                DartWorker.callMethod(this@APNService, "SMSMsg", map)
-            }
+        } else {
+            Log.d("SMSObserver", "SMS observer already registered")
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -418,6 +423,8 @@ class APNService : Service(), MsgReceiver {
     }
 
     override fun onDestroy() {
+        smsObserver?.close()
+        smsObserver = null
         if (activeService === this) {
             activeService = null
         }
