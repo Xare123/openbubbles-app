@@ -1188,7 +1188,11 @@ class Message {
     final chat = Chat.findEligibleCloudMessageChat(c.chatId);
 
     if (chat == null || chat.isRpSms) {
-      throw StateError('Cloud message has no eligible local iMessage chat');
+      final referenceShape = Chat.cloudIdentityReferenceShape(c.chatId);
+      throw StateError(
+        'Cloud message has no eligible local iMessage chat '
+        '(reference_shape=$referenceShape)',
+      );
     }
 
     ckRecordId = cloudkitId;

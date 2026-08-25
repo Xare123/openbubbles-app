@@ -1122,8 +1122,7 @@ class Chat {
     final aliases = <String>{};
     void add(String value) {
       if (value.trim().isEmpty) return;
-      aliases.add(value);
-      aliases.add(normalizedCompositeChatIdentifier(value));
+      aliases.addAll(cloudIdentityCandidates(value));
     }
 
     add(chat.groupId);
@@ -1153,6 +1152,36 @@ class Chat {
     );
   }
 
+  /// Expands a CloudKit chat reference without discarding its exact wire
+  /// identity. Some message records nest a `tel:` or `mailto:` URI inside an
+  /// `iMessage;+/-;` composite while chat records retain only the bare value.
+  static Set<String> cloudIdentityCandidates(String value) {
+    final exact = value.trim();
+    if (exact.isEmpty) return const <String>{};
+    final compositeTail = normalizedCompositeChatIdentifier(exact);
+    return <String>{
+      exact,
+      compositeTail,
+      normalizeCloudParticipantAddress(exact),
+      normalizeCloudParticipantAddress(compositeTail),
+    }..removeWhere((candidate) => candidate.isEmpty);
+  }
+
+  /// Returns a non-identifying shape for diagnostics. Never include the
+  /// reference itself because it can contain a phone number or email address.
+  static String cloudIdentityReferenceShape(String value) {
+    final composite = value.startsWith('iMessage;');
+    final tail = normalizedCompositeChatIdentifier(value);
+    final isTel = tail.toLowerCase().startsWith('tel:');
+    final isMail = tail.toLowerCase().startsWith('mailto:');
+    if (composite && isTel) return 'composite_tel';
+    if (composite && isMail) return 'composite_mailto';
+    if (composite) return 'composite_bare';
+    if (isTel) return 'tel';
+    if (isMail) return 'mailto';
+    return 'bare';
+  }
+
   /// Resolves a CloudKit message's chat reference without ever selecting an
   /// SMS routing stub. Apple can use the exact group ID, a legacy alias, or an
   /// `iMessage;+/-;<chatIdentifier>` composite in the message record.
@@ -1161,8 +1190,7 @@ class Chat {
     Box<Chat>? box,
   }) {
     final chatsBox = box ?? Database.chats;
-    final candidates = <String>{reference};
-    candidates.add(normalizedCompositeChatIdentifier(reference));
+    final candidates = cloudIdentityCandidates(reference);
 
     Chat? find(Condition<Chat> identity) {
       final eligible = Chat_.isRpSms

@@ -52,6 +52,33 @@ void main() {
     expect(result?.id, expected.id);
   });
 
+  test('resolves a composite reference containing a tel URI', () {
+    final expected = Chat(guid: 'local-guid', chatIdentifier: '+15555550100');
+    chats.put(expected);
+
+    final result = Chat.findEligibleCloudMessageChat(
+      'iMessage;-;tel:+15555550100',
+      box: chats,
+    );
+
+    expect(result?.id, expected.id);
+  });
+
+  test('resolves a composite reference containing a mailto URI', () {
+    final expected = Chat(
+      guid: 'local-guid',
+      chatIdentifier: 'user@example.com',
+    );
+    chats.put(expected);
+
+    final result = Chat.findEligibleCloudMessageChat(
+      'iMessage;-;mailto:user@example.com',
+      box: chats,
+    );
+
+    expect(result?.id, expected.id);
+  });
+
   test('resolves legacy group aliases retained by the current chat', () {
     final expected = Chat(
       guid: 'current-guid',
@@ -154,6 +181,41 @@ void main() {
       Chat.normalizeCloudParticipantAddress('mailto:user@example.com'),
       'user@example.com',
     );
+  });
+
+  test('identity candidates normalize nested participant URI schemes', () {
+    expect(
+      Chat.cloudIdentityCandidates('iMessage;-;tel:+15555550100'),
+      containsAll([
+        'iMessage;-;tel:+15555550100',
+        'tel:+15555550100',
+        '+15555550100',
+      ]),
+    );
+    expect(
+      Chat.cloudIdentityCandidates('iMessage;-;mailto:user@example.com'),
+      containsAll([
+        'iMessage;-;mailto:user@example.com',
+        'mailto:user@example.com',
+        'user@example.com',
+      ]),
+    );
+  });
+
+  test('reference diagnostics expose only the identifier shape', () {
+    expect(
+      Chat.cloudIdentityReferenceShape('iMessage;-;tel:+15555550100'),
+      'composite_tel',
+    );
+    expect(
+      Chat.cloudIdentityReferenceShape('iMessage;-;mailto:user@example.com'),
+      'composite_mailto',
+    );
+    expect(
+      Chat.cloudIdentityReferenceShape('iMessage;+;group-identifier'),
+      'composite_bare',
+    );
+    expect(Chat.cloudIdentityReferenceShape('bare-identifier'), 'bare');
   });
 }
 
