@@ -6,6 +6,9 @@ void main() {
   final source = File(
     'lib/services/rustpush/rustpush_service.dart',
   ).readAsStringSync();
+  final methodChannelSource = File(
+    'lib/services/backend/java_dart_interop/method_channel_service.dart',
+  ).readAsStringSync();
 
   test('background sync waits for a UI status port and always cleans up', () {
     final entrypointStart = source.indexOf(
@@ -57,10 +60,24 @@ void main() {
     expect(reset, contains('removePortNameMapping("bg_sync")'));
   });
 
+  test('failed worker termination is not reported as successful completion', () {
+    expect(source, contains("'legacyCloudKitTerminal': 'failed'"));
+    expect(source, contains("data['legacyCloudKitTerminal'] == 'failed'"));
+    expect(source, contains('ports.clear();'));
+    expect(
+      source.indexOf('ports.clear();'),
+      lessThan(source.indexOf('pushService.isSyncing.value = null;')),
+    );
+  });
+
+  test('headless ready handshake is awaited', () {
+    expect(methodChannelSource, contains('await channel.invokeMethod("ready")'));
+  });
+
   test('legacy CloudKit remains restore-only in every build', () {
     expect(
       source,
-      contains('const bool _legacyCloudKitMutationsEnabled = false;'),
+      contains('CloudKitWriterOwnership.legacyMutationsEnabled'),
     );
     expect(source, isNot(contains('OPENBUBBLES_LEGACY_CLOUDKIT_MUTATIONS')));
   });
