@@ -1046,45 +1046,63 @@ class Chat {
     }
   }
 
-  static Future<Chat> findFromCloud(api.CloudChat c) async {
-    var chat = Chat.findByRustGuid(c.groupId);
-    if (chat != null) return chat;
-
-    final query2 = Database.chats
-        .query(Chat_.chatIdentifier.equals(c.chatIdentifier))
-        .build();
-    final result2 = query2.findFirst();
-    query2.close();
-    if (result2 != null) return result2;
-
-    var cond = Chat_.isRoutingStub.equals(false);
-    if (c.displayName != null) {
-      cond = cond.and(Chat_.apnTitle.equals(c.displayName!));
+  static Future<Chat> findFromCloud(
+    api.CloudChat c, {
+    bool allowParticipantFallback = true,
+    Iterable<String>? exactIdentityReferences,
+  }) async {
+    final identityMatches = findEligibleCloudMessageChatMatches(
+      exactIdentityReferences ?? cloudIdentityAliases(c),
+      expandCandidates: exactIdentityReferences == null,
+    );
+    if (identityMatches.length == 1) return identityMatches.single;
+    if (identityMatches.length > 1) {
+      throw StateError(
+        'Cloud chat identities resolve to multiple eligible local chats',
+      );
     }
-    final query = (Database.chats.query(cond)
-          ..linkMany(Chat_.handles,
-              Handle_.address.oneOf(c.participants.map((e) => e.uri).toList())))
-        .build();
-    final results = query.find();
-    query.close();
 
-    var result = results.firstWhereOrNull((element) {
-      var participantsCopy = c.participants.map((e) => e.uri).toList();
-      for (var handle in element.handles) {
-        var included = participantsCopy.contains(handle.address);
-        if (!included) {
-          return false;
-        }
-        participantsCopy.remove(handle.address);
+    if (allowParticipantFallback) {
+      final participantAddresses = c.participants
+          .map((participant) => normalizeCloudParticipantAddress(participant.uri))
+          .toList(growable: false);
+      var cond = Chat_.isRoutingStub
+          .equals(false)
+          .and(Chat_.isRpSms.equals(false))
+          .and(Chat_.dateDeleted.isNull());
+      if (c.displayName != null) {
+        cond = cond.and(Chat_.apnTitle.equals(c.displayName!));
       }
-      return participantsCopy.isEmpty;
-    });
+      final query =
+          (Database.chats.query(cond)..linkMany(
+                Chat_.handles,
+                Handle_.address.oneOf(participantAddresses),
+              ))
+              .build();
+      final results = query.find();
+      query.close();
+
+      var result = results.firstWhereOrNull((element) {
+        var participantsCopy = participantAddresses.toList();
+        for (var handle in element.handles) {
+          var included = participantsCopy.contains(handle.address);
+          if (!included) {
+            return false;
+          }
+          participantsCopy.remove(handle.address);
+        }
+        return participantsCopy.isEmpty;
+      });
 
     if (result != null) return result;
+    }
 
-    chat = await backend.createChat(
-        c.participants.map((p) => p.uri).toList(), null, c.serviceName,
-        existingGuid: c.groupId);
+    final chat = await backend.createChat(
+      c.participants.map((p) => p.uri).toList(),
+      null,
+      c.serviceName,
+      existingGuid: c.guid.isNotEmpty ? c.guid : c.groupId,
+    );
     chat.senderIsKnown = true;
     chat.save(updateSenderIsKnown: true);
     return chat;
@@ -1170,12 +1188,34 @@ class Chat {
     Iterable<String> references, {
     Box<Chat>? box,
   }) {
-    final chatsBox = box ?? Database.chats;
-    final candidates = references
-        .expand(cloudIdentityCandidates)
-        .toSet();
+    final exactMatches = findEligibleCloudMessageChatMatches(
+      references,
+      box: box,
+      expandCandidates: false,
+    );
+    if (exactMatches.isNotEmpty) {
+      return exactMatches.length == 1 ? exactMatches.single : null;
+    }
+    final normalizedMatches = findEligibleCloudMessageChatMatches(
+      references,
+      box: box,
+    );
+    return normalizedMatches.length == 1 ? normalizedMatches.single : null;
+  }
 
-    Chat? find(Condition<Chat> identity) {
+  static List<Chat> findEligibleCloudMessageChatMatches(
+    Iterable<String> references, {
+    Box<Chat>? box,
+    bool expandCandidates = true,
+  }) {
+    final chatsBox = box ?? Database.chats;
+    final candidates = expandCandidates
+        ? references.expand(cloudIdentityCandidates).toSet()
+        : references.toSet();
+
+    final matches = <int, Chat>{};
+
+    void collect(Condition<Chat> identity) {
       final eligible = Chat_.isRpSms
           .equals(false)
           .and(Chat_.isRoutingStub.equals(false))
@@ -1183,7 +1223,9 @@ class Chat {
           .and(identity);
       final query = chatsBox.query(eligible).build();
       try {
-        return query.findFirst();
+        for (final chat in query.find()) {
+          matches[chat.id!] = chat;
+        }
       } finally {
         query.close();
       }
@@ -1191,15 +1233,13 @@ class Chat {
 
     for (final candidate in candidates) {
       if (candidate.isEmpty) continue;
-      final match =
-          find(Chat_.cloudGuid.equals(candidate)) ??
-          find(Chat_.guid.equals(candidate)) ??
-          find(Chat_.chatIdentifier.equals(candidate)) ??
-          find(Chat_.guidRefs.containsElement(candidate)) ??
-          find(Chat_.ckRecordId.equals(candidate));
-      if (match != null) return match;
+      collect(Chat_.cloudGuid.equals(candidate));
+      collect(Chat_.guid.equals(candidate));
+      collect(Chat_.chatIdentifier.equals(candidate));
+      collect(Chat_.guidRefs.containsElement(candidate));
+      collect(Chat_.ckRecordId.equals(candidate));
     }
-    return null;
+    return matches.values.toList(growable: false);
   }
 
   Future<api.CloudChat> toCloud() async {

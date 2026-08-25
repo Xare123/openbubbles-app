@@ -17,6 +17,16 @@ class LegacyCloudChatRepairPage<T> {
 class LegacyCloudChatRepair {
   static const int maxPages = 1000;
 
+  static T? selectUniqueCandidate<T>(
+    Iterable<T> candidates, {
+    required bool Function(T candidate) isExact,
+  }) {
+    final all = candidates.toList(growable: false);
+    final exact = all.where(isExact).toList(growable: false);
+    final eligible = exact.isEmpty ? all : exact;
+    return eligible.length == 1 ? eligible.single : null;
+  }
+
   static Future<int> recover<T>({
     required int Function() unresolvedCount,
     required Future<LegacyCloudChatRepairPage<T>> Function(
