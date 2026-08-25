@@ -67,6 +67,67 @@ void main() {
     expect(result?.id, expected.id);
   });
 
+  test(
+    'fails closed when authoritative identities resolve to different chats',
+    () {
+      final historical = Chat(
+        guid: 'historical-local-guid',
+        chatIdentifier: 'historical-cloud-id',
+      );
+      final current = Chat(
+        guid: 'current-local-guid',
+        chatIdentifier: 'current-cloud-id',
+      );
+      chats.putMany([historical, current]);
+
+      final result = Chat.findEligibleCloudMessageChatReferences(const [
+        'historical-cloud-id',
+        'current-cloud-id',
+      ], box: chats);
+
+      expect(result, isNull);
+    },
+  );
+
+  test('fails closed when one identity is retained by multiple chats', () {
+    chats.putMany([
+      Chat(guid: 'first-guid', chatIdentifier: 'shared-cloud-id'),
+      Chat(guid: 'second-guid', chatIdentifier: 'shared-cloud-id'),
+    ]);
+
+    final result = Chat.findEligibleCloudMessageChat(
+      'shared-cloud-id',
+      box: chats,
+    );
+
+    expect(result, isNull);
+  });
+
+  test('exact matching does not collapse a composite into a bare alias', () {
+    final exact = Chat(
+      guid: 'exact-guid',
+      chatIdentifier: 'exact-chat-identifier',
+    )..cloudGuid = 'iMessage;+;shared-identity';
+    final normalized = Chat(
+      guid: 'normalized-guid',
+      chatIdentifier: 'shared-identity',
+    );
+    chats.putMany([exact, normalized]);
+
+    final exactMatches = Chat.findEligibleCloudMessageChatMatches(
+      const ['iMessage;+;shared-identity'],
+      box: chats,
+      expandCandidates: false,
+    );
+
+    expect(exactMatches.map((chat) => chat.id), [exact.id]);
+    expect(
+      Chat.findEligibleCloudMessageChat('iMessage;+;shared-identity', box: chats)
+          ?.id,
+      exact.id,
+    );
+  });
+
   test('resolves a composite reference containing a tel URI', () {
     final expected = Chat(guid: 'local-guid', chatIdentifier: '+15555550100');
     chats.put(expected);

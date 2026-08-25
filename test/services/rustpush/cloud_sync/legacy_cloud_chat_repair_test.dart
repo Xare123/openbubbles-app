@@ -2,6 +2,33 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/legacy_cloud_chat_repai
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('selects the sole exact candidate over normalized alternatives', () {
+    final selected = LegacyCloudChatRepair.selectUniqueCandidate(
+      const ['normalized', 'exact'],
+      isExact: (candidate) => candidate == 'exact',
+    );
+
+    expect(selected, 'exact');
+  });
+
+  test('rejects multiple exact candidates', () {
+    final selected = LegacyCloudChatRepair.selectUniqueCandidate(
+      const ['exact-one', 'exact-two', 'normalized'],
+      isExact: (candidate) => candidate.startsWith('exact-'),
+    );
+
+    expect(selected, isNull);
+  });
+
+  test('rejects multiple normalized candidates when none is exact', () {
+    final selected = LegacyCloudChatRepair.selectUniqueCandidate(
+      const ['normalized-one', 'normalized-two'],
+      isExact: (_) => false,
+    );
+
+    expect(selected, isNull);
+  });
+
   test(
     'scans from the beginning and stops after all references resolve',
     () async {

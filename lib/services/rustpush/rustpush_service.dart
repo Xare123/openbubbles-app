@@ -3725,13 +3725,20 @@ class RustPushService extends GetxService {
     List<Set<String>> referenceGroups,
   ) async {
     final references = referenceGroups.expand((group) => group).toSet();
+    final referenceCandidates = references
+        .expand(Chat.cloudIdentityCandidates)
+        .toSet();
     int unresolvedCount() => referenceGroups
         .where(
           (group) => Chat.findEligibleCloudMessageChatReferences(group) == null,
         )
         .length;
-    return LegacyCloudChatRepair.recover<api.CloudChat>(
-      unresolvedCount: unresolvedCount,
+    final candidates = <String, api.CloudChat>{};
+    await LegacyCloudChatRepair.recover<api.CloudChat>(
+      // Keep scanning until the terminal page. Applying a partial historical
+      // match before seeing every candidate can bind a message to the wrong
+      // migrated group.
+      unresolvedCount: () => 1,
       fetchPage: (continuationToken) async {
         final (nextToken, items, state) = await api.syncChats(
           cloudMessagesClient:
@@ -3748,15 +3755,87 @@ class RustPushService extends GetxService {
       },
       applyRecord: (recordId, cloudChat) async {
         if (cloudChat.serviceName != 'iMessage') return;
-        final identities = <String>{
-          recordId,
-          ...Chat.cloudIdentityAliases(cloudChat),
-        };
-        if (!identities.any(references.contains)) return;
-        final chat = await Chat.findFromCloud(cloudChat);
-        chat.applyFromCloud(cloudChat, recordId);
+        final identities = _legacyCloudChatRawIdentities(recordId, cloudChat)
+            .expand(Chat.cloudIdentityCandidates)
+            .toSet();
+        if (!identities.any(referenceCandidates.contains)) return;
+        candidates[recordId] = cloudChat;
       },
     );
+
+    final selectedRecords = <String, api.CloudChat>{};
+    for (final group in referenceGroups) {
+      if (Chat.findEligibleCloudMessageChatReferences(group) != null) continue;
+      final groupCandidates = group.expand(Chat.cloudIdentityCandidates).toSet();
+      final matches = candidates.entries.where((entry) {
+        final identities = _legacyCloudChatRawIdentities(entry.key, entry.value)
+            .expand(Chat.cloudIdentityCandidates);
+        return identities.any(groupCandidates.contains);
+      });
+      final selected = LegacyCloudChatRepair.selectUniqueCandidate(
+        matches,
+        isExact: (entry) {
+          final exactIdentities = _legacyCloudChatRawIdentities(
+            entry.key,
+            entry.value,
+          );
+          return exactIdentities.any(group.contains);
+        },
+      );
+      if (selected != null) selectedRecords[selected.key] = selected.value;
+    }
+
+    final identityOwners = <String, String>{};
+    final conflictedRecords = <String>{};
+    for (final entry in selectedRecords.entries) {
+      for (final identity in _legacyCloudChatRawIdentities(
+        entry.key,
+        entry.value,
+      )) {
+        final previous = identityOwners[identity];
+        if (previous == null) {
+          identityOwners[identity] = entry.key;
+        } else if (previous != entry.key) {
+          conflictedRecords.addAll([previous, entry.key]);
+        }
+      }
+    }
+
+    for (final entry in selectedRecords.entries) {
+      if (conflictedRecords.contains(entry.key)) continue;
+      final exactIdentities = _legacyCloudChatRawIdentities(
+        entry.key,
+        entry.value,
+      );
+      final chat = await Chat.findFromCloud(
+        entry.value,
+        allowParticipantFallback: false,
+        exactIdentityReferences: exactIdentities,
+      );
+      chat.applyFromCloud(entry.value, entry.key);
+    }
+    return unresolvedCount();
+  }
+
+  Set<String> _legacyCloudChatRawIdentities(
+    String recordId,
+    api.CloudChat chat,
+  ) {
+    final identities = <String>{};
+    void add(String value) {
+      final normalized = value.trim();
+      if (normalized.isNotEmpty) identities.add(normalized);
+    }
+
+    add(recordId);
+    add(chat.groupId);
+    add(chat.originalGroupId);
+    add(chat.guid);
+    add(chat.chatIdentifier);
+    for (final legacy in chat.properties?.legacyGroupIdentifiers ?? const []) {
+      add(legacy);
+    }
+    return identities;
   }
 
   Future<void> _doCloudKitSyncPrivateUnlocked() async {
