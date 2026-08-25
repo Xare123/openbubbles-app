@@ -177,6 +177,18 @@ Future<void> backgroundSyncIsolate() async {
           trace: s,
         );
       }
+      final terminalFailure = <String, String>{
+        'legacyCloudKitTerminal': 'failed',
+        'message': emsg,
+      };
+      for (final port in ports) {
+        try {
+          port.send(terminalFailure);
+        } catch (_) {}
+      }
+      // Do not let the following null state overwrite this terminal failure as
+      // a successful "complete" event in the UI isolate.
+      ports.clear();
     }
     // Remove only this worker's registration. A replacement worker may have
     // started after a reset while this isolate was winding down.
@@ -3295,6 +3307,17 @@ class RustPushService extends GetxService {
     final port = ReceivePort();
     _legacyCloudKitStatusPort = port;
     port.listen((data) {
+      if (data is Map && data['legacyCloudKitTerminal'] == 'failed') {
+        final message = data['message']?.toString() ?? 'Unknown sync failure';
+        Logger.error('Legacy CloudKit sync failed: $message');
+        ss.prefs.reload();
+        port.close();
+        if (identical(_legacyCloudKitStatusPort, port)) {
+          _legacyCloudKitStatusPort = null;
+        }
+        isSyncing.value = null;
+        return;
+      }
       Logger.info(
         "Legacy CloudKit sync status: ${data?.toString() ?? 'complete'}",
       );

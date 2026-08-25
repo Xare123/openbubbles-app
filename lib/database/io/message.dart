@@ -1185,18 +1185,7 @@ class Message {
   }
 
   bool applyFromCloud(api.CloudMessage c, String cloudkitId) {
-    Chat? chat;
-    if (c.chatId.contains(";")) {
-      final query = Database.chats.query(Chat_.chatIdentifier.equals(c.chatId.split(";")[2])).build();
-      chat = query.findFirst();
-      query.close();
-    } else {
-      final query = Database.chats.query(Chat_.cloudGuid.equals(c.chatId)).build();
-      chat = query.findFirst();
-      query.close();
-      
-      chat ??= Chat.findByRustGuid(c.chatId);
-    }
+    final chat = Chat.findEligibleCloudMessageChat(c.chatId);
 
     if (chat == null || chat.isRpSms) {
       throw StateError('Cloud message has no eligible local iMessage chat');

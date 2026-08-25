@@ -17,7 +17,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:get/get.dart' hide Response;
+import 'package:get/get.dart' hide Condition, Response;
 import 'package:metadata_fetch/metadata_fetch.dart';
 import 'package:mime_type/mime_type.dart';
 // (needed when generating objectbox model code)
@@ -1046,29 +1046,33 @@ class Chat {
   }
 
   static Future<Chat> findFromCloud(api.CloudChat c) async {
-    var chat = Chat.findByRustGuid(c.groupId);
-    if (chat != null) return chat;
+    Chat? chat;
+    for (final alias in cloudIdentityAliases(c)) {
+      chat = findEligibleCloudMessageChat(alias);
+      if (chat != null) return chat;
+    }
 
-    final query2 = Database.chats
-        .query(Chat_.chatIdentifier.equals(c.chatIdentifier))
-        .build();
-    final result2 = query2.findFirst();
-    query2.close();
-    if (result2 != null) return result2;
-
-    var cond = Chat_.isRoutingStub.equals(false);
+    final participantAddresses = c.participants
+        .map((participant) => normalizeCloudParticipantAddress(participant.uri))
+        .toList(growable: false);
+    var cond = Chat_.isRoutingStub
+        .equals(false)
+        .and(Chat_.isRpSms.equals(false))
+        .and(Chat_.dateDeleted.isNull());
     if (c.displayName != null) {
       cond = cond.and(Chat_.apnTitle.equals(c.displayName!));
     }
-    final query = (Database.chats.query(cond)
-          ..linkMany(Chat_.handles,
-              Handle_.address.oneOf(c.participants.map((e) => e.uri).toList())))
-        .build();
+    final query =
+        (Database.chats.query(cond)..linkMany(
+              Chat_.handles,
+              Handle_.address.oneOf(participantAddresses),
+            ))
+            .build();
     final results = query.find();
     query.close();
 
     var result = results.firstWhereOrNull((element) {
-      var participantsCopy = c.participants.map((e) => e.uri).toList();
+      var participantsCopy = participantAddresses.toList();
       for (var handle in element.handles) {
         var included = participantsCopy.contains(handle.address);
         if (!included) {
@@ -1082,11 +1086,91 @@ class Chat {
     if (result != null) return result;
 
     chat = await backend.createChat(
-        c.participants.map((p) => p.uri).toList(), null, c.serviceName,
-        existingGuid: c.groupId);
+      c.participants.map((p) => p.uri).toList(),
+      null,
+      c.serviceName,
+      existingGuid: c.guid.isNotEmpty ? c.guid : c.groupId,
+    );
     chat.senderIsKnown = true;
     chat.save(updateSenderIsKnown: true);
     return chat;
+  }
+
+  /// Returns every stable identity a Messages in iCloud chat record may use
+  /// when its messages refer back to it. Older messages can retain an original
+  /// or legacy group identifier after the current chat record has moved on to
+  /// a newer group ID.
+  static List<String> cloudIdentityAliases(api.CloudChat chat) {
+    final aliases = <String>{};
+    void add(String value) {
+      if (value.trim().isEmpty) return;
+      aliases.add(value);
+      aliases.add(normalizedCompositeChatIdentifier(value));
+    }
+
+    add(chat.groupId);
+    add(chat.originalGroupId);
+    add(chat.guid);
+    add(chat.chatIdentifier);
+    for (final legacy in chat.properties?.legacyGroupIdentifiers ?? const []) {
+      add(legacy);
+    }
+    return aliases.toList(growable: false);
+  }
+
+  static String normalizedCompositeChatIdentifier(String value) {
+    if (!value.startsWith('iMessage;')) return value;
+    final firstSeparator = value.indexOf(';');
+    final secondSeparator = value.indexOf(';', firstSeparator + 1);
+    if (secondSeparator == -1 || secondSeparator + 1 >= value.length) {
+      return value;
+    }
+    return value.substring(secondSeparator + 1);
+  }
+
+  static String normalizeCloudParticipantAddress(String value) {
+    return value.replaceFirst(
+      RegExp(r'^(?:tel:|mailto:)', caseSensitive: false),
+      '',
+    );
+  }
+
+  /// Resolves a CloudKit message's chat reference without ever selecting an
+  /// SMS routing stub. Apple can use the exact group ID, a legacy alias, or an
+  /// `iMessage;+/-;<chatIdentifier>` composite in the message record.
+  static Chat? findEligibleCloudMessageChat(
+    String reference, {
+    Box<Chat>? box,
+  }) {
+    final chatsBox = box ?? Database.chats;
+    final candidates = <String>{reference};
+    candidates.add(normalizedCompositeChatIdentifier(reference));
+
+    Chat? find(Condition<Chat> identity) {
+      final eligible = Chat_.isRpSms
+          .equals(false)
+          .and(Chat_.isRoutingStub.equals(false))
+          .and(Chat_.dateDeleted.isNull())
+          .and(identity);
+      final query = chatsBox.query(eligible).build();
+      try {
+        return query.findFirst();
+      } finally {
+        query.close();
+      }
+    }
+
+    for (final candidate in candidates) {
+      if (candidate.isEmpty) continue;
+      final match =
+          find(Chat_.cloudGuid.equals(candidate)) ??
+          find(Chat_.guid.equals(candidate)) ??
+          find(Chat_.chatIdentifier.equals(candidate)) ??
+          find(Chat_.guidRefs.containsElement(candidate)) ??
+          find(Chat_.ckRecordId.equals(candidate));
+      if (match != null) return match;
+    }
+    return null;
   }
 
   Future<api.CloudChat> toCloud() async {
@@ -1166,6 +1250,11 @@ class Chat {
     chatIdentifier = c.chatIdentifier;
     ckRecordId = record;
     cloudGuid = c.groupId;
+    for (final alias in cloudIdentityAliases(c)) {
+      if (!guidRefs.contains(alias)) guidRefs.add(alias);
+    }
+    isRpSms = false;
+    isRoutingStub = false;
     ckSyncState = c.properties?.pv == (groupVersion ?? 1);
     if (c.properties?.pv == null || c.properties!.pv! <= (groupVersion ?? 1)) {
       Database.chats.put(this);

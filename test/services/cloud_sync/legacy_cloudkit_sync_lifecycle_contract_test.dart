@@ -57,6 +57,19 @@ void main() {
     expect(reset, contains('removePortNameMapping("bg_sync")'));
   });
 
+  test(
+    'failed worker termination is not reported as successful completion',
+    () {
+      expect(source, contains("'legacyCloudKitTerminal': 'failed'"));
+      expect(source, contains("data['legacyCloudKitTerminal'] == 'failed'"));
+      expect(source, contains('ports.clear();'));
+      expect(
+        source.indexOf('ports.clear();'),
+        lessThan(source.indexOf('pushService.isSyncing.value = null;')),
+      );
+    },
+  );
+
   test('legacy CloudKit remains restore-only in every build', () {
     expect(
       source,
