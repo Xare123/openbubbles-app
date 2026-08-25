@@ -6,6 +6,7 @@ import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
+import 'package:bluebubbles/services/rustpush/apple_handle_validation.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -157,11 +158,14 @@ class FaceTimeBtnState extends OptimizedState<FaceTimeBtn> {
         final supported = await api.validateTargetsFacetime(
             state: state.client,
             targets: data.participants,
-            sender: await chat.ensureHandle());
+            sender: await chat.requireLiveIMessageHandle());
         if (!mounted) return;
         ftSupportedParticipants = supported;
         setState(() { });
       } catch (error, trace) {
+        if (error is AppleHandleUnavailableException) {
+          showSnackbar("Apple handle unavailable", error.userMessage);
+        }
         Logger.warn("Failed to load FaceTime availability",
             error: error, trace: trace);
       }
@@ -245,11 +249,18 @@ class FaceTimeBtnState extends OptimizedState<FaceTimeBtn> {
           ),
           tooltip: "FaceTime Call",
           onPressed: () async {
-            var data = await chat.getConversationData();
-            var handle = await chat.ensureHandle();
-            var handles = data.participants;
-            handles.remove(handle);
-            await pushService.placeOutgoingCall(handle, handles);
+            try {
+              var data = await chat.getConversationData();
+              var handle = await chat.requireLiveIMessageHandle();
+              var handles = data.participants;
+              handles.remove(handle);
+              await pushService.placeOutgoingCall(handle, handles);
+            } catch (error, trace) {
+              if (error is AppleHandleUnavailableException) {
+                showSnackbar("Apple handle unavailable", error.userMessage);
+              }
+              Logger.warn("Failed to start FaceTime call", error: error, trace: trace);
+            }
           },
         ),
       );

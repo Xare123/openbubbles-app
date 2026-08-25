@@ -20,6 +20,7 @@ import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/services/rustpush/apple_network_health.dart';
+import 'package:bluebubbles/services/rustpush/apple_handle_validation.dart';
 import 'package:bluebubbles/services/rustpush/cloud_message_upload_state.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
@@ -448,6 +449,9 @@ class RustPushBBUtils {
 class RustPushBackend implements BackendService {
   Future<String> getDefaultHandle() async {
     var myHandles = await api.getHandles(state: pushService.state!.client);
+    if (myHandles.isEmpty) {
+      throw const AppleHandleUnavailableException(noRegisteredHandles: true);
+    }
     var setHandle = ss.settings.defaultHandle.value;
     if (myHandles.contains(setHandle)) {
       return setHandle;
@@ -736,6 +740,19 @@ class RustPushBackend implements BackendService {
     void Function(int p1, int p2)? onSendProgress,
     CancelToken? cancelToken,
   }) async {
+    String? validatedSender;
+    if (!chat.isRpSms) {
+      try {
+        validatedSender = await chat.requireLiveIMessageHandle();
+      } catch (error, trace) {
+        if (error is AppleHandleUnavailableException) {
+          showSnackbar("Apple handle unavailable", error.userMessage);
+        }
+        Logger.warn("Cannot send attachment with unavailable Apple handle",
+            error: error, trace: trace);
+        rethrow;
+      }
+    }
     if (chat.isRpSms && !smsForwardingEnabled()) {
       throw Exception("SMS is not enabled (enable in settings -> user)");
     }
@@ -761,7 +778,7 @@ class RustPushBackend implements BackendService {
     Logger.info("uploaded");
     var msg = await api.newMsg(
       conversation: await chat.getConversationData(),
-      sender: await chat.ensureHandle(),
+      sender: validatedSender ?? await chat.ensureHandle(),
       message: api.Message.message(
         api.NormalMessage(
           parts: api.MessageParts(
@@ -1196,6 +1213,19 @@ class RustPushBackend implements BackendService {
     Message m, {
     CancelToken? cancelToken,
   }) async {
+    String? validatedSender;
+    if (!chat.isRpSms) {
+      try {
+        validatedSender = await chat.requireLiveIMessageHandle();
+      } catch (error, trace) {
+        if (error is AppleHandleUnavailableException) {
+          showSnackbar("Apple handle unavailable", error.userMessage);
+        }
+        Logger.warn("Cannot send message with unavailable Apple handle",
+            error: error, trace: trace);
+        rethrow;
+      }
+    }
     if (chat.isRpSms && !smsForwardingEnabled()) {
       throw Exception("SMS is not enabled (enable in settings -> user)");
     }
@@ -1332,7 +1362,7 @@ class RustPushBackend implements BackendService {
       }
       return api.newMsg(
         conversation: await chat.getConversationData(),
-        sender: await chat.ensureHandle(),
+        sender: validatedSender ?? await chat.ensureHandle(),
         message: api.Message.message(
           api.NormalMessage(
             parts: parts,

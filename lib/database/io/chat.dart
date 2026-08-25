@@ -9,6 +9,7 @@ import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/services/network/backend_service.dart';
+import 'package:bluebubbles/services/rustpush/apple_handle_validation.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
@@ -750,6 +751,23 @@ class Chat {
       }
     }
     return usingHandle!;
+  }
+
+  /// Returns the selected iMessage sender only while it is still registered
+  /// on the live Apple account. A stale selection is terminal for this chat,
+  /// so callers can surface it instead of silently changing the sender.
+  Future<String> requireLiveIMessageHandle() async {
+    if (isRpSms) return ensureHandle();
+
+    final selected = await ensureHandle();
+    final liveHandles = await api.getHandles(state: pushService.state!.client);
+    if (liveHandles.isEmpty) {
+      throw const AppleHandleUnavailableException(noRegisteredHandles: true);
+    }
+    return validateLiveAppleHandle(
+      selectedHandle: selected,
+      liveHandles: liveHandles,
+    );
   }
 
   // return true if we should route this conversation as a router

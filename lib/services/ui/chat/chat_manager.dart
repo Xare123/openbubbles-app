@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/helpers/group_participant_helpers.dart';
+import 'package:bluebubbles/helpers/ui/ui_helpers.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:dio/dio.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
+import 'package:bluebubbles/services/rustpush/apple_handle_validation.dart';
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:get/get.dart' hide Response;
 import 'package:tuple/tuple.dart';
@@ -64,17 +66,25 @@ class ChatManager extends GetxService {
       if (!chat.isIMessage) return;
       var statuskit = pushService.state?.icloudServices?.statuskitClient;
       if (statuskit == null) return;
-      Logger.info("ensuring keys");
-      var participants = (await chat.getConversationData()).participants;
-      var targets = await pushService.doValidateTargets(participants, await chat.ensureHandle());
-      Logger.info("finished ensuring keys ${targets.length}/${participants.length}");
-      if (chat.participants.length == 1) {
-        participants.remove(await chat.ensureHandle());
-        Logger.info("showing interest in handle ${participants[0]}");
-        provider?.dispose();
-        provider = await api.requestHandles(status: statuskit, to: [participants[0]]);
-        Logger.info("showed interest in handles");
-        chat.fixZenModeShared();
+      try {
+        Logger.info("ensuring keys");
+        var participants = (await chat.getConversationData()).participants;
+        final sender = await chat.requireLiveIMessageHandle();
+        var targets = await pushService.doValidateTargets(participants, sender);
+        Logger.info("finished ensuring keys ${targets.length}/${participants.length}");
+        if (chat.participants.length == 1) {
+          participants.remove(sender);
+          Logger.info("showing interest in handle ${participants[0]}");
+          provider?.dispose();
+          provider = await api.requestHandles(status: statuskit, to: [participants[0]]);
+          Logger.info("showed interest in handles");
+          chat.fixZenModeShared();
+        }
+      } catch (error, trace) {
+        if (error is AppleHandleUnavailableException) {
+          showSnackbar("Apple handle unavailable", error.userMessage);
+        }
+        Logger.warn("Failed to validate active chat sender", error: error, trace: trace);
       }
     })();
 

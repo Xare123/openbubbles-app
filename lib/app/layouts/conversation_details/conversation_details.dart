@@ -7,6 +7,7 @@ import 'package:bluebubbles/app/layouts/conversation_details/widgets/chat_option
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/interactive/url_preview.dart';
 import 'package:bluebubbles/app/layouts/settings/pages/profile/profile_scaffold.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/app/layouts/conversation_details/widgets/media_gallery_card.dart';
 import 'package:bluebubbles/app/layouts/conversation_details/widgets/contact_tile.dart';
 import 'package:bluebubbles/app/layouts/settings/widgets/settings_widgets.dart';
@@ -14,6 +15,7 @@ import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/database/database.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
+import 'package:bluebubbles/services/rustpush/apple_handle_validation.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter/cupertino.dart';
@@ -64,10 +66,19 @@ class _ConversationDetailsState extends OptimizedState<ConversationDetails> with
     mediaPager = ConversationMediaPager(chat: chat)..addListener(_onMediaChanged);
 
     (() async {
-      var data = await chat.getConversationData();
-      ftSupportedParticipants = await api.validateTargetsFacetime(
-          state: pushService.state!.client, targets: data.participants, sender: await chat.ensureHandle());
-      setState(() {});
+      try {
+        var data = await chat.getConversationData();
+        ftSupportedParticipants = await api.validateTargetsFacetime(
+            state: pushService.state!.client,
+            targets: data.participants,
+            sender: await chat.requireLiveIMessageHandle());
+        if (mounted) setState(() {});
+      } catch (error, trace) {
+        if (error is AppleHandleUnavailableException) {
+          showSnackbar("Apple handle unavailable", error.userMessage);
+        }
+        Logger.warn("Failed to load FaceTime availability", error: error, trace: trace);
+      }
     })();
 
     if (!kIsWeb) {

@@ -622,6 +622,22 @@ class _AppleIdLoginState extends OptimizedState<AppleIdLogin> {
       }
     } catch (e) {
       if (e is StaleLoginAttemptException) return;
+      if (e is StateError && e.message == 'Cannot use a disposed login resource') {
+        controller.cancelLoginAttempt();
+        try {
+          await controller.rebuildLoginResources();
+        } catch (rebuildError, rebuildTrace) {
+          Logger.warn(
+            "Failed to rebuild expired Apple login resources",
+            error: rebuildError,
+            trace: rebuildTrace,
+          );
+        }
+        controller.updateConnectError(
+          "Apple login session expired. Please try again.",
+        );
+        return;
+      }
       if (e is AnyhowException) {
         if (e.message.contains("MOBILEME_TERMS_OF_SERVICE_UPDATE")) {
           await controller.updateAccountUi((finished) => setState(() { 
@@ -641,6 +657,19 @@ class _AppleIdLoginState extends OptimizedState<AppleIdLogin> {
           }));
         }
         controller.updateConnectError(e.message);
+        if (e.message.contains("6005")) {
+          controller.cancelLoginAttempt();
+          try {
+            await controller.rebuildLoginResources();
+          } catch (rebuildError, rebuildTrace) {
+            Logger.warn(
+              "Failed to rebuild Apple login resources after 6005",
+              error: rebuildError,
+              trace: rebuildTrace,
+            );
+          }
+          return;
+        }
       }
       if (e is PanicException) {
         controller.updateConnectError(e.message);

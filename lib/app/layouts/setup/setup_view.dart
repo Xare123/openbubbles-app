@@ -833,6 +833,16 @@ class SetupViewController extends StatefulController {
     connection = null;
     _disposeLoginResourceWhenIdle(oldConnection);
   }
+
+  Future<void> rebuildLoginResources() async {
+    final oldAnisette = anisette;
+    anisette = null;
+    cancelLoginAttempt();
+    destroyConnection();
+    _disposeLoginResourceWhenIdle(oldAnisette);
+    if (_disposed || config == null || identity == null) return;
+    await setupConnection();
+  }
   
 
   Future<api.LoginState> submitCode(String code, {int? attempt}) async {
