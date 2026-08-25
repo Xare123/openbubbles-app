@@ -25,6 +25,12 @@ class LegacyCloudKitPageGuard {
       );
     }
 
+    if (state != 3 && nextToken.isEmpty) {
+      throw StateError(
+        'Stopped $zone CloudKit sync because its nonterminal token was empty',
+      );
+    }
+
     final encoded = base64Encode(nextToken);
     if (state != 3 && encoded == previousToken) {
       throw StateError(
