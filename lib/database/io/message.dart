@@ -1185,13 +1185,18 @@ class Message {
   }
 
   bool applyFromCloud(api.CloudMessage c, String cloudkitId) {
-    final chat = Chat.findEligibleCloudMessageChat(c.chatId);
+    final chatReferences = cloudChatReferences(c);
+    final chat = Chat.findEligibleCloudMessageChatReferences(chatReferences);
 
     if (chat == null || chat.isRpSms) {
-      final referenceShape = Chat.cloudIdentityReferenceShape(c.chatId);
+      final referenceShapes = chatReferences
+          .map(Chat.cloudIdentityReferenceShape)
+          .toSet()
+          .toList(growable: false)
+        ..sort();
       throw StateError(
         'Cloud message has no eligible local iMessage chat '
-        '(reference_shape=$referenceShape)',
+        '(reference_shapes=${referenceShapes.join(',')})',
       );
     }
 
@@ -1273,6 +1278,26 @@ class Message {
     
     save(chat: chat, throwOnUniqueViolation: true);
     return true;
+  }
+
+  /// Returns only chat identities carried explicitly by the message record.
+  /// `chatID` and `msgProto4.groupID` can diverge after historical group
+  /// migrations, so either may be the identity retained by the local chat.
+  static Set<String> cloudChatReferences(api.CloudMessage message) {
+    final references = <String>{message.chatId};
+    if (message.msgProto4 == null) return references;
+    try {
+      final groupId =
+          api.decodeMessageproto4(wrapped: message.msgProto4!).groupId?.trim();
+      if (groupId != null && groupId.isNotEmpty) references.add(groupId);
+    } catch (error, trace) {
+      Logger.warn(
+        'Failed to decode secondary CloudKit chat identity',
+        error: error,
+        trace: trace,
+      );
+    }
+    return references;
   }
 
   /// Fetch reactions

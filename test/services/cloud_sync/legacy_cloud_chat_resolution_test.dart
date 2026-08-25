@@ -52,6 +52,21 @@ void main() {
     expect(result?.id, expected.id);
   });
 
+  test('resolves either authoritative message chat identity', () {
+    final expected = Chat(
+      guid: 'local-group-guid',
+      chatIdentifier: 'current-chat-identifier',
+    );
+    chats.put(expected);
+
+    final result = Chat.findEligibleCloudMessageChatReferences(const [
+      'historical-cloud-id',
+      'local-group-guid',
+    ], box: chats);
+
+    expect(result?.id, expected.id);
+  });
+
   test('resolves a composite reference containing a tel URI', () {
     final expected = Chat(guid: 'local-guid', chatIdentifier: '+15555550100');
     chats.put(expected);

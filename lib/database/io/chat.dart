@@ -1188,9 +1188,16 @@ class Chat {
   static Chat? findEligibleCloudMessageChat(
     String reference, {
     Box<Chat>? box,
+  }) => findEligibleCloudMessageChatReferences([reference], box: box);
+
+  static Chat? findEligibleCloudMessageChatReferences(
+    Iterable<String> references, {
+    Box<Chat>? box,
   }) {
     final chatsBox = box ?? Database.chats;
-    final candidates = cloudIdentityCandidates(reference);
+    final candidates = references
+        .expand(cloudIdentityCandidates)
+        .toSet();
 
     Chat? find(Condition<Chat> identity) {
       final eligible = Chat_.isRpSms

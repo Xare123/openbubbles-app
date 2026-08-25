@@ -3721,11 +3721,17 @@ class RustPushService extends GetxService {
     }
   }
 
-  Future<Set<String>> _repairMissingLegacyCloudChats(Set<String> references) {
+  Future<int> _repairMissingLegacyCloudChats(
+    List<Set<String>> referenceGroups,
+  ) async {
+    final references = referenceGroups.expand((group) => group).toSet();
+    int unresolvedCount() => referenceGroups
+        .where(
+          (group) => Chat.findEligibleCloudMessageChatReferences(group) == null,
+        )
+        .length;
     return LegacyCloudChatRepair.recover<api.CloudChat>(
-      unresolvedReferences: references,
-      isResolved: (reference) =>
-          Chat.findEligibleCloudMessageChat(reference) != null,
+      unresolvedCount: unresolvedCount,
       fetchPage: (continuationToken) async {
         final (nextToken, items, state) = await api.syncChats(
           cloudMessagesClient:
@@ -4061,31 +4067,34 @@ class RustPushService extends GetxService {
       );
       totalMessages += items2.length;
 
-      final missingChatReferences = items2.values
+      final missingChatReferenceGroups = items2.values
           .whereType<api.CloudMessage>()
-          .map((message) => message.chatId)
+          .where((message) => Message.findOne(guid: message.guid) == null)
+          .map(Message.cloudChatReferences)
           .where(
-            (reference) => Chat.findEligibleCloudMessageChat(reference) == null,
+            (references) =>
+                Chat.findEligibleCloudMessageChatReferences(references) == null,
           )
-          .toSet();
-      if (missingChatReferences.isNotEmpty) {
+          .toList(growable: false);
+      if (missingChatReferenceGroups.isNotEmpty) {
         Logger.warn(
-          'Repairing ${missingChatReferences.length} unresolved legacy '
+          'Repairing ${missingChatReferenceGroups.length} unresolved legacy '
           'CloudKit chat references',
         );
-        final unresolved = await _repairMissingLegacyCloudChats(
-          missingChatReferences,
+        final unresolvedCount = await _repairMissingLegacyCloudChats(
+          missingChatReferenceGroups,
         );
-        if (unresolved.isNotEmpty) {
+        if (unresolvedCount != 0) {
           final shapes =
-              unresolved
+              missingChatReferenceGroups
+                  .expand((group) => group)
                   .map(Chat.cloudIdentityReferenceShape)
                   .toSet()
                   .toList(growable: false)
                 ..sort();
           throw StateError(
             'Legacy CloudKit chat repair could not resolve '
-            '${unresolved.length} references (shapes=${shapes.join(',')})',
+            '$unresolvedCount messages (shapes=${shapes.join(',')})',
           );
         }
       }

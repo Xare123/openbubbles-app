@@ -9,8 +9,7 @@ void main() {
       final requestedTokens = <List<int>?>[];
 
       final unresolved = await LegacyCloudChatRepair.recover<String>(
-        unresolvedReferences: {'chat-a', 'chat-b'},
-        isResolved: resolved.contains,
+        unresolvedCount: () => 2 - resolved.length,
         fetchPage: (token) async {
           requestedTokens.add(token);
           if (token == null) {
@@ -29,7 +28,7 @@ void main() {
         applyRecord: (_, value) async => resolved.add(value),
       );
 
-      expect(unresolved, isEmpty);
+      expect(unresolved, 0);
       expect(requestedTokens, [
         null,
         [1],
@@ -41,8 +40,7 @@ void main() {
     'returns unresolved references at the terminal chat-zone state',
     () async {
       final unresolved = await LegacyCloudChatRepair.recover<String>(
-        unresolvedReferences: {'missing-chat'},
-        isResolved: (_) => false,
+        unresolvedCount: () => 1,
         fetchPage: (_) async => const LegacyCloudChatRepairPage(
           continuationToken: [9],
           items: {},
@@ -51,7 +49,7 @@ void main() {
         applyRecord: (_, __) async {},
       );
 
-      expect(unresolved, {'missing-chat'});
+      expect(unresolved, 1);
     },
   );
 
@@ -60,8 +58,7 @@ void main() {
 
     await expectLater(
       LegacyCloudChatRepair.recover<String>(
-        unresolvedReferences: {'missing-chat'},
-        isResolved: (_) => false,
+        unresolvedCount: () => 1,
         fetchPage: (_) async {
           calls++;
           return const LegacyCloudChatRepairPage(
@@ -81,8 +78,7 @@ void main() {
     var fetched = false;
 
     final unresolved = await LegacyCloudChatRepair.recover<String>(
-      unresolvedReferences: {'chat-a'},
-      isResolved: (_) => true,
+      unresolvedCount: () => 0,
       fetchPage: (_) async {
         fetched = true;
         return const LegacyCloudChatRepairPage(
@@ -94,7 +90,7 @@ void main() {
       applyRecord: (_, __) async {},
     );
 
-    expect(unresolved, isEmpty);
+    expect(unresolved, 0);
     expect(fetched, isFalse);
   });
 }
