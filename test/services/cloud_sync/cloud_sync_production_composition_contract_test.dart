@@ -92,6 +92,9 @@ void main() {
       workflow,
       contains('--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true'),
     );
+    expect(workflow, contains('workflow_dispatch:'));
+    expect(workflow, contains('canary_only:'));
+    expect(workflow, contains("'[canary only]'"));
   });
 
   test('production entry point requires both developer safety gates', () {

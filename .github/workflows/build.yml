@@ -1,8 +1,18 @@
-on: [ push, pull_request ]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      canary_only:
+        description: Build only the CloudKit V2 Evidence Canary APK
+        required: false
+        type: boolean
+        default: false
 name: Build
 jobs:
   build:
     name: OpenBubbles APK
+    if: ${{ !contains(github.event.head_commit.message, '[canary only]') && (github.event_name != 'workflow_dispatch' || inputs.canary_only != true) }}
     # Pinned rather than ubuntu-latest so the image cannot drift underneath the
     # gates. ubuntu-latest moved to an image without PowerShell, which silently
     # broke the protected-data logging scan below.
@@ -301,6 +311,7 @@ jobs:
       # report has no in-app export and must be pulled with adb run-as, which a
       # release build does not permit.
       - name: Build Beta Debug APK with the Cloud Sync V2 sampler
+        if: ${{ !contains(github.event.head_commit.message, '[canary only]') && (github.event_name != 'workflow_dispatch' || inputs.canary_only != true) }}
         env:
           REGISTRATION_RELAY_ACCESS_TOKEN: ${{ secrets.REGISTRATION_RELAY_ACCESS_TOKEN }}
         run: >-
@@ -311,6 +322,7 @@ jobs:
           "--dart-define=OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN=$REGISTRATION_RELAY_ACCESS_TOKEN"
 
       - name: Verify the beta APK carries the Rust bridge
+        if: ${{ !contains(github.event.head_commit.message, '[canary only]') && (github.event_name != 'workflow_dispatch' || inputs.canary_only != true) }}
         run: |
           set -euo pipefail
           apk=build/app/outputs/flutter-apk/app-beta-debug.apk
@@ -338,6 +350,7 @@ jobs:
           unzip -l "$apk" | grep 'lib/arm64-v8a/'
 
       - uses: actions/upload-artifact@v7
+        if: ${{ !contains(github.event.head_commit.message, '[canary only]') && (github.event_name != 'workflow_dispatch' || inputs.canary_only != true) }}
         with:
           name: Beta Debug APK (Cloud Sync sampler)
           path: build/app/outputs/flutter-apk/app-beta-debug.apk
