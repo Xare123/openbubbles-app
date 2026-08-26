@@ -11,6 +11,9 @@ final class CloudSyncSemanticPullZoneReport {
     required this.applied,
     required this.deferred,
     required this.quarantined,
+    required this.preflightQuarantined,
+    required this.tombstoneQuarantined,
+    required this.semanticQuarantined,
     required this.retried,
     required this.elapsedMilliseconds,
     this.failureCategory,
@@ -23,6 +26,9 @@ final class CloudSyncSemanticPullZoneReport {
   final int applied;
   final int deferred;
   final int quarantined;
+  final int preflightQuarantined;
+  final int tombstoneQuarantined;
+  final int semanticQuarantined;
   final int retried;
   final int elapsedMilliseconds;
   final CloudFailureCategory? failureCategory;
@@ -35,6 +41,9 @@ final class CloudSyncSemanticPullZoneReport {
     'applied': applied,
     'deferred': deferred,
     'quarantined': quarantined,
+    'preflightQuarantined': preflightQuarantined,
+    'tombstoneQuarantined': tombstoneQuarantined,
+    'semanticQuarantined': semanticQuarantined,
     'retried': retried,
     'elapsedMilliseconds': elapsedMilliseconds,
     'failureCategory': failureCategory?.name,

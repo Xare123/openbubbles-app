@@ -344,6 +344,56 @@ void main() {
     },
   );
 
+  test(
+    'quarantine stages survive startup and post-fetch aggregation',
+    () async {
+      await seedGeneralJournal(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [
+            testChange(
+              1,
+              preflightFailure: CloudFailureCategory.malformedRecord,
+            ),
+          ],
+          batchId: 'batch-staged-preflight',
+          generation: 1,
+          nextToken: 'staged-preflight-token',
+          hasMore: false,
+        ),
+        now: clock.value,
+      );
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(2, tombstone: true)],
+          batchId: 'batch-staged-tombstone',
+          generation: 1,
+          nextToken: 'staged-tombstone-token',
+          hasMore: false,
+        ),
+      );
+      applier.resultsBySequence[2] = const CloudInboxApplyResult.quarantined(
+        failureCategory: CloudFailureCategory.conflict,
+      );
+
+      final result = await engine(
+        maximumInboxEntriesPerRun: 2,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.counters.quarantined, 2);
+      expect(result.counters.preflightQuarantined, 1);
+      expect(result.counters.tombstoneQuarantined, 1);
+      expect(result.counters.semanticQuarantined, 0);
+      expect(
+        result.counters.preflightQuarantined +
+            result.counters.tombstoneQuarantined +
+            result.counters.semanticQuarantined,
+        result.counters.quarantined,
+      );
+    },
+  );
+
   test('semanticApply false keeps fetch-only behavior unchanged', () async {
     await seedGeneralJournal(
       CloudFetchBatch(
@@ -731,6 +781,9 @@ void main() {
       );
 
       expect(result.counters.quarantined, 1);
+      expect(result.counters.semanticQuarantined, 1);
+      expect(result.counters.preflightQuarantined, 0);
+      expect(result.counters.tombstoneQuarantined, 0);
       expect(result.counters.applied, 1);
       expect((await store.readCheckpoint(scope)).lastAppliedSequence, 2);
       final entries = await store.inboxEntries(scope);
@@ -861,10 +914,41 @@ void main() {
       );
 
       expect(result.counters.quarantined, 1);
+      expect(result.counters.preflightQuarantined, 1);
+      expect(result.counters.tombstoneQuarantined, 0);
+      expect(result.counters.semanticQuarantined, 0);
       expect(applier.appliedSequences, isEmpty);
       final entries = await store.inboxEntries(scope);
       expect(entries.single.status, CloudInboxStatus.quarantined);
       expect(entries.single.lastFailure, CloudFailureCategory.malformedRecord);
+    },
+  );
+
+  test(
+    'tombstone quarantine is counted separately from semantic failures',
+    () async {
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1, tombstone: true)],
+          batchId: 'batch-tombstone-quarantine',
+          generation: 1,
+          nextToken: 'opaque-token',
+          hasMore: false,
+        ),
+      );
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.quarantined(
+        failureCategory: CloudFailureCategory.conflict,
+      );
+
+      final result = await engine().synchronize(
+        trigger: CloudSyncTrigger.manual,
+      );
+
+      expect(result.counters.quarantined, 1);
+      expect(result.counters.preflightQuarantined, 0);
+      expect(result.counters.tombstoneQuarantined, 1);
+      expect(result.counters.semanticQuarantined, 0);
     },
   );
 

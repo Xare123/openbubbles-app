@@ -1059,6 +1059,9 @@ class CloudSyncRunCounters {
     this.applied = 0,
     this.deferred = 0,
     this.quarantined = 0,
+    this.preflightQuarantined = 0,
+    this.tombstoneQuarantined = 0,
+    this.semanticQuarantined = 0,
     this.confirmed = 0,
     this.retried = 0,
     this.shadowJournalEntries = 0,
@@ -1070,6 +1073,12 @@ class CloudSyncRunCounters {
   final int applied;
   final int deferred;
   final int quarantined;
+
+  /// Content-free semantic-inbox quarantine stages. They partition inbox
+  /// quarantines; [quarantined] may also include unclassified outbox work.
+  final int preflightQuarantined;
+  final int tombstoneQuarantined;
+  final int semanticQuarantined;
   final int confirmed;
   final int retried;
 
@@ -1084,6 +1093,9 @@ class CloudSyncRunCounters {
     int applied = 0,
     int deferred = 0,
     int quarantined = 0,
+    int preflightQuarantined = 0,
+    int tombstoneQuarantined = 0,
+    int semanticQuarantined = 0,
     int confirmed = 0,
     int retried = 0,
     int shadowJournalEntries = 0,
@@ -1095,6 +1107,9 @@ class CloudSyncRunCounters {
       applied: this.applied + applied,
       deferred: this.deferred + deferred,
       quarantined: this.quarantined + quarantined,
+      preflightQuarantined: this.preflightQuarantined + preflightQuarantined,
+      tombstoneQuarantined: this.tombstoneQuarantined + tombstoneQuarantined,
+      semanticQuarantined: this.semanticQuarantined + semanticQuarantined,
       confirmed: this.confirmed + confirmed,
       retried: this.retried + retried,
       shadowJournalEntries: this.shadowJournalEntries + shadowJournalEntries,

@@ -211,6 +211,9 @@ void main() {
       ]);
       expect(report.zones.map((zone) => zone.fetched), [1, 1, 1]);
       expect(report.zones.map((zone) => zone.applied), [1, 1, 1]);
+      expect(report.zones.map((zone) => zone.preflightQuarantined), [0, 0, 0]);
+      expect(report.zones.map((zone) => zone.tombstoneQuarantined), [0, 0, 0]);
+      expect(report.zones.map((zone) => zone.semanticQuarantined), [0, 0, 0]);
       expect(applied, const [
         'chatManateeZone:1',
         'messageManateeZone:1',

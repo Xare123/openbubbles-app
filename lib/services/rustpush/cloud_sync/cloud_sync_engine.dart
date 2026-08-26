@@ -401,12 +401,18 @@ class CloudSyncEngine {
           applied: startupApply.counters.applied,
           deferred: startupApply.counters.deferred,
           quarantined: startupApply.counters.quarantined,
+          preflightQuarantined: startupApply.counters.preflightQuarantined,
+          tombstoneQuarantined: startupApply.counters.tombstoneQuarantined,
+          semanticQuarantined: startupApply.counters.semanticQuarantined,
           retried: startupApply.counters.retried,
         );
         counters = counters.add(
           applied: startupApply.counters.applied,
           deferred: startupApply.counters.deferred,
           quarantined: startupApply.counters.quarantined,
+          preflightQuarantined: startupApply.counters.preflightQuarantined,
+          tombstoneQuarantined: startupApply.counters.tombstoneQuarantined,
+          semanticQuarantined: startupApply.counters.semanticQuarantined,
           retried: startupApply.counters.retried,
         );
         remainingInboxEntries -= startupApply.processedEntries;
@@ -445,12 +451,18 @@ class CloudSyncEngine {
           applied: postFetchApply.counters.applied,
           deferred: postFetchApply.counters.deferred,
           quarantined: postFetchApply.counters.quarantined,
+          preflightQuarantined: postFetchApply.counters.preflightQuarantined,
+          tombstoneQuarantined: postFetchApply.counters.tombstoneQuarantined,
+          semanticQuarantined: postFetchApply.counters.semanticQuarantined,
           retried: postFetchApply.counters.retried,
         );
         counters = counters.add(
           applied: postFetchApply.counters.applied,
           deferred: postFetchApply.counters.deferred,
           quarantined: postFetchApply.counters.quarantined,
+          preflightQuarantined: postFetchApply.counters.preflightQuarantined,
+          tombstoneQuarantined: postFetchApply.counters.tombstoneQuarantined,
+          semanticQuarantined: postFetchApply.counters.semanticQuarantined,
           retried: postFetchApply.counters.retried,
         );
         remainingInboxEntries -= postFetchApply.processedEntries;
@@ -956,7 +968,7 @@ class CloudSyncEngine {
                 leaseFence: _requireActiveLeaseFence(),
               );
             }
-            counters = counters.add(quarantined: 1);
+            counters = _addQuarantinedCounter(counters, entry);
             canApplyNextSequence = true;
             break;
           }
@@ -993,7 +1005,7 @@ class CloudSyncEngine {
               leaseFence: _requireActiveLeaseFence(),
             );
           }
-          counters = counters.add(quarantined: 1);
+          counters = _addQuarantinedCounter(counters, entry);
           canApplyNextSequence = true;
           break;
       }
@@ -1011,6 +1023,20 @@ class CloudSyncEngine {
     return _InboxApplyResult(
       counters: counters,
       processedEntries: processedEntries,
+    );
+  }
+
+  CloudSyncRunCounters _addQuarantinedCounter(
+    CloudSyncRunCounters counters,
+    CloudInboxEntry entry,
+  ) {
+    final preflight = entry.change.preflightFailure != null;
+    final tombstone = !preflight && entry.change.isTombstone;
+    return counters.add(
+      quarantined: 1,
+      preflightQuarantined: preflight ? 1 : 0,
+      tombstoneQuarantined: tombstone ? 1 : 0,
+      semanticQuarantined: !preflight && !tombstone ? 1 : 0,
     );
   }
 
