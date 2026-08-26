@@ -370,16 +370,31 @@ final class CloudSyncProtocolEvidenceWriter {
       final canonicalRoot = path.normalize(
         await _trustedRoot.resolveSymbolicLinks(),
       );
+      final requestedRoot = path.normalize(_trustedRoot.path);
       final requestedDirectory = path.normalize(_privateDirectory.path);
-      if (!_isStrictChild(canonicalRoot, requestedDirectory)) {
+      if (!_isStrictChild(requestedRoot, requestedDirectory)) {
         throw const CloudSyncProtocolEvidenceException(
           'cloud_sync_protocol_evidence_path_escape',
         );
       }
-      await _rejectSymlinkAncestors(requestedDirectory, canonicalRoot);
-      await _privateDirectory.create(recursive: true);
+      final canonicalRequestedDirectory = path.normalize(
+        path.join(
+          canonicalRoot,
+          path.relative(requestedDirectory, from: requestedRoot),
+        ),
+      );
+      if (!_isStrictChild(canonicalRoot, canonicalRequestedDirectory)) {
+        throw const CloudSyncProtocolEvidenceException(
+          'cloud_sync_protocol_evidence_path_escape',
+        );
+      }
+      await _rejectSymlinkAncestors(canonicalRequestedDirectory, canonicalRoot);
+      final requestedCanonicalDirectory = Directory(
+        canonicalRequestedDirectory,
+      );
+      await requestedCanonicalDirectory.create(recursive: true);
       final directoryType = await FileSystemEntity.type(
-        requestedDirectory,
+        canonicalRequestedDirectory,
         followLinks: false,
       );
       if (directoryType != FileSystemEntityType.directory) {
@@ -388,7 +403,7 @@ final class CloudSyncProtocolEvidenceWriter {
         );
       }
       final canonicalDirectory = path.normalize(
-        await Directory(requestedDirectory).resolveSymbolicLinks(),
+        await requestedCanonicalDirectory.resolveSymbolicLinks(),
       );
       if (!_isStrictChild(canonicalRoot, canonicalDirectory)) {
         throw const CloudSyncProtocolEvidenceException(
