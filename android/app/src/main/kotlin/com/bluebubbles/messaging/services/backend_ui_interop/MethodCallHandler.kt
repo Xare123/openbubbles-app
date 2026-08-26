@@ -150,6 +150,7 @@ class MethodCallHandler {
             "ready" -> {
                 MainActivity.engine_ready = true
                 APNService.onMainEngineReady()
+                result.success(null)
             }
             else -> {
                 val error = "Could not find method call handler for ${call.method}!"
