@@ -2660,9 +2660,9 @@ class CloudProp001 {
 
 /// Redacted identity binding for one active Cloud Messages client.
 ///
-/// The raw DSID is read and transformed entirely in Rust. Only two
-/// per-install HMAC values cross FRB: an account fingerprint and a
-/// process-local client-generation tag. Neither value is an Apple credential.
+/// The raw DSID is read and transformed entirely in Rust. Three derived values
+/// cross FRB: two per-install HMAC values and a per-install protected-store
+/// identity. None of them is an Apple credential.
 class CloudSyncNativeAuthMetadata {
   final String nativeSessionId;
   final String accountFingerprint;
