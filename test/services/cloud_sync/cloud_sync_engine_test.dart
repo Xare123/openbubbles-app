@@ -354,6 +354,7 @@ void main() {
             testChange(
               1,
               preflightFailure: CloudFailureCategory.malformedRecord,
+              preflightCode: CloudPreflightCode.invalidChangeShape,
             ),
           ],
           batchId: 'batch-staged-preflight',
@@ -383,6 +384,13 @@ void main() {
 
       expect(result.counters.quarantined, 2);
       expect(result.counters.preflightQuarantined, 1);
+      expect(result.counters.preflightInvalidChangeShape, 1);
+      expect(result.counters.preflightUnsupportedRecordType, 0);
+      expect(result.counters.preflightMalformedMetadata, 0);
+      expect(result.counters.preflightOversizedRecord, 0);
+      expect(result.counters.preflightUnknown, 0);
+      expect(result.counters.startupQuarantined, 1);
+      expect(result.counters.postFetchQuarantined, 1);
       expect(result.counters.tombstoneQuarantined, 1);
       expect(result.counters.semanticStageQuarantined, 0);
       expect(
@@ -900,6 +908,7 @@ void main() {
             testChange(
               1,
               preflightFailure: CloudFailureCategory.malformedRecord,
+              preflightCode: CloudPreflightCode.oversizedRecord,
             ),
           ],
           batchId: 'batch-preflight-quarantine',
@@ -915,6 +924,8 @@ void main() {
 
       expect(result.counters.quarantined, 1);
       expect(result.counters.preflightQuarantined, 1);
+      expect(result.counters.preflightOversizedRecord, 1);
+      expect(result.counters.preflightUnknown, 0);
       expect(result.counters.tombstoneQuarantined, 0);
       expect(result.counters.semanticStageQuarantined, 0);
       expect(applier.appliedSequences, isEmpty);

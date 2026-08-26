@@ -31,6 +31,9 @@ class CloudSyncCheckpointEntity {
   String streamKind;
   int schemaVersion;
 
+  /// Local persistence lane only. Null identifies pre-lane legacy rows.
+  String? persistenceLane;
+
   /// Base64 application ciphertext. Never a raw CloudKit continuation token.
   String? fetchedTokenCiphertext;
   int generation;
@@ -58,6 +61,7 @@ class CloudSyncCheckpointEntity {
     required this.zone,
     required this.streamKind,
     this.schemaVersion = cloudSyncSchemaVersion,
+    this.persistenceLane,
     this.fetchedTokenCiphertext,
     this.generation = 1,
     this.lastBatchId,
@@ -124,7 +128,13 @@ class CloudInboxChangeEntity {
   int status;
 
   bool isTombstone;
+
+  /// Immutable ingestion classification, distinct from mutable retry state.
+  String? preflightCategory;
   String? failureCategory;
+
+  /// Fixed, content-free native preflight code. Never stores server text.
+  String? preflightCode;
   int retryCount;
   int nextEligibleAtMs;
   int serverModifiedAtMs;
@@ -151,7 +161,9 @@ class CloudInboxChangeEntity {
     required this.fetchSequence,
     this.status = 0,
     this.isTombstone = false,
+    this.preflightCategory,
     this.failureCategory,
+    this.preflightCode,
     this.retryCount = 0,
     this.nextEligibleAtMs = 0,
     this.serverModifiedAtMs = 0,

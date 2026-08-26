@@ -107,9 +107,8 @@ void main() {
   test('native auth failures collapse to a content-free stage code', () async {
     final sampler = CloudSyncManualShadowSampler(
       readPreflight: () async => readyState(),
-      readAuthSnapshot: () async => throw Exception(
-        'token=private-value account=user@example.com',
-      ),
+      readAuthSnapshot: () async =>
+          throw Exception('token=private-value account=user@example.com'),
       createStore: (scope) async => InMemoryCloudSyncStore(),
       createRawTransport: (snapshot, scope) async => FakeCloudSyncTransport(),
       operationFenceStore: InMemoryCloudSyncStore(),
@@ -165,6 +164,10 @@ void main() {
       expect(
         scopes.map((scope) => scope.zone),
         CloudSyncManualShadowSampler.zones,
+      );
+      expect(
+        scopes.map((scope) => scope.persistenceLane),
+        everyElement(CloudSyncPersistenceLane.shadow),
       );
       expect(transports.map((transport) => transport.fetchCallCount), [
         1,

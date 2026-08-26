@@ -17,6 +17,13 @@ void main() {
       deferred: 3,
       quarantined: 4,
       preflightQuarantined: 1,
+      preflightUnsupportedRecordType: 1,
+      preflightMalformedMetadata: 2,
+      preflightOversizedRecord: 3,
+      preflightInvalidChangeShape: 4,
+      preflightUnknown: 5,
+      startupQuarantined: 6,
+      postFetchQuarantined: 7,
       tombstoneQuarantined: 1,
       semanticStageQuarantined: 2,
       confirmed: 5,
@@ -33,6 +40,13 @@ void main() {
     expect(combined.deferred, 6);
     expect(combined.quarantined, 8);
     expect(combined.preflightQuarantined, 2);
+    expect(combined.preflightUnsupportedRecordType, 2);
+    expect(combined.preflightMalformedMetadata, 4);
+    expect(combined.preflightOversizedRecord, 6);
+    expect(combined.preflightInvalidChangeShape, 8);
+    expect(combined.preflightUnknown, 10);
+    expect(combined.startupQuarantined, 12);
+    expect(combined.postFetchQuarantined, 14);
     expect(combined.tombstoneQuarantined, 2);
     expect(combined.semanticStageQuarantined, 4);
     expect(combined.confirmed, 10);

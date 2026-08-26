@@ -271,6 +271,15 @@ final class RustCloudSyncTransport implements CloudSyncTransport {
       RustCloudSyncRawRecordKind.malformedMetadata =>
         CloudFailureCategory.malformedRecord,
     };
+    final preflightCode = switch (change.kind) {
+      RustCloudSyncRawRecordKind.encryptedUpsert ||
+      RustCloudSyncRawRecordKind.tombstone =>
+        oversize ? CloudPreflightCode.oversizedRecord : null,
+      RustCloudSyncRawRecordKind.unsupportedRecordType =>
+        CloudPreflightCode.unsupportedRecordType,
+      RustCloudSyncRawRecordKind.malformedMetadata =>
+        CloudPreflightCode.malformedMetadata,
+    };
 
     final systemFields = change.systemFields;
     final canonicalEnvelope = jsonEncode({
@@ -337,6 +346,7 @@ final class RustCloudSyncTransport implements CloudSyncTransport {
       payloadSha256: rawDigest,
       isTombstone: isTombstone,
       preflightFailure: preflightFailure,
+      preflightCode: preflightCode,
     );
   }
 

@@ -117,6 +117,7 @@ final class CloudSyncManualSemanticPullSampler {
         container: container,
         database: database,
         zone: zone,
+        persistenceLane: CloudSyncPersistenceLane.semantic,
       );
       final store = await _createStore(scope);
       final observer = await _createObserver(scope);
@@ -164,6 +165,16 @@ final class CloudSyncManualSemanticPullSampler {
             deferred: result.counters.deferred,
             quarantined: result.counters.quarantined,
             preflightQuarantined: result.counters.preflightQuarantined,
+            preflightUnsupportedRecordType:
+                result.counters.preflightUnsupportedRecordType,
+            preflightMalformedMetadata:
+                result.counters.preflightMalformedMetadata,
+            preflightOversizedRecord: result.counters.preflightOversizedRecord,
+            preflightInvalidChangeShape:
+                result.counters.preflightInvalidChangeShape,
+            preflightUnknown: result.counters.preflightUnknown,
+            startupQuarantined: result.counters.startupQuarantined,
+            postFetchQuarantined: result.counters.postFetchQuarantined,
             tombstoneQuarantined: result.counters.tombstoneQuarantined,
             semanticStageQuarantined: result.counters.semanticStageQuarantined,
             retried: result.counters.retried,

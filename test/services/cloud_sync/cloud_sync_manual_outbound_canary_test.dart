@@ -541,6 +541,7 @@ CloudSyncScope _scope(String account) => CloudSyncScope(
   zone: CloudSyncManualOutboundCanary.zone,
   streamKind: CloudSyncStreamKind.messages,
   schemaVersion: 2,
+  persistenceLane: CloudSyncPersistenceLane.semantic,
 );
 
 CloudSyncNativeAuthSnapshot _auth(

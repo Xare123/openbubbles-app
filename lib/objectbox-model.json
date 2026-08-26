@@ -910,7 +910,7 @@
     },
     {
       "id": "18:6719772093493207335",
-      "lastPropertyId": "25:4451177903685227588",
+      "lastPropertyId": "27:1526171191000868532",
       "name": "CloudInboxChangeEntity",
       "properties": [
         {
@@ -1053,6 +1053,16 @@
         {
           "id": "25:4451177903685227588",
           "name": "changeIdHash",
+          "type": 9
+        },
+        {
+          "id": "26:8856514040804159956",
+          "name": "preflightCode",
+          "type": 9
+        },
+        {
+          "id": "27:1526171191000868532",
+          "name": "preflightCategory",
           "type": 9
         }
       ],
@@ -1294,7 +1304,7 @@
     },
     {
       "id": "21:4610418443336266937",
-      "lastPropertyId": "20:469503483284611167",
+      "lastPropertyId": "21:5316195973293636516",
       "name": "CloudSyncCheckpointEntity",
       "properties": [
         {
@@ -1403,6 +1413,11 @@
           "id": "20:469503483284611167",
           "name": "mutationRevisionCounter",
           "type": 6
+        },
+        {
+          "id": "21:5316195973293636516",
+          "name": "persistenceLane",
+          "type": 9
         }
       ],
       "relations": []

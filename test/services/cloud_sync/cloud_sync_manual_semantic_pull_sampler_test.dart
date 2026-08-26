@@ -146,6 +146,7 @@ void main() {
     'runs only on explicit confirmation in exact zone order with read-only flags',
     () async {
       final scopes = <String>[];
+      final lanes = <CloudSyncPersistenceLane>[];
       final transports = <String, FakeCloudSyncTransport>{};
       final appliers = <String, FakeCloudInboxApplier>{};
       final applied = <String>[];
@@ -164,6 +165,7 @@ void main() {
         readAuthSnapshot: () async => _auth(),
         createStore: (scope) async {
           scopes.add(scope.zone);
+          lanes.add(scope.persistenceLane);
           final store = InMemoryCloudSyncStore();
           stores[scope.zone] = store;
           return store;
@@ -204,6 +206,7 @@ void main() {
       final report = await sampler.runConfirmed();
 
       expect(scopes, CloudSyncManualSemanticPullSampler.zones);
+      expect(lanes, everyElement(CloudSyncPersistenceLane.semantic));
       expect(report.zones.map((zone) => zone.zoneLabel), const [
         'chats',
         'messages',
@@ -212,6 +215,20 @@ void main() {
       expect(report.zones.map((zone) => zone.fetched), [1, 1, 1]);
       expect(report.zones.map((zone) => zone.applied), [1, 1, 1]);
       expect(report.zones.map((zone) => zone.preflightQuarantined), [0, 0, 0]);
+      expect(
+        report.zones.map((zone) => zone.toJson()['preflightReasons']),
+        everyElement(<String, int>{
+          'unsupportedRecordType': 0,
+          'malformedMetadata': 0,
+          'oversizedRecord': 0,
+          'invalidChangeShape': 0,
+          'unknown': 0,
+        }),
+      );
+      expect(
+        report.zones.map((zone) => zone.toJson()['quarantinePhases']),
+        everyElement(<String, int>{'startup': 0, 'postFetch': 0}),
+      );
       expect(report.zones.map((zone) => zone.tombstoneQuarantined), [0, 0, 0]);
       expect(report.zones.map((zone) => zone.semanticStageQuarantined), [
         0,

@@ -208,6 +208,7 @@ final class CloudSyncManualShadowSampler {
         container: container,
         database: database,
         zone: zone,
+        persistenceLane: CloudSyncPersistenceLane.shadow,
       );
       final store = ShadowOnlyCloudSyncStore(
         await _runStage(

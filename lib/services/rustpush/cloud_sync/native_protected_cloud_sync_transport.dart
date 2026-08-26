@@ -902,6 +902,18 @@ final class NativeProtectedCloudSyncTransport
       preflightFailure: preflight == null
           ? null
           : CloudFailureCategory.malformedRecord,
+      preflightCode: preflight == null
+          ? null
+          : switch (preflight) {
+              NativeProtectedPreflightCode.unsupportedRecordType =>
+                CloudPreflightCode.unsupportedRecordType,
+              NativeProtectedPreflightCode.malformedMetadata =>
+                CloudPreflightCode.malformedMetadata,
+              NativeProtectedPreflightCode.oversizedRecord =>
+                CloudPreflightCode.oversizedRecord,
+              NativeProtectedPreflightCode.invalidChangeShape =>
+                CloudPreflightCode.invalidChangeShape,
+            },
     );
   }
 

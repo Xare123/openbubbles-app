@@ -231,6 +231,7 @@ final class CloudSyncManualOutboundCanary {
         zone: zone,
         streamKind: CloudSyncStreamKind.messages,
         schemaVersion: 2,
+        persistenceLane: CloudSyncPersistenceLane.semantic,
       );
       session = await _createSession(auth, scope);
       final CloudOutboxOperation operation;

@@ -178,7 +178,9 @@ class ObjectBoxCloudSyncStore
             fetchSequence: nextSequence,
             status: _inboxStatusToInt(CloudInboxStatus.pending),
             isTombstone: change.isTombstone,
+            preflightCategory: change.preflightFailure?.name,
             failureCategory: change.preflightFailure?.name,
+            preflightCode: change.preflightCode?.name,
             serverModifiedAtMs:
                 change.serverModifiedAt?.millisecondsSinceEpoch ?? 0,
             createdAtMs: transactionNowMs,
@@ -394,7 +396,9 @@ class ObjectBoxCloudSyncStore
             fetchSequence: nextSequence,
             status: _inboxStatusToInt(CloudInboxStatus.pending),
             isTombstone: change.isTombstone,
+            preflightCategory: change.preflightFailure?.name,
             failureCategory: change.preflightFailure?.name,
+            preflightCode: change.preflightCode?.name,
             serverModifiedAtMs:
                 change.serverModifiedAt?.millisecondsSinceEpoch ?? 0,
             createdAtMs: transactionNowMs,
@@ -1797,6 +1801,7 @@ class ObjectBoxCloudSyncStore
       zone: scope.zone,
       streamKind: scope.streamKind.name,
       schemaVersion: scope.schemaVersion,
+      persistenceLane: scope.persistenceLane.name,
       updatedAtMs: nowMs,
     );
     created.id = _checkpoints.put(created);
@@ -1834,7 +1839,9 @@ class ObjectBoxCloudSyncStore
         entity.database != scope.database ||
         entity.zone != scope.zone ||
         entity.streamKind != scope.streamKind.name ||
-        entity.schemaVersion != scope.schemaVersion) {
+        entity.schemaVersion != scope.schemaVersion ||
+        _persistenceLaneFromName(entity.persistenceLane) !=
+            scope.persistenceLane) {
       throw _storageFailure('scope_collision');
     }
   }
@@ -1863,7 +1870,11 @@ class ObjectBoxCloudSyncStore
         payloadSha256: entity.payloadSha256,
         isTombstone: entity.isTombstone,
         serverModifiedAt: _dateOrNull(entity.serverModifiedAtMs),
-        preflightFailure: _failureOrNull(entity.failureCategory),
+        preflightFailure: _failureOrNull(
+          entity.preflightCategory ??
+              (entity.retryCount == 0 ? entity.failureCategory : null),
+        ),
+        preflightCode: _preflightCodeOrNull(entity.preflightCode),
       ),
       status: _inboxStatusFromInt(entity.status),
       attemptCount: entity.retryCount,
@@ -2385,6 +2396,7 @@ class ObjectBoxCloudSyncStore
       zone: entity.zone,
       streamKind: stream.single,
       schemaVersion: entity.schemaVersion,
+      persistenceLane: _persistenceLaneFromName(entity.persistenceLane),
     );
     _validateCheckpointScope(entity, scope);
     return scope;
@@ -2444,6 +2456,24 @@ class ObjectBoxCloudSyncStore
       if (value.name == name) return value;
     }
     throw _storageFailure('failure_category_invalid');
+  }
+
+  CloudPreflightCode? _preflightCodeOrNull(String? name) {
+    if (name == null) return null;
+    for (final value in CloudPreflightCode.values) {
+      if (value.name == name) return value;
+    }
+    // A future or corrupted value must stay quarantined without becoming an
+    // arbitrary diagnostic string.
+    return CloudPreflightCode.unknown;
+  }
+
+  CloudSyncPersistenceLane _persistenceLaneFromName(String? name) {
+    if (name == null || name.isEmpty) return CloudSyncPersistenceLane.legacy;
+    for (final value in CloudSyncPersistenceLane.values) {
+      if (value.name == name) return value;
+    }
+    throw _storageFailure('persistence_lane_invalid');
   }
 
   CloudChangeType _changeTypeFromName(String name) {

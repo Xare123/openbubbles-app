@@ -155,8 +155,65 @@ void main() {
       expect(change.type, CloudChangeType.delete);
       expect(change.isTombstone, isTrue);
       expect(change.preflightFailure, CloudFailureCategory.malformedRecord);
+      expect(change.preflightCode, CloudPreflightCode.oversizedRecord);
     },
   );
+
+  test('preserves every content-free native preflight reason', () async {
+    const cases =
+        <(NativeProtectedPreflightCode native, CloudPreflightCode expected)>[
+          (
+            NativeProtectedPreflightCode.unsupportedRecordType,
+            CloudPreflightCode.unsupportedRecordType,
+          ),
+          (
+            NativeProtectedPreflightCode.malformedMetadata,
+            CloudPreflightCode.malformedMetadata,
+          ),
+          (
+            NativeProtectedPreflightCode.oversizedRecord,
+            CloudPreflightCode.oversizedRecord,
+          ),
+          (
+            NativeProtectedPreflightCode.invalidChangeShape,
+            CloudPreflightCode.invalidChangeShape,
+          ),
+        ];
+
+    for (final (native, expected) in cases) {
+      bindings.fetchResult = NativeProtectedFetchResult(
+        page: NativeProtectedPage(
+          changes: [
+            NativeProtectedChange(
+              changeId: _hash('C'),
+              recordIdHash: _hash('R'),
+              kind: NativeProtectedChangeKind.quarantined,
+              payloadSha256: _sha('b'),
+              payloadLength: 1,
+              protectedRecordIdentityReference: _reference('I'),
+              protectedRawEnvelopeReference: _reference('P'),
+              preflightCode: native,
+              isTombstone: false,
+            ),
+          ],
+          batchId: _hash('B'),
+          generation: 1,
+          pageLeaseReference: _lease('3'),
+          complete: true,
+          admittedRawBytes: 1,
+        ),
+      );
+
+      final change = (await transport.fetchChanges(
+        scope,
+        previousToken: null,
+        generation: 1,
+        limit: 20,
+      )).changes.single;
+      expect(change.preflightFailure, CloudFailureCategory.malformedRecord);
+      expect(change.preflightCode, expected);
+    }
+  });
 
   test('typed native retry survives without server text', () async {
     bindings.fetchResult = const NativeProtectedFetchResult(

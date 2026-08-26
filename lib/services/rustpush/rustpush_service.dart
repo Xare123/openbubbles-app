@@ -33,6 +33,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shado
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_owner.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_persistent_keys.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_preflight.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protocol_evidence.dart';
@@ -7499,9 +7500,41 @@ class RustPushService extends GetxService {
       zone: CloudSyncManualOutboundCanary.zone,
       streamKind: CloudSyncStreamKind.messages,
       schemaVersion: 2,
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    final legacySyncScope = CloudSyncScope(
+      accountFingerprint: writerScope.accountFingerprint,
+      container: writerScope.container,
+      database: writerScope.database,
+      zone: CloudSyncManualOutboundCanary.zone,
+      streamKind: CloudSyncStreamKind.messages,
+      schemaVersion: 2,
+      persistenceLane: CloudSyncPersistenceLane.legacy,
+    );
+    final shadowSyncScope = CloudSyncScope(
+      accountFingerprint: writerScope.accountFingerprint,
+      container: writerScope.container,
+      database: writerScope.database,
+      zone: CloudSyncManualOutboundCanary.zone,
+      streamKind: CloudSyncStreamKind.messages,
+      schemaVersion: 2,
+      persistenceLane: CloudSyncPersistenceLane.shadow,
     );
     final outboxQuery = Database.cloudSyncOutbox
-        .query(CloudOutboxOperationEntity_.scopeKey.equals(syncScope.storageKey))
+        .query(
+          CloudOutboxOperationEntity_.scopeKey
+              .equals(cloudSyncPersistentScopeKey(syncScope))
+              .or(
+                CloudOutboxOperationEntity_.scopeKey.equals(
+                  cloudSyncPersistentScopeKey(legacySyncScope),
+                ),
+              )
+              .or(
+                CloudOutboxOperationEntity_.scopeKey.equals(
+                  cloudSyncPersistentScopeKey(shadowSyncScope),
+                ),
+              ),
+        )
         .build();
     try {
       return CloudKitWriterProvisioningMeasurements(

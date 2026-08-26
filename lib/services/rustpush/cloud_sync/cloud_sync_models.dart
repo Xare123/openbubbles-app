@@ -9,6 +9,11 @@ bool _isCanonicalAppleUuid(String value) =>
 
 enum CloudSyncStreamKind { messages, profiles }
 
+/// Local persistence namespace. It does not alter the remote CloudKit scope.
+/// [legacy] preserves the exact pre-lane storage key for compatibility while
+/// new shadow evidence and semantic production state remain isolated.
+enum CloudSyncPersistenceLane { legacy, shadow, semantic }
+
 /// Account and CloudKit-zone boundary for every V2 record and operation.
 ///
 /// [accountFingerprint] must be a one-way, application-scoped fingerprint.
@@ -27,6 +32,7 @@ class CloudSyncScope {
     required this.zone,
     this.streamKind = CloudSyncStreamKind.messages,
     this.schemaVersion = 2,
+    this.persistenceLane = CloudSyncPersistenceLane.legacy,
   }) {
     if (!_accountFingerprintPattern.hasMatch(accountFingerprint)) {
       throw ArgumentError('cloud_sync_scope_account_fingerprint_invalid');
@@ -66,9 +72,15 @@ class CloudSyncScope {
   final String zone;
   final CloudSyncStreamKind streamKind;
   final int schemaVersion;
+  final CloudSyncPersistenceLane persistenceLane;
 
-  String get storageKey =>
-      '$accountFingerprint\u001f$container\u001f$database\u001f$zone\u001f${streamKind.name}\u001f$schemaVersion';
+  String get storageKey {
+    final base =
+        '$accountFingerprint\u001f$container\u001f$database\u001f$zone\u001f${streamKind.name}\u001f$schemaVersion';
+    return persistenceLane == CloudSyncPersistenceLane.legacy
+        ? base
+        : '$base\u001f${persistenceLane.name}';
+  }
 
   /// Safe, bounded identifier for diagnostics. It intentionally excludes the
   /// container, database, zone, and full account fingerprint.
@@ -76,7 +88,7 @@ class CloudSyncScope {
     final prefix = accountFingerprint.length <= 8
         ? accountFingerprint
         : accountFingerprint.substring(0, 8);
-    return 'acct:$prefix/v$schemaVersion';
+    return 'acct:$prefix/v$schemaVersion/${persistenceLane.name}';
   }
 
   @override
@@ -181,6 +193,17 @@ enum CloudChangeType { save, delete }
 
 enum CloudInboxStatus { pending, applied, quarantined }
 
+/// Fixed, content-free reason assigned before semantic decoding. These values
+/// may be persisted and reported as counts; they must never contain server
+/// text, identifiers, tokens, or payload data.
+enum CloudPreflightCode {
+  unsupportedRecordType,
+  malformedMetadata,
+  oversizedRecord,
+  invalidChangeShape,
+  unknown,
+}
+
 enum CloudOutboxAction { save, delete }
 
 /// Durable outbox states. Keep the order stable because ObjectBox persists the
@@ -272,6 +295,7 @@ class CloudFetchedChange {
     this.isTombstone = false,
     this.serverModifiedAt,
     this.preflightFailure,
+    this.preflightCode,
   }) {
     if (changeId.isEmpty) {
       throw ArgumentError('cloud_fetched_change_id_invalid');
@@ -299,6 +323,9 @@ class CloudFetchedChange {
     if (isTombstone != (type == CloudChangeType.delete)) {
       throw ArgumentError('cloud_fetched_tombstone_type_invalid');
     }
+    if (preflightFailure == null && preflightCode != null) {
+      throw ArgumentError('cloud_fetched_preflight_code_without_failure');
+    }
   }
 
   /// Deterministic, account-scoped digest used to deduplicate replayed pages.
@@ -324,6 +351,11 @@ class CloudFetchedChange {
   /// journals the original protected bytes, then quarantines the entry
   /// without invoking a semantic decoder.
   final CloudFailureCategory? preflightFailure;
+  final CloudPreflightCode? preflightCode;
+
+  CloudPreflightCode? get effectivePreflightCode => preflightFailure == null
+      ? null
+      : preflightCode ?? CloudPreflightCode.unknown;
 }
 
 class CloudFetchBatch {
@@ -1060,6 +1092,13 @@ class CloudSyncRunCounters {
     this.deferred = 0,
     this.quarantined = 0,
     this.preflightQuarantined = 0,
+    this.preflightUnsupportedRecordType = 0,
+    this.preflightMalformedMetadata = 0,
+    this.preflightOversizedRecord = 0,
+    this.preflightInvalidChangeShape = 0,
+    this.preflightUnknown = 0,
+    this.startupQuarantined = 0,
+    this.postFetchQuarantined = 0,
     this.tombstoneQuarantined = 0,
     this.semanticStageQuarantined = 0,
     this.confirmed = 0,
@@ -1079,6 +1118,13 @@ class CloudSyncRunCounters {
   /// non-preflight, non-tombstone terminal result, and [quarantined] may also
   /// include unclassified outbox work.
   final int preflightQuarantined;
+  final int preflightUnsupportedRecordType;
+  final int preflightMalformedMetadata;
+  final int preflightOversizedRecord;
+  final int preflightInvalidChangeShape;
+  final int preflightUnknown;
+  final int startupQuarantined;
+  final int postFetchQuarantined;
   final int tombstoneQuarantined;
   final int semanticStageQuarantined;
   final int confirmed;
@@ -1096,6 +1142,13 @@ class CloudSyncRunCounters {
     int deferred = 0,
     int quarantined = 0,
     int preflightQuarantined = 0,
+    int preflightUnsupportedRecordType = 0,
+    int preflightMalformedMetadata = 0,
+    int preflightOversizedRecord = 0,
+    int preflightInvalidChangeShape = 0,
+    int preflightUnknown = 0,
+    int startupQuarantined = 0,
+    int postFetchQuarantined = 0,
     int tombstoneQuarantined = 0,
     int semanticStageQuarantined = 0,
     int confirmed = 0,
@@ -1110,6 +1163,17 @@ class CloudSyncRunCounters {
       deferred: this.deferred + deferred,
       quarantined: this.quarantined + quarantined,
       preflightQuarantined: this.preflightQuarantined + preflightQuarantined,
+      preflightUnsupportedRecordType:
+          this.preflightUnsupportedRecordType + preflightUnsupportedRecordType,
+      preflightMalformedMetadata:
+          this.preflightMalformedMetadata + preflightMalformedMetadata,
+      preflightOversizedRecord:
+          this.preflightOversizedRecord + preflightOversizedRecord,
+      preflightInvalidChangeShape:
+          this.preflightInvalidChangeShape + preflightInvalidChangeShape,
+      preflightUnknown: this.preflightUnknown + preflightUnknown,
+      startupQuarantined: this.startupQuarantined + startupQuarantined,
+      postFetchQuarantined: this.postFetchQuarantined + postFetchQuarantined,
       tombstoneQuarantined: this.tombstoneQuarantined + tombstoneQuarantined,
       semanticStageQuarantined:
           this.semanticStageQuarantined + semanticStageQuarantined,
@@ -1129,6 +1193,13 @@ class CloudSyncRunCounters {
     deferred: other.deferred,
     quarantined: other.quarantined,
     preflightQuarantined: other.preflightQuarantined,
+    preflightUnsupportedRecordType: other.preflightUnsupportedRecordType,
+    preflightMalformedMetadata: other.preflightMalformedMetadata,
+    preflightOversizedRecord: other.preflightOversizedRecord,
+    preflightInvalidChangeShape: other.preflightInvalidChangeShape,
+    preflightUnknown: other.preflightUnknown,
+    startupQuarantined: other.startupQuarantined,
+    postFetchQuarantined: other.postFetchQuarantined,
     tombstoneQuarantined: other.tombstoneQuarantined,
     semanticStageQuarantined: other.semanticStageQuarantined,
     confirmed: other.confirmed,

@@ -141,6 +141,70 @@ void main() {
     );
   }
 
+  test('persists content-free preflight reason across reopen', () async {
+    final scope = testScope();
+    await journal(
+      batch(
+        scope,
+        changes: [
+          testChange(
+            1,
+            preflightFailure: CloudFailureCategory.malformedRecord,
+            preflightCode: CloudPreflightCode.invalidChangeShape,
+          ),
+        ],
+      ),
+    );
+
+    await reopen();
+    final entries = await store.readEligibleInbox(
+      scope,
+      now: currentTime,
+      limit: 1,
+    );
+    expect(
+      entries.single.change.preflightFailure,
+      CloudFailureCategory.malformedRecord,
+    );
+    expect(
+      entries.single.change.preflightCode,
+      CloudPreflightCode.invalidChangeShape,
+    );
+  });
+
+  test('isolates shadow and semantic checkpoints across reopen', () async {
+    final shadow = testScope(persistenceLane: CloudSyncPersistenceLane.shadow);
+    final semantic = testScope(
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    expect(shadow.storageKey, isNot(semantic.storageKey));
+
+    await journalShadow(
+      batch(shadow, token: 'shadow-token', changes: [testChange(1)]),
+      now: currentTime,
+      budget: CloudShadowJournalBudget(
+        maximumEntriesPerScope: 10,
+        maximumEstimatedBytesPerScope: 1024 * 1024,
+        maximumPendingAge: const Duration(days: 1),
+      ),
+    );
+
+    expect((await store.readCheckpoint(shadow)).fetchedToken, 'shadow-token');
+    expect((await store.readCheckpoint(semantic)).fetchedToken, isNull);
+    expect(
+      await store.readEligibleInbox(semantic, now: currentTime, limit: 1),
+      isEmpty,
+    );
+
+    await reopen();
+    expect((await store.readCheckpoint(shadow)).fetchedToken, 'shadow-token');
+    expect((await store.readCheckpoint(semantic)).fetchedToken, isNull);
+    expect(
+      await store.readEligibleInbox(semantic, now: currentTime, limit: 1),
+      isEmpty,
+    );
+  });
+
   test(
     'propagates the protected outbound lease reference through models',
     () async {
@@ -459,6 +523,19 @@ void main() {
     final row = objectBox.box<CloudInboxChangeEntity>().getAll().single;
     expect(row.retryCount, 1);
     expect(row.nextEligibleAtMs, later.millisecondsSinceEpoch);
+    currentTime = later;
+    var eligible = await store.readEligibleInbox(
+      scope,
+      now: currentTime,
+      limit: 1,
+    );
+    expect(eligible.single.change.preflightFailure, isNull);
+    expect(eligible.single.lastFailure, CloudFailureCategory.network);
+
+    await reopen();
+    eligible = await store.readEligibleInbox(scope, now: currentTime, limit: 1);
+    expect(eligible.single.change.preflightFailure, isNull);
+    expect(eligible.single.lastFailure, CloudFailureCategory.network);
   });
 
   test('generation mismatch rolls back both the page and checkpoint', () async {

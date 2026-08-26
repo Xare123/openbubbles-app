@@ -402,6 +402,16 @@ class CloudSyncEngine {
           deferred: startupApply.counters.deferred,
           quarantined: startupApply.counters.quarantined,
           preflightQuarantined: startupApply.counters.preflightQuarantined,
+          preflightUnsupportedRecordType:
+              startupApply.counters.preflightUnsupportedRecordType,
+          preflightMalformedMetadata:
+              startupApply.counters.preflightMalformedMetadata,
+          preflightOversizedRecord:
+              startupApply.counters.preflightOversizedRecord,
+          preflightInvalidChangeShape:
+              startupApply.counters.preflightInvalidChangeShape,
+          preflightUnknown: startupApply.counters.preflightUnknown,
+          startupQuarantined: startupApply.counters.quarantined,
           tombstoneQuarantined: startupApply.counters.tombstoneQuarantined,
           semanticStageQuarantined:
               startupApply.counters.semanticStageQuarantined,
@@ -412,6 +422,16 @@ class CloudSyncEngine {
           deferred: startupApply.counters.deferred,
           quarantined: startupApply.counters.quarantined,
           preflightQuarantined: startupApply.counters.preflightQuarantined,
+          preflightUnsupportedRecordType:
+              startupApply.counters.preflightUnsupportedRecordType,
+          preflightMalformedMetadata:
+              startupApply.counters.preflightMalformedMetadata,
+          preflightOversizedRecord:
+              startupApply.counters.preflightOversizedRecord,
+          preflightInvalidChangeShape:
+              startupApply.counters.preflightInvalidChangeShape,
+          preflightUnknown: startupApply.counters.preflightUnknown,
+          startupQuarantined: startupApply.counters.quarantined,
           tombstoneQuarantined: startupApply.counters.tombstoneQuarantined,
           semanticStageQuarantined:
               startupApply.counters.semanticStageQuarantined,
@@ -454,6 +474,16 @@ class CloudSyncEngine {
           deferred: postFetchApply.counters.deferred,
           quarantined: postFetchApply.counters.quarantined,
           preflightQuarantined: postFetchApply.counters.preflightQuarantined,
+          preflightUnsupportedRecordType:
+              postFetchApply.counters.preflightUnsupportedRecordType,
+          preflightMalformedMetadata:
+              postFetchApply.counters.preflightMalformedMetadata,
+          preflightOversizedRecord:
+              postFetchApply.counters.preflightOversizedRecord,
+          preflightInvalidChangeShape:
+              postFetchApply.counters.preflightInvalidChangeShape,
+          preflightUnknown: postFetchApply.counters.preflightUnknown,
+          postFetchQuarantined: postFetchApply.counters.quarantined,
           tombstoneQuarantined: postFetchApply.counters.tombstoneQuarantined,
           semanticStageQuarantined:
               postFetchApply.counters.semanticStageQuarantined,
@@ -464,6 +494,16 @@ class CloudSyncEngine {
           deferred: postFetchApply.counters.deferred,
           quarantined: postFetchApply.counters.quarantined,
           preflightQuarantined: postFetchApply.counters.preflightQuarantined,
+          preflightUnsupportedRecordType:
+              postFetchApply.counters.preflightUnsupportedRecordType,
+          preflightMalformedMetadata:
+              postFetchApply.counters.preflightMalformedMetadata,
+          preflightOversizedRecord:
+              postFetchApply.counters.preflightOversizedRecord,
+          preflightInvalidChangeShape:
+              postFetchApply.counters.preflightInvalidChangeShape,
+          preflightUnknown: postFetchApply.counters.preflightUnknown,
+          postFetchQuarantined: postFetchApply.counters.quarantined,
           tombstoneQuarantined: postFetchApply.counters.tombstoneQuarantined,
           semanticStageQuarantined:
               postFetchApply.counters.semanticStageQuarantined,
@@ -1036,9 +1076,19 @@ class CloudSyncEngine {
   ) {
     final preflight = entry.change.preflightFailure != null;
     final tombstone = !preflight && entry.change.isTombstone;
+    final preflightCode = entry.change.effectivePreflightCode;
     return counters.add(
       quarantined: 1,
       preflightQuarantined: preflight ? 1 : 0,
+      preflightUnsupportedRecordType:
+          preflightCode == CloudPreflightCode.unsupportedRecordType ? 1 : 0,
+      preflightMalformedMetadata:
+          preflightCode == CloudPreflightCode.malformedMetadata ? 1 : 0,
+      preflightOversizedRecord:
+          preflightCode == CloudPreflightCode.oversizedRecord ? 1 : 0,
+      preflightInvalidChangeShape:
+          preflightCode == CloudPreflightCode.invalidChangeShape ? 1 : 0,
+      preflightUnknown: preflightCode == CloudPreflightCode.unknown ? 1 : 0,
       tombstoneQuarantined: tombstone ? 1 : 0,
       semanticStageQuarantined: !preflight && !tombstone ? 1 : 0,
     );

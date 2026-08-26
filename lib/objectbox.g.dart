@@ -1113,7 +1113,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(18, 6719772093493207335),
     name: 'CloudInboxChangeEntity',
-    lastPropertyId: const obx_int.IdUid(25, 4451177903685227588),
+    lastPropertyId: const obx_int.IdUid(27, 1526171191000868532),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -1271,6 +1271,18 @@ final _entities = <obx_int.ModelEntity>[
       obx_int.ModelProperty(
         id: const obx_int.IdUid(25, 4451177903685227588),
         name: 'changeIdHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(26, 8856514040804159956),
+        name: 'preflightCode',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(27, 1526171191000868532),
+        name: 'preflightCategory',
         type: 9,
         flags: 0,
       ),
@@ -1542,7 +1554,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(21, 4610418443336266937),
     name: 'CloudSyncCheckpointEntity',
-    lastPropertyId: const obx_int.IdUid(20, 469503483284611167),
+    lastPropertyId: const obx_int.IdUid(21, 5316195973293636516),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -1666,6 +1678,12 @@ final _entities = <obx_int.ModelEntity>[
         id: const obx_int.IdUid(20, 469503483284611167),
         name: 'mutationRevisionCounter',
         type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(21, 5316195973293636516),
+        name: 'persistenceLane',
+        type: 9,
         flags: 0,
       ),
     ],
@@ -4207,7 +4225,13 @@ obx_int.ModelDefinition getObjectBoxModel() {
             : fbb.writeString(object.protectedSystemFieldsRef!);
         final batchIdOffset = fbb.writeString(object.batchId);
         final changeIdHashOffset = fbb.writeString(object.changeIdHash);
-        fbb.startTable(26);
+        final preflightCodeOffset = object.preflightCode == null
+            ? null
+            : fbb.writeString(object.preflightCode!);
+        final preflightCategoryOffset = object.preflightCategory == null
+            ? null
+            : fbb.writeString(object.preflightCategory!);
+        fbb.startTable(28);
         fbb.addInt64(0, object.id);
         fbb.addOffset(1, changeKeyOffset);
         fbb.addOffset(2, accountFingerprintOffset);
@@ -4233,6 +4257,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
         fbb.addInt64(22, object.serverModifiedAtMs);
         fbb.addInt64(23, object.completedAtMs);
         fbb.addOffset(24, changeIdHashOffset);
+        fbb.addOffset(25, preflightCodeOffset);
+        fbb.addOffset(26, preflightCategoryOffset);
         fbb.finish(fbb.endTable());
         return object.id;
       },
@@ -4308,9 +4334,15 @@ obx_int.ModelDefinition getObjectBoxModel() {
           26,
           false,
         );
+        final preflightCategoryParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 56);
         final failureCategoryParam = const fb.StringReader(
           asciiOptimization: true,
         ).vTableGetNullable(buffer, rootOffset, 28);
+        final preflightCodeParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGetNullable(buffer, rootOffset, 54);
         final retryCountParam = const fb.Int64Reader().vTableGet(
           buffer,
           rootOffset,
@@ -4366,7 +4398,9 @@ obx_int.ModelDefinition getObjectBoxModel() {
           fetchSequence: fetchSequenceParam,
           status: statusParam,
           isTombstone: isTombstoneParam,
+          preflightCategory: preflightCategoryParam,
           failureCategory: failureCategoryParam,
+          preflightCode: preflightCodeParam,
           retryCount: retryCountParam,
           nextEligibleAtMs: nextEligibleAtMsParam,
           serverModifiedAtMs: serverModifiedAtMsParam,
@@ -4744,7 +4778,10 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final lastBatchIdOffset = object.lastBatchId == null
                 ? null
                 : fbb.writeString(object.lastBatchId!);
-            fbb.startTable(21);
+            final persistenceLaneOffset = object.persistenceLane == null
+                ? null
+                : fbb.writeString(object.persistenceLane!);
+            fbb.startTable(22);
             fbb.addInt64(0, object.id);
             fbb.addOffset(1, checkpointKeyOffset);
             fbb.addOffset(2, accountFingerprintOffset);
@@ -4765,6 +4802,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
             fbb.addInt64(17, object.generation);
             fbb.addOffset(18, lastBatchIdOffset);
             fbb.addInt64(19, object.mutationRevisionCounter);
+            fbb.addOffset(20, persistenceLaneOffset);
             fbb.finish(fbb.endTable());
             return object.id;
           },
@@ -4801,6 +4839,9 @@ obx_int.ModelDefinition getObjectBoxModel() {
               16,
               0,
             );
+            final persistenceLaneParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 44);
             final fetchedTokenCiphertextParam = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGetNullable(buffer, rootOffset, 18);
@@ -4869,6 +4910,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
               zone: zoneParam,
               streamKind: streamKindParam,
               schemaVersion: schemaVersionParam,
+              persistenceLane: persistenceLaneParam,
               fetchedTokenCiphertext: fetchedTokenCiphertextParam,
               generation: generationParam,
               lastBatchId: lastBatchIdParam,
@@ -6990,6 +7032,17 @@ class CloudInboxChangeEntity_ {
   static final changeIdHash = obx.QueryStringProperty<CloudInboxChangeEntity>(
     _entities[9].properties[24],
   );
+
+  /// See [CloudInboxChangeEntity.preflightCode].
+  static final preflightCode = obx.QueryStringProperty<CloudInboxChangeEntity>(
+    _entities[9].properties[25],
+  );
+
+  /// See [CloudInboxChangeEntity.preflightCategory].
+  static final preflightCategory =
+      obx.QueryStringProperty<CloudInboxChangeEntity>(
+        _entities[9].properties[26],
+      );
 }
 
 /// [CloudOutboxOperationEntity] entity fields to define ObjectBox queries.
@@ -7327,6 +7380,12 @@ class CloudSyncCheckpointEntity_ {
   static final mutationRevisionCounter =
       obx.QueryIntegerProperty<CloudSyncCheckpointEntity>(
         _entities[12].properties[19],
+      );
+
+  /// See [CloudSyncCheckpointEntity.persistenceLane].
+  static final persistenceLane =
+      obx.QueryStringProperty<CloudSyncCheckpointEntity>(
+        _entities[12].properties[20],
       );
 }
 

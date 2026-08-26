@@ -12,6 +12,13 @@ final class CloudSyncSemanticPullZoneReport {
     required this.deferred,
     required this.quarantined,
     required this.preflightQuarantined,
+    required this.preflightUnsupportedRecordType,
+    required this.preflightMalformedMetadata,
+    required this.preflightOversizedRecord,
+    required this.preflightInvalidChangeShape,
+    required this.preflightUnknown,
+    required this.startupQuarantined,
+    required this.postFetchQuarantined,
     required this.tombstoneQuarantined,
     required this.semanticStageQuarantined,
     required this.retried,
@@ -27,6 +34,13 @@ final class CloudSyncSemanticPullZoneReport {
   final int deferred;
   final int quarantined;
   final int preflightQuarantined;
+  final int preflightUnsupportedRecordType;
+  final int preflightMalformedMetadata;
+  final int preflightOversizedRecord;
+  final int preflightInvalidChangeShape;
+  final int preflightUnknown;
+  final int startupQuarantined;
+  final int postFetchQuarantined;
   final int tombstoneQuarantined;
   final int semanticStageQuarantined;
   final int retried;
@@ -42,6 +56,17 @@ final class CloudSyncSemanticPullZoneReport {
     'deferred': deferred,
     'quarantined': quarantined,
     'preflightQuarantined': preflightQuarantined,
+    'preflightReasons': <String, int>{
+      'unsupportedRecordType': preflightUnsupportedRecordType,
+      'malformedMetadata': preflightMalformedMetadata,
+      'oversizedRecord': preflightOversizedRecord,
+      'invalidChangeShape': preflightInvalidChangeShape,
+      'unknown': preflightUnknown,
+    },
+    'quarantinePhases': <String, int>{
+      'startup': startupQuarantined,
+      'postFetch': postFetchQuarantined,
+    },
     'tombstoneQuarantined': tombstoneQuarantined,
     'semanticStageQuarantined': semanticStageQuarantined,
     'retried': retried,

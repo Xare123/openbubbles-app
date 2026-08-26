@@ -8,6 +8,7 @@ const testAccountFingerprintB = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
 CloudSyncScope testScope({
   String account = testAccountFingerprintA,
   CloudSyncStreamKind streamKind = CloudSyncStreamKind.messages,
+  CloudSyncPersistenceLane persistenceLane = CloudSyncPersistenceLane.legacy,
 }) {
   return CloudSyncScope(
     accountFingerprint: account,
@@ -15,6 +16,7 @@ CloudSyncScope testScope({
     database: 'private',
     zone: 'message-zone',
     streamKind: streamKind,
+    persistenceLane: persistenceLane,
   );
 }
 
@@ -22,6 +24,7 @@ CloudFetchedChange testChange(
   int index, {
   bool tombstone = false,
   CloudFailureCategory? preflightFailure,
+  CloudPreflightCode? preflightCode,
 }) {
   final changeId = 'C${index.toString().padLeft(42, '0')}';
   return CloudFetchedChange(
@@ -35,6 +38,7 @@ CloudFetchedChange testChange(
     payloadSha256: tombstone ? null : 'payload-digest-$index',
     isTombstone: tombstone,
     preflightFailure: preflightFailure,
+    preflightCode: preflightCode,
   );
 }
 
