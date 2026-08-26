@@ -150,19 +150,7 @@ class CloudSyncShadowRuntime {
     var worst = results.first;
     var shadowJournalBlockReason = results.first.shadowJournalBlockReason;
     for (final result in results) {
-      counters = counters.add(
-        fetched: result.counters.fetched,
-        applied: result.counters.applied,
-        deferred: result.counters.deferred,
-        quarantined: result.counters.quarantined,
-        confirmed: result.counters.confirmed,
-        retried: result.counters.retried,
-        shadowJournalEntries: result.counters.shadowJournalEntries,
-        shadowJournalEstimatedBytes:
-            result.counters.shadowJournalEstimatedBytes,
-        shadowJournalRejectedEntries:
-            result.counters.shadowJournalRejectedEntries,
-      );
+      counters = counters.combine(result.counters);
       shadowJournalBlockReason ??= result.shadowJournalBlockReason;
       if (result.startedAt.isBefore(startedAt)) startedAt = result.startedAt;
       if (result.finishedAt.isAfter(finishedAt)) {

@@ -384,11 +384,11 @@ void main() {
       expect(result.counters.quarantined, 2);
       expect(result.counters.preflightQuarantined, 1);
       expect(result.counters.tombstoneQuarantined, 1);
-      expect(result.counters.semanticQuarantined, 0);
+      expect(result.counters.semanticStageQuarantined, 0);
       expect(
         result.counters.preflightQuarantined +
             result.counters.tombstoneQuarantined +
-            result.counters.semanticQuarantined,
+            result.counters.semanticStageQuarantined,
         result.counters.quarantined,
       );
     },
@@ -781,7 +781,7 @@ void main() {
       );
 
       expect(result.counters.quarantined, 1);
-      expect(result.counters.semanticQuarantined, 1);
+      expect(result.counters.semanticStageQuarantined, 1);
       expect(result.counters.preflightQuarantined, 0);
       expect(result.counters.tombstoneQuarantined, 0);
       expect(result.counters.applied, 1);
@@ -916,7 +916,7 @@ void main() {
       expect(result.counters.quarantined, 1);
       expect(result.counters.preflightQuarantined, 1);
       expect(result.counters.tombstoneQuarantined, 0);
-      expect(result.counters.semanticQuarantined, 0);
+      expect(result.counters.semanticStageQuarantined, 0);
       expect(applier.appliedSequences, isEmpty);
       final entries = await store.inboxEntries(scope);
       expect(entries.single.status, CloudInboxStatus.quarantined);
@@ -948,7 +948,7 @@ void main() {
       expect(result.counters.quarantined, 1);
       expect(result.counters.preflightQuarantined, 0);
       expect(result.counters.tombstoneQuarantined, 1);
-      expect(result.counters.semanticQuarantined, 0);
+      expect(result.counters.semanticStageQuarantined, 0);
     },
   );
 

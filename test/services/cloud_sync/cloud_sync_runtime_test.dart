@@ -10,6 +10,38 @@ import 'package:flutter_test/flutter_test.dart';
 import 'cloud_sync_test_helpers.dart';
 
 void main() {
+  test('counter combination preserves every diagnostic field', () {
+    const first = CloudSyncRunCounters(
+      fetched: 1,
+      applied: 2,
+      deferred: 3,
+      quarantined: 4,
+      preflightQuarantined: 1,
+      tombstoneQuarantined: 1,
+      semanticStageQuarantined: 2,
+      confirmed: 5,
+      retried: 6,
+      shadowJournalEntries: 7,
+      shadowJournalEstimatedBytes: 8,
+      shadowJournalRejectedEntries: 9,
+    );
+
+    final combined = first.combine(first);
+
+    expect(combined.fetched, 2);
+    expect(combined.applied, 4);
+    expect(combined.deferred, 6);
+    expect(combined.quarantined, 8);
+    expect(combined.preflightQuarantined, 2);
+    expect(combined.tombstoneQuarantined, 2);
+    expect(combined.semanticStageQuarantined, 4);
+    expect(combined.confirmed, 10);
+    expect(combined.retried, 12);
+    expect(combined.shadowJournalEntries, 14);
+    expect(combined.shadowJournalEstimatedBytes, 16);
+    expect(combined.shadowJournalRejectedEntries, 18);
+  });
+
   CloudSyncEngine engineFor({
     required String zone,
     required FakeCloudSyncTransport transport,

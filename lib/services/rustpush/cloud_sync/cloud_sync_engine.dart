@@ -403,7 +403,8 @@ class CloudSyncEngine {
           quarantined: startupApply.counters.quarantined,
           preflightQuarantined: startupApply.counters.preflightQuarantined,
           tombstoneQuarantined: startupApply.counters.tombstoneQuarantined,
-          semanticQuarantined: startupApply.counters.semanticQuarantined,
+          semanticStageQuarantined:
+              startupApply.counters.semanticStageQuarantined,
           retried: startupApply.counters.retried,
         );
         counters = counters.add(
@@ -412,7 +413,8 @@ class CloudSyncEngine {
           quarantined: startupApply.counters.quarantined,
           preflightQuarantined: startupApply.counters.preflightQuarantined,
           tombstoneQuarantined: startupApply.counters.tombstoneQuarantined,
-          semanticQuarantined: startupApply.counters.semanticQuarantined,
+          semanticStageQuarantined:
+              startupApply.counters.semanticStageQuarantined,
           retried: startupApply.counters.retried,
         );
         remainingInboxEntries -= startupApply.processedEntries;
@@ -453,7 +455,8 @@ class CloudSyncEngine {
           quarantined: postFetchApply.counters.quarantined,
           preflightQuarantined: postFetchApply.counters.preflightQuarantined,
           tombstoneQuarantined: postFetchApply.counters.tombstoneQuarantined,
-          semanticQuarantined: postFetchApply.counters.semanticQuarantined,
+          semanticStageQuarantined:
+              postFetchApply.counters.semanticStageQuarantined,
           retried: postFetchApply.counters.retried,
         );
         counters = counters.add(
@@ -462,7 +465,8 @@ class CloudSyncEngine {
           quarantined: postFetchApply.counters.quarantined,
           preflightQuarantined: postFetchApply.counters.preflightQuarantined,
           tombstoneQuarantined: postFetchApply.counters.tombstoneQuarantined,
-          semanticQuarantined: postFetchApply.counters.semanticQuarantined,
+          semanticStageQuarantined:
+              postFetchApply.counters.semanticStageQuarantined,
           retried: postFetchApply.counters.retried,
         );
         remainingInboxEntries -= postFetchApply.processedEntries;
@@ -1036,7 +1040,7 @@ class CloudSyncEngine {
       quarantined: 1,
       preflightQuarantined: preflight ? 1 : 0,
       tombstoneQuarantined: tombstone ? 1 : 0,
-      semanticQuarantined: !preflight && !tombstone ? 1 : 0,
+      semanticStageQuarantined: !preflight && !tombstone ? 1 : 0,
     );
   }
 

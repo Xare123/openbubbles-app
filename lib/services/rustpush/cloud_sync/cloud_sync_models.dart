@@ -1061,7 +1061,7 @@ class CloudSyncRunCounters {
     this.quarantined = 0,
     this.preflightQuarantined = 0,
     this.tombstoneQuarantined = 0,
-    this.semanticQuarantined = 0,
+    this.semanticStageQuarantined = 0,
     this.confirmed = 0,
     this.retried = 0,
     this.shadowJournalEntries = 0,
@@ -1075,10 +1075,12 @@ class CloudSyncRunCounters {
   final int quarantined;
 
   /// Content-free semantic-inbox quarantine stages. They partition inbox
-  /// quarantines; [quarantined] may also include unclassified outbox work.
+  /// quarantines; [semanticStageQuarantined] is the residual bucket for any
+  /// non-preflight, non-tombstone terminal result, and [quarantined] may also
+  /// include unclassified outbox work.
   final int preflightQuarantined;
   final int tombstoneQuarantined;
-  final int semanticQuarantined;
+  final int semanticStageQuarantined;
   final int confirmed;
   final int retried;
 
@@ -1095,7 +1097,7 @@ class CloudSyncRunCounters {
     int quarantined = 0,
     int preflightQuarantined = 0,
     int tombstoneQuarantined = 0,
-    int semanticQuarantined = 0,
+    int semanticStageQuarantined = 0,
     int confirmed = 0,
     int retried = 0,
     int shadowJournalEntries = 0,
@@ -1109,7 +1111,8 @@ class CloudSyncRunCounters {
       quarantined: this.quarantined + quarantined,
       preflightQuarantined: this.preflightQuarantined + preflightQuarantined,
       tombstoneQuarantined: this.tombstoneQuarantined + tombstoneQuarantined,
-      semanticQuarantined: this.semanticQuarantined + semanticQuarantined,
+      semanticStageQuarantined:
+          this.semanticStageQuarantined + semanticStageQuarantined,
       confirmed: this.confirmed + confirmed,
       retried: this.retried + retried,
       shadowJournalEntries: this.shadowJournalEntries + shadowJournalEntries,
@@ -1119,4 +1122,19 @@ class CloudSyncRunCounters {
           this.shadowJournalRejectedEntries + shadowJournalRejectedEntries,
     );
   }
+
+  CloudSyncRunCounters combine(CloudSyncRunCounters other) => add(
+    fetched: other.fetched,
+    applied: other.applied,
+    deferred: other.deferred,
+    quarantined: other.quarantined,
+    preflightQuarantined: other.preflightQuarantined,
+    tombstoneQuarantined: other.tombstoneQuarantined,
+    semanticStageQuarantined: other.semanticStageQuarantined,
+    confirmed: other.confirmed,
+    retried: other.retried,
+    shadowJournalEntries: other.shadowJournalEntries,
+    shadowJournalEstimatedBytes: other.shadowJournalEstimatedBytes,
+    shadowJournalRejectedEntries: other.shadowJournalRejectedEntries,
+  );
 }
