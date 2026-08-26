@@ -315,7 +315,7 @@ void main() {
     expect(temporaryDirectory.listSync(), isEmpty);
   });
 
-  test('rejects incomplete or impossible zone counters', () async {
+  test('rejects an incomplete zone set', () async {
     final writer = CloudSyncShadowReportFileWriter(
       privateReportDirectory: temporaryDirectory.path,
     );
@@ -352,6 +352,51 @@ void main() {
           (error) => error.safeCode,
           'safeCode',
           'cloud_sync_report_zone_count_invalid',
+        ),
+      ),
+    );
+  });
+
+  test('rejects impossible zone counters', () async {
+    final writer = CloudSyncShadowReportFileWriter(
+      privateReportDirectory: temporaryDirectory.path,
+    );
+    final validZones = report().zones;
+    final invalid = CloudSyncShadowReport(
+      runId: 'obcs2-shadow-invalid-counter',
+      correlationTag: 'ephemeral-tag',
+      timestampUtc: DateTime.utc(2026, 8, 2),
+      platform: 'android',
+      architecture: 'arm64',
+      buildCommit: 'test-build',
+      legacySyncEnabled: false,
+      pageLimit: 1,
+      changeLimit: 50,
+      tripwiresArmed: true,
+      outboxCountBefore: 0,
+      outboxCountAfter: 0,
+      zones: [
+        validZones.first,
+        const CloudSyncShadowZoneReport(
+          zoneLabel: 'messages',
+          status: CloudSyncRunStatus.completed,
+          fetched: 51,
+          journaled: 0,
+          rejected: 0,
+          estimatedBytes: 0,
+          elapsedMilliseconds: 1,
+        ),
+        ...validZones.skip(2),
+      ],
+    );
+
+    await expectLater(
+      writer.write(invalid),
+      throwsA(
+        isA<CloudSyncShadowReportFileException>().having(
+          (error) => error.safeCode,
+          'safeCode',
+          'cloud_sync_report_zone_counter_invalid',
         ),
       ),
     );

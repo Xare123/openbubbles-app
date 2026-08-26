@@ -116,6 +116,7 @@ void main() {
       'cloud_sync_protocol_evidence_directory_unsafe',
       'cloud_sync_protocol_evidence_owned_file_invalid',
       'cloud_sync_protocol_evidence_path_escape',
+      'cloud_sync_protocol_evidence_trigger_invalid',
       'cloud_sync_protocol_evidence_trusted_root_invalid',
       'cloud_sync_protocol_evidence_write_failed',
     };

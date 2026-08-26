@@ -53,6 +53,7 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_protocol_evidence_skip_invalid',
   'cloud_sync_protocol_evidence_stream_invalid',
   'cloud_sync_protocol_evidence_timestamp_invalid',
+  'cloud_sync_protocol_evidence_trigger_invalid',
   'cloud_sync_protocol_evidence_trusted_root_invalid',
   'cloud_sync_protocol_evidence_unknown_failure',
   'cloud_sync_protocol_evidence_write_failed',
