@@ -202,9 +202,9 @@ pub fn cloud_sync_fingerprint_account(
 
 /// Redacted identity binding for one active Cloud Messages client.
 ///
-/// The raw DSID is read and transformed entirely in Rust. Only two
-/// per-install HMAC values cross FRB: an account fingerprint and a
-/// process-local client-generation tag. Neither value is an Apple credential.
+/// The raw DSID is read and transformed entirely in Rust. Three derived values
+/// cross FRB: two per-install HMAC values and a per-install protected-store
+/// identity. None of them is an Apple credential.
 pub struct CloudSyncNativeAuthMetadata {
     pub native_session_id: String,
     pub account_fingerprint: String,
@@ -217,12 +217,13 @@ pub async fn cloud_sync_capture_auth_snapshot(
 ) -> anyhow::Result<CloudSyncNativeAuthMetadata> {
     let raw_account_identifier = cloud_messages_client.native_account_identifier().await;
     if raw_account_identifier.is_empty() {
-        return Err(anyhow!("Cloud Messages account identity is unavailable"));
+        return Err(anyhow!("cloud_sync_native_auth_account_unavailable"));
     }
     let account_fingerprint = crate::cloud_sync_protector::fingerprint_account(
         storage_directory.clone(),
         raw_account_identifier.clone(),
-    )?;
+    )
+    .map_err(|_| anyhow!("cloud_sync_native_auth_account_fingerprint_failed"))?;
     let client_generation_input = format!(
         "{raw_account_identifier}\0client:{:p}",
         Arc::as_ptr(cloud_messages_client)
@@ -230,9 +231,11 @@ pub async fn cloud_sync_capture_auth_snapshot(
     let native_session_id = crate::cloud_sync_protector::fingerprint_account(
         storage_directory.clone(),
         client_generation_input,
-    )?;
+    )
+    .map_err(|_| anyhow!("cloud_sync_native_auth_session_fingerprint_failed"))?;
     let protected_store_identity =
-        crate::cloud_sync_protector::protected_store_identity(storage_directory)?;
+        crate::cloud_sync_protector::protected_store_identity(storage_directory)
+            .map_err(|_| anyhow!("cloud_sync_native_auth_store_identity_failed"))?;
     Ok(CloudSyncNativeAuthMetadata {
         native_session_id,
         account_fingerprint,

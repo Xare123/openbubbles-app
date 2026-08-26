@@ -4,6 +4,8 @@ import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:bluebubbles/src/rust/frb_generated.dart' as frb_generated;
 import 'package:bluebubbles/src/rust/lib.dart' as frb_lib;
 import 'package:bluebubbles/database/database.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
+    as frb;
 
 import 'cloud_inbox_applier.dart';
 import 'cloud_protected_page_lease_lifecycle.dart';
@@ -68,26 +70,25 @@ final class FrbCloudSyncNativeAuthBinding
   }) async {
     if (cloudMessagesClient
         is! frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider) {
-      throw ArgumentError(
-        'cloudMessagesClient must be the generated FRB Cloud Messages client',
-      );
+      throw StateError('cloud_sync_native_auth_client_type_invalid');
     }
     if (privateStorageDirectory.isEmpty) {
-      throw ArgumentError.value(
-        privateStorageDirectory,
-        'privateStorageDirectory',
-        'must not be empty',
-      );
+      throw StateError('cloud_sync_native_auth_storage_invalid');
     }
 
     // Resolving the generated singleton is intentionally delayed until after
     // validation so malformed calls fail closed without loading native state.
     // ignore: invalid_use_of_internal_member
     final api = _apiOverride ?? frb_generated.RustLib.instance.api;
-    final metadata = await api.crateApiApiCloudSyncCaptureAuthSnapshot(
-      cloudMessagesClient: cloudMessagesClient,
-      storageDirectory: privateStorageDirectory,
-    );
+    late final frb_api.CloudSyncNativeAuthMetadata metadata;
+    try {
+      metadata = await api.crateApiApiCloudSyncCaptureAuthSnapshot(
+        cloudMessagesClient: cloudMessagesClient,
+        storageDirectory: privateStorageDirectory,
+      );
+    } catch (error) {
+      throw StateError(cloudSyncNativeAuthBridgeSafeCode(error));
+    }
     return _metadataFromFrb(metadata);
   }
 
@@ -108,6 +109,21 @@ final class FrbCloudSyncNativeAuthBinding
       protectedStoreIdentity: metadata.protectedStoreIdentity,
     );
   }
+}
+
+/// Classifies only fixed native auth tags. Arbitrary exception text is never
+/// returned or logged and collapses to one reviewed bridge failure code.
+String cloudSyncNativeAuthBridgeSafeCode(Object error) {
+  const reviewed = <String>{
+    'cloud_sync_native_auth_account_unavailable',
+    'cloud_sync_native_auth_account_fingerprint_failed',
+    'cloud_sync_native_auth_session_fingerprint_failed',
+    'cloud_sync_native_auth_store_identity_failed',
+  };
+  if (error is frb.AnyhowException && reviewed.contains(error.message)) {
+    return error.message;
+  }
+  return 'cloud_sync_native_auth_bridge_failed';
 }
 
 typedef ActiveCloudMessagesClientReader = Object? Function();

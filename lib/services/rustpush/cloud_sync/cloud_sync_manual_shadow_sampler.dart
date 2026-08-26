@@ -329,6 +329,10 @@ final class CloudSyncManualShadowSampler {
   Future<T> _runStage<T>(String safeCode, Future<T> Function() action) async {
     try {
       return await action();
+    } on StateError {
+      // The UI/log boundary still allowlists the message. Preserve reviewed
+      // subcodes while arbitrary StateError text remains redacted there.
+      rethrow;
     } catch (_) {
       // Collapse arbitrary dependency/native exception text into a reviewed,
       // content-free stage code. The original exception can contain account,

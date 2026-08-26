@@ -1,31 +1,36 @@
 import 'dart:async';
 
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
+    as frb;
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('construction and capture expose no raw account input in Dart', () async {
-    final client = Object();
-    final binding = _FakeNativeAuthBinding();
-    final provider = CloudSyncProductionAuthSnapshotProvider(
-      readActiveClient: () => client,
-      nativeAuthBinding: binding,
-      privateStorageDirectory: 'private-storage',
-    );
+  test(
+    'construction and capture expose no raw account input in Dart',
+    () async {
+      final client = Object();
+      final binding = _FakeNativeAuthBinding();
+      final provider = CloudSyncProductionAuthSnapshotProvider(
+        readActiveClient: () => client,
+        nativeAuthBinding: binding,
+        privateStorageDirectory: 'private-storage',
+      );
 
-    expect(binding.calls, 0);
-    final snapshot = await provider.capture();
+      expect(binding.calls, 0);
+      final snapshot = await provider.capture();
 
-    expect(binding.calls, 1);
-    expect(binding.clients.single, same(client));
-    expect(snapshot!.cloudMessagesClient, same(client));
-    expect(snapshot.accountFingerprint, _digest('F'));
-    expect(snapshot.nativeSessionId, _digest('N'));
-    expect(
-      snapshot.protectedStoreIdentity,
-      'obcs2.store.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-    );
-  });
+      expect(binding.calls, 1);
+      expect(binding.clients.single, same(client));
+      expect(snapshot!.cloudMessagesClient, same(client));
+      expect(snapshot.accountFingerprint, _digest('F'));
+      expect(snapshot.nativeSessionId, _digest('N'));
+      expect(
+        snapshot.protectedStoreIdentity,
+        'obcs2.store.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      );
+    },
+  );
 
   test('client replacement during native capture fails closed', () async {
     final first = Object();
@@ -59,18 +64,47 @@ void main() {
     expect(binding.calls, 0);
   });
 
-  test('production binding rejects a non-FRB client before native access', () async {
-    final binding = FrbCloudSyncNativeAuthBinding();
+  test(
+    'production binding rejects a non-FRB client before native access',
+    () async {
+      final binding = FrbCloudSyncNativeAuthBinding();
 
-    await expectLater(
-      binding.capture(cloudMessagesClient: Object(), privateStorageDirectory: 'private-storage'),
-      throwsA(
-        isA<ArgumentError>().having(
-          (error) => error.message,
-          'message',
-          contains('generated FRB Cloud Messages client'),
+      await expectLater(
+        binding.capture(
+          cloudMessagesClient: Object(),
+          privateStorageDirectory: 'private-storage',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'cloud_sync_native_auth_client_type_invalid',
+          ),
+        ),
+      );
+    },
+  );
+
+  test('native auth bridge classification exposes only reviewed tags', () {
+    expect(
+      cloudSyncNativeAuthBridgeSafeCode(
+        frb.AnyhowException('cloud_sync_native_auth_account_unavailable'),
+      ),
+      'cloud_sync_native_auth_account_unavailable',
+    );
+    expect(
+      cloudSyncNativeAuthBridgeSafeCode(
+        frb.AnyhowException(
+          'prefix cloud_sync_native_auth_account_unavailable suffix',
         ),
       ),
+      'cloud_sync_native_auth_bridge_failed',
+    );
+    expect(
+      cloudSyncNativeAuthBridgeSafeCode(
+        Exception('token=private-value account=user@example.com'),
+      ),
+      'cloud_sync_native_auth_bridge_failed',
     );
   });
 }
@@ -93,7 +127,8 @@ final class _FakeNativeAuthBinding implements CloudSyncNativeAuthBinding {
     return const CloudSyncNativeAuthMetadata(
       nativeSessionId: _nativeSession,
       accountFingerprint: _accountFingerprint,
-      protectedStoreIdentity: 'obcs2.store.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      protectedStoreIdentity:
+          'obcs2.store.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     );
   }
 }
