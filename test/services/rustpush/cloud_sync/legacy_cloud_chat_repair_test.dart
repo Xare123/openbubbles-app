@@ -2,6 +2,16 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/legacy_cloud_chat_repai
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('rejects owners whose normalized identities overlap', () {
+    final conflicted = LegacyCloudChatRepair.findConflictedOwners({
+      'record-a': {'iMessage;+;shared-chat', 'shared-chat'},
+      'record-b': {'shared-chat'},
+      'record-c': {'independent-chat'},
+    });
+
+    expect(conflicted, {'record-a', 'record-b'});
+  });
+
   test('selects the sole exact candidate over normalized alternatives', () {
     final selected = LegacyCloudChatRepair.selectUniqueCandidate(
       const ['normalized', 'exact'],

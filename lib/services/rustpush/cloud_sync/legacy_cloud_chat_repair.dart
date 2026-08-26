@@ -17,6 +17,24 @@ class LegacyCloudChatRepairPage<T> {
 class LegacyCloudChatRepair {
   static const int maxPages = 1000;
 
+  static Set<K> findConflictedOwners<K, V>(
+    Map<K, Iterable<V>> identitiesByOwner,
+  ) {
+    final identityOwners = <V, K>{};
+    final conflicted = <K>{};
+    for (final entry in identitiesByOwner.entries) {
+      for (final identity in entry.value) {
+        final previous = identityOwners[identity];
+        if (previous == null) {
+          identityOwners[identity] = entry.key;
+        } else if (previous != entry.key) {
+          conflicted.addAll([previous, entry.key]);
+        }
+      }
+    }
+    return conflicted;
+  }
+
   static T? selectUniqueCandidate<T>(
     Iterable<T> candidates, {
     required bool Function(T candidate) isExact,

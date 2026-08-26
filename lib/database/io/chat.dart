@@ -1113,10 +1113,20 @@ class Chat {
   /// or legacy group identifier after the current chat record has moved on to
   /// a newer group ID.
   static List<String> cloudIdentityAliases(api.CloudChat chat) {
+    return cloudIdentityWireAliases(chat)
+        .expand(cloudIdentityCandidates)
+        .toSet()
+        .toList(growable: false);
+  }
+
+  /// Returns the identities exactly as supplied by CloudKit. Persist only
+  /// these values; normalized candidates are lookup aids and can overlap
+  /// otherwise distinct chats.
+  static List<String> cloudIdentityWireAliases(api.CloudChat chat) {
     final aliases = <String>{};
     void add(String value) {
       if (value.trim().isEmpty) return;
-      aliases.addAll(cloudIdentityCandidates(value));
+      aliases.add(value.trim());
     }
 
     add(chat.groupId);
@@ -1128,6 +1138,14 @@ class Chat {
     }
     return aliases.toList(growable: false);
   }
+
+  static List<String> mergeCloudIdentityAliases(
+    Iterable<String> existing,
+    api.CloudChat chat,
+  ) => <String>{
+    ...existing,
+    ...cloudIdentityWireAliases(chat),
+  }.toList(growable: false);
 
   static String normalizedCompositeChatIdentifier(String value) {
     if (!value.startsWith('iMessage;')) return value;
@@ -1319,6 +1337,7 @@ class Chat {
     chatIdentifier = c.chatIdentifier;
     ckRecordId = record;
     cloudGuid = c.groupId;
+    guidRefs = mergeCloudIdentityAliases(guidRefs, c);
     ckSyncState = c.properties?.pv == (groupVersion ?? 1);
     if (c.properties?.pv == null || c.properties!.pv! <= (groupVersion ?? 1)) {
       Database.chats.put(this);

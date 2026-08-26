@@ -248,6 +248,42 @@ void main() {
     expect(aliases, containsAll(['iMessage;-;+15555550100', '+15555550100']));
   });
 
+  test('merges historical cloud aliases into persisted chat references', () {
+    final references = Chat.mergeCloudIdentityAliases(
+      const ['existing-reference'],
+      api.CloudChat(
+        style: 43,
+        isFiltered: 0,
+        successfulQuery: 1,
+        state: 3,
+        chatIdentifier: 'chat-identifier',
+        groupId: 'current-group',
+        serviceName: 'iMessage',
+        originalGroupId: 'original-group',
+        properties: api.CloudProp(
+          legacyGroupIdentifiers: const ['legacy-group'],
+        ),
+        participants: const [],
+        prop001: const api.CloudProp001(syndicationType: 0),
+        lastReadMessageTimestamp: 0,
+        lastAddressedHandle: 'user@example.com',
+        guid: 'iMessage;+;chat-identifier',
+      ),
+    );
+
+    expect(
+      references,
+      containsAll(<String>[
+        'existing-reference',
+        'current-group',
+        'original-group',
+        'legacy-group',
+        'chat-identifier',
+        'iMessage;+;chat-identifier',
+      ]),
+    );
+  });
+
   test('normalizes CloudKit participant URI schemes', () {
     expect(
       Chat.normalizeCloudParticipantAddress('tel:+15555550100'),

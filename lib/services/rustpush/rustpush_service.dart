@@ -3640,12 +3640,21 @@ class RustPushService extends GetxService {
     final referenceCandidates = references
         .expand(Chat.cloudIdentityCandidates)
         .toSet();
+    final distinctReferenceGroupCount = referenceGroups.map((group) {
+      final sorted = group.toList(growable: false)..sort();
+      return jsonEncode(sorted);
+    }).toSet().length;
     int unresolvedCount() => referenceGroups
         .where(
           (group) => Chat.findEligibleCloudMessageChatReferences(group) == null,
         )
         .length;
     final candidates = <String, api.CloudChat>{};
+    var repairPages = 0;
+    var scannedRecordEntries = 0;
+    var scannedTombstones = 0;
+    var scannedIMessageRecords = 0;
+    var scannedOtherServiceRecords = 0;
     await LegacyCloudChatRepair.recover<api.CloudChat>(
       // Keep scanning until the terminal page. Applying a partial historical
       // match before seeing every candidate can bind a message to the wrong
@@ -3659,6 +3668,9 @@ class RustPushService extends GetxService {
               ? null
               : Uint8List.fromList(continuationToken),
         );
+        repairPages++;
+        scannedRecordEntries += items.length;
+        scannedTombstones += items.values.where((item) => item == null).length;
         return LegacyCloudChatRepairPage<api.CloudChat>(
           continuationToken: nextToken,
           items: items,
@@ -3666,7 +3678,11 @@ class RustPushService extends GetxService {
         );
       },
       applyRecord: (recordId, cloudChat) async {
-        if (cloudChat.serviceName != 'iMessage') return;
+        if (cloudChat.serviceName != 'iMessage') {
+          scannedOtherServiceRecords++;
+          return;
+        }
+        scannedIMessageRecords++;
         final identities = _legacyCloudChatRawIdentities(recordId, cloudChat)
             .expand(Chat.cloudIdentityCandidates)
             .toSet();
@@ -3676,14 +3692,29 @@ class RustPushService extends GetxService {
     );
 
     final selectedRecords = <String, api.CloudChat>{};
+    var alreadyResolvedGroups = 0;
+    var uniqueCandidateGroups = 0;
+    var noCandidateGroups = 0;
+    var ambiguousExactGroups = 0;
+    var ambiguousNormalizedGroups = 0;
     for (final group in referenceGroups) {
-      if (Chat.findEligibleCloudMessageChatReferences(group) != null) continue;
+      if (Chat.findEligibleCloudMessageChatReferences(group) != null) {
+        alreadyResolvedGroups++;
+        continue;
+      }
       final groupCandidates = group.expand(Chat.cloudIdentityCandidates).toSet();
       final matches = candidates.entries.where((entry) {
         final identities = _legacyCloudChatRawIdentities(entry.key, entry.value)
             .expand(Chat.cloudIdentityCandidates);
         return identities.any(groupCandidates.contains);
-      });
+      }).toList(growable: false);
+      final exactMatches = matches.where((entry) {
+        final exactIdentities = _legacyCloudChatRawIdentities(
+          entry.key,
+          entry.value,
+        );
+        return exactIdentities.any(group.contains);
+      }).toList(growable: false);
       final selected = LegacyCloudChatRepair.selectUniqueCandidate(
         matches,
         isExact: (entry) {
@@ -3694,39 +3725,74 @@ class RustPushService extends GetxService {
           return exactIdentities.any(group.contains);
         },
       );
-      if (selected != null) selectedRecords[selected.key] = selected.value;
-    }
-
-    final identityOwners = <String, String>{};
-    final conflictedRecords = <String>{};
-    for (final entry in selectedRecords.entries) {
-      for (final identity in _legacyCloudChatRawIdentities(
-        entry.key,
-        entry.value,
-      )) {
-        final previous = identityOwners[identity];
-        if (previous == null) {
-          identityOwners[identity] = entry.key;
-        } else if (previous != entry.key) {
-          conflictedRecords.addAll([previous, entry.key]);
-        }
+      if (selected != null) {
+        uniqueCandidateGroups++;
+        selectedRecords[selected.key] = selected.value;
+      } else if (exactMatches.length > 1) {
+        ambiguousExactGroups++;
+      } else if (matches.isEmpty) {
+        noCandidateGroups++;
+      } else {
+        ambiguousNormalizedGroups++;
       }
     }
 
+    final conflictedRecords = LegacyCloudChatRepair.findConflictedOwners(
+      selectedRecords.map(
+        (recordId, cloudChat) => MapEntry(
+          recordId,
+          _legacyCloudChatRawIdentities(
+            recordId,
+            cloudChat,
+          ).expand(Chat.cloudIdentityCandidates).toSet(),
+        ),
+      ),
+    );
+
+    var appliedRecords = 0;
+    var skippedConflictedRecords = 0;
     for (final entry in selectedRecords.entries) {
-      if (conflictedRecords.contains(entry.key)) continue;
+      if (conflictedRecords.contains(entry.key)) {
+        skippedConflictedRecords++;
+        continue;
+      }
       final exactIdentities = _legacyCloudChatRawIdentities(
         entry.key,
         entry.value,
       );
+      final repairIdentities = exactIdentities
+          .expand(Chat.cloudIdentityCandidates)
+          .toSet();
       final chat = await Chat.findFromCloud(
         entry.value,
         allowParticipantFallback: false,
-        exactIdentityReferences: exactIdentities,
+        exactIdentityReferences: repairIdentities,
       );
       chat.applyFromCloud(entry.value, entry.key);
+      appliedRecords++;
     }
-    return unresolvedCount();
+    final remaining = unresolvedCount();
+    Logger.warn(
+      'Legacy CloudKit chat repair diagnostics: '
+      'message_groups=${referenceGroups.length} '
+      'distinct_reference_groups=$distinctReferenceGroupCount '
+      'reference_candidates=${referenceCandidates.length} '
+      'pages=$repairPages scanned_entries=$scannedRecordEntries '
+      'tombstones=$scannedTombstones '
+      'imessage_records=$scannedIMessageRecords '
+      'other_service_records=$scannedOtherServiceRecords '
+      'matching_records=${candidates.length} '
+      'already_resolved_groups=$alreadyResolvedGroups '
+      'unique_candidate_groups=$uniqueCandidateGroups '
+      'no_candidate_groups=$noCandidateGroups '
+      'ambiguous_exact_groups=$ambiguousExactGroups '
+      'ambiguous_normalized_groups=$ambiguousNormalizedGroups '
+      'selected_records=${selectedRecords.length} '
+      'conflicted_records=${conflictedRecords.length} '
+      'skipped_conflicted_records=$skippedConflictedRecords '
+      'applied_records=$appliedRecords unresolved_after=$remaining',
+    );
+    return remaining;
   }
 
   Set<String> _legacyCloudChatRawIdentities(
