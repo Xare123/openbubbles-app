@@ -72,6 +72,23 @@ class FlutterBackgroundIsolateEmbeddingContractTest {
     }
 
     @Test
+    fun `main engine ready handshake completes the Dart method call`() {
+        val handler = readSource(
+            "services/backend_ui_interop/MethodCallHandler.kt",
+        )
+        val branchStart = handler.text.indexOf("\"ready\" -> {")
+        val branchEnd = handler.text.indexOf("\n            else ->", branchStart)
+
+        assertTrue("MethodCallHandler.kt must define a ready branch", branchStart >= 0)
+        assertTrue("Unable to isolate the ready branch", branchEnd > branchStart)
+        val readyBranch = handler.text.substring(branchStart, branchEnd)
+        assertTrue(
+            "ready handler must complete the Dart method call",
+            readyBranch.contains("result.success(null)"),
+        )
+    }
+
+    @Test
     fun `background isolate sources contain no removed v1 embedding APIs`() {
         val removedApis = listOf(
             "io.flutter.view.Flutter" + "Main",
