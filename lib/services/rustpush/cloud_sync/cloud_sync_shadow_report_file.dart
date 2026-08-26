@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:path/path.dart' as path;
 import 'package:universal_io/io.dart';
 
+import 'cloud_shadow_journal_budget.dart';
 import 'cloud_sync_shadow_report.dart';
 
 /// Persists one allowlisted shadow report through a same-directory atomic
@@ -14,6 +15,7 @@ import 'cloud_sync_shadow_report.dart';
 final class CloudSyncShadowReportFileWriter {
   CloudSyncShadowReportFileWriter({
     required String privateReportDirectory,
+    required this.journalBudget,
     String? trustedStorageRoot,
     this.maximumRetainedReports = 20,
     DateTime Function()? now,
@@ -22,6 +24,7 @@ final class CloudSyncShadowReportFileWriter {
          trustedStorageRoot ?? path.dirname(privateReportDirectory),
        ).absolute,
        _now = now ?? DateTime.now {
+    journalBudget.validate();
     if (maximumRetainedReports < 1 || maximumRetainedReports > 100) {
       throw ArgumentError.value(
         maximumRetainedReports,
@@ -69,6 +72,7 @@ final class CloudSyncShadowReportFileWriter {
 
   final Directory _directory;
   final Directory _trustedStorageRoot;
+  final CloudShadowJournalBudget journalBudget;
   final DateTime Function() _now;
   final int maximumRetainedReports;
 
@@ -194,12 +198,13 @@ final class CloudSyncShadowReportFileWriter {
       if (zone.fetched < 0 ||
           zone.fetched > report.pageLimit * report.changeLimit ||
           zone.journaled < 0 ||
-          zone.journaled > report.pageLimit * report.changeLimit ||
+          zone.journaled > journalBudget.maximumEntriesPerScope ||
           zone.rejected < 0 ||
           zone.rejected > report.pageLimit * report.changeLimit) {
         return 'cloud_sync_report_zone_counter_invalid';
       }
-      if (zone.estimatedBytes < 0 || zone.estimatedBytes > 8 * 1024 * 1024) {
+      if (zone.estimatedBytes < 0 ||
+          zone.estimatedBytes > journalBudget.maximumEstimatedBytesPerScope) {
         return 'cloud_sync_report_zone_bytes_invalid';
       }
       if (zone.elapsedMilliseconds < 0 ||

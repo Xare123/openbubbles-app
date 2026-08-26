@@ -25,8 +25,12 @@ class CloudSyncShadowZoneReport {
   final String zoneLabel;
   final CloudSyncRunStatus status;
   final int fetched;
+
+  /// Current cumulative pending entries for this scope, not only this run.
   final int journaled;
   final int rejected;
+
+  /// Current cumulative estimated pending bytes for this scope.
   final int estimatedBytes;
   final int elapsedMilliseconds;
   final CloudFailureCategory? failureCategory;

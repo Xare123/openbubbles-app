@@ -27,6 +27,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_mutatio
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_outbound_canary_candidate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_controller.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_owner.dart';
@@ -7583,6 +7584,7 @@ class RustPushService extends GetxService {
           'reports',
         ),
         trustedStorageRoot: statePath,
+        journalBudget: CloudSyncManualShadowSampler.journalBudget,
       ),
     );
   }

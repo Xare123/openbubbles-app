@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_shadow_journal_budget.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_report.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_report_file.dart';
@@ -8,8 +9,10 @@ import 'package:universal_io/io.dart';
 
 void main() {
   late Directory temporaryDirectory;
+  late CloudShadowJournalBudget journalBudget;
 
   setUp(() {
+    journalBudget = CloudShadowJournalBudget();
     temporaryDirectory = Directory.systemTemp.createTempSync(
       'cloud-sync-shadow-report-',
     );
@@ -21,7 +24,12 @@ void main() {
     }
   });
 
-  CloudSyncShadowReport report({String runId = 'obcs2-shadow-20260802-1'}) {
+  CloudSyncShadowReport report({
+    String runId = 'obcs2-shadow-20260802-1',
+    int messageFetched = 2,
+    int messageJournaled = 2,
+    int messageEstimatedBytes = 2048,
+  }) {
     return CloudSyncShadowReport(
       runId: runId,
       correlationTag: 'ephemeral-tag',
@@ -35,8 +43,8 @@ void main() {
       tripwiresArmed: true,
       outboxCountBefore: 0,
       outboxCountAfter: 0,
-      zones: const [
-        CloudSyncShadowZoneReport(
+      zones: [
+        const CloudSyncShadowZoneReport(
           zoneLabel: 'chats',
           status: CloudSyncRunStatus.completed,
           fetched: 0,
@@ -48,13 +56,13 @@ void main() {
         CloudSyncShadowZoneReport(
           zoneLabel: 'messages',
           status: CloudSyncRunStatus.completed,
-          fetched: 2,
-          journaled: 2,
+          fetched: messageFetched,
+          journaled: messageJournaled,
           rejected: 0,
-          estimatedBytes: 2048,
+          estimatedBytes: messageEstimatedBytes,
           elapsedMilliseconds: 12,
         ),
-        CloudSyncShadowZoneReport(
+        const CloudSyncShadowZoneReport(
           zoneLabel: 'attachments',
           status: CloudSyncRunStatus.completed,
           fetched: 0,
@@ -63,7 +71,7 @@ void main() {
           estimatedBytes: 0,
           elapsedMilliseconds: 4,
         ),
-        CloudSyncShadowZoneReport(
+        const CloudSyncShadowZoneReport(
           zoneLabel: 'message updates',
           status: CloudSyncRunStatus.completed,
           fetched: 0,
@@ -72,7 +80,7 @@ void main() {
           estimatedBytes: 0,
           elapsedMilliseconds: 5,
         ),
-        CloudSyncShadowZoneReport(
+        const CloudSyncShadowZoneReport(
           zoneLabel: 'recoverable deletes',
           status: CloudSyncRunStatus.completed,
           fetched: 0,
@@ -81,7 +89,7 @@ void main() {
           estimatedBytes: 0,
           elapsedMilliseconds: 6,
         ),
-        CloudSyncShadowZoneReport(
+        const CloudSyncShadowZoneReport(
           zoneLabel: 'scheduled messages',
           status: CloudSyncRunStatus.completed,
           fetched: 0,
@@ -90,7 +98,7 @@ void main() {
           estimatedBytes: 0,
           elapsedMilliseconds: 7,
         ),
-        CloudSyncShadowZoneReport(
+        const CloudSyncShadowZoneReport(
           zoneLabel: 'chat1 manatee',
           status: CloudSyncRunStatus.completed,
           fetched: 0,
@@ -106,6 +114,7 @@ void main() {
   test('writes only the allowlisted redacted report contract', () async {
     final writer = CloudSyncShadowReportFileWriter(
       privateReportDirectory: temporaryDirectory.path,
+      journalBudget: journalBudget,
     );
 
     final file = await writer.write(report());
@@ -129,6 +138,7 @@ void main() {
   test('will not overwrite an existing report', () async {
     final writer = CloudSyncShadowReportFileWriter(
       privateReportDirectory: temporaryDirectory.path,
+      journalBudget: journalBudget,
     );
     await writer.write(report());
 
@@ -147,6 +157,7 @@ void main() {
   test('retains a bounded number of owned reports', () async {
     final writer = CloudSyncShadowReportFileWriter(
       privateReportDirectory: temporaryDirectory.path,
+      journalBudget: journalBudget,
       maximumRetainedReports: 2,
     );
     final first = await writer.write(report(runId: 'obcs2-shadow-1'));
@@ -172,6 +183,7 @@ void main() {
     )..writeAsStringSync('{"preserve":true}');
     final writer = CloudSyncShadowReportFileWriter(
       privateReportDirectory: temporaryDirectory.path,
+      journalBudget: journalBudget,
       maximumRetainedReports: 1,
     );
     await writer.write(report(runId: 'obcs2-shadow-1'));
@@ -206,6 +218,7 @@ void main() {
 
     final writer = CloudSyncShadowReportFileWriter(
       privateReportDirectory: temporaryDirectory.path,
+      journalBudget: journalBudget,
       now: () => now,
     );
     await writer.write(report(runId: 'obcs2-shadow-cleanup'));
@@ -235,6 +248,7 @@ void main() {
         final writer = CloudSyncShadowReportFileWriter(
           privateReportDirectory: linkedReports.path,
           trustedStorageRoot: temporaryDirectory.path,
+          journalBudget: journalBudget,
         );
 
         await expectLater(
@@ -258,6 +272,7 @@ void main() {
   test('rejects traversal and secret-bearing run identifiers', () async {
     final writer = CloudSyncShadowReportFileWriter(
       privateReportDirectory: temporaryDirectory.path,
+      journalBudget: journalBudget,
     );
 
     for (final invalid in [
@@ -285,6 +300,7 @@ void main() {
   test('rejects non-allowlisted report strings before writing', () async {
     final writer = CloudSyncShadowReportFileWriter(
       privateReportDirectory: temporaryDirectory.path,
+      journalBudget: journalBudget,
     );
     final unsafe = CloudSyncShadowReport(
       runId: 'obcs2-shadow-safe-name',
@@ -318,6 +334,7 @@ void main() {
   test('rejects an incomplete zone set', () async {
     final writer = CloudSyncShadowReportFileWriter(
       privateReportDirectory: temporaryDirectory.path,
+      journalBudget: journalBudget,
     );
     final invalid = CloudSyncShadowReport(
       runId: 'obcs2-shadow-invalid-counts',
@@ -360,6 +377,7 @@ void main() {
   test('rejects impossible zone counters', () async {
     final writer = CloudSyncShadowReportFileWriter(
       privateReportDirectory: temporaryDirectory.path,
+      journalBudget: journalBudget,
     );
     final validZones = report().zones;
     final invalid = CloudSyncShadowReport(
@@ -401,4 +419,89 @@ void main() {
       ),
     );
   });
+
+  test(
+    'accepts cumulative journal usage within the configured budget',
+    () async {
+      final budget = CloudShadowJournalBudget(
+        maximumEntriesPerScope: 512,
+        maximumEstimatedBytesPerScope: 8 * 1024 * 1024,
+        maximumPendingAge: const Duration(hours: 24),
+      );
+      final writer = CloudSyncShadowReportFileWriter(
+        privateReportDirectory: temporaryDirectory.path,
+        journalBudget: budget,
+      );
+
+      final file = await writer.write(
+        report(
+          runId: 'obcs2-shadow-cumulative-journal',
+          messageFetched: 50,
+          messageJournaled: 512,
+          messageEstimatedBytes: 8 * 1024 * 1024,
+        ),
+      );
+
+      expect(await file.exists(), isTrue);
+    },
+  );
+
+  test(
+    'rejects cumulative journal entries beyond the configured budget',
+    () async {
+      final budget = CloudShadowJournalBudget(maximumEntriesPerScope: 512);
+      final writer = CloudSyncShadowReportFileWriter(
+        privateReportDirectory: temporaryDirectory.path,
+        journalBudget: budget,
+      );
+
+      await expectLater(
+        writer.write(
+          report(
+            runId: 'obcs2-shadow-journal-over-budget',
+            messageFetched: 0,
+            messageJournaled: 513,
+          ),
+        ),
+        throwsA(
+          isA<CloudSyncShadowReportFileException>().having(
+            (error) => error.safeCode,
+            'safeCode',
+            'cloud_sync_report_zone_counter_invalid',
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
+    'rejects cumulative journal bytes beyond the configured budget',
+    () async {
+      final budget = CloudShadowJournalBudget(
+        maximumEstimatedBytesPerScope: 8 * 1024 * 1024,
+      );
+      final writer = CloudSyncShadowReportFileWriter(
+        privateReportDirectory: temporaryDirectory.path,
+        journalBudget: budget,
+      );
+
+      await expectLater(
+        writer.write(
+          report(
+            runId: 'obcs2-shadow-journal-bytes-over-budget',
+            messageFetched: 0,
+            messageJournaled: 0,
+            messageEstimatedBytes: 8 * 1024 * 1024 + 1,
+          ),
+        ),
+        throwsA(
+          isA<CloudSyncShadowReportFileException>().having(
+            (error) => error.safeCode,
+            'safeCode',
+            'cloud_sync_report_zone_bytes_invalid',
+          ),
+        ),
+      );
+    },
+  );
 }
