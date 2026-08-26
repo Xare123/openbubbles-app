@@ -15,6 +15,12 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use thiserror::Error;
 
+#[cfg(any(target_os = "android", target_os = "linux"))]
+use std::{
+    ffi::CString,
+    os::{fd::AsRawFd, unix::ffi::OsStrExt},
+};
+
 #[cfg(target_os = "android")]
 use keystore::{EncryptMode, KeyType, KeystoreAccessRules};
 
@@ -693,9 +699,9 @@ fn install_secret_file_atomically(
             .map_err(|_| CloudSyncProtectionError::SecretStorage)?;
         drop(file);
 
-        match fs::hard_link(&temporary, path) {
+        match publish_install_secret(&temporary, path) {
             Ok(()) => {
-                #[cfg(target_os = "android")]
+                #[cfg(any(target_os = "android", target_os = "linux"))]
                 File::open(parent)
                     .and_then(|directory| directory.sync_all())
                     .map_err(|_| CloudSyncProtectionError::SecretStorage)?;
@@ -708,6 +714,56 @@ fn install_secret_file_atomically(
 
     let _ = fs::remove_file(&temporary);
     result
+}
+
+#[cfg(any(target_os = "android", target_os = "linux"))]
+fn publish_install_secret(temporary: &Path, path: &Path) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+    if temporary.parent() != Some(parent) {
+        return Err(io::Error::from(io::ErrorKind::InvalidInput));
+    }
+    let directory = File::open(parent)?;
+    let temporary = CString::new(
+        temporary
+            .file_name()
+            .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?
+            .as_bytes(),
+    )
+    .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    let path = CString::new(
+        path.file_name()
+            .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?
+            .as_bytes(),
+    )
+    .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+
+    // Android app SELinux policy denies hard links inside app-private data.
+    // renameat2 with RENAME_NOREPLACE atomically publishes the fully synced
+    // temporary file while preserving the existing race-winner semantics.
+    // Use the syscall directly so this works on Android versions where Bionic
+    // does not export a renameat2 symbol even though the kernel supports it.
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            directory.as_raw_fd(),
+            temporary.as_ptr(),
+            directory.as_raw_fd(),
+            path.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(any(target_os = "android", target_os = "linux")))]
+fn publish_install_secret(temporary: &Path, path: &Path) -> io::Result<()> {
+    fs::hard_link(temporary, path)
 }
 
 #[cfg(test)]
@@ -844,6 +900,25 @@ mod tests {
             .map(|worker| worker.join().expect("worker should not panic"))
             .collect();
         assert!(secrets.windows(2).all(|pair| pair[0] == pair[1]));
+    }
+
+    #[test]
+    fn atomic_secret_publish_never_replaces_an_existing_winner() {
+        let directory = tempdir().expect("temporary directory");
+        let installed = directory.path().join(INSTALL_SECRET_FILE_NAME);
+        fs::write(&installed, b"winner").expect("write winner");
+
+        install_secret_file_atomically(&installed, b"candidate")
+            .expect("an existing destination must win");
+        assert_eq!(fs::read(&installed).expect("read winner"), b"winner");
+        let entries: Vec<_> = fs::read_dir(directory.path())
+            .expect("read directory")
+            .map(|entry| entry.expect("directory entry").file_name())
+            .collect();
+        assert_eq!(
+            entries,
+            vec![std::ffi::OsString::from(INSTALL_SECRET_FILE_NAME)]
+        );
     }
 
     #[test]
