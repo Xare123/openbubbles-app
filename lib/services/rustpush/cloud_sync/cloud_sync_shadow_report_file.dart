@@ -78,10 +78,9 @@ final class CloudSyncShadowReportFileWriter {
         'cloud_sync_report_run_id_invalid',
       );
     }
-    if (!_isValidReportContract(report)) {
-      throw const CloudSyncShadowReportFileException(
-        'cloud_sync_report_contract_invalid',
-      );
+    final contractFailure = _reportContractFailure(report);
+    if (contractFailure != null) {
+      throw CloudSyncShadowReportFileException(contractFailure);
     }
 
     try {
@@ -167,39 +166,50 @@ final class CloudSyncShadowReportFileWriter {
     }
   }
 
-  bool _isValidReportContract(CloudSyncShadowReport report) {
+  String? _reportContractFailure(CloudSyncShadowReport report) {
     if (!_safeCorrelationTag.hasMatch(report.correlationTag) ||
         !_supportedPlatforms.contains(report.platform) ||
         !_supportedArchitectures.contains(report.architecture) ||
         !_safeBuildIdentifier.hasMatch(report.buildCommit) ||
-        !report.timestampUtc.isUtc ||
-        report.legacySyncEnabled ||
+        !report.timestampUtc.isUtc) {
+      return 'cloud_sync_report_metadata_invalid';
+    }
+    if (report.legacySyncEnabled ||
         report.pageLimit != 1 ||
         report.changeLimit != 50 ||
         !report.tripwiresArmed ||
         report.outboxCountBefore != 0 ||
-        report.outboxCountAfter != 0 ||
-        report.zones.length != _supportedZoneLabels.length) {
-      return false;
+        report.outboxCountAfter != 0) {
+      return 'cloud_sync_report_read_only_invariant_invalid';
+    }
+    if (report.zones.length != _supportedZoneLabels.length) {
+      return 'cloud_sync_report_zone_count_invalid';
     }
     final labels = <String>{};
     for (final zone in report.zones) {
       if (!_supportedZoneLabels.contains(zone.zoneLabel) ||
-          !labels.add(zone.zoneLabel) ||
-          zone.fetched < 0 ||
+          !labels.add(zone.zoneLabel)) {
+        return 'cloud_sync_report_zone_label_invalid';
+      }
+      if (zone.fetched < 0 ||
           zone.fetched > report.pageLimit * report.changeLimit ||
           zone.journaled < 0 ||
           zone.journaled > report.pageLimit * report.changeLimit ||
           zone.rejected < 0 ||
-          zone.rejected > report.pageLimit * report.changeLimit ||
-          zone.estimatedBytes < 0 ||
-          zone.estimatedBytes > 8 * 1024 * 1024 ||
-          zone.elapsedMilliseconds < 0 ||
+          zone.rejected > report.pageLimit * report.changeLimit) {
+        return 'cloud_sync_report_zone_counter_invalid';
+      }
+      if (zone.estimatedBytes < 0 || zone.estimatedBytes > 8 * 1024 * 1024) {
+        return 'cloud_sync_report_zone_bytes_invalid';
+      }
+      if (zone.elapsedMilliseconds < 0 ||
           zone.elapsedMilliseconds > _maximumZoneElapsedMilliseconds) {
-        return false;
+        return 'cloud_sync_report_zone_elapsed_invalid';
       }
     }
-    return labels.length == _supportedZoneLabels.length;
+    return labels.length == _supportedZoneLabels.length
+        ? null
+        : 'cloud_sync_report_zone_label_invalid';
   }
 
   Future<String> _verifiedDirectoryPath() async {

@@ -7595,10 +7595,16 @@ class RustPushService extends GetxService {
           !ss.settings.cloudSyncV2EvidenceEnabled.value) {
         return const NoopCloudSyncObserver();
       }
-      writer ??= await CloudSyncProtocolEvidenceWriter.open(
-        privateDirectory: join(statePath, 'cloud-sync-v2', 'evidence'),
-        trustedRoot: statePath,
-      );
+      try {
+        writer ??= await CloudSyncProtocolEvidenceWriter.open(
+          privateDirectory: join(statePath, 'cloud-sync-v2', 'evidence'),
+          trustedRoot: statePath,
+        );
+      } on CloudSyncProtocolEvidenceException catch (error) {
+        // Preserve only the writer's reviewed, content-free diagnostic code.
+        // The sampler keeps arbitrary filesystem exception text redacted.
+        throw StateError(error.safeCode);
+      }
       return CloudSyncProtocolEvidenceObserver(
         writer: writer!,
         zoneLabel: scope.zone,

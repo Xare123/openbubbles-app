@@ -308,7 +308,7 @@ void main() {
         isA<CloudSyncShadowReportFileException>().having(
           (error) => error.safeCode,
           'safeCode',
-          'cloud_sync_report_contract_invalid',
+          'cloud_sync_report_metadata_invalid',
         ),
       ),
     );
@@ -351,7 +351,7 @@ void main() {
         isA<CloudSyncShadowReportFileException>().having(
           (error) => error.safeCode,
           'safeCode',
-          'cloud_sync_report_contract_invalid',
+          'cloud_sync_report_zone_count_invalid',
         ),
       ),
     );

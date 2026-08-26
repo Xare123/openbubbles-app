@@ -109,4 +109,18 @@ void main() {
       expect(cloudSyncV2SafeFailureCode(StateError(code)), code);
     }
   });
+
+  test('exposes reviewed protocol evidence codes', () {
+    const codes = <String>{
+      'cloud_sync_protocol_evidence_directory_unavailable',
+      'cloud_sync_protocol_evidence_directory_unsafe',
+      'cloud_sync_protocol_evidence_owned_file_invalid',
+      'cloud_sync_protocol_evidence_path_escape',
+      'cloud_sync_protocol_evidence_trusted_root_invalid',
+      'cloud_sync_protocol_evidence_write_failed',
+    };
+    for (final code in codes) {
+      expect(cloudSyncV2SafeFailureCode(StateError(code)), code);
+    }
+  });
 }
