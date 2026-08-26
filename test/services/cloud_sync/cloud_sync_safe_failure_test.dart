@@ -38,7 +38,9 @@ void main() {
   test('preserves a reviewed writer authority failure code', () {
     expect(
       cloudSyncV2SafeFailureCode(
-        const CloudKitWriterAuthorityFailure('cloudkit_writer_identity_changed'),
+        const CloudKitWriterAuthorityFailure(
+          'cloudkit_writer_identity_changed',
+        ),
       ),
       'cloudkit_writer_identity_changed',
     );
@@ -72,5 +74,23 @@ void main() {
       ),
       'cloud_sync_unknown_failure',
     );
+  });
+
+  test('exposes reviewed shadow stage codes', () {
+    const codes = <String>{
+      'cloud_sync_shadow_auth_capture_failed',
+      'cloud_sync_shadow_auth_revalidation_failed',
+      'cloud_sync_shadow_cleanup_failed',
+      'cloud_sync_shadow_observer_flush_failed',
+      'cloud_sync_shadow_observer_open_failed',
+      'cloud_sync_shadow_preflight_read_failed',
+      'cloud_sync_shadow_quiescence_failed',
+      'cloud_sync_shadow_store_open_failed',
+      'cloud_sync_shadow_synchronize_failed',
+      'cloud_sync_shadow_transport_open_failed',
+    };
+    for (final code in codes) {
+      expect(cloudSyncV2SafeFailureCode(StateError(code)), code);
+    }
   });
 }

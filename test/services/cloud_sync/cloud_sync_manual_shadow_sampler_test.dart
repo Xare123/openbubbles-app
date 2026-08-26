@@ -104,6 +104,34 @@ void main() {
     },
   );
 
+  test('native auth failures collapse to a content-free stage code', () async {
+    final sampler = CloudSyncManualShadowSampler(
+      readPreflight: () async => readyState(),
+      readAuthSnapshot: () async => throw Exception(
+        'token=private-value account=user@example.com',
+      ),
+      createStore: (scope) async => InMemoryCloudSyncStore(),
+      createRawTransport: (snapshot, scope) async => FakeCloudSyncTransport(),
+      operationFenceStore: InMemoryCloudSyncStore(),
+      privateStorageDirectory: privateStorageDirectory.path,
+      platform: 'android',
+      architecture: 'arm64',
+      buildCommit: 'test',
+      compileGateOverrideForTest: true,
+    );
+
+    await expectLater(
+      sampler.runConfirmed(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'cloud_sync_shadow_auth_capture_failed',
+        ),
+      ),
+    );
+  });
+
   test(
     'owns exact bounded read-only composition for all fixed zones',
     () async {

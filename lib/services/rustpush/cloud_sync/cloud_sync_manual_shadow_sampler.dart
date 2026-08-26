@@ -186,23 +186,43 @@ final class CloudSyncManualShadowSampler {
   }
 
   Future<CloudSyncShadowReport> _runConfirmedUnderInterlock() async {
-    final before = await _readPreflight();
+    final before = await _runStage(
+      'cloud_sync_shadow_preflight_read_failed',
+      _readPreflight,
+    );
     _validatePreflight(before);
-    final auth = await _readAuthSnapshot();
+    final auth = await _runStage(
+      'cloud_sync_shadow_auth_capture_failed',
+      _readAuthSnapshot,
+    );
     if (auth == null) throw StateError('account_unavailable');
 
     final reports = <CloudSyncShadowZoneReport>[];
     for (final zone in zones) {
-      await _requireSameAuth(auth);
+      await _runStage(
+        'cloud_sync_shadow_auth_revalidation_failed',
+        () => _requireSameAuth(auth),
+      );
       final scope = CloudSyncScope(
         accountFingerprint: auth.accountFingerprint,
         container: container,
         database: database,
         zone: zone,
       );
-      final store = ShadowOnlyCloudSyncStore(await _createStore(scope));
-      final observer = await _createObserver(scope);
-      final rawTransport = await _createRawTransport(auth, scope);
+      final store = ShadowOnlyCloudSyncStore(
+        await _runStage(
+          'cloud_sync_shadow_store_open_failed',
+          () => _createStore(scope),
+        ),
+      );
+      final observer = await _runStage(
+        'cloud_sync_shadow_observer_open_failed',
+        () => _createObserver(scope),
+      );
+      final rawTransport = await _runStage(
+        'cloud_sync_shadow_transport_open_failed',
+        () => _createRawTransport(auth, scope),
+      );
       CloudSyncShadowRuntime? runtime;
       try {
         final guardedTransport = AccountBoundShadowTransport(
@@ -230,8 +250,14 @@ final class CloudSyncManualShadowSampler {
           automaticTriggersEnabled: false,
           debounce: Duration.zero,
         );
-        final result = (await runtime.synchronizeNow()).single;
-        await _flushObserver(observer);
+        final result = await _runStage(
+          'cloud_sync_shadow_synchronize_failed',
+          () async => (await runtime!.synchronizeNow()).single,
+        );
+        await _runStage(
+          'cloud_sync_shadow_observer_flush_failed',
+          () => _flushObserver(observer),
+        );
         _requireZeroMutationCounters(result.counters);
         reports.add(
           CloudSyncShadowZoneReport(
@@ -253,15 +279,27 @@ final class CloudSyncManualShadowSampler {
         await _flushObserverAfterFailure(observer);
         rethrow;
       } finally {
-        await runtime?.dispose();
+        await _runStage(
+          'cloud_sync_shadow_cleanup_failed',
+          () async => runtime?.dispose(),
+        );
         if (rawTransport case CloudSyncNativeOperationQuiescence quiescence) {
-          await quiescence.quiesceNativeOperations();
+          await _runStage(
+            'cloud_sync_shadow_quiescence_failed',
+            quiescence.quiesceNativeOperations,
+          );
         }
       }
-      await _requireSameAuth(auth);
+      await _runStage(
+        'cloud_sync_shadow_auth_revalidation_failed',
+        () => _requireSameAuth(auth),
+      );
     }
 
-    final after = await _readPreflight();
+    final after = await _runStage(
+      'cloud_sync_shadow_preflight_read_failed',
+      _readPreflight,
+    );
     _validatePreflight(after);
     if (after.outboxCount != before.outboxCount) {
       throw StateError('cloud_sync_shadow_write_tripwire');
@@ -287,6 +325,17 @@ final class CloudSyncManualShadowSampler {
       _observerFactory == null
       ? const NoopCloudSyncObserver()
       : _observerFactory(scope);
+
+  Future<T> _runStage<T>(String safeCode, Future<T> Function() action) async {
+    try {
+      return await action();
+    } catch (_) {
+      // Collapse arbitrary dependency/native exception text into a reviewed,
+      // content-free stage code. The original exception can contain account,
+      // record, token, or server details and must never reach app logs.
+      throw StateError(safeCode);
+    }
+  }
 
   Future<void> _flushObserver(CloudSyncObserver observer) async {
     if (observer case FlushableCloudSyncObserver flushable) {
