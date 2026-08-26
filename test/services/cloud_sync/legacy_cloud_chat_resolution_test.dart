@@ -122,8 +122,10 @@ void main() {
 
     expect(exactMatches.map((chat) => chat.id), [exact.id]);
     expect(
-      Chat.findEligibleCloudMessageChat('iMessage;+;shared-identity', box: chats)
-          ?.id,
+      Chat.findEligibleCloudMessageChat(
+        'iMessage;+;shared-identity',
+        box: chats,
+      )?.id,
       exact.id,
     );
   });
@@ -312,6 +314,64 @@ void main() {
         'user@example.com',
       ]),
     );
+  });
+
+  test('resolves CloudKit group identities without UUID case sensitivity', () {
+    final upper = Chat(guid: 'local-upper')
+      ..cloudGuid = 'ABCDEF12-3456-7890-ABCD-EF1234567890';
+    upper.id = chats.put(upper);
+
+    expect(
+      Chat.findEligibleCloudMessageChat(
+        'abcdef12-3456-7890-abcd-ef1234567890',
+        box: chats,
+      )?.guid,
+      'local-upper',
+    );
+  });
+
+  test('case-insensitive CloudKit identity collisions fail closed', () {
+    final first = Chat(guid: 'local-first')..cloudGuid = 'ABCDEF';
+    first.id = chats.put(first);
+    final second = Chat(guid: 'local-second')..cloudGuid = 'AbCdEf';
+    second.id = chats.put(second);
+
+    expect(Chat.findEligibleCloudMessageChat('abcdef', box: chats), isNull);
+  });
+
+  test('exact CloudKit identity wins over a case-folded alternative', () {
+    final exact = Chat(guid: 'local-exact')..cloudGuid = 'ABCDEF';
+    exact.id = chats.put(exact);
+    final folded = Chat(guid: 'local-folded')..cloudGuid = 'abcdef';
+    folded.id = chats.put(folded);
+
+    expect(
+      Chat.findEligibleCloudMessageChat('ABCDEF', box: chats)?.guid,
+      'local-exact',
+    );
+  });
+
+  test('case folding does not broaden non-group chat identities', () {
+    final customGuid = Chat(guid: 'Custom-Guid');
+    customGuid.id = chats.put(customGuid);
+    final customIdentifier = Chat(guid: 'local-identifier')
+      ..chatIdentifier = 'Custom-Identifier';
+    customIdentifier.id = chats.put(customIdentifier);
+    final customAlias = Chat(guid: 'local-alias')
+      ..guidRefs = const ['Custom-Alias'];
+    customAlias.id = chats.put(customAlias);
+    final customRecord = Chat(guid: 'local-record')
+      ..ckRecordId = 'Custom-Record';
+    customRecord.id = chats.put(customRecord);
+
+    for (final reference in const [
+      'custom-guid',
+      'custom-identifier',
+      'custom-alias',
+      'custom-record',
+    ]) {
+      expect(Chat.findEligibleCloudMessageChat(reference, box: chats), isNull);
+    }
   });
 
   test('reference diagnostics expose only the identifier shape', () {

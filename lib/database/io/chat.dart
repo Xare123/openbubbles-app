@@ -1217,6 +1217,7 @@ class Chat {
     final normalizedMatches = findEligibleCloudMessageChatMatches(
       references,
       box: box,
+      caseInsensitiveCloudGuid: true,
     );
     return normalizedMatches.length == 1 ? normalizedMatches.single : null;
   }
@@ -1225,6 +1226,7 @@ class Chat {
     Iterable<String> references, {
     Box<Chat>? box,
     bool expandCandidates = true,
+    bool caseInsensitiveCloudGuid = false,
   }) {
     final chatsBox = box ?? Database.chats;
     final candidates = expandCandidates
@@ -1251,7 +1253,12 @@ class Chat {
 
     for (final candidate in candidates) {
       if (candidate.isEmpty) continue;
-      collect(Chat_.cloudGuid.equals(candidate));
+      collect(
+        Chat_.cloudGuid.equals(
+          candidate,
+          caseSensitive: !caseInsensitiveCloudGuid,
+        ),
+      );
       collect(Chat_.guid.equals(candidate));
       collect(Chat_.chatIdentifier.equals(candidate));
       collect(Chat_.guidRefs.containsElement(candidate));
