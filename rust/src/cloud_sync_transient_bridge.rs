@@ -377,6 +377,19 @@ fn gzip_field_requires_preflight(
         return Err(CloudTransientBridgeFailure::MalformedRecord);
     };
     if !field.required && presence.was_sent_as_empty_list(field.name) {
+        if value.bytes_value.is_some()
+            || value.signed_value.is_some()
+            || value.double_value.is_some()
+            || value.date_value.is_some()
+            || value.string_value.is_some()
+            || value.location_value.is_some()
+            || value.reference_value.is_some()
+            || value.asset_value.is_some()
+            || !value.list_values.is_empty()
+            || value.package_value.is_some()
+        {
+            return Err(CloudTransientBridgeFailure::MalformedRecord);
+        }
         return Ok(false);
     }
     if value.bytes_value.is_none() {
@@ -1714,15 +1727,28 @@ mod tests {
     fn optional_empty_list_skips_gzip_preflight_but_required_empty_list_is_rejected() {
         use rustpush::cloudkit_proto::record::field::value::Type;
 
-        let record = gzip_test_record("msgProto2", Type::EmptyList as i32, None);
+        let record = gzip_test_record("msgProto", Type::EmptyList as i32, None);
+        let presence = CloudRawRecordPresence::extract(&record).unwrap();
+
+        assert_eq!(
+            gzip_field_requires_preflight(&record, &presence, GzipFieldSpec::optional("msgProto")),
+            Ok(false)
+        );
+        assert_eq!(
+            gzip_field_requires_preflight(&record, &presence, GzipFieldSpec::required("msgProto")),
+            Err(CloudTransientBridgeFailure::MalformedRecord)
+        );
+    }
+
+    #[test]
+    fn optional_empty_list_with_payload_remains_malformed() {
+        use rustpush::cloudkit_proto::record::field::value::Type;
+
+        let record = gzip_test_record("msgProto2", Type::EmptyList as i32, Some(vec![1, 2, 3]));
         let presence = CloudRawRecordPresence::extract(&record).unwrap();
 
         assert_eq!(
             gzip_field_requires_preflight(&record, &presence, GzipFieldSpec::optional("msgProto2"),),
-            Ok(false)
-        );
-        assert_eq!(
-            gzip_field_requires_preflight(&record, &presence, GzipFieldSpec::required("msgProto2"),),
             Err(CloudTransientBridgeFailure::MalformedRecord)
         );
     }
@@ -1775,6 +1801,23 @@ mod tests {
         assert_eq!(
             gzip_field_requires_preflight(&record, &presence, GzipFieldSpec::optional("msgProto2"),),
             Ok(true)
+        );
+    }
+
+    #[test]
+    fn bounded_gzip_rejects_oversized_output() {
+        use flate2::{write::GzEncoder, Compression};
+        use std::io::Write;
+
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+        encoder
+            .write_all(&vec![0; MAX_DECOMPRESSED_FIELD_BYTES + 1])
+            .unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        assert_eq!(
+            bounded_gunzip(&compressed).unwrap_err(),
+            CloudTransientBridgeFailure::OversizedRecord
         );
     }
 
