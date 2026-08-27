@@ -16,6 +16,7 @@ use std::{
 };
 
 use flate2::read::GzDecoder;
+use log::warn;
 use prost::Message as _;
 use rustpush::{
     cloud_messages::{
@@ -73,6 +74,15 @@ pub(crate) enum CloudTransientBridgeFailure {
     PcsUnavailable,
     RetryableUpstream,
     DecoderFailure,
+}
+
+/// Emits only the fixed decoder stage, never record content or identifiers.
+/// `DecoderFailure` otherwise collapses unrelated native failures into one
+/// opaque result, which makes an authenticated canary unable to distinguish
+/// PCS setup from field decoding without exposing protected data.
+fn decoder_failure_at(stage: &'static str) -> CloudTransientBridgeFailure {
+    warn!("CloudKit V2 transient decoder stage={stage}");
+    CloudTransientBridgeFailure::DecoderFailure
 }
 
 pub(crate) enum CloudTransientDecodeOutcome {
@@ -315,7 +325,7 @@ fn encrypted_field_bytes(
         return Err(CloudTransientBridgeFailure::MalformedRecord);
     };
     let decrypted = catch_unwind(AssertUnwindSafe(|| key.decrypt_data(ciphertext, name)))
-        .map_err(|_| CloudTransientBridgeFailure::DecoderFailure)?;
+        .map_err(|_| decoder_failure_at("field_decrypt_panic"))?;
     if decrypted.len() > MAX_DECOMPRESSED_FIELD_BYTES {
         return Err(CloudTransientBridgeFailure::OversizedRecord);
     }
@@ -364,7 +374,7 @@ fn typed_record<T: CloudKitRecord>(
     catch_unwind(AssertUnwindSafe(|| {
         T::from_record_encrypted(&record.record_field, Some(key))
     }))
-    .map_err(|_| CloudTransientBridgeFailure::DecoderFailure)
+    .map_err(|_| decoder_failure_at("typed_record_decode_panic"))
 }
 
 fn map_native_failure(
@@ -396,7 +406,7 @@ fn map_native_failure(
                 CloudTransientBridgeFailure::MalformedRecord
             }
             CloudNativeFailureCategory::LocalStorage | CloudNativeFailureCategory::Unknown => {
-                CloudTransientBridgeFailure::DecoderFailure
+                decoder_failure_at("native_failure_mapping")
             }
         },
     }
@@ -417,6 +427,15 @@ fn map_push_failure(error: &PushError) -> CloudTransientBridgeFailure {
         PushError::DoNotRetry(inner) => map_push_failure(inner),
         PushError::BatchError(inner) => map_push_failure(inner),
         _ => CloudTransientBridgeFailure::DecoderFailure,
+    }
+}
+
+fn map_push_failure_at(error: &PushError, stage: &'static str) -> CloudTransientBridgeFailure {
+    let failure = map_push_failure(error);
+    if failure == CloudTransientBridgeFailure::DecoderFailure {
+        decoder_failure_at(stage)
+    } else {
+        failure
     }
 }
 
@@ -742,9 +761,9 @@ pub(crate) async fn cloud_sync_decode_transient_record(
         match cloud_sync_protector::protected_store_identity(storage_directory.clone()) {
             Ok(value) => value,
             Err(_) => {
-                return CloudTransientDecodeOutcome::Failure(
-                    CloudTransientBridgeFailure::DecoderFailure,
-                )
+                return CloudTransientDecodeOutcome::Failure(decoder_failure_at(
+                    "protected_store_identity",
+                ))
             }
         };
     if actual_store_identity != request.expected_protected_store_identity {
@@ -764,9 +783,7 @@ pub(crate) async fn cloud_sync_decode_transient_record(
     ) {
         Ok(value) => value,
         Err(_) => {
-            return CloudTransientDecodeOutcome::Failure(
-                CloudTransientBridgeFailure::DecoderFailure,
-            )
+            return CloudTransientDecodeOutcome::Failure(decoder_failure_at("account_fingerprint"))
         }
     };
     if actual_account_fingerprint != request.expected_account_fingerprint {
@@ -786,9 +803,9 @@ pub(crate) async fn cloud_sync_decode_transient_record(
     let hasher = match cloud_sync_protector::semantic_identifier_hasher(storage_directory) {
         Ok(value) => value,
         Err(_) => {
-            return CloudTransientDecodeOutcome::Failure(
-                CloudTransientBridgeFailure::DecoderFailure,
-            )
+            return CloudTransientDecodeOutcome::Failure(decoder_failure_at(
+                "semantic_identifier_hasher",
+            ))
         }
     };
     let envelope = match cloud_sync_unprotect_raw_envelope(
@@ -867,7 +884,10 @@ pub(crate) async fn cloud_sync_decode_transient_record(
     let container = match cloud_messages_client.get_container().await {
         Ok(value) => value,
         Err(error) => {
-            return CloudTransientDecodeOutcome::Failure(map_push_failure(&error));
+            return CloudTransientDecodeOutcome::Failure(map_push_failure_at(
+                &error,
+                "container_initialization",
+            ));
         }
     };
     let zone = container.private_zone(request.stream.zone().to_owned());
@@ -877,19 +897,23 @@ pub(crate) async fn cloud_sync_decode_transient_record(
     {
         Ok(value) => value,
         Err(error) => {
-            return CloudTransientDecodeOutcome::Failure(map_push_failure(&error));
+            return CloudTransientDecodeOutcome::Failure(map_push_failure_at(
+                &error,
+                "zone_encryption_config",
+            ));
         }
     };
     let record_key =
         match catch_unwind(AssertUnwindSafe(|| pcs_keys_for_record(&record, &zone_key))) {
             Ok(Ok(value)) => value,
             Ok(Err(error)) => {
-                return CloudTransientDecodeOutcome::Failure(map_push_failure(&error));
+                return CloudTransientDecodeOutcome::Failure(map_push_failure_at(
+                    &error,
+                    "record_key_lookup",
+                ));
             }
             Err(_) => {
-                return CloudTransientDecodeOutcome::Failure(
-                    CloudTransientBridgeFailure::DecoderFailure,
-                )
+                return CloudTransientDecodeOutcome::Failure(decoder_failure_at("record_key_panic"))
             }
         };
 
@@ -963,9 +987,7 @@ pub(crate) async fn cloud_sync_decode_transient_record(
         | CloudNativeStream::RecoverableMessageDelete
         | CloudNativeStream::ScheduledMessage
         | CloudNativeStream::Chat1 => {
-            return CloudTransientDecodeOutcome::Failure(
-                CloudTransientBridgeFailure::DecoderFailure,
-            );
+            return CloudTransientDecodeOutcome::Failure(decoder_failure_at("unsupported_stream"));
         }
     };
     normalize_conversion(
