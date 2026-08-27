@@ -332,6 +332,59 @@ fn encrypted_field_bytes(
     Ok(Some(decrypted))
 }
 
+#[derive(Clone, Copy)]
+struct GzipFieldSpec {
+    name: &'static str,
+    required: bool,
+}
+
+impl GzipFieldSpec {
+    const fn required(name: &'static str) -> Self {
+        Self {
+            name,
+            required: true,
+        }
+    }
+
+    const fn optional(name: &'static str) -> Self {
+        Self {
+            name,
+            required: false,
+        }
+    }
+}
+
+/// Returns whether a gzip field needs decrypt/decompress preflight.
+///
+/// Apple encodes some absent optional encrypted protobuf fields as the
+/// `EMPTY_LIST` wire sentinel. The typed CloudKit decoder already maps that
+/// sentinel to `None`, but attempting to decrypt it first treated the missing
+/// ciphertext as a malformed record. Required fields remain strict, and every
+/// other present non-bytes shape remains malformed.
+fn gzip_field_requires_preflight(
+    record: &Record,
+    presence: &CloudRawRecordPresence,
+    field: GzipFieldSpec,
+) -> Result<bool, CloudTransientBridgeFailure> {
+    let Some(candidate) = record
+        .record_field
+        .iter()
+        .find(|candidate| field_name(candidate) == Some(field.name))
+    else {
+        return Ok(false);
+    };
+    let Some(value) = candidate.value.as_ref() else {
+        return Err(CloudTransientBridgeFailure::MalformedRecord);
+    };
+    if !field.required && presence.was_sent_as_empty_list(field.name) {
+        return Ok(false);
+    }
+    if value.bytes_value.is_none() {
+        return Err(CloudTransientBridgeFailure::MalformedRecord);
+    }
+    Ok(true)
+}
+
 fn bounded_gunzip(value: &[u8]) -> Result<Vec<u8>, CloudTransientBridgeFailure> {
     let mut decoder = GzDecoder::new(value);
     let mut output = Vec::new();
@@ -349,11 +402,15 @@ fn bounded_gunzip(value: &[u8]) -> Result<Vec<u8>, CloudTransientBridgeFailure> 
 fn preflight_gzip_fields(
     record: &Record,
     key: &PCSEncryptor,
-    fields: &[&str],
+    presence: &CloudRawRecordPresence,
+    fields: &[GzipFieldSpec],
 ) -> Result<(), CloudTransientBridgeFailure> {
     let mut aggregate = 0usize;
     for field in fields {
-        let Some(compressed) = encrypted_field_bytes(record, key, field)? else {
+        if !gzip_field_requires_preflight(record, presence, *field)? {
+            continue;
+        }
+        let Some(compressed) = encrypted_field_bytes(record, key, field.name)? else {
             continue;
         };
         let decompressed = bounded_gunzip(&compressed)?;
@@ -919,7 +976,13 @@ pub(crate) async fn cloud_sync_decode_transient_record(
 
     let converted = match request.stream {
         CloudNativeStream::Chats => {
-            if let Err(failure) = preflight_gzip_fields(&record, &record_key, &["proto001"]) {
+            if let Err(failure) = preflight_gzip_fields(
+                &record,
+                &record_key,
+                &presence,
+                &[GzipFieldSpec::optional("proto001")],
+            ) {
+                warn!("CloudKit V2 transient decoder stage=chat_gzip_preflight");
                 return CloudTransientDecodeOutcome::Failure(failure);
             }
             match encrypted_field_bytes(&record, &record_key, "prop") {
@@ -940,14 +1003,35 @@ pub(crate) async fn cloud_sync_decode_transient_record(
                 Ok(value) => value,
                 Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
             };
+            if chat.service_name != "iMessage" {
+                let service_class = if chat.service_name.is_empty() {
+                    "empty"
+                } else if chat.service_name.eq_ignore_ascii_case("iMessage") {
+                    "imessage_case_variant"
+                } else if chat.service_name == "SMS" {
+                    "sms"
+                } else if chat.service_name == "FaceTime" {
+                    "facetime"
+                } else {
+                    "other"
+                };
+                warn!("CloudKit V2 transient chat service_class={service_class}");
+            }
             convert_chat(&context, &presence, &chat)
         }
         CloudNativeStream::Messages => {
             if let Err(failure) = preflight_gzip_fields(
                 &record,
                 &record_key,
-                &["msgProto", "msgProto2", "msgProto3", "msgProto4"],
+                &presence,
+                &[
+                    GzipFieldSpec::required("msgProto"),
+                    GzipFieldSpec::optional("msgProto2"),
+                    GzipFieldSpec::optional("msgProto3"),
+                    GzipFieldSpec::optional("msgProto4"),
+                ],
             ) {
+                warn!("CloudKit V2 transient decoder stage=message_gzip_preflight");
                 return CloudTransientDecodeOutcome::Failure(failure);
             }
             let message = match typed_record::<CloudMessage>(&record, &record_key) {
@@ -1605,6 +1689,92 @@ mod tests {
         assert_eq!(
             bounded_gunzip(b"not-gzip").unwrap_err(),
             CloudTransientBridgeFailure::MalformedRecord
+        );
+    }
+
+    fn gzip_test_record(name: &str, field_type: i32, bytes_value: Option<Vec<u8>>) -> Record {
+        use rustpush::cloudkit_proto::record::field;
+
+        Record {
+            record_field: vec![Field {
+                identifier: Some(field::Identifier {
+                    name: Some(name.to_owned()),
+                }),
+                value: Some(field::Value {
+                    r#type: Some(field_type),
+                    bytes_value,
+                    ..Default::default()
+                }),
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn optional_empty_list_skips_gzip_preflight_but_required_empty_list_is_rejected() {
+        use rustpush::cloudkit_proto::record::field::value::Type;
+
+        let record = gzip_test_record("msgProto2", Type::EmptyList as i32, None);
+        let presence = CloudRawRecordPresence::extract(&record).unwrap();
+
+        assert_eq!(
+            gzip_field_requires_preflight(&record, &presence, GzipFieldSpec::optional("msgProto2"),),
+            Ok(false)
+        );
+        assert_eq!(
+            gzip_field_requires_preflight(&record, &presence, GzipFieldSpec::required("msgProto2"),),
+            Err(CloudTransientBridgeFailure::MalformedRecord)
+        );
+    }
+
+    #[test]
+    fn optional_non_empty_list_without_ciphertext_remains_malformed() {
+        use rustpush::cloudkit_proto::record::field::value::Type;
+
+        let record = gzip_test_record("msgProto2", Type::EncryptedBytesType as i32, None);
+        let presence = CloudRawRecordPresence::extract(&record).unwrap();
+
+        assert_eq!(
+            gzip_field_requires_preflight(&record, &presence, GzipFieldSpec::optional("msgProto2"),),
+            Err(CloudTransientBridgeFailure::MalformedRecord)
+        );
+    }
+
+    #[test]
+    fn optional_present_without_value_remains_malformed() {
+        use rustpush::cloudkit_proto::record::field;
+
+        let record = Record {
+            record_field: vec![Field {
+                identifier: Some(field::Identifier {
+                    name: Some("msgProto2".to_owned()),
+                }),
+                value: None,
+            }],
+            ..Default::default()
+        };
+        let presence = CloudRawRecordPresence::extract(&record).unwrap();
+
+        assert_eq!(
+            gzip_field_requires_preflight(&record, &presence, GzipFieldSpec::optional("msgProto2"),),
+            Err(CloudTransientBridgeFailure::MalformedRecord)
+        );
+    }
+
+    #[test]
+    fn optional_ciphertext_still_requires_bounded_gzip_preflight() {
+        use rustpush::cloudkit_proto::record::field::value::Type;
+
+        let record = gzip_test_record(
+            "msgProto2",
+            Type::EncryptedBytesType as i32,
+            Some(vec![1, 2, 3]),
+        );
+        let presence = CloudRawRecordPresence::extract(&record).unwrap();
+
+        assert_eq!(
+            gzip_field_requires_preflight(&record, &presence, GzipFieldSpec::optional("msgProto2"),),
+            Ok(true)
         );
     }
 
