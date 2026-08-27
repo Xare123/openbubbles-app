@@ -1304,7 +1304,7 @@
     },
     {
       "id": "21:4610418443336266937",
-      "lastPropertyId": "21:5316195973293636516",
+      "lastPropertyId": "23:8346271905819443021",
       "name": "CloudSyncCheckpointEntity",
       "properties": [
         {
@@ -1417,6 +1417,16 @@
         {
           "id": "21:5316195973293636516",
           "name": "persistenceLane",
+          "type": 9
+        },
+        {
+          "id": "22:7163548097042261884",
+          "name": "pendingFetchedTokenCiphertext",
+          "type": 9
+        },
+        {
+          "id": "23:8346271905819443021",
+          "name": "pendingBatchId",
           "type": 9
         }
       ],

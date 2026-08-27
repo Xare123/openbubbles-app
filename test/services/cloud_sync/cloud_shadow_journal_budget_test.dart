@@ -41,28 +41,6 @@ void main() {
     );
   }
 
-  Future<int> journalGeneral(
-    CloudFetchBatch value, {
-    required DateTime now,
-  }) async {
-    final scoped = value.scope;
-    final fence = fences[scoped.storageKey] ??= (await store
-        .tryAcquireCoordinatorLease(
-          scoped,
-          ownerId: 'budget-test-${scoped.accountFingerprint}',
-          now: now,
-          leaseDuration: const Duration(days: 1),
-        ))!;
-    final checkpoint = await store.readCheckpoint(scoped);
-    return store.journalFetchedBatch(
-      value,
-      now: now,
-      leaseFence: fence,
-      expectedGeneration: checkpoint.generation,
-      expectedFetchedToken: checkpoint.fetchedToken,
-    );
-  }
-
   CloudFetchBatch batch({
     required String id,
     required String? token,
@@ -177,12 +155,13 @@ void main() {
   });
 
   test('age boundary is deterministic and never prunes pending data', () async {
-    await journalGeneral(
-      batch(id: 'legacy-page', token: 'legacy-token', changes: [testChange(1)]),
-      now: testEpoch,
-    );
     final budget = CloudShadowJournalBudget(
       maximumPendingAge: const Duration(days: 1),
+    );
+    await journalShadow(
+      batch(id: 'legacy-page', token: 'legacy-token', changes: [testChange(1)]),
+      now: testEpoch,
+      budget: budget,
     );
     final usage = await store.readShadowJournalUsage(scope, budget: budget);
 

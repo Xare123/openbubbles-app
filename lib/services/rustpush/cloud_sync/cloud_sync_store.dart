@@ -20,10 +20,12 @@ abstract interface class CloudSyncStore {
   /// Returns the account-scoped checkpoint, creating an empty one if needed.
   Future<CloudSyncCheckpoint> readCheckpoint(CloudSyncScope scope);
 
-  /// Atomically inserts unseen inbox changes, allocates their monotonically
-  /// increasing sequence numbers, and advances the fetched token.
+  /// Atomically inserts unseen inbox changes and allocates their monotonically
+  /// increasing sequence numbers. For a non-empty semantic page, the new
+  /// continuation token is held as pending until all rows in that page are
+  /// terminal; only then may it become the committed fetched token.
   ///
-  /// A crash must commit both the journal and token, or neither.
+  /// A crash must commit the journal and its pending-token state together.
   Future<int> journalFetchedBatch(
     CloudFetchBatch batch, {
     required DateTime now,

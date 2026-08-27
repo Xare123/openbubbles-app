@@ -13,6 +13,7 @@ class InMemoryCloudSyncStore
     implements CloudSyncStore, CloudSyncUnknownOutcomeLeasingStore {
   final Lock _lock = Lock();
   final Map<String, CloudSyncCheckpoint> _checkpoints = {};
+  final Map<String, String?> _pendingFetchedTokens = {};
   final Map<String, SplayTreeMap<int, CloudInboxEntry>> _inbox = {};
   final Map<String, Set<String>> _seenChangeIds = {};
   final Map<String, Map<String, CloudOutboxOperation>> _outbox = {};
@@ -40,7 +41,12 @@ class InMemoryCloudSyncStore
 
   @override
   Future<CloudSyncCheckpoint> readCheckpoint(CloudSyncScope scope) {
-    return _lock.synchronized(() async => _checkpoint(scope));
+    return _lock.synchronized(() async {
+      final checkpoint = _checkpoint(scope);
+      return checkpoint.copyWith(
+        hasUnmarkedPendingInbox: _hasUnmarkedPendingInbox(scope, checkpoint),
+      );
+    });
   }
 
   @override
@@ -144,7 +150,11 @@ class InMemoryCloudSyncStore
         );
       }
 
-      final inserted = _journalFetchedBatchLocked(batch, now: now);
+      final inserted = _journalFetchedBatchLocked(
+        batch,
+        now: now,
+        deferTokenUntilTerminal: false,
+      );
       return CloudShadowJournalAdmission(
         insertedEntries: inserted,
         rejectedEntries: 0,
@@ -217,7 +227,10 @@ class InMemoryCloudSyncStore
     return _lock.synchronized(() async {
       _requireActiveCoordinatorLeaseLocked(scope, leaseFence, now);
       final entry = _requireInboxEntry(scope, sequence);
-      if (entry.status == CloudInboxStatus.applied) return;
+      if (entry.status == CloudInboxStatus.applied) {
+        _advanceContiguousAppliedPosition(scope);
+        return;
+      }
       if (entry.status != CloudInboxStatus.pending) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.localStorage,
@@ -283,6 +296,7 @@ class InMemoryCloudSyncStore
       final entry = _requireInboxEntry(scope, sequence);
       if (entry.status == CloudInboxStatus.quarantined &&
           entry.lastFailure == category) {
+        _advanceContiguousAppliedPosition(scope);
         return;
       }
       if (entry.status != CloudInboxStatus.pending) {
@@ -371,6 +385,7 @@ class InMemoryCloudSyncStore
         generation: generation,
         clearFetchedToken: true,
         lastBatchId: null,
+        clearPendingBatchId: true,
         fetchedSequence: 0,
         lastAppliedSequence: 0,
         consecutivePullFailures: 0,
@@ -387,6 +402,7 @@ class InMemoryCloudSyncStore
       // its test journal is the equivalent of fencing old ObjectBox rows.
       _inbox.remove(request.scope.storageKey);
       _seenChangeIds.remove(request.scope.storageKey);
+      _pendingFetchedTokens.remove(request.scope.storageKey);
       return CloudSyncResetCompletionProof(
         scope: request.scope,
         transitionIdHash: request.transitionIdHash,
@@ -1002,10 +1018,19 @@ class InMemoryCloudSyncStore
   int _journalFetchedBatchLocked(
     CloudFetchBatch batch, {
     required DateTime now,
+    bool deferTokenUntilTerminal = true,
   }) {
     final scope = batch.scope;
     var checkpoint = _checkpoint(scope);
     _requireGeneration(batch, checkpoint);
+    if (deferTokenUntilTerminal &&
+        (checkpoint.pendingBatchId != null ||
+            _hasUnmarkedPendingInbox(scope, checkpoint))) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.localStorage,
+        safeCode: 'checkpoint_pending_page_unresolved',
+      );
+    }
     final entries = _inbox.putIfAbsent(
       scope.storageKey,
       SplayTreeMap<int, CloudInboxEntry>.new,
@@ -1030,12 +1055,21 @@ class InMemoryCloudSyncStore
       inserted++;
     }
     checkpoint = checkpoint.copyWith(
-      fetchedToken: batch.nextToken,
-      clearFetchedToken: batch.nextToken == null,
       generation: batch.generation,
       lastBatchId: batch.batchId,
       fetchedSequence: nextSequence - 1,
     );
+    if (!deferTokenUntilTerminal || inserted == 0) {
+      checkpoint = checkpoint.copyWith(
+        fetchedToken: batch.nextToken,
+        clearFetchedToken: batch.nextToken == null,
+        clearPendingBatchId: true,
+      );
+      _pendingFetchedTokens.remove(scope.storageKey);
+    } else {
+      checkpoint = checkpoint.copyWith(pendingBatchId: batch.batchId);
+      _pendingFetchedTokens[scope.storageKey] = batch.nextToken;
+    }
     _checkpoints[scope.storageKey] = checkpoint;
     return inserted;
   }
@@ -1117,6 +1151,19 @@ class InMemoryCloudSyncStore
     );
   }
 
+  bool _hasUnmarkedPendingInbox(
+    CloudSyncScope scope,
+    CloudSyncCheckpoint checkpoint,
+  ) {
+    if (checkpoint.pendingBatchId != null) return false;
+    return _inbox[scope.storageKey]?.values.any(
+          (entry) =>
+              entry.generation == checkpoint.generation &&
+              entry.status == CloudInboxStatus.pending,
+        ) ??
+        false;
+  }
+
   CloudInboxEntry _requireInboxEntry(CloudSyncScope scope, int sequence) {
     final entry = _inbox[scope.storageKey]?[sequence];
     if (entry == null) {
@@ -1140,6 +1187,24 @@ class InMemoryCloudSyncStore
       checkpoint = checkpoint.copyWith(lastAppliedSequence: appliedThrough);
       _checkpoints[scope.storageKey] = checkpoint;
     }
+    final pendingBatchId = checkpoint.pendingBatchId;
+    if (pendingBatchId == null) return;
+    final pendingEntries = entries?.values.where(
+      (entry) =>
+          entry.generation == checkpoint.generation &&
+          entry.batchId == pendingBatchId,
+    );
+    if (pendingEntries == null ||
+        pendingEntries.isEmpty ||
+        pendingEntries.any((entry) => !_isTerminalInboxStatus(entry.status))) {
+      return;
+    }
+    _checkpoints[scope.storageKey] = checkpoint.copyWith(
+      fetchedToken: _pendingFetchedTokens[scope.storageKey],
+      clearFetchedToken: _pendingFetchedTokens[scope.storageKey] == null,
+      clearPendingBatchId: true,
+    );
+    _pendingFetchedTokens.remove(scope.storageKey);
   }
 
   bool _isTerminalInboxStatus(CloudInboxStatus? status) =>

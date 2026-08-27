@@ -447,6 +447,7 @@ class CloudSyncEngine {
         final pullResult = await _pullChanges(
           trigger: trigger,
           cancellationToken: cancellationToken,
+          maximumInboxEntries: remainingInboxEntries,
         );
         counters = counters.add(
           fetched: pullResult.fetched,
@@ -457,6 +458,56 @@ class CloudSyncEngine {
         pullSucceeded = pullResult.succeeded;
         degradedFailure = pullResult.failureCategory;
         shadowJournalBlockReason = pullResult.journalBlockReason;
+        semanticInboxPhaseStarted =
+            semanticInboxPhaseStarted ||
+            pullResult.semanticProcessedEntries > 0;
+        semanticInboxCounters = semanticInboxCounters.add(
+          applied: pullResult.semanticCounters.applied,
+          deferred: pullResult.semanticCounters.deferred,
+          quarantined: pullResult.semanticCounters.quarantined,
+          postFetchQuarantined:
+              pullResult.semanticCounters.postFetchQuarantined,
+          preflightQuarantined:
+              pullResult.semanticCounters.preflightQuarantined,
+          preflightUnsupportedRecordType:
+              pullResult.semanticCounters.preflightUnsupportedRecordType,
+          preflightMalformedMetadata:
+              pullResult.semanticCounters.preflightMalformedMetadata,
+          preflightOversizedRecord:
+              pullResult.semanticCounters.preflightOversizedRecord,
+          preflightInvalidChangeShape:
+              pullResult.semanticCounters.preflightInvalidChangeShape,
+          preflightUnknown: pullResult.semanticCounters.preflightUnknown,
+          tombstoneQuarantined:
+              pullResult.semanticCounters.tombstoneQuarantined,
+          semanticStageQuarantined:
+              pullResult.semanticCounters.semanticStageQuarantined,
+          retried: pullResult.semanticCounters.retried,
+        );
+        counters = counters.add(
+          applied: pullResult.semanticCounters.applied,
+          deferred: pullResult.semanticCounters.deferred,
+          quarantined: pullResult.semanticCounters.quarantined,
+          postFetchQuarantined:
+              pullResult.semanticCounters.postFetchQuarantined,
+          preflightQuarantined:
+              pullResult.semanticCounters.preflightQuarantined,
+          preflightUnsupportedRecordType:
+              pullResult.semanticCounters.preflightUnsupportedRecordType,
+          preflightMalformedMetadata:
+              pullResult.semanticCounters.preflightMalformedMetadata,
+          preflightOversizedRecord:
+              pullResult.semanticCounters.preflightOversizedRecord,
+          preflightInvalidChangeShape:
+              pullResult.semanticCounters.preflightInvalidChangeShape,
+          preflightUnknown: pullResult.semanticCounters.preflightUnknown,
+          tombstoneQuarantined:
+              pullResult.semanticCounters.tombstoneQuarantined,
+          semanticStageQuarantined:
+              pullResult.semanticCounters.semanticStageQuarantined,
+          retried: pullResult.semanticCounters.retried,
+        );
+        remainingInboxEntries -= pullResult.semanticProcessedEntries;
       }
 
       if (config.flags.semanticApply &&
@@ -629,18 +680,21 @@ class CloudSyncEngine {
   Future<_PullResult> _pullChanges({
     required CloudSyncTrigger trigger,
     CloudSyncCancellationToken? cancellationToken,
+    required int maximumInboxEntries,
   }) {
     final lifecycle = _protectedPageLeaseLifecycle;
     if (lifecycle == null) {
       return _pullChangesWhileStoreExclusive(
         trigger: trigger,
         cancellationToken: cancellationToken,
+        maximumInboxEntries: maximumInboxEntries,
       );
     }
     return lifecycle.runProtectedStoreExclusive(
       () => _pullChangesWhileStoreExclusive(
         trigger: trigger,
         cancellationToken: cancellationToken,
+        maximumInboxEntries: maximumInboxEntries,
       ),
     );
   }
@@ -648,6 +702,7 @@ class CloudSyncEngine {
   Future<_PullResult> _pullChangesWhileStoreExclusive({
     required CloudSyncTrigger trigger,
     CloudSyncCancellationToken? cancellationToken,
+    required int maximumInboxEntries,
   }) async {
     await _protectedPageLeaseLifecycle?.ensureRecoveredBeforeFetch();
     var checkpoint = await _store.readCheckpoint(scope);
@@ -669,11 +724,35 @@ class CloudSyncEngine {
 
     var fetched = 0;
     var sawSuccessfulPage = false;
+    var semanticCounters = const CloudSyncRunCounters();
+    var semanticProcessedEntries = 0;
     var authenticationRefreshUsed = false;
     var pcsRefreshUsed = false;
     var journalUsage = CloudShadowJournalUsage.empty;
     final shadowMode =
         config.flags.readOnlyFetch && !config.flags.semanticApply;
+    if (config.flags.semanticApply && maximumInboxEntries <= 0) {
+      // A semantic page cannot be journaled safely without capacity to make
+      // its rows terminal. Leave the committed token untouched for the next
+      // run rather than creating an unserviceable pending page.
+      return _PullResult(
+        fetched: 0,
+        succeeded: false,
+        failureCategory: CloudFailureCategory.dependency,
+      );
+    }
+    if (config.flags.semanticApply &&
+        (checkpoint.pendingBatchId != null ||
+            checkpoint.hasUnmarkedPendingInbox)) {
+      // The startup inbox pass already attempted the page. Keeping the old
+      // token means refetching here would be unsafe and would only create a
+      // duplicate page while its predecessor is retryable/deferred.
+      return _PullResult(
+        fetched: 0,
+        succeeded: false,
+        failureCategory: CloudFailureCategory.dependency,
+      );
+    }
     if (shadowMode) {
       journalUsage = await _store.readShadowJournalUsage(
         scope,
@@ -793,8 +872,9 @@ class CloudSyncEngine {
         );
       }
 
-      // The journal and fetched token are committed even if cancellation
-      // arrives while the network request is in flight.
+      // The journal is committed even if cancellation arrives while the
+      // network request is in flight. A semantic page's continuation token is
+      // held separately until its rows reach terminal state.
       final journalNow = _clock();
       await _renewCoordinatorLeaseOrThrow(force: true);
       if (batch.protectedPageLeaseReference != null &&
@@ -874,16 +954,58 @@ class CloudSyncEngine {
       sawSuccessfulPage = true;
       _emit(CloudSyncEventType.fetchCompleted, at: _clock(), count: inserted);
       checkpoint = await _store.readCheckpoint(scope);
+      if (!shadowMode && maximumInboxEntries > semanticProcessedEntries) {
+        final pageApply = await _applyInbox(
+          cancellationToken,
+          maximumEntries: maximumInboxEntries - semanticProcessedEntries,
+          emitEvent: false,
+        );
+        semanticCounters = semanticCounters.add(
+          applied: pageApply.counters.applied,
+          deferred: pageApply.counters.deferred,
+          quarantined: pageApply.counters.quarantined,
+          postFetchQuarantined: pageApply.counters.quarantined,
+          preflightQuarantined: pageApply.counters.preflightQuarantined,
+          preflightUnsupportedRecordType:
+              pageApply.counters.preflightUnsupportedRecordType,
+          preflightMalformedMetadata:
+              pageApply.counters.preflightMalformedMetadata,
+          preflightOversizedRecord: pageApply.counters.preflightOversizedRecord,
+          preflightInvalidChangeShape:
+              pageApply.counters.preflightInvalidChangeShape,
+          preflightUnknown: pageApply.counters.preflightUnknown,
+          tombstoneQuarantined: pageApply.counters.tombstoneQuarantined,
+          semanticStageQuarantined: pageApply.counters.semanticStageQuarantined,
+          retried: pageApply.counters.retried,
+        );
+        semanticProcessedEntries += pageApply.processedEntries;
+        checkpoint = await _store.readCheckpoint(scope);
+        // A retryable/deferred predecessor keeps the committed token at the
+        // prior page. Do not fetch another page until this page is terminal.
+        if (checkpoint.pendingBatchId != null ||
+            semanticProcessedEntries >= maximumInboxEntries) {
+          break;
+        }
+      }
       if (!batch.hasMore) break;
     }
 
     if (sawSuccessfulPage) {
       await _store.recordPullSuccess(scope, now: _clock());
     }
+    final pageRemainsPending =
+        config.flags.semanticApply &&
+        (checkpoint.pendingBatchId != null ||
+            checkpoint.hasUnmarkedPendingInbox);
     return _PullResult(
       fetched: fetched,
       succeeded: sawSuccessfulPage,
+      failureCategory: pageRemainsPending
+          ? CloudFailureCategory.dependency
+          : null,
       journalUsage: journalUsage,
+      semanticCounters: semanticCounters,
+      semanticProcessedEntries: semanticProcessedEntries,
     );
   }
 
@@ -2224,6 +2346,8 @@ class _PullResult {
     CloudShadowJournalUsage? journalUsage,
     this.rejectedEntries = 0,
     this.journalBlockReason,
+    this.semanticCounters = const CloudSyncRunCounters(),
+    this.semanticProcessedEntries = 0,
   }) : journalUsage = journalUsage ?? CloudShadowJournalUsage.empty;
 
   final int fetched;
@@ -2232,6 +2356,8 @@ class _PullResult {
   final CloudShadowJournalUsage journalUsage;
   final int rejectedEntries;
   final CloudShadowJournalBlockReason? journalBlockReason;
+  final CloudSyncRunCounters semanticCounters;
+  final int semanticProcessedEntries;
 }
 
 class _InboxApplyResult {

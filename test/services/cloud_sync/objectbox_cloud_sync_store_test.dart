@@ -172,6 +172,58 @@ void main() {
     );
   });
 
+  test(
+    'legacy committed-token page is fenced until retained rows are terminal',
+    () async {
+      final scope = testScope(
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      await journalShadow(
+        batch(
+          scope,
+          batchId: 'legacy-unmarked-page',
+          token: 'legacy-advanced-token',
+          changes: [testChange(1)],
+        ),
+        now: testEpoch,
+        budget: CloudShadowJournalBudget(),
+      );
+
+      final legacy = await store.readCheckpoint(scope);
+      expect(legacy.fetchedToken, 'legacy-advanced-token');
+      expect(legacy.pendingBatchId, isNull);
+      expect(legacy.hasUnmarkedPendingInbox, isTrue);
+
+      await expectLater(
+        journal(
+          batch(
+            scope,
+            batchId: 'must-not-journal',
+            token: 'must-not-advance',
+            changes: [testChange(2)],
+          ),
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (error) => error.safeCode,
+            'safeCode',
+            'checkpoint_pending_page_unresolved',
+          ),
+        ),
+      );
+
+      await store.markInboxApplied(
+        scope,
+        sequence: 1,
+        now: testEpoch,
+        leaseFence: coordinatorFences[scope.storageKey]!,
+      );
+      final terminal = await store.readCheckpoint(scope);
+      expect(terminal.fetchedToken, 'legacy-advanced-token');
+      expect(terminal.hasUnmarkedPendingInbox, isFalse);
+    },
+  );
+
   test('isolates shadow and semantic checkpoints across reopen', () async {
     final shadow = testScope(persistenceLane: CloudSyncPersistenceLane.shadow);
     final semantic = testScope(
@@ -428,15 +480,18 @@ void main() {
           .box<CloudSyncCheckpointEntity>()
           .getAll()
           .single;
-      expect(persisted.fetchedTokenCiphertext, isNot('opaque-token-1'));
+      expect(persisted.fetchedTokenCiphertext, isNull);
+      expect(persisted.pendingFetchedTokenCiphertext, isNotNull);
       expect(
-        persisted.fetchedTokenCiphertext,
+        persisted.pendingFetchedTokenCiphertext,
         isNot(contains('opaque-token-1')),
       );
+      expect(persisted.pendingBatchId, 'batch-digest-1');
       expect(persisted.checkpointKey, isNot(contains(scope.storageKey)));
 
       final checkpoint = await store.readCheckpoint(scope);
-      expect(checkpoint.fetchedToken, 'opaque-token-1');
+      expect(checkpoint.fetchedToken, isNull);
+      expect(checkpoint.pendingBatchId, 'batch-digest-1');
       expect(checkpoint.fetchedSequence, 2);
       expect(
         (await store.readEligibleInbox(
@@ -445,6 +500,23 @@ void main() {
           limit: 256,
         )).map((entry) => entry.sequence),
         [1],
+      );
+
+      await store.markInboxApplied(
+        scope,
+        sequence: 1,
+        now: testEpoch,
+        leaseFence: coordinatorFences[scope.storageKey]!,
+      );
+      await store.markInboxApplied(
+        scope,
+        sequence: 2,
+        now: testEpoch,
+        leaseFence: coordinatorFences[scope.storageKey]!,
+      );
+      expect(
+        (await store.readCheckpoint(scope)).fetchedToken,
+        'opaque-token-1',
       );
 
       await reopen();
@@ -541,6 +613,18 @@ void main() {
   test('generation mismatch rolls back both the page and checkpoint', () async {
     final scope = testScope();
     await journal(batch(scope));
+    await store.markInboxApplied(
+      scope,
+      sequence: 1,
+      now: testEpoch,
+      leaseFence: coordinatorFences[scope.storageKey]!,
+    );
+    await store.markInboxApplied(
+      scope,
+      sequence: 2,
+      now: testEpoch,
+      leaseFence: coordinatorFences[scope.storageKey]!,
+    );
 
     await expectLater(
       journal(
@@ -600,7 +684,8 @@ void main() {
       expect(objectBox.box<CloudInboxChangeEntity>().count(), 2);
       protector.failProtection = false;
       final checkpoint = await store.readCheckpoint(scope);
-      expect(checkpoint.fetchedToken, 'legacy-token');
+      expect(checkpoint.fetchedToken, isNull);
+      expect(checkpoint.pendingBatchId, 'legacy-unbounded-page');
       expect(checkpoint.fetchedSequence, 2);
     },
   );
@@ -2238,6 +2323,25 @@ void main() {
             'applied terminal rows remain protected-reference roots until a '
             'separately reviewed compaction policy exists',
       );
+    },
+  );
+
+  test(
+    'live protected-reference scan preserves a pending checkpoint token',
+    () async {
+      final scope = testScope();
+      final pendingTokenReference = _nativeReference('T');
+      await journal(
+        batch(scope, token: pendingTokenReference, changes: [testChange(1)]),
+      );
+
+      final snapshot = await store.readLiveProtectedReferences(
+        maximumCount: 16,
+      );
+
+      expect(snapshot.isComplete, isTrue);
+      expect(snapshot.references, contains(pendingTokenReference));
+      expect((await store.readCheckpoint(scope)).fetchedToken, isNull);
     },
   );
 

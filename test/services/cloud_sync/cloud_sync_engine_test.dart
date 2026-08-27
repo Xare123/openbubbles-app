@@ -118,6 +118,32 @@ void main() {
     }
   }
 
+  Future<void> seedShadowJournal(
+    CloudFetchBatch batch, {
+    required DateTime now,
+  }) async {
+    const ownerId = 'engine-test-shadow-seed';
+    final fence = (await store.tryAcquireCoordinatorLease(
+      batch.scope,
+      ownerId: ownerId,
+      now: now,
+      leaseDuration: const Duration(minutes: 5),
+    ))!;
+    final checkpoint = await store.readCheckpoint(batch.scope);
+    try {
+      await store.journalShadowFetchedBatch(
+        batch,
+        now: now,
+        budget: CloudShadowJournalBudget(),
+        leaseFence: fence,
+        expectedGeneration: checkpoint.generation,
+        expectedFetchedToken: checkpoint.fetchedToken,
+      );
+    } finally {
+      await store.releaseCoordinatorLease(batch.scope, leaseFence: fence);
+    }
+  }
+
   Future<void> seedPausedOutbox(
     CloudOutboxOperation operation, {
     required CloudFailureCategory category,
@@ -330,7 +356,8 @@ void main() {
       expect(transport.fetchCallCount, 1);
       expect(transport.observedFetchTokens, [null]);
       final checkpointAfterCrash = await store.readCheckpoint(scope);
-      expect(checkpointAfterCrash.fetchedToken, 'token-after-page-one');
+      expect(checkpointAfterCrash.fetchedToken, isNull);
+      expect(checkpointAfterCrash.pendingBatchId, 'batch-crash-page-one');
       expect(checkpointAfterCrash.lastAppliedSequence, 0);
       expect(await store.inboxEntries(scope), hasLength(1));
       expect(applier.appliedSequences, isEmpty);
@@ -401,15 +428,17 @@ void main() {
         trigger: CloudSyncTrigger.manual,
       );
 
+      expect(first.status, CloudSyncRunStatus.degraded);
+      expect(first.failureCategory, CloudFailureCategory.dependency);
       expect(first.counters.retried, 1);
       expect(first.counters.applied, 0);
-      expect(transport.observedFetchTokens, [null, 'token-retry-page-one']);
+      expect(transport.observedFetchTokens, [null]);
       expect(applier.appliedSequences, [1]);
       final blockedCheckpoint = await store.readCheckpoint(scope);
-      expect(blockedCheckpoint.fetchedToken, 'token-retry-page-two');
+      expect(blockedCheckpoint.fetchedToken, isNull);
+      expect(blockedCheckpoint.pendingBatchId, 'batch-retry-page-one');
       expect(blockedCheckpoint.lastAppliedSequence, 0);
       expect((await store.inboxEntries(scope)).map((entry) => entry.status), [
-        CloudInboxStatus.pending,
         CloudInboxStatus.pending,
       ]);
 
@@ -421,13 +450,112 @@ void main() {
 
       expect(second.status, CloudSyncRunStatus.completed);
       expect(second.counters.applied, 2);
-      expect(transport.observedFetchTokens, [
-        null,
-        'token-retry-page-one',
-        'token-retry-page-two',
-      ]);
+      expect(transport.observedFetchTokens, [null, 'token-retry-page-one']);
       expect(applier.appliedSequences, [1, 1, 2]);
       expect((await store.readCheckpoint(scope)).lastAppliedSequence, 2);
+    },
+  );
+
+  test(
+    'legacy unmarked pending page blocks transport until its row is terminal',
+    () async {
+      await seedShadowJournal(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1)],
+          batchId: 'legacy-unmarked-page',
+          generation: 1,
+          nextToken: 'legacy-advanced-token',
+          hasMore: true,
+        ),
+        now: clock.value,
+      );
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.retryable(
+        failureCategory: CloudFailureCategory.network,
+      );
+      transport.fetchHandler = (scope, token, generation, limit) async {
+        fail('transport must remain fenced for an unmarked pending page');
+      };
+
+      final result = await engine().synchronize(
+        trigger: CloudSyncTrigger.startup,
+      );
+
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.failureCategory, CloudFailureCategory.dependency);
+      expect(transport.fetchCallCount, 0);
+      final checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.fetchedToken, 'legacy-advanced-token');
+      expect(checkpoint.hasUnmarkedPendingInbox, isTrue);
+      expect(checkpoint.lastAppliedSequence, 0);
+    },
+  );
+
+  test(
+    'marked pending page degrades and blocks transport while retry remains unresolved',
+    () async {
+      await seedGeneralJournal(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1)],
+          batchId: 'marked-pending-page',
+          generation: 1,
+          nextToken: 'marked-pending-token',
+          hasMore: true,
+        ),
+        now: clock.value,
+      );
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.retryable(
+        failureCategory: CloudFailureCategory.network,
+      );
+      transport.fetchHandler = (scope, token, generation, limit) async {
+        fail('transport must remain fenced for a marked pending page');
+      };
+
+      final result = await engine().synchronize(
+        trigger: CloudSyncTrigger.startup,
+      );
+
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.failureCategory, CloudFailureCategory.dependency);
+      expect(transport.fetchCallCount, 0);
+      final checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.fetchedToken, isNull);
+      expect(checkpoint.pendingBatchId, 'marked-pending-page');
+      expect(checkpoint.lastAppliedSequence, 0);
+    },
+  );
+
+  test(
+    'startup inbox budget exhaustion degrades without fetching another page',
+    () async {
+      await seedGeneralJournal(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1)],
+          batchId: 'startup-budget-page',
+          generation: 1,
+          nextToken: 'startup-budget-token',
+          hasMore: true,
+        ),
+        now: clock.value,
+      );
+      transport.fetchHandler = (scope, token, generation, limit) async {
+        fail('transport must not run after the inbox budget is exhausted');
+      };
+
+      final result = await engine(
+        maximumInboxEntriesPerRun: 1,
+      ).synchronize(trigger: CloudSyncTrigger.startup);
+
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.failureCategory, CloudFailureCategory.dependency);
+      expect(result.counters.applied, 1);
+      expect(transport.fetchCallCount, 0);
+      final checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.fetchedToken, 'startup-budget-token');
+      expect(checkpoint.pendingBatchId, isNull);
+      expect(checkpoint.lastAppliedSequence, 1);
     },
   );
 
@@ -533,7 +661,8 @@ void main() {
         observer: observer,
       ).synchronize(trigger: CloudSyncTrigger.manual);
 
-      expect(result.status, CloudSyncRunStatus.completed);
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.failureCategory, CloudFailureCategory.dependency);
       expect(result.counters.applied, 2);
       expect(applier.appliedSequences, [1, 2]);
       expect(transport.fetchCallCount, 1);
@@ -610,7 +739,7 @@ void main() {
   );
 
   test('semanticApply false keeps fetch-only behavior unchanged', () async {
-    await seedGeneralJournal(
+    await seedShadowJournal(
       CloudFetchBatch(
         scope: scope,
         changes: [testChange(1)],
@@ -1384,7 +1513,7 @@ void main() {
   );
 
   test(
-    'cancellation after fetch still journals token and payload reference',
+    'cancellation after fetch journals without promoting a nonterminal page',
     () async {
       final fetchStarted = Completer<void>();
       final releaseFetch = Completer<void>();
@@ -1412,9 +1541,10 @@ void main() {
 
       final result = await run;
       expect(result.status, CloudSyncRunStatus.cancelled);
+      expect((await store.readCheckpoint(scope)).fetchedToken, isNull);
       expect(
-        (await store.readCheckpoint(scope)).fetchedToken,
-        'opaque-token-after-cancel',
+        (await store.readCheckpoint(scope)).pendingBatchId,
+        'cancelled-batch',
       );
       expect(await store.inboxEntries(scope), hasLength(1));
       expect(applier.appliedSequences, isEmpty);
@@ -1502,10 +1632,7 @@ void main() {
       );
       expect(result.counters.shadowJournalEntries, 1);
       expect(result.counters.shadowJournalEstimatedBytes, greaterThan(0));
-      expect(
-        (await store.readCheckpoint(scope)).fetchedToken,
-        'preserved-token',
-      );
+      expect((await store.readCheckpoint(scope)).fetchedToken, isNull);
       expect(await store.inboxEntries(scope), hasLength(1));
     },
   );

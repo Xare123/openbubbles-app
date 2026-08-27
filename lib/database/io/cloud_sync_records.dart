@@ -36,6 +36,11 @@ class CloudSyncCheckpointEntity {
 
   /// Base64 application ciphertext. Never a raw CloudKit continuation token.
   String? fetchedTokenCiphertext;
+
+  /// Protected continuation token for the most recently journaled page.
+  /// This is promoted only after every row in [pendingBatchId] is terminal.
+  String? pendingFetchedTokenCiphertext;
+  String? pendingBatchId;
   int generation;
   String? lastBatchId;
   int fetchedSequence;
@@ -63,6 +68,8 @@ class CloudSyncCheckpointEntity {
     this.schemaVersion = cloudSyncSchemaVersion,
     this.persistenceLane,
     this.fetchedTokenCiphertext,
+    this.pendingFetchedTokenCiphertext,
+    this.pendingBatchId,
     this.generation = 1,
     this.lastBatchId,
     this.fetchedSequence = 0,

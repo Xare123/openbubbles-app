@@ -66,6 +66,23 @@ void main() {
       expect(properties['checkpointGeneration'], '23:3453625028306797643');
       expect(properties['appleRequestUuid'], '24:2838853240019164046');
       expect(properties['appleOperationUuid'], '25:593864995002474100');
+
+      final checkpoint = (model['entities'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .singleWhere(
+            (entity) => entity['name'] == 'CloudSyncCheckpointEntity',
+          );
+      final checkpointProperties = {
+        for (final value in checkpoint['properties'] as List<dynamic>)
+          (value as Map<String, dynamic>)['name'] as String:
+              value['id'] as String,
+      };
+      expect(checkpoint['lastPropertyId'], '23:8346271905819443021');
+      expect(
+        checkpointProperties['pendingFetchedTokenCiphertext'],
+        '22:7163548097042261884',
+      );
+      expect(checkpointProperties['pendingBatchId'], '23:8346271905819443021');
     },
   );
 }

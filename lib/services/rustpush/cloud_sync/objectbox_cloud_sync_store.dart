@@ -60,10 +60,14 @@ class ObjectBoxCloudSyncStore
 
   @override
   Future<CloudSyncCheckpoint> readCheckpoint(CloudSyncScope scope) async {
-    final entity = _store.runInTransaction(
-      TxMode.write,
-      () => _checkpointLocked(scope, nowMs: _nowMs()),
-    );
+    final captured = _store.runInTransaction(TxMode.write, () {
+      final entity = _checkpointLocked(scope, nowMs: _nowMs());
+      return (
+        entity: entity,
+        hasUnmarkedPendingInbox: _hasUnmarkedPendingInboxLocked(scope, entity),
+      );
+    });
+    final entity = captured.entity;
     final ciphertext = entity.fetchedTokenCiphertext;
     String? token;
     if (ciphertext != null) {
@@ -77,7 +81,12 @@ class ObjectBoxCloudSyncStore
         throw _storageFailure('checkpoint_unprotect_failed');
       }
     }
-    return _checkpointFromEntity(scope, entity, fetchedToken: token);
+    return _checkpointFromEntity(
+      scope,
+      entity,
+      fetchedToken: token,
+      hasUnmarkedPendingInbox: captured.hasUnmarkedPendingInbox,
+    );
   }
 
   @override
@@ -105,6 +114,10 @@ class ObjectBoxCloudSyncStore
         final checkpoint = _findCheckpointByKeyLocked(_scopeKey(batch.scope));
         if (checkpoint == null) return null;
         _validateCheckpointScope(checkpoint, batch.scope);
+        if (checkpoint.pendingBatchId != null ||
+            _hasUnmarkedPendingInboxLocked(batch.scope, checkpoint)) {
+          throw _storageFailure('checkpoint_pending_page_unresolved');
+        }
         return checkpoint.fetchedTokenCiphertext;
       },
     );
@@ -149,6 +162,10 @@ class ObjectBoxCloudSyncStore
       if (checkpoint.generation != batch.generation) {
         throw _storageFailure('generation_mismatch');
       }
+      if (checkpoint.pendingBatchId != null ||
+          _hasUnmarkedPendingInboxLocked(batch.scope, checkpoint)) {
+        throw _storageFailure('checkpoint_pending_page_unresolved');
+      }
 
       var nextSequence = checkpoint.fetchedSequence + 1;
       var inserted = 0;
@@ -192,12 +209,23 @@ class ObjectBoxCloudSyncStore
       }
 
       checkpoint
-        ..fetchedTokenCiphertext = tokenCiphertext
         ..generation = batch.generation
         ..lastBatchId = batch.batchId
         ..fetchedSequence = nextSequence - 1
         ..lastAttemptAtMs = transactionNowMs
         ..updatedAtMs = transactionNowMs;
+      if (inserted == 0) {
+        // A page with no unseen rows is already terminal. This also makes a
+        // harmless refetch after a crash idempotently advance its token.
+        checkpoint
+          ..fetchedTokenCiphertext = tokenCiphertext
+          ..pendingFetchedTokenCiphertext = null
+          ..pendingBatchId = null;
+      } else {
+        checkpoint
+          ..pendingFetchedTokenCiphertext = tokenCiphertext
+          ..pendingBatchId = batch.batchId;
+      }
       _checkpoints.put(checkpoint);
       _adoptProtectedPageLeaseLocked(batch, nowMs: transactionNowMs);
       return inserted;
@@ -494,7 +522,7 @@ class ObjectBoxCloudSyncStore
     }
     final captured = _store.runInTransaction(TxMode.read, () {
       final upperBound =
-          _checkpoints.count() +
+          (_checkpoints.count() * 2) +
           (_inbox.count() * 3) +
           _outbox.count() +
           (_recordMaps.count() * 2) +
@@ -570,14 +598,16 @@ class ObjectBoxCloudSyncStore
       scanPaged(
         (_checkpoints.query()..order(CloudSyncCheckpointEntity_.id)).build(),
         (entry) {
-          final ciphertext = entry.fetchedTokenCiphertext;
-          if (ciphertext == null) return;
-          checkpoints.add(
-            _ProtectedCheckpointCapture(
-              scope: _scopeFromCheckpointEntity(entry),
-              ciphertext: ciphertext,
-            ),
-          );
+          final scope = _scopeFromCheckpointEntity(entry);
+          for (final ciphertext in [
+            entry.fetchedTokenCiphertext,
+            entry.pendingFetchedTokenCiphertext,
+          ]) {
+            if (ciphertext == null) continue;
+            checkpoints.add(
+              _ProtectedCheckpointCapture(scope: scope, ciphertext: ciphertext),
+            );
+          }
         },
       );
       return _ProtectedReferenceCapture(
@@ -716,7 +746,10 @@ class ObjectBoxCloudSyncStore
       );
       final entity = _requireInboxLocked(scope, sequence);
       final status = _inboxStatusFromInt(entity.status);
-      if (status == CloudInboxStatus.applied) return;
+      if (status == CloudInboxStatus.applied) {
+        _promotePendingFetchedTokenIfTerminalLocked(scope, transactionNowMs);
+        return;
+      }
       if (status != CloudInboxStatus.pending) {
         throw _storageFailure('inbox_transition_not_pending');
       }
@@ -787,6 +820,7 @@ class ObjectBoxCloudSyncStore
       final status = _inboxStatusFromInt(entity.status);
       if (status == CloudInboxStatus.quarantined &&
           entity.failureCategory == category.name) {
+        _promotePendingFetchedTokenIfTerminalLocked(scope, transactionNowMs);
         return;
       }
       if (status != CloudInboxStatus.pending) {
@@ -1024,6 +1058,8 @@ class ObjectBoxCloudSyncStore
       checkpoint
         ..generation = nextGeneration
         ..fetchedTokenCiphertext = null
+        ..pendingFetchedTokenCiphertext = null
+        ..pendingBatchId = null
         ..lastBatchId = null
         ..fetchedSequence = 0
         ..appliedSequence = 0
@@ -1774,6 +1810,8 @@ class ObjectBoxCloudSyncStore
       _validateCheckpointScope(existing, scope);
       if (existing.generation == 0) {
         if (existing.fetchedTokenCiphertext != null ||
+            existing.pendingFetchedTokenCiphertext != null ||
+            existing.pendingBatchId != null ||
             existing.lastBatchId != null ||
             existing.fetchedSequence != 0 ||
             existing.appliedSequence != 0 ||
@@ -1812,6 +1850,7 @@ class ObjectBoxCloudSyncStore
     CloudSyncScope scope,
     CloudSyncCheckpointEntity entity, {
     required String? fetchedToken,
+    bool hasUnmarkedPendingInbox = false,
   }) {
     _validateCheckpointScope(entity, scope);
     return CloudSyncCheckpoint(
@@ -1819,6 +1858,8 @@ class ObjectBoxCloudSyncStore
       fetchedToken: fetchedToken,
       generation: entity.generation,
       lastBatchId: entity.lastBatchId,
+      pendingBatchId: entity.pendingBatchId,
+      hasUnmarkedPendingInbox: hasUnmarkedPendingInbox,
       fetchedSequence: entity.fetchedSequence,
       lastAppliedSequence: entity.appliedSequence,
       mutationRevisionCounter: entity.mutationRevisionCounter,
@@ -2101,6 +2142,107 @@ class ObjectBoxCloudSyncStore
         ..appliedSequence = appliedThrough
         ..updatedAtMs = nowMs;
       _checkpoints.put(checkpoint);
+    }
+    _promotePendingFetchedTokenIfTerminalLocked(scope, nowMs);
+  }
+
+  void _promotePendingFetchedTokenIfTerminalLocked(
+    CloudSyncScope scope,
+    int nowMs,
+  ) {
+    final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
+    final pendingBatchId = checkpoint.pendingBatchId;
+    if (pendingBatchId == null) return;
+
+    final batchQuery =
+        _inbox
+            .query(
+              CloudInboxChangeEntity_.scopeKey
+                  .equals(_scopeKey(scope))
+                  .and(
+                    CloudInboxChangeEntity_.generation.equals(
+                      checkpoint.generation,
+                    ),
+                  )
+                  .and(CloudInboxChangeEntity_.batchId.equals(pendingBatchId)),
+            )
+            .build()
+          ..limit = 1;
+    try {
+      if (batchQuery.findFirst() == null) return;
+    } finally {
+      batchQuery.close();
+    }
+
+    final nonterminalQuery =
+        _inbox
+            .query(
+              CloudInboxChangeEntity_.scopeKey
+                  .equals(_scopeKey(scope))
+                  .and(
+                    CloudInboxChangeEntity_.generation.equals(
+                      checkpoint.generation,
+                    ),
+                  )
+                  .and(CloudInboxChangeEntity_.batchId.equals(pendingBatchId))
+                  .and(
+                    CloudInboxChangeEntity_.status.notEquals(
+                      _inboxStatusToInt(CloudInboxStatus.applied),
+                    ),
+                  )
+                  .and(
+                    CloudInboxChangeEntity_.status.notEquals(
+                      _inboxStatusToInt(CloudInboxStatus.quarantined),
+                    ),
+                  ),
+            )
+            .build()
+          ..limit = 1;
+    try {
+      if (nonterminalQuery.findFirst() != null) return;
+    } finally {
+      nonterminalQuery.close();
+    }
+
+    if (checkpoint.pendingBatchId != pendingBatchId) {
+      return;
+    }
+
+    checkpoint
+      ..fetchedTokenCiphertext = checkpoint.pendingFetchedTokenCiphertext
+      ..pendingFetchedTokenCiphertext = null
+      ..pendingBatchId = null
+      ..updatedAtMs = nowMs;
+    _checkpoints.put(checkpoint);
+  }
+
+  bool _hasUnmarkedPendingInboxLocked(
+    CloudSyncScope scope,
+    CloudSyncCheckpointEntity checkpoint,
+  ) {
+    if (checkpoint.pendingBatchId != null) return false;
+    final query =
+        _inbox
+            .query(
+              CloudInboxChangeEntity_.scopeKey
+                  .equals(_scopeKey(scope))
+                  .and(
+                    CloudInboxChangeEntity_.generation.equals(
+                      checkpoint.generation,
+                    ),
+                  )
+                  .and(
+                    CloudInboxChangeEntity_.status.equals(
+                      _inboxStatusToInt(CloudInboxStatus.pending),
+                    ),
+                  ),
+            )
+            .build()
+          ..limit = 1;
+    try {
+      return query.findFirst() != null;
+    } finally {
+      query.close();
     }
   }
 

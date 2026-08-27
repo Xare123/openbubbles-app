@@ -470,6 +470,8 @@ class CloudSyncCheckpoint {
     this.fetchedToken,
     this.generation = 1,
     this.lastBatchId,
+    this.pendingBatchId,
+    this.hasUnmarkedPendingInbox = false,
     this.fetchedSequence = 0,
     this.lastAppliedSequence = 0,
     this.mutationRevisionCounter = 0,
@@ -499,6 +501,12 @@ class CloudSyncCheckpoint {
   final String? fetchedToken;
   final int generation;
   final String? lastBatchId;
+  final String? pendingBatchId;
+
+  /// A pre-pending-token journal contains unresolved current-generation rows
+  /// but no durable pending-page marker. Its already-advanced token must not
+  /// be used for another fetch until those retained rows become terminal.
+  final bool hasUnmarkedPendingInbox;
   final int fetchedSequence;
 
   /// Highest contiguous terminal inbox sequence. Applied and quarantined rows
@@ -515,6 +523,9 @@ class CloudSyncCheckpoint {
     bool clearFetchedToken = false,
     int? generation,
     String? lastBatchId,
+    String? pendingBatchId,
+    bool clearPendingBatchId = false,
+    bool? hasUnmarkedPendingInbox,
     int? fetchedSequence,
     int? lastAppliedSequence,
     int? mutationRevisionCounter,
@@ -532,6 +543,11 @@ class CloudSyncCheckpoint {
           : fetchedToken ?? this.fetchedToken,
       generation: generation ?? this.generation,
       lastBatchId: lastBatchId ?? this.lastBatchId,
+      pendingBatchId: clearPendingBatchId
+          ? null
+          : pendingBatchId ?? this.pendingBatchId,
+      hasUnmarkedPendingInbox:
+          hasUnmarkedPendingInbox ?? this.hasUnmarkedPendingInbox,
       fetchedSequence: fetchedSequence ?? this.fetchedSequence,
       lastAppliedSequence: lastAppliedSequence ?? this.lastAppliedSequence,
       mutationRevisionCounter:

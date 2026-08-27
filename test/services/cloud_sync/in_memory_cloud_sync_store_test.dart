@@ -35,7 +35,7 @@ void main() {
   });
 
   test(
-    'journals page and token atomically while deduplicating replay',
+    'journals page durably, promotes only after terminal, and deduplicates',
     () async {
       final batch = CloudFetchBatch(
         scope: scope,
@@ -47,14 +47,46 @@ void main() {
       );
 
       expect(await _journal(store, batch), 2);
-      expect(await _journal(store, batch), 0);
 
       final checkpoint = await store.readCheckpoint(scope);
       final inbox = await store.inboxEntries(scope);
-      expect(checkpoint.fetchedToken, 'opaque-token-1');
+      expect(checkpoint.fetchedToken, isNull);
+      expect(checkpoint.pendingBatchId, 'batch-1');
       expect(checkpoint.fetchedSequence, 2);
       expect(checkpoint.lastBatchId, 'batch-1');
       expect(inbox.map((entry) => entry.sequence), [1, 2]);
+
+      final fence = (await store.tryAcquireCoordinatorLease(
+        scope,
+        ownerId: 'terminal-page-owner',
+        now: testEpoch,
+        leaseDuration: const Duration(minutes: 5),
+      ))!;
+      await store.markInboxApplied(
+        scope,
+        sequence: 1,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+      expect((await store.readCheckpoint(scope)).fetchedToken, isNull);
+      await store.markInboxApplied(
+        scope,
+        sequence: 2,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+      final promoted = await store.readCheckpoint(scope);
+      expect(promoted.fetchedToken, 'opaque-token-1');
+      expect(promoted.pendingBatchId, isNull);
+      await store.releaseCoordinatorLease(scope, leaseFence: fence);
+
+      // A refetched page is now safe to deduplicate against the terminal
+      // journal and advance its continuation token exactly once.
+      expect(await _journal(store, batch), 0);
+      expect(
+        (await store.readCheckpoint(scope)).fetchedToken,
+        'opaque-token-1',
+      );
     },
   );
 
@@ -118,6 +150,7 @@ void main() {
           hasMore: false,
         ),
       );
+      expect((await store.readCheckpoint(scope)).fetchedToken, isNull);
 
       final fence = (await store.tryAcquireCoordinatorLease(
         scope,
@@ -149,6 +182,64 @@ void main() {
         leaseFence: fence,
       );
       expect((await store.readCheckpoint(scope)).lastAppliedSequence, 3);
+      expect((await store.readCheckpoint(scope)).fetchedToken, 'token');
+    },
+  );
+
+  test(
+    'failed first record retains the old token until the whole page is terminal',
+    () async {
+      await _journal(
+        store,
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1), testChange(2)],
+          batchId: 'failed-first-page',
+          generation: 1,
+          nextToken: 'new-token',
+          hasMore: true,
+        ),
+      );
+      final fence = (await store.tryAcquireCoordinatorLease(
+        scope,
+        ownerId: 'failed-first-owner',
+        now: testEpoch,
+        leaseDuration: const Duration(minutes: 5),
+      ))!;
+
+      await store.markInboxApplied(
+        scope,
+        sequence: 2,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+      expect((await store.readCheckpoint(scope)).fetchedToken, isNull);
+      await store.markInboxRetryable(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.network,
+        now: testEpoch,
+        nextEligibleAt: testEpoch.add(const Duration(minutes: 1)),
+        leaseFence: fence,
+      );
+      expect((await store.readCheckpoint(scope)).fetchedToken, isNull);
+
+      await store.markInboxApplied(
+        scope,
+        sequence: 1,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+      expect((await store.readCheckpoint(scope)).fetchedToken, 'new-token');
+      // A repeated terminal transition cannot promote a second time or alter
+      // the already committed token.
+      await store.markInboxApplied(
+        scope,
+        sequence: 1,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+      expect((await store.readCheckpoint(scope)).fetchedToken, 'new-token');
     },
   );
 

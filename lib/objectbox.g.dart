@@ -1554,7 +1554,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(21, 4610418443336266937),
     name: 'CloudSyncCheckpointEntity',
-    lastPropertyId: const obx_int.IdUid(21, 5316195973293636516),
+    lastPropertyId: const obx_int.IdUid(23, 8346271905819443021),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -1683,6 +1683,18 @@ final _entities = <obx_int.ModelEntity>[
       obx_int.ModelProperty(
         id: const obx_int.IdUid(21, 5316195973293636516),
         name: 'persistenceLane',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(22, 7163548097042261884),
+        name: 'pendingFetchedTokenCiphertext',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(23, 8346271905819443021),
+        name: 'pendingBatchId',
         type: 9,
         flags: 0,
       ),
@@ -4781,7 +4793,14 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final persistenceLaneOffset = object.persistenceLane == null
                 ? null
                 : fbb.writeString(object.persistenceLane!);
-            fbb.startTable(22);
+            final pendingFetchedTokenCiphertextOffset =
+                object.pendingFetchedTokenCiphertext == null
+                ? null
+                : fbb.writeString(object.pendingFetchedTokenCiphertext!);
+            final pendingBatchIdOffset = object.pendingBatchId == null
+                ? null
+                : fbb.writeString(object.pendingBatchId!);
+            fbb.startTable(24);
             fbb.addInt64(0, object.id);
             fbb.addOffset(1, checkpointKeyOffset);
             fbb.addOffset(2, accountFingerprintOffset);
@@ -4803,6 +4822,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
             fbb.addOffset(18, lastBatchIdOffset);
             fbb.addInt64(19, object.mutationRevisionCounter);
             fbb.addOffset(20, persistenceLaneOffset);
+            fbb.addOffset(21, pendingFetchedTokenCiphertextOffset);
+            fbb.addOffset(22, pendingBatchIdOffset);
             fbb.finish(fbb.endTable());
             return object.id;
           },
@@ -4842,6 +4863,12 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final persistenceLaneParam = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGetNullable(buffer, rootOffset, 44);
+            final pendingFetchedTokenCiphertextParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 46);
+            final pendingBatchIdParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 48);
             final fetchedTokenCiphertextParam = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGetNullable(buffer, rootOffset, 18);
@@ -4912,6 +4939,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
               schemaVersion: schemaVersionParam,
               persistenceLane: persistenceLaneParam,
               fetchedTokenCiphertext: fetchedTokenCiphertextParam,
+              pendingFetchedTokenCiphertext: pendingFetchedTokenCiphertextParam,
+              pendingBatchId: pendingBatchIdParam,
               generation: generationParam,
               lastBatchId: lastBatchIdParam,
               fetchedSequence: fetchedSequenceParam,
@@ -7386,6 +7415,18 @@ class CloudSyncCheckpointEntity_ {
   static final persistenceLane =
       obx.QueryStringProperty<CloudSyncCheckpointEntity>(
         _entities[12].properties[20],
+      );
+
+  /// See [CloudSyncCheckpointEntity.pendingFetchedTokenCiphertext].
+  static final pendingFetchedTokenCiphertext =
+      obx.QueryStringProperty<CloudSyncCheckpointEntity>(
+        _entities[12].properties[21],
+      );
+
+  /// See [CloudSyncCheckpointEntity.pendingBatchId].
+  static final pendingBatchId =
+      obx.QueryStringProperty<CloudSyncCheckpointEntity>(
+        _entities[12].properties[22],
       );
 }
 

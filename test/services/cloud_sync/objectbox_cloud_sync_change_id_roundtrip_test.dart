@@ -134,6 +134,11 @@ void main() {
             .terminalOutcome,
         'quarantined',
       );
+      expect(
+        (await journalStore.readCheckpoint(scope)).fetchedToken,
+        _reference('T'),
+      );
+      expect((await journalStore.readCheckpoint(scope)).pendingBatchId, isNull);
     },
   );
 }

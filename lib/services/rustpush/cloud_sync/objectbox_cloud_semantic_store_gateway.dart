@@ -922,6 +922,69 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         ..updatedAtMs = _updatedAtMs;
       _checkpoints.put(_checkpointEntity);
     }
+    _promotePendingFetchedTokenIfTerminal();
+  }
+
+  void _promotePendingFetchedTokenIfTerminal() {
+    final pendingBatchId = _checkpointEntity.pendingBatchId;
+    if (pendingBatchId == null) return;
+
+    final batchQuery =
+        _inbox
+            .query(
+              CloudInboxChangeEntity_.scopeKey
+                  .equals(_context.scopeKey)
+                  .and(
+                    CloudInboxChangeEntity_.generation.equals(
+                      _context.entry.generation,
+                    ),
+                  )
+                  .and(CloudInboxChangeEntity_.batchId.equals(pendingBatchId)),
+            )
+            .build()
+          ..limit = 1;
+    try {
+      if (batchQuery.findFirst() == null) return;
+    } finally {
+      batchQuery.close();
+    }
+
+    final nonterminalQuery =
+        _inbox
+            .query(
+              CloudInboxChangeEntity_.scopeKey
+                  .equals(_context.scopeKey)
+                  .and(
+                    CloudInboxChangeEntity_.generation.equals(
+                      _context.entry.generation,
+                    ),
+                  )
+                  .and(CloudInboxChangeEntity_.batchId.equals(pendingBatchId))
+                  .and(
+                    CloudInboxChangeEntity_.status.notEquals(
+                      CloudInboxStatus.applied.index,
+                    ),
+                  )
+                  .and(
+                    CloudInboxChangeEntity_.status.notEquals(
+                      CloudInboxStatus.quarantined.index,
+                    ),
+                  ),
+            )
+            .build()
+          ..limit = 1;
+    try {
+      if (nonterminalQuery.findFirst() != null) return;
+    } finally {
+      nonterminalQuery.close();
+    }
+
+    _checkpointEntity
+      ..fetchedTokenCiphertext = _checkpointEntity.pendingFetchedTokenCiphertext
+      ..pendingFetchedTokenCiphertext = null
+      ..pendingBatchId = null
+      ..updatedAtMs = _updatedAtMs;
+    _checkpoints.put(_checkpointEntity);
   }
 
   CloudSemanticReplayEntity _newReplayEntity({

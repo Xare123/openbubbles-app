@@ -95,6 +95,81 @@ void main() {
     },
   );
 
+  test('promotes a pending page token with its final terminal row', () async {
+    final entry = _entry(scope: scope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    final checkpoint =
+        objectBox.box<CloudSyncCheckpointEntity>().getAll().single
+          ..fetchedTokenCiphertext = 'protected-old-token'
+          ..pendingFetchedTokenCiphertext = 'protected-next-token'
+          ..pendingBatchId = entry.batchId;
+    objectBox.box<CloudSyncCheckpointEntity>().put(checkpoint);
+
+    await gateway.writeTransaction<void>(
+      entry: entry,
+      leaseFence: leaseFence,
+      action: _applyAndMark(entry),
+    );
+
+    final promoted = objectBox.box<CloudSyncCheckpointEntity>().getAll().single;
+    expect(promoted.fetchedTokenCiphertext, 'protected-next-token');
+    expect(promoted.pendingFetchedTokenCiphertext, isNull);
+    expect(promoted.pendingBatchId, isNull);
+  });
+
+  test(
+    'does not promote a page token while a sibling row is pending',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final siblingChangeId = _digestValue('D');
+      final sibling =
+          _copyInbox(
+              inboxBox.getAll().single,
+              changeKey: _scopedDigest(scope, 'change', siblingChangeId),
+            )
+            ..changeIdHash = siblingChangeId
+            ..fetchSequence = 2;
+      inboxBox.put(sibling);
+      final checkpoint =
+          objectBox.box<CloudSyncCheckpointEntity>().getAll().single
+            ..fetchedTokenCiphertext = 'protected-old-token'
+            ..pendingFetchedTokenCiphertext = 'protected-next-token'
+            ..pendingBatchId = entry.batchId
+            ..fetchedSequence = 2;
+      objectBox.box<CloudSyncCheckpointEntity>().put(checkpoint);
+
+      await gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: _applyAndMark(entry),
+      );
+
+      final retained = objectBox
+          .box<CloudSyncCheckpointEntity>()
+          .getAll()
+          .single;
+      expect(retained.fetchedTokenCiphertext, 'protected-old-token');
+      expect(retained.pendingFetchedTokenCiphertext, 'protected-next-token');
+      expect(retained.pendingBatchId, entry.batchId);
+      expect(
+        inboxBox.getAll().where((row) => row.fetchSequence == 2).single.status,
+        CloudInboxStatus.pending.index,
+      );
+    },
+  );
+
   test('rejects legacy transport grammar before opening a transaction', () async {
     final entry = _entry(
       scope: scope,
