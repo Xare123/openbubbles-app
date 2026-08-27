@@ -867,28 +867,29 @@ unencrypted message fields.
 
 ### Fact: `change_type` cannot be the sole semantic discriminator
 
-The V2 transport currently preserves `change_type` as `Option<i32>`. Its page
-mapper treats `Some(1)` with a record as an upsert and `Some(2)` without one as
-a tombstone, but deliberately permits `None` when the record shape is otherwise
-well formed. The new `cloud_sync_semantic_decoder.rs`, in contrast, currently
-requires raw value `1` for an upsert and `2` for a tombstone. Therefore a
-transport-valid change with absent raw type would be rejected by the semantic
-layer even though the transport had enough information to classify it.
+The V2 transport preserves `change_type` as `Option<i32>`. Authenticated Canary
+evidence established the private Messages in iCloud matrix: `Some(1)` with a
+record is a create/upsert, `Some(2)` with a record is an update/upsert, and
+`Some(3)` without a record is a delete/tombstone. `None` remains valid when the
+record body shape is otherwise unambiguous. Transport and semantic validation
+must apply this same closed matrix; treating `2` as deletion rejects every live
+updated record before PCS conversion.
 
-Source: current V2 transport mapping in
-[`cloud_messages.rs`](../rustpush/src/imessage/cloud_messages.rs) lines
-`800-882`, and the decoder's raw-type checks in
-[`cloud_sync_semantic_decoder.rs`](../rust/src/cloud_sync_semantic_decoder.rs)
-lines `172-204` and `215-219`. Public rustpush also represents synced records
-as `Option` values, where absence is the deletion signal, in
+Source: current V2 transport shape validation in
+[`cloud_messages.rs`](../rustpush/src/imessage/cloud_messages.rs), bridge
+validation in
+[`cloud_sync_transient_bridge.rs`](../rust/src/cloud_sync_transient_bridge.rs),
+and the closed semantic matrix in
+[`cloud_sync_semantic_decoder.rs`](../rust/src/cloud_sync_semantic_decoder.rs).
+Public rustpush also represents synced records as `Option` values, where
+absence is the deletion signal, in
 [the generic Messages sync contract](https://github.com/OpenBubbles/rustpush/blob/70ec162c6838830194d55792c8b26e4d6681c816/src/imessage/cloud_messages.rs#L660-L688).
 
-**Action:** Change the semantic boundary to accept the transport's validated
-`CloudMessageRecordKind` (or a similarly closed `Upsert | Tombstone` enum),
-not a guessed raw integer. Preserve the optional raw type for redacted
-diagnostics. Add fixtures for `None` with a valid upsert, `None` with a valid
-tombstone, and contradictory record/type shapes. No checkpoint may advance
-until each is projected or durably quarantined.
+**Action:** Keep the transport, protected bridge, and semantic boundary on the
+same validated matrix. Preserve the optional raw type for redacted diagnostics.
+Retain fixtures for create, update, delete, `None` with either valid body shape,
+and contradictory record/type shapes. No checkpoint may advance until each
+change is projected or durably quarantined.
 
 ### Fact: PCS failures are wider than malformed record data
 
