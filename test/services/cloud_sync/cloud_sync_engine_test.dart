@@ -225,7 +225,7 @@ void main() {
   });
 
   test(
-    'passes page one token to page two and applies both pages in order',
+    'passes persisted tokens across three pages and applies them in order',
     () async {
       transport.fetchHandler =
           (requestedScope, previousToken, generation, limit) async {
@@ -249,6 +249,15 @@ void main() {
                   batchId: 'batch-page-two',
                   generation: generation,
                   nextToken: 'token-page-two',
+                  hasMore: true,
+                );
+              case 'token-page-two':
+                return CloudFetchBatch(
+                  scope: scope,
+                  changes: [testChange(3)],
+                  batchId: 'batch-page-three',
+                  generation: generation,
+                  nextToken: 'token-page-three',
                   hasMore: false,
                 );
               default:
@@ -261,17 +270,22 @@ void main() {
       );
 
       expect(result.status, CloudSyncRunStatus.completed);
-      expect(result.counters.fetched, 2);
-      expect(result.counters.applied, 2);
-      expect(transport.observedFetchTokens, [null, 'token-page-one']);
-      expect(applier.appliedSequences, [1, 2]);
+      expect(result.counters.fetched, 3);
+      expect(result.counters.applied, 3);
+      expect(transport.observedFetchTokens, [
+        null,
+        'token-page-one',
+        'token-page-two',
+      ]);
+      expect(applier.appliedSequences, [1, 2, 3]);
       expect((await store.inboxEntries(scope)).map((entry) => entry.batchId), [
         'batch-page-one',
         'batch-page-two',
+        'batch-page-three',
       ]);
       final checkpoint = await store.readCheckpoint(scope);
-      expect(checkpoint.fetchedToken, 'token-page-two');
-      expect(checkpoint.lastAppliedSequence, 2);
+      expect(checkpoint.fetchedToken, 'token-page-three');
+      expect(checkpoint.lastAppliedSequence, 3);
     },
   );
 
