@@ -153,8 +153,8 @@ pub fn validated_change_kind(
     has_record: bool,
 ) -> Result<CloudSemanticChangeKind, CloudSemanticDecodeFailure> {
     match (change_type, has_record) {
-        (Some(1) | None, true) => Ok(CloudSemanticChangeKind::Upsert),
-        (Some(2) | None, false) => Ok(CloudSemanticChangeKind::Tombstone),
+        (Some(1 | 2) | None, true) => Ok(CloudSemanticChangeKind::Upsert),
+        (Some(3) | None, false) => Ok(CloudSemanticChangeKind::Tombstone),
         _ => Err(CloudSemanticDecodeFailure::MalformedRecord),
     }
 }
@@ -545,7 +545,7 @@ mod tests {
     }
 
     #[test]
-    fn omitted_change_type_uses_the_validated_record_shape() {
+    fn change_type_and_record_shape_form_a_closed_matrix() {
         assert_eq!(
             validated_change_kind(None, true),
             Ok(CloudSemanticChangeKind::Upsert)
@@ -560,6 +560,18 @@ mod tests {
         );
         assert_eq!(
             validated_change_kind(Some(2), true),
+            Ok(CloudSemanticChangeKind::Upsert)
+        );
+        assert_eq!(
+            validated_change_kind(Some(3), false),
+            Ok(CloudSemanticChangeKind::Tombstone)
+        );
+        assert_eq!(
+            validated_change_kind(Some(2), false),
+            Err(CloudSemanticDecodeFailure::MalformedRecord)
+        );
+        assert_eq!(
+            validated_change_kind(Some(3), true),
             Err(CloudSemanticDecodeFailure::MalformedRecord)
         );
     }

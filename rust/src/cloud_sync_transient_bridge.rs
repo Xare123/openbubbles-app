@@ -498,11 +498,19 @@ fn validate_upsert_record(
     if record_name(record) != envelope.record_name()
         || record_type(record) != envelope.record_type()
         || envelope.record_type() != Some(expected_record_type(envelope.stream()))
-        || envelope.change_type().is_some_and(|value| value != 1)
+        || !valid_upsert_change_type(envelope.change_type())
     {
         return Err(CloudTransientBridgeFailure::MalformedRecord);
     }
     Ok(())
+}
+
+fn valid_upsert_change_type(change_type: Option<i32>) -> bool {
+    matches!(change_type, None | Some(1 | 2))
+}
+
+fn valid_tombstone_change_type(change_type: Option<i32>) -> bool {
+    matches!(change_type, None | Some(3))
 }
 
 fn validate_tombstone_record(
@@ -524,7 +532,7 @@ fn validate_tombstone_record(
         || record_type != envelope.record_type()
         || change.r#type != envelope.change_type()
         || change.record.is_some()
-        || envelope.change_type().is_some_and(|value| value != 2)
+        || !valid_tombstone_change_type(envelope.change_type())
     {
         return Err(CloudTransientBridgeFailure::MalformedRecord);
     }
@@ -983,6 +991,19 @@ mod tests {
 
     fn digest(character: char) -> String {
         character.to_string().repeat(43)
+    }
+
+    #[test]
+    fn private_change_types_match_create_update_and_delete_shapes() {
+        assert!(valid_upsert_change_type(Some(1)));
+        assert!(valid_upsert_change_type(Some(2)));
+        assert!(valid_upsert_change_type(None));
+        assert!(!valid_upsert_change_type(Some(3)));
+
+        assert!(valid_tombstone_change_type(Some(3)));
+        assert!(valid_tombstone_change_type(None));
+        assert!(!valid_tombstone_change_type(Some(1)));
+        assert!(!valid_tombstone_change_type(Some(2)));
     }
 
     fn upsert_mutation(
