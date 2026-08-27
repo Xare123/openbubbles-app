@@ -1,6 +1,7 @@
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:bluebubbles/src/rust/frb_generated.dart' as frb_generated;
 import 'package:bluebubbles/src/rust/lib.dart' as frb_lib;
+import 'package:bluebubbles/utils/logger/logger.dart';
 
 import 'cloud_inbox_applier.dart';
 import 'cloud_merge_policy.dart';
@@ -184,11 +185,44 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       ),
     );
 
+    _logContentFreeNativeDisposition(_nativeStream(entry.scope), result);
+
     final currentAuth = await _readAuthSnapshot();
     if (!auth.sameIdentity(currentAuth)) {
       throw const CloudSemanticDecodeFailure(CloudFailureCategory.conflict);
     }
     return _mapResult(entry, result, tombstoneIdentity);
+  }
+
+  static void _logContentFreeNativeDisposition(
+    String stream,
+    frb_api.CloudSyncTransientDecodeResult result,
+  ) {
+    final hasReadyField =
+        result.changeId != null ||
+        result.entityKind != null ||
+        result.mutationKind != null ||
+        result.snapshot != null ||
+        result.payload != null ||
+        result.tombstone != null;
+    final disposition = switch ((
+      hasReadyField,
+      result.deferredReason,
+      result.quarantineReason,
+      result.failureCode,
+    )) {
+      (true, null, null, null) => 'ready',
+      (false, final deferred?, null, null) =>
+        'deferred:${deferred.name}',
+      (false, null, final quarantine?, null) =>
+        'quarantined:${quarantine.name}',
+      (false, null, null, final failure?) => 'failure:${failure.name}',
+      _ => 'invalid_disposition_shape',
+    };
+    Logger.info(
+      'CloudKit V2 semantic native outcome stream=$stream '
+      'disposition=$disposition',
+    );
   }
 
   CloudDecodedMutation _mapResult(
