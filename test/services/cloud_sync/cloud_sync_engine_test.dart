@@ -225,6 +225,199 @@ void main() {
   });
 
   test(
+    'passes page one token to page two and applies both pages in order',
+    () async {
+      transport.fetchHandler =
+          (requestedScope, previousToken, generation, limit) async {
+            expect(requestedScope, scope);
+            expect(generation, 1);
+            expect(limit, 256);
+            switch (previousToken) {
+              case null:
+                return CloudFetchBatch(
+                  scope: scope,
+                  changes: [testChange(1)],
+                  batchId: 'batch-page-one',
+                  generation: generation,
+                  nextToken: 'token-page-one',
+                  hasMore: true,
+                );
+              case 'token-page-one':
+                return CloudFetchBatch(
+                  scope: scope,
+                  changes: [testChange(2)],
+                  batchId: 'batch-page-two',
+                  generation: generation,
+                  nextToken: 'token-page-two',
+                  hasMore: false,
+                );
+              default:
+                fail('unexpected continuation token: $previousToken');
+            }
+          };
+
+      final result = await engine().synchronize(
+        trigger: CloudSyncTrigger.manual,
+      );
+
+      expect(result.status, CloudSyncRunStatus.completed);
+      expect(result.counters.fetched, 2);
+      expect(result.counters.applied, 2);
+      expect(transport.observedFetchTokens, [null, 'token-page-one']);
+      expect(applier.appliedSequences, [1, 2]);
+      expect((await store.inboxEntries(scope)).map((entry) => entry.batchId), [
+        'batch-page-one',
+        'batch-page-two',
+      ]);
+      final checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.fetchedToken, 'token-page-two');
+      expect(checkpoint.lastAppliedSequence, 2);
+    },
+  );
+
+  test(
+    'restart resumes after a post-journal page-one crash without refetching it',
+    () async {
+      store = _CrashAfterFirstJournalStore();
+      transport.fetchHandler =
+          (requestedScope, previousToken, generation, limit) async {
+            expect(requestedScope, scope);
+            expect(generation, 1);
+            expect(limit, 256);
+            switch (previousToken) {
+              case null:
+                return CloudFetchBatch(
+                  scope: scope,
+                  changes: [testChange(1)],
+                  batchId: 'batch-crash-page-one',
+                  generation: generation,
+                  nextToken: 'token-after-page-one',
+                  hasMore: true,
+                );
+              case 'token-after-page-one':
+                return CloudFetchBatch(
+                  scope: scope,
+                  changes: [testChange(2)],
+                  batchId: 'batch-resumed-page-two',
+                  generation: generation,
+                  nextToken: 'token-after-page-two',
+                  hasMore: false,
+                );
+              default:
+                fail('unexpected continuation token: $previousToken');
+            }
+          };
+
+      final crashed = await engine().synchronize(
+        trigger: CloudSyncTrigger.manual,
+      );
+
+      expect(crashed.status, CloudSyncRunStatus.failed);
+      expect(transport.fetchCallCount, 1);
+      expect(transport.observedFetchTokens, [null]);
+      final checkpointAfterCrash = await store.readCheckpoint(scope);
+      expect(checkpointAfterCrash.fetchedToken, 'token-after-page-one');
+      expect(checkpointAfterCrash.lastAppliedSequence, 0);
+      expect(await store.inboxEntries(scope), hasLength(1));
+      expect(applier.appliedSequences, isEmpty);
+
+      final resumed = await engine(
+        coordinatorId: 'coordinator-after-crash',
+      ).synchronize(trigger: CloudSyncTrigger.startup);
+
+      expect(resumed.status, CloudSyncRunStatus.completed);
+      expect(transport.fetchCallCount, 2);
+      expect(transport.observedFetchTokens, [null, 'token-after-page-one']);
+      expect(applier.appliedSequences, [1, 2]);
+      final checkpointAfterResume = await store.readCheckpoint(scope);
+      expect(checkpointAfterResume.fetchedToken, 'token-after-page-two');
+      expect(checkpointAfterResume.lastAppliedSequence, 2);
+      expect((await store.inboxEntries(scope)).map((entry) => entry.batchId), [
+        'batch-crash-page-one',
+        'batch-resumed-page-two',
+      ]);
+    },
+  );
+
+  test(
+    'retryable page-one predecessor blocks page-two floor advancement',
+    () async {
+      transport.fetchHandler =
+          (requestedScope, previousToken, generation, limit) async {
+            expect(requestedScope, scope);
+            expect(generation, 1);
+            expect(limit, 256);
+            switch (previousToken) {
+              case null:
+                return CloudFetchBatch(
+                  scope: scope,
+                  changes: [testChange(1)],
+                  batchId: 'batch-retry-page-one',
+                  generation: generation,
+                  nextToken: 'token-retry-page-one',
+                  hasMore: true,
+                );
+              case 'token-retry-page-one':
+                return CloudFetchBatch(
+                  scope: scope,
+                  changes: [testChange(2)],
+                  batchId: 'batch-retry-page-two',
+                  generation: generation,
+                  nextToken: 'token-retry-page-two',
+                  hasMore: false,
+                );
+              case 'token-retry-page-two':
+                return CloudFetchBatch(
+                  scope: scope,
+                  changes: const [],
+                  batchId: 'batch-retry-after-resume',
+                  generation: generation,
+                  nextToken: previousToken,
+                  hasMore: false,
+                );
+              default:
+                fail('unexpected continuation token: $previousToken');
+            }
+          };
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.retryable(
+        failureCategory: CloudFailureCategory.network,
+      );
+
+      final first = await engine().synchronize(
+        trigger: CloudSyncTrigger.manual,
+      );
+
+      expect(first.counters.retried, 1);
+      expect(first.counters.applied, 0);
+      expect(transport.observedFetchTokens, [null, 'token-retry-page-one']);
+      expect(applier.appliedSequences, [1]);
+      final blockedCheckpoint = await store.readCheckpoint(scope);
+      expect(blockedCheckpoint.fetchedToken, 'token-retry-page-two');
+      expect(blockedCheckpoint.lastAppliedSequence, 0);
+      expect((await store.inboxEntries(scope)).map((entry) => entry.status), [
+        CloudInboxStatus.pending,
+        CloudInboxStatus.pending,
+      ]);
+
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.applied();
+      clock.advance(const Duration(seconds: 10));
+      final second = await engine(
+        coordinatorId: 'coordinator-after-retry',
+      ).synchronize(trigger: CloudSyncTrigger.startup);
+
+      expect(second.status, CloudSyncRunStatus.completed);
+      expect(second.counters.applied, 2);
+      expect(transport.observedFetchTokens, [
+        null,
+        'token-retry-page-one',
+        'token-retry-page-two',
+      ]);
+      expect(applier.appliedSequences, [1, 1, 2]);
+      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 2);
+    },
+  );
+
+  test(
     'semantic startup applies existing inbox before transport fetch',
     () async {
       await seedGeneralJournal(
@@ -2532,5 +2725,31 @@ class _FailingSubmissionMarkerStore extends InMemoryCloudSyncStore {
       category: CloudFailureCategory.localStorage,
       safeCode: 'simulated_submission_marker_failure',
     );
+  }
+}
+
+class _CrashAfterFirstJournalStore extends InMemoryCloudSyncStore {
+  int journalCallCount = 0;
+
+  @override
+  Future<int> journalFetchedBatch(
+    CloudFetchBatch batch, {
+    required DateTime now,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int expectedGeneration,
+    required String? expectedFetchedToken,
+  }) async {
+    journalCallCount++;
+    final inserted = await super.journalFetchedBatch(
+      batch,
+      now: now,
+      leaseFence: leaseFence,
+      expectedGeneration: expectedGeneration,
+      expectedFetchedToken: expectedFetchedToken,
+    );
+    if (journalCallCount == 1) {
+      throw StateError('simulated_process_crash_after_page_one_journal');
+    }
+    return inserted;
   }
 }
