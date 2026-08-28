@@ -16,6 +16,7 @@ final class TransientCloudCanonicalIdentityRegistry
   int? _generation;
   int _leaseGeneration = 0;
   Map<(CloudEntityKind, String), String>? _identities;
+  Map<String, CloudCanonicalIdentityOwner>? _owners;
 
   bool get hasActiveLease => _identities != null;
 
@@ -30,6 +31,7 @@ final class TransientCloudCanonicalIdentityRegistry
     }
 
     final identities = <(CloudEntityKind, String), String>{};
+    final owners = <String, CloudCanonicalIdentityOwner>{};
     void add(CloudEntityKind kind, String hash, String guid) {
       if (hash.isEmpty || guid.isEmpty) {
         throw StateError('cloud_canonical_identity_registry_entry_invalid');
@@ -39,7 +41,19 @@ final class TransientCloudCanonicalIdentityRegistry
       if (existing != null && existing != guid) {
         throw StateError('cloud_canonical_identity_registry_conflict');
       }
+      final owner = owners[guid];
+      if (owner != null &&
+          !owner.matches(
+            expectedKind: kind,
+            expectedLogicalEntityKeyHash: hash,
+          )) {
+        throw StateError('cloud_canonical_identity_registry_conflict');
+      }
       identities[key] = guid;
+      owners[guid] = CloudCanonicalIdentityOwner(
+        kind: kind,
+        logicalEntityKeyHash: hash,
+      );
     }
 
     final payload = mutation.payload!;
@@ -109,6 +123,7 @@ final class TransientCloudCanonicalIdentityRegistry
     _scope = mutation.scope;
     _generation = mutation.generation;
     _identities = Map.unmodifiable(identities);
+    _owners = Map.unmodifiable(owners);
     final leaseGeneration = ++_leaseGeneration;
     return _TransientCloudCanonicalIdentityLease(
       releaseCallback: () => _release(leaseGeneration),
@@ -126,9 +141,20 @@ final class TransientCloudCanonicalIdentityRegistry
     return _identities?[(kind, logicalEntityKeyHash)];
   }
 
+  @override
+  CloudCanonicalIdentityOwner? resolveCanonicalIdentityOwner({
+    required CloudSyncScope scope,
+    required int generation,
+    required String canonicalGuid,
+  }) {
+    if (_scope != scope || _generation != generation) return null;
+    return _owners?[canonicalGuid];
+  }
+
   void _release(int leaseGeneration) {
     if (_identities == null || leaseGeneration != _leaseGeneration) return;
     _identities = null;
+    _owners = null;
     _scope = null;
     _generation = null;
   }

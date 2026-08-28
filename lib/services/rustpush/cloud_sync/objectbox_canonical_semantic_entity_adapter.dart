@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:bluebubbles/database/models.dart';
+import 'package:crypto/crypto.dart';
 
 import 'cloud_inbox_applier.dart';
 import 'cloud_merge_policy.dart';
@@ -37,6 +40,147 @@ abstract interface class CloudCanonicalIdentityResolver {
     required CloudEntityKind kind,
     required String logicalEntityKeyHash,
   });
+
+  /// Returns the owner of [canonicalGuid] while the same bounded identity
+  /// proof is active. Null means ownership is unknown, not that the GUID is
+  /// safe to reuse for an existing row.
+  CloudCanonicalIdentityOwner? resolveCanonicalIdentityOwner({
+    required CloudSyncScope scope,
+    required int generation,
+    required String canonicalGuid,
+  });
+}
+
+/// A logical identity proven to own one canonical row for a bounded scope and
+/// generation.
+final class CloudCanonicalIdentityOwner {
+  const CloudCanonicalIdentityOwner({
+    required this.kind,
+    required this.logicalEntityKeyHash,
+  });
+
+  final CloudEntityKind kind;
+  final String logicalEntityKeyHash;
+
+  bool matches({
+    required CloudEntityKind expectedKind,
+    required String expectedLogicalEntityKeyHash,
+  }) =>
+      kind == expectedKind &&
+      logicalEntityKeyHash == expectedLogicalEntityKeyHash;
+}
+
+/// One-way durable binding between a canonical ObjectBox row and its semantic
+/// snapshot. The digest is evidence, not another canonical-ID registry: it is
+/// persisted only on the same scoped snapshot transaction as the row mutation.
+/// Its input binds the exact scope, generation, entity kind, and logical owner
+/// so a copied snapshot cannot establish ownership in another context.
+final class CloudCanonicalIdentityDigest {
+  const CloudCanonicalIdentityDigest._();
+
+  static final RegExp _pattern = RegExp(r'^[0-9a-f]{64}$');
+
+  static String forCanonicalGuid({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudEntityKind kind,
+    required String logicalEntityKeyHash,
+    required String canonicalGuid,
+  }) {
+    if (generation <= 0 ||
+        logicalEntityKeyHash.isEmpty ||
+        !_isValidCanonicalGuid(canonicalGuid)) {
+      throw ArgumentError('canonical_identity_guid_invalid');
+    }
+    final canonical = StringBuffer('canonical-identity-v2\u001f')
+      ..write(_lengthPrefixed(scope.storageKey))
+      ..write(_lengthPrefixed(scope.accountFingerprint))
+      ..write(_lengthPrefixed(scope.container))
+      ..write(_lengthPrefixed(scope.database))
+      ..write(_lengthPrefixed(scope.zone))
+      ..write(_lengthPrefixed(scope.streamKind.name))
+      ..write(_lengthPrefixed(scope.schemaVersion.toString()))
+      ..write(_lengthPrefixed(scope.persistenceLane.name))
+      ..write(_lengthPrefixed(generation.toString()))
+      ..write(_lengthPrefixed(kind.name))
+      ..write(_lengthPrefixed(logicalEntityKeyHash))
+      ..write(_lengthPrefixed(canonicalGuid));
+    return sha256.convert(utf8.encode(canonical.toString())).toString();
+  }
+
+  static String forPayload({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudSemanticEntityPayload payload,
+  }) => forCanonicalGuid(
+    scope: scope,
+    generation: generation,
+    kind: payload.kind,
+    logicalEntityKeyHash: payload.logicalEntityKeyHash,
+    canonicalGuid: switch (payload) {
+      CloudChatEntityPayload value => value.canonicalGuid,
+      CloudMessageEntityPayload value => value.canonicalGuid,
+      CloudReactionEntityPayload value => value.canonicalGuid,
+      CloudAttachmentEntityPayload value => value.canonicalGuid,
+      CloudGroupPhotoEntityPayload value => value.photoGuid,
+      CloudProfileEntityPayload _ => throw ArgumentError(
+        'canonical_identity_payload_unsupported',
+      ),
+    },
+  );
+
+  /// Owner-independent lookup key used only to find every durable claimant of
+  /// one canonical GUID inside the exact account scope and generation.
+  static String forCanonicalGuidLookup({
+    required CloudSyncScope scope,
+    required int generation,
+    required String canonicalGuid,
+  }) {
+    if (generation <= 0 || !_isValidCanonicalGuid(canonicalGuid)) {
+      throw ArgumentError('canonical_identity_guid_invalid');
+    }
+    final canonical = StringBuffer('canonical-identity-lookup-v1\u001f')
+      ..write(_lengthPrefixed(scope.storageKey))
+      ..write(_lengthPrefixed(scope.accountFingerprint))
+      ..write(_lengthPrefixed(scope.container))
+      ..write(_lengthPrefixed(scope.database))
+      ..write(_lengthPrefixed(scope.zone))
+      ..write(_lengthPrefixed(scope.streamKind.name))
+      ..write(_lengthPrefixed(scope.schemaVersion.toString()))
+      ..write(_lengthPrefixed(scope.persistenceLane.name))
+      ..write(_lengthPrefixed(generation.toString()))
+      ..write(_lengthPrefixed(canonicalGuid));
+    return sha256.convert(utf8.encode(canonical.toString())).toString();
+  }
+
+  static String forPayloadLookup({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudSemanticEntityPayload payload,
+  }) => forCanonicalGuidLookup(
+    scope: scope,
+    generation: generation,
+    canonicalGuid: switch (payload) {
+      CloudChatEntityPayload value => value.canonicalGuid,
+      CloudMessageEntityPayload value => value.canonicalGuid,
+      CloudReactionEntityPayload value => value.canonicalGuid,
+      CloudAttachmentEntityPayload value => value.canonicalGuid,
+      CloudGroupPhotoEntityPayload value => value.photoGuid,
+      CloudProfileEntityPayload _ => throw ArgumentError(
+        'canonical_identity_payload_unsupported',
+      ),
+    },
+  );
+
+  static bool isValid(String value) => _pattern.hasMatch(value);
+
+  static String _lengthPrefixed(String value) =>
+      '${utf8.encode(value).length}:$value';
+
+  static bool _isValidCanonicalGuid(String value) =>
+      value.isNotEmpty &&
+      value.length <= 1024 &&
+      value.codeUnits.every((unit) => unit >= 0x20 && unit != 0x7f);
 }
 
 /// Default-off synchronous adapter for the app's canonical ObjectBox boxes.
@@ -70,7 +214,8 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
   }) : _chats = store.box<Chat>(),
        _handles = store.box<Handle>(),
        _messages = store.box<Message>(),
-       _attachments = store.box<Attachment>();
+       _attachments = store.box<Attachment>(),
+       _snapshots = store.box<CloudSemanticSnapshotEntity>();
 
   @override
   final Store store;
@@ -87,6 +232,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
   final Box<Handle> _handles;
   final Box<Message> _messages;
   final Box<Attachment> _attachments;
+  final Box<CloudSemanticSnapshotEntity> _snapshots;
 
   @override
   bool isActiveAccountScope({
@@ -111,6 +257,13 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       logicalEntityKeyHash: logicalEntityKeyHash,
     );
     if (guid == null) return false;
+    _requireCanonicalIdentityOwnership(
+      scope: scope,
+      generation: generation,
+      kind: kind,
+      logicalEntityKeyHash: logicalEntityKeyHash,
+      canonicalGuid: guid,
+    );
 
     return switch (kind) {
       CloudEntityKind.chat => _findChat(guid) != null,
@@ -121,6 +274,35 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       // existence can be safely inferred from the current V2 DTO.
       CloudEntityKind.groupPhoto || CloudEntityKind.sharedProfile => false,
     };
+  }
+
+  @override
+  void validateOwnershipEvidence({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudEntityKind kind,
+    required String logicalEntityKeyHash,
+  }) {
+    _requireActiveScope(scope, generation);
+    final canonicalGuid = _resolveCanonicalGuid(
+      scope: scope,
+      generation: generation,
+      kind: kind,
+      logicalEntityKeyHash: logicalEntityKeyHash,
+    );
+    if (canonicalGuid == null) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'canonical_identity_unavailable',
+      );
+    }
+    _requireCanonicalIdentityOwnership(
+      scope: scope,
+      generation: generation,
+      kind: kind,
+      logicalEntityKeyHash: logicalEntityKeyHash,
+      canonicalGuid: canonicalGuid,
+    );
   }
 
   @override
@@ -138,6 +320,27 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         safeCode: 'canonical_payload_snapshot_mismatch',
       );
     }
+    _validateMutationIdentitySet(payload);
+
+    final canonicalGuid = _resolveCanonicalGuid(
+      scope: scope,
+      generation: generation,
+      kind: payload.kind,
+      logicalEntityKeyHash: payload.logicalEntityKeyHash,
+    );
+    if (canonicalGuid == null) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'canonical_identity_unavailable',
+      );
+    }
+    _requireCanonicalIdentityOwnership(
+      scope: scope,
+      generation: generation,
+      kind: payload.kind,
+      logicalEntityKeyHash: payload.logicalEntityKeyHash,
+      canonicalGuid: canonicalGuid,
+    );
 
     // There is one deliberately narrow safe mapping. The merge gateway has
     // already decided the incoming snapshot wins; this adapter still refuses
@@ -793,8 +996,281 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         safeCode: 'canonical_identity_mismatch',
       );
     }
+    _requireCanonicalIdentityOwnership(
+      scope: scope,
+      generation: generation,
+      kind: kind,
+      logicalEntityKeyHash: logicalEntityKeyHash,
+      canonicalGuid: resolved,
+    );
     return resolved;
   }
+
+  void _requireCanonicalIdentityOwnership({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudEntityKind kind,
+    required String logicalEntityKeyHash,
+    required String canonicalGuid,
+  }) {
+    final resolverOwner = _identityResolver.resolveCanonicalIdentityOwner(
+      scope: scope,
+      generation: generation,
+      canonicalGuid: canonicalGuid,
+    );
+    if (resolverOwner != null &&
+        !resolverOwner.matches(
+          expectedKind: kind,
+          expectedLogicalEntityKeyHash: logicalEntityKeyHash,
+        )) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_identity_owner_conflict',
+      );
+    }
+
+    final scopeGenerationKey = _scopeGenerationKey(scope, generation);
+    final legacyQuery =
+        _snapshots
+            .query(
+              CloudSemanticSnapshotEntity_.scopeGenerationKey
+                  .equals(scopeGenerationKey)
+                  .and(
+                    CloudSemanticSnapshotEntity_.canonicalGuidLookupHash
+                        .isNull(),
+                  ),
+            )
+            .build()
+          ..limit = 1;
+    try {
+      if (legacyQuery.findFirst() != null) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.dependency,
+          safeCode: 'canonical_identity_owner_unproven',
+        );
+      }
+    } finally {
+      legacyQuery.close();
+    }
+
+    final lookupHash = CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+      scope: scope,
+      generation: generation,
+      canonicalGuid: canonicalGuid,
+    );
+    final ownerQuery =
+        _snapshots
+            .query(
+              CloudSemanticSnapshotEntity_.scopeGenerationKey
+                  .equals(scopeGenerationKey)
+                  .and(
+                    CloudSemanticSnapshotEntity_.canonicalGuidLookupHash.equals(
+                      lookupHash,
+                    ),
+                  ),
+            )
+            .build()
+          ..limit = 2;
+    late final List<CloudSemanticSnapshotEntity> ownerCandidates;
+    try {
+      ownerCandidates = ownerQuery.find();
+    } finally {
+      ownerQuery.close();
+    }
+    if (ownerCandidates.length > 1) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_identity_owner_conflict',
+      );
+    }
+
+    var exactDurableProof = false;
+    for (final snapshot in ownerCandidates) {
+      if (!_snapshotMatchesScope(snapshot, scope, generation) ||
+          snapshot.canonicalGuidLookupHash != lookupHash) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.dependency,
+          safeCode: 'canonical_identity_owner_unproven',
+        );
+      }
+      final snapshotKind = _snapshotKind(snapshot.entityKind);
+      if (snapshotKind == null) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.dependency,
+          safeCode: 'canonical_identity_owner_unproven',
+        );
+      }
+      final snapshotGuidHash = snapshot.canonicalGuidHash;
+      if (snapshotGuidHash == null) {
+        // A pre-ownership snapshot cannot prove that it does not own this
+        // GUID. It must block every canonical mutation in this scope and
+        // generation, even if the incoming GUID does not currently resolve to
+        // a local row. Otherwise a fresh row could establish an alias that
+        // future ownership checks can no longer disprove.
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.dependency,
+          safeCode: 'canonical_identity_owner_unproven',
+        );
+      }
+      if (!CloudCanonicalIdentityDigest.isValid(snapshotGuidHash)) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.dependency,
+          safeCode: 'canonical_identity_owner_unproven',
+        );
+      }
+      final snapshotBoundHash = CloudCanonicalIdentityDigest.forCanonicalGuid(
+        scope: scope,
+        generation: generation,
+        kind: snapshotKind,
+        logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
+        canonicalGuid: canonicalGuid,
+      );
+      if (snapshotGuidHash != snapshotBoundHash) {
+        // The exact owner row must carry evidence for this exact context. A
+        // mismatch is not an unrelated GUID, it is stale or re-homed proof.
+        if (snapshotKind == kind &&
+            snapshot.logicalEntityKeyHash == logicalEntityKeyHash) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.dependency,
+            safeCode: 'canonical_identity_owner_unproven',
+          );
+        }
+        continue;
+      }
+      if (snapshotKind != kind ||
+          snapshot.logicalEntityKeyHash != logicalEntityKeyHash) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'canonical_identity_owner_conflict',
+        );
+      }
+      exactDurableProof = true;
+    }
+
+    // A transient decode lease proves only the identity asserted by this one
+    // incoming mutation. It cannot establish ownership of an already-present
+    // canonical row, which may predate V2 or belong to another account scope.
+    // Existing rows therefore require their own exact, durable V2 proof.
+    if (!exactDurableProof && _canonicalRowExists(canonicalGuid)) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'canonical_identity_owner_unproven',
+      );
+    }
+  }
+
+  void _validateMutationIdentitySet(CloudSemanticEntityPayload payload) {
+    final owners = <String, CloudCanonicalIdentityOwner>{};
+    void add({
+      required CloudEntityKind kind,
+      required String logicalEntityKeyHash,
+      required String canonicalGuid,
+    }) {
+      final existing = owners[canonicalGuid];
+      if (existing != null &&
+          !existing.matches(
+            expectedKind: kind,
+            expectedLogicalEntityKeyHash: logicalEntityKeyHash,
+          )) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'canonical_identity_owner_conflict',
+        );
+      }
+      owners[canonicalGuid] = CloudCanonicalIdentityOwner(
+        kind: kind,
+        logicalEntityKeyHash: logicalEntityKeyHash,
+      );
+    }
+
+    switch (payload) {
+      case CloudChatEntityPayload value:
+        add(
+          kind: CloudEntityKind.chat,
+          logicalEntityKeyHash: value.logicalEntityKeyHash,
+          canonicalGuid: value.canonicalGuid,
+        );
+      case CloudMessageEntityPayload value:
+        add(
+          kind: CloudEntityKind.message,
+          logicalEntityKeyHash: value.logicalEntityKeyHash,
+          canonicalGuid: value.canonicalGuid,
+        );
+        if (value.replyParentLogicalKeyHash != null) {
+          add(
+            kind: CloudEntityKind.message,
+            logicalEntityKeyHash: value.replyParentLogicalKeyHash!,
+            canonicalGuid: value.replyParentCanonicalGuid!,
+          );
+        }
+        if (value.associationParentLogicalKeyHash != null) {
+          add(
+            kind: CloudEntityKind.message,
+            logicalEntityKeyHash: value.associationParentLogicalKeyHash!,
+            canonicalGuid: value.associationParentCanonicalGuid!,
+          );
+        }
+      case CloudReactionEntityPayload value:
+        add(
+          kind: CloudEntityKind.reaction,
+          logicalEntityKeyHash: value.logicalEntityKeyHash,
+          canonicalGuid: value.canonicalGuid,
+        );
+        add(
+          kind: CloudEntityKind.message,
+          logicalEntityKeyHash: value.parentLogicalKeyHash,
+          canonicalGuid: value.parentCanonicalGuid,
+        );
+      case CloudAttachmentEntityPayload value:
+        add(
+          kind: CloudEntityKind.attachment,
+          logicalEntityKeyHash: value.logicalEntityKeyHash,
+          canonicalGuid: value.canonicalGuid,
+        );
+        if (value.ownerLogicalKeyHash != null) {
+          add(
+            kind: CloudEntityKind.message,
+            logicalEntityKeyHash: value.ownerLogicalKeyHash!,
+            canonicalGuid: value.ownerCanonicalGuid!,
+          );
+        }
+      case CloudProfileEntityPayload _:
+      case CloudGroupPhotoEntityPayload _:
+        break;
+    }
+  }
+
+  bool _snapshotMatchesScope(
+    CloudSemanticSnapshotEntity snapshot,
+    CloudSyncScope scope,
+    int generation,
+  ) =>
+      snapshot.scopeKey == _scopeKey(scope) &&
+      snapshot.accountFingerprint == scope.accountFingerprint &&
+      snapshot.container == scope.container &&
+      snapshot.database == scope.database &&
+      snapshot.zone == scope.zone &&
+      snapshot.streamKind == scope.streamKind.name &&
+      snapshot.schemaVersion == scope.schemaVersion &&
+      snapshot.generation == generation;
+
+  static String _scopeKey(CloudSyncScope scope) =>
+      'scope2:${sha256.convert(utf8.encode(scope.storageKey)).toString()}';
+
+  static String _scopeGenerationKey(CloudSyncScope scope, int generation) =>
+      'semantic-generation4:${sha256.convert(utf8.encode('${_scopeKey(scope)}\u001f$generation')).toString()}';
+
+  CloudEntityKind? _snapshotKind(String value) {
+    for (final kind in CloudEntityKind.values) {
+      if (kind.name == value) return kind;
+    }
+    return null;
+  }
+
+  bool _canonicalRowExists(String guid) =>
+      _findChat(guid) != null ||
+      _findMessage(guid) != null ||
+      _findAttachment(guid) != null;
 
   Handle? _resolveMessageSender(String raw, bool fromMe) {
     if (raw.isEmpty && fromMe) return null;
@@ -976,8 +1452,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
   }
 
   static bool _isValidCanonicalGuid(String value) {
-    if (value.isEmpty || value.length > 1024) return false;
-    return value.codeUnits.every((unit) => unit >= 0x20 && unit != 0x7f);
+    return CloudCanonicalIdentityDigest._isValidCanonicalGuid(value);
   }
 
   Chat? _findChat(String guid) {

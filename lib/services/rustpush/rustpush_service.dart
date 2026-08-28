@@ -7216,6 +7216,12 @@ class RustPushService extends GetxService {
       Duration(seconds: 50);
   static const _cloudSyncV2OutboundQuiescenceTimeout = Duration(seconds: 90);
 
+  bool get _cloudSyncV2CanaryRuntimeAllowed =>
+      CloudSyncDevGate.isCanaryRuntime(
+        isAndroid: Platform.isAndroid,
+        packageName: fs.packageInfo.packageName,
+      );
+
   bool get cloudSyncV2ManualShadowAvailable {
     if (!CloudSyncDevGate.manualShadowSamplerEnabled ||
         !_cloudSyncV2DeveloperRuntimeAllowed ||
@@ -7248,6 +7254,7 @@ class RustPushService extends GetxService {
 
   bool get cloudSyncV2ManualSemanticPullAvailable {
     if (!CloudSyncDevGate.manualSemanticPullEnabled ||
+        !_cloudSyncV2CanaryRuntimeAllowed ||
         !_cloudSyncV2DeveloperRuntimeAllowed ||
         !ls.isUiThread ||
         loggingOut ||
@@ -7270,6 +7277,9 @@ class RustPushService extends GetxService {
   runCloudSyncV2ManualSemanticPullConfirmed() {
     if (!CloudSyncDevGate.manualSemanticPullEnabled) {
       throw StateError('cloud_sync_semantic_pull_disabled');
+    }
+    if (!_cloudSyncV2CanaryRuntimeAllowed) {
+      throw StateError('cloud_sync_canary_package_required');
     }
     if (!_cloudSyncV2DeveloperRuntimeAllowed) {
       throw StateError('cloud_sync_developer_mode_required');
@@ -7335,6 +7345,7 @@ class RustPushService extends GetxService {
 
   bool get cloudSyncV2ManualOutboundAvailable {
     if (!CloudSyncDevGate.manualOutboundCanaryEnabled ||
+        !_cloudSyncV2CanaryRuntimeAllowed ||
         !CloudKitWriterOwnership.v2MutationsEnabled ||
         !_cloudSyncV2DeveloperRuntimeAllowed ||
         !ls.isUiThread ||

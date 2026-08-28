@@ -12,6 +12,12 @@ void main() {
     );
     expect(
       cloudSyncV2SafeFailureCode(
+        StateError('cloud_sync_canary_package_required'),
+      ),
+      'cloud_sync_canary_package_required',
+    );
+    expect(
+      cloudSyncV2SafeFailureCode(
         StateError('account-secret@example.com should never be shown'),
       ),
       'cloud_sync_unknown_failure',

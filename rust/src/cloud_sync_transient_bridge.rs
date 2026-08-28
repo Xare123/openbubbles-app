@@ -24,8 +24,9 @@ use rustpush::{
     },
     cloudkit::pcs_keys_for_record,
     cloudkit_proto::{
-        record::Field, retrieve_changes_response::RecordChange, CloudKitEncryptor, CloudKitRecord,
-        Record,
+        record::{field::Value, Field},
+        retrieve_changes_response::RecordChange,
+        CloudKitEncryptor, CloudKitRecord, Record,
     },
     pcs::PCSEncryptor,
     DefaultAnisetteProvider, PushError,
@@ -324,12 +325,59 @@ fn encrypted_field_bytes(
     let Some(ciphertext) = value.bytes_value.as_deref() else {
         return Err(CloudTransientBridgeFailure::MalformedRecord);
     };
-    let decrypted = catch_unwind(AssertUnwindSafe(|| key.decrypt_data(ciphertext, name)))
-        .map_err(|_| decoder_failure_at("field_decrypt_panic"))?;
+    let decrypted = key
+        .decrypt_data_checked(ciphertext, name)
+        .map_err(|error| map_push_failure_at(&error, "field_decrypt"))?;
     if decrypted.len() > MAX_DECOMPRESSED_FIELD_BYTES {
         return Err(CloudTransientBridgeFailure::OversizedRecord);
     }
     Ok(Some(decrypted))
+}
+
+fn preflight_ciphertext_key(
+    key: &PCSEncryptor,
+    ciphertext: &[u8],
+) -> Result<(), CloudTransientBridgeFailure> {
+    key.validate_ciphertext_key(ciphertext)
+        .map_err(|error| map_push_failure_at(&error, "ciphertext_key_preflight"))
+}
+
+fn preflight_encrypted_value_keys(
+    key: &PCSEncryptor,
+    value: &Value,
+) -> Result<(), CloudTransientBridgeFailure> {
+    if value.is_encrypted == Some(true) {
+        let ciphertext = value
+            .bytes_value
+            .as_deref()
+            .ok_or(CloudTransientBridgeFailure::MalformedRecord)?;
+        preflight_ciphertext_key(key, ciphertext)?;
+    }
+    for nested in &value.list_values {
+        preflight_encrypted_value_keys(key, nested)?;
+    }
+    if let Some(asset) = value.asset_value.as_ref() {
+        if let Some(ciphertext) = asset
+            .protection_info
+            .as_ref()
+            .and_then(|protection| protection.protection_info.as_deref())
+        {
+            preflight_ciphertext_key(key, ciphertext)?;
+        }
+    }
+    Ok(())
+}
+
+fn preflight_record_ciphertext_keys(
+    record: &Record,
+    key: &PCSEncryptor,
+) -> Result<(), CloudTransientBridgeFailure> {
+    for field in &record.record_field {
+        if let Some(value) = field.value.as_ref() {
+            preflight_encrypted_value_keys(key, value)?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -665,12 +713,24 @@ fn map_native_failure(
 fn map_push_failure(error: &PushError) -> CloudTransientBridgeFailure {
     match error {
         PushError::PCSRecordKeyMissing
+        | PushError::PCSKeyIdMismatch
+        | PushError::PCSDecryptionFailed
+        | PushError::NotInClique
         | PushError::ShareKeyNotFound(_)
         | PushError::MasterKeyNotFound
         | PushError::DecryptionKeyNotFound(_) => CloudTransientBridgeFailure::PcsUnavailable,
+        // This is an authorization precondition, not missing PCS material. The
+        // existing public transient adapter maps ActiveAccountMismatch to the
+        // authorization category, preserving binding compatibility while
+        // keeping warm-auth failures out of the PCS-unavailable bucket.
+        PushError::CloudKitWarmAuthenticationRequired => {
+            CloudTransientBridgeFailure::ActiveAccountMismatch
+        }
+        PushError::PCSCiphertextMalformed => CloudTransientBridgeFailure::MalformedRecord,
         PushError::RequestError(_)
         | PushError::CloudKitHttpError { .. }
         | PushError::CloudKitError(_)
+        | PushError::CloudKitChangeTokenExpired
         | PushError::ResourceTimeout
         | PushError::ResourceGenTimeout
         | PushError::TooManyRequests => CloudTransientBridgeFailure::RetryableUpstream,
@@ -1131,18 +1191,22 @@ pub(crate) async fn cloud_sync_decode_transient_record(
             )
         }
     };
-    let container = match cloud_messages_client.get_container().await {
+    let container = match cloud_messages_client.get_container_lookup_only().await {
         Ok(value) => value,
         Err(error) => {
             return CloudTransientDecodeOutcome::Failure(map_push_failure_at(
                 &error,
-                "container_initialization",
+                "warm_container_preflight",
             ));
         }
     };
     let zone = container.private_zone(request.stream.zone().to_owned());
     let zone_key = match container
-        .get_zone_encryption_config(&zone, &cloud_messages_client.keychain, &MESSAGES_SERVICE)
+        .get_zone_encryption_config_lookup_only(
+            &zone,
+            &cloud_messages_client.keychain,
+            &MESSAGES_SERVICE,
+        )
         .await
     {
         Ok(value) => value,
@@ -1166,6 +1230,9 @@ pub(crate) async fn cloud_sync_decode_transient_record(
                 return CloudTransientDecodeOutcome::Failure(decoder_failure_at("record_key_panic"))
             }
         };
+    if let Err(failure) = preflight_record_ciphertext_keys(&record, &record_key) {
+        return CloudTransientDecodeOutcome::Failure(failure);
+    }
 
     let converted = match request.stream {
         CloudNativeStream::Chats => {
@@ -2254,6 +2321,27 @@ mod tests {
         );
         assert!(!output.contains(secret));
         assert!(!format!("{:?}", CloudTransientBridgeFailure::DecoderFailure).contains(secret));
+    }
+
+    #[test]
+    fn semantic_failure_mapping_classifies_warm_auth_as_authorization_not_pcs() {
+        let warm_auth = map_push_failure(&PushError::CloudKitWarmAuthenticationRequired);
+        assert_eq!(
+            warm_auth,
+            CloudTransientBridgeFailure::ActiveAccountMismatch
+        );
+        assert_ne!(warm_auth, CloudTransientBridgeFailure::PcsUnavailable);
+
+        let rendered = format!("{warm_auth:?}");
+        for sentinel in [
+            "private-message-sentinel",
+            "dsid-sentinel",
+            "token-sentinel",
+            "peer-id-sentinel",
+            "key-id-sentinel",
+        ] {
+            assert!(!rendered.contains(sentinel));
+        }
     }
 
     #[test]

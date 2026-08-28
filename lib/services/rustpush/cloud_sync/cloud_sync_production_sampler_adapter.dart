@@ -247,7 +247,6 @@ final class CloudSyncProductionSemanticPullAdapter {
         );
         final gateway = ObjectBoxCloudSemanticStoreGateway.fromDatabase(
           canonicalAdapter: canonicalAdapter,
-          allowTombstones: false,
         );
         return TransactionalCloudInboxApplier(
           decoder: RustCloudSemanticDecoder(

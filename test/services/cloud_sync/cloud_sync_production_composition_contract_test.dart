@@ -11,6 +11,30 @@ void main() {
     expect(CloudSyncDevGate.protocolEvidenceAvailable, isFalse);
   });
 
+  test('local mutation canaries require the exact Android Canary package', () {
+    expect(
+      CloudSyncDevGate.isCanaryRuntime(
+        isAndroid: true,
+        packageName: CloudSyncDevGate.androidCanaryPackageName,
+      ),
+      isTrue,
+    );
+    expect(
+      CloudSyncDevGate.isCanaryRuntime(
+        isAndroid: true,
+        packageName: 'com.bluebubbles.messaging.alpha',
+      ),
+      isFalse,
+    );
+    expect(
+      CloudSyncDevGate.isCanaryRuntime(
+        isAndroid: false,
+        packageName: CloudSyncDevGate.androidCanaryPackageName,
+      ),
+      isFalse,
+    );
+  });
+
   test('evidence canary is a distinct read-only Android artifact', () {
     final workflow = File('.github/workflows/build.yml').readAsStringSync();
     final gradle = File('android/app/build.gradle').readAsStringSync();
@@ -48,6 +72,7 @@ void main() {
       contains('--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE=true'),
     );
     expect(canaryBuild, contains('app-canary-debug.apk'));
+    expect(canaryBuild, contains('Unexpected Canary application ID'));
     expect(
       gradle,
       contains('applicationId "com.bluebubbles.messaging.cloudkitcanary"'),
@@ -133,6 +158,7 @@ void main() {
     expect(methodEnd, greaterThan(methodStart));
     final method = source.substring(methodStart, methodEnd);
     expect(method, contains('CloudSyncDevGate.manualSemanticPullEnabled'));
+    expect(method, contains('_cloudSyncV2CanaryRuntimeAllowed'));
     expect(method, contains('_cloudSyncV2DeveloperRuntimeAllowed'));
     expect(method, contains('_cloudSyncV2SemanticPullQuiescing'));
     expect(method, contains('_cloudSyncV2SemanticPullInFlight'));

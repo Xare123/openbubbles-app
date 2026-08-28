@@ -9,6 +9,7 @@ import 'cloud_inbox_applier.dart';
 import 'cloud_merge_policy.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_store.dart';
+import 'objectbox_canonical_semantic_entity_adapter.dart';
 
 /// Positive acknowledgement from a synchronous canonical ObjectBox mutation.
 ///
@@ -39,6 +40,18 @@ abstract interface class CloudCanonicalSemanticEntityAdapter {
     required String logicalEntityKeyHash,
   });
 
+  /// Verifies the durable canonical ownership proof for an existing semantic
+  /// snapshot before a no-change path can bind a record, terminalize inbox
+  /// state, or advance a checkpoint. Implementations must fail closed when
+  /// the identity cannot be resolved or the scoped proof is legacy, malformed,
+  /// or re-homed from another owner context.
+  void validateOwnershipEvidence({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudEntityKind kind,
+    required String logicalEntityKeyHash,
+  });
+
   CloudCanonicalSemanticMutationReceipt applyEntity({
     required CloudSyncScope scope,
     required int generation,
@@ -57,6 +70,218 @@ enum _SemanticReplayOutcome { applied, appliedWithConflict, quarantined }
 
 enum _SemanticTransactionPhase { open, appliedTerminal, quarantinedTerminal }
 
+/// The local ObjectBox lease, checkpoint, and inbox fence shared by semantic
+/// mutation paths. It has no transport dependency and never writes CloudKit.
+final class ObjectBoxCloudSemanticFence {
+  const ObjectBoxCloudSemanticFence._();
+
+  static void validateEntryContext({
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required CloudInboxStatus expectedInboxStatus,
+  }) {
+    ObjectBoxCloudSemanticStoreGateway._validateExternalDigest(
+      entry.scope.accountFingerprint,
+    );
+    ObjectBoxCloudSemanticStoreGateway._validateExternalDigest(
+      entry.change.changeId,
+    );
+    ObjectBoxCloudSemanticStoreGateway._validateExternalDigest(
+      entry.change.recordIdHash,
+    );
+    ObjectBoxCloudSemanticStoreGateway._validateOptionalExternalDigest(
+      entry.change.etagHash,
+    );
+    ObjectBoxCloudSemanticStoreGateway._validateOptionalContentDigest(
+      entry.change.payloadSha256,
+    );
+    ObjectBoxCloudSemanticStoreGateway._validateProtectedReference(
+      entry.change.encryptedServerRecordId,
+    );
+    ObjectBoxCloudSemanticStoreGateway._validateProtectedReference(
+      entry.change.protectedSystemFieldsReference,
+    );
+    ObjectBoxCloudSemanticStoreGateway._validateProtectedReference(
+      entry.change.encryptedPayloadReference,
+    );
+    if (entry.change.encryptedServerRecordId == null ||
+        entry.change.encryptedPayloadReference == null) {
+      throw ObjectBoxCloudSemanticStoreGateway._malformed(
+        'semantic_protected_reference_missing',
+      );
+    }
+    if (entry.generation <= 0 ||
+        leaseFence.generation <= 0 ||
+        leaseFence.generation != entry.generation) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'semantic_generation_fence_mismatch',
+      );
+    }
+    if (entry.sequence <= 0 ||
+        entry.status != expectedInboxStatus ||
+        entry.batchId.isEmpty ||
+        entry.batchId.length > 256 ||
+        leaseFence.ownerId.isEmpty ||
+        leaseFence.ownerId.length > 256) {
+      throw ObjectBoxCloudSemanticStoreGateway._failure(
+        'semantic_transaction_context_invalid',
+      );
+    }
+  }
+
+  static CloudObjectBoxDurableFence validateLocked({
+    required Store store,
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int nowMs,
+    required CloudInboxStatus expectedInboxStatus,
+    required CloudCanonicalSemanticEntityAdapter canonicalAdapter,
+  }) {
+    if (entry.generation <= 0 ||
+        leaseFence.generation <= 0 ||
+        leaseFence.generation != entry.generation) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'semantic_generation_fence_mismatch',
+      );
+    }
+    validateEntryContext(
+      entry: entry,
+      leaseFence: leaseFence,
+      expectedInboxStatus: expectedInboxStatus,
+    );
+    final scopeKey = 'scope2:${_digest(entry.scope.storageKey)}';
+    final leaseKey = _scopedDigest(entry.scope, 'coordinator-lease', 'v1');
+    final ownerIdHash = _digest('coordinator-owner\u001f${leaseFence.ownerId}');
+    final changeKey = _scopedDigest(
+      entry.scope,
+      'change',
+      entry.change.changeId,
+    );
+    final leases = store.box<CloudSyncLeaseEntity>();
+    final checkpoints = store.box<CloudSyncCheckpointEntity>();
+    final inbox = store.box<CloudInboxChangeEntity>();
+
+    final leaseQuery =
+        leases.query(CloudSyncLeaseEntity_.leaseKey.equals(leaseKey)).build()
+          ..limit = 1;
+    final CloudSyncLeaseEntity? lease;
+    try {
+      lease = leaseQuery.findFirst();
+    } finally {
+      leaseQuery.close();
+    }
+    if (lease == null ||
+        lease.scopeKey != scopeKey ||
+        lease.accountFingerprint != entry.scope.accountFingerprint ||
+        lease.ownerIdHash != ownerIdHash ||
+        lease.generation != leaseFence.generation ||
+        lease.expiresAtMs <= nowMs) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'semantic_coordinator_lease_fence_lost',
+      );
+    }
+
+    final checkpointQuery =
+        checkpoints
+            .query(CloudSyncCheckpointEntity_.checkpointKey.equals(scopeKey))
+            .build()
+          ..limit = 1;
+    final CloudSyncCheckpointEntity? checkpoint;
+    try {
+      checkpoint = checkpointQuery.findFirst();
+    } finally {
+      checkpointQuery.close();
+    }
+    if (checkpoint == null ||
+        checkpoint.checkpointKey != scopeKey ||
+        checkpoint.accountFingerprint != entry.scope.accountFingerprint ||
+        checkpoint.container != entry.scope.container ||
+        checkpoint.database != entry.scope.database ||
+        checkpoint.zone != entry.scope.zone ||
+        checkpoint.streamKind != entry.scope.streamKind.name ||
+        checkpoint.schemaVersion != entry.scope.schemaVersion ||
+        checkpoint.generation != entry.generation ||
+        checkpoint.appliedSequence < 0 ||
+        checkpoint.appliedSequence > checkpoint.fetchedSequence ||
+        checkpoint.fetchedSequence < entry.sequence) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'semantic_checkpoint_fence_lost',
+      );
+    }
+
+    final inboxQuery =
+        inbox.query(CloudInboxChangeEntity_.changeKey.equals(changeKey)).build()
+          ..limit = 1;
+    final CloudInboxChangeEntity? inboxEntity;
+    try {
+      inboxEntity = inboxQuery.findFirst();
+    } finally {
+      inboxQuery.close();
+    }
+    final change = entry.change;
+    if (inboxEntity == null ||
+        inboxEntity.changeKey != changeKey ||
+        inboxEntity.changeIdHash != change.changeId ||
+        inboxEntity.scopeKey != scopeKey ||
+        inboxEntity.accountFingerprint != entry.scope.accountFingerprint ||
+        inboxEntity.zone != entry.scope.zone ||
+        inboxEntity.serverRecordIdHash != change.recordIdHash ||
+        inboxEntity.etagHash != change.etagHash ||
+        inboxEntity.changeType != change.type.name ||
+        inboxEntity.encryptedServerRecordId != change.encryptedServerRecordId ||
+        inboxEntity.protectedSystemFieldsRef !=
+            change.protectedSystemFieldsReference ||
+        inboxEntity.encryptedPayloadRef != change.encryptedPayloadReference ||
+        inboxEntity.payloadSha256 != change.payloadSha256 ||
+        inboxEntity.batchId != entry.batchId ||
+        inboxEntity.generation != entry.generation ||
+        inboxEntity.fetchSequence != entry.sequence ||
+        inboxEntity.status != expectedInboxStatus.index ||
+        inboxEntity.isTombstone != change.isTombstone) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'semantic_inbox_fence_lost',
+      );
+    }
+    if (!canonicalAdapter.isActiveAccountScope(
+      scope: entry.scope,
+      generation: entry.generation,
+    )) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.authorization,
+        safeCode: 'semantic_active_account_scope_changed',
+      );
+    }
+    return CloudObjectBoxDurableFence(
+      checkpoint: checkpoint,
+      inbox: inboxEntity,
+    );
+  }
+
+  static String _scopedDigest(
+    CloudSyncScope scope,
+    String purpose,
+    String value,
+  ) => '$purpose:${_digest('${scope.storageKey}\u001f$purpose\u001f$value')}';
+
+  static String _digest(String value) =>
+      sha256.convert(utf8.encode(value)).toString();
+}
+
+final class CloudObjectBoxDurableFence {
+  const CloudObjectBoxDurableFence({
+    required this.checkpoint,
+    required this.inbox,
+  });
+
+  final CloudSyncCheckpointEntity checkpoint;
+  final CloudInboxChangeEntity inbox;
+}
+
 /// Durable ObjectBox implementation of [CloudSemanticStoreGateway].
 ///
 /// This gateway remains default-off outside the separately compile-gated
@@ -70,13 +295,11 @@ final class ObjectBoxCloudSemanticStoreGateway
     required Store store,
     required CloudCanonicalSemanticEntityAdapter canonicalAdapter,
     DateTime Function()? clock,
-    this._allowTombstones = false,
   }) : _store = store,
        _canonicalAdapter = canonicalAdapter,
        _clock = clock ?? DateTime.now,
        _checkpoints = store.box<CloudSyncCheckpointEntity>(),
        _inbox = store.box<CloudInboxChangeEntity>(),
-       _leases = store.box<CloudSyncLeaseEntity>(),
        _recordMaps = store.box<CloudRecordMapEntity>(),
        _snapshots = store.box<CloudSemanticSnapshotEntity>(),
        _replay = store.box<CloudSemanticReplayEntity>() {
@@ -88,13 +311,11 @@ final class ObjectBoxCloudSemanticStoreGateway
   factory ObjectBoxCloudSemanticStoreGateway.fromDatabase({
     required CloudCanonicalSemanticEntityAdapter canonicalAdapter,
     DateTime Function()? clock,
-    bool allowTombstones = false,
   }) {
     return ObjectBoxCloudSemanticStoreGateway(
       store: Database.store,
       canonicalAdapter: canonicalAdapter,
       clock: clock,
-      allowTombstones: allowTombstones,
     );
   }
 
@@ -112,10 +333,8 @@ final class ObjectBoxCloudSemanticStoreGateway
   final Store _store;
   final CloudCanonicalSemanticEntityAdapter _canonicalAdapter;
   final DateTime Function() _clock;
-  final bool _allowTombstones;
   final Box<CloudSyncCheckpointEntity> _checkpoints;
   final Box<CloudInboxChangeEntity> _inbox;
-  final Box<CloudSyncLeaseEntity> _leases;
   final Box<CloudRecordMapEntity> _recordMaps;
   final Box<CloudSemanticSnapshotEntity> _snapshots;
   final Box<CloudSemanticReplayEntity> _replay;
@@ -126,7 +345,17 @@ final class ObjectBoxCloudSemanticStoreGateway
     required CloudCoordinatorLeaseFence leaseFence,
     required T Function(CloudSemanticStoreTransaction transaction) action,
   }) {
-    _validateEntryContext(entry, leaseFence);
+    try {
+      ObjectBoxCloudSemanticFence.validateEntryContext(
+        entry: entry,
+        leaseFence: leaseFence,
+        expectedInboxStatus: CloudInboxStatus.pending,
+      );
+    } on CloudSyncFailure catch (failure) {
+      return Future<T>.error(failure);
+    } catch (_) {
+      return Future<T>.error(_failure('semantic_transaction_context_invalid'));
+    }
     if (!_activeStores.add(_store)) {
       throw _failure('semantic_nested_transaction_forbidden');
     }
@@ -156,7 +385,6 @@ final class ObjectBoxCloudSemanticStoreGateway
           snapshots: _snapshots,
           replay: _replay,
           canonicalAdapter: _canonicalAdapter,
-          allowTombstones: _allowTombstones,
         );
         try {
           final value = action(transaction);
@@ -179,132 +407,17 @@ final class ObjectBoxCloudSemanticStoreGateway
     }
   }
 
-  _DurableSemanticFence _validateDurableFenceLocked({
+  CloudObjectBoxDurableFence _validateDurableFenceLocked({
     required _SemanticTransactionContext context,
     required int nowMs,
-  }) {
-    final leaseQuery =
-        _leases
-            .query(CloudSyncLeaseEntity_.leaseKey.equals(context.leaseKey))
-            .build()
-          ..limit = 1;
-    final CloudSyncLeaseEntity? lease;
-    try {
-      lease = leaseQuery.findFirst();
-    } finally {
-      leaseQuery.close();
-    }
-    if (lease == null ||
-        lease.scopeKey != context.scopeKey ||
-        lease.accountFingerprint != context.entry.scope.accountFingerprint ||
-        lease.ownerIdHash != context.ownerIdHash ||
-        lease.generation != context.leaseFence.generation ||
-        lease.expiresAtMs <= nowMs) {
-      throw _failure('semantic_coordinator_lease_fence_lost');
-    }
-
-    final checkpointQuery =
-        _checkpoints
-            .query(
-              CloudSyncCheckpointEntity_.checkpointKey.equals(context.scopeKey),
-            )
-            .build()
-          ..limit = 1;
-    final CloudSyncCheckpointEntity? checkpoint;
-    try {
-      checkpoint = checkpointQuery.findFirst();
-    } finally {
-      checkpointQuery.close();
-    }
-    if (checkpoint == null ||
-        checkpoint.checkpointKey != context.scopeKey ||
-        checkpoint.accountFingerprint !=
-            context.entry.scope.accountFingerprint ||
-        checkpoint.container != context.entry.scope.container ||
-        checkpoint.database != context.entry.scope.database ||
-        checkpoint.zone != context.entry.scope.zone ||
-        checkpoint.streamKind != context.entry.scope.streamKind.name ||
-        checkpoint.schemaVersion != context.entry.scope.schemaVersion ||
-        checkpoint.generation != context.entry.generation ||
-        checkpoint.appliedSequence < 0 ||
-        checkpoint.appliedSequence > checkpoint.fetchedSequence ||
-        checkpoint.fetchedSequence < context.entry.sequence) {
-      throw _failure('semantic_checkpoint_fence_lost');
-    }
-
-    final inboxQuery =
-        _inbox
-            .query(CloudInboxChangeEntity_.changeKey.equals(context.changeKey))
-            .build()
-          ..limit = 1;
-    final CloudInboxChangeEntity? inbox;
-    try {
-      inbox = inboxQuery.findFirst();
-    } finally {
-      inboxQuery.close();
-    }
-    final change = context.entry.change;
-    if (inbox == null ||
-        inbox.changeKey != context.changeKey ||
-        inbox.changeIdHash != change.changeId ||
-        inbox.scopeKey != context.scopeKey ||
-        inbox.accountFingerprint != context.entry.scope.accountFingerprint ||
-        inbox.zone != context.entry.scope.zone ||
-        inbox.serverRecordIdHash != change.recordIdHash ||
-        inbox.etagHash != change.etagHash ||
-        inbox.changeType != change.type.name ||
-        inbox.encryptedServerRecordId != change.encryptedServerRecordId ||
-        inbox.protectedSystemFieldsRef !=
-            change.protectedSystemFieldsReference ||
-        inbox.encryptedPayloadRef != change.encryptedPayloadReference ||
-        inbox.payloadSha256 != change.payloadSha256 ||
-        inbox.batchId != context.entry.batchId ||
-        inbox.generation != context.entry.generation ||
-        inbox.fetchSequence != context.entry.sequence ||
-        inbox.status != CloudInboxStatus.pending.index ||
-        inbox.isTombstone != change.isTombstone) {
-      throw _failure('semantic_inbox_fence_lost');
-    }
-
-    if (!_canonicalAdapter.isActiveAccountScope(
-      scope: context.entry.scope,
-      generation: context.entry.generation,
-    )) {
-      throw CloudSyncFailure(
-        category: CloudFailureCategory.authorization,
-        safeCode: 'semantic_active_account_scope_changed',
-      );
-    }
-    return _DurableSemanticFence(checkpoint: checkpoint, inbox: inbox);
-  }
-
-  static void _validateEntryContext(
-    CloudInboxEntry entry,
-    CloudCoordinatorLeaseFence leaseFence,
-  ) {
-    _validateExternalDigest(entry.scope.accountFingerprint);
-    _validateExternalDigest(entry.change.changeId);
-    _validateExternalDigest(entry.change.recordIdHash);
-    _validateOptionalExternalDigest(entry.change.etagHash);
-    _validateOptionalContentDigest(entry.change.payloadSha256);
-    _validateProtectedReference(entry.change.encryptedServerRecordId);
-    _validateProtectedReference(entry.change.protectedSystemFieldsReference);
-    _validateProtectedReference(entry.change.encryptedPayloadReference);
-    if (entry.change.encryptedServerRecordId == null ||
-        entry.change.encryptedPayloadReference == null) {
-      throw _malformed('semantic_protected_reference_missing');
-    }
-    if (entry.sequence <= 0 ||
-        entry.generation <= 0 ||
-        entry.status != CloudInboxStatus.pending ||
-        entry.batchId.isEmpty ||
-        entry.batchId.length > 256 ||
-        leaseFence.ownerId.isEmpty ||
-        leaseFence.ownerId.length > 256 ||
-        leaseFence.generation <= 0) {
-      throw _failure('semantic_transaction_context_invalid');
-    }
-  }
+  }) => ObjectBoxCloudSemanticFence.validateLocked(
+    store: _store,
+    entry: context.entry,
+    leaseFence: context.leaseFence,
+    nowMs: nowMs,
+    expectedInboxStatus: CloudInboxStatus.pending,
+    canonicalAdapter: _canonicalAdapter,
+  );
 
   static void _validateProtectedReference(String? value) {
     if (value == null) return;
@@ -343,13 +456,6 @@ final class ObjectBoxCloudSemanticStoreGateway
     category: CloudFailureCategory.malformedRecord,
     safeCode: safeCode,
   );
-}
-
-final class _DurableSemanticFence {
-  const _DurableSemanticFence({required this.checkpoint, required this.inbox});
-
-  final CloudSyncCheckpointEntity checkpoint;
-  final CloudInboxChangeEntity inbox;
 }
 
 final class _SemanticTransactionContext {
@@ -435,7 +541,6 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     required this._snapshots,
     required this._replay,
     required this._canonicalAdapter,
-    required this._allowTombstones,
   });
 
   final _SemanticTransactionContext _context;
@@ -448,7 +553,6 @@ final class _ObjectBoxCloudSemanticStoreTransaction
   final Box<CloudSemanticSnapshotEntity> _snapshots;
   final Box<CloudSemanticReplayEntity> _replay;
   final CloudCanonicalSemanticEntityAdapter _canonicalAdapter;
-  final bool _allowTombstones;
 
   bool _active = true;
   bool _canonicalMutationPerformed = false;
@@ -497,6 +601,15 @@ final class _ObjectBoxCloudSemanticStoreTransaction
       entity,
       expectedKind: kind,
       expectedLogicalKeyHash: logicalEntityKeyHash,
+    );
+    // This is intentionally before returning the snapshot. A no-change merge
+    // otherwise binds a record and terminalizes the inbox without calling
+    // applyEntity, bypassing the adapter's canonical mutation guard.
+    _canonicalAdapter.validateOwnershipEvidence(
+      scope: _context.entry.scope,
+      generation: _context.entry.generation,
+      kind: kind,
+      logicalEntityKeyHash: logicalEntityKeyHash,
     );
     return _snapshotFromEntity(entity);
   }
@@ -625,6 +738,15 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     _validateEntityKindForStream(snapshot.kind);
     _validatePayloadParent(payload, snapshot);
     _validateSnapshot(snapshot);
+    // The adapter scans all scoped ownership evidence, including legacy
+    // snapshots for a different logical row. Do this before the record-map
+    // write so a create/update cannot transiently mutate metadata first.
+    _canonicalAdapter.validateOwnershipEvidence(
+      scope: _context.entry.scope,
+      generation: _context.entry.generation,
+      kind: snapshot.kind,
+      logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
+    );
     bindRecordIdentity(
       logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
       encryptedRawRecordReference: snapshot.encryptedRawRecordReference,
@@ -658,6 +780,16 @@ final class _ObjectBoxCloudSemanticStoreTransaction
       _snapshotEntity(
         snapshot,
         snapshotKey: key,
+        canonicalGuidHash: CloudCanonicalIdentityDigest.forPayload(
+          scope: _context.entry.scope,
+          generation: _context.entry.generation,
+          payload: payload,
+        ),
+        canonicalGuidLookupHash: CloudCanonicalIdentityDigest.forPayloadLookup(
+          scope: _context.entry.scope,
+          generation: _context.entry.generation,
+          payload: payload,
+        ),
         existingId: existing?.id ?? 0,
       ),
     );
@@ -667,52 +799,12 @@ final class _ObjectBoxCloudSemanticStoreTransaction
   void applyTombstone(CloudSemanticTombstone tombstone) {
     _ensureActive();
     _ensureOpen();
-    if (_canonicalMutationPerformed) {
-      throw ObjectBoxCloudSemanticStoreGateway._failure(
-        'semantic_multiple_canonical_mutations_forbidden',
-      );
-    }
-    if (!_allowTombstones) {
-      throw CloudSyncFailure(
-        category: CloudFailureCategory.conflict,
-        safeCode: 'semantic_tombstones_disabled',
-      );
-    }
-    if (!tombstone.serverConfirmed || tombstone.deletedAt == null) {
-      throw CloudSyncFailure(
-        category: CloudFailureCategory.conflict,
-        safeCode: 'semantic_tombstone_order_unproven',
-      );
-    }
-    _validateEntityKindForStream(tombstone.kind);
-    _validateHashedValue(tombstone.logicalEntityKeyHash);
-    bindRecordIdentity(
-      logicalEntityKeyHash: tombstone.logicalEntityKeyHash,
-      encryptedRawRecordReference:
-          _context.entry.change.encryptedPayloadReference,
+    // There is no ownership-bound tombstone DTO. Do not leave a constructor
+    // switch that could re-enable this path before the proof exists.
+    throw CloudSyncFailure(
+      category: CloudFailureCategory.conflict,
+      safeCode: 'semantic_tombstones_disabled',
     );
-    final receipt = _canonicalAdapter.applyTombstone(
-      scope: _context.entry.scope,
-      generation: _context.entry.generation,
-      tombstone: tombstone,
-    );
-    if (receipt != CloudCanonicalSemanticMutationReceipt.committed) {
-      throw ObjectBoxCloudSemanticStoreGateway._failure(
-        'semantic_canonical_tombstone_uncommitted',
-      );
-    }
-    _canonicalMutationPerformed = true;
-    final existing = _findSnapshot(
-      _context.snapshotKey(tombstone.kind, tombstone.logicalEntityKeyHash),
-    );
-    if (existing != null) {
-      _validateSnapshotScope(
-        existing,
-        expectedKind: tombstone.kind,
-        expectedLogicalKeyHash: tombstone.logicalEntityKeyHash,
-      );
-      _snapshots.remove(existing.id);
-    }
   }
 
   @override
@@ -1030,6 +1122,8 @@ final class _ObjectBoxCloudSemanticStoreTransaction
   CloudSemanticSnapshotEntity _snapshotEntity(
     CloudSemanticSnapshot snapshot, {
     required String snapshotKey,
+    required String canonicalGuidHash,
+    required String canonicalGuidLookupHash,
     required int existingId,
   }) {
     final scope = _context.entry.scope;
@@ -1047,6 +1141,8 @@ final class _ObjectBoxCloudSemanticStoreTransaction
       generation: _context.entry.generation,
       entityKind: snapshot.kind.name,
       logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
+      canonicalGuidHash: canonicalGuidHash,
+      canonicalGuidLookupHash: canonicalGuidLookupHash,
       parentLogicalKeyHash: snapshot.parentLogicalKeyHash,
       immutableContentDigest: snapshot.immutableContentDigest,
       createdAtMs: _millisecondsOrSentinel(snapshot.createdAt),
@@ -1174,21 +1270,9 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         entity.accountFingerprint != scope.accountFingerprint ||
         entity.zone != scope.zone ||
         entity.logicalEntityKeyHash != logicalEntityKeyHash ||
-        (entity.generation != _context.entry.generation &&
-            entity.generation != 0)) {
+        entity.generation != _context.entry.generation) {
       throw ObjectBoxCloudSemanticStoreGateway._failure(
         'semantic_record_map_scope_mismatch',
-      );
-    }
-    if (entity.generation == 0 &&
-        (entity.serverRecordIdHash != expectedChange.recordIdHash ||
-            entity.encryptedServerRecordId !=
-                expectedChange.encryptedServerRecordId ||
-            entity.etagHash != expectedChange.etagHash ||
-            entity.encryptedRawRecordRef !=
-                expectedChange.encryptedPayloadReference)) {
-      throw ObjectBoxCloudSemanticStoreGateway._failure(
-        'semantic_record_map_legacy_reproof_failed',
       );
     }
   }

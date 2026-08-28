@@ -12,7 +12,15 @@ enum CloudSyncStreamKind { messages, profiles }
 /// Local persistence namespace. It does not alter the remote CloudKit scope.
 /// [legacy] preserves the exact pre-lane storage key for compatibility while
 /// new shadow evidence and semantic production state remain isolated.
-enum CloudSyncPersistenceLane { legacy, shadow, semantic }
+enum CloudSyncPersistenceLane {
+  legacy,
+  shadow,
+  semantic;
+
+  /// Stable spelling for callers that require the isolated semantic V2 lane.
+  /// Existing local ObjectBox keys retain the `semantic` suffix.
+  static const CloudSyncPersistenceLane semanticV2 = semantic;
+}
 
 /// Account and CloudKit-zone boundary for every V2 record and operation.
 ///

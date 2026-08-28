@@ -14,7 +14,7 @@ use log::{debug, error, info, warn};
 pub use plist::Value;
 use plist::{Data, Dictionary};
 pub use rustpush::{default_provider, ArcAnisetteClient, DefaultAnisetteProvider, LoginClientInfo};
-use sha2::Digest;
+use sha2::{Digest, Sha256};
 pub use std::time::SystemTime;
 use std::{
     borrow::{Borrow, BorrowMut},
@@ -2056,6 +2056,600 @@ fn map_cloud_sync_transient_known_flags(
     }
 }
 
+/// The only immutable-content digest admitted to the local quarantine-repair
+/// lane. It is built over the exact transient canonical payload that Dart
+/// receives, with domain/version tags and explicit framing for every field.
+/// Keep this byte contract in lockstep with cloudkit_repair_content_digest.dart.
+struct CloudKitRepairDigestWriter {
+    parts: Vec<Vec<u8>>,
+}
+
+impl CloudKitRepairDigestWriter {
+    fn new(entity_kind: &str) -> Self {
+        let mut writer = Self { parts: Vec::new() };
+        writer.string("domain", "bluebubbles.cloudkit.repair.digest");
+        writer.string("version", "1");
+        writer.string("entityKind", entity_kind);
+        writer
+    }
+
+    fn add(&mut self, name: &str, type_tag: u8, value: impl AsRef<[u8]>) {
+        self.parts.push(name.as_bytes().to_vec());
+        let mut tagged = Vec::with_capacity(value.as_ref().len() + 1);
+        tagged.push(type_tag);
+        tagged.extend_from_slice(value.as_ref());
+        self.parts.push(tagged);
+    }
+
+    fn null(&mut self, name: &str) {
+        self.add(name, 0, []);
+    }
+
+    fn string(&mut self, name: &str, value: &str) {
+        self.add(name, 1, value.as_bytes());
+    }
+
+    fn optional_string(&mut self, name: &str, value: Option<&str>) {
+        match value {
+            Some(value) => self.string(name, value),
+            None => self.null(name),
+        }
+    }
+
+    fn integer<T: ToString>(&mut self, name: &str, value: T) {
+        self.add(name, 2, value.to_string().as_bytes());
+    }
+
+    fn optional_integer<T: ToString + Copy>(&mut self, name: &str, value: Option<T>) {
+        match value {
+            Some(value) => self.integer(name, value),
+            None => self.null(name),
+        }
+    }
+
+    fn boolean(&mut self, name: &str, value: bool) {
+        self.add(name, 3, [u8::from(value)]);
+    }
+
+    fn optional_boolean(&mut self, name: &str, value: Option<bool>) {
+        match value {
+            Some(value) => self.boolean(name, value),
+            None => self.null(name),
+        }
+    }
+
+    fn optional_bytes(&mut self, name: &str, value: Option<&[u8]>) {
+        match value {
+            Some(value) => self.add(name, 4, value),
+            None => self.null(name),
+        }
+    }
+
+    fn finish(self) -> String {
+        let mut hasher = Sha256::new();
+        for part in self.parts {
+            hasher.update((part.len() as u64).to_be_bytes());
+            hasher.update(part);
+        }
+        hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+}
+
+fn repair_digest_field_state(value: CloudSyncTransientFieldState) -> &'static str {
+    match value {
+        CloudSyncTransientFieldState::Absent => "absent",
+        CloudSyncTransientFieldState::Value => "value",
+        CloudSyncTransientFieldState::ExplicitClear => "explicitClear",
+    }
+}
+
+fn repair_digest_association(value: CloudSyncTransientAssociationKind) -> &'static str {
+    match value {
+        CloudSyncTransientAssociationKind::None => "none",
+        CloudSyncTransientAssociationKind::Sticker => "sticker",
+        CloudSyncTransientAssociationKind::ReactionAdd => "reactionAdd",
+        CloudSyncTransientAssociationKind::ReactionRemove => "reactionRemove",
+    }
+}
+
+fn repair_digest_reaction_type(kind: CloudSyncTransientReactionKind, removed: bool) -> String {
+    let base = match kind {
+        CloudSyncTransientReactionKind::Heart => "love",
+        CloudSyncTransientReactionKind::Like => "like",
+        CloudSyncTransientReactionKind::Dislike => "dislike",
+        CloudSyncTransientReactionKind::Laugh => "laugh",
+        CloudSyncTransientReactionKind::Emphasize => "emphasize",
+        CloudSyncTransientReactionKind::Question => "question",
+        CloudSyncTransientReactionKind::Emoji => "emoji",
+        CloudSyncTransientReactionKind::StickerBack => "stickerback",
+    };
+    if removed {
+        format!("-{base}")
+    } else {
+        base.to_owned()
+    }
+}
+
+fn repair_digest_flags(
+    writer: &mut CloudKitRepairDigestWriter,
+    flags: Option<&CloudSyncTransientKnownMessageFlags>,
+) {
+    let Some(flags) = flags else {
+        writer.null("knownFlagsPresent");
+        return;
+    };
+    writer.boolean("knownFlagsPresent", true);
+    writer.boolean("knownFlags.fromMe", flags.from_me);
+    writer.boolean("knownFlags.delivered", flags.delivered);
+    writer.boolean("knownFlags.read", flags.read);
+    writer.boolean(
+        "knownFlags.hasDataDetectorResults",
+        flags.has_data_detector_results,
+    );
+    writer.boolean("knownFlags.deliveredQuietly", flags.delivered_quietly);
+    writer.boolean("knownFlags.didNotifyRecipient", flags.did_notify_recipient);
+}
+
+fn repair_digest_bodies(
+    writer: &mut CloudKitRepairDigestWriter,
+    name: &str,
+    bodies: &[CloudSyncTransientAttributedBody],
+) {
+    writer.integer(&format!("{name}.count"), bodies.len());
+    for (body_index, body) in bodies.iter().enumerate() {
+        let prefix = format!("{name}[{body_index}].");
+        writer.string(&format!("{prefix}text"), &body.text);
+        writer.integer(&format!("{prefix}runs.count"), body.runs.len());
+        for (run_index, run) in body.runs.iter().enumerate() {
+            let prefix = format!("{prefix}runs[{run_index}].");
+            writer.integer(&format!("{prefix}startUtf16"), run.start_utf16);
+            writer.integer(&format!("{prefix}lengthUtf16"), run.length_utf16);
+            writer.optional_integer(&format!("{prefix}messagePart"), run.message_part);
+            writer.optional_string(
+                &format!("{prefix}attachmentCanonicalGuid"),
+                run.attachment_canonical_guid.as_deref(),
+            );
+            writer.optional_string(
+                &format!("{prefix}attachmentLogicalKeyHash"),
+                run.attachment_logical_key_hash.as_deref(),
+            );
+            writer.optional_string(
+                &format!("{prefix}mentionHandle"),
+                run.mention_handle.as_deref(),
+            );
+            writer.optional_string(
+                &format!("{prefix}audioTranscript"),
+                run.audio_transcript.as_deref(),
+            );
+            writer.optional_integer(&format!("{prefix}textEffect"), run.text_effect);
+            writer.optional_boolean(&format!("{prefix}bold"), run.bold);
+            writer.optional_boolean(&format!("{prefix}italic"), run.italic);
+            writer.optional_boolean(&format!("{prefix}strikethrough"), run.strikethrough);
+            writer.optional_boolean(&format!("{prefix}underline"), run.underline);
+        }
+    }
+}
+
+fn cloudkit_repair_content_digest(payload: &CloudSyncTransientPayload) -> Option<String> {
+    let value = payload.message.as_ref()?;
+    if let Some(kind) = value.reaction_kind {
+        let mut writer = CloudKitRepairDigestWriter::new("reaction");
+        writer.string("logicalEntityKeyHash", &value.logical_entity_key_hash);
+        writer.string("canonicalGuid", &value.canonical_guid);
+        writer.optional_string(
+            "parentLogicalKeyHash",
+            value.reaction_parent_logical_key_hash.as_deref(),
+        );
+        writer.optional_string(
+            "parentCanonicalGuid",
+            value.reaction_parent_canonical_guid.as_deref(),
+        );
+        writer.optional_integer("parentPart", value.reaction_parent_part);
+        writer.string("senderHandle", &value.sender_handle);
+        writer.string(
+            "reactionType",
+            &repair_digest_reaction_type(kind, value.reaction_removed),
+        );
+        writer.optional_string("associatedEmoji", value.associated_emoji.as_deref());
+        writer.integer("createdAtMs", value.created_at_millis);
+        writer.integer("error", value.error);
+        writer.string("service", "iMessage");
+        repair_digest_flags(&mut writer, Some(&value.known_flags));
+        writer.string(
+            "readAtState",
+            repair_digest_field_state(value.read_at_millis_state),
+        );
+        writer.optional_integer("readAtMs", value.read_at_millis);
+        writer.string(
+            "deliveredAtState",
+            repair_digest_field_state(value.delivered_at_millis_state),
+        );
+        writer.optional_integer("deliveredAtMs", value.delivered_at_millis);
+        writer.optional_integer("associatedRangeLocation", value.associated_range_location);
+        writer.optional_integer("associatedRangeLength", value.associated_range_length);
+        return Some(writer.finish());
+    }
+
+    Some(cloudkit_repair_message_content_digest(
+        value,
+        Some(&value.known_flags),
+    ))
+}
+
+fn cloudkit_repair_message_content_digest(
+    value: &CloudSyncTransientMessagePayload,
+    known_flags: Option<&CloudSyncTransientKnownMessageFlags>,
+) -> String {
+    let mut writer = CloudKitRepairDigestWriter::new("message");
+    writer.string("logicalEntityKeyHash", &value.logical_entity_key_hash);
+    writer.string("canonicalGuid", &value.canonical_guid);
+    writer.string("chatAliasKeyHash", &value.chat_alias_key_hash);
+    writer.string("chatIdentifier", &value.chat_identifier);
+    writer.optional_string("body", value.body.as_deref());
+    writer.string("senderHandle", &value.sender_handle);
+    writer.integer("createdAtMs", value.created_at_millis);
+    writer.integer("error", value.error);
+    writer.string("service", "iMessage");
+    writer.string(
+        "subjectState",
+        repair_digest_field_state(value.subject_state),
+    );
+    writer.optional_string("subject", value.subject.as_deref());
+    writer.string("bodyState", repair_digest_field_state(value.body_state));
+    writer.string(
+        "attributedBodiesState",
+        repair_digest_field_state(value.attributed_bodies_state),
+    );
+    writer.string(
+        "balloonBundleIdState",
+        repair_digest_field_state(value.balloon_bundle_id_state),
+    );
+    writer.optional_string("balloonBundleId", value.balloon_bundle_id.as_deref());
+    writer.string("decodedExtensionPayloadState", "absent");
+    writer.optional_bytes("decodedExtensionPayload", None);
+    writer.string("effectState", repair_digest_field_state(value.effect_state));
+    writer.optional_string("effect", value.effect.as_deref());
+    writer.string(
+        "readAtState",
+        repair_digest_field_state(value.read_at_millis_state),
+    );
+    writer.optional_integer("readAtMs", value.read_at_millis);
+    writer.string(
+        "deliveredAtState",
+        repair_digest_field_state(value.delivered_at_millis_state),
+    );
+    writer.optional_integer("deliveredAtMs", value.delivered_at_millis);
+    repair_digest_flags(&mut writer, known_flags);
+    writer.string(
+        "associationKind",
+        repair_digest_association(value.association_kind),
+    );
+    writer.optional_string(
+        "associationParentLogicalKeyHash",
+        value.reaction_parent_logical_key_hash.as_deref(),
+    );
+    writer.optional_string(
+        "associationParentCanonicalGuid",
+        value.reaction_parent_canonical_guid.as_deref(),
+    );
+    writer.optional_integer("associationParentPart", value.reaction_parent_part);
+    writer.optional_integer("associatedRangeLocation", value.associated_range_location);
+    writer.optional_integer("associatedRangeLength", value.associated_range_length);
+    writer.optional_string(
+        "replyParentLogicalKeyHash",
+        value.reply_parent_logical_key_hash.as_deref(),
+    );
+    writer.optional_string(
+        "replyParentCanonicalGuid",
+        value.reply_parent_canonical_guid.as_deref(),
+    );
+    writer.optional_string("replyParentPart", value.reply_parent_part.as_deref());
+    writer.string("editsState", repair_digest_field_state(value.edits_state));
+    writer.string(
+        "retractedPartsState",
+        repair_digest_field_state(value.retracted_parts_state),
+    );
+    repair_digest_bodies(&mut writer, "attributedBodies", &value.attributed_bodies);
+    writer.integer("edits.count", value.edits.len());
+    for (index, edit) in value.edits.iter().enumerate() {
+        let prefix = format!("edits[{index}].");
+        writer.integer(&format!("{prefix}part"), edit.part);
+        writer.integer(&format!("{prefix}revision"), edit.revision);
+        writer.integer(&format!("{prefix}modifiedAtMs"), edit.modified_at_millis);
+        writer.optional_integer(
+            &format!("{prefix}originalRangeLocation"),
+            edit.original_range_location,
+        );
+        writer.optional_integer(
+            &format!("{prefix}originalRangeLength"),
+            edit.original_range_length,
+        );
+        repair_digest_bodies(&mut writer, &format!("{prefix}bodies"), &edit.bodies);
+    }
+    writer.integer("retractedParts.count", value.retracted_parts.len());
+    for (index, part) in value.retracted_parts.iter().enumerate() {
+        writer.integer(&format!("retractedParts[{index}]"), part);
+    }
+    writer.finish()
+}
+
+#[cfg(test)]
+mod cloudkit_repair_digest_tests {
+    use super::*;
+
+    const CORPUS: &str =
+        include_str!("../../../test/fixtures/cloud_sync/cloudkit_repair_digest_golden_v1.tsv");
+
+    fn flags() -> CloudSyncTransientKnownMessageFlags {
+        CloudSyncTransientKnownMessageFlags {
+            from_me: true,
+            delivered: false,
+            read: true,
+            has_data_detector_results: false,
+            delivered_quietly: true,
+            did_notify_recipient: false,
+        }
+    }
+
+    fn basic_message(body: &str) -> CloudSyncTransientMessagePayload {
+        CloudSyncTransientMessagePayload {
+            logical_entity_key_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+            canonical_guid: "guid".to_owned(),
+            chat_alias_key_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
+            chat_identifier: "chat".to_owned(),
+            sender_handle: "sender".to_owned(),
+            created_at_millis: 1,
+            error: 2,
+            service: CloudSyncTransientService::IMessage,
+            subject_state: CloudSyncTransientFieldState::Value,
+            subject: Some("subject".to_owned()),
+            body_state: CloudSyncTransientFieldState::Value,
+            body: Some(body.to_owned()),
+            attributed_bodies_state: CloudSyncTransientFieldState::Absent,
+            attributed_bodies: vec![],
+            balloon_bundle_id_state: CloudSyncTransientFieldState::Absent,
+            balloon_bundle_id: None,
+            effect_state: CloudSyncTransientFieldState::Absent,
+            effect: None,
+            read_at_millis_state: CloudSyncTransientFieldState::Absent,
+            read_at_millis: None,
+            delivered_at_millis_state: CloudSyncTransientFieldState::Absent,
+            delivered_at_millis: None,
+            known_flags: flags(),
+            association_kind: CloudSyncTransientAssociationKind::None,
+            reaction_kind: None,
+            reaction_removed: false,
+            reaction_parent_logical_key_hash: None,
+            reaction_parent_canonical_guid: None,
+            reaction_parent_part: None,
+            associated_range_location: None,
+            associated_range_length: None,
+            reply_parent_logical_key_hash: None,
+            reply_parent_canonical_guid: None,
+            reply_parent_part: None,
+            edits_state: CloudSyncTransientFieldState::Absent,
+            edits: vec![],
+            retracted_parts_state: CloudSyncTransientFieldState::Absent,
+            retracted_parts: vec![],
+            associated_emoji_state: CloudSyncTransientFieldState::Absent,
+            associated_emoji: None,
+        }
+    }
+
+    fn field_state_message(
+        state: CloudSyncTransientFieldState,
+    ) -> CloudSyncTransientMessagePayload {
+        let mut value = basic_message("");
+        value.canonical_guid = "field-guid".to_owned();
+        value.chat_identifier = "field-chat".to_owned();
+        value.created_at_millis = 2;
+        value.error = 0;
+        value.subject_state = state;
+        value.subject = None;
+        value.body_state = state;
+        value.body = None;
+        value.attributed_bodies_state = state;
+        value.balloon_bundle_id_state = state;
+        // Native defers extension payloads before this transient boundary;
+        // cloudkit_repair_message_content_digest therefore writes absent.
+        value.effect_state = state;
+        value.read_at_millis_state = state;
+        value.delivered_at_millis_state = state;
+        value.edits_state = state;
+        value.retracted_parts_state = state;
+        value
+    }
+
+    fn nested_body() -> (
+        CloudSyncTransientAttributedBody,
+        CloudSyncTransientAttributedBody,
+    ) {
+        let first = CloudSyncTransientAttributedBody {
+            text: "A🙂B".to_owned(),
+            runs: vec![CloudSyncTransientTextRun {
+                start_utf16: 0,
+                length_utf16: 3,
+                message_part: Some(0),
+                attachment_canonical_guid: Some("attachment_guid".to_owned()),
+                attachment_logical_key_hash: Some(
+                    "ccccccccccccccccccccccccccccccccccccccccccc".to_owned(),
+                ),
+                mention_handle: Some("person@example.com".to_owned()),
+                audio_transcript: Some("spoken".to_owned()),
+                text_effect: Some(7),
+                bold: Some(true),
+                italic: Some(false),
+                strikethrough: None,
+                underline: Some(true),
+            }],
+        };
+        let second = CloudSyncTransientAttributedBody {
+            text: "second".to_owned(),
+            runs: vec![],
+        };
+        (first, second)
+    }
+
+    fn nested_message(retracted_parts: Vec<u32>) -> CloudSyncTransientMessagePayload {
+        let (first, second) = nested_body();
+        let mut value = basic_message("A🙂B");
+        value.canonical_guid = "nested-guid".to_owned();
+        value.chat_identifier = "nested-chat".to_owned();
+        value.created_at_millis = 3;
+        value.error = 0;
+        value.subject_state = CloudSyncTransientFieldState::Absent;
+        value.subject = None;
+        value.attributed_bodies_state = CloudSyncTransientFieldState::Value;
+        value.attributed_bodies = vec![first.clone(), second.clone()];
+        value.edits_state = CloudSyncTransientFieldState::Value;
+        value.edits = vec![CloudSyncTransientMessageEdit {
+            part: 0,
+            revision: 2,
+            bodies: vec![second, first],
+            modified_at_millis: 4,
+            original_range_location: Some(1),
+            original_range_length: Some(2),
+        }];
+        value.retracted_parts_state = CloudSyncTransientFieldState::Value;
+        value.retracted_parts = retracted_parts;
+        value
+    }
+
+    fn reaction(removed: bool, parent_part: Option<u32>) -> CloudSyncTransientMessagePayload {
+        let mut value = basic_message("");
+        value.logical_entity_key_hash = "ddddddddddddddddddddddddddddddddddddddddddd".to_owned();
+        value.canonical_guid = if removed {
+            "reaction-remove".to_owned()
+        } else {
+            "reaction-add".to_owned()
+        };
+        value.sender_handle = "sender".to_owned();
+        value.created_at_millis = 5;
+        value.error = 0;
+        value.subject_state = CloudSyncTransientFieldState::Absent;
+        value.subject = None;
+        value.body_state = CloudSyncTransientFieldState::Absent;
+        value.body = None;
+        value.association_kind = if removed {
+            CloudSyncTransientAssociationKind::ReactionRemove
+        } else {
+            CloudSyncTransientAssociationKind::ReactionAdd
+        };
+        value.reaction_kind = Some(CloudSyncTransientReactionKind::Emoji);
+        value.reaction_removed = removed;
+        value.reaction_parent_logical_key_hash =
+            Some("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_owned());
+        value.reaction_parent_canonical_guid = Some("parent-guid".to_owned());
+        value.reaction_parent_part = parent_part;
+        value.associated_range_location = Some(1);
+        value.associated_range_length = Some(2);
+        value.read_at_millis_state = CloudSyncTransientFieldState::Value;
+        value.read_at_millis = Some(6);
+        value.delivered_at_millis_state = CloudSyncTransientFieldState::ExplicitClear;
+        value.associated_emoji_state = CloudSyncTransientFieldState::Value;
+        value.associated_emoji = Some("🔥".to_owned());
+        value
+    }
+
+    fn digest(value: &CloudSyncTransientMessagePayload) -> String {
+        cloudkit_repair_content_digest(&CloudSyncTransientPayload {
+            chat: None,
+            message: Some(value.clone()),
+            attachment: None,
+            group_photo: None,
+        })
+        .expect("message and reaction payloads have repair digests")
+    }
+
+    fn raw_bytes_framing_digest() -> String {
+        let mut writer = CloudKitRepairDigestWriter::new("framingProbe");
+        writer.string("unicodeText", "é🙂");
+        writer.optional_bytes("rawBytes", Some(&[0, 255, 1, 128, 10]));
+        writer.finish()
+    }
+
+    fn corpus() -> Vec<(&'static str, &'static str)> {
+        CORPUS
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(|line| {
+                let mut fields = line.split('\t');
+                let name = fields.next().expect("corpus name");
+                let digest = fields.next().expect("corpus digest");
+                assert!(fields.next().is_none(), "invalid corpus row");
+                (name, digest)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn cloudkit_repair_digest_matches_every_pinned_neutral_vector() {
+        let flags_absent = basic_message("flags");
+        let actual = vec![
+            ("basic-message", digest(&basic_message("body"))),
+            ("reaction-add-partless", digest(&reaction(false, None))),
+            (
+                "reaction-remove-part-zero",
+                digest(&reaction(true, Some(0))),
+            ),
+            (
+                "unicode-multibyte",
+                digest(&basic_message("مرحبا 👩🏽‍🚀 café 漢字")),
+            ),
+            (
+                "fields-absent",
+                digest(&field_state_message(CloudSyncTransientFieldState::Absent)),
+            ),
+            (
+                "fields-explicit-clear",
+                digest(&field_state_message(
+                    CloudSyncTransientFieldState::ExplicitClear,
+                )),
+            ),
+            ("known-flags-present", digest(&basic_message("flags"))),
+            (
+                "known-flags-absent",
+                cloudkit_repair_message_content_digest(&flags_absent, None),
+            ),
+            (
+                "nested-attributed-edits",
+                digest(&nested_message(vec![3, 1])),
+            ),
+            ("retracted-order-1-2", digest(&nested_message(vec![1, 2]))),
+            ("retracted-order-2-1", digest(&nested_message(vec![2, 1]))),
+            ("raw-bytes-framing", raw_bytes_framing_digest()),
+        ];
+        let expected = corpus();
+        assert_eq!(actual.len(), expected.len());
+        for ((actual_name, actual_digest), (expected_name, expected_digest)) in
+            actual.iter().zip(expected)
+        {
+            assert_eq!(*actual_name, expected_name);
+            assert_eq!(actual_digest, expected_digest, "{actual_name}");
+        }
+    }
+
+    #[test]
+    fn cloudkit_repair_digest_changes_for_semantic_and_order_mutations() {
+        assert_ne!(
+            digest(&basic_message("body")),
+            digest(&basic_message("changed"))
+        );
+        assert_ne!(
+            digest(&nested_message(vec![1, 2])),
+            digest(&nested_message(vec![2, 1]))
+        );
+        assert_ne!(
+            digest(&reaction(false, None)),
+            digest(&reaction(false, Some(0)))
+        );
+    }
+}
+
 fn map_cloud_sync_transient_snapshot(
     snapshot: &crate::cloud_sync_canonical_dto::CloudCanonicalSnapshot,
 ) -> CloudSyncTransientSnapshot {
@@ -2503,13 +3097,21 @@ pub async fn cloud_sync_decode_protected_change(
                     Some(CloudSyncTransientFailureCode::GenerationMismatch);
                 return failure_result;
             }
-            let snapshot = mutation.snapshot().map(map_cloud_sync_transient_snapshot);
+            let mut snapshot = mutation.snapshot().map(map_cloud_sync_transient_snapshot);
             let payload = mutation.payload().and_then(|payload| {
                 map_cloud_sync_transient_payload(
                     envelope.logical_entity_key_hash().value(),
                     payload,
                 )
             });
+            if let (Some(snapshot), Some(payload)) = (&mut snapshot, &payload) {
+                // Replace the decoder-internal/raw digest with the repair
+                // digest over the exact transient canonical payload Dart will
+                // validate before any local repair write.
+                if let Some(digest) = cloudkit_repair_content_digest(payload) {
+                    snapshot.immutable_content_digest = Some(digest);
+                }
+            }
             let tombstone = mutation
                 .tombstone()
                 .map(|tombstone| CloudSyncTransientTombstone {
@@ -6224,6 +6826,7 @@ fn cloud_sync_failure_category(error: &PushError) -> (CloudSyncRawFailureCategor
         }
         PushError::UnauthorizedAccountError
         | PushError::TokenMissing
+        | PushError::CloudKitWarmAuthenticationRequired
         | PushError::UserNotFound
         | PushError::AuthInvalid(_)
         | PushError::MobileMeError(_, _) => (
@@ -6231,6 +6834,8 @@ fn cloud_sync_failure_category(error: &PushError) -> (CloudSyncRawFailureCategor
             "cloudkit-authorization",
         ),
         PushError::PCSRecordKeyMissing
+        | PushError::PCSKeyIdMismatch
+        | PushError::PCSDecryptionFailed
         | PushError::MasterKeyNotFound
         | PushError::NotInClique
         | PushError::ShareKeyNotFound(_)
@@ -6238,9 +6843,15 @@ fn cloud_sync_failure_category(error: &PushError) -> (CloudSyncRawFailureCategor
             CloudSyncRawFailureCategory::PcsUnavailable,
             "pcs-unavailable",
         ),
-        PushError::ProtobufError(_) | PushError::JsonError(_) => (
+        PushError::PCSCiphertextMalformed
+        | PushError::ProtobufError(_)
+        | PushError::JsonError(_) => (
             CloudSyncRawFailureCategory::MalformedRecord,
             "malformed-response",
+        ),
+        PushError::CloudKitChangeTokenExpired => (
+            CloudSyncRawFailureCategory::Unknown,
+            "cloudkit-change-token-expired",
         ),
         PushError::CloudKitProtocolError(CloudKitProtocolError::ContinuationTokenNoProgress) => (
             CloudSyncRawFailureCategory::MalformedRecord,

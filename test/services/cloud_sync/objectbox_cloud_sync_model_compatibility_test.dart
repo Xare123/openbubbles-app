@@ -90,6 +90,63 @@ void main() {
         '22:7163548097042261884',
       );
       expect(checkpointProperties['pendingBatchId'], '23:8346271905819443021');
+
+      Map<String, Map<String, dynamic>> propertiesFor(String entityName) {
+        final entity = (model['entities'] as List<dynamic>)
+            .cast<Map<String, dynamic>>()
+            .singleWhere((value) => value['name'] == entityName);
+        return {
+          for (final value in entity['properties'] as List<dynamic>)
+            (value as Map<String, dynamic>)['name'] as String: value,
+        };
+      }
+
+      final inboxProperties = propertiesFor('CloudInboxChangeEntity');
+      expect(inboxProperties['generation']?['id'], '21:8085608731784905006');
+      expect(
+        inboxProperties['generation']?['indexId'],
+        '81:3830688548090503170',
+      );
+
+      final replayProperties = propertiesFor('CloudSemanticReplayEntity');
+      expect(
+        replayProperties['inboxSequence']?['id'],
+        '21:2926325749401488941',
+      );
+      expect(
+        replayProperties['inboxSequence']?['indexId'],
+        '83:2290394163013382047',
+      );
+
+      final snapshotProperties = propertiesFor('CloudSemanticSnapshotEntity');
+      expect(
+        snapshotProperties['canonicalGuidLookupHash']?['id'],
+        '26:6951661599762727523',
+      );
+      expect(
+        snapshotProperties['canonicalGuidLookupHash']?['indexId'],
+        '84:3233573957190533269',
+      );
+
+      final receiptProperties = propertiesFor(
+        'CloudKitV2QuarantineRepairReceiptEntity',
+      );
+      expect(
+        receiptProperties['inboxSequence']?['id'],
+        '15:9098288398353927251',
+      );
+      expect(
+        receiptProperties['inboxSequence']?['indexId'],
+        '82:1274079036917826277',
+      );
+      expect(
+        receiptProperties['evidenceDigestVersion']?['id'],
+        '25:2636988580358074206',
+      );
+      expect(
+        receiptProperties['evidenceDigestSha256']?['id'],
+        '26:4954038203640662813',
+      );
     },
   );
 }

@@ -2946,6 +2946,14 @@ fn retry_after_seconds(error: &PushError) -> Option<u64> {
 fn map_fetch_failure(error: &PushError) -> CloudNativeFetchFailure {
     let retry_after = retry_after_seconds(error);
     let (category, safe_code) = match error {
+        PushError::CloudKitChangeTokenExpired => (
+            CloudNativeFailureCategory::Unknown,
+            CloudNativeSafeCode::CloudKitResetRequired,
+        ),
+        PushError::CloudKitWarmAuthenticationRequired => (
+            CloudNativeFailureCategory::Authorization,
+            CloudNativeSafeCode::CloudKitAuthorization,
+        ),
         PushError::CloudKitError(result) => match classify_cloudkit_failure(result) {
             CloudKitFailureClass::Throttled => (
                 CloudNativeFailureCategory::Throttled,
@@ -3506,6 +3514,7 @@ mod tests {
         },
     };
 
+    use prost::Message as _;
     use tempfile::tempdir;
 
     use super::*;
@@ -4095,6 +4104,93 @@ mod tests {
             }),
             Some(MAX_RETRY_AFTER_SECONDS),
         );
+    }
+
+    #[test]
+    fn fetched_record_roundtrips_through_protect_unprotect_and_raw_decode() {
+        let store = MemoryProtectedStore::default();
+        let scope = scope(CloudNativeStream::Messages);
+        let raw_record = rustpush::cloudkit_proto::Record {
+            r#type: Some(rustpush::cloudkit_proto::record::Type {
+                name: Some("Message".to_owned()),
+            }),
+            ..Default::default()
+        }
+        .encode_to_vec();
+        let page = CloudMessageRecordPage {
+            changes: vec![change("faithful-fake-message", raw_record.clone())],
+            next_token: None,
+            status: 3,
+        };
+
+        let CloudNativeProtectedFetchOutcome::Page(protected_page) =
+            protect_native_page(&store, &hasher(), &request(&scope, None), page)
+        else {
+            panic!("expected protected page");
+        };
+        let raw_reference = CloudCanonicalProtectedReference::new(
+            protected_page.changes[0]
+                .protected_raw_envelope_reference()
+                .to_owned(),
+        )
+        .expect("protected raw reference");
+        let protected_plaintext = store
+            .unprotect(
+                &scope,
+                CloudNativeProtectionPurpose::RawRecord,
+                &raw_reference,
+            )
+            .expect("unprotect raw envelope");
+        let envelope = decode_raw_envelope(
+            &protected_plaintext,
+            request(&scope, None).generation,
+            CloudNativeStream::Messages,
+        )
+        .expect("decode raw envelope");
+
+        assert_eq!(envelope.record_name(), Some("faithful-fake-message"));
+        assert_eq!(envelope.record_type(), Some("Message"));
+        assert_eq!(envelope.raw(), Some(raw_record.as_slice()));
+        let decoded_record =
+            rustpush::cloudkit_proto::Record::decode(envelope.raw().expect("raw record protobuf"))
+                .expect("decode record protobuf");
+        assert_eq!(
+            decoded_record
+                .r#type
+                .as_ref()
+                .and_then(|record_type| record_type.name.as_deref()),
+            Some("Message")
+        );
+    }
+
+    #[test]
+    fn structured_cloudkit_state_failures_map_to_distinct_content_free_codes() {
+        let token_expired = map_fetch_failure(&PushError::CloudKitChangeTokenExpired);
+        assert_eq!(
+            token_expired,
+            CloudNativeFetchFailure::new(
+                CloudNativeFailureCategory::Unknown,
+                CloudNativeSafeCode::CloudKitResetRequired,
+                None,
+            )
+        );
+
+        let warm_auth = map_fetch_failure(&PushError::CloudKitWarmAuthenticationRequired);
+        assert_eq!(
+            warm_auth,
+            CloudNativeFetchFailure::new(
+                CloudNativeFailureCategory::Authorization,
+                CloudNativeSafeCode::CloudKitAuthorization,
+                None,
+            )
+        );
+
+        assert_ne!(token_expired, warm_auth);
+        for rendered in [format!("{token_expired:?}"), format!("{warm_auth:?}")] {
+            assert!(!rendered.contains("private-message-sentinel"));
+            assert!(!rendered.contains("dsid-sentinel"));
+            assert!(!rendered.contains("token-sentinel"));
+        }
     }
 
     #[test]

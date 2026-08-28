@@ -23,6 +23,7 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_outbound_candidate_selection_failed',
   'cloud_sync_outbound_quiescence_timeout',
   'cloud_sync_developer_mode_required',
+  'cloud_sync_canary_package_required',
   'cloud_sync_native_auth_account_fingerprint_failed',
   'cloud_sync_native_auth_account_unavailable',
   'cloud_sync_native_auth_bridge_failed',

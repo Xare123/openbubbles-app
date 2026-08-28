@@ -9,6 +9,10 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   final now = DateTime.utc(2026, 8, 27, 12);
   final scope = _scope();
+  const leaseFence = CloudCoordinatorLeaseFence(
+    ownerId: 'quarantine-repair-test-owner',
+    generation: 7,
+  );
   late Directory directory;
   late Store store;
   Store? storeForCleanup;
@@ -21,19 +25,20 @@ void main() {
     store = await openStore(directory: directory.path);
     storeForCleanup = store;
     adapter = _Adapter(store);
-    gateway = CloudKitV2QuarantineRepairGateway(
+    gateway = CloudKitV2QuarantineRepairGateway.testOnly(
       store: store,
       canonicalAdapter: adapter,
-      enabled: true,
       clock: () => now,
     );
-    final entry = _entry(scope, sequence: 2);
+    final entry = _entry(scope, sequence: 1);
     _seed(store, scope, entry, now);
     request = CloudKitV2QuarantineRepairRequest(
       scope: scope,
+      persistenceLane: CloudSyncPersistenceLane.semanticV2,
       generation: entry.generation,
       changeIdHash: entry.change.changeId,
       correction: CloudKitV2QuarantineRepairAllowlist.only,
+      leaseFence: leaseFence,
     );
   });
 
@@ -53,32 +58,34 @@ void main() {
 
       final disabledResult = await disabled.repair(
         request: request,
-        correctedDecoder: decoder,
+        testOnlyCapability: decoder,
       );
       expect(
         disabledResult.disposition,
         CloudKitV2QuarantineRepairDisposition.disabled,
       );
       expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 0);
-      expect(decoder.calls, 0);
 
       final unallowlisted = CloudKitV2QuarantineRepairRequest(
         scope: scope,
+        persistenceLane: CloudSyncPersistenceLane.semanticV2,
         generation: request.generation,
         changeIdHash: request.changeIdHash,
         correction: const CloudKitV2ConverterCorrection(
           converterRevision: 'cloud-canonical-converter-r3',
           correctionName: 'unreviewed-correction',
+          expectedOriginalTerminalSafeCode: 'semantic_conflict',
+          expectedOriginalQuarantineReason: CloudFailureCategory.conflict,
         ),
+        leaseFence: leaseFence,
       );
       final result = await gateway.repair(
         request: unallowlisted,
-        correctedDecoder: decoder,
+        testOnlyCapability: decoder,
       );
       expect(result.disposition, CloudKitV2QuarantineRepairDisposition.failed);
       expect(result.safeCode, 'quarantine_repair_correction_not_allowlisted');
-      expect(decoder.calls, 0);
-      expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 1);
+      expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 0);
     },
   );
 
@@ -90,7 +97,7 @@ void main() {
 
       final result = await gateway.repair(
         request: request,
-        correctedDecoder: decoder,
+        testOnlyCapability: decoder,
       );
 
       expect(
@@ -98,7 +105,6 @@ void main() {
         CloudKitV2QuarantineRepairDisposition.repaired,
       );
       expect(result.succeeded, isTrue);
-      expect(decoder.calls, 1);
       expect(adapter.applyCalls, 1);
       expect(store.box<CloudSemanticSnapshotEntity>().count(), 1);
       expect(store.box<CloudRecordMapEntity>().count(), 1);
@@ -127,6 +133,17 @@ void main() {
         CloudKitV2QuarantineRepairAllowlist.only.correctionName,
       );
       expect(receipt.outcome, 'repaired');
+      expect(receipt.originalPayloadSha256, _sha256('payload'));
+      expect(
+        receipt.originalQuarantineReason,
+        CloudFailureCategory.conflict.name,
+      );
+      expect(receipt.originalTerminalSafeCode, 'semantic_conflict');
+      expect(
+        receipt.evidenceDigestVersion,
+        'cloudkit-quarantine-repair-evidence-v1',
+      );
+      expect(receipt.evidenceDigestSha256, matches(RegExp(r'^[0-9a-f]{64}$')));
 
       final inbox = store.box<CloudInboxChangeEntity>().getAll().single;
       final replay = store.box<CloudSemanticReplayEntity>().getAll().single;
@@ -141,7 +158,7 @@ void main() {
 
     final first = await gateway.repair(
       request: request,
-      correctedDecoder: decoder,
+      testOnlyCapability: decoder,
     );
     final stored = store
         .box<CloudKitV2QuarantineRepairReceiptEntity>()
@@ -150,7 +167,7 @@ void main() {
     final storedCreatedAt = stored.createdAtMs;
     final second = await gateway.repair(
       request: request,
-      correctedDecoder: decoder,
+      testOnlyCapability: decoder,
     );
 
     expect(first.disposition, CloudKitV2QuarantineRepairDisposition.repaired);
@@ -158,7 +175,6 @@ void main() {
       second.disposition,
       CloudKitV2QuarantineRepairDisposition.alreadyRepaired,
     );
-    expect(decoder.calls, 1);
     expect(adapter.applyCalls, 1);
     expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 1);
     expect(
@@ -177,14 +193,14 @@ void main() {
       final decoder = _Decoder(_decoded(scope, request.changeIdHash, 7));
       final first = await gateway.repair(
         request: request,
-        correctedDecoder: decoder,
+        testOnlyCapability: decoder,
       );
       expect(first.disposition, CloudKitV2QuarantineRepairDisposition.repaired);
       store.box<CloudRecordMapEntity>().removeAll();
 
       final second = await gateway.repair(
         request: request,
-        correctedDecoder: decoder,
+        testOnlyCapability: decoder,
       );
 
       expect(
@@ -193,7 +209,6 @@ void main() {
       );
       expect(second.failureCategory, CloudFailureCategory.localStorage);
       expect(second.safeCode, 'quarantine_repair_record_mapping_missing');
-      expect(decoder.calls, 1);
       expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 1);
     },
   );
@@ -202,14 +217,14 @@ void main() {
     'repaired receipt is not trusted after its terminal pair changes',
     () async {
       final decoder = _Decoder(_decoded(scope, request.changeIdHash, 7));
-      await gateway.repair(request: request, correctedDecoder: decoder);
+      await gateway.repair(request: request, testOnlyCapability: decoder);
       final replay = store.box<CloudSemanticReplayEntity>().getAll().single
         ..terminalOutcome = 'applied';
       store.box<CloudSemanticReplayEntity>().put(replay);
 
       final result = await gateway.repair(
         request: request,
-        correctedDecoder: decoder,
+        testOnlyCapability: decoder,
       );
 
       expect(
@@ -218,9 +233,68 @@ void main() {
       );
       expect(result.failureCategory, CloudFailureCategory.localStorage);
       expect(result.safeCode, 'quarantine_repair_terminal_pair_invalid');
-      expect(decoder.calls, 1);
     },
   );
+
+  test(
+    'repaired receipt is not trusted after its original payload evidence changes',
+    () async {
+      final decoder = _Decoder(_decoded(scope, request.changeIdHash, 7));
+      await gateway.repair(request: request, testOnlyCapability: decoder);
+      final changedPayloadHash = _sha256('changed-terminal-payload');
+      final inbox = store.box<CloudInboxChangeEntity>().getAll().single
+        ..payloadSha256 = changedPayloadHash;
+      final replay = store.box<CloudSemanticReplayEntity>().getAll().single
+        ..payloadSha256 = changedPayloadHash;
+      store.box<CloudInboxChangeEntity>().put(inbox);
+      store.box<CloudSemanticReplayEntity>().put(replay);
+
+      final result = await gateway.repair(
+        request: request,
+        testOnlyCapability: decoder,
+      );
+
+      expect(
+        result.disposition,
+        CloudKitV2QuarantineRepairDisposition.retryable,
+      );
+      expect(result.safeCode, 'quarantine_repair_existing_receipt_stale');
+    },
+  );
+
+  test('repaired receipt detects non-key terminal evidence mutation', () async {
+    final decoder = _Decoder(_decoded(scope, request.changeIdHash, 7));
+    await gateway.repair(request: request, testOnlyCapability: decoder);
+    final inbox = store.box<CloudInboxChangeEntity>().getAll().single
+      ..updatedAtMs += 1;
+    store.box<CloudInboxChangeEntity>().put(inbox);
+
+    final result = await gateway.repair(
+      request: request,
+      testOnlyCapability: decoder,
+    );
+
+    expect(result.disposition, CloudKitV2QuarantineRepairDisposition.retryable);
+    expect(result.safeCode, 'quarantine_repair_existing_evidence_stale');
+    expect(adapter.applyCalls, 1);
+  });
+
+  test('repaired receipt detects snapshot evidence mutation', () async {
+    final decoder = _Decoder(_decoded(scope, request.changeIdHash, 7));
+    await gateway.repair(request: request, testOnlyCapability: decoder);
+    final snapshot = store.box<CloudSemanticSnapshotEntity>().getAll().single
+      ..updatedAtMs += 1;
+    store.box<CloudSemanticSnapshotEntity>().put(snapshot);
+
+    final result = await gateway.repair(
+      request: request,
+      testOnlyCapability: decoder,
+    );
+
+    expect(result.disposition, CloudKitV2QuarantineRepairDisposition.retryable);
+    expect(result.safeCode, 'quarantine_repair_existing_evidence_stale');
+    expect(adapter.applyCalls, 1);
+  });
 
   test(
     'repair keys include the named correction as well as its revision',
@@ -231,21 +305,25 @@ void main() {
       );
       final alternate = CloudKitV2QuarantineRepairRequest(
         scope: request.scope,
+        persistenceLane: CloudSyncPersistenceLane.semanticV2,
         generation: request.generation,
         changeIdHash: request.changeIdHash,
         correction: const CloudKitV2ConverterCorrection(
           converterRevision: 'cloud-canonical-converter-r2',
           correctionName: 'another-reviewed-shape',
+          expectedOriginalTerminalSafeCode: 'semantic_conflict',
+          expectedOriginalQuarantineReason: CloudFailureCategory.conflict,
         ),
+        leaseFence: leaseFence,
       );
 
       final first = await disabled.repair(
         request: request,
-        correctedDecoder: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+        testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
       );
       final second = await disabled.repair(
         request: alternate,
-        correctedDecoder: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+        testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
       );
 
       expect(first.repairKey, startsWith('semantic-repair2:'));
@@ -259,7 +337,7 @@ void main() {
       final decoder = _Decoder(_decoded(scope, request.changeIdHash, 7));
       final first = await gateway.repair(
         request: request,
-        correctedDecoder: decoder,
+        testOnlyCapability: decoder,
       );
       expect(first.disposition, CloudKitV2QuarantineRepairDisposition.repaired);
 
@@ -267,14 +345,13 @@ void main() {
       adapter.parentExists = true;
       final second = await gateway.repair(
         request: request,
-        correctedDecoder: decoder,
+        testOnlyCapability: decoder,
       );
 
       expect(
         second.disposition,
         CloudKitV2QuarantineRepairDisposition.repaired,
       );
-      expect(decoder.calls, 2);
       expect(adapter.applyCalls, 1);
       expect(store.box<CloudSemanticSnapshotEntity>().count(), 1);
       expect(store.box<CloudRecordMapEntity>().count(), 1);
@@ -284,14 +361,14 @@ void main() {
 
   test('noChange repair fails closed when its record map is absent', () async {
     final decoder = _Decoder(_decoded(scope, request.changeIdHash, 7));
-    await gateway.repair(request: request, correctedDecoder: decoder);
+    await gateway.repair(request: request, testOnlyCapability: decoder);
     store.box<CloudKitV2QuarantineRepairReceiptEntity>().removeAll();
     store.box<CloudRecordMapEntity>().removeAll();
     adapter.parentExists = true;
 
     final result = await gateway.repair(
       request: request,
-      correctedDecoder: decoder,
+      testOnlyCapability: decoder,
     );
 
     expect(result.disposition, CloudKitV2QuarantineRepairDisposition.failed);
@@ -311,13 +388,13 @@ void main() {
 
   test('noChange repair fails closed when canonical state is absent', () async {
     final decoder = _Decoder(_decoded(scope, request.changeIdHash, 7));
-    await gateway.repair(request: request, correctedDecoder: decoder);
+    await gateway.repair(request: request, testOnlyCapability: decoder);
     store.box<CloudKitV2QuarantineRepairReceiptEntity>().removeAll();
     adapter.existingEntityKeys.clear();
 
     final result = await gateway.repair(
       request: request,
-      correctedDecoder: decoder,
+      testOnlyCapability: decoder,
     );
 
     expect(result.disposition, CloudKitV2QuarantineRepairDisposition.failed);
@@ -328,48 +405,271 @@ void main() {
     expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 1);
   });
 
-  test('decoder failure writes only a failure receipt', () async {
-    final decoder = _Decoder.failure();
-    final before = _controlState(store);
+  test(
+    'invalid materialized correction writes only a bound failure receipt',
+    () async {
+      final decoder = _Decoder(
+        _decoded(
+          scope,
+          request.changeIdHash,
+          7,
+          snapshotDigest: _digest('mismatched-content'),
+        ),
+      );
+      final before = _controlState(store);
 
-    final result = await gateway.repair(
-      request: request,
-      correctedDecoder: decoder,
-    );
+      final result = await gateway.repair(
+        request: request,
+        testOnlyCapability: decoder,
+      );
 
-    expect(result.disposition, CloudKitV2QuarantineRepairDisposition.failed);
-    expect(result.failureCategory, CloudFailureCategory.malformedRecord);
-    expect(result.safeCode, 'quarantine_repair_decode_failed');
-    expect(adapter.applyCalls, 0);
-    expect(store.box<CloudSemanticSnapshotEntity>().count(), 0);
-    expect(store.box<CloudRecordMapEntity>().count(), 0);
-    expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 1);
-    expect(_controlState(store), before);
-    final receipt = store
-        .box<CloudKitV2QuarantineRepairReceiptEntity>()
-        .getAll()
-        .single;
-    expect(receipt.outcome, 'failed');
-    expect(receipt.failureCategory, CloudFailureCategory.malformedRecord.name);
+      expect(result.disposition, CloudKitV2QuarantineRepairDisposition.failed);
+      expect(result.failureCategory, CloudFailureCategory.malformedRecord);
+      expect(result.safeCode, 'quarantine_repair_payload_content_mismatch');
+      expect(adapter.applyCalls, 0);
+      expect(store.box<CloudSemanticSnapshotEntity>().count(), 0);
+      expect(store.box<CloudRecordMapEntity>().count(), 0);
+      expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 1);
+      expect(_controlState(store), before);
+      final receipt = store
+          .box<CloudKitV2QuarantineRepairReceiptEntity>()
+          .getAll()
+          .single;
+      expect(receipt.outcome, 'failed');
+      expect(
+        receipt.failureCategory,
+        CloudFailureCategory.malformedRecord.name,
+      );
+      expect(receipt.inboxSequence, 1);
+      expect(receipt.serverRecordIdHash, _digest('record'));
+      expect(receipt.originalPayloadSha256, _sha256('payload'));
+      expect(
+        receipt.originalQuarantineReason,
+        CloudFailureCategory.conflict.name,
+      );
+      expect(receipt.originalTerminalSafeCode, 'semantic_conflict');
 
-    final retry = await gateway.repair(
-      request: request,
-      correctedDecoder: _Decoder(_decoded(scope, request.changeIdHash, 7)),
-    );
-    expect(
-      retry.disposition,
-      CloudKitV2QuarantineRepairDisposition.alreadyFailed,
-    );
-    expect(decoder.calls, 1);
-    expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 1);
-  });
+      final retry = await gateway.repair(
+        request: request,
+        testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+      );
+      expect(
+        retry.disposition,
+        CloudKitV2QuarantineRepairDisposition.alreadyFailed,
+      );
+      expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 1);
+    },
+  );
+
+  test(
+    'rejects unknown or malformed persisted failed-receipt categories before terminal reuse',
+    () async {
+      final initial = await gateway.repair(
+        request: request,
+        testOnlyCapability: _Decoder(
+          _decoded(
+            scope,
+            request.changeIdHash,
+            7,
+            snapshotDigest: _digest('mismatched-content'),
+          ),
+        ),
+      );
+      expect(initial.disposition, CloudKitV2QuarantineRepairDisposition.failed);
+      final receiptBox = store.box<CloudKitV2QuarantineRepairReceiptEntity>();
+      for (final invalidCategory in <String>[
+        CloudFailureCategory.unknown.name,
+        'unrecognized_persisted_category',
+      ]) {
+        final receipt = receiptBox.getAll().single
+          ..failureCategory = invalidCategory;
+        receiptBox.put(receipt);
+        final before = _controlState(store);
+
+        final retry = await gateway.repair(
+          request: request,
+          testOnlyCapability: _Decoder(
+            _decoded(scope, request.changeIdHash, 7),
+          ),
+        );
+
+        expect(
+          retry.disposition,
+          CloudKitV2QuarantineRepairDisposition.retryable,
+        );
+        expect(retry.failureCategory, CloudFailureCategory.localStorage);
+        expect(retry.safeCode, 'quarantine_repair_receipt_binding_invalid');
+        expect(adapter.applyCalls, 0);
+        expect(store.box<CloudSemanticSnapshotEntity>().count(), 0);
+        expect(store.box<CloudRecordMapEntity>().count(), 0);
+        expect(receiptBox.count(), 1);
+        expect(_controlState(store), before);
+      }
+    },
+  );
+
+  test(
+    'rejects body, sender, timestamp, and flag content mismatches',
+    () async {
+      final baseline = _decoded(scope, request.changeIdHash, 7);
+      final baselineDigest = baseline.snapshot!.immutableContentDigest!;
+      final mismatches = <CloudDecodedMutation>[
+        _decoded(
+          scope,
+          request.changeIdHash,
+          7,
+          body: 'changed body',
+          snapshotDigest: baselineDigest,
+        ),
+        _decoded(
+          scope,
+          request.changeIdHash,
+          7,
+          senderHandle: 'other@example.com',
+          snapshotDigest: baselineDigest,
+        ),
+        _decoded(
+          scope,
+          request.changeIdHash,
+          7,
+          createdAt: DateTime.utc(2026, 8, 27, 10, 1),
+          snapshotDigest: baselineDigest,
+        ),
+        _decoded(
+          scope,
+          request.changeIdHash,
+          7,
+          knownFlags: const CloudSemanticKnownMessageFlags(
+            fromMe: true,
+            delivered: true,
+            read: true,
+            hasDataDetectorResults: true,
+            deliveredQuietly: false,
+            didNotifyRecipient: true,
+          ),
+          snapshotDigest: baselineDigest,
+        ),
+      ];
+      for (final mutation in mismatches) {
+        store.box<CloudKitV2QuarantineRepairReceiptEntity>().removeAll();
+        final result = await gateway.repair(
+          request: request,
+          testOnlyCapability: _Decoder(mutation),
+        );
+        expect(
+          result.disposition,
+          CloudKitV2QuarantineRepairDisposition.failed,
+        );
+        expect(result.safeCode, 'quarantine_repair_payload_content_mismatch');
+        expect(adapter.applyCalls, 0);
+        expect(store.box<CloudSemanticSnapshotEntity>().count(), 0);
+        expect(store.box<CloudRecordMapEntity>().count(), 0);
+      }
+    },
+  );
+
+  test(
+    'old repaired receipts return a migration-safe retryable result',
+    () async {
+      final correction = _Decoder(_decoded(scope, request.changeIdHash, 7));
+      final first = await gateway.repair(
+        request: request,
+        testOnlyCapability: correction,
+      );
+      expect(first.disposition, CloudKitV2QuarantineRepairDisposition.repaired);
+      final receipt =
+          store.box<CloudKitV2QuarantineRepairReceiptEntity>().getAll().single
+            ..evidenceDigestVersion = null
+            ..evidenceDigestSha256 = null;
+      store.box<CloudKitV2QuarantineRepairReceiptEntity>().put(receipt);
+
+      final result = await gateway.repair(
+        request: request,
+        testOnlyCapability: correction,
+      );
+      expect(
+        result.disposition,
+        CloudKitV2QuarantineRepairDisposition.retryable,
+      );
+      expect(result.failureCategory, CloudFailureCategory.localStorage);
+      expect(result.safeCode, 'quarantine_repair_receipt_migration_required');
+    },
+  );
+
+  test(
+    'old failed receipts return a migration-safe retryable result',
+    () async {
+      final invalid = _Decoder(
+        _decoded(
+          scope,
+          request.changeIdHash,
+          7,
+          snapshotDigest: _digest('mismatched-content'),
+        ),
+      );
+      final first = await gateway.repair(
+        request: request,
+        testOnlyCapability: invalid,
+      );
+      expect(first.disposition, CloudKitV2QuarantineRepairDisposition.failed);
+      final receipt =
+          store.box<CloudKitV2QuarantineRepairReceiptEntity>().getAll().single
+            ..evidenceDigestVersion = null
+            ..evidenceDigestSha256 = null;
+      store.box<CloudKitV2QuarantineRepairReceiptEntity>().put(receipt);
+
+      final result = await gateway.repair(
+        request: request,
+        testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+      );
+      expect(
+        result.disposition,
+        CloudKitV2QuarantineRepairDisposition.retryable,
+      );
+      expect(result.failureCategory, CloudFailureCategory.localStorage);
+      expect(result.safeCode, 'quarantine_repair_receipt_migration_required');
+    },
+  );
+
+  test(
+    'stale failed receipts remain retryable after the lease expires',
+    () async {
+      final invalid = _Decoder(
+        _decoded(
+          scope,
+          request.changeIdHash,
+          7,
+          snapshotDigest: _digest('mismatched-content'),
+        ),
+      );
+      final first = await gateway.repair(
+        request: request,
+        testOnlyCapability: invalid,
+      );
+      expect(first.disposition, CloudKitV2QuarantineRepairDisposition.failed);
+      final lease = store.box<CloudSyncLeaseEntity>().getAll().single
+        ..expiresAtMs = 0;
+      store.box<CloudSyncLeaseEntity>().put(lease);
+
+      final result = await gateway.repair(
+        request: request,
+        testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+      );
+      expect(
+        result.disposition,
+        CloudKitV2QuarantineRepairDisposition.retryable,
+      );
+      expect(result.safeCode, 'semantic_coordinator_lease_fence_lost');
+      expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 1);
+    },
+  );
 
   test(
     'rejects a decoded payload whose parent disagrees with its snapshot',
     () async {
       final result = await gateway.repair(
         request: request,
-        correctedDecoder: _Decoder(
+        testOnlyCapability: _Decoder(
           _decoded(
             scope,
             request.changeIdHash,
@@ -389,6 +689,7 @@ void main() {
   );
 
   test('does not repair across a pending sequence predecessor', () async {
+    _moveSeededTargetToSequence2(store);
     final predecessor = _entry(scope, sequence: 1, changeId: _digest('prior'));
     final predecessorRow = CloudInboxChangeEntity(
       changeKey: _changeKey(scope, predecessor.change.changeId),
@@ -416,7 +717,7 @@ void main() {
 
     final result = await gateway.repair(
       request: request,
-      correctedDecoder: decoder,
+      testOnlyCapability: decoder,
     );
 
     expect(result.disposition, CloudKitV2QuarantineRepairDisposition.retryable);
@@ -424,11 +725,105 @@ void main() {
       result.safeCode,
       'quarantine_repair_sequence_predecessor_not_applied',
     );
-    expect(decoder.calls, 1);
     expect(adapter.applyCalls, 0);
     expect(store.box<CloudSemanticSnapshotEntity>().count(), 0);
     expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 0);
   });
+
+  test(
+    'rejects a missing predecessor even when the checkpoint passed it',
+    () async {
+      _moveSeededTargetToSequence2(store);
+
+      final result = await gateway.repair(
+        request: request,
+        testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+      );
+
+      expect(
+        result.disposition,
+        CloudKitV2QuarantineRepairDisposition.retryable,
+      );
+      expect(
+        result.safeCode,
+        'quarantine_repair_sequence_gap_or_pruned_prefix',
+      );
+      expect(adapter.applyCalls, 0);
+    },
+  );
+
+  test('rejects duplicate rows at the target sequence', () async {
+    final duplicate = _entry(
+      scope,
+      sequence: 1,
+      changeId: _digest('duplicate-target'),
+    );
+    _putInboxRow(
+      store,
+      scope,
+      duplicate,
+      now,
+      status: CloudInboxStatus.applied,
+    );
+
+    final result = await gateway.repair(
+      request: request,
+      testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+    );
+
+    expect(result.disposition, CloudKitV2QuarantineRepairDisposition.retryable);
+    expect(result.safeCode, 'quarantine_repair_duplicate_target_sequence');
+    expect(adapter.applyCalls, 0);
+  });
+
+  test('rejects duplicate rows at a predecessor sequence', () async {
+    _moveSeededTargetToSequence2(store);
+    _putInboxRow(
+      store,
+      scope,
+      _entry(scope, sequence: 1, changeId: _digest('predecessor-a')),
+      now,
+      status: CloudInboxStatus.applied,
+    );
+    _putInboxRow(
+      store,
+      scope,
+      _entry(scope, sequence: 1, changeId: _digest('predecessor-b')),
+      now,
+      status: CloudInboxStatus.applied,
+    );
+
+    final result = await gateway.repair(
+      request: request,
+      testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+    );
+
+    expect(result.disposition, CloudKitV2QuarantineRepairDisposition.retryable);
+    expect(result.safeCode, 'quarantine_repair_duplicate_predecessor_sequence');
+    expect(adapter.applyCalls, 0);
+  });
+
+  test(
+    'rejects a checkpoint that has not durably reached the target',
+    () async {
+      final checkpoint = store.box<CloudSyncCheckpointEntity>().getAll().single
+        ..fetchedSequence = 0
+        ..appliedSequence = 0;
+      store.box<CloudSyncCheckpointEntity>().put(checkpoint);
+
+      final result = await gateway.repair(
+        request: request,
+        testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+      );
+
+      expect(
+        result.disposition,
+        CloudKitV2QuarantineRepairDisposition.retryable,
+      );
+      expect(result.safeCode, 'quarantine_repair_checkpoint_sequence_unproven');
+      expect(adapter.applyCalls, 0);
+    },
+  );
 
   test('defers a repaired child until its parent is present', () async {
     final decoder = _Decoder(
@@ -442,12 +837,11 @@ void main() {
 
     final result = await gateway.repair(
       request: request,
-      correctedDecoder: decoder,
+      testOnlyCapability: decoder,
     );
 
     expect(result.disposition, CloudKitV2QuarantineRepairDisposition.retryable);
     expect(result.safeCode, 'quarantine_repair_parent_not_ready');
-    expect(decoder.calls, 1);
     expect(adapter.applyCalls, 0);
     expect(store.box<CloudSemanticSnapshotEntity>().count(), 0);
     expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 0);
@@ -460,7 +854,7 @@ void main() {
 
     final first = await gateway.repair(
       request: request,
-      correctedDecoder: decoder,
+      testOnlyCapability: decoder,
     );
     expect(first.disposition, CloudKitV2QuarantineRepairDisposition.retryable);
     expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 0);
@@ -468,7 +862,7 @@ void main() {
     adapter.parentExists = true;
     final second = await gateway.repair(
       request: request,
-      correctedDecoder: decoder,
+      testOnlyCapability: decoder,
     );
     expect(second.disposition, CloudKitV2QuarantineRepairDisposition.repaired);
     expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 1);
@@ -477,6 +871,7 @@ void main() {
   });
 
   test('blocks every earlier non-applied inbox state', () async {
+    _moveSeededTargetToSequence2(store);
     final predecessor = _entry(
       scope,
       sequence: 1,
@@ -509,7 +904,7 @@ void main() {
 
     final result = await gateway.repair(
       request: request,
-      correctedDecoder: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+      testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
     );
     expect(result.disposition, CloudKitV2QuarantineRepairDisposition.retryable);
     expect(
@@ -519,7 +914,84 @@ void main() {
     expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 0);
   });
 
-  test('rejects a tombstone even when its decoder returns an upsert', () async {
+  test(
+    'a fully revalidated repaired quarantine predecessor unblocks row N+1',
+    () async {
+      _moveSeededTargetToSequence2(store);
+      final predecessor = _entry(
+        scope,
+        sequence: 1,
+        changeId: _digest('repaired-prior'),
+      );
+      _seedTerminalPair(store, scope, predecessor, now);
+      final predecessorRequest = CloudKitV2QuarantineRepairRequest(
+        scope: scope,
+        persistenceLane: CloudSyncPersistenceLane.semanticV2,
+        generation: predecessor.generation,
+        changeIdHash: predecessor.change.changeId,
+        correction: CloudKitV2QuarantineRepairAllowlist.only,
+        leaseFence: leaseFence,
+      );
+
+      expect(
+        (await gateway.repair(
+          request: predecessorRequest,
+          testOnlyCapability: _Decoder(
+            _decoded(
+              scope,
+              predecessor.change.changeId,
+              predecessor.generation,
+            ),
+          ),
+        )).disposition,
+        CloudKitV2QuarantineRepairDisposition.repaired,
+      );
+
+      final child = await gateway.repair(
+        request: request,
+        testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+      );
+      expect(child.disposition, CloudKitV2QuarantineRepairDisposition.repaired);
+      final original = store.box<CloudInboxChangeEntity>().getAll().singleWhere(
+        (row) => row.changeIdHash == predecessor.change.changeId,
+      );
+      expect(original.status, CloudInboxStatus.quarantined.index);
+    },
+  );
+
+  test('a stale repaired predecessor receipt still blocks row N+1', () async {
+    _moveSeededTargetToSequence2(store);
+    final predecessor = _entry(
+      scope,
+      sequence: 1,
+      changeId: _digest('stale-repaired-prior'),
+    );
+    _seedTerminalPair(store, scope, predecessor, now);
+    final predecessorRequest = CloudKitV2QuarantineRepairRequest(
+      scope: scope,
+      persistenceLane: CloudSyncPersistenceLane.semanticV2,
+      generation: predecessor.generation,
+      changeIdHash: predecessor.change.changeId,
+      correction: CloudKitV2QuarantineRepairAllowlist.only,
+      leaseFence: leaseFence,
+    );
+    await gateway.repair(
+      request: predecessorRequest,
+      testOnlyCapability: _Decoder(
+        _decoded(scope, predecessor.change.changeId, predecessor.generation),
+      ),
+    );
+    store.box<CloudRecordMapEntity>().removeAll();
+
+    final child = await gateway.repair(
+      request: request,
+      testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+    );
+    expect(child.disposition, CloudKitV2QuarantineRepairDisposition.retryable);
+    expect(child.safeCode, 'quarantine_repair_predecessor_receipt_invalid');
+  });
+
+  test('rejects a tombstone even when its correction is an upsert', () async {
     final inbox = store.box<CloudInboxChangeEntity>().getAll().single
       ..changeType = CloudChangeType.delete.name
       ..isTombstone = true;
@@ -531,13 +1003,12 @@ void main() {
     final decoder = _Decoder(_decoded(scope, request.changeIdHash, 7));
     final result = await gateway.repair(
       request: request,
-      correctedDecoder: decoder,
+      testOnlyCapability: decoder,
     );
 
-    expect(result.disposition, CloudKitV2QuarantineRepairDisposition.failed);
+    expect(result.disposition, CloudKitV2QuarantineRepairDisposition.retryable);
     expect(result.failureCategory, CloudFailureCategory.malformedRecord);
-    expect(decoder.calls, 0);
-    expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 1);
+    expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 0);
     expect(store.box<CloudSemanticSnapshotEntity>().count(), 0);
     expect(store.box<CloudRecordMapEntity>().count(), 0);
   });
@@ -548,22 +1019,24 @@ void main() {
       container: scope.container,
       database: scope.database,
       zone: 'chatManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semanticV2,
     );
     final wrongRequest = CloudKitV2QuarantineRepairRequest(
       scope: wrongZone,
+      persistenceLane: CloudSyncPersistenceLane.semanticV2,
       generation: request.generation,
       changeIdHash: request.changeIdHash,
       correction: request.correction,
+      leaseFence: leaseFence,
     );
     final decoder = _Decoder(_decoded(wrongZone, request.changeIdHash, 7));
 
     final result = await gateway.repair(
       request: wrongRequest,
-      correctedDecoder: decoder,
+      testOnlyCapability: decoder,
     );
     expect(result.disposition, CloudKitV2QuarantineRepairDisposition.failed);
     expect(result.safeCode, 'quarantine_repair_zone_not_allowlisted');
-    expect(decoder.calls, 0);
   });
 
   test(
@@ -588,7 +1061,7 @@ void main() {
 
       final result = await gateway.repair(
         request: request,
-        correctedDecoder: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+        testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
       );
       expect(result.disposition, CloudKitV2QuarantineRepairDisposition.failed);
       expect(result.failureCategory, CloudFailureCategory.conflict);
@@ -598,81 +1071,86 @@ void main() {
     },
   );
 
-  test('reproves and upgrades an exact generation-zero record map', () async {
-    final map = CloudRecordMapEntity(
-      mapKey: _recordMapKey(scope, _digest('logical')),
-      scopeKey: _scopeKey(scope),
-      accountFingerprint: scope.accountFingerprint,
-      zone: scope.zone,
-      logicalEntityKeyHash: _digest('logical'),
-      serverRecordIdHash: _digest('record'),
-      generation: 0,
-      encryptedServerRecordId: _protected('server'),
-      etagHash: _digest('etag'),
-      encryptedRawRecordRef: _protected('payload'),
-      updatedAtMs: now.millisecondsSinceEpoch,
-    );
-    final mapId = store.box<CloudRecordMapEntity>().put(map);
+  test(
+    'rejects an exact generation-zero record map without adopting it',
+    () async {
+      final map = CloudRecordMapEntity(
+        mapKey: _recordMapKey(scope, _digest('logical')),
+        scopeKey: _scopeKey(scope),
+        accountFingerprint: scope.accountFingerprint,
+        zone: scope.zone,
+        logicalEntityKeyHash: _digest('logical'),
+        serverRecordIdHash: _digest('record'),
+        generation: 0,
+        encryptedServerRecordId: _protected('server'),
+        etagHash: _digest('etag'),
+        encryptedRawRecordRef: _protected('payload'),
+        updatedAtMs: now.millisecondsSinceEpoch,
+      );
+      final mapId = store.box<CloudRecordMapEntity>().put(map);
 
-    final result = await gateway.repair(
-      request: request,
-      correctedDecoder: _Decoder(_decoded(scope, request.changeIdHash, 7)),
-    );
+      final result = await gateway.repair(
+        request: request,
+        testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+      );
 
-    final upgraded = store.box<CloudRecordMapEntity>().get(mapId)!;
-    expect(result.disposition, CloudKitV2QuarantineRepairDisposition.repaired);
-    expect(upgraded.id, mapId);
-    expect(upgraded.generation, request.generation);
-  });
-
-  test('rejects a generation-zero map that fails exact reproof', () async {
-    final map = CloudRecordMapEntity(
-      mapKey: _recordMapKey(scope, _digest('logical')),
-      scopeKey: _scopeKey(scope),
-      accountFingerprint: scope.accountFingerprint,
-      zone: scope.zone,
-      logicalEntityKeyHash: _digest('logical'),
-      serverRecordIdHash: _digest('record'),
-      generation: 0,
-      encryptedServerRecordId: _protected('server'),
-      etagHash: _digest('wrong-etag'),
-      encryptedRawRecordRef: _protected('payload'),
-      updatedAtMs: now.millisecondsSinceEpoch,
-    );
-    final mapId = store.box<CloudRecordMapEntity>().put(map);
-
-    final result = await gateway.repair(
-      request: request,
-      correctedDecoder: _Decoder(_decoded(scope, request.changeIdHash, 7)),
-    );
-
-    final retained = store.box<CloudRecordMapEntity>().get(mapId)!;
-    expect(result.disposition, CloudKitV2QuarantineRepairDisposition.failed);
-    expect(
-      result.safeCode,
-      'quarantine_repair_record_map_legacy_reproof_failed',
-    );
-    expect(retained.id, mapId);
-    expect(retained.generation, 0);
-    expect(store.box<CloudSemanticSnapshotEntity>().count(), 0);
-  });
+      final retained = store.box<CloudRecordMapEntity>().get(mapId)!;
+      expect(result.disposition, CloudKitV2QuarantineRepairDisposition.failed);
+      expect(result.safeCode, 'quarantine_repair_record_map_scope_mismatch');
+      expect(retained.id, mapId);
+      expect(retained.generation, 0);
+    },
+  );
 
   test(
-    'rejects a stale decoded entry before canonical or metadata writes',
+    'rejects a generation-zero map even when its old evidence is stale',
     () async {
-      final decoder = _StaleDecoder(
+      final map = CloudRecordMapEntity(
+        mapKey: _recordMapKey(scope, _digest('logical')),
+        scopeKey: _scopeKey(scope),
+        accountFingerprint: scope.accountFingerprint,
+        zone: scope.zone,
+        logicalEntityKeyHash: _digest('logical'),
+        serverRecordIdHash: _digest('record'),
+        generation: 0,
+        encryptedServerRecordId: _protected('server'),
+        etagHash: _digest('wrong-etag'),
+        encryptedRawRecordRef: _protected('payload'),
+        updatedAtMs: now.millisecondsSinceEpoch,
+      );
+      final mapId = store.box<CloudRecordMapEntity>().put(map);
+
+      final result = await gateway.repair(
+        request: request,
+        testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+      );
+
+      final retained = store.box<CloudRecordMapEntity>().get(mapId)!;
+      expect(result.disposition, CloudKitV2QuarantineRepairDisposition.failed);
+      expect(result.safeCode, 'quarantine_repair_record_map_scope_mismatch');
+      expect(retained.id, mapId);
+      expect(retained.generation, 0);
+      expect(store.box<CloudSemanticSnapshotEntity>().count(), 0);
+    },
+  );
+
+  test(
+    'rejects missing terminal evidence before canonical or metadata writes',
+    () async {
+      final decoder = _staleDecoder(
         store,
         _decoded(scope, request.changeIdHash, 7),
+        removeTerminal: true,
       );
       final result = await gateway.repair(
         request: request,
-        correctedDecoder: decoder,
+        testOnlyCapability: decoder,
       );
       expect(
         result.disposition,
         CloudKitV2QuarantineRepairDisposition.retryable,
       );
-      expect(result.safeCode, 'quarantine_repair_terminal_state_changed');
+      expect(result.safeCode, 'quarantine_repair_inbox_missing');
       expect(adapter.applyCalls, 0);
       expect(store.box<CloudRecordMapEntity>().count(), 0);
       expect(store.box<CloudSemanticSnapshotEntity>().count(), 0);
@@ -680,18 +1158,121 @@ void main() {
     },
   );
 
-  test('rejects a server timestamp change between decode and commit', () async {
-    final decoder = _StaleDecoder(
-      store,
-      _decoded(scope, request.changeIdHash, 7),
-      mutateServerModifiedAt: true,
-    );
+  test(
+    'rejects a payload whose parent matches the incoming snapshot but not the final merge decision',
+    () async {
+      final localParent = _digest('local-parent');
+      final incomingParent = _digest('incoming-parent');
+      final incoming = _decoded(
+        scope,
+        request.changeIdHash,
+        request.generation,
+        parentKey: incomingParent,
+      );
+      _seedLocalSnapshot(
+        store,
+        scope,
+        request,
+        now,
+        parentKey: localParent,
+        immutableContentDigest: incoming.snapshot!.immutableContentDigest,
+      );
+      adapter
+        ..parentExists = true
+        ..existingEntityKeys.add(_digest('logical'));
+
+      final result = await gateway.repair(
+        request: request,
+        testOnlyCapability: _Decoder(incoming),
+      );
+
+      expect(result.disposition, CloudKitV2QuarantineRepairDisposition.failed);
+      expect(result.safeCode, 'quarantine_repair_decoded_parent_mismatch');
+      expect(adapter.applyCalls, 0);
+      expect(store.box<CloudSemanticSnapshotEntity>().count(), 1);
+      expect(store.box<CloudRecordMapEntity>().count(), 1);
+    },
+  );
+
+  test(
+    'rejects legacy requests without decoding or writing any receipt',
+    () async {
+      final legacyScope = CloudSyncScope(
+        accountFingerprint: scope.accountFingerprint,
+        container: scope.container,
+        database: scope.database,
+        zone: scope.zone,
+        persistenceLane: CloudSyncPersistenceLane.legacy,
+      );
+      final legacyRequest = CloudKitV2QuarantineRepairRequest(
+        scope: legacyScope,
+        persistenceLane: CloudSyncPersistenceLane.legacy,
+        generation: request.generation,
+        changeIdHash: request.changeIdHash,
+        correction: request.correction,
+        leaseFence: leaseFence,
+      );
+      final decoder = _Decoder(_decoded(legacyScope, request.changeIdHash, 7));
+
+      final result = await gateway.repair(
+        request: legacyRequest,
+        testOnlyCapability: decoder,
+      );
+
+      expect(
+        result.disposition,
+        CloudKitV2QuarantineRepairDisposition.disabled,
+      );
+      expect(result.safeCode, 'quarantine_repair_semantic_lane_required');
+      expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 0);
+    },
+  );
+
+  test('rejects a coordinator lease lost before repair', () async {
     final result = await gateway.repair(
       request: request,
-      correctedDecoder: decoder,
+      testOnlyCapability: _staleDecoder(
+        store,
+        _decoded(scope, request.changeIdHash, 7),
+        expireLease: true,
+      ),
+    );
+
+    expect(result.disposition, CloudKitV2QuarantineRepairDisposition.retryable);
+    expect(result.safeCode, 'semantic_coordinator_lease_fence_lost');
+    expect(adapter.applyCalls, 0);
+    expect(store.box<CloudRecordMapEntity>().count(), 0);
+    expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 0);
+  });
+
+  test('rejects a checkpoint fence changed before repair', () async {
+    final result = await gateway.repair(
+      request: request,
+      testOnlyCapability: _staleDecoder(
+        store,
+        _decoded(scope, request.changeIdHash, 7),
+        staleCheckpoint: true,
+      ),
+    );
+
+    expect(result.disposition, CloudKitV2QuarantineRepairDisposition.retryable);
+    expect(result.safeCode, 'quarantine_repair_checkpoint_sequence_unproven');
+    expect(adapter.applyCalls, 0);
+    expect(store.box<CloudRecordMapEntity>().count(), 0);
+    expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 0);
+  });
+
+  test('rejects a changed terminal status before canonical writes', () async {
+    final inbox = store.box<CloudInboxChangeEntity>().getAll().single
+      ..status = CloudInboxStatus.pending.index;
+    store.box<CloudInboxChangeEntity>().put(inbox);
+    final decoder = _Decoder(_decoded(scope, request.changeIdHash, 7));
+    final result = await gateway.repair(
+      request: request,
+      testOnlyCapability: decoder,
     );
     expect(result.disposition, CloudKitV2QuarantineRepairDisposition.retryable);
-    expect(result.safeCode, 'quarantine_repair_terminal_state_changed');
+    expect(result.safeCode, 'quarantine_repair_terminal_pair_invalid');
     expect(adapter.applyCalls, 0);
     expect(store.box<CloudRecordMapEntity>().count(), 0);
     expect(store.box<CloudSemanticSnapshotEntity>().count(), 0);
@@ -699,28 +1280,44 @@ void main() {
   });
 
   test(
-    'missing terminal row after decode stays retryable without a receipt',
+    'keeps malformed terminal references retryable without a receipt',
     () async {
-      final decoder = _StaleDecoder(
-        store,
-        _decoded(scope, request.changeIdHash, 7),
-        removeTerminal: true,
-      );
+      final inbox = store.box<CloudInboxChangeEntity>().getAll().single
+        ..protectedSystemFieldsRef = 'malformed-reference';
+      store.box<CloudInboxChangeEntity>().put(inbox);
 
       final result = await gateway.repair(
         request: request,
-        correctedDecoder: decoder,
+        testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
       );
 
       expect(
         result.disposition,
         CloudKitV2QuarantineRepairDisposition.retryable,
       );
-      expect(result.safeCode, 'quarantine_repair_terminal_state_changed');
+      expect(result.safeCode, 'semantic_protected_reference_invalid');
       expect(adapter.applyCalls, 0);
       expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 0);
     },
   );
+
+  test('missing terminal row stays retryable without a receipt', () async {
+    final decoder = _staleDecoder(
+      store,
+      _decoded(scope, request.changeIdHash, 7),
+      removeTerminal: true,
+    );
+
+    final result = await gateway.repair(
+      request: request,
+      testOnlyCapability: decoder,
+    );
+
+    expect(result.disposition, CloudKitV2QuarantineRepairDisposition.retryable);
+    expect(result.safeCode, 'quarantine_repair_inbox_missing');
+    expect(adapter.applyCalls, 0);
+    expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 0);
+  });
 
   test('fails closed on an inconsistent exact snapshot key', () async {
     store.box<CloudSemanticSnapshotEntity>().put(
@@ -743,7 +1340,7 @@ void main() {
     );
     final result = await gateway.repair(
       request: request,
-      correctedDecoder: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+      testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
     );
     expect(result.disposition, CloudKitV2QuarantineRepairDisposition.failed);
     expect(result.safeCode, 'quarantine_repair_snapshot_scope_mismatch');
@@ -758,7 +1355,7 @@ void main() {
 
       final result = await gateway.repair(
         request: request,
-        correctedDecoder: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+        testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
       );
 
       expect(
@@ -774,54 +1371,29 @@ void main() {
   );
 }
 
-final class _Decoder implements CloudSemanticDecoder {
-  _Decoder(this.value) : failureValue = null;
-  _Decoder.failure() : value = null, failureValue = true;
+// ignore: non_constant_identifier_names
+CloudKitV2QuarantineRepairTestCapability _Decoder(CloudDecodedMutation value) =>
+    CloudKitV2QuarantineRepairTestCapabilityFactory.create(value);
 
-  final CloudDecodedMutation? value;
-  final bool? failureValue;
-  int calls = 0;
-
-  @override
-  Future<CloudDecodedMutation> decode(CloudInboxEntry entry) async {
-    calls++;
-    if (failureValue == true) {
-      throw const CloudSemanticDecodeFailure(
-        CloudFailureCategory.malformedRecord,
-      );
-    }
-    return value!;
+CloudKitV2QuarantineRepairTestCapability _staleDecoder(
+  Store store,
+  CloudDecodedMutation value, {
+  bool removeTerminal = false,
+  bool expireLease = false,
+  bool staleCheckpoint = false,
+}) {
+  if (expireLease) {
+    final lease = store.box<CloudSyncLeaseEntity>().getAll().single
+      ..expiresAtMs = 0;
+    store.box<CloudSyncLeaseEntity>().put(lease);
+  } else if (staleCheckpoint) {
+    final checkpoint = store.box<CloudSyncCheckpointEntity>().getAll().single;
+    checkpoint.generation += 1;
+    store.box<CloudSyncCheckpointEntity>().put(checkpoint);
+  } else if (removeTerminal) {
+    store.box<CloudInboxChangeEntity>().removeAll();
   }
-}
-
-final class _StaleDecoder implements CloudSemanticDecoder {
-  _StaleDecoder(
-    this.store,
-    this.value, {
-    this.mutateServerModifiedAt = false,
-    this.removeTerminal = false,
-  });
-
-  final Store store;
-  final CloudDecodedMutation value;
-  final bool mutateServerModifiedAt;
-  final bool removeTerminal;
-
-  @override
-  Future<CloudDecodedMutation> decode(CloudInboxEntry entry) async {
-    if (removeTerminal) {
-      store.box<CloudInboxChangeEntity>().removeAll();
-      return value;
-    }
-    final row = store.box<CloudInboxChangeEntity>().getAll().single;
-    if (mutateServerModifiedAt) {
-      row.serverModifiedAtMs++;
-    } else {
-      row.payloadSha256 = _sha256('changed-after-decode');
-    }
-    store.box<CloudInboxChangeEntity>().put(row);
-    return value;
-  }
+  return CloudKitV2QuarantineRepairTestCapabilityFactory.create(value);
 }
 
 final class _Adapter implements CloudCanonicalSemanticEntityAdapter {
@@ -848,6 +1420,14 @@ final class _Adapter implements CloudCanonicalSemanticEntityAdapter {
     required CloudEntityKind kind,
     required String logicalEntityKeyHash,
   }) => parentExists || existingEntityKeys.contains(logicalEntityKeyHash);
+
+  @override
+  void validateOwnershipEvidence({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudEntityKind kind,
+    required String logicalEntityKeyHash,
+  }) {}
 
   @override
   CloudCanonicalSemanticMutationReceipt applyEntity({
@@ -883,6 +1463,7 @@ CloudSyncScope _scope() => CloudSyncScope(
   container: 'com.apple.messages.cloud',
   database: 'private',
   zone: 'messageManateeZone',
+  persistenceLane: CloudSyncPersistenceLane.semanticV2,
 );
 
 CloudInboxEntry _entry(
@@ -920,11 +1501,29 @@ CloudDecodedMutation _decoded(
   int generation, {
   String? parentKey,
   bool mismatchPayloadParent = false,
+  String body = 'transient body',
+  String senderHandle = 'sender@example.com',
+  DateTime? createdAt,
+  CloudSemanticKnownMessageFlags? knownFlags,
+  String? snapshotDigest,
 }) {
   final key = _digest('logical');
   final payloadParentKey = mismatchPayloadParent
       ? _digest('different-parent')
       : parentKey;
+  final payload = CloudMessageEntityPayload(
+    logicalEntityKeyHash: key,
+    canonicalGuid: 'message-guid',
+    chatAliasKeyHash: _digest('chat'),
+    chatIdentifier: 'iMessage;-;chat',
+    body: body,
+    senderHandle: senderHandle,
+    createdAt: createdAt ?? DateTime.utc(2026, 8, 27, 10),
+    knownFlags: knownFlags,
+    replyParentLogicalKeyHash: payloadParentKey,
+    replyParentCanonicalGuid: payloadParentKey == null ? null : 'parent-guid',
+    replyParentPart: payloadParentKey == null ? null : '0',
+  );
   return CloudDecodedMutation.upsert(
     scope: scope,
     generation: generation,
@@ -933,23 +1532,64 @@ CloudDecodedMutation _decoded(
       kind: CloudEntityKind.message,
       logicalEntityKeyHash: key,
       parentLogicalKeyHash: parentKey,
-      immutableContentDigest: _digest('immutable'),
+      immutableContentDigest:
+          snapshotDigest ?? CloudKitV2SemanticContentDigest.forPayload(payload),
       createdAt: DateTime.utc(2026, 8, 27, 10),
       etagHash: _digest('etag'),
       encryptedRawRecordReference: _protected('payload'),
     ),
-    payload: CloudMessageEntityPayload(
-      logicalEntityKeyHash: key,
-      canonicalGuid: 'message-guid',
-      chatAliasKeyHash: _digest('chat'),
-      chatIdentifier: 'iMessage;-;chat',
-      body: 'transient body',
-      senderHandle: 'sender@example.com',
-      replyParentLogicalKeyHash: payloadParentKey,
-      replyParentCanonicalGuid: payloadParentKey == null ? null : 'parent-guid',
-      replyParentPart: payloadParentKey == null ? null : '0',
-    ),
+    payload: payload,
   );
+}
+
+void _seedLocalSnapshot(
+  Store store,
+  CloudSyncScope scope,
+  CloudKitV2QuarantineRepairRequest request,
+  DateTime now, {
+  required String parentKey,
+  String? immutableContentDigest,
+}) {
+  final logicalKey = _digest('logical');
+  store.runInTransaction(TxMode.write, () {
+    store.box<CloudRecordMapEntity>().put(
+      CloudRecordMapEntity(
+        mapKey: _recordMapKey(scope, logicalKey),
+        scopeKey: _scopeKey(scope),
+        accountFingerprint: scope.accountFingerprint,
+        zone: scope.zone,
+        logicalEntityKeyHash: logicalKey,
+        serverRecordIdHash: _digest('record'),
+        generation: request.generation,
+        encryptedServerRecordId: _protected('server'),
+        etagHash: _digest('etag'),
+        encryptedRawRecordRef: _protected('payload'),
+        updatedAtMs: now.millisecondsSinceEpoch,
+      ),
+    );
+    store.box<CloudSemanticSnapshotEntity>().put(
+      CloudSemanticSnapshotEntity(
+        snapshotKey:
+            'semantic-snapshot4:${_scopeGenerationKey(scope, request.generation)}:message:$logicalKey',
+        scopeGenerationKey: _scopeGenerationKey(scope, request.generation),
+        scopeKey: _scopeKey(scope),
+        accountFingerprint: scope.accountFingerprint,
+        container: scope.container,
+        database: scope.database,
+        zone: scope.zone,
+        streamKind: scope.streamKind.name,
+        schemaVersion: scope.schemaVersion,
+        generation: request.generation,
+        entityKind: CloudEntityKind.message.name,
+        logicalEntityKeyHash: logicalKey,
+        parentLogicalKeyHash: parentKey,
+        immutableContentDigest: immutableContentDigest ?? _digest('immutable'),
+        createdAtMs: DateTime.utc(2026, 8, 27, 10).millisecondsSinceEpoch,
+        etagHash: _digest('etag'),
+        updatedAtMs: now.millisecondsSinceEpoch,
+      ),
+    );
+  });
 }
 
 void _seed(
@@ -962,6 +1602,19 @@ void _seed(
   final scopeGenerationKey = _scopeGenerationKey(scope, entry.generation);
   final change = entry.change;
   store.runInTransaction(TxMode.write, () {
+    store.box<CloudSyncLeaseEntity>().put(
+      CloudSyncLeaseEntity(
+        leaseKey: _leaseKey(scope),
+        scopeKey: scopeKey,
+        accountFingerprint: scope.accountFingerprint,
+        ownerIdHash: _sha256(
+          'coordinator-owner\u001fquarantine-repair-test-owner',
+        ),
+        generation: entry.generation,
+        acquiredAtMs: now.millisecondsSinceEpoch,
+        expiresAtMs: now.add(const Duration(minutes: 5)).millisecondsSinceEpoch,
+      ),
+    );
     store.box<CloudSyncCheckpointEntity>().put(
       CloudSyncCheckpointEntity(
         checkpointKey: scopeKey,
@@ -971,6 +1624,7 @@ void _seed(
         zone: scope.zone,
         streamKind: scope.streamKind.name,
         schemaVersion: scope.schemaVersion,
+        persistenceLane: scope.persistenceLane.name,
         generation: entry.generation,
         fetchedTokenCiphertext: 'opaque-token-ciphertext',
         fetchedSequence: entry.sequence,
@@ -1050,6 +1704,119 @@ void _seed(
   });
 }
 
+void _moveSeededTargetToSequence2(Store store) {
+  store.runInTransaction(TxMode.write, () {
+    final inbox = store.box<CloudInboxChangeEntity>().getAll().single
+      ..fetchSequence = 2;
+    store.box<CloudInboxChangeEntity>().put(inbox);
+    final replay = store.box<CloudSemanticReplayEntity>().getAll().single
+      ..inboxSequence = 2;
+    store.box<CloudSemanticReplayEntity>().put(replay);
+    final checkpoint = store.box<CloudSyncCheckpointEntity>().getAll().single
+      ..fetchedSequence = 2
+      ..appliedSequence = 2;
+    store.box<CloudSyncCheckpointEntity>().put(checkpoint);
+  });
+}
+
+void _putInboxRow(
+  Store store,
+  CloudSyncScope scope,
+  CloudInboxEntry entry,
+  DateTime now, {
+  required CloudInboxStatus status,
+}) {
+  final change = entry.change;
+  store.box<CloudInboxChangeEntity>().put(
+    CloudInboxChangeEntity(
+      changeKey: _changeKey(scope, change.changeId),
+      changeIdHash: change.changeId,
+      scopeKey: _scopeKey(scope),
+      accountFingerprint: scope.accountFingerprint,
+      zone: scope.zone,
+      serverRecordIdHash: change.recordIdHash,
+      etagHash: change.etagHash,
+      changeType: change.type.name,
+      encryptedServerRecordId: change.encryptedServerRecordId,
+      protectedSystemFieldsRef: change.protectedSystemFieldsReference,
+      encryptedPayloadRef: change.encryptedPayloadReference,
+      payloadSha256: change.payloadSha256,
+      batchId: entry.batchId,
+      generation: entry.generation,
+      fetchSequence: entry.sequence,
+      status: status.index,
+      createdAtMs: entry.createdAt.millisecondsSinceEpoch,
+      updatedAtMs: now.millisecondsSinceEpoch,
+      completedAtMs: status == CloudInboxStatus.pending
+          ? 0
+          : now.millisecondsSinceEpoch,
+    ),
+  );
+}
+
+void _seedTerminalPair(
+  Store store,
+  CloudSyncScope scope,
+  CloudInboxEntry entry,
+  DateTime now,
+) {
+  final change = entry.change;
+  store.runInTransaction(TxMode.write, () {
+    store.box<CloudInboxChangeEntity>().put(
+      CloudInboxChangeEntity(
+        changeKey: _changeKey(scope, change.changeId),
+        changeIdHash: change.changeId,
+        scopeKey: _scopeKey(scope),
+        accountFingerprint: scope.accountFingerprint,
+        zone: scope.zone,
+        serverRecordIdHash: change.recordIdHash,
+        etagHash: change.etagHash,
+        changeType: change.type.name,
+        encryptedServerRecordId: change.encryptedServerRecordId,
+        protectedSystemFieldsRef: change.protectedSystemFieldsReference,
+        encryptedPayloadRef: change.encryptedPayloadReference,
+        payloadSha256: change.payloadSha256,
+        batchId: entry.batchId,
+        generation: entry.generation,
+        fetchSequence: entry.sequence,
+        status: CloudInboxStatus.quarantined.index,
+        isTombstone: false,
+        failureCategory: CloudFailureCategory.conflict.name,
+        retryCount: 1,
+        createdAtMs: entry.createdAt.millisecondsSinceEpoch,
+        updatedAtMs: now.millisecondsSinceEpoch,
+        completedAtMs: entry.completedAt!.millisecondsSinceEpoch,
+      ),
+    );
+    store.box<CloudSemanticReplayEntity>().put(
+      CloudSemanticReplayEntity(
+        replayKey:
+            'semantic-replay4:${_scopeGenerationKey(scope, entry.generation)}:${_sha256(change.changeId)}',
+        scopeGenerationKey: _scopeGenerationKey(scope, entry.generation),
+        scopeKey: _scopeKey(scope),
+        accountFingerprint: scope.accountFingerprint,
+        container: scope.container,
+        database: scope.database,
+        zone: scope.zone,
+        streamKind: scope.streamKind.name,
+        schemaVersion: scope.schemaVersion,
+        generation: entry.generation,
+        changeIdHash: change.changeId,
+        serverRecordIdHash: change.recordIdHash,
+        payloadSha256: change.payloadSha256,
+        protectedPayloadReferenceHash: _sha256(
+          'semantic-payload-reference\u001f${change.encryptedPayloadReference}',
+        ),
+        inboxSequence: entry.sequence,
+        changeType: change.type.name,
+        terminalOutcome: 'quarantined',
+        terminalSafeCode: 'semantic_conflict',
+        updatedAtMs: now.millisecondsSinceEpoch,
+      ),
+    );
+  });
+}
+
 List<Object?> _controlState(Store store) => [
   ...store.box<CloudSyncCheckpointEntity>().getAll().expand(
     (row) => [
@@ -1103,6 +1870,9 @@ String _changeKey(CloudSyncScope scope, String changeId) =>
 
 String _recordMapKey(CloudSyncScope scope, String logicalEntityKeyHash) =>
     'record-map:${_sha256('${scope.storageKey}\u001frecord-map\u001f$logicalEntityKeyHash')}';
+
+String _leaseKey(CloudSyncScope scope) =>
+    'coordinator-lease:${_sha256('${scope.storageKey}\u001fcoordinator-lease\u001fv1')}';
 
 String _digest(String value) => base64Url
     .encode(sha256.convert(utf8.encode(value)).bytes)

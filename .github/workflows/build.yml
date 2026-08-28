@@ -112,6 +112,14 @@ jobs:
       - name: Run the Dart test suite
         run: flutter test
 
+      # Compile and execute the conditional web implementation in Chrome.
+      # The VM copy of this test is not sufficient to catch native imports or
+      # accidental web enablement introduced through conditional exports.
+      - name: Run CloudKit repair web parity gate
+        run: >-
+          flutter test --platform chrome
+          test/services/cloud_sync/cloudkit_quarantine_repair_web_test.dart
+
       # This gate is a .ps1 shared with local Windows runs, so install pwsh
       # rather than forking the scan logic into a second implementation that
       # could drift. Guarded so a runner image that already ships PowerShell
@@ -420,6 +428,21 @@ jobs:
         run: |
           set -euo pipefail
           apk=build/app/outputs/flutter-apk/app-canary-debug.apk
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          aapt="$(
+            find "$sdk_root/build-tools" -type f -name aapt -print \
+              | sort -V \
+              | tail -n 1
+          )"
+          test -x "$aapt"
+          application_id="$(
+            "$aapt" dump badging "$apk" \
+              | sed -n "s/^package: name='\([^']*\)'.*/\1/p"
+          )"
+          if [[ "$application_id" != 'com.bluebubbles.messaging.cloudkitcanary' ]]; then
+            echo "Unexpected Canary application ID: $application_id" >&2
+            exit 1
+          fi
           for entry in \
             lib/arm64-v8a/libflutter.so \
             lib/arm64-v8a/librust_lib_bluebubbles.so \

@@ -1248,7 +1248,8 @@ final _entities = <obx_int.ModelEntity>[
         id: const obx_int.IdUid(21, 8085608731784905006),
         name: 'generation',
         type: 6,
-        flags: 0,
+        flags: 8,
+        indexId: const obx_int.IdUid(81, 3830688548090503170),
       ),
       obx_int.ModelProperty(
         id: const obx_int.IdUid(22, 7803520175828220783),
@@ -2105,7 +2106,8 @@ final _entities = <obx_int.ModelEntity>[
         id: const obx_int.IdUid(21, 2926325749401488941),
         name: 'inboxSequence',
         type: 6,
-        flags: 0,
+        flags: 8,
+        indexId: const obx_int.IdUid(83, 2290394163013382047),
       ),
       obx_int.ModelProperty(
         id: const obx_int.IdUid(22, 5443645776082689040),
@@ -2133,7 +2135,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(26, 7701837625666464233),
     name: 'CloudSemanticSnapshotEntity',
-    lastPropertyId: const obx_int.IdUid(24, 5035678304275097058),
+    lastPropertyId: const obx_int.IdUid(26, 6951661599762727523),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -2285,6 +2287,19 @@ final _entities = <obx_int.ModelEntity>[
         name: 'updatedAtMs',
         type: 6,
         flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(25, 6134389012765432198),
+        name: 'canonicalGuidHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(26, 6951661599762727523),
+        name: 'canonicalGuidLookupHash',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(84, 3233573957190533269),
       ),
     ],
     relations: <obx_int.ModelRelation>[],
@@ -2588,7 +2603,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(31, 5051649657745290821),
     name: 'CloudKitV2QuarantineRepairReceiptEntity',
-    lastPropertyId: const obx_int.IdUid(21, 6898568333390897368),
+    lastPropertyId: const obx_int.IdUid(26, 4954038203640662813),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -2682,7 +2697,8 @@ final _entities = <obx_int.ModelEntity>[
         id: const obx_int.IdUid(15, 9098288398353927251),
         name: 'inboxSequence',
         type: 6,
-        flags: 0,
+        flags: 8,
+        indexId: const obx_int.IdUid(82, 1274079036917826277),
       ),
       obx_int.ModelProperty(
         id: const obx_int.IdUid(16, 4946906600101814802),
@@ -2718,6 +2734,36 @@ final _entities = <obx_int.ModelEntity>[
         id: const obx_int.IdUid(21, 6898568333390897368),
         name: 'createdAtMs',
         type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(22, 8853807822519174655),
+        name: 'originalPayloadSha256',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(23, 8560153284248147812),
+        name: 'originalQuarantineReason',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(24, 3324228994724203147),
+        name: 'originalTerminalSafeCode',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(25, 2636988580358074206),
+        name: 'evidenceDigestVersion',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(26, 4954038203640662813),
+        name: 'evidenceDigestSha256',
+        type: 9,
         flags: 0,
       ),
     ],
@@ -2770,7 +2816,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
     generatorVersion: obx_int.GeneratorVersion.v2025_12_16,
     entities: _entities,
     lastEntityId: const obx_int.IdUid(31, 5051649657745290821),
-    lastIndexId: const obx_int.IdUid(80, 3483788582408701777),
+    lastIndexId: const obx_int.IdUid(84, 3233573957190533269),
     lastRelationId: const obx_int.IdUid(1, 7492985733214117623),
     lastSequenceId: const obx_int.IdUid(0, 0),
     retiredEntityUids: const [
@@ -5689,7 +5735,14 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final etagHashOffset = object.etagHash == null
                 ? null
                 : fbb.writeString(object.etagHash!);
-            fbb.startTable(25);
+            final canonicalGuidHashOffset = object.canonicalGuidHash == null
+                ? null
+                : fbb.writeString(object.canonicalGuidHash!);
+            final canonicalGuidLookupHashOffset =
+                object.canonicalGuidLookupHash == null
+                ? null
+                : fbb.writeString(object.canonicalGuidLookupHash!);
+            fbb.startTable(27);
             fbb.addInt64(0, object.id);
             fbb.addOffset(1, snapshotKeyOffset);
             fbb.addOffset(2, scopeGenerationKeyOffset);
@@ -5714,6 +5767,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
             fbb.addOffset(21, groupMetadataDigestOffset);
             fbb.addOffset(22, etagHashOffset);
             fbb.addInt64(23, object.updatedAtMs);
+            fbb.addOffset(24, canonicalGuidHashOffset);
+            fbb.addOffset(25, canonicalGuidLookupHashOffset);
             fbb.finish(fbb.endTable());
             return object.id;
           },
@@ -5768,6 +5823,12 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final logicalEntityKeyHashParam = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGet(buffer, rootOffset, 28, '');
+            final canonicalGuidHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 52);
+            final canonicalGuidLookupHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 54);
             final parentLogicalKeyHashParam = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGetNullable(buffer, rootOffset, 30);
@@ -5832,6 +5893,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
               generation: generationParam,
               entityKind: entityKindParam,
               logicalEntityKeyHash: logicalEntityKeyHashParam,
+              canonicalGuidHash: canonicalGuidHashParam,
+              canonicalGuidLookupHash: canonicalGuidLookupHashParam,
               parentLogicalKeyHash: parentLogicalKeyHashParam,
               immutableContentDigest: immutableContentDigestParam,
               createdAtMs: createdAtMsParam,
@@ -6286,7 +6349,27 @@ obx_int.ModelDefinition getObjectBoxModel() {
                     object.logicalEntityKeyHash == null
                     ? null
                     : fbb.writeString(object.logicalEntityKeyHash!);
-                fbb.startTable(22);
+                final originalPayloadSha256Offset =
+                    object.originalPayloadSha256 == null
+                    ? null
+                    : fbb.writeString(object.originalPayloadSha256!);
+                final originalQuarantineReasonOffset =
+                    object.originalQuarantineReason == null
+                    ? null
+                    : fbb.writeString(object.originalQuarantineReason!);
+                final originalTerminalSafeCodeOffset =
+                    object.originalTerminalSafeCode == null
+                    ? null
+                    : fbb.writeString(object.originalTerminalSafeCode!);
+                final evidenceDigestVersionOffset =
+                    object.evidenceDigestVersion == null
+                    ? null
+                    : fbb.writeString(object.evidenceDigestVersion!);
+                final evidenceDigestSha256Offset =
+                    object.evidenceDigestSha256 == null
+                    ? null
+                    : fbb.writeString(object.evidenceDigestSha256!);
+                fbb.startTable(27);
                 fbb.addInt64(0, object.id);
                 fbb.addOffset(1, repairKeyOffset);
                 fbb.addOffset(2, scopeGenerationKeyOffset);
@@ -6308,6 +6391,11 @@ obx_int.ModelDefinition getObjectBoxModel() {
                 fbb.addOffset(18, safeCodeOffset);
                 fbb.addOffset(19, logicalEntityKeyHashOffset);
                 fbb.addInt64(20, object.createdAtMs);
+                fbb.addOffset(21, originalPayloadSha256Offset);
+                fbb.addOffset(22, originalQuarantineReasonOffset);
+                fbb.addOffset(23, originalTerminalSafeCodeOffset);
+                fbb.addOffset(24, evidenceDigestVersionOffset);
+                fbb.addOffset(25, evidenceDigestSha256Offset);
                 fbb.finish(fbb.endTable());
                 return object.id;
               },
@@ -6374,6 +6462,21 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final serverRecordIdHashParam = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGet(buffer, rootOffset, 34, '');
+            final originalPayloadSha256Param = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 46);
+            final originalQuarantineReasonParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 48);
+            final originalTerminalSafeCodeParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 50);
+            final evidenceDigestVersionParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 52);
+            final evidenceDigestSha256Param = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 54);
             final outcomeParam = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGet(buffer, rootOffset, 36, '');
@@ -6409,6 +6512,11 @@ obx_int.ModelDefinition getObjectBoxModel() {
               generation: generationParam,
               inboxSequence: inboxSequenceParam,
               serverRecordIdHash: serverRecordIdHashParam,
+              originalPayloadSha256: originalPayloadSha256Param,
+              originalQuarantineReason: originalQuarantineReasonParam,
+              originalTerminalSafeCode: originalTerminalSafeCodeParam,
+              evidenceDigestVersion: evidenceDigestVersionParam,
+              evidenceDigestSha256: evidenceDigestSha256Param,
               outcome: outcomeParam,
               failureCategory: failureCategoryParam,
               safeCode: safeCodeParam,
@@ -8232,6 +8340,18 @@ class CloudSemanticSnapshotEntity_ {
       obx.QueryIntegerProperty<CloudSemanticSnapshotEntity>(
         _entities[17].properties[23],
       );
+
+  /// See [CloudSemanticSnapshotEntity.canonicalGuidHash].
+  static final canonicalGuidHash =
+      obx.QueryStringProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[24],
+      );
+
+  /// See [CloudSemanticSnapshotEntity.canonicalGuidLookupHash].
+  static final canonicalGuidLookupHash =
+      obx.QueryStringProperty<CloudSemanticSnapshotEntity>(
+        _entities[17].properties[25],
+      );
 }
 
 /// [CloudProtectedPageLeaseEntity] entity fields to define ObjectBox queries.
@@ -8607,5 +8727,35 @@ class CloudKitV2QuarantineRepairReceiptEntity_ {
   static final createdAtMs =
       obx.QueryIntegerProperty<CloudKitV2QuarantineRepairReceiptEntity>(
         _entities[22].properties[20],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.originalPayloadSha256].
+  static final originalPayloadSha256 =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[21],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.originalQuarantineReason].
+  static final originalQuarantineReason =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[22],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.originalTerminalSafeCode].
+  static final originalTerminalSafeCode =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[23],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.evidenceDigestVersion].
+  static final evidenceDigestVersion =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[24],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.evidenceDigestSha256].
+  static final evidenceDigestSha256 =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[25],
       );
 }
