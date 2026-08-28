@@ -537,6 +537,9 @@ fn typed_record<T: CloudKitRecord>(
 struct CloudMessageTypeDiagnosticLabels {
     message_type_class: &'static str,
     association_presence: &'static str,
+    association_type_class: &'static str,
+    parent_reference_class: &'static str,
+    associated_range_class: &'static str,
 }
 
 fn cloud_message_service_class(service: &str) -> Option<&'static str> {
@@ -570,15 +573,42 @@ fn cloud_message_type_diagnostic_labels(
         value if value < 0 => "negative",
         _ => "other_positive",
     };
-    let association_presence = if message.msg_proto.0.associated_message_type.is_some() {
+    let proto = &message.msg_proto.0;
+    let association_presence = if proto.associated_message_type.is_some() {
         "present"
     } else {
         "absent"
+    };
+    let association_type_class = match proto.associated_message_type {
+        None => "none",
+        Some(2) => "sticker",
+        Some(2000..=2007) => "reaction_add",
+        Some(3000..=3007) => "reaction_remove",
+        Some(_) => "other",
+    };
+    let parent_reference_class = match proto.associated_message_guid.as_deref() {
+        None => "absent",
+        Some(value) if value.starts_with("p:") => "p",
+        Some(value) if value.starts_with("bp:") => "bp",
+        Some(value) if value.starts_with("bpdi:") => "bpdi",
+        Some(value) if !value.contains(':') && !value.contains('/') => "bare",
+        Some(_) => "other",
+    };
+    let associated_range_class = match (
+        proto.associated_message_range_location,
+        proto.associated_message_range_length,
+    ) {
+        (None, None) => "absent",
+        (Some(_), Some(_)) => "complete",
+        _ => "partial",
     };
 
     CloudMessageTypeDiagnosticLabels {
         message_type_class,
         association_presence,
+        association_type_class,
+        parent_reference_class,
+        associated_range_class,
     }
 }
 
@@ -1210,8 +1240,12 @@ pub(crate) async fn cloud_sync_decode_transient_record(
             if cloud_message_requires_unsupported_type_diagnostic(&message) {
                 let labels = cloud_message_type_diagnostic_labels(&message);
                 warn!(
-                    "CloudKit V2 transient message message_type_class={} association_presence={}",
-                    labels.message_type_class, labels.association_presence,
+                    "CloudKit V2 transient message message_type_class={} association_presence={} association_type_class={} parent_reference_class={} associated_range_class={}",
+                    labels.message_type_class,
+                    labels.association_presence,
+                    labels.association_type_class,
+                    labels.parent_reference_class,
+                    labels.associated_range_class,
                 );
             }
             convert_message(&context, &presence, &message)
@@ -2071,6 +2105,9 @@ mod tests {
             CloudMessageTypeDiagnosticLabels {
                 message_type_class: "normal",
                 association_presence: "absent",
+                association_type_class: "none",
+                parent_reference_class: "absent",
+                associated_range_class: "absent",
             }
         );
         assert_eq!(cloud_message_service_class(&normal.service), None);
@@ -2080,6 +2117,9 @@ mod tests {
         let association_labels = cloud_message_type_diagnostic_labels(&association);
         assert_eq!(association_labels.message_type_class, "association");
         assert_eq!(association_labels.association_presence, "present");
+        assert_eq!(association_labels.association_type_class, "reaction_add");
+        assert_eq!(association_labels.parent_reference_class, "absent");
+        assert_eq!(association_labels.associated_range_class, "absent");
         assert_eq!(cloud_message_service_class(&association.service), None);
         assert!(!cloud_message_requires_unsupported_type_diagnostic(
             &association
@@ -2092,6 +2132,9 @@ mod tests {
         ));
         assert_eq!(labels.message_type_class, "other_positive");
         assert_eq!(labels.association_presence, "absent");
+        assert_eq!(labels.association_type_class, "none");
+        assert_eq!(labels.parent_reference_class, "absent");
+        assert_eq!(labels.associated_range_class, "absent");
         assert!(!format!("{labels:?}").contains("private-service-name"));
         assert_eq!(
             cloud_message_service_class("private-service-name"),
@@ -2113,6 +2156,46 @@ mod tests {
             assert_eq!(labels.message_type_class, expected_class);
             assert_eq!(labels.association_presence, "absent");
         }
+    }
+
+    #[test]
+    fn association_diagnostic_labels_are_fixed_and_content_free() {
+        for (associated_type, expected_type_class) in [
+            (2, "sticker"),
+            (2007, "reaction_add"),
+            (3007, "reaction_remove"),
+            (42, "other"),
+        ] {
+            let mut message = diagnostic_message(1, Some(associated_type), "iMessage");
+            message.msg_proto.0.associated_message_guid =
+                Some("p:0/private-parent-identifier".to_owned());
+            message.msg_proto.0.associated_message_range_location = Some(0);
+            message.msg_proto.0.associated_message_range_length = Some(4);
+            let labels = cloud_message_type_diagnostic_labels(&message);
+            assert_eq!(labels.association_type_class, expected_type_class);
+            assert_eq!(labels.parent_reference_class, "p");
+            assert_eq!(labels.associated_range_class, "complete");
+            assert!(!format!("{labels:?}").contains("private-parent-identifier"));
+        }
+
+        for (parent, expected_class) in [
+            ("bp:0/private-parent", "bp"),
+            ("bpdi:0/private-parent", "bpdi"),
+            ("private-parent", "bare"),
+            ("other:private-parent", "other"),
+        ] {
+            let mut message = diagnostic_message(1, Some(2000), "iMessage");
+            message.msg_proto.0.associated_message_guid = Some(parent.to_owned());
+            let labels = cloud_message_type_diagnostic_labels(&message);
+            assert_eq!(labels.parent_reference_class, expected_class);
+        }
+
+        let mut partial = diagnostic_message(1, Some(2000), "iMessage");
+        partial.msg_proto.0.associated_message_range_location = Some(0);
+        assert_eq!(
+            cloud_message_type_diagnostic_labels(&partial).associated_range_class,
+            "partial"
+        );
     }
 
     #[test]
