@@ -227,6 +227,79 @@ function Test-NativeMediaBundle {
         throw "ANGLE manifest runtime set does not exactly match the reviewed set."
     }
 
+    $requiredCompileFiles = @(
+        "include/EGL/egl.h",
+        "include/GLES2/gl2.h",
+        "include/KHR/khrplatform.h",
+        "lib/libEGL.dll.lib",
+        "lib/libGLESv2.dll.lib"
+    )
+    $manifestCompileFiles = @($manifest.compile_files)
+    if ($manifestCompileFiles.Count -eq 0) {
+        throw "ANGLE bundle manifest has no compile inputs."
+    }
+    $seenCompileFiles = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    $validatedCompileFiles = [System.Collections.Generic.List[object]]::new()
+    foreach ($entry in $manifestCompileFiles) {
+        $relative = ([string] $entry.relative_path).Replace('\', '/')
+        if (-not ($relative.StartsWith(
+            "include/",
+            [System.StringComparison]::OrdinalIgnoreCase
+        ) -or $relative.StartsWith(
+            "lib/",
+            [System.StringComparison]::OrdinalIgnoreCase
+        ))) {
+            throw "ANGLE compile input is outside the reviewed include/lib roots: $relative"
+        }
+        if (-not $seenCompileFiles.Add($relative)) {
+            throw "ANGLE bundle manifest contains duplicate compile input: $relative"
+        }
+        if (-not (Test-HexDigest ([string] $entry.sha256))) {
+            throw "ANGLE bundle manifest has an invalid compile-input SHA-256 for $relative"
+        }
+        $file = Assert-SafeRelativePath -Root $bundle -RelativePath $relative
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+            throw "ANGLE bundle is missing required compile input: $relative"
+        }
+        $actualHash = Get-Sha256Hex -Path $file
+        if ($actualHash -ne ([string] $entry.sha256).ToLowerInvariant()) {
+            throw "ANGLE compile-input SHA-256 mismatch for $relative"
+        }
+        $validatedCompileFiles.Add([pscustomobject]@{
+            relative_path = $relative
+            path = $file
+            sha256 = $actualHash
+        })
+    }
+    foreach ($relative in $requiredCompileFiles) {
+        if (-not $seenCompileFiles.Contains($relative)) {
+            throw "ANGLE manifest omits required compile input: $relative"
+        }
+    }
+    $actualCompileFiles = @(
+        foreach ($compileRootName in @("include", "lib")) {
+            $compileRoot = Join-Path $bundle $compileRootName
+            if (-not (Test-Path -LiteralPath $compileRoot -PathType Container)) {
+                throw "ANGLE bundle is missing its $compileRootName compile-input directory."
+            }
+            Get-ChildItem -LiteralPath $compileRoot -File -Recurse
+        }
+    )
+    $compileBundlePrefixLength = $bundle.TrimEnd('\', '/').Length + 1
+    foreach ($actual in $actualCompileFiles) {
+        $relative = $actual.FullName.Substring(
+            $compileBundlePrefixLength
+        ).Replace('\', '/')
+        if (-not $seenCompileFiles.Contains($relative)) {
+            throw "ANGLE bundle contains an unlisted compile input: $relative"
+        }
+    }
+    if ($actualCompileFiles.Count -ne $seenCompileFiles.Count) {
+        throw "ANGLE compile-input file count does not match its manifest."
+    }
+
     $binRoot = Join-Path $bundle "bin"
     if (-not (Test-Path -LiteralPath $binRoot -PathType Container)) {
         throw "ANGLE bundle has no bin directory."
@@ -351,6 +424,7 @@ function Test-NativeMediaBundle {
         angle_commit = $ExpectedAngleCommit
         depot_tools_commit = $ExpectedDepotToolsCommit
         files = @($validatedFiles)
+        compile_files = @($validatedCompileFiles)
         manifest_path = $manifestFile
         bundle_root = $bundle
     }

@@ -13,6 +13,8 @@ param(
     [Parameter(Mandatory)]
     [string] $GeneratedCmakePath,
 
+    [string] $CompatibilityRoot,
+
     [string] $ResolutionPath,
 
     [string] $LibmpvArchivePath,
@@ -193,6 +195,127 @@ function ConvertTo-CmakePath {
     return $Path.Replace('\', '/')
 }
 
+function Install-VerifiedCompatibilityTree {
+    param(
+        [Parameter(Mandatory)][string] $TargetRoot,
+        [Parameter(Mandatory)][string] $Kind,
+        [Parameter(Mandatory)][ValidateSet("x64", "arm64")][string] $Architecture,
+        [Parameter(Mandatory)][string] $SourceManifestSha256,
+        [Parameter(Mandatory)][object[]] $Mappings
+    )
+
+    $target = Get-SafeBuildPath -Path $TargetRoot -Label "$Kind compatibility root"
+    $seen = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    $entries = [System.Collections.Generic.List[object]]::new()
+    foreach ($mapping in $Mappings) {
+        $source = (Resolve-Path -LiteralPath ([string] $mapping.source) -ErrorAction Stop).Path
+        $relative = ([string] $mapping.relative_path).Replace('\', '/')
+        Assert-SafeRelativePath -Root $target -RelativePath $relative | Out-Null
+        if (-not $seen.Add($relative)) {
+            throw "$Kind compatibility mapping contains duplicate path: $relative"
+        }
+        $entries.Add([pscustomobject]@{
+            relative_path = $relative
+            sha256 = Get-Sha256Hex -Path $source
+            source = $source
+        })
+    }
+    if ($entries.Count -eq 0) {
+        throw "$Kind compatibility mapping is empty."
+    }
+
+    $expected = [ordered]@{
+        schema_version = 1
+        kind = $Kind
+        architecture = $Architecture
+        source_manifest_sha256 = $SourceManifestSha256
+        files = @(
+            $entries | ForEach-Object {
+                [ordered]@{
+                    relative_path = $_.relative_path
+                    sha256 = $_.sha256
+                }
+            }
+        )
+    }
+
+    if (Test-Path -LiteralPath $target -PathType Container) {
+        $markerPath = Join-Path $target ".openbubbles-native-compat.json"
+        if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
+            throw "Refusing unmarked existing $Kind compatibility tree: $target"
+        }
+        $existing = Get-Content -LiteralPath $markerPath -Raw |
+            ConvertFrom-Json -ErrorAction Stop
+        if ($existing.schema_version -ne 1 -or
+            [string] $existing.kind -ne $Kind -or
+            [string] $existing.architecture -ne $Architecture -or
+            [string] $existing.source_manifest_sha256 -ne $SourceManifestSha256) {
+            throw "Existing $Kind compatibility tree does not match the verified source."
+        }
+        $existingFiles = @($existing.files)
+        if ($existingFiles.Count -ne $entries.Count) {
+            throw "Existing $Kind compatibility inventory has the wrong file count."
+        }
+        $expectedByPath = @{}
+        foreach ($entry in $entries) {
+            $expectedByPath[$entry.relative_path] = $entry.sha256
+        }
+        foreach ($entry in $existingFiles) {
+            $relative = ([string] $entry.relative_path).Replace('\', '/')
+            if (-not $expectedByPath.ContainsKey($relative) -or
+                [string] $entry.sha256 -ne $expectedByPath[$relative]) {
+                throw "Existing $Kind compatibility inventory mismatch: $relative"
+            }
+            $file = Assert-SafeRelativePath -Root $target -RelativePath $relative
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or
+                (Get-Sha256Hex -Path $file) -ne $expectedByPath[$relative]) {
+                throw "Existing $Kind compatibility file mismatch: $relative"
+            }
+        }
+        $actualFiles = @(
+            Get-ChildItem -LiteralPath $target -File -Recurse |
+                Where-Object { $_.FullName -ne $markerPath }
+        )
+        if ($actualFiles.Count -ne $entries.Count) {
+            throw "Existing $Kind compatibility tree contains unlisted files."
+        }
+        return $target
+    }
+
+    $parent = Split-Path $target -Parent
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    $stage = "$target.stage-$([guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $stage -Force | Out-Null
+    try {
+        foreach ($entry in $entries) {
+            $destination = Assert-SafeRelativePath `
+                -Root $stage `
+                -RelativePath $entry.relative_path
+            New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force |
+                Out-Null
+            Copy-Item -LiteralPath $entry.source -Destination $destination
+            if ((Get-Sha256Hex -Path $destination) -ne $entry.sha256) {
+                throw "$Kind compatibility copy hash mismatch: $($entry.relative_path)"
+            }
+        }
+        Write-AtomicUtf8NoBom `
+            -Path (Join-Path $stage ".openbubbles-native-compat.json") `
+            -Content ($expected | ConvertTo-Json -Depth 8)
+        if (Test-Path -LiteralPath $target) {
+            throw "Refusing to overwrite an existing $Kind compatibility tree: $target"
+        }
+        Move-Item -LiteralPath $stage -Destination $target
+    }
+    finally {
+        if (Test-Path -LiteralPath $stage) {
+            Remove-Item -LiteralPath $stage -Recurse -Force
+        }
+    }
+    return $target
+}
+
 function Test-LibmpvExtraction {
     param(
         [Parameter(Mandatory)][string] $Root,
@@ -240,7 +363,11 @@ function Test-LibmpvExtraction {
         }
     }
 
-    foreach ($required in @($DllRelativePath, "include/mpv/client.h")) {
+    foreach ($required in @(
+        $DllRelativePath,
+        "libmpv.dll.a",
+        "include/mpv/client.h"
+    )) {
         if (-not $seen.Contains($required)) {
             throw "libmpv extraction manifest omits required file: $required"
         }
@@ -463,6 +590,67 @@ if ($extractedPeFiles.Count -ne 1 -or
     throw "libmpv extraction contains an unexpected PE executable or DLL."
 }
 
+$compatibility = $null
+if ($CompatibilityRoot) {
+    $compatibilityRootPath = Get-SafeBuildPath `
+        -Path $CompatibilityRoot `
+        -Label "CompatibilityRoot"
+    # Import libraries live below bundle/lib, while headers live below
+    # bundle/include. Preserve both roots under the hard-coded ANGLE directory
+    # expected by media_kit_video.
+    $angleMappings = @(
+        $angleResult.compile_files |
+            ForEach-Object {
+                [pscustomobject]@{
+                    source = $_.path
+                    relative_path = $_.relative_path
+                }
+            }
+    )
+
+    $libmpvMappings = [System.Collections.Generic.List[object]]::new()
+    $libmpvImportLibrary = Join-Path $libmpvRoot "libmpv.dll.a"
+    $libmpvMappings.Add([pscustomobject]@{
+        source = $libmpvImportLibrary
+        relative_path = "libmpv.dll.a"
+    })
+    $libmpvIncludeRoot = Join-Path $libmpvRoot "include\mpv"
+    foreach ($header in @(
+        Get-ChildItem -LiteralPath $libmpvIncludeRoot -File -Recurse |
+            Sort-Object FullName
+    )) {
+        $headerRelative = $header.FullName.Substring(
+            $libmpvIncludeRoot.TrimEnd('\', '/').Length + 1
+        ).Replace('\', '/')
+        $libmpvMappings.Add([pscustomobject]@{
+            source = $header.FullName
+            relative_path = "include/mpv/$headerRelative"
+        })
+        $libmpvMappings.Add([pscustomobject]@{
+            source = $header.FullName
+            relative_path = "include/$headerRelative"
+        })
+    }
+
+    $angleCompatibilityRoot = Install-VerifiedCompatibilityTree `
+        -TargetRoot (Join-Path $compatibilityRootPath "ANGLE") `
+        -Kind "ANGLE" `
+        -Architecture $Architecture `
+        -SourceManifestSha256 (Get-Sha256Hex -Path $angleManifestPath) `
+        -Mappings $angleMappings
+    $libmpvCompatibilityRoot = Install-VerifiedCompatibilityTree `
+        -TargetRoot (Join-Path $compatibilityRootPath "libmpv") `
+        -Kind "libmpv" `
+        -Architecture $Architecture `
+        -SourceManifestSha256 (Get-Sha256Hex -Path $libmpvExtraction.manifest) `
+        -Mappings @($libmpvMappings)
+    $compatibility = [ordered]@{
+        root = $compatibilityRootPath
+        angle = $angleCompatibilityRoot
+        libmpv = $libmpvCompatibilityRoot
+    }
+}
+
 $runtimeFiles = [System.Collections.Generic.List[object]]::new()
 $runtimeFiles.Add([pscustomobject]@{
     role = "libmpv"
@@ -513,6 +701,7 @@ $resolution = [ordered]@{
         mpv_commit = $provenance.libmpv.mpv_commit
         redistribution_status = $provenance.libmpv.license_mode_evidence.redistribution_status
     }
+    compatibility = $compatibility
     runtime_files = @($runtimeFiles)
 }
 
@@ -562,6 +751,16 @@ $portableAngleManifest = [ordered]@{
                     relative_path = $_.relative_path
                     sha256 = $_.sha256
                     pe_machine = $_.pe_machine
+                    origin = $_.origin
+                }
+            }
+    )
+    compile_files = @(
+        $angleManifest.compile_files |
+            ForEach-Object {
+                [ordered]@{
+                    relative_path = $_.relative_path
+                    sha256 = $_.sha256
                     origin = $_.origin
                 }
             }

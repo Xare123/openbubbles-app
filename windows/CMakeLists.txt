@@ -36,6 +36,12 @@ set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE}")
 # Use Unicode for all projects.
 add_definitions(-DUNICODE -D_UNICODE)
 
+# Visual Studio 18 removes the deprecated experimental coroutine surface unless
+# callers explicitly acknowledge the compatibility path still used by several
+# Flutter Windows plugins. This definition must be global because those plugin
+# targets are generated below and do not call APPLY_STANDARD_SETTINGS.
+add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+
 # Compilation settings that should be applied to most targets.
 function(APPLY_STANDARD_SETTINGS TARGET)
   target_compile_features(${TARGET} PUBLIC cxx_std_17)

@@ -46,6 +46,7 @@ $verifiedBuildPath = Join-Path $repo (
     "tooling\windows\build_verified_native_media_runner.ps1"
 )
 $runtimeSmokePath = Join-Path $package "tool\runtime_smoke.ps1"
+$preparePath = Join-Path $package "tool\prepare_native_media.ps1"
 $workflowPath = Join-Path $repo (
     ".github\workflows\windows-arm64-native-media.yml"
 )
@@ -64,6 +65,7 @@ foreach ($required in @(
     $noticesPath,
     $verifiedBuildPath,
     $runtimeSmokePath,
+    $preparePath,
     $workflowPath,
     $validationWorkflowPath
 )) {
@@ -160,6 +162,7 @@ foreach ($requiredText in @(
     'MEDIA_KIT_NATIVE_MEDIA_PORTABLE_EVIDENCE_FILES',
     'media_kit_libs_windows_video_portable_evidence_files',
     'media_kit_libs_windows_video_angle_license_directory',
+    '-CompatibilityRoot',
     'PARENT_SCOPE'
 )) {
     Assert-True `
@@ -169,6 +172,7 @@ foreach ($requiredText in @(
 
 $rootCmake = Get-Content -LiteralPath $rootCmakePath -Raw
 foreach ($requiredText in @(
+    '_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS',
     'media_kit_libs_windows_video_portable_evidence_files',
     'media_kit_libs_windows_video_angle_license_directory',
     '${INSTALL_BUNDLE_DATA_DIR}/native-media',
@@ -215,11 +219,27 @@ foreach ($requiredText in @(
     'function Initialize-PinnedDepotTools',
     'bootstrap\win_tools.bat',
     'python3_bin_reldir.txt',
-    'DEPOT_TOOLS_UPDATE stays disabled'
+    'DEPOT_TOOLS_UPDATE stays disabled',
+    'libEGL.dll.lib',
+    'libGLESv2.dll.lib',
+    'compile_files = @($compileEntries)'
 )) {
     Assert-True `
         -Condition $angleBuild.Contains($requiredText) `
         -Message "ANGLE bootstrap must contain '$requiredText'"
+}
+$prepare = Get-Content -LiteralPath $preparePath -Raw
+foreach ($requiredText in @(
+    'Install-VerifiedCompatibilityTree',
+    '"include/mpv/$headerRelative"',
+    '"include/$headerRelative"',
+    '"libmpv.dll.a"',
+    '$CompatibilityRoot',
+    'compile_files = @('
+)) {
+    Assert-True `
+        -Condition $prepare.Contains($requiredText) `
+        -Message "native resolver must contain '$requiredText'"
 }
 Assert-True `
     -Condition ($workflow -notmatch

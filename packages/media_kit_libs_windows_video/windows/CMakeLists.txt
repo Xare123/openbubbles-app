@@ -97,6 +97,8 @@ set(
   "${MEDIA_KIT_NATIVE_CACHE}"
   -GeneratedCmakePath
   "${MEDIA_KIT_GENERATED_CMAKE}"
+  -CompatibilityRoot
+  "${CMAKE_BINARY_DIR}"
   -ResolutionPath
   "${MEDIA_KIT_RESOLUTION_JSON}"
 )

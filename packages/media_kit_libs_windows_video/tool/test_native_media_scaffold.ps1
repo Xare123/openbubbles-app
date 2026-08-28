@@ -101,6 +101,23 @@ function New-SyntheticAngleBundle {
         })
     }
 
+    $compileEntries = [System.Collections.Generic.List[object]]::new()
+    foreach ($relative in @(
+        "include/EGL/egl.h",
+        "include/GLES2/gl2.h",
+        "include/KHR/khrplatform.h",
+        "lib/libEGL.dll.lib",
+        "lib/libGLESv2.dll.lib"
+    )) {
+        $path = Join-Path $Root $relative
+        Write-Utf8NoBom -Path $path -Content "synthetic compile input: $relative"
+        $compileEntries.Add([pscustomobject]@{
+            relative_path = $relative
+            sha256 = Get-Sha256Hex -Path $path
+            origin = "synthetic test fixture"
+        })
+    }
+
     $angleLicense = Join-Path $Root "licenses\ANGLE-LICENSE.txt"
     $inventory = Join-Path $Root "licenses\license-inventory.json"
     $thirdPartyLicense = Join-Path $Root (
@@ -138,6 +155,7 @@ function New-SyntheticAngleBundle {
             synthetic_fixture = $true
         }
         files = @($entries)
+        compile_files = @($compileEntries)
         angle_license_sha256 = Get-Sha256Hex -Path $angleLicense
         license_inventory_sha256 = Get-Sha256Hex -Path $inventory
         evidence = [ordered]@{
@@ -282,6 +300,41 @@ try {
                 -Architecture "x64"
         } `
         -MessagePattern "SHA-256 mismatch"
+
+    $badCompileHash = New-SyntheticAngleBundle `
+        -Root (Join-Path $testRoot "bad-compile-hash") `
+        -Architecture "x64" `
+        -Provenance $provenance
+    $badCompileManifest = Get-Content -LiteralPath $badCompileHash.manifest -Raw |
+        ConvertFrom-Json
+    $badCompileManifest.compile_files[0].sha256 = "0" * 64
+    Write-Utf8NoBom `
+        -Path $badCompileHash.manifest `
+        -Content ($badCompileManifest | ConvertTo-Json -Depth 10)
+    Assert-Throws `
+        -Action {
+            Invoke-BundleValidation `
+                -Bundle $badCompileHash `
+                -Provenance $provenance `
+                -Architecture "x64"
+        } `
+        -MessagePattern "compile-input SHA-256 mismatch"
+
+    $unlistedCompile = New-SyntheticAngleBundle `
+        -Root (Join-Path $testRoot "unlisted-compile") `
+        -Architecture "x64" `
+        -Provenance $provenance
+    Write-Utf8NoBom `
+        -Path (Join-Path $unlistedCompile.root "include\EGL\unlisted.h") `
+        -Content "unlisted"
+    Assert-Throws `
+        -Action {
+            Invoke-BundleValidation `
+                -Bundle $unlistedCompile `
+                -Provenance $provenance `
+                -Architecture "x64"
+        } `
+        -MessagePattern "unlisted compile input"
 
     $missing = New-SyntheticAngleBundle `
         -Root (Join-Path $testRoot "missing") `
@@ -601,9 +654,13 @@ try {
             -Condition (-not $portableAngleRaw.Contains($integrationRoot)) `
             -Message "portable ANGLE evidence must omit local cache paths"
         $portableEvidence = $portableEvidenceRaw | ConvertFrom-Json
+        $portableAngle = $portableAngleRaw | ConvertFrom-Json
         Assert-True `
             -Condition ($portableEvidence.architecture -eq $architecture) `
             -Message "portable evidence must preserve $architecture"
+        Assert-True `
+            -Condition (@($portableAngle.compile_files).Count -ge 5) `
+            -Message "portable ANGLE evidence must inventory verified compile inputs"
         Assert-True `
             -Condition (@($portableEvidence.runtime_files).Count -eq 3) `
             -Message "portable evidence must inventory all three runtime DLLs"
@@ -730,6 +787,23 @@ install(
                 Join-Path $cmakeBuild "CMakeCache.txt"
             )) `
             -Message "CMake must configure the $architecture package"
+        foreach ($compatibilityRelative in @(
+            "ANGLE\include\EGL\egl.h",
+            "ANGLE\include\GLES2\gl2.h",
+            "ANGLE\lib\libEGL.dll.lib",
+            "ANGLE\lib\libGLESv2.dll.lib",
+            "libmpv\include\client.h",
+            "libmpv\include\mpv\client.h",
+            "libmpv\libmpv.dll.a",
+            "ANGLE\.openbubbles-native-compat.json",
+            "libmpv\.openbubbles-native-compat.json"
+        )) {
+            Assert-True `
+                -Condition (Test-Path -LiteralPath (
+                    Join-Path $cmakeBuild $compatibilityRelative
+                ) -PathType Leaf) `
+                -Message "CMake configure must stage verified $compatibilityRelative"
+        }
 
         $buildOutput = & cmake `
             --build $cmakeBuild `

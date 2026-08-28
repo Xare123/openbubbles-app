@@ -745,10 +745,13 @@ Invoke-Checked `
 
 $stage = "$output.stage-$([guid]::NewGuid().ToString('N'))"
 $bin = Join-Path $stage "bin"
+$include = Join-Path $stage "include"
+$lib = Join-Path $stage "lib"
 $licenses = Join-Path $stage "licenses"
 $sourceLicenses = Join-Path $licenses "source-tree"
 $evidence = Join-Path $stage "provenance"
 New-Item -ItemType Directory -Path $bin -Force | Out-Null
+New-Item -ItemType Directory -Path $lib -Force | Out-Null
 New-Item -ItemType Directory -Path $sourceLicenses -Force | Out-Null
 New-Item -ItemType Directory -Path $evidence -Force | Out-Null
 
@@ -759,6 +762,22 @@ foreach ($relative in $requiredRuntimeFiles) {
         throw "Official ANGLE build did not produce required runtime: $source"
     }
     Copy-Item -LiteralPath $source -Destination (Join-Path $bin $name)
+}
+
+$angleInclude = Join-Path $angleSource "include"
+if (-not (Test-Path -LiteralPath $angleInclude -PathType Container)) {
+    throw "Pinned ANGLE checkout is missing its public include tree: $angleInclude"
+}
+Copy-Item -LiteralPath $angleInclude -Destination $stage -Recurse
+
+foreach ($importLibraryName in @("libEGL.dll.lib", "libGLESv2.dll.lib")) {
+    $importLibrary = Join-Path $buildRoot $importLibraryName
+    if (-not (Test-Path -LiteralPath $importLibrary -PathType Leaf)) {
+        throw "Official ANGLE build did not produce required import library: $importLibrary"
+    }
+    Copy-Item -LiteralPath $importLibrary -Destination (
+        Join-Path $lib $importLibraryName
+    )
 }
 
 $angleLicense = Join-Path $angleSource "LICENSE"
@@ -862,6 +881,21 @@ foreach ($relative in $requiredRuntimeFiles) {
     })
 }
 
+$compileEntries = [System.Collections.Generic.List[object]]::new()
+$stagePrefixLength = $stage.TrimEnd('\', '/').Length + 1
+foreach ($compileFile in @(
+    Get-ChildItem -LiteralPath $include, $lib -File -Recurse |
+        Sort-Object FullName
+)) {
+    $compileEntries.Add([pscustomobject]@{
+        relative_path = $compileFile.FullName.Substring(
+            $stagePrefixLength
+        ).Replace('\', '/')
+        sha256 = Get-Sha256Hex -Path $compileFile.FullName
+        origin = "official ANGLE source build"
+    })
+}
+
 $manifest = [ordered]@{
     schema_version = 1
     architecture = $Architecture
@@ -883,6 +917,7 @@ $manifest = [ordered]@{
         sdk_compatibility = $sdkCompatibilityFiles
     }
     files = @($runtimeEntries)
+    compile_files = @($compileEntries)
     angle_license_sha256 = Get-Sha256Hex -Path (
         Join-Path $licenses "ANGLE-LICENSE.txt"
     )
