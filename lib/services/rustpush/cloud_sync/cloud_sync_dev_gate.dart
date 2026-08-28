@@ -3,6 +3,9 @@
 /// Production builds omit the sampler unless the build explicitly supplies
 /// `--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true`.
 abstract final class CloudSyncDevGate {
+  static const String androidCanaryPackageName =
+      'com.bluebubbles.messaging.cloudkitcanary';
+
   static const bool manualShadowSamplerEnabled = bool.fromEnvironment(
     'OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER',
     defaultValue: false,
@@ -31,4 +34,16 @@ abstract final class CloudSyncDevGate {
     'OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE',
     defaultValue: false,
   );
+
+  /// Runtime identity fence for paths that can mutate the local canonical
+  /// message store or admit an outbound canary. Compile-time flags alone are
+  /// insufficient because a misconfigured Alpha build could receive them.
+  /// Windows remains closed until it has an independently identifiable Canary
+  /// package and private store.
+  static bool isCanaryRuntime({
+    required bool isAndroid,
+    required String packageName,
+  }) {
+    return isAndroid && packageName == androidCanaryPackageName;
+  }
 }

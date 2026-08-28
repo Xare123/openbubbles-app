@@ -225,6 +225,7 @@ final class CloudSyncProtocolEvidenceRecord {
     'localStorage',
     'cancelled',
     'unknown',
+    'unsupportedService',
     'none',
   };
 

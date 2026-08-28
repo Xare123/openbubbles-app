@@ -215,6 +215,25 @@ void main() {
     );
   });
 
+  test(
+    'rejects one canonical GUID shared across message and reaction kinds',
+    () {
+      final registry = TransientCloudCanonicalIdentityRegistry();
+      final payload = CloudReactionEntityPayload(
+        logicalEntityKeyHash: 'reaction-key',
+        canonicalGuid: 'shared-guid',
+        parentLogicalKeyHash: 'parent-message-key',
+        parentCanonicalGuid: 'shared-guid',
+        parentPart: 0,
+        senderHandle: 'sender@example.invalid',
+        reactionType: 'like',
+      );
+
+      expect(() => registry.bind(_upsert(payload)), throwsA(isA<StateError>()));
+      expect(registry.hasActiveLease, isFalse);
+    },
+  );
+
   test('binds an owned attachment and its owner message identity', () {
     final registry = TransientCloudCanonicalIdentityRegistry();
     final lease = registry.bind(_upsert(_ownedAttachment()));

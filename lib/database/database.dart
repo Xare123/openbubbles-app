@@ -27,6 +27,8 @@ class Database {
       cloudAttachmentMaterializations;
   static late final Box<CloudSemanticSnapshotEntity> cloudSemanticSnapshots;
   static late final Box<CloudSemanticReplayEntity> cloudSemanticReplay;
+  static late final Box<CloudKitV2QuarantineRepairReceiptEntity>
+      cloudKitV2QuarantineRepairs;
   static late final Box<CloudKitDeletionIntentEntity> cloudKitDeletionIntents;
   static late final Box<CloudKitDeletionQuarantineEntity>
       cloudKitDeletionQuarantines;
@@ -69,6 +71,8 @@ class Database {
       Database.cloudSemanticSnapshots =
           store.box<CloudSemanticSnapshotEntity>();
       Database.cloudSemanticReplay = store.box<CloudSemanticReplayEntity>();
+      Database.cloudKitV2QuarantineRepairs =
+          store.box<CloudKitV2QuarantineRepairReceiptEntity>();
       Database.cloudKitDeletionIntents =
           store.box<CloudKitDeletionIntentEntity>();
       Database.cloudKitDeletionQuarantines =

@@ -5,7 +5,9 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shado
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/rust_cloud_semantic_decoder.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb;
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:logger/logger.dart' as logger_api;
 
 void main() {
   late Object client;
@@ -187,6 +189,8 @@ void main() {
           CloudFailureCategory.malformedRecord,
       frb.CloudSyncTransientFailureCode.activeAccountMismatch:
           CloudFailureCategory.authorization,
+      frb.CloudSyncTransientFailureCode.warmAuthenticationRequired:
+          CloudFailureCategory.authorization,
       frb.CloudSyncTransientFailureCode.scopeMismatch:
           CloudFailureCategory.conflict,
       frb.CloudSyncTransientFailureCode.generationMismatch:
@@ -227,16 +231,55 @@ void main() {
       );
     }
 
-    bindings.result = frb.CloudSyncTransientDecodeResult(
-      protectedSourceReference: _sourceReference,
-      generation: BigInt.from(entry.generation),
-      quarantineReason: frb.CloudSyncTransientQuarantineReason.malformedRecord,
-    );
-    await _expectFailure(
-      decoder().decode(entry),
-      CloudFailureCategory.malformedRecord,
-    );
+    for (final reason in frb.CloudSyncTransientQuarantineReason.values) {
+      bindings.result = frb.CloudSyncTransientDecodeResult(
+        protectedSourceReference: _sourceReference,
+        generation: BigInt.from(entry.generation),
+        quarantineReason: reason,
+      );
+      await _expectFailure(
+        decoder().decode(entry),
+        reason == frb.CloudSyncTransientQuarantineReason.unsupportedService
+            ? CloudFailureCategory.unsupportedService
+            : CloudFailureCategory.malformedRecord,
+      );
+    }
+    expect(CloudFailureCategory.unsupportedService.isRetryable, isFalse);
   });
+
+  test(
+    'logs only the bounded native disposition for unsupported service',
+    () async {
+      final output = _CapturingLogOutput();
+      final previousLogger = Logger;
+      Logger = BaseLogger();
+      Logger.currentOutput = output;
+      Logger.currentLevel = logger_api.Level.info;
+      try {
+        final entry = _entry();
+        bindings.result = frb.CloudSyncTransientDecodeResult(
+          protectedSourceReference: _sourceReference,
+          generation: BigInt.from(entry.generation),
+          quarantineReason:
+              frb.CloudSyncTransientQuarantineReason.unsupportedService,
+        );
+
+        await _expectFailure(
+          decoder().decode(entry),
+          CloudFailureCategory.unsupportedService,
+        );
+
+        final message = output.lines.join('\n');
+        expect(message, contains('disposition=quarantined:unsupportedService'));
+        expect(message, isNot(contains(entry.change.changeId)));
+        expect(message, isNot(contains(_sourceReference)));
+        expect(message, isNot(contains(_payloadSha)));
+        expect(message, isNot(contains('iMessage')));
+      } finally {
+        Logger = previousLogger;
+      }
+    },
+  );
 
   test('rejects mixed dispositions and malformed payload lanes', () async {
     final entry = _entry();
@@ -1183,6 +1226,13 @@ final class _Bindings implements RustCloudSemanticDecodeBindings {
     afterDecode?.call();
     return result;
   }
+}
+
+final class _CapturingLogOutput extends logger_api.LogOutput {
+  final List<String> lines = [];
+
+  @override
+  void output(logger_api.OutputEvent event) => lines.addAll(event.lines);
 }
 
 final class _TombstoneResolver implements CloudTombstoneIdentityResolver {

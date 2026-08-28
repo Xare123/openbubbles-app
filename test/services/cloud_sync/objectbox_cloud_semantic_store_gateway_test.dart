@@ -11,7 +11,7 @@ void main() {
   final scope = _scope();
   const leaseFence = CloudCoordinatorLeaseFence(
     ownerId: 'semantic-test-owner',
-    generation: 4,
+    generation: 7,
   );
   late Directory directory;
   late Store objectBox;
@@ -310,6 +310,60 @@ void main() {
     expect(map.encryptedRawRecordRef, _protectedReference('W'));
   });
 
+  test(
+    'reopened generation-zero record maps remain rejected and unchanged',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final mapId = objectBox.box<CloudRecordMapEntity>().put(
+        CloudRecordMapEntity(
+          mapKey: _recordMapKey(scope, _digestValue('L')),
+          scopeKey: _scopeKey(scope),
+          accountFingerprint: scope.accountFingerprint,
+          zone: scope.zone,
+          logicalEntityKeyHash: _digestValue('L'),
+          serverRecordIdHash: entry.change.recordIdHash,
+          generation: 0,
+          encryptedServerRecordId: entry.change.encryptedServerRecordId!,
+          etagHash: entry.change.etagHash,
+          encryptedRawRecordRef: entry.change.encryptedPayloadReference,
+          updatedAtMs: now.millisecondsSinceEpoch,
+        ),
+      );
+
+      objectBox.close();
+      objectBox = await openStore(directory: directory.path);
+      adapter = _ObjectBoxTestCanonicalAdapter(objectBox)
+        ..activeScope = scope
+        ..activeGeneration = 7
+        ..existingEntities.add((CloudEntityKind.chat, _digestValue('H')));
+      gateway = ObjectBoxCloudSemanticStoreGateway(
+        store: objectBox,
+        canonicalAdapter: adapter,
+        clock: () => now,
+      );
+
+      await expectLater(
+        gateway.writeTransaction<void>(
+          entry: entry,
+          leaseFence: leaseFence,
+          action: _applyAndMark(entry),
+        ),
+        throwsA(_failureCode('semantic_record_map_scope_mismatch')),
+      );
+
+      final map = objectBox.box<CloudRecordMapEntity>().get(mapId)!;
+      expect(map.id, mapId);
+      expect(map.generation, 0);
+      expect(adapter.entityApplyCalls, 0);
+    },
+  );
+
   test('lease takeover fails before canonical mutation', () async {
     final entry = _entry(scope: scope);
     _seedDurableFence(
@@ -329,6 +383,30 @@ void main() {
         action: _applyAndMark(entry),
       ),
       throwsA(_failureCode('semantic_coordinator_lease_fence_lost')),
+    );
+    _expectNoSemanticMutation(objectBox, adapter);
+  });
+
+  test('generation mismatch fails before canonical mutation', () async {
+    final entry = _entry(scope: scope);
+    const mismatchedFence = CloudCoordinatorLeaseFence(
+      ownerId: 'semantic-test-owner',
+      generation: 8,
+    );
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: mismatchedFence,
+      now: now,
+    );
+
+    await expectLater(
+      gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: mismatchedFence,
+        action: _applyAndMark(entry),
+      ),
+      throwsA(_failureCode('semantic_generation_fence_mismatch')),
     );
     _expectNoSemanticMutation(objectBox, adapter);
   });
@@ -556,6 +634,78 @@ void main() {
   });
 
   test(
+    'a legacy no-digest snapshot blocks the noChange map replay and checkpoint path',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final logicalKey = _digestValue('L');
+      objectBox.box<CloudSemanticSnapshotEntity>().put(
+        CloudSemanticSnapshotEntity(
+          snapshotKey:
+              'semantic-snapshot4:${_scopeGenerationKey(scope, entry.generation)}:message:$logicalKey',
+          scopeGenerationKey: _scopeGenerationKey(scope, entry.generation),
+          scopeKey: _scopeKey(scope),
+          accountFingerprint: scope.accountFingerprint,
+          container: scope.container,
+          database: scope.database,
+          zone: scope.zone,
+          streamKind: scope.streamKind.name,
+          schemaVersion: scope.schemaVersion,
+          generation: entry.generation,
+          entityKind: CloudEntityKind.message.name,
+          logicalEntityKeyHash: logicalKey,
+          immutableContentDigest: _digestValue('I'),
+          updatedAtMs: now.millisecondsSinceEpoch,
+        ),
+      );
+
+      await expectLater(
+        gateway.writeTransaction<void>(
+          entry: entry,
+          leaseFence: leaseFence,
+          action: (transaction) {
+            // This is the exact noChange sequence. readSnapshot must reject
+            // before the record-map/replay/inbox/checkpoint writes below.
+            transaction.readSnapshot(
+              kind: CloudEntityKind.message,
+              logicalEntityKeyHash: logicalKey,
+            );
+            transaction.bindRecordIdentity(
+              logicalEntityKeyHash: logicalKey,
+              encryptedRawRecordReference:
+                  entry.change.encryptedPayloadReference,
+            );
+            transaction.markChangeApplied(entry.change.changeId);
+          },
+        ),
+        throwsA(_failureCode('canonical_identity_owner_unproven')),
+      );
+
+      expect(adapter.entityApplyCalls, 0);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 1);
+      expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 0);
+      expect(
+        objectBox.box<CloudInboxChangeEntity>().getAll().single.status,
+        CloudInboxStatus.pending.index,
+      );
+      expect(
+        objectBox
+            .box<CloudSyncCheckpointEntity>()
+            .getAll()
+            .single
+            .appliedSequence,
+        0,
+      );
+    },
+  );
+
+  test(
     'quarantine after a canonical mutation is forbidden and rolls back',
     () async {
       final entry = _entry(scope: scope);
@@ -734,6 +884,7 @@ void main() {
           zone: scope.zone,
           logicalEntityKeyHash: _digestValue('L'),
           serverRecordIdHash: _digestValue('Z'),
+          generation: entry.generation,
           encryptedServerRecordId: _protectedReference('O'),
           updatedAtMs: now.millisecondsSinceEpoch,
         ),
@@ -751,6 +902,49 @@ void main() {
       expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 0);
       expect(objectBox.box<CloudSemanticReplayEntity>().count(), 0);
       expect(objectBox.box<CloudRecordMapEntity>().count(), 1);
+    },
+  );
+
+  test(
+    'generation-zero record maps fail closed without identity adoption',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final mapId = objectBox.box<CloudRecordMapEntity>().put(
+        CloudRecordMapEntity(
+          mapKey: _recordMapKey(scope, _digestValue('L')),
+          scopeKey: _scopeKey(scope),
+          accountFingerprint: scope.accountFingerprint,
+          zone: scope.zone,
+          logicalEntityKeyHash: _digestValue('L'),
+          serverRecordIdHash: entry.change.recordIdHash,
+          generation: 0,
+          encryptedServerRecordId: entry.change.encryptedServerRecordId!,
+          etagHash: entry.change.etagHash,
+          encryptedRawRecordRef: _protectedReference('X'),
+          updatedAtMs: now.millisecondsSinceEpoch,
+        ),
+      );
+
+      await expectLater(
+        gateway.writeTransaction<void>(
+          entry: entry,
+          leaseFence: leaseFence,
+          action: _applyAndMark(entry),
+        ),
+        throwsA(_failureCode('semantic_record_map_scope_mismatch')),
+      );
+
+      final map = objectBox.box<CloudRecordMapEntity>().get(mapId)!;
+      expect(map.id, mapId);
+      expect(map.generation, 0);
+      expect(adapter.entityApplyCalls, 0);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 0);
     },
   );
 
@@ -1181,34 +1375,74 @@ void main() {
     },
   );
 
-  test('tombstones remain disabled in the durable gateway', () async {
-    final entry = _entry(scope: scope, tombstone: true);
-    _seedDurableFence(
-      objectBox,
-      entry: entry,
-      leaseFence: leaseFence,
-      now: now,
-    );
-
-    await expectLater(
-      gateway.writeTransaction<void>(
+  test(
+    'tombstones are permanently disabled before any durable mutation',
+    () async {
+      final entry = _entry(scope: scope, tombstone: true);
+      _seedDurableFence(
+        objectBox,
         entry: entry,
         leaseFence: leaseFence,
-        action: (transaction) {
-          transaction.applyTombstone(
-            CloudSemanticTombstone(
+        now: now,
+      );
+
+      await expectLater(
+        gateway.writeTransaction<void>(
+          entry: entry,
+          leaseFence: leaseFence,
+          action: (transaction) {
+            transaction.applyTombstone(
+              CloudSemanticTombstone(
+                kind: CloudEntityKind.message,
+                logicalEntityKeyHash: _digestValue('L'),
+                deletedAt: now,
+                serverConfirmed: true,
+              ),
+            );
+          },
+        ),
+        throwsA(_failureCode('semantic_tombstones_disabled')),
+      );
+      _expectNoSemanticMutation(objectBox, adapter);
+    },
+  );
+
+  test(
+    'a generic tombstone toggle cannot mutate the ObjectBox gateway',
+    () async {
+      final entry = _entry(scope: scope, tombstone: true);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final applier = TransactionalCloudInboxApplier(
+        decoder: _FixedDecoder(
+          CloudDecodedMutation.tombstone(
+            scope: scope,
+            generation: entry.generation,
+            changeId: entry.change.changeId,
+            tombstone: CloudSemanticTombstone(
               kind: CloudEntityKind.message,
               logicalEntityKeyHash: _digestValue('L'),
               deletedAt: now,
               serverConfirmed: true,
             ),
-          );
-        },
-      ),
-      throwsA(_failureCode('semantic_tombstones_disabled')),
-    );
-    _expectNoSemanticMutation(objectBox, adapter);
-  });
+          ),
+        ),
+        store: gateway,
+        allowTombstones: true,
+      );
+
+      final result = await applier.apply(entry, leaseFence: leaseFence);
+
+      expect(result.disposition, CloudInboxApplyDisposition.quarantined);
+      expect(result.failureCategory, CloudFailureCategory.conflict);
+      expect(adapter.tombstoneCalls, 0);
+      _expectNoSemanticMutation(objectBox, adapter);
+    },
+  );
 }
 
 CloudSyncScope _scope({String? account, String zone = 'messageManateeZone'}) {
@@ -1423,6 +1657,9 @@ Matcher _failureCode(String safeCode) {
 
 String _scopeKey(CloudSyncScope scope) => 'scope2:${_sha256(scope.storageKey)}';
 
+String _scopeGenerationKey(CloudSyncScope scope, int generation) =>
+    'semantic-generation4:${_sha256('${_scopeKey(scope)}\u001f$generation')}';
+
 String _recordMapKey(CloudSyncScope scope, String logicalEntityKeyHash) =>
     _scopedDigest(scope, 'record-map', logicalEntityKeyHash);
 
@@ -1435,6 +1672,15 @@ String _digestValue(String character) => List.filled(43, character).join();
 
 String _protectedReference(String character) =>
     'obcs2.ref.${_digestValue(character)}';
+
+final class _FixedDecoder implements CloudSemanticDecoder {
+  const _FixedDecoder(this._mutation);
+
+  final CloudDecodedMutation _mutation;
+
+  @override
+  Future<CloudDecodedMutation> decode(CloudInboxEntry entry) async => _mutation;
+}
 
 final class _ObjectBoxTestCanonicalAdapter
     implements CloudCanonicalSemanticEntityAdapter {
@@ -1466,6 +1712,31 @@ final class _ObjectBoxTestCanonicalAdapter
   }) =>
       existingEntities.contains((kind, logicalEntityKeyHash)) ||
       _find(scope, generation, kind, logicalEntityKeyHash) != null;
+
+  @override
+  void validateOwnershipEvidence({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudEntityKind kind,
+    required String logicalEntityKeyHash,
+  }) {
+    for (final snapshot in store.box<CloudSemanticSnapshotEntity>().getAll()) {
+      if (snapshot.scopeKey == _scopeKey(scope) &&
+          snapshot.accountFingerprint == scope.accountFingerprint &&
+          snapshot.container == scope.container &&
+          snapshot.database == scope.database &&
+          snapshot.zone == scope.zone &&
+          snapshot.streamKind == scope.streamKind.name &&
+          snapshot.schemaVersion == scope.schemaVersion &&
+          snapshot.generation == generation &&
+          snapshot.canonicalGuidHash == null) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.dependency,
+          safeCode: 'canonical_identity_owner_unproven',
+        );
+      }
+    }
+  }
 
   @override
   CloudCanonicalSemanticMutationReceipt applyEntity({

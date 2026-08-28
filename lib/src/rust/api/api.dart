@@ -9,9 +9,9 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'api.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `bin_deserialize_16`, `classify_cloud_sync_reconcile_observation`, `cloud_sync_failure_category`, `cloud_sync_outbound_failure_result`, `cloud_sync_prepare_failure`, `cloud_sync_reconcile_failure`, `cloud_sync_retry_after_seconds`, `cloud_sync_transient_empty_result`, `config`, `encrypt`, `get_login_config`, `get_password`, `handle_2fa`, `handle_circle`, `handle_photostream`, `is_cloud_sync_hex_digest`, `is_cloud_sync_keyed_hash`, `is_cloud_sync_lease_reference`, `is_cloud_sync_operation_id`, `is_cloud_sync_protected_reference`, `is_cloud_sync_protected_source_reference`, `is_valid_cloud_sync_reconcile_message_create_input`, `local_cloud_sync_protected_failure`, `map_cloud_sync_outbound_failure_class`, `map_cloud_sync_outbound_failure`, `map_cloud_sync_protected_category`, `map_cloud_sync_protected_change`, `map_cloud_sync_protected_failure`, `map_cloud_sync_protected_page`, `map_cloud_sync_protected_safe_code`, `map_cloud_sync_raw_page`, `map_cloud_sync_transient_attributed_body`, `map_cloud_sync_transient_chat_style`, `map_cloud_sync_transient_deferred`, `map_cloud_sync_transient_entity_kind`, `map_cloud_sync_transient_failure`, `map_cloud_sync_transient_field_state`, `map_cloud_sync_transient_known_flags`, `map_cloud_sync_transient_message_edit`, `map_cloud_sync_transient_payload`, `map_cloud_sync_transient_quarantine`, `map_cloud_sync_transient_reaction_kind`, `map_cloud_sync_transient_service`, `map_cloud_sync_transient_snapshot`, `map_cloud_sync_transient_text_run`, `migrate`, `plist_to_bin`, `plist_to_buf`, `plist_to_string`, `reset_user`, `shared_items`, `subscribe_streams`, `unmap_cloud_sync_transient_entity_kind`, `wrap_sink`
+// These functions are ignored because they are not marked as `pub`: `add`, `bin_deserialize_16`, `boolean`, `bounded_cloud_sync_read_authentication`, `classify_cloud_sync_reconcile_observation`, `cloud_sync_failure_category`, `cloud_sync_outbound_failure_result`, `cloud_sync_prepare_failure`, `cloud_sync_reconcile_failure`, `cloud_sync_retry_after_seconds`, `cloud_sync_transient_empty_result`, `cloudkit_repair_content_digest`, `cloudkit_repair_message_content_digest`, `config`, `encrypt`, `finish`, `get_login_config`, `get_password`, `handle_2fa`, `handle_circle`, `handle_photostream`, `integer`, `is_cloud_sync_hex_digest`, `is_cloud_sync_keyed_hash`, `is_cloud_sync_lease_reference`, `is_cloud_sync_operation_id`, `is_cloud_sync_protected_reference`, `is_cloud_sync_protected_source_reference`, `is_valid_cloud_sync_reconcile_message_create_input`, `local_cloud_sync_protected_failure`, `map_cloud_sync_outbound_failure_class`, `map_cloud_sync_outbound_failure`, `map_cloud_sync_protected_category`, `map_cloud_sync_protected_change`, `map_cloud_sync_protected_failure`, `map_cloud_sync_protected_page`, `map_cloud_sync_protected_safe_code`, `map_cloud_sync_raw_page`, `map_cloud_sync_transient_attributed_body`, `map_cloud_sync_transient_chat_style`, `map_cloud_sync_transient_deferred`, `map_cloud_sync_transient_entity_kind`, `map_cloud_sync_transient_failure`, `map_cloud_sync_transient_field_state`, `map_cloud_sync_transient_known_flags`, `map_cloud_sync_transient_message_edit`, `map_cloud_sync_transient_payload`, `map_cloud_sync_transient_quarantine`, `map_cloud_sync_transient_reaction_kind`, `map_cloud_sync_transient_service`, `map_cloud_sync_transient_snapshot`, `map_cloud_sync_transient_text_run`, `migrate`, `new`, `null`, `optional_boolean`, `optional_bytes`, `optional_integer`, `optional_string`, `plist_to_bin`, `plist_to_buf`, `plist_to_string`, `repair_digest_association`, `repair_digest_bodies`, `repair_digest_field_state`, `repair_digest_flags`, `repair_digest_reaction_type`, `reset_user`, `shared_items`, `string`, `subscribe_streams`, `unmap_cloud_sync_transient_entity_kind`, `wrap_sink`
 // These functions are ignored because they have generic arguments: `bin_deserialize`, `bin_serialize`
-// These types are ignored because they are not used by any `pub` functions: `AnisetteState`, `CloudSyncReconcileObservation`, `DaemonData`, `FLUTTER_RUST_BRIDGE_HANDLER`, `GSAConfig`, `NSArrayClass`, `NSArrayIconArray`, `NSArrayImageArray`, `ProvisionedAnisette`
+// These types are ignored because they are not used by any `pub` functions: `AnisetteState`, `CloudKitRepairDigestWriter`, `CloudSyncReconcileObservation`, `DaemonData`, `FLUTTER_RUST_BRIDGE_HANDLER`, `GSAConfig`, `NSArrayClass`, `NSArrayIconArray`, `NSArrayImageArray`, `ProvisionedAnisette`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `deref`, `deref`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `get_files`, `initialize`, `spawn`
 
 ChatProto decodeChatproto({required GZipWrapperChatProto wrapped}) =>
@@ -128,6 +128,18 @@ String cloudSyncFingerprintAccount({
 }) => RustLib.instance.api.crateApiApiCloudSyncFingerprintAccount(
   storageDirectory: storageDirectory,
   rawAccountIdentifier: rawAccountIdentifier,
+);
+
+/// Explicitly authenticates the read-only Cloud Sync V2 container.
+///
+/// Callers must hold the CloudKit operation interlock. This may perform one
+/// bounded `ckAppInit` request for a cold client, but it cannot issue record,
+/// zone, subscription, save, or delete operations. Protected fetch and
+/// semantic decode remain lookup-only after this step.
+Future<void> cloudSyncWarmReadAuthentication({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+}) => RustLib.instance.api.crateApiApiCloudSyncWarmReadAuthentication(
+  cloudMessagesClient: cloudMessagesClient,
 );
 
 Future<CloudSyncNativeAuthMetadata> cloudSyncCaptureAuthSnapshot({
@@ -3797,6 +3809,7 @@ enum CloudSyncTransientEntityKind {
 enum CloudSyncTransientFailureCode {
   invalidRequest,
   activeAccountMismatch,
+  warmAuthenticationRequired,
   scopeMismatch,
   generationMismatch,
   storeIdentityMismatch,

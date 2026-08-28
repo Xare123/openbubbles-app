@@ -684,6 +684,7 @@ void main() {
         CloudFailureCategory.malformedRecord,
         CloudFailureCategory.conflict,
         CloudFailureCategory.cancelled,
+        CloudFailureCategory.unsupportedService,
       ];
 
       for (final category in permanentCategories) {

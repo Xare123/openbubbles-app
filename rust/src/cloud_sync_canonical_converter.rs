@@ -1867,12 +1867,18 @@ fn build_association(
     ),
     CloudCanonicalConversionOutcome,
 > {
+    // MessageEncryptedV3.msgType selects the outer record class. Live Apple
+    // records and the native decoder both treat 0, 1, and 2 as members of the
+    // same message family. Association semantics are carried independently by
+    // MessageProto.associated_message_type, so requiring msgType == 2 here
+    // orphaned valid reactions whose outer class was 0 or 1.
+    if !matches!(message_type, 0..=2) {
+        return Err(CloudCanonicalConversionOutcome::Quarantined(
+            CloudCanonicalQuarantineReason::UnsupportedMessageType,
+        ));
+    }
+
     let Some(associated_type) = proto.associated_message_type else {
-        if message_type != 1 {
-            return Err(CloudCanonicalConversionOutcome::Quarantined(
-                CloudCanonicalQuarantineReason::UnsupportedMessageType,
-            ));
-        }
         if proto.associated_message_guid.is_some()
             || proto.associated_message_range_location.is_some()
             || proto.associated_message_range_length.is_some()
@@ -1887,11 +1893,6 @@ fn build_association(
             None,
         ));
     };
-    if message_type != 2 {
-        return Err(CloudCanonicalConversionOutcome::Quarantined(
-            CloudCanonicalQuarantineReason::UnsupportedMessageType,
-        ));
-    }
     if associated_type == 2 {
         return Err(CloudCanonicalConversionOutcome::Deferred(
             CloudCanonicalDeferredReason::UnsupportedSticker,
@@ -3203,6 +3204,109 @@ mod tests {
             panic!("reaction message payload expected");
         };
         assert!(payload.association().is_reaction());
+    }
+
+    #[test]
+    fn message_family_types_zero_one_and_two_accept_plain_messages() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        for message_type in 0..=2 {
+            let mut message = normal_message(Some("hello"));
+            message.r#type = message_type;
+            assert!(
+                matches!(
+                    convert_message(
+                        &context(
+                            &hasher,
+                            &format!("server-plain-message-type-{message_type}"),
+                            None,
+                        ),
+                        &message_presence(),
+                        &message,
+                    ),
+                    CloudCanonicalConversionOutcome::Ready(_)
+                ),
+                "msgType={message_type}",
+            );
+        }
+    }
+
+    #[test]
+    fn association_subtype_not_outer_message_type_selects_reaction_semantics() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        for message_type in 0..=2 {
+            for associated_type in [2000, 3000] {
+                let mut reaction = reaction_message();
+                reaction.r#type = message_type;
+                reaction.msg_proto.0.associated_message_type = Some(associated_type);
+                let outcome = convert_message(
+                    &context(
+                        &hasher,
+                        &format!(
+                            "server-reaction-message-type-{message_type}-association-{associated_type}"
+                        ),
+                        None,
+                    ),
+                    &message_presence(),
+                    &reaction,
+                );
+                let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+                    panic!(
+                        "msgType={message_type} associatedMessageType={associated_type} should convert"
+                    );
+                };
+                assert_eq!(
+                    mutation.envelope().entity_kind(),
+                    CloudCanonicalEntityKind::Reaction
+                );
+                let Some(CloudCanonicalPayload::Message(payload)) = mutation.payload() else {
+                    panic!("reaction message payload expected");
+                };
+                let Some((_, _, remove)) = payload.association().reaction() else {
+                    panic!("reaction association expected");
+                };
+                assert_eq!(remove, associated_type == 3000);
+            }
+        }
+    }
+
+    #[test]
+    fn special_outer_classes_remain_quarantined_with_or_without_association() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        for message_type in 3..=7 {
+            let mut plain = normal_message(Some("hello"));
+            plain.r#type = message_type;
+            assert_eq!(
+                convert_message(
+                    &context(
+                        &hasher,
+                        &format!("server-special-plain-type-{message_type}"),
+                        None,
+                    ),
+                    &message_presence(),
+                    &plain,
+                ),
+                CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::UnsupportedMessageType
+                ),
+            );
+
+            let mut associated = reaction_message();
+            associated.r#type = message_type;
+            assert_eq!(
+                convert_message(
+                    &context(
+                        &hasher,
+                        &format!("server-special-associated-type-{message_type}"),
+                        None,
+                    ),
+                    &message_presence(),
+                    &associated,
+                ),
+                CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::UnsupportedMessageType
+                ),
+            );
+        }
     }
 
     #[test]

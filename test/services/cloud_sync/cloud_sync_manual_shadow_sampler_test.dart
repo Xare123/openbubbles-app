@@ -80,6 +80,7 @@ void main() {
           preflightCalls++;
           return readyState();
         },
+        prepareAuthSnapshot: () async => auth('session-a'),
         readAuthSnapshot: () async => auth('session-a'),
         createStore: (scope) async {
           storeCalls++;
@@ -107,6 +108,8 @@ void main() {
   test('native auth failures collapse to a content-free stage code', () async {
     final sampler = CloudSyncManualShadowSampler(
       readPreflight: () async => readyState(),
+      prepareAuthSnapshot: () async =>
+          throw Exception('token=private-value account=user@example.com'),
       readAuthSnapshot: () async =>
           throw Exception('token=private-value account=user@example.com'),
       createStore: (scope) async => InMemoryCloudSyncStore(),
@@ -125,11 +128,55 @@ void main() {
         isA<StateError>().having(
           (error) => error.message,
           'message',
-          'cloud_sync_shadow_auth_capture_failed',
+          'cloud_sync_shadow_auth_prepare_failed',
         ),
       ),
     );
   });
+
+  test(
+    'read authentication preparation runs under the CloudKit interlock',
+    () async {
+      final fenceStore = InMemoryCloudSyncStore();
+      final competing = CloudKitOperationInterlock(
+        privateStorageDirectory: privateStorageDirectory.path,
+        fenceStore: fenceStore,
+      );
+      var observedActiveInterlock = false;
+      final sampler = CloudSyncManualShadowSampler(
+        readPreflight: () async => readyState(),
+        prepareAuthSnapshot: () async {
+          await expectLater(
+            competing.runExclusive(
+              kind: CloudKitOperationKind.legacyReadWrite,
+              action: () async {},
+            ),
+            throwsA(
+              isA<CloudKitOperationInterlockException>().having(
+                (error) => error.safeCode,
+                'safeCode',
+                'cloudkit_interlock_mode_violation',
+              ),
+            ),
+          );
+          observedActiveInterlock = true;
+          return auth('session-a');
+        },
+        readAuthSnapshot: () async => auth('session-a'),
+        createStore: (scope) async => InMemoryCloudSyncStore(),
+        createRawTransport: (snapshot, scope) async => FakeCloudSyncTransport(),
+        operationFenceStore: fenceStore,
+        privateStorageDirectory: privateStorageDirectory.path,
+        platform: 'android',
+        architecture: 'arm64',
+        buildCommit: 'test',
+        compileGateOverrideForTest: true,
+      );
+
+      await sampler.runConfirmed();
+      expect(observedActiveInterlock, isTrue);
+    },
+  );
 
   test(
     'owns exact bounded read-only composition for all fixed zones',
@@ -139,6 +186,7 @@ void main() {
       final observers = <String, _RecordingFlushableObserver>{};
       final sampler = CloudSyncManualShadowSampler(
         readPreflight: () async => readyState(),
+        prepareAuthSnapshot: () async => auth('session-a'),
         readAuthSnapshot: () async => auth('session-a'),
         createStore: (scope) async {
           scopes.add(scope);
@@ -221,6 +269,7 @@ void main() {
     late InMemoryCloudSyncStore store;
     final sampler = CloudSyncManualShadowSampler(
       readPreflight: () async => readyState(),
+      prepareAuthSnapshot: () async => current,
       readAuthSnapshot: () async => current,
       createStore: (scope) async => store = InMemoryCloudSyncStore(),
       createRawTransport: (snapshot, scope) async {
@@ -265,6 +314,7 @@ void main() {
     late CloudSyncScope observedScope;
     final sampler = CloudSyncManualShadowSampler(
       readPreflight: () async => readyState(),
+      prepareAuthSnapshot: () async => auth('session-a'),
       readAuthSnapshot: () async => auth('session-a'),
       createStore: (scope) async {
         observedScope = scope;
@@ -309,6 +359,7 @@ void main() {
       var transportIndex = 0;
       final sampler = CloudSyncManualShadowSampler(
         readPreflight: () async => readyState(),
+        prepareAuthSnapshot: () async => auth('session-a'),
         readAuthSnapshot: () async => auth('session-a'),
         createStore: (scope) async => InMemoryCloudSyncStore(),
         createRawTransport: (snapshot, scope) async {
@@ -400,6 +451,7 @@ void main() {
     var legacy = true;
     final sampler = CloudSyncManualShadowSampler(
       readPreflight: () async => readyState(legacySyncEnabled: legacy),
+      prepareAuthSnapshot: () async => auth('session-a'),
       readAuthSnapshot: () async => auth('session-a'),
       createStore: (scope) async {
         await blocker.future;

@@ -24,8 +24,9 @@ use rustpush::{
     },
     cloudkit::pcs_keys_for_record,
     cloudkit_proto::{
-        record::Field, retrieve_changes_response::RecordChange, CloudKitEncryptor, CloudKitRecord,
-        Record,
+        record::{field::Value, Field},
+        retrieve_changes_response::RecordChange,
+        CloudKitEncryptor, CloudKitRecord, Record,
     },
     pcs::PCSEncryptor,
     DefaultAnisetteProvider, PushError,
@@ -65,6 +66,7 @@ pub(crate) enum CloudTransientExpectedChangeKind {
 pub(crate) enum CloudTransientBridgeFailure {
     InvalidRequest,
     ActiveAccountMismatch,
+    WarmAuthenticationRequired,
     ScopeMismatch,
     GenerationMismatch,
     StoreIdentityMismatch,
@@ -324,12 +326,59 @@ fn encrypted_field_bytes(
     let Some(ciphertext) = value.bytes_value.as_deref() else {
         return Err(CloudTransientBridgeFailure::MalformedRecord);
     };
-    let decrypted = catch_unwind(AssertUnwindSafe(|| key.decrypt_data(ciphertext, name)))
-        .map_err(|_| decoder_failure_at("field_decrypt_panic"))?;
+    let decrypted = key
+        .decrypt_data_checked(ciphertext, name)
+        .map_err(|error| map_push_failure_at(&error, "field_decrypt"))?;
     if decrypted.len() > MAX_DECOMPRESSED_FIELD_BYTES {
         return Err(CloudTransientBridgeFailure::OversizedRecord);
     }
     Ok(Some(decrypted))
+}
+
+fn preflight_ciphertext_key(
+    key: &PCSEncryptor,
+    ciphertext: &[u8],
+) -> Result<(), CloudTransientBridgeFailure> {
+    key.validate_ciphertext_key(ciphertext)
+        .map_err(|error| map_push_failure_at(&error, "ciphertext_key_preflight"))
+}
+
+fn preflight_encrypted_value_keys(
+    key: &PCSEncryptor,
+    value: &Value,
+) -> Result<(), CloudTransientBridgeFailure> {
+    if value.is_encrypted == Some(true) {
+        let ciphertext = value
+            .bytes_value
+            .as_deref()
+            .ok_or(CloudTransientBridgeFailure::MalformedRecord)?;
+        preflight_ciphertext_key(key, ciphertext)?;
+    }
+    for nested in &value.list_values {
+        preflight_encrypted_value_keys(key, nested)?;
+    }
+    if let Some(asset) = value.asset_value.as_ref() {
+        if let Some(ciphertext) = asset
+            .protection_info
+            .as_ref()
+            .and_then(|protection| protection.protection_info.as_deref())
+        {
+            preflight_ciphertext_key(key, ciphertext)?;
+        }
+    }
+    Ok(())
+}
+
+fn preflight_record_ciphertext_keys(
+    record: &Record,
+    key: &PCSEncryptor,
+) -> Result<(), CloudTransientBridgeFailure> {
+    for field in &record.record_field {
+        if let Some(value) = field.value.as_ref() {
+            preflight_encrypted_value_keys(key, value)?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -412,25 +461,111 @@ fn bounded_gunzip(value: &[u8]) -> Result<Vec<u8>, CloudTransientBridgeFailure> 
     Ok(output)
 }
 
+fn normalize_optional_empty_gzip_field(
+    record: &mut Record,
+    field: GzipFieldSpec,
+    decrypted: &[u8],
+) -> bool {
+    if field.required || !decrypted.is_empty() {
+        return false;
+    }
+    record
+        .record_field
+        .retain(|candidate| field_name(candidate) != Some(field.name));
+    true
+}
+
+fn non_gzip_header_stage(value: &[u8]) -> &'static str {
+    match value {
+        [] => "header_empty",
+        [_] => "header_single_byte",
+        [cmf, flg, ..] if cmf & 0x0f == 8 && (u16::from(*cmf) << 8 | u16::from(*flg)) % 31 == 0 => {
+            "header_zlib"
+        }
+        _ => "header_non_gzip",
+    }
+}
+
 fn preflight_gzip_fields(
-    record: &Record,
+    record: &mut Record,
     key: &PCSEncryptor,
     presence: &CloudRawRecordPresence,
     fields: &[GzipFieldSpec],
 ) -> Result<(), CloudTransientBridgeFailure> {
     let mut aggregate = 0usize;
     for field in fields {
-        if !gzip_field_requires_preflight(record, presence, *field)? {
+        let requires_preflight = match gzip_field_requires_preflight(record, presence, *field) {
+            Ok(value) => value,
+            Err(failure) => {
+                warn!(
+                    "CloudKit V2 gzip preflight field={} stage=wire_shape",
+                    field.name
+                );
+                return Err(failure);
+            }
+        };
+        if !requires_preflight {
             continue;
         }
-        let Some(compressed) = encrypted_field_bytes(record, key, field.name)? else {
-            continue;
+        let compressed = match encrypted_field_bytes(record, key, field.name) {
+            Ok(Some(value)) => value,
+            Ok(None) => {
+                warn!(
+                    "CloudKit V2 gzip preflight field={} stage=missing_ciphertext",
+                    field.name
+                );
+                return Err(CloudTransientBridgeFailure::MalformedRecord);
+            }
+            Err(failure) => {
+                warn!(
+                    "CloudKit V2 gzip preflight field={} stage=decrypt",
+                    field.name
+                );
+                return Err(failure);
+            }
         };
-        let decompressed = bounded_gunzip(&compressed)?;
+        // Zero-length plaintext cannot carry an optional protobuf. Normalize
+        // only that exact, unambiguous shape to absence before the typed decoder
+        // reaches its infallible gzip wrapper. Required fields remain strict,
+        // and every non-empty non-gzip value still fails closed.
+        if normalize_optional_empty_gzip_field(record, *field, &compressed) {
+            warn!(
+                "CloudKit V2 gzip preflight field={} stage=optional_empty_normalized",
+                field.name
+            );
+            continue;
+        }
+        if compressed.len() < 2 || compressed[..2] != [0x1f, 0x8b] {
+            let stage = non_gzip_header_stage(&compressed);
+            warn!(
+                "CloudKit V2 gzip preflight field={} stage={stage}",
+                field.name
+            );
+            return Err(CloudTransientBridgeFailure::MalformedRecord);
+        }
+        let decompressed = match bounded_gunzip(&compressed) {
+            Ok(value) => value,
+            Err(failure) => {
+                let stage = if failure == CloudTransientBridgeFailure::OversizedRecord {
+                    "field_oversized"
+                } else {
+                    "inflate"
+                };
+                warn!(
+                    "CloudKit V2 gzip preflight field={} stage={stage}",
+                    field.name
+                );
+                return Err(failure);
+            }
+        };
         aggregate = aggregate
             .checked_add(decompressed.len())
             .ok_or(CloudTransientBridgeFailure::OversizedRecord)?;
         if aggregate > MAX_DECOMPRESSED_RECORD_BYTES {
+            warn!(
+                "CloudKit V2 gzip preflight field={} stage=record_oversized",
+                field.name
+            );
             return Err(CloudTransientBridgeFailure::OversizedRecord);
         }
     }
@@ -445,6 +580,100 @@ fn typed_record<T: CloudKitRecord>(
         T::from_record_encrypted(&record.record_field, Some(key))
     }))
     .map_err(|_| decoder_failure_at("typed_record_decode_panic"))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CloudMessageTypeDiagnosticLabels {
+    message_type_class: &'static str,
+    association_presence: &'static str,
+    association_type_class: &'static str,
+    parent_reference_class: &'static str,
+    associated_range_class: &'static str,
+}
+
+fn cloud_message_service_class(service: &str) -> Option<&'static str> {
+    if service == "iMessage" {
+        None
+    } else if service.is_empty() {
+        Some("empty")
+    } else if service.eq_ignore_ascii_case("iMessage") {
+        Some("imessage_case_variant")
+    } else if service == "SMS" {
+        Some("sms")
+    } else if service == "FaceTime" {
+        Some("facetime")
+    } else {
+        Some("other")
+    }
+}
+
+fn cloud_message_type_diagnostic_labels(
+    message: &CloudMessage,
+) -> CloudMessageTypeDiagnosticLabels {
+    let message_type_class = match message.r#type {
+        0 => "zero",
+        1 => "normal",
+        2 => "association",
+        3 => "group_title_change",
+        4 => "location_share_status_change",
+        5 => "message_action",
+        6 => "participant_change",
+        7 => "group_action",
+        value if value < 0 => "negative",
+        _ => "other_positive",
+    };
+    let proto = &message.msg_proto.0;
+    let association_presence = if proto.associated_message_type.is_some() {
+        "present"
+    } else {
+        "absent"
+    };
+    let association_type_class = match proto.associated_message_type {
+        None => "none",
+        Some(2) => "sticker",
+        Some(2000..=2007) => "reaction_add",
+        Some(3000..=3007) => "reaction_remove",
+        Some(_) => "other",
+    };
+    let parent_reference_class = match proto.associated_message_guid.as_deref() {
+        None => "absent",
+        Some(value) if value.starts_with("p:") => "p",
+        Some(value) if value.starts_with("bp:") => "bp",
+        Some(value) if value.starts_with("bpdi:") => "bpdi",
+        Some(value) if !value.contains(':') && !value.contains('/') => "bare",
+        Some(_) => "other",
+    };
+    let associated_range_class = match (
+        proto.associated_message_range_location,
+        proto.associated_message_range_length,
+    ) {
+        (None, None) => "absent",
+        (Some(_), Some(_)) => "complete",
+        _ => "partial",
+    };
+
+    CloudMessageTypeDiagnosticLabels {
+        message_type_class,
+        association_presence,
+        association_type_class,
+        parent_reference_class,
+        associated_range_class,
+    }
+}
+
+fn cloud_message_proto4_service_class(message: &CloudMessage) -> Option<&'static str> {
+    message
+        .msg_proto_4
+        .as_ref()
+        .and_then(|proto| proto.0.service.as_deref())
+        .and_then(cloud_message_service_class)
+}
+
+fn cloud_message_requires_unsupported_type_diagnostic(message: &CloudMessage) -> bool {
+    match message.msg_proto.0.associated_message_type {
+        None => message.r#type != 1,
+        Some(_) => message.r#type != 2,
+    }
 }
 
 fn map_native_failure(
@@ -485,12 +714,20 @@ fn map_native_failure(
 fn map_push_failure(error: &PushError) -> CloudTransientBridgeFailure {
     match error {
         PushError::PCSRecordKeyMissing
+        | PushError::PCSKeyIdMismatch
+        | PushError::PCSDecryptionFailed
+        | PushError::NotInClique
         | PushError::ShareKeyNotFound(_)
         | PushError::MasterKeyNotFound
         | PushError::DecryptionKeyNotFound(_) => CloudTransientBridgeFailure::PcsUnavailable,
+        PushError::CloudKitWarmAuthenticationRequired => {
+            CloudTransientBridgeFailure::WarmAuthenticationRequired
+        }
+        PushError::PCSCiphertextMalformed => CloudTransientBridgeFailure::MalformedRecord,
         PushError::RequestError(_)
         | PushError::CloudKitHttpError { .. }
         | PushError::CloudKitError(_)
+        | PushError::CloudKitChangeTokenExpired
         | PushError::ResourceTimeout
         | PushError::ResourceGenTimeout
         | PushError::TooManyRequests => CloudTransientBridgeFailure::RetryableUpstream,
@@ -935,11 +1172,11 @@ pub(crate) async fn cloud_sync_decode_transient_record(
         );
     }
 
-    let record = match Record::decode(raw).map_err(|_| CloudTransientBridgeFailure::MalformedRecord)
-    {
-        Ok(value) => value,
-        Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
-    };
+    let mut record =
+        match Record::decode(raw).map_err(|_| CloudTransientBridgeFailure::MalformedRecord) {
+            Ok(value) => value,
+            Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
+        };
     if let Err(failure) = validate_upsert_record(&envelope, &record) {
         return CloudTransientDecodeOutcome::Failure(failure);
     }
@@ -951,18 +1188,22 @@ pub(crate) async fn cloud_sync_decode_transient_record(
             )
         }
     };
-    let container = match cloud_messages_client.get_container().await {
+    let container = match cloud_messages_client.get_container_lookup_only().await {
         Ok(value) => value,
         Err(error) => {
             return CloudTransientDecodeOutcome::Failure(map_push_failure_at(
                 &error,
-                "container_initialization",
+                "warm_container_preflight",
             ));
         }
     };
     let zone = container.private_zone(request.stream.zone().to_owned());
     let zone_key = match container
-        .get_zone_encryption_config(&zone, &cloud_messages_client.keychain, &MESSAGES_SERVICE)
+        .get_zone_encryption_config_lookup_only(
+            &zone,
+            &cloud_messages_client.keychain,
+            &MESSAGES_SERVICE,
+        )
         .await
     {
         Ok(value) => value,
@@ -986,11 +1227,14 @@ pub(crate) async fn cloud_sync_decode_transient_record(
                 return CloudTransientDecodeOutcome::Failure(decoder_failure_at("record_key_panic"))
             }
         };
+    if let Err(failure) = preflight_record_ciphertext_keys(&record, &record_key) {
+        return CloudTransientDecodeOutcome::Failure(failure);
+    }
 
     let converted = match request.stream {
         CloudNativeStream::Chats => {
             if let Err(failure) = preflight_gzip_fields(
-                &record,
+                &mut record,
                 &record_key,
                 &presence,
                 &[GzipFieldSpec::optional("proto001")],
@@ -1034,7 +1278,7 @@ pub(crate) async fn cloud_sync_decode_transient_record(
         }
         CloudNativeStream::Messages => {
             if let Err(failure) = preflight_gzip_fields(
-                &record,
+                &mut record,
                 &record_key,
                 &presence,
                 &[
@@ -1051,6 +1295,23 @@ pub(crate) async fn cloud_sync_decode_transient_record(
                 Ok(value) => value,
                 Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
             };
+            if let Some(service_class) = cloud_message_service_class(&message.service) {
+                warn!("CloudKit V2 transient message service_class={service_class}");
+            }
+            if let Some(proto4_service_class) = cloud_message_proto4_service_class(&message) {
+                warn!("CloudKit V2 transient message proto4_service_class={proto4_service_class}");
+            }
+            if cloud_message_requires_unsupported_type_diagnostic(&message) {
+                let labels = cloud_message_type_diagnostic_labels(&message);
+                warn!(
+                    "CloudKit V2 transient message message_type_class={} association_presence={} association_type_class={} parent_reference_class={} associated_range_class={}",
+                    labels.message_type_class,
+                    labels.association_presence,
+                    labels.association_type_class,
+                    labels.parent_reference_class,
+                    labels.associated_range_class,
+                );
+            }
             convert_message(&context, &presence, &message)
         }
         CloudNativeStream::Attachments => {
@@ -1106,6 +1367,10 @@ mod tests {
         CloudCanonicalMessagePayload, CloudCanonicalMutationKind, CloudCanonicalParentReference,
         CloudCanonicalPayload, CloudCanonicalProtectedReference, CloudCanonicalReactionKind,
         CloudCanonicalService, CloudCanonicalSnapshot, CLOUD_CANONICAL_SCHEMA_VERSION,
+    };
+    use rustpush::cloud_messages::{
+        cloudmessagesp::{MessageProto, MessageProto4},
+        GZipWrapper,
     };
 
     fn digest(character: char) -> String {
@@ -1724,6 +1989,52 @@ mod tests {
     }
 
     #[test]
+    fn only_optional_zero_length_gzip_plaintext_is_normalized_away() {
+        use rustpush::cloudkit_proto::record::field::value::Type;
+
+        let mut optional = gzip_test_record(
+            "msgProto2",
+            Type::EncryptedBytesType as i32,
+            Some(Vec::new()),
+        );
+        assert!(normalize_optional_empty_gzip_field(
+            &mut optional,
+            GzipFieldSpec::optional("msgProto2"),
+            &[],
+        ));
+        assert!(optional.record_field.is_empty());
+
+        let mut required = gzip_test_record(
+            "msgProto",
+            Type::EncryptedBytesType as i32,
+            Some(Vec::new()),
+        );
+        assert!(!normalize_optional_empty_gzip_field(
+            &mut required,
+            GzipFieldSpec::required("msgProto"),
+            &[],
+        ));
+        assert_eq!(required.record_field.len(), 1);
+
+        let mut non_empty =
+            gzip_test_record("msgProto2", Type::EncryptedBytesType as i32, Some(vec![1]));
+        assert!(!normalize_optional_empty_gzip_field(
+            &mut non_empty,
+            GzipFieldSpec::optional("msgProto2"),
+            &[1],
+        ));
+        assert_eq!(non_empty.record_field.len(), 1);
+    }
+
+    #[test]
+    fn non_gzip_header_diagnostics_are_bounded_categories() {
+        assert_eq!(non_gzip_header_stage(&[]), "header_empty");
+        assert_eq!(non_gzip_header_stage(&[0x08]), "header_single_byte");
+        assert_eq!(non_gzip_header_stage(&[0x78, 0x9c]), "header_zlib");
+        assert_eq!(non_gzip_header_stage(b"not-gzip"), "header_non_gzip");
+    }
+
+    #[test]
     fn optional_empty_list_skips_gzip_preflight_but_required_empty_list_is_rejected() {
         use rustpush::cloudkit_proto::record::field::value::Type;
 
@@ -1821,6 +2132,183 @@ mod tests {
         );
     }
 
+    fn diagnostic_message(
+        message_type: i64,
+        associated_message_type: Option<u32>,
+        service: &str,
+    ) -> CloudMessage {
+        CloudMessage {
+            r#type: message_type,
+            msg_proto: GZipWrapper(MessageProto {
+                associated_message_type,
+                ..Default::default()
+            }),
+            service: service.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    fn diagnostic_message_with_proto4_service(service: Option<&str>) -> CloudMessage {
+        CloudMessage {
+            msg_proto_4: service.map(|service| {
+                GZipWrapper(MessageProto4 {
+                    service: Some(service.to_owned()),
+                    ..Default::default()
+                })
+            }),
+            ..diagnostic_message(1, None, "iMessage")
+        }
+    }
+
+    #[test]
+    fn message_diagnostic_labels_are_allowlisted_and_shape_based() {
+        let normal = diagnostic_message(1, None, "iMessage");
+        let normal_labels = cloud_message_type_diagnostic_labels(&normal);
+        assert_eq!(
+            normal_labels,
+            CloudMessageTypeDiagnosticLabels {
+                message_type_class: "normal",
+                association_presence: "absent",
+                association_type_class: "none",
+                parent_reference_class: "absent",
+                associated_range_class: "absent",
+            }
+        );
+        assert_eq!(cloud_message_service_class(&normal.service), None);
+        assert!(!cloud_message_requires_unsupported_type_diagnostic(&normal));
+
+        let association = diagnostic_message(2, Some(2000), "iMessage");
+        let association_labels = cloud_message_type_diagnostic_labels(&association);
+        assert_eq!(association_labels.message_type_class, "association");
+        assert_eq!(association_labels.association_presence, "present");
+        assert_eq!(association_labels.association_type_class, "reaction_add");
+        assert_eq!(association_labels.parent_reference_class, "absent");
+        assert_eq!(association_labels.associated_range_class, "absent");
+        assert_eq!(cloud_message_service_class(&association.service), None);
+        assert!(!cloud_message_requires_unsupported_type_diagnostic(
+            &association
+        ));
+
+        let labels = cloud_message_type_diagnostic_labels(&diagnostic_message(
+            8,
+            None,
+            "private-service-name",
+        ));
+        assert_eq!(labels.message_type_class, "other_positive");
+        assert_eq!(labels.association_presence, "absent");
+        assert_eq!(labels.association_type_class, "none");
+        assert_eq!(labels.parent_reference_class, "absent");
+        assert_eq!(labels.associated_range_class, "absent");
+        assert!(!format!("{labels:?}").contains("private-service-name"));
+        assert_eq!(
+            cloud_message_service_class("private-service-name"),
+            Some("other")
+        );
+
+        for (message_type, expected_class) in [
+            (3, "group_title_change"),
+            (4, "location_share_status_change"),
+            (5, "message_action"),
+            (6, "participant_change"),
+            (7, "group_action"),
+        ] {
+            let labels = cloud_message_type_diagnostic_labels(&diagnostic_message(
+                message_type,
+                None,
+                "iMessage",
+            ));
+            assert_eq!(labels.message_type_class, expected_class);
+            assert_eq!(labels.association_presence, "absent");
+        }
+    }
+
+    #[test]
+    fn association_diagnostic_labels_are_fixed_and_content_free() {
+        for (associated_type, expected_type_class) in [
+            (2, "sticker"),
+            (2007, "reaction_add"),
+            (3007, "reaction_remove"),
+            (42, "other"),
+        ] {
+            let mut message = diagnostic_message(1, Some(associated_type), "iMessage");
+            message.msg_proto.0.associated_message_guid =
+                Some("p:0/private-parent-identifier".to_owned());
+            message.msg_proto.0.associated_message_range_location = Some(0);
+            message.msg_proto.0.associated_message_range_length = Some(4);
+            let labels = cloud_message_type_diagnostic_labels(&message);
+            assert_eq!(labels.association_type_class, expected_type_class);
+            assert_eq!(labels.parent_reference_class, "p");
+            assert_eq!(labels.associated_range_class, "complete");
+            assert!(!format!("{labels:?}").contains("private-parent-identifier"));
+        }
+
+        for (parent, expected_class) in [
+            ("bp:0/private-parent", "bp"),
+            ("bpdi:0/private-parent", "bpdi"),
+            ("private-parent", "bare"),
+            ("other:private-parent", "other"),
+        ] {
+            let mut message = diagnostic_message(1, Some(2000), "iMessage");
+            message.msg_proto.0.associated_message_guid = Some(parent.to_owned());
+            let labels = cloud_message_type_diagnostic_labels(&message);
+            assert_eq!(labels.parent_reference_class, expected_class);
+        }
+
+        let mut partial = diagnostic_message(1, Some(2000), "iMessage");
+        partial.msg_proto.0.associated_message_range_location = Some(0);
+        assert_eq!(
+            cloud_message_type_diagnostic_labels(&partial).associated_range_class,
+            "partial"
+        );
+    }
+
+    #[test]
+    fn message_diagnostic_warns_only_for_non_imessage_or_unsupported_type_shape() {
+        for (message_type, associated_message_type) in [(0, None), (1, Some(2000)), (2, None)] {
+            let message = diagnostic_message(message_type, associated_message_type, "iMessage");
+            assert!(cloud_message_requires_unsupported_type_diagnostic(&message));
+        }
+
+        for message_type in [-3, 3, 2000] {
+            let message = diagnostic_message(message_type, None, "iMessage");
+            assert!(cloud_message_requires_unsupported_type_diagnostic(&message));
+        }
+
+        for service in ["", "iMessage ", "SMS", "FaceTime", "other"] {
+            let message = diagnostic_message(1, None, service);
+            assert_ne!(service, "iMessage");
+            assert!(cloud_message_service_class(&message.service).is_some());
+            assert!(!cloud_message_requires_unsupported_type_diagnostic(
+                &message
+            ));
+        }
+    }
+
+    #[test]
+    fn proto4_service_diagnostic_is_optional_and_allowlisted() {
+        let absent = diagnostic_message_with_proto4_service(None);
+        assert_eq!(cloud_message_proto4_service_class(&absent), None);
+
+        let exact = diagnostic_message_with_proto4_service(Some("iMessage"));
+        assert_eq!(cloud_message_proto4_service_class(&exact), None);
+
+        for (service, expected_class) in [
+            ("", "empty"),
+            ("IMESSAGE", "imessage_case_variant"),
+            ("iMessage ", "other"),
+            ("SMS", "sms"),
+            ("FaceTime", "facetime"),
+            ("private-service-name", "other"),
+        ] {
+            let message = diagnostic_message_with_proto4_service(Some(service));
+            assert_eq!(
+                cloud_message_proto4_service_class(&message),
+                Some(expected_class)
+            );
+            assert_ne!(expected_class, service);
+        }
+    }
+
     #[test]
     fn debug_output_never_contains_content() {
         let secret = "private-message-content";
@@ -1830,6 +2318,31 @@ mod tests {
         );
         assert!(!output.contains(secret));
         assert!(!format!("{:?}", CloudTransientBridgeFailure::DecoderFailure).contains(secret));
+    }
+
+    #[test]
+    fn semantic_failure_mapping_classifies_warm_auth_as_authorization_not_pcs() {
+        let warm_auth = map_push_failure(&PushError::CloudKitWarmAuthenticationRequired);
+        assert_eq!(
+            warm_auth,
+            CloudTransientBridgeFailure::WarmAuthenticationRequired
+        );
+        assert_ne!(
+            warm_auth,
+            CloudTransientBridgeFailure::ActiveAccountMismatch
+        );
+        assert_ne!(warm_auth, CloudTransientBridgeFailure::PcsUnavailable);
+
+        let rendered = format!("{warm_auth:?}");
+        for sentinel in [
+            "private-message-sentinel",
+            "dsid-sentinel",
+            "token-sentinel",
+            "peer-id-sentinel",
+            "key-id-sentinel",
+        ] {
+            assert!(!rendered.contains(sentinel));
+        }
     }
 
     #[test]

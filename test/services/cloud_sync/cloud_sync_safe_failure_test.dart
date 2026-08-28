@@ -12,6 +12,12 @@ void main() {
     );
     expect(
       cloudSyncV2SafeFailureCode(
+        StateError('cloud_sync_canary_package_required'),
+      ),
+      'cloud_sync_canary_package_required',
+    );
+    expect(
+      cloudSyncV2SafeFailureCode(
         StateError('account-secret@example.com should never be shown'),
       ),
       'cloud_sync_unknown_failure',
@@ -78,7 +84,7 @@ void main() {
 
   test('exposes reviewed shadow stage codes', () {
     const codes = <String>{
-      'cloud_sync_shadow_auth_capture_failed',
+      'cloud_sync_shadow_auth_prepare_failed',
       'cloud_sync_shadow_auth_revalidation_failed',
       'cloud_sync_shadow_cleanup_failed',
       'cloud_sync_shadow_observer_flush_failed',
@@ -97,6 +103,7 @@ void main() {
   test('exposes reviewed native auth codes', () {
     const codes = <String>{
       'cloud_sync_native_auth_account_fingerprint_failed',
+      'cloud_sync_native_auth_account_changed',
       'cloud_sync_native_auth_account_unavailable',
       'cloud_sync_native_auth_bridge_failed',
       'cloud_sync_native_auth_client_type_invalid',
@@ -104,6 +111,8 @@ void main() {
       'cloud_sync_native_auth_session_fingerprint_failed',
       'cloud_sync_native_auth_storage_invalid',
       'cloud_sync_native_auth_store_identity_failed',
+      'cloud_sync_native_auth_warm_failed',
+      'cloud_sync_native_auth_warm_timeout',
     };
     for (final code in codes) {
       expect(cloudSyncV2SafeFailureCode(StateError(code)), code);

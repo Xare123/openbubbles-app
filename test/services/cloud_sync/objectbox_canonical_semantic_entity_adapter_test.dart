@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -7,6 +8,8 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_merge_policy.dart
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_canonical_semantic_entity_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_semantic_store_gateway.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/transient_cloud_canonical_identity_registry.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'cloud_sync_test_helpers.dart';
@@ -87,6 +90,14 @@ void main() {
     'uses exact scope, generation, kind, and resolved canonical identity',
     () {
       store.box<Chat>().put(Chat(guid: 'chat-guid'));
+      _seedExactOwnershipProof(
+        store,
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.chat,
+        logicalEntityKeyHash: chatHash,
+        canonicalGuid: 'chat-guid',
+      );
       final adapter = _newAdapter(
         store: store,
         activeScopeProvider: () => activeScope,
@@ -162,6 +173,14 @@ void main() {
         snapshot: _snapshot(CloudEntityKind.chat, chatHash),
       ),
       CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: 'chat-guid',
     );
     expect(
       adapter.applyEntity(
@@ -384,6 +403,14 @@ void main() {
     }
 
     apply(2, 'mailto:alice@example.com');
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: versionedHash,
+      canonicalGuid: 'versioned-chat-guid',
+    );
     apply(2, 'mailto:bob@example.com');
     expect(
       store.box<Chat>().getAll().single.handles.map((handle) => handle.address),
@@ -409,6 +436,14 @@ void main() {
         lockChatName: true,
         style: 45,
       ),
+    );
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: 'chat-guid',
     );
     final adapter = _newAdapter(
       store: store,
@@ -441,6 +476,14 @@ void main() {
         displayName: 'Keep until verified',
         style: 45,
       ),
+    );
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: 'chat-guid',
     );
     final payload = _chatPayload(
       logicalEntityKeyHash: chatHash,
@@ -603,6 +646,14 @@ void main() {
       ),
       CloudCanonicalSemanticMutationReceipt.committed,
     );
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: 'message-guid',
+    );
     expect(
       adapter.applyEntity(
         scope: scope,
@@ -700,6 +751,14 @@ void main() {
     }
 
     apply(body: 'first', readAt: firstRead, deliveredAt: firstDelivered);
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: 'message-guid',
+    );
     final firstId = store.box<Message>().getAll().single.id;
     apply(body: 'second', readAt: secondRead, deliveredAt: secondDelivered);
     apply(body: 'older', readAt: firstRead, deliveredAt: firstDelivered);
@@ -728,6 +787,14 @@ void main() {
       hasAttachments: true,
     )..chat.target = chat;
     final messageId = store.box<Message>().put(message);
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: 'message-guid',
+    );
     final adapter = _newAdapter(
       store: store,
       activeScopeProvider: () => activeScope,
@@ -774,6 +841,14 @@ void main() {
       text: 'original',
     )..chat.targetId = firstChatId;
     store.box<Message>().put(existing);
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: 'message-guid',
+    );
     final adapter = _newAdapter(
       store: store,
       activeScopeProvider: () => activeScope,
@@ -831,6 +906,517 @@ void main() {
     expect(store.box<Message>().count(), 1);
     expect(store.box<Handle>().count(), 0);
   });
+
+  test('rejects a canonical GUID already owned by another entity kind', () {
+    final chatId = store.box<Chat>().put(
+      Chat(guid: 'chat-guid', chatIdentifier: 'iMessage;-;chat'),
+    );
+    final existing = Message(
+      guid: 'shared-guid',
+      dateCreated: testEpoch,
+      isFromMe: false,
+    )..chat.targetId = chatId;
+    final existingId = store.box<Message>().put(existing);
+    resolver
+      ..put(
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.reaction,
+        logicalEntityKeyHash: 'existing-reaction-key',
+        canonicalGuid: 'shared-guid',
+      )
+      ..put(
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: 'new-message-key',
+        canonicalGuid: 'shared-guid',
+      );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+
+    expect(
+      () => adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: 'new-message-key',
+          canonicalGuid: 'shared-guid',
+          chatIdentifier: 'iMessage;-;chat',
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, 'new-message-key'),
+      ),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) => failure.safeCode == 'canonical_identity_owner_conflict',
+        ),
+      ),
+    );
+    final unchanged = store.box<Message>().get(existingId)!;
+    expect(unchanged.guid, 'shared-guid');
+    expect(unchanged.chat.targetId, chatId);
+    expect(unchanged.text, isNull);
+    expect(store.box<Handle>().count(), 0);
+  });
+
+  test(
+    'rejects a released transient GUID reuse using the durable snapshot owner',
+    () {
+      final chatId = store.box<Chat>().put(
+        Chat(guid: 'chat-guid', chatIdentifier: 'iMessage;-;chat'),
+      );
+      final existingId = store.box<Message>().put(
+        Message(
+          guid: 'shared-guid',
+          dateCreated: testEpoch,
+          isFromMe: false,
+          text: 'prior durable body',
+        )..chat.targetId = chatId,
+      );
+      final registry = TransientCloudCanonicalIdentityRegistry();
+      final priorPayload = _messagePayload(
+        logicalEntityKeyHash: 'prior-message-key',
+        canonicalGuid: 'shared-guid',
+        chatIdentifier: 'iMessage;-;chat',
+      );
+      final priorLease = registry.bind(
+        CloudDecodedMutation.upsert(
+          scope: scope,
+          generation: generation,
+          changeId: 'prior-change',
+          snapshot: _snapshot(CloudEntityKind.message, 'prior-message-key'),
+          payload: priorPayload,
+        ),
+      );
+      priorLease.release();
+      expect(registry.hasActiveLease, isFalse);
+
+      store.runInTransaction(TxMode.write, () {
+        store.box<CloudRecordMapEntity>().put(
+          CloudRecordMapEntity(
+            mapKey: 'prior-record-map',
+            scopeKey: _semanticScopeKey(scope),
+            accountFingerprint: scope.accountFingerprint,
+            zone: scope.zone,
+            logicalEntityKeyHash: 'prior-message-key',
+            serverRecordIdHash: 'prior-record-id',
+            generation: generation,
+            encryptedServerRecordId: _protectedReference('prior-record'),
+            updatedAtMs: testEpoch.millisecondsSinceEpoch,
+          ),
+        );
+        store.box<CloudSemanticSnapshotEntity>().put(
+          CloudSemanticSnapshotEntity(
+            snapshotKey: 'prior-semantic-snapshot',
+            scopeGenerationKey: _semanticScopeGenerationKey(scope, generation),
+            scopeKey: _semanticScopeKey(scope),
+            accountFingerprint: scope.accountFingerprint,
+            container: scope.container,
+            database: scope.database,
+            zone: scope.zone,
+            streamKind: scope.streamKind.name,
+            schemaVersion: scope.schemaVersion,
+            generation: generation,
+            entityKind: CloudEntityKind.message.name,
+            logicalEntityKeyHash: 'prior-message-key',
+            canonicalGuidHash: CloudCanonicalIdentityDigest.forPayload(
+              scope: scope,
+              generation: generation,
+              payload: priorPayload,
+            ),
+            canonicalGuidLookupHash:
+                CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+                  scope: scope,
+                  generation: generation,
+                  canonicalGuid: priorPayload.canonicalGuid,
+                ),
+            immutableContentDigest: 'prior-content-digest',
+            updatedAtMs: testEpoch.millisecondsSinceEpoch,
+          ),
+        );
+      });
+
+      final reusedPayload = _messagePayload(
+        logicalEntityKeyHash: 'reused-message-key',
+        canonicalGuid: 'shared-guid',
+        chatIdentifier: 'iMessage;-;chat',
+        body: 'must not replace prior body',
+      );
+      final reusedLease = registry.bind(
+        CloudDecodedMutation.upsert(
+          scope: scope,
+          generation: generation,
+          changeId: 'reused-change',
+          snapshot: _snapshot(CloudEntityKind.message, 'reused-message-key'),
+          payload: reusedPayload,
+        ),
+      );
+      final adapter = _newAdapter(
+        store: store,
+        activeScopeProvider: () => activeScope,
+        resolver: registry,
+        semanticApplyEnabled: true,
+        allowMessageUpserts: true,
+      );
+
+      try {
+        expect(
+          () => adapter.applyEntity(
+            scope: scope,
+            generation: generation,
+            payload: reusedPayload,
+            snapshot: _snapshot(CloudEntityKind.message, 'reused-message-key'),
+          ),
+          throwsA(
+            predicate<CloudSyncFailure>(
+              (failure) =>
+                  failure.safeCode == 'canonical_identity_owner_conflict',
+            ),
+          ),
+        );
+      } finally {
+        reusedLease.release();
+      }
+
+      final unchanged = store.box<Message>().get(existingId)!;
+      expect(unchanged.guid, 'shared-guid');
+      expect(unchanged.chat.targetId, chatId);
+      expect(unchanged.text, 'prior durable body');
+      expect(store.box<Message>().count(), 1);
+      expect(store.box<CloudRecordMapEntity>().count(), 1);
+      expect(store.box<CloudSemanticSnapshotEntity>().count(), 1);
+      expect(store.box<Handle>().count(), 0);
+    },
+  );
+
+  test(
+    'rejects a legacy scoped snapshot without an ownership digest before a new canonical row is created',
+    () {
+      const incomingKey = 'new-message-key';
+      const incomingGuid = 'new-message-guid';
+      resolver.put(
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: incomingKey,
+        canonicalGuid: incomingGuid,
+      );
+      store.box<CloudSemanticSnapshotEntity>().put(
+        CloudSemanticSnapshotEntity(
+          snapshotKey: 'legacy-semantic-snapshot-without-owner',
+          scopeGenerationKey: _semanticScopeGenerationKey(scope, generation),
+          scopeKey: _semanticScopeKey(scope),
+          accountFingerprint: scope.accountFingerprint,
+          container: scope.container,
+          database: scope.database,
+          zone: scope.zone,
+          streamKind: scope.streamKind.name,
+          schemaVersion: scope.schemaVersion,
+          generation: generation,
+          entityKind: CloudEntityKind.message.name,
+          logicalEntityKeyHash: 'legacy-message-key',
+          immutableContentDigest: 'legacy-content-digest',
+          updatedAtMs: testEpoch.millisecondsSinceEpoch,
+        ),
+      );
+      final adapter = _newAdapter(
+        store: store,
+        activeScopeProvider: () => activeScope,
+        resolver: resolver,
+        semanticApplyEnabled: true,
+        allowMessageUpserts: true,
+      );
+
+      expect(store.box<Message>().count(), 0);
+      expect(
+        () => adapter.applyEntity(
+          scope: scope,
+          generation: generation,
+          payload: _messagePayload(
+            logicalEntityKeyHash: incomingKey,
+            canonicalGuid: incomingGuid,
+            chatIdentifier: 'iMessage;-;chat',
+          ),
+          snapshot: _snapshot(CloudEntityKind.message, incomingKey),
+        ),
+        throwsA(
+          predicate<CloudSyncFailure>(
+            (failure) =>
+                failure.safeCode == 'canonical_identity_owner_unproven',
+          ),
+        ),
+      );
+      expect(store.box<Message>().count(), 0);
+      expect(store.box<Handle>().count(), 0);
+      expect(store.box<CloudSemanticSnapshotEntity>().count(), 1);
+    },
+  );
+
+  test(
+    'rejects ownership evidence re-homed across scope generation kind or owner',
+    () {
+      final alternateScope = CloudSyncScope(
+        accountFingerprint: testAccountFingerprintB,
+        container: scope.container,
+        database: scope.database,
+        zone: scope.zone,
+      );
+      const canonicalGuid = 're-homed-guid';
+      const sourceOwner = 'source-owner';
+      const targetOwner = 'target-owner';
+      final cases =
+          <
+            (
+              String,
+              CloudSyncScope,
+              int,
+              CloudEntityKind,
+              String,
+              CloudSyncScope,
+              int,
+              CloudEntityKind,
+              String,
+            )
+          >[
+            (
+              'scope',
+              alternateScope,
+              generation,
+              CloudEntityKind.message,
+              sourceOwner,
+              scope,
+              generation,
+              CloudEntityKind.message,
+              sourceOwner,
+            ),
+            (
+              'generation',
+              scope,
+              generation + 1,
+              CloudEntityKind.message,
+              sourceOwner,
+              scope,
+              generation,
+              CloudEntityKind.message,
+              sourceOwner,
+            ),
+            (
+              'kind',
+              scope,
+              generation,
+              CloudEntityKind.reaction,
+              sourceOwner,
+              scope,
+              generation,
+              CloudEntityKind.message,
+              sourceOwner,
+            ),
+            (
+              'owner',
+              scope,
+              generation,
+              CloudEntityKind.message,
+              targetOwner,
+              scope,
+              generation,
+              CloudEntityKind.message,
+              sourceOwner,
+            ),
+          ];
+
+      for (final value in cases) {
+        final (
+          label,
+          targetScope,
+          targetGeneration,
+          targetKind,
+          targetOwner,
+          sourceScope,
+          sourceGeneration,
+          sourceKind,
+          sourceOwnerForDigest,
+        ) = value;
+        final caseCanonicalGuid = '$canonicalGuid-$label';
+        store.box<CloudSemanticSnapshotEntity>().removeAll();
+        resolver.put(
+          scope: targetScope,
+          generation: targetGeneration,
+          kind: targetKind,
+          logicalEntityKeyHash: targetOwner,
+          canonicalGuid: caseCanonicalGuid,
+        );
+        activeScope = CloudCanonicalActiveScope(
+          scope: targetScope,
+          generation: targetGeneration,
+        );
+        store.box<CloudSemanticSnapshotEntity>().put(
+          CloudSemanticSnapshotEntity(
+            snapshotKey: 're-homed-$label',
+            scopeGenerationKey: _semanticScopeGenerationKey(
+              targetScope,
+              targetGeneration,
+            ),
+            scopeKey: _semanticScopeKey(targetScope),
+            accountFingerprint: targetScope.accountFingerprint,
+            container: targetScope.container,
+            database: targetScope.database,
+            zone: targetScope.zone,
+            streamKind: targetScope.streamKind.name,
+            schemaVersion: targetScope.schemaVersion,
+            generation: targetGeneration,
+            entityKind: targetKind.name,
+            logicalEntityKeyHash: targetOwner,
+            canonicalGuidHash: CloudCanonicalIdentityDigest.forCanonicalGuid(
+              scope: sourceScope,
+              generation: sourceGeneration,
+              kind: sourceKind,
+              logicalEntityKeyHash: sourceOwnerForDigest,
+              canonicalGuid: caseCanonicalGuid,
+            ),
+            canonicalGuidLookupHash:
+                CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+                  scope: targetScope,
+                  generation: targetGeneration,
+                  canonicalGuid: caseCanonicalGuid,
+                ),
+            updatedAtMs: testEpoch.millisecondsSinceEpoch,
+          ),
+        );
+        final adapter = _newAdapter(
+          store: store,
+          activeScopeProvider: () => activeScope,
+          resolver: resolver,
+          semanticApplyEnabled: true,
+        );
+
+        expect(
+          () => adapter.validateOwnershipEvidence(
+            scope: targetScope,
+            generation: targetGeneration,
+            kind: targetKind,
+            logicalEntityKeyHash: targetOwner,
+          ),
+          throwsA(
+            predicate<CloudSyncFailure>(
+              (failure) =>
+                  failure.safeCode == 'canonical_identity_owner_unproven',
+            ),
+          ),
+          reason: label,
+        );
+      }
+    },
+  );
+
+  test(
+    'rejects inherited and foreign-scope canonical rows without an exact current durable proof',
+    () {
+      final chatId = store.box<Chat>().put(
+        Chat(guid: 'chat-guid', chatIdentifier: 'iMessage;-;ownership-chat'),
+      );
+      final adapter = _newAdapter(
+        store: store,
+        activeScopeProvider: () => activeScope,
+        resolver: resolver,
+        semanticApplyEnabled: true,
+        allowMessageUpserts: true,
+      );
+      final foreignScope = CloudSyncScope(
+        accountFingerprint: testAccountFingerprintB,
+        container: scope.container,
+        database: scope.database,
+        zone: scope.zone,
+      );
+      final cases = <(String, String, bool)>[
+        ('inherited-without-proof', 'inherited-guid', false),
+        ('foreign-scope-proof', 'foreign-guid', true),
+      ];
+
+      for (final (logicalKey, canonicalGuid, seedForeignProof) in cases) {
+        final existingId = store.box<Message>().put(
+          Message(
+            guid: canonicalGuid,
+            dateCreated: testEpoch,
+            isFromMe: false,
+            text: 'must remain unchanged',
+          )..chat.targetId = chatId,
+        );
+        resolver.put(
+          scope: scope,
+          generation: generation,
+          kind: CloudEntityKind.message,
+          logicalEntityKeyHash: logicalKey,
+          canonicalGuid: canonicalGuid,
+        );
+        if (seedForeignProof) {
+          store.box<CloudSemanticSnapshotEntity>().put(
+            CloudSemanticSnapshotEntity(
+              snapshotKey: 'foreign-proof-$logicalKey',
+              scopeGenerationKey: _semanticScopeGenerationKey(
+                foreignScope,
+                generation,
+              ),
+              scopeKey: _semanticScopeKey(foreignScope),
+              accountFingerprint: foreignScope.accountFingerprint,
+              container: foreignScope.container,
+              database: foreignScope.database,
+              zone: foreignScope.zone,
+              streamKind: foreignScope.streamKind.name,
+              schemaVersion: foreignScope.schemaVersion,
+              generation: generation,
+              entityKind: CloudEntityKind.message.name,
+              logicalEntityKeyHash: logicalKey,
+              canonicalGuidHash: CloudCanonicalIdentityDigest.forCanonicalGuid(
+                scope: foreignScope,
+                generation: generation,
+                kind: CloudEntityKind.message,
+                logicalEntityKeyHash: logicalKey,
+                canonicalGuid: canonicalGuid,
+              ),
+              canonicalGuidLookupHash:
+                  CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+                    scope: foreignScope,
+                    generation: generation,
+                    canonicalGuid: canonicalGuid,
+                  ),
+              updatedAtMs: testEpoch.millisecondsSinceEpoch,
+            ),
+          );
+        }
+
+        expect(
+          () => adapter.applyEntity(
+            scope: scope,
+            generation: generation,
+            payload: _messagePayload(
+              logicalEntityKeyHash: logicalKey,
+              canonicalGuid: canonicalGuid,
+              chatIdentifier: 'iMessage;-;ownership-chat',
+              body: 'must not be written',
+            ),
+            snapshot: _snapshot(CloudEntityKind.message, logicalKey),
+          ),
+          throwsA(
+            predicate<CloudSyncFailure>(
+              (failure) =>
+                  failure.safeCode == 'canonical_identity_owner_unproven',
+            ),
+          ),
+          reason: logicalKey,
+        );
+        expect(
+          store.box<Message>().get(existingId)!.text,
+          'must remain unchanged',
+        );
+      }
+      expect(store.box<Handle>().count(), 0);
+    },
+  );
 
   test('rolls back a message and sender handle for a malformed text range', () {
     final chatId = store.box<Chat>().put(
@@ -963,6 +1549,14 @@ void main() {
         isFromMe: false,
       )..chat.targetId = chatId;
       final parentId = store.box<Message>().put(parent);
+      _seedExactOwnershipProof(
+        store,
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: messageHash,
+        canonicalGuid: 'message-guid',
+      );
       final adapter = _newAdapter(
         store: store,
         activeScopeProvider: () => activeScope,
@@ -990,6 +1584,14 @@ void main() {
           reactionHash,
           parentLogicalKeyHash: messageHash,
         ),
+      );
+      _seedExactOwnershipProof(
+        store,
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.reaction,
+        logicalEntityKeyHash: reactionHash,
+        canonicalGuid: 'reaction-guid',
       );
       adapter.applyEntity(
         scope: scope,
@@ -1041,6 +1643,14 @@ void main() {
       isFromMe: false,
     )..chat.targetId = chatId;
     store.box<Message>().put(parent);
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: 'message-guid',
+    );
     final adapter = _newAdapter(
       store: store,
       activeScopeProvider: () => activeScope,
@@ -1166,6 +1776,14 @@ void main() {
       isFromMe: false,
     );
     final ownerId = store.box<Message>().put(owner);
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: ownerLogicalKeyHash,
+      canonicalGuid: 'message_guid_with_underscores',
+    );
     final adapter = _newAdapter(
       store: store,
       activeScopeProvider: () => activeScope,
@@ -1202,6 +1820,14 @@ void main() {
         ),
       ),
       CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.attachment,
+      logicalEntityKeyHash: 'attachment-hash',
+      canonicalGuid: 'message_guid_with_underscores_2',
     );
     expect(
       adapter.applyEntity(
@@ -1379,6 +2005,22 @@ void main() {
       transferName: 'existing.bin',
     )..message.targetId = secondOwnerId;
     final attachmentId = store.box<Attachment>().put(existing);
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: 'message-guid',
+    );
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.attachment,
+      logicalEntityKeyHash: 'relation-conflict-hash',
+      canonicalGuid: 'message-guid_1',
+    );
     final adapter = _newAdapter(
       store: store,
       activeScopeProvider: () => activeScope,
@@ -1467,6 +2109,14 @@ void main() {
       store.box<Message>().put(
         Message(guid: 'message-guid', dateCreated: testEpoch, isFromMe: false),
       );
+      _seedExactOwnershipProof(
+        store,
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: messageHash,
+        canonicalGuid: 'message-guid',
+      );
       final enabledAdapter = _newAdapter(
         store: store,
         activeScopeProvider: () => activeScope,
@@ -1507,6 +2157,14 @@ void main() {
         displayName: 'Old name',
         lockChatName: false,
       ),
+    );
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: 'chat-guid',
     );
     final adapter = _newAdapter(
       store: store,
@@ -1831,8 +2489,59 @@ CloudSemanticSnapshot _snapshot(
   immutableContentDigest: 'content-digest',
 );
 
+void _seedExactOwnershipProof(
+  Store store, {
+  required CloudSyncScope scope,
+  required int generation,
+  required CloudEntityKind kind,
+  required String logicalEntityKeyHash,
+  required String canonicalGuid,
+}) {
+  store.box<CloudSemanticSnapshotEntity>().put(
+    CloudSemanticSnapshotEntity(
+      snapshotKey:
+          'ownership-proof:$generation:${kind.name}:$logicalEntityKeyHash:$canonicalGuid',
+      scopeGenerationKey: _semanticScopeGenerationKey(scope, generation),
+      scopeKey: _semanticScopeKey(scope),
+      accountFingerprint: scope.accountFingerprint,
+      container: scope.container,
+      database: scope.database,
+      zone: scope.zone,
+      streamKind: scope.streamKind.name,
+      schemaVersion: scope.schemaVersion,
+      generation: generation,
+      entityKind: kind.name,
+      logicalEntityKeyHash: logicalEntityKeyHash,
+      canonicalGuidHash: CloudCanonicalIdentityDigest.forCanonicalGuid(
+        scope: scope,
+        generation: generation,
+        kind: kind,
+        logicalEntityKeyHash: logicalEntityKeyHash,
+        canonicalGuid: canonicalGuid,
+      ),
+      canonicalGuidLookupHash:
+          CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+            scope: scope,
+            generation: generation,
+            canonicalGuid: canonicalGuid,
+          ),
+      updatedAtMs: testEpoch.millisecondsSinceEpoch,
+    ),
+  );
+}
+
+String _semanticScopeKey(CloudSyncScope scope) =>
+    'scope2:${sha256.convert(utf8.encode(scope.storageKey))}';
+
+String _semanticScopeGenerationKey(CloudSyncScope scope, int generation) =>
+    'semantic-generation4:${sha256.convert(utf8.encode('${_semanticScopeKey(scope)}\u001f$generation'))}';
+
+String _protectedReference(String value) =>
+    'obcs2.ref.${base64Url.encode(sha256.convert(utf8.encode(value)).bytes).replaceAll('=', '')}';
+
 final class _Resolver implements CloudCanonicalIdentityResolver {
   final Map<String, String> _values = {};
+  final Map<String, CloudCanonicalIdentityOwner> _owners = {};
 
   void put({
     required CloudSyncScope scope,
@@ -1843,6 +2552,13 @@ final class _Resolver implements CloudCanonicalIdentityResolver {
   }) {
     _values[_key(scope, generation, kind, logicalEntityKeyHash)] =
         canonicalGuid;
+    _owners.putIfAbsent(
+      '${scope.storageKey}:$generation:$canonicalGuid',
+      () => CloudCanonicalIdentityOwner(
+        kind: kind,
+        logicalEntityKeyHash: logicalEntityKeyHash,
+      ),
+    );
   }
 
   @override
@@ -1852,6 +2568,13 @@ final class _Resolver implements CloudCanonicalIdentityResolver {
     required CloudEntityKind kind,
     required String logicalEntityKeyHash,
   }) => _values[_key(scope, generation, kind, logicalEntityKeyHash)];
+
+  @override
+  CloudCanonicalIdentityOwner? resolveCanonicalIdentityOwner({
+    required CloudSyncScope scope,
+    required int generation,
+    required String canonicalGuid,
+  }) => _owners['${scope.storageKey}:$generation:$canonicalGuid'];
 
   String _key(
     CloudSyncScope scope,

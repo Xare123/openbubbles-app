@@ -241,6 +241,9 @@ final class CloudProtectedPageLeaseLifecycle {
 
   Future<CloudProtectedGarbageCollectionResult>
   collectOneProtectedGarbagePage() async {
+    // App-level sync/account admission belongs to
+    // CloudProtectedPageLeaseMaintenanceCaller. This primitive only owns the
+    // protected-store recovery, liveness snapshot, and native store lock.
     await ensureRecoveredBeforeFetch();
     return runProtectedStoreExclusive(
       () async => _transport.collectProtectedGarbage(

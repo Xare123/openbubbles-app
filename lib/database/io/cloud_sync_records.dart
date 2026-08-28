@@ -125,6 +125,7 @@ class CloudInboxChangeEntity {
   @Index(type: IndexType.hash64)
   String batchId;
 
+  @Index()
   int generation;
 
   @Index()
@@ -547,6 +548,18 @@ class CloudSemanticSnapshotEntity {
   @Index(type: IndexType.hash64)
   String logicalEntityKeyHash;
 
+  /// One-way digest of the exact canonical row GUID that this semantic
+  /// snapshot proved and mutated. It is scoped by this row's immutable scope,
+  /// generation, entity kind, and logical key; no raw canonical identifier is
+  /// persisted.
+  String? canonicalGuidHash;
+
+  /// Owner-independent, scope-and-generation-bound lookup digest for the raw
+  /// canonical GUID. This permits an exact bounded ownership query while
+  /// [canonicalGuidHash] remains the owner-bound proof.
+  @Index(type: IndexType.hash64)
+  String? canonicalGuidLookupHash;
+
   String? parentLogicalKeyHash;
   String? immutableContentDigest;
   int createdAtMs;
@@ -577,6 +590,8 @@ class CloudSemanticSnapshotEntity {
     required this.generation,
     required this.entityKind,
     required this.logicalEntityKeyHash,
+    this.canonicalGuidHash,
+    this.canonicalGuidLookupHash,
     this.parentLogicalKeyHash,
     this.immutableContentDigest,
     this.createdAtMs = -1,
@@ -633,6 +648,7 @@ class CloudSemanticReplayEntity {
 
   String? payloadSha256;
   String? protectedPayloadReferenceHash;
+  @Index()
   int inboxSequence;
   String changeType;
 
@@ -667,6 +683,85 @@ class CloudSemanticReplayEntity {
     required this.terminalOutcome,
     this.terminalSafeCode,
     required this.updatedAtMs,
+  });
+}
+
+/// Immutable receipt for one explicitly allowlisted repair of a terminal
+/// semantic quarantine. The original inbox and replay rows are evidence and
+/// are never updated by the repair lane.
+@Entity()
+class CloudKitV2QuarantineRepairReceiptEntity {
+  int id;
+
+  /// Versioned composite of `scopeGenerationKey`, `changeIdHash`,
+  /// `converterRevision`, and `correctionName`.
+  @Index(type: IndexType.hash64)
+  @Unique()
+  String repairKey;
+
+  @Index(type: IndexType.hash64)
+  String scopeGenerationKey;
+
+  @Index(type: IndexType.hash64)
+  String changeIdHash;
+
+  String converterRevision;
+  String correctionName;
+  String scopeKey;
+  String accountFingerprint;
+  String container;
+  String database;
+  String zone;
+  String streamKind;
+  int schemaVersion;
+  int generation;
+  @Index()
+  int inboxSequence;
+  String serverRecordIdHash;
+  String? originalPayloadSha256;
+  String? originalQuarantineReason;
+  String? originalTerminalSafeCode;
+
+  /// Immutable, versioned digest over the complete local evidence that
+  /// authorized this outcome. Nullable fields preserve upgrade compatibility;
+  /// legacy receipts are never trusted and remain retryable.
+  String? evidenceDigestVersion;
+  String? evidenceDigestSha256;
+
+  /// `repaired` or `failed`; this value is immutable.
+  String outcome;
+  String? failureCategory;
+  String? safeCode;
+  String? logicalEntityKeyHash;
+  int createdAtMs;
+
+  CloudKitV2QuarantineRepairReceiptEntity({
+    this.id = 0,
+    required this.repairKey,
+    required this.scopeGenerationKey,
+    required this.changeIdHash,
+    required this.converterRevision,
+    required this.correctionName,
+    required this.scopeKey,
+    required this.accountFingerprint,
+    required this.container,
+    required this.database,
+    required this.zone,
+    required this.streamKind,
+    required this.schemaVersion,
+    required this.generation,
+    required this.inboxSequence,
+    required this.serverRecordIdHash,
+    this.originalPayloadSha256,
+    this.originalQuarantineReason,
+    this.originalTerminalSafeCode,
+    this.evidenceDigestVersion,
+    this.evidenceDigestSha256,
+    required this.outcome,
+    this.failureCategory,
+    this.safeCode,
+    this.logicalEntityKeyHash,
+    required this.createdAtMs,
   });
 }
 

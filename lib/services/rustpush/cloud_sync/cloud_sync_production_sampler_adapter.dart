@@ -45,6 +45,8 @@ final class CloudSyncNativeAuthMetadata {
 }
 
 abstract interface class CloudSyncNativeAuthBinding {
+  Future<void> warmReadAuthentication({required Object cloudMessagesClient});
+
   Future<CloudSyncNativeAuthMetadata> capture({
     required Object cloudMessagesClient,
     required String privateStorageDirectory,
@@ -62,6 +64,25 @@ final class FrbCloudSyncNativeAuthBinding
     : _apiOverride = api;
 
   final frb_generated.RustLibApi? _apiOverride;
+
+  @override
+  Future<void> warmReadAuthentication({
+    required Object cloudMessagesClient,
+  }) async {
+    if (cloudMessagesClient
+        is! frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider) {
+      throw StateError('cloud_sync_native_auth_client_type_invalid');
+    }
+    // ignore: invalid_use_of_internal_member
+    final api = _apiOverride ?? frb_generated.RustLib.instance.api;
+    try {
+      await api.crateApiApiCloudSyncWarmReadAuthentication(
+        cloudMessagesClient: cloudMessagesClient,
+      );
+    } catch (error) {
+      throw StateError(cloudSyncNativeAuthBridgeSafeCode(error));
+    }
+  }
 
   @override
   Future<CloudSyncNativeAuthMetadata> capture({
@@ -116,6 +137,9 @@ final class FrbCloudSyncNativeAuthBinding
 String cloudSyncNativeAuthBridgeSafeCode(Object error) {
   const reviewed = <String>{
     'cloud_sync_native_auth_account_unavailable',
+    'cloud_sync_native_auth_account_changed',
+    'cloud_sync_native_auth_warm_failed',
+    'cloud_sync_native_auth_warm_timeout',
     'cloud_sync_native_auth_account_fingerprint_failed',
     'cloud_sync_native_auth_session_fingerprint_failed',
     'cloud_sync_native_auth_store_identity_failed',
@@ -147,9 +171,10 @@ final class CloudSyncProductionSamplerAdapter {
     NativeProtectedCloudSyncBindings? transportBindings,
     bool? compileGateOverrideForTest,
   }) {
+    final authBinding = nativeAuthBinding ?? FrbCloudSyncNativeAuthBinding();
     final authProvider = CloudSyncProductionAuthSnapshotProvider(
       readActiveClient: readActiveClient,
-      nativeAuthBinding: nativeAuthBinding ?? FrbCloudSyncNativeAuthBinding(),
+      nativeAuthBinding: authBinding,
       privateStorageDirectory: privateStorageDirectory,
     );
     final protector = RustCloudSyncProtector(
@@ -161,6 +186,7 @@ final class CloudSyncProductionSamplerAdapter {
     );
     sampler = CloudSyncManualShadowSampler(
       readPreflight: readPreflight,
+      prepareAuthSnapshot: authProvider.prepareReadAuthenticationUnderInterlock,
       readAuthSnapshot: authProvider.capture,
       createStore: (scope) async => durableStore,
       createRawTransport: (snapshot, scope) async =>
@@ -201,9 +227,10 @@ final class CloudSyncProductionSemanticPullAdapter {
     RustCloudSemanticDecodeBindings? semanticDecodeBindings,
     bool? compileGateOverrideForTest,
   }) {
+    final authBinding = nativeAuthBinding ?? FrbCloudSyncNativeAuthBinding();
     final authProvider = CloudSyncProductionAuthSnapshotProvider(
       readActiveClient: readActiveClient,
-      nativeAuthBinding: nativeAuthBinding ?? FrbCloudSyncNativeAuthBinding(),
+      nativeAuthBinding: authBinding,
       privateStorageDirectory: privateStorageDirectory,
     );
     final protector = RustCloudSyncProtector(
@@ -215,6 +242,7 @@ final class CloudSyncProductionSemanticPullAdapter {
     );
     sampler = CloudSyncManualSemanticPullSampler(
       readPreflight: readPreflight,
+      prepareAuthSnapshot: authProvider.prepareReadAuthenticationUnderInterlock,
       readAuthSnapshot: authProvider.capture,
       createStore: (scope) async => durableStore,
       createRawTransport: (snapshot, scope) async =>
@@ -247,7 +275,6 @@ final class CloudSyncProductionSemanticPullAdapter {
         );
         final gateway = ObjectBoxCloudSemanticStoreGateway.fromDatabase(
           canonicalAdapter: canonicalAdapter,
-          allowTombstones: false,
         );
         return TransactionalCloudInboxApplier(
           decoder: RustCloudSemanticDecoder(
@@ -451,6 +478,26 @@ final class CloudSyncProductionAuthSnapshotProvider {
   final ActiveCloudMessagesClientReader _readActiveClient;
   final CloudSyncNativeAuthBinding _nativeAuthBinding;
   final String privateStorageDirectory;
+
+  /// Performs the single bounded CloudKit read-auth warmup for a manual run.
+  /// The caller must already hold the CloudKit operation interlock.
+  Future<CloudSyncNativeAuthSnapshot?>
+  prepareReadAuthenticationUnderInterlock() async {
+    CloudKitOperationInterlock.requireActiveAny(const <CloudKitOperationKind>{
+      CloudKitOperationKind.v2ShadowRead,
+      CloudKitOperationKind.v2SemanticRead,
+    });
+    final before = await capture();
+    if (before == null) return null;
+    await _nativeAuthBinding.warmReadAuthentication(
+      cloudMessagesClient: before.cloudMessagesClient,
+    );
+    if (!identical(before.cloudMessagesClient, _readActiveClient())) {
+      return null;
+    }
+    final after = await capture();
+    return before.sameIdentity(after) ? after : null;
+  }
 
   Future<CloudSyncNativeAuthSnapshot?> capture() async {
     final client = _readActiveClient();

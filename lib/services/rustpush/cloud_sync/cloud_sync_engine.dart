@@ -413,6 +413,8 @@ class CloudSyncEngine {
           preflightUnknown: startupApply.counters.preflightUnknown,
           startupQuarantined: startupApply.counters.quarantined,
           tombstoneQuarantined: startupApply.counters.tombstoneQuarantined,
+          semanticUnsupportedServiceQuarantined:
+              startupApply.counters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
               startupApply.counters.semanticStageQuarantined,
           retried: startupApply.counters.retried,
@@ -433,6 +435,8 @@ class CloudSyncEngine {
           preflightUnknown: startupApply.counters.preflightUnknown,
           startupQuarantined: startupApply.counters.quarantined,
           tombstoneQuarantined: startupApply.counters.tombstoneQuarantined,
+          semanticUnsupportedServiceQuarantined:
+              startupApply.counters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
               startupApply.counters.semanticStageQuarantined,
           retried: startupApply.counters.retried,
@@ -480,6 +484,8 @@ class CloudSyncEngine {
           preflightUnknown: pullResult.semanticCounters.preflightUnknown,
           tombstoneQuarantined:
               pullResult.semanticCounters.tombstoneQuarantined,
+          semanticUnsupportedServiceQuarantined: pullResult
+              .semanticCounters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
               pullResult.semanticCounters.semanticStageQuarantined,
           retried: pullResult.semanticCounters.retried,
@@ -503,6 +509,8 @@ class CloudSyncEngine {
           preflightUnknown: pullResult.semanticCounters.preflightUnknown,
           tombstoneQuarantined:
               pullResult.semanticCounters.tombstoneQuarantined,
+          semanticUnsupportedServiceQuarantined: pullResult
+              .semanticCounters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
               pullResult.semanticCounters.semanticStageQuarantined,
           retried: pullResult.semanticCounters.retried,
@@ -536,6 +544,8 @@ class CloudSyncEngine {
           preflightUnknown: postFetchApply.counters.preflightUnknown,
           postFetchQuarantined: postFetchApply.counters.quarantined,
           tombstoneQuarantined: postFetchApply.counters.tombstoneQuarantined,
+          semanticUnsupportedServiceQuarantined:
+              postFetchApply.counters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
               postFetchApply.counters.semanticStageQuarantined,
           retried: postFetchApply.counters.retried,
@@ -556,6 +566,8 @@ class CloudSyncEngine {
           preflightUnknown: postFetchApply.counters.preflightUnknown,
           postFetchQuarantined: postFetchApply.counters.quarantined,
           tombstoneQuarantined: postFetchApply.counters.tombstoneQuarantined,
+          semanticUnsupportedServiceQuarantined:
+              postFetchApply.counters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
               postFetchApply.counters.semanticStageQuarantined,
           retried: postFetchApply.counters.retried,
@@ -975,6 +987,8 @@ class CloudSyncEngine {
               pageApply.counters.preflightInvalidChangeShape,
           preflightUnknown: pageApply.counters.preflightUnknown,
           tombstoneQuarantined: pageApply.counters.tombstoneQuarantined,
+          semanticUnsupportedServiceQuarantined:
+              pageApply.counters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined: pageApply.counters.semanticStageQuarantined,
           retried: pageApply.counters.retried,
         );
@@ -1134,7 +1148,11 @@ class CloudSyncEngine {
                 leaseFence: _requireActiveLeaseFence(),
               );
             }
-            counters = _addQuarantinedCounter(counters, entry);
+            counters = _addQuarantinedCounter(
+              counters,
+              entry,
+              category: category,
+            );
             canApplyNextSequence = true;
             break;
           }
@@ -1171,7 +1189,11 @@ class CloudSyncEngine {
               leaseFence: _requireActiveLeaseFence(),
             );
           }
-          counters = _addQuarantinedCounter(counters, entry);
+          counters = _addQuarantinedCounter(
+            counters,
+            entry,
+            category: result.failureCategory ?? CloudFailureCategory.unknown,
+          );
           canApplyNextSequence = true;
           break;
       }
@@ -1194,11 +1216,16 @@ class CloudSyncEngine {
 
   CloudSyncRunCounters _addQuarantinedCounter(
     CloudSyncRunCounters counters,
-    CloudInboxEntry entry,
-  ) {
+    CloudInboxEntry entry, {
+    required CloudFailureCategory category,
+  }) {
     final preflight = entry.change.preflightFailure != null;
     final tombstone = !preflight && entry.change.isTombstone;
     final preflightCode = entry.change.effectivePreflightCode;
+    final unsupportedService =
+        !preflight &&
+        !tombstone &&
+        category == CloudFailureCategory.unsupportedService;
     return counters.add(
       quarantined: 1,
       preflightQuarantined: preflight ? 1 : 0,
@@ -1212,7 +1239,9 @@ class CloudSyncEngine {
           preflightCode == CloudPreflightCode.invalidChangeShape ? 1 : 0,
       preflightUnknown: preflightCode == CloudPreflightCode.unknown ? 1 : 0,
       tombstoneQuarantined: tombstone ? 1 : 0,
-      semanticStageQuarantined: !preflight && !tombstone ? 1 : 0,
+      semanticUnsupportedServiceQuarantined: unsupportedService ? 1 : 0,
+      semanticStageQuarantined:
+          !preflight && !tombstone && !unsupportedService ? 1 : 0,
     );
   }
 

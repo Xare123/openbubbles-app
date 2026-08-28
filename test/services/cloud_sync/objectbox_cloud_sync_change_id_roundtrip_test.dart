@@ -175,6 +175,14 @@ final class _NoMutationCanonicalAdapter
   }) => false;
 
   @override
+  void validateOwnershipEvidence({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudEntityKind kind,
+    required String logicalEntityKeyHash,
+  }) {}
+
+  @override
   CloudCanonicalSemanticMutationReceipt applyEntity({
     required CloudSyncScope scope,
     required int generation,

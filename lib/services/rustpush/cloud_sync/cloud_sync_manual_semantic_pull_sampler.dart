@@ -29,6 +29,7 @@ typedef CloudSyncSemanticInboxApplierFactory =
 final class CloudSyncManualSemanticPullSampler {
   CloudSyncManualSemanticPullSampler({
     required this._readPreflight,
+    required this._prepareAuthSnapshot,
     required this._readAuthSnapshot,
     required this._createStore,
     required this._createRawTransport,
@@ -72,6 +73,7 @@ final class CloudSyncManualSemanticPullSampler {
   );
 
   final CloudSyncShadowPreflightReader _readPreflight;
+  final CloudSyncPreparedAuthSnapshotReader _prepareAuthSnapshot;
   final CloudSyncNativeAuthSnapshotReader _readAuthSnapshot;
   final CloudSyncSemanticStoreFactory _createStore;
   final CloudSyncSemanticRawTransportFactory _createRawTransport;
@@ -106,7 +108,7 @@ final class CloudSyncManualSemanticPullSampler {
   Future<CloudSyncSemanticPullReport> _runConfirmedUnderInterlock() async {
     final before = await _readPreflight();
     _validatePreflight(before);
-    final auth = await _readAuthSnapshot();
+    final auth = await _prepareAuthSnapshot();
     if (auth == null) throw StateError('account_unavailable');
 
     final reports = <CloudSyncSemanticPullZoneReport>[];
@@ -176,6 +178,8 @@ final class CloudSyncManualSemanticPullSampler {
             startupQuarantined: result.counters.startupQuarantined,
             postFetchQuarantined: result.counters.postFetchQuarantined,
             tombstoneQuarantined: result.counters.tombstoneQuarantined,
+            semanticUnsupportedServiceQuarantined:
+                result.counters.semanticUnsupportedServiceQuarantined,
             semanticStageQuarantined: result.counters.semanticStageQuarantined,
             retried: result.counters.retried,
             elapsedMilliseconds: result.finishedAt

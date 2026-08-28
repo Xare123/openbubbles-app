@@ -5,6 +5,7 @@ import 'package:path/path.dart' as path;
 import 'package:universal_io/io.dart';
 
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protocol_evidence.dart';
 
 Directory? _testRoot;
@@ -41,6 +42,20 @@ void main() {
     expect(json['timestampUtc'], '2026-08-22T12:00:00.000Z');
     expect(record.toJsonLine(), isNot(contains('SECRET')));
     expect(record.toJsonLine(), isNot(contains('message text')));
+  });
+
+  test('accepts the fixed unsupported-service failure label', () {
+    final record = CloudSyncProtocolEvidenceRecord.fromEvent(
+      _event(failureCategory: CloudFailureCategory.unsupportedService),
+      zoneLabel: 'messageManateeZone',
+      streamKindLabel: 'messages',
+      platform: 'android',
+      architecture: 'arm64',
+      buildCommit: 'abc123',
+    );
+
+    final json = jsonDecode(record.toJsonLine()) as Map<String, dynamic>;
+    expect(json['failure'], 'unsupportedService');
   });
 
   test('rejects invalid metadata and numeric ranges with fixed safe codes', () {
@@ -224,12 +239,14 @@ void main() {
 CloudSyncEvent _event({
   CloudSyncEventType type = CloudSyncEventType.fetchCompleted,
   String scope = 'safe-scope',
+  CloudFailureCategory? failureCategory,
 }) {
   return CloudSyncEvent(
     type: type,
     scopeDiagnosticKey: scope,
     at: DateTime.utc(2026, 8, 22, 12),
     trigger: CloudSyncTrigger.manual,
+    failureCategory: failureCategory,
     count: 4,
     estimatedBytes: 128,
     attempt: 2,

@@ -58,6 +58,7 @@ void main() {
         expect(store.box<CloudSemanticReplayEntity>().count(), 0);
         expect(store.box<CloudSemanticSnapshotEntity>().count(), 0);
         expect(store.box<CloudProtectedPageLeaseEntity>().count(), 0);
+        expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 0);
       } finally {
         store.close();
       }
