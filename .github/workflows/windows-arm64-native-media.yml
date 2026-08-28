@@ -156,11 +156,25 @@ jobs:
         if: matrix.arch == 'arm64'
         shell: pwsh
         run: |
-          $flutterRoot = "${{ steps.flutter.outputs['cache-path'] }}"
+          # flutter-action's cache-path is the parent cache directory, not the
+          # SDK root. FLUTTER_ROOT points at the checked-out Flutter SDK.
+          $flutterRoot = "$env:FLUTTER_ROOT"
+          if (-not (Test-Path "$flutterRoot\bin\internal\update_dart_sdk.ps1")) {
+            throw "Flutter SDK layout changed: missing update_dart_sdk.ps1 under $flutterRoot"
+          }
           Remove-Item -Force `
             "$flutterRoot\bin\cache\engine-dart-sdk.stamp" `
             -ErrorAction SilentlyContinue
           & "$flutterRoot\bin\internal\update_dart_sdk.ps1"
+
+          # The archive's flutter_tools snapshot was compiled for x64 Dart.
+          # Rebuild it after replacing the VM with the native ARM64 SDK.
+          Remove-Item -Force `
+            "$flutterRoot\bin\cache\flutter_tools.snapshot" `
+            -ErrorAction SilentlyContinue
+          Remove-Item -Force `
+            "$flutterRoot\bin\cache\flutter_tools.stamp" `
+            -ErrorAction SilentlyContinue
           $dartVersion = & "$flutterRoot\bin\dart.bat" --version 2>&1 |
             Out-String
           if ($dartVersion -notmatch "windows_arm64") {
@@ -169,9 +183,9 @@ jobs:
           & "$flutterRoot\bin\flutter.bat" precache --windows
           if (-not (Test-Path (
             Join-Path $flutterRoot `
-              "bin/cache/artifacts/engine/windows-arm64-release"
+              "bin/cache/artifacts/engine/windows-arm64"
           ))) {
-            throw "Flutter did not install its Windows ARM64 release engine."
+            throw "Flutter did not install its native Windows ARM64 engine."
           }
 
       - name: Set up Rust target
