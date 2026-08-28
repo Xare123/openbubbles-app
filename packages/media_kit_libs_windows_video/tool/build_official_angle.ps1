@@ -197,7 +197,10 @@ function Initialize-PinnedDepotTools {
         }
         Push-Location $DepotToolsPath
         try {
-            & $bootstrap
+            # The batch bootstrap writes progress lines to stdout.  Keep that
+            # chatter out of the function's success value, which must remain
+            # the single Python path returned below.
+            & $bootstrap *> $null
             if ($LASTEXITCODE -ne 0) {
                 throw "Pinned depot_tools bootstrap failed with exit code ${LASTEXITCODE}: $bootstrap"
             }

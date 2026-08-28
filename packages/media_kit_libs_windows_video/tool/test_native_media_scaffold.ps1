@@ -464,6 +464,9 @@ try {
         -Condition ($angleBuildScript -match 'Ensure-DepotToolsGitShim') `
         -Message "ANGLE build must bootstrap pinned depot_tools with the runner Git shim"
     Assert-True `
+        -Condition ($angleBuildScript -match '(?m)& \$bootstrap \*> \$null') `
+        -Message "depot_tools bootstrap output must not corrupt its single Python-path return value"
+    Assert-True `
         -Condition ($angleBuildScript -match 'Resolve-CompleteWindowsSdk') `
         -Message "ANGLE build must resolve a complete installed Windows SDK"
     Assert-True `
