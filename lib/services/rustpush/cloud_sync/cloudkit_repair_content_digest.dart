@@ -261,8 +261,16 @@ final class _DigestWriter {
   String finish() {
     final bytes = BytesBuilder(copy: false);
     for (final part in _parts) {
-      final length = ByteData(8)..setUint64(0, part.length, Endian.big);
-      bytes.add(length.buffer.asUint8List());
+      // dart2js does not implement ByteData.setUint64. Encode the same
+      // unsigned big-endian length arithmetically so native and web use one
+      // deterministic framing rule.
+      final length = Uint8List(8);
+      var remaining = part.length;
+      for (var index = length.length - 1; index >= 0; index--) {
+        length[index] = remaining % 256;
+        remaining ~/= 256;
+      }
+      bytes.add(length);
       bytes.add(part);
     }
     return sha256.convert(bytes.takeBytes()).toString();
