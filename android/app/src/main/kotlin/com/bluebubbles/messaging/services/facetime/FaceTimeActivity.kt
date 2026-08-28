@@ -291,13 +291,7 @@ class FaceTimeActivity : Activity() {
             FaceTimeRemoteEndAction.WEB_LEAVE -> dispatchWebLeave()
             FaceTimeRemoteEndAction.NATIVE_DECLINE -> dispatchNativeDecline()
             FaceTimeRemoteEndAction.ALREADY_SENT -> finishTerminalActivity()
-            FaceTimeRemoteEndAction.NO_SAFE_ACTION -> {
-                // NativePushState exposes decline_session only. It does not
-                // expose cancel_session to Kotlin, and using decline for an
-                // answered/outgoing call is semantically unsafe.
-                Log.w(diagnosticTag, "remote end unavailable reason=native_cancel_binding_missing")
-                finishTerminalActivity()
-            }
+            FaceTimeRemoteEndAction.DART_CANCEL -> dispatchDartCancel()
         }
     }
 
@@ -353,6 +347,35 @@ class FaceTimeActivity : Activity() {
             }
         }
         finishTerminalActivity()
+    }
+
+    private fun dispatchDartCancel() {
+        val activeCallUuid = callUuid
+        if (activeCallUuid.isNullOrBlank()) {
+            Log.w(diagnosticTag, "native cancel unavailable reason=missing_call_id")
+            finishTerminalActivity()
+            return
+        }
+        val fallback = Runnable {
+            if (!isFinishing && !isDestroyed) {
+                Log.w(diagnosticTag, "native cancel unavailable reason=bridge_timeout")
+                finishTerminalActivity()
+            }
+        }
+        endFallbackRunnable = fallback
+        mainHandler.postDelayed(fallback, 1500)
+        MethodCallHandler.invokeMethodForBooleanResult(
+            "facetime-native-cancel",
+            mapOf("callUuid" to activeCallUuid),
+        ) { canceled ->
+            mainHandler.post {
+                mainHandler.removeCallbacks(fallback)
+                if (diagnosticsEnabled()) {
+                    Log.i(diagnosticTag, "native cancel completed success=$canceled")
+                }
+                finishTerminalActivity()
+            }
+        }
     }
 
     private fun finishTerminalActivity() {

@@ -67,6 +67,10 @@ class MethodChannelService extends GetxService {
         if (callUuid is! String || callUuid.isEmpty) return false;
         pushService.handleNativeFaceTimeCallEnded(callUuid);
         return true;
+      case "facetime-native-cancel":
+        final callUuid = arguments?["callUuid"];
+        if (callUuid is! String || callUuid.isEmpty) return false;
+        return await pushService.cancelNativeFaceTimeSession(callUuid);
       case "facetime-admission-retry":
         return await pushService.retryPendingFaceTimeAdmission();
       case "SMSMsg":

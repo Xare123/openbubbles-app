@@ -749,8 +749,11 @@ class RustPushBackend implements BackendService {
         if (error is AppleHandleUnavailableException) {
           showSnackbar("Apple handle unavailable", error.userMessage);
         }
-        Logger.warn("Cannot send attachment with unavailable Apple handle",
-            error: error, trace: trace);
+        Logger.warn(
+          "Cannot send attachment with unavailable Apple handle",
+          error: error,
+          trace: trace,
+        );
         rethrow;
       }
     }
@@ -1222,8 +1225,11 @@ class RustPushBackend implements BackendService {
         if (error is AppleHandleUnavailableException) {
           showSnackbar("Apple handle unavailable", error.userMessage);
         }
-        Logger.warn("Cannot send message with unavailable Apple handle",
-            error: error, trace: trace);
+        Logger.warn(
+          "Cannot send message with unavailable Apple handle",
+          error: error,
+          trace: trace,
+        );
         rethrow;
       }
     }
@@ -3755,9 +3761,10 @@ class RustPushService extends GetxService {
       },
       applyRecord: (recordId, cloudChat) async {
         if (cloudChat.serviceName != 'iMessage') return;
-        final identities = _legacyCloudChatRawIdentities(recordId, cloudChat)
-            .expand(Chat.cloudIdentityCandidates)
-            .toSet();
+        final identities = _legacyCloudChatRawIdentities(
+          recordId,
+          cloudChat,
+        ).expand(Chat.cloudIdentityCandidates).toSet();
         if (!identities.any(referenceCandidates.contains)) return;
         candidates[recordId] = cloudChat;
       },
@@ -3766,10 +3773,14 @@ class RustPushService extends GetxService {
     final selectedRecords = <String, api.CloudChat>{};
     for (final group in referenceGroups) {
       if (Chat.findEligibleCloudMessageChatReferences(group) != null) continue;
-      final groupCandidates = group.expand(Chat.cloudIdentityCandidates).toSet();
+      final groupCandidates = group
+          .expand(Chat.cloudIdentityCandidates)
+          .toSet();
       final matches = candidates.entries.where((entry) {
-        final identities = _legacyCloudChatRawIdentities(entry.key, entry.value)
-            .expand(Chat.cloudIdentityCandidates);
+        final identities = _legacyCloudChatRawIdentities(
+          entry.key,
+          entry.value,
+        ).expand(Chat.cloudIdentityCandidates);
         return identities.any(groupCandidates.contains);
       });
       final selected = LegacyCloudChatRepair.selectUniqueCandidate(
@@ -4542,6 +4553,27 @@ class RustPushService extends GetxService {
     hideFaceTimeOverlay(guid, timeout: true);
   }
 
+  Future<bool> cancelNativeFaceTimeSession(String guid) async {
+    final facetime = pushService.state?.ftClient;
+    if (facetime == null) {
+      Logger.warn(
+        "Unable to cancel ended FaceTime call (native state missing)",
+      );
+      return false;
+    }
+    try {
+      await api.cancelFacetime(facetime: facetime, guid: guid);
+      if (chosenFTRoomGuid == guid) chosenFTRoomGuid = null;
+      _clearOutgoingCall(guid, finalState: "ended");
+      return true;
+    } catch (error) {
+      Logger.warn(
+        "Unable to cancel ended FaceTime call (${error.runtimeType})",
+      );
+      return false;
+    }
+  }
+
   Future<void> placeOutgoingCall(String caller, List<String> targets) async {
     if (_outgoingCallSetupInProgress || currentOutgoingCallGuid != null) {
       Logger.warn(
@@ -4598,32 +4630,6 @@ class RustPushService extends GetxService {
       final callState = outgoingguid.obs;
       currentOutgoingCall = callState;
       currentOutgoingCallGuid = outgoingguid;
-      outgoingCallTimer = Timer(const Duration(seconds: 30), () async {
-        if (currentOutgoingCallGuid != outgoingguid ||
-            !identical(currentOutgoingCall, callState)) {
-          Logger.info("Ignoring stale FaceTime timeout for a superseded call");
-          return;
-        }
-        callState.value = "timeout";
-
-        try {
-          await api.cancelFacetime(
-            facetime: pushService.state!.ftClient,
-            guid: outgoingguid,
-          );
-        } catch (error) {
-          Logger.warn(
-            "Unable to cancel timed-out FaceTime call (${error.runtimeType})",
-          );
-        } finally {
-          // Destroy only the webview associated with this call.
-          mcs.invokeMethod("update-call-state", {
-            "callUuid": outgoingguid,
-            "state": "timeout",
-          });
-          _clearOutgoingCall(outgoingguid);
-        }
-      });
 
       Uint8List? icon;
       String? poster;
@@ -4648,6 +4654,40 @@ class RustPushService extends GetxService {
         handle: caller,
         participants: targets,
       );
+      if (currentOutgoingCallGuid == outgoingguid &&
+          identical(currentOutgoingCall, callState)) {
+        // The timeout starts only after the native session exists. Starting it
+        // before createFacetime allowed a slow create to outlive a failed
+        // cancel and place an orphaned remote call.
+        outgoingCallTimer = Timer(const Duration(seconds: 30), () async {
+          if (currentOutgoingCallGuid != outgoingguid ||
+              !identical(currentOutgoingCall, callState)) {
+            Logger.info(
+              "Ignoring stale FaceTime timeout for a superseded call",
+            );
+            return;
+          }
+          callState.value = "timeout";
+
+          try {
+            await api.cancelFacetime(
+              facetime: pushService.state!.ftClient,
+              guid: outgoingguid,
+            );
+          } catch (error) {
+            Logger.warn(
+              "Unable to cancel timed-out FaceTime call (${error.runtimeType})",
+            );
+          } finally {
+            // Destroy only the webview associated with this call.
+            mcs.invokeMethod("update-call-state", {
+              "callUuid": outgoingguid,
+              "state": "timeout",
+            });
+            _clearOutgoingCall(outgoingguid);
+          }
+        });
+      }
     } catch (error) {
       if (currentOutgoingCallGuid == outgoingguid) {
         try {
@@ -5331,10 +5371,7 @@ class RustPushService extends GetxService {
     Chat.softDelete(chat);
   }
 
-  Future handleMsg(
-    api.PushMessage push, {
-    bool automaticRetry = false,
-  }) async {
+  Future handleMsg(api.PushMessage push, {bool automaticRetry = false}) async {
     await handleMsgInner(
       push,
       automaticRetry: automaticRetry,

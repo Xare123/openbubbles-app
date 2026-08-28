@@ -93,11 +93,11 @@ class FaceTimeUiReliabilityTest {
     }
 
     @Test
-    fun rendererDeathFailsClosedForAnsweredCallWithoutNativeCancelBinding() {
+    fun rendererDeathUsesDartRustCancelForAnsweredCall() {
         val policy = FaceTimeLifecycleEndPolicy()
 
         assertEquals(
-            FaceTimeRemoteEndAction.NO_SAFE_ACTION,
+            FaceTimeRemoteEndAction.DART_CANCEL,
             policy.consume(
                 FaceTimeLifecycleEndTrigger.RENDERER_GONE,
                 active().copy(rendererAvailable = false),

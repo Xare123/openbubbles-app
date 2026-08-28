@@ -141,11 +141,8 @@ internal enum class FaceTimeRemoteEndAction {
     /** The explicit Apple web Leave control already sent the remote effect. */
     ALREADY_SENT,
 
-    /**
-     * Fail closed instead of sending an incoming decline for an answered or
-     * outgoing call. Kotlin currently has no native cancel_session binding.
-     */
-    NO_SAFE_ACTION,
+    /** Ask the live Dart engine to invoke the typed Rust cancel_session API. */
+    DART_CANCEL,
 }
 
 internal data class FaceTimeLifecycleEndSnapshot(
@@ -165,8 +162,8 @@ internal data class FaceTimeLifecycleEndSnapshot(
  * transitions, and destruction of a replaced Activity are not terminal and do
  * not consume the gate. Unanswered incoming calls use the native decline path.
  * Answered/outgoing calls use Apple's web Leave control while its renderer is
- * available. If that renderer has died, Kotlin has no safe native cancel
- * binding, so the policy deliberately fails closed instead of misusing decline.
+ * available. If that renderer has died, the existing Flutter/Rust bridge owns
+ * cancellation instead of misusing the native incoming-decline operation.
  */
 internal class FaceTimeLifecycleEndPolicy {
     private var consumed = false
@@ -201,7 +198,7 @@ internal class FaceTimeLifecycleEndPolicy {
         return if (snapshot.rendererAvailable) {
             FaceTimeRemoteEndAction.WEB_LEAVE
         } else {
-            FaceTimeRemoteEndAction.NO_SAFE_ACTION
+            FaceTimeRemoteEndAction.DART_CANCEL
         }
     }
 }

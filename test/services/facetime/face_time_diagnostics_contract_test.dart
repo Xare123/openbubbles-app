@@ -80,6 +80,30 @@ void main() {
     expect(cachedWebview, isNot(contains('consoleMessage.message()')));
   });
 
+  test('renderer loss cancels through the typed Dart Rust FaceTime bridge', () {
+    final activity = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeActivity.kt',
+    ).readAsStringSync();
+    final policy = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeJoinPolicy.kt',
+    ).readAsStringSync();
+    final methodChannel = File(
+      'lib/services/backend/java_dart_interop/method_channel_service.dart',
+    ).readAsStringSync();
+    final service = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+
+    expect(policy, contains('FaceTimeRemoteEndAction.DART_CANCEL'));
+    expect(activity, contains('"facetime-native-cancel"'));
+    expect(activity, contains('invokeMethodForBooleanResult'));
+    expect(methodChannel, contains('case "facetime-native-cancel":'));
+    expect(methodChannel, contains('cancelNativeFaceTimeSession(callUuid)'));
+    expect(service, contains('Future<bool> cancelNativeFaceTimeSession'));
+    expect(service, contains('await api.cancelFacetime('));
+    expect(activity, isNot(contains('native_cancel_binding_missing')));
+  });
+
   test('incoming ring and admission paths reject stale state', () {
     final source = File(
       'lib/services/rustpush/rustpush_service.dart',
@@ -331,6 +355,45 @@ void main() {
     expect(nativeBridge, contains('showAdmissionRecovery'));
   });
 
+  test('sent admission follow-up cannot expose a second response retry', () {
+    final nativeSource = File('rustpush/src/facetime.rs').readAsStringSync();
+    final responseSend = nativeSource.indexOf(
+      'send_for_message(letmein.pseud.clone(), encrypted_message, None)',
+    );
+    final completion = nativeSource.indexOf(
+      'delegated_lock.complete(delegation)',
+      responseSend,
+    );
+    final followUpPolicy = nativeSource.indexOf(
+      'admission_follow_up_result(follow_up)',
+      completion,
+    );
+
+    expect(responseSend, greaterThanOrEqualTo(0));
+    expect(completion, greaterThan(responseSend));
+    expect(followUpPolicy, greaterThan(completion));
+    expect(
+      nativeSource,
+      contains('FaceTime admission follow-up failed after response send'),
+    );
+  });
+
+  test('FaceTime native diagnostics and alias paths are content-free', () {
+    final nativeSource = File('rustpush/src/facetime.rs').readAsStringSync();
+    final identitySource = File(
+      'rustpush/src/ids/identity_manager.rs',
+    ).readAsStringSync();
+
+    expect(nativeSource, isNot(contains('Got relay {:?}')));
+    expect(nativeSource, isNot(contains('Adding members {new_members:?}')));
+    expect(nativeSource, isNot(contains('Creating new link using pseud')));
+    expect(nativeSource, isNot(contains('Standing up for {:?}')));
+    expect(identitySource, isNot(contains('expect("No new alias!!!")')));
+    expect(identitySource, isNot(contains('Pseudonym not found {pseud}')));
+    expect(identitySource, isNot(contains('Validating pseudonym {:?}')));
+    expect(identitySource, contains('new_alias.ok_or(PushError::BadMsg)?'));
+  });
+
   test('outgoing timeout cannot clear a superseding call', () {
     final source = File(
       'lib/services/rustpush/rustpush_service.dart',
@@ -347,6 +410,24 @@ void main() {
       source,
       contains('_clearOutgoingCall(facetime.guid, finalState: "ended")'),
     );
+  });
+
+  test('outgoing timeout starts only after native session creation', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final methodStart = source.indexOf('Future<void> placeOutgoingCall(');
+    final methodEnd = source.indexOf(
+      '\n  // returns handle to show poster of',
+      methodStart,
+    );
+    final method = source.substring(methodStart, methodEnd);
+    final create = method.indexOf('await api.createFacetime(');
+    final timer = method.indexOf('outgoingCallTimer = Timer(');
+
+    expect(create, greaterThanOrEqualTo(0));
+    expect(timer, greaterThan(create));
+    expect(method, contains('currentOutgoingCallGuid == outgoingguid'));
   });
 
   test('duplicate outgoing join events cannot relaunch the active call', () {
