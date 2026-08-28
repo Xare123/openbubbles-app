@@ -61,6 +61,7 @@ CloudSyncManualSemanticPullSampler _sampler({
   required Directory privateStorageDirectory,
   required CloudSyncShadowPreflightReader readPreflight,
   required CloudSyncNativeAuthSnapshotReader readAuthSnapshot,
+  CloudSyncPreparedAuthSnapshotReader? prepareAuthSnapshot,
   required CloudSyncSemanticStoreFactory createStore,
   required CloudSyncSemanticRawTransportFactory createRawTransport,
   required CloudSyncSemanticInboxApplierFactory createInboxApplier,
@@ -70,6 +71,7 @@ CloudSyncManualSemanticPullSampler _sampler({
   CloudSyncObserverFactory? observerFactory,
 }) => CloudSyncManualSemanticPullSampler(
   readPreflight: readPreflight,
+  prepareAuthSnapshot: prepareAuthSnapshot ?? readAuthSnapshot,
   readAuthSnapshot: readAuthSnapshot,
   createStore: createStore,
   createRawTransport: createRawTransport,
@@ -97,43 +99,88 @@ void main() {
     privateStorageDirectory.deleteSync(recursive: true);
   });
 
-  test('semantic report keeps quarantine phases and redacted subtype counts', () {
-    final zone = CloudSyncSemanticPullZoneReport(
-      zoneLabel: 'messages',
-      status: CloudSyncRunStatus.completed,
-      fetched: 3,
-      applied: 0,
-      deferred: 0,
-      quarantined: 3,
-      preflightQuarantined: 1,
-      preflightUnsupportedRecordType: 0,
-      preflightMalformedMetadata: 0,
-      preflightOversizedRecord: 0,
-      preflightInvalidChangeShape: 1,
-      preflightUnknown: 0,
-      startupQuarantined: 1,
-      postFetchQuarantined: 2,
-      tombstoneQuarantined: 1,
-      semanticUnsupportedServiceQuarantined: 1,
-      semanticStageQuarantined: 0,
-      retried: 0,
-      elapsedMilliseconds: 1,
-    );
+  test(
+    'read authentication preparation runs under the semantic interlock',
+    () async {
+      final fenceStore = InMemoryCloudSyncStore();
+      final competing = CloudKitOperationInterlock(
+        privateStorageDirectory: privateStorageDirectory.path,
+        fenceStore: fenceStore,
+      );
+      var observedBusyFence = false;
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        operationFenceStore: fenceStore,
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => _auth(),
+        prepareAuthSnapshot: () async {
+          await expectLater(
+            competing.runExclusive(
+              kind: CloudKitOperationKind.legacyReadWrite,
+              action: () async {},
+            ),
+            throwsA(
+              isA<CloudKitOperationInterlockException>().having(
+                (error) => error.safeCode,
+                'safeCode',
+                'cloudkit_interlock_busy',
+              ),
+            ),
+          );
+          observedBusyFence = true;
+          return _auth();
+        },
+        createStore: (scope) async => InMemoryCloudSyncStore(),
+        createRawTransport: (snapshot, scope) async => FakeCloudSyncTransport(),
+        createInboxApplier: (auth, scope, generation) async =>
+            FakeCloudInboxApplier(),
+      );
 
-    final json = zone.toJson();
+      await sampler.runConfirmed();
+      expect(observedBusyFence, isTrue);
+    },
+  );
 
-    expect(json['quarantinePhases'], <String, int>{
-      'startup': 1,
-      'postFetch': 2,
-    });
-    expect(json['tombstoneQuarantined'], 1);
-    expect(json['semanticUnsupportedServiceQuarantined'], 1);
-    expect(json.toString(), isNot(contains('service-name')));
-    expect(json.toString(), isNot(contains('record-id')));
-    expect(json.toString(), isNot(contains('message-body')));
-    expect(json.toString(), isNot(contains('change-token')));
-    expect(json.toString(), isNot(contains('protected-reference')));
-  });
+  test(
+    'semantic report keeps quarantine phases and redacted subtype counts',
+    () {
+      final zone = CloudSyncSemanticPullZoneReport(
+        zoneLabel: 'messages',
+        status: CloudSyncRunStatus.completed,
+        fetched: 3,
+        applied: 0,
+        deferred: 0,
+        quarantined: 3,
+        preflightQuarantined: 1,
+        preflightUnsupportedRecordType: 0,
+        preflightMalformedMetadata: 0,
+        preflightOversizedRecord: 0,
+        preflightInvalidChangeShape: 1,
+        preflightUnknown: 0,
+        startupQuarantined: 1,
+        postFetchQuarantined: 2,
+        tombstoneQuarantined: 1,
+        semanticUnsupportedServiceQuarantined: 1,
+        semanticStageQuarantined: 0,
+        retried: 0,
+        elapsedMilliseconds: 1,
+      );
+
+      final json = zone.toJson();
+
+      expect(json['quarantinePhases'], <String, int>{
+        'startup': 1,
+        'postFetch': 2,
+      });
+      expect(json['tombstoneQuarantined'], 1);
+      expect(json['semanticUnsupportedServiceQuarantined'], 1);
+      expect(json.toString(), isNot(contains('service-name')));
+      expect(json.toString(), isNot(contains('record-id')));
+      expect(json.toString(), isNot(contains('message-body')));
+      expect(json.toString(), isNot(contains('change-token')));
+      expect(json.toString(), isNot(contains('protected-reference')));
+    },
+  );
 
   test(
     'disabled compile gate performs no work and starts no background run',
@@ -270,9 +317,7 @@ void main() {
       );
       expect(report.zones.map((zone) => zone.tombstoneQuarantined), [0, 0, 0]);
       expect(
-        report.zones.map(
-          (zone) => zone.semanticUnsupportedServiceQuarantined,
-        ),
+        report.zones.map((zone) => zone.semanticUnsupportedServiceQuarantined),
         [0, 0, 0],
       );
       expect(report.zones.map((zone) => zone.semanticStageQuarantined), [

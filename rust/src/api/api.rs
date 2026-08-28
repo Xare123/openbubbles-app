@@ -211,6 +211,60 @@ pub struct CloudSyncNativeAuthMetadata {
     pub protected_store_identity: String,
 }
 
+const CLOUD_SYNC_READ_AUTH_WARM_TIMEOUT: Duration = Duration::from_secs(30);
+
+async fn bounded_cloud_sync_read_authentication<F, T, E>(
+    timeout: Duration,
+    future: F,
+) -> anyhow::Result<T>
+where
+    F: Future<Output = Result<T, E>>,
+{
+    match tokio::time::timeout(timeout, future).await {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(_)) => Err(anyhow!("cloud_sync_native_auth_warm_failed")),
+        Err(_) => Err(anyhow!("cloud_sync_native_auth_warm_timeout")),
+    }
+}
+
+/// Explicitly authenticates the read-only Cloud Sync V2 container.
+///
+/// Callers must hold the CloudKit operation interlock. This may perform one
+/// bounded `ckAppInit` request for a cold client, but it cannot issue record,
+/// zone, subscription, save, or delete operations. Protected fetch and
+/// semantic decode remain lookup-only after this step.
+pub async fn cloud_sync_warm_read_authentication(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+) -> anyhow::Result<()> {
+    let account_before_warm = cloud_messages_client.native_account_identifier().await;
+    if account_before_warm.is_empty() {
+        return Err(anyhow!("cloud_sync_native_auth_account_unavailable"));
+    }
+    bounded_cloud_sync_read_authentication(CLOUD_SYNC_READ_AUTH_WARM_TIMEOUT, async {
+        cloud_messages_client.get_container().await?;
+        cloud_messages_client.keychain.get_container().await?;
+        cloud_messages_client
+            .keychain
+            .get_security_container()
+            .await?;
+        cloud_messages_client
+            .client
+            .token_provider
+            .get_mme_token_cached("cloudKitToken")
+            .await?;
+        Ok::<(), PushError>(())
+    })
+    .await?;
+    let account_after_warm = cloud_messages_client.native_account_identifier().await;
+    if account_after_warm.is_empty() {
+        return Err(anyhow!("cloud_sync_native_auth_account_unavailable"));
+    }
+    if account_after_warm != account_before_warm {
+        return Err(anyhow!("cloud_sync_native_auth_account_changed"));
+    }
+    Ok(())
+}
+
 pub async fn cloud_sync_capture_auth_snapshot(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
     storage_directory: String,
@@ -241,6 +295,54 @@ pub async fn cloud_sync_capture_auth_snapshot(
         account_fingerprint,
         protected_store_identity,
     })
+}
+
+#[cfg(test)]
+mod cloud_sync_read_authentication_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn bounded_warm_authentication_times_out_with_only_a_safe_code() {
+        let failure = bounded_cloud_sync_read_authentication(
+            Duration::from_millis(1),
+            std::future::pending::<Result<(), &'static str>>(),
+        )
+        .await
+        .expect_err("pending warm authentication must time out");
+
+        assert_eq!(failure.to_string(), "cloud_sync_native_auth_warm_timeout");
+    }
+
+    #[tokio::test]
+    async fn bounded_warm_authentication_redacts_inner_failures() {
+        let failure = bounded_cloud_sync_read_authentication(Duration::from_secs(1), async {
+            Err::<(), _>("token=private-value account=user@example.com")
+        })
+        .await
+        .expect_err("failed warm authentication must remain content-free");
+
+        assert_eq!(failure.to_string(), "cloud_sync_native_auth_warm_failed");
+        assert!(!failure.to_string().contains("private-value"));
+        assert!(!failure.to_string().contains("user@example.com"));
+    }
+
+    #[tokio::test]
+    async fn bounded_warm_authentication_timeout_releases_owned_mutex_guards() {
+        let initialization = Arc::new(tokio::sync::Mutex::new(()));
+        let timed_initialization = Arc::clone(&initialization);
+        let failure =
+            bounded_cloud_sync_read_authentication(Duration::from_millis(10), async move {
+                let _guard = timed_initialization.lock().await;
+                std::future::pending::<Result<(), &'static str>>().await
+            })
+            .await
+            .expect_err("stalled initialization must time out");
+
+        assert_eq!(failure.to_string(), "cloud_sync_native_auth_warm_timeout");
+        let _guard = tokio::time::timeout(Duration::from_secs(1), initialization.lock())
+            .await
+            .expect("cancellation must release the initialization mutex");
+    }
 }
 
 // CLOUD_SYNC_PROTECTED_DTO_BEGIN
@@ -604,6 +706,7 @@ pub enum CloudSyncTransientQuarantineReason {
 pub enum CloudSyncTransientFailureCode {
     InvalidRequest,
     ActiveAccountMismatch,
+    WarmAuthenticationRequired,
     ScopeMismatch,
     GenerationMismatch,
     StoreIdentityMismatch,
@@ -2945,6 +3048,9 @@ fn map_cloud_sync_transient_failure(
     match failure {
         Native::InvalidRequest => CloudSyncTransientFailureCode::InvalidRequest,
         Native::ActiveAccountMismatch => CloudSyncTransientFailureCode::ActiveAccountMismatch,
+        Native::WarmAuthenticationRequired => {
+            CloudSyncTransientFailureCode::WarmAuthenticationRequired
+        }
         Native::ScopeMismatch => CloudSyncTransientFailureCode::ScopeMismatch,
         Native::GenerationMismatch => CloudSyncTransientFailureCode::GenerationMismatch,
         Native::StoreIdentityMismatch => CloudSyncTransientFailureCode::StoreIdentityMismatch,
@@ -4267,7 +4373,9 @@ pub fn make_keychain(
             plist::to_file_xml(&cloudkit_path, update).unwrap();
         }),
         container: tokio::sync::Mutex::new(None),
+        container_initialization: tokio::sync::Mutex::new(()),
         security_container: tokio::sync::Mutex::new(None),
+        security_container_initialization: tokio::sync::Mutex::new(()),
         client: cloudkit.clone(),
     }))
 }

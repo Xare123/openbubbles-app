@@ -79,7 +79,7 @@ void main() {
   }
 
   test(
-    'matching durable owner and native identity permit one mutation',
+    'matching durable owner uses lookup-only auth and permits one mutation',
     () async {
       provision(CloudKitWriterOwner.legacy);
       var actionCalls = 0;
@@ -93,6 +93,7 @@ void main() {
       expect(value, 42);
       expect(actionCalls, 1);
       expect(binding.captureCalls, 2);
+      expect(binding.warmCalls, 0);
     },
   );
 
@@ -116,6 +117,7 @@ void main() {
       );
       expect(actionCalls, 0);
       expect(binding.captureCalls, 0);
+      expect(binding.warmCalls, 0);
     },
   );
 
@@ -135,6 +137,7 @@ void main() {
       throwsA(_failure('cloudkit_writer_active_client_missing')),
     );
     expect(binding.captureCalls, 0);
+    expect(binding.warmCalls, 0);
     expect(actionCalls, 0);
   });
 
@@ -208,6 +211,7 @@ void main() {
         throwsA(_failure('cloudkit_writer_mutation_outcome_unknown')),
       );
       expect(binding.captureCalls, 1);
+      expect(binding.warmCalls, 0);
       final snapshot = authority(CloudKitWriterOwner.legacy).read(_scope)!;
       expect(snapshot.state, CloudKitWriterAuthorityState.mutationUnknown);
       expect(
@@ -222,8 +226,16 @@ void main() {
 
 final class _FakeAuthBinding implements CloudSyncNativeAuthBinding {
   int captureCalls = 0;
+  int warmCalls = 0;
   void Function(int call)? afterCapture;
   CloudSyncNativeAuthMetadata Function(int call)? metadataForCall;
+
+  @override
+  Future<void> warmReadAuthentication({
+    required Object cloudMessagesClient,
+  }) async {
+    warmCalls++;
+  }
 
   @override
   Future<CloudSyncNativeAuthMetadata> capture({

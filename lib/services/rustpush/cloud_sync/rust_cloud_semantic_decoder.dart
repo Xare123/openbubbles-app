@@ -212,8 +212,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       result.failureCode,
     )) {
       (true, null, null, null) => 'ready',
-      (false, final deferred?, null, null) =>
-        'deferred:${deferred.name}',
+      (false, final deferred?, null, null) => 'deferred:${deferred.name}',
       (false, null, final quarantine?, null) =>
         'quarantined:${quarantine.name}',
       (false, null, null, final failure?) => 'failure:${failure.name}',
@@ -262,13 +261,11 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       );
     }
     if (result.quarantineReason != null) {
-      throw CloudSemanticDecodeFailure(
-        switch (result.quarantineReason!) {
-          frb_api.CloudSyncTransientQuarantineReason.unsupportedService =>
-            CloudFailureCategory.unsupportedService,
-          _ => CloudFailureCategory.malformedRecord,
-        },
-      );
+      throw CloudSemanticDecodeFailure(switch (result.quarantineReason!) {
+        frb_api.CloudSyncTransientQuarantineReason.unsupportedService =>
+          CloudFailureCategory.unsupportedService,
+        _ => CloudFailureCategory.malformedRecord,
+      });
     }
 
     if (result.changeId != entry.change.changeId ||
@@ -974,7 +971,8 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     frb_api.CloudSyncTransientFailureCode.malformedRecord ||
     frb_api.CloudSyncTransientFailureCode.oversizedRecord =>
       CloudFailureCategory.malformedRecord,
-    frb_api.CloudSyncTransientFailureCode.activeAccountMismatch =>
+    frb_api.CloudSyncTransientFailureCode.activeAccountMismatch ||
+    frb_api.CloudSyncTransientFailureCode.warmAuthenticationRequired =>
       CloudFailureCategory.authorization,
     frb_api.CloudSyncTransientFailureCode.scopeMismatch ||
     frb_api.CloudSyncTransientFailureCode.generationMismatch ||

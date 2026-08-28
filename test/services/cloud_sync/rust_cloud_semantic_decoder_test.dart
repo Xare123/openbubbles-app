@@ -189,6 +189,8 @@ void main() {
           CloudFailureCategory.malformedRecord,
       frb.CloudSyncTransientFailureCode.activeAccountMismatch:
           CloudFailureCategory.authorization,
+      frb.CloudSyncTransientFailureCode.warmAuthenticationRequired:
+          CloudFailureCategory.authorization,
       frb.CloudSyncTransientFailureCode.scopeMismatch:
           CloudFailureCategory.conflict,
       frb.CloudSyncTransientFailureCode.generationMismatch:

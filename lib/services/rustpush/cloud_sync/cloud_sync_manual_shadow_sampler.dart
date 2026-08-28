@@ -66,6 +66,8 @@ final class CloudSyncNativeAuthSnapshot {
 
 typedef CloudSyncNativeAuthSnapshotReader =
     Future<CloudSyncNativeAuthSnapshot?> Function();
+typedef CloudSyncPreparedAuthSnapshotReader =
+    Future<CloudSyncNativeAuthSnapshot?> Function();
 typedef CloudSyncShadowStoreFactory =
     Future<CloudSyncStore> Function(CloudSyncScope scope);
 typedef CloudSyncShadowRawTransportFactory =
@@ -110,6 +112,7 @@ typedef CloudSyncShadowPreflightReader =
 final class CloudSyncManualShadowSampler {
   CloudSyncManualShadowSampler({
     required this._readPreflight,
+    required this._prepareAuthSnapshot,
     required this._readAuthSnapshot,
     required this._createStore,
     required this._createRawTransport,
@@ -156,6 +159,7 @@ final class CloudSyncManualShadowSampler {
   );
 
   final CloudSyncShadowPreflightReader _readPreflight;
+  final CloudSyncPreparedAuthSnapshotReader _prepareAuthSnapshot;
   final CloudSyncNativeAuthSnapshotReader _readAuthSnapshot;
   final CloudSyncShadowStoreFactory _createStore;
   final CloudSyncShadowRawTransportFactory _createRawTransport;
@@ -192,8 +196,8 @@ final class CloudSyncManualShadowSampler {
     );
     _validatePreflight(before);
     final auth = await _runStage(
-      'cloud_sync_shadow_auth_capture_failed',
-      _readAuthSnapshot,
+      'cloud_sync_shadow_auth_prepare_failed',
+      _prepareAuthSnapshot,
     );
     if (auth == null) throw StateError('account_unavailable');
 

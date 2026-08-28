@@ -66,6 +66,7 @@ pub(crate) enum CloudTransientExpectedChangeKind {
 pub(crate) enum CloudTransientBridgeFailure {
     InvalidRequest,
     ActiveAccountMismatch,
+    WarmAuthenticationRequired,
     ScopeMismatch,
     GenerationMismatch,
     StoreIdentityMismatch,
@@ -719,12 +720,8 @@ fn map_push_failure(error: &PushError) -> CloudTransientBridgeFailure {
         | PushError::ShareKeyNotFound(_)
         | PushError::MasterKeyNotFound
         | PushError::DecryptionKeyNotFound(_) => CloudTransientBridgeFailure::PcsUnavailable,
-        // This is an authorization precondition, not missing PCS material. The
-        // existing public transient adapter maps ActiveAccountMismatch to the
-        // authorization category, preserving binding compatibility while
-        // keeping warm-auth failures out of the PCS-unavailable bucket.
         PushError::CloudKitWarmAuthenticationRequired => {
-            CloudTransientBridgeFailure::ActiveAccountMismatch
+            CloudTransientBridgeFailure::WarmAuthenticationRequired
         }
         PushError::PCSCiphertextMalformed => CloudTransientBridgeFailure::MalformedRecord,
         PushError::RequestError(_)
@@ -2327,6 +2324,10 @@ mod tests {
     fn semantic_failure_mapping_classifies_warm_auth_as_authorization_not_pcs() {
         let warm_auth = map_push_failure(&PushError::CloudKitWarmAuthenticationRequired);
         assert_eq!(
+            warm_auth,
+            CloudTransientBridgeFailure::WarmAuthenticationRequired
+        );
+        assert_ne!(
             warm_auth,
             CloudTransientBridgeFailure::ActiveAccountMismatch
         );
