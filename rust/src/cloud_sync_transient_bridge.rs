@@ -533,6 +533,65 @@ fn typed_record<T: CloudKitRecord>(
     .map_err(|_| decoder_failure_at("typed_record_decode_panic"))
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CloudMessageTypeDiagnosticLabels {
+    message_type_class: &'static str,
+    association_presence: &'static str,
+}
+
+fn cloud_message_service_class(service: &str) -> Option<&'static str> {
+    if service == "iMessage" {
+        None
+    } else if service.is_empty() {
+        Some("empty")
+    } else if service.eq_ignore_ascii_case("iMessage") {
+        Some("imessage_case_variant")
+    } else if service == "SMS" {
+        Some("sms")
+    } else if service == "FaceTime" {
+        Some("facetime")
+    } else {
+        Some("other")
+    }
+}
+
+fn cloud_message_type_diagnostic_labels(
+    message: &CloudMessage,
+) -> CloudMessageTypeDiagnosticLabels {
+    let message_type_class = match message.r#type {
+        0 => "zero",
+        1 => "normal",
+        2 => "association",
+        value if value < 0 => "negative",
+        _ => "other_positive",
+    };
+    let association_presence = if message.msg_proto.0.associated_message_type.is_some() {
+        "present"
+    } else {
+        "absent"
+    };
+
+    CloudMessageTypeDiagnosticLabels {
+        message_type_class,
+        association_presence,
+    }
+}
+
+fn cloud_message_proto4_service_class(message: &CloudMessage) -> Option<&'static str> {
+    message
+        .msg_proto_4
+        .as_ref()
+        .and_then(|proto| proto.0.service.as_deref())
+        .and_then(cloud_message_service_class)
+}
+
+fn cloud_message_requires_unsupported_type_diagnostic(message: &CloudMessage) -> bool {
+    match message.msg_proto.0.associated_message_type {
+        None => message.r#type != 1,
+        Some(_) => message.r#type != 2,
+    }
+}
+
 fn map_native_failure(
     category: CloudNativeFailureCategory,
     safe_code: CloudNativeSafeCode,
@@ -1137,6 +1196,19 @@ pub(crate) async fn cloud_sync_decode_transient_record(
                 Ok(value) => value,
                 Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
             };
+            if let Some(service_class) = cloud_message_service_class(&message.service) {
+                warn!("CloudKit V2 transient message service_class={service_class}");
+            }
+            if let Some(proto4_service_class) = cloud_message_proto4_service_class(&message) {
+                warn!("CloudKit V2 transient message proto4_service_class={proto4_service_class}");
+            }
+            if cloud_message_requires_unsupported_type_diagnostic(&message) {
+                let labels = cloud_message_type_diagnostic_labels(&message);
+                warn!(
+                    "CloudKit V2 transient message message_type_class={} association_presence={}",
+                    labels.message_type_class, labels.association_presence,
+                );
+            }
             convert_message(&context, &presence, &message)
         }
         CloudNativeStream::Attachments => {
@@ -1192,6 +1264,10 @@ mod tests {
         CloudCanonicalMessagePayload, CloudCanonicalMutationKind, CloudCanonicalParentReference,
         CloudCanonicalPayload, CloudCanonicalProtectedReference, CloudCanonicalReactionKind,
         CloudCanonicalService, CloudCanonicalSnapshot, CLOUD_CANONICAL_SCHEMA_VERSION,
+    };
+    use rustpush::cloud_messages::{
+        cloudmessagesp::{MessageProto, MessageProto4},
+        GZipWrapper,
     };
 
     fn digest(character: char) -> String {
@@ -1951,6 +2027,118 @@ mod tests {
             bounded_gunzip(&compressed).unwrap_err(),
             CloudTransientBridgeFailure::OversizedRecord
         );
+    }
+
+    fn diagnostic_message(
+        message_type: i64,
+        associated_message_type: Option<u32>,
+        service: &str,
+    ) -> CloudMessage {
+        CloudMessage {
+            r#type: message_type,
+            msg_proto: GZipWrapper(MessageProto {
+                associated_message_type,
+                ..Default::default()
+            }),
+            service: service.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    fn diagnostic_message_with_proto4_service(service: Option<&str>) -> CloudMessage {
+        CloudMessage {
+            msg_proto_4: service.map(|service| {
+                GZipWrapper(MessageProto4 {
+                    service: Some(service.to_owned()),
+                    ..Default::default()
+                })
+            }),
+            ..diagnostic_message(1, None, "iMessage")
+        }
+    }
+
+    #[test]
+    fn message_diagnostic_labels_are_allowlisted_and_shape_based() {
+        let normal = diagnostic_message(1, None, "iMessage");
+        let normal_labels = cloud_message_type_diagnostic_labels(&normal);
+        assert_eq!(
+            normal_labels,
+            CloudMessageTypeDiagnosticLabels {
+                message_type_class: "normal",
+                association_presence: "absent",
+            }
+        );
+        assert_eq!(cloud_message_service_class(&normal.service), None);
+        assert!(!cloud_message_requires_unsupported_type_diagnostic(&normal));
+
+        let association = diagnostic_message(2, Some(2000), "iMessage");
+        let association_labels = cloud_message_type_diagnostic_labels(&association);
+        assert_eq!(association_labels.message_type_class, "association");
+        assert_eq!(association_labels.association_presence, "present");
+        assert_eq!(cloud_message_service_class(&association.service), None);
+        assert!(!cloud_message_requires_unsupported_type_diagnostic(
+            &association
+        ));
+
+        let labels = cloud_message_type_diagnostic_labels(&diagnostic_message(
+            4,
+            None,
+            "private-service-name",
+        ));
+        assert_eq!(labels.message_type_class, "other_positive");
+        assert_eq!(labels.association_presence, "absent");
+        assert!(!format!("{labels:?}").contains("private-service-name"));
+        assert_eq!(
+            cloud_message_service_class("private-service-name"),
+            Some("other")
+        );
+    }
+
+    #[test]
+    fn message_diagnostic_warns_only_for_non_imessage_or_unsupported_type_shape() {
+        for (message_type, associated_message_type) in [(0, None), (1, Some(2000)), (2, None)] {
+            let message = diagnostic_message(message_type, associated_message_type, "iMessage");
+            assert!(cloud_message_requires_unsupported_type_diagnostic(&message));
+        }
+
+        for message_type in [-3, 3, 2000] {
+            let message = diagnostic_message(message_type, None, "iMessage");
+            assert!(cloud_message_requires_unsupported_type_diagnostic(&message));
+        }
+
+        for service in ["", "iMessage ", "SMS", "FaceTime", "other"] {
+            let message = diagnostic_message(1, None, service);
+            assert_ne!(service, "iMessage");
+            assert!(cloud_message_service_class(&message.service).is_some());
+            assert!(!cloud_message_requires_unsupported_type_diagnostic(
+                &message
+            ));
+        }
+    }
+
+    #[test]
+    fn proto4_service_diagnostic_is_optional_and_allowlisted() {
+        let absent = diagnostic_message_with_proto4_service(None);
+        assert_eq!(cloud_message_proto4_service_class(&absent), None);
+
+        let exact = diagnostic_message_with_proto4_service(Some("iMessage"));
+        assert_eq!(cloud_message_proto4_service_class(&exact), None);
+
+        for (service, expected_class) in [
+            ("", "empty"),
+            ("IMESSAGE", "imessage_case_variant"),
+            ("iMessage ", "other"),
+            ("SMS", "sms"),
+            ("FaceTime", "facetime"),
+            ("private-service-name", "other"),
+        ] {
+            let message = diagnostic_message_with_proto4_service(Some(service));
+            assert_eq!(
+                cloud_message_proto4_service_class(&message),
+                Some(expected_class)
+            );
+            assert_ne!(expected_class, service);
+        }
     }
 
     #[test]

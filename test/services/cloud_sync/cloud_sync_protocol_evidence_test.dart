@@ -43,6 +43,20 @@ void main() {
     expect(record.toJsonLine(), isNot(contains('message text')));
   });
 
+  test('accepts the fixed unsupported-service failure label', () {
+    final record = CloudSyncProtocolEvidenceRecord.fromEvent(
+      _event(failureCategory: CloudFailureCategory.unsupportedService),
+      zoneLabel: 'messageManateeZone',
+      streamKindLabel: 'messages',
+      platform: 'android',
+      architecture: 'arm64',
+      buildCommit: 'abc123',
+    );
+
+    final json = jsonDecode(record.toJsonLine()) as Map<String, dynamic>;
+    expect(json['failure'], 'unsupportedService');
+  });
+
   test('rejects invalid metadata and numeric ranges with fixed safe codes', () {
     CloudSyncProtocolEvidenceRecord build({
       String zone = 'messageManateeZone',
@@ -224,12 +238,14 @@ void main() {
 CloudSyncEvent _event({
   CloudSyncEventType type = CloudSyncEventType.fetchCompleted,
   String scope = 'safe-scope',
+  CloudFailureCategory? failureCategory,
 }) {
   return CloudSyncEvent(
     type: type,
     scopeDiagnosticKey: scope,
     at: DateTime.utc(2026, 8, 22, 12),
     trigger: CloudSyncTrigger.manual,
+    failureCategory: failureCategory,
     count: 4,
     estimatedBytes: 128,
     attempt: 2,
