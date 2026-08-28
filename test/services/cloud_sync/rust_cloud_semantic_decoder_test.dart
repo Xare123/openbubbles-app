@@ -249,8 +249,8 @@ void main() {
     'logs only the bounded native disposition for unsupported service',
     () async {
       final output = _CapturingLogOutput();
-      final previousOutput = Logger.currentOutput;
-      final previousLevel = Logger.currentLevel;
+      final previousLogger = Logger;
+      Logger = BaseLogger();
       Logger.currentOutput = output;
       Logger.currentLevel = logger_api.Level.info;
       try {
@@ -274,8 +274,7 @@ void main() {
         expect(message, isNot(contains(_payloadSha)));
         expect(message, isNot(contains('iMessage')));
       } finally {
-        Logger.currentOutput = previousOutput;
-        Logger.currentLevel = previousLevel;
+        Logger = previousLogger;
       }
     },
   );
@@ -1227,7 +1226,7 @@ final class _Bindings implements RustCloudSemanticDecodeBindings {
   }
 }
 
-final class _CapturingLogOutput implements logger_api.LogOutput {
+final class _CapturingLogOutput extends logger_api.LogOutput {
   final List<String> lines = [];
 
   @override

@@ -5,6 +5,7 @@ import 'package:path/path.dart' as path;
 import 'package:universal_io/io.dart';
 
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protocol_evidence.dart';
 
 Directory? _testRoot;
