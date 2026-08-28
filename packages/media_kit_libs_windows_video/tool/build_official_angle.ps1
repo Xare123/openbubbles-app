@@ -224,8 +224,133 @@ function Initialize-PinnedDepotTools {
     }
 }
 
+function Resolve-CompleteWindowsSdk {
+    $roots = @(
+        [Environment]::GetEnvironmentVariable("WindowsSdkDir"),
+        (Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10"),
+        (Join-Path $env:ProgramFiles "Windows Kits\10")
+    ) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        ForEach-Object { $_.TrimEnd('\', '/') } |
+        Select-Object -Unique
+
+    $candidates = @(
+        foreach ($root in $roots) {
+            $includeRoot = Join-Path $root "Include"
+            $libRoot = Join-Path $root "Lib"
+            if (-not (Test-Path -LiteralPath $includeRoot -PathType Container) -or
+                -not (Test-Path -LiteralPath $libRoot -PathType Container)) {
+                continue
+            }
+
+            foreach ($includeVersion in @(
+                Get-ChildItem -LiteralPath $includeRoot -Directory -ErrorAction SilentlyContinue
+            )) {
+                if ($includeVersion.Name -notmatch '^10\.0\.\d+\.0$') {
+                    continue
+                }
+                $includeUm = Join-Path $includeVersion.FullName "um"
+                $libUm = Join-Path (Join-Path $libRoot $includeVersion.Name) "um"
+                if ((Test-Path -LiteralPath $includeUm -PathType Container) -and
+                    (Test-Path -LiteralPath $libUm -PathType Container)) {
+                    [pscustomobject]@{
+                        version = [version] $includeVersion.Name
+                        version_text = $includeVersion.Name
+                        root = $root
+                        include_um = $includeUm
+                        lib_um = $libUm
+                    }
+                }
+            }
+        }
+    )
+
+    $selected = $candidates |
+        Sort-Object -Property version, root -Descending |
+        Select-Object -First 1
+    if (-not $selected) {
+        throw "No complete Windows SDK was found. Each candidate must contain Include\\<version>\\um and Lib\\<version>\\um."
+    }
+    return $selected
+}
+
+function Resolve-VisualStudioInstallation {
+    $vswhere = $null
+    try {
+        $vswhere = (Get-Command vswhere.exe -ErrorAction Stop).Source
+    }
+    catch {
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    }
+
+    $candidatePaths = @()
+    if (Test-Path -LiteralPath $vswhere -PathType Leaf) {
+        $candidatePaths += @(
+            & $vswhere -latest -products * -property installationPath 2>$null |
+                ForEach-Object { ([string] $_).Trim() } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        )
+    }
+    $candidatePaths += @(
+        (Join-Path ${env:ProgramFiles} "Microsoft Visual Studio"),
+        (Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio")
+    ) |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Container } |
+        ForEach-Object {
+            Get-ChildItem -LiteralPath $_ -Directory -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    Get-ChildItem -LiteralPath $_.FullName -Directory -ErrorAction SilentlyContinue |
+                        ForEach-Object { $_.FullName }
+                }
+        }
+
+    foreach ($candidate in ($candidatePaths | Select-Object -Unique)) {
+        $vcvarsall = Join-Path $candidate "VC\Auxiliary\Build\vcvarsall.bat"
+        if (Test-Path -LiteralPath $vcvarsall -PathType Leaf) {
+            return [pscustomobject]@{
+                root = ([System.IO.Path]::GetFullPath($candidate)).TrimEnd('\', '/')
+                vcvarsall = $vcvarsall
+            }
+        }
+    }
+    throw "No Visual Studio installation with VC\\Auxiliary\\Build\\vcvarsall.bat was found."
+}
+
+function Initialize-SdkCompatibilityShim {
+    param(
+        [Parameter(Mandatory)]
+        [string] $WorkRoot,
+
+        [Parameter(Mandatory)]
+        [string] $SdkVersion,
+
+        [Parameter(Mandatory)]
+        [string] $VisualStudioVcvarsAll
+    )
+
+    $shimRoot = Join-Path $WorkRoot "vs-sdk-override"
+    $shimPath = Join-Path $shimRoot "VC\Auxiliary\Build\vcvarsall.bat"
+    New-Item -ItemType Directory -Path (Split-Path $shimPath -Parent) -Force | Out-Null
+    $escapedVcvarsAll = $VisualStudioVcvarsAll.Replace("%", "%%")
+    $shim = @"
+@echo off
+set "OPENBUBBLES_REAL_VCVARSALL=$escapedVcvarsAll"
+set "OPENBUBBLES_SDK_VERSION=$SdkVersion"
+if /I "%~2"=="store" (
+  call "%OPENBUBBLES_REAL_VCVARSALL%" "%~1" store "%OPENBUBBLES_SDK_VERSION%"
+) else (
+  call "%OPENBUBBLES_REAL_VCVARSALL%" "%~1" "%OPENBUBBLES_SDK_VERSION%"
+)
+exit /b %ERRORLEVEL%
+"@
+    Write-Utf8NoBom -Path $shimPath -Content $shim.TrimStart()
+    $env:GYP_MSVS_OVERRIDE_PATH = $shimRoot
+    return $shimRoot
+}
+
 $work = Get-SafeFullPath -Path $WorkRoot -Label "WorkRoot"
 $output = Get-SafeFullPath -Path $OutputRoot -Label "OutputRoot"
+$selectedSdk = Resolve-CompleteWindowsSdk
 $provenanceFile = (Resolve-Path -LiteralPath $ProvenancePath -ErrorAction Stop).Path
 $provenance = Get-Content -LiteralPath $provenanceFile -Raw |
     ConvertFrom-Json -ErrorAction Stop
@@ -278,6 +403,8 @@ $plan = [pscustomobject]@{
     angle_commit = $provenance.angle.source_commit
     depot_tools_source = $provenance.angle.depot_tools_url
     depot_tools_commit = $provenance.angle.depot_tools_commit
+    windows_sdk_version = $selectedSdk.version_text
+    windows_sdk_root = $selectedSdk.root
     required_runtime_files = $requiredRuntimeFiles
 }
 
@@ -330,6 +457,12 @@ $actualDepotToolsCommit = (& $git -C $depotTools rev-parse HEAD).Trim()
 if ($actualDepotToolsCommit -ne $provenance.angle.depot_tools_commit) {
     throw "depot_tools moved away from its reviewed pin to $actualDepotToolsCommit."
 }
+
+$visualStudio = Resolve-VisualStudioInstallation
+Initialize-SdkCompatibilityShim `
+    -WorkRoot $work `
+    -SdkVersion $selectedSdk.version_text `
+    -VisualStudioVcvarsAll $visualStudio.vcvarsall | Out-Null
 
 $gn = (Get-Command gn -ErrorAction Stop).Source
 $autoninja = (Get-Command autoninja -ErrorAction Stop).Source

@@ -463,6 +463,16 @@ try {
     Assert-True `
         -Condition ($angleBuildScript -match 'Ensure-DepotToolsGitShim') `
         -Message "ANGLE build must bootstrap pinned depot_tools with the runner Git shim"
+    Assert-True `
+        -Condition ($angleBuildScript -match 'Resolve-CompleteWindowsSdk') `
+        -Message "ANGLE build must resolve a complete installed Windows SDK"
+    Assert-True `
+        -Condition ($angleBuildScript -match 'Include.*um' -and $angleBuildScript -match 'Lib.*um') `
+        -Message "ANGLE SDK selection must require both Include\\<version>\\um and Lib\\<version>\\um"
+    Assert-True `
+        -Condition ($angleBuildScript -match 'Initialize-SdkCompatibilityShim' -and
+            $angleBuildScript -match 'GYP_MSVS_OVERRIDE_PATH') `
+        -Message "ANGLE build must adapt the pinned SDK request through a local vcvarsall shim"
 
     foreach ($architecture in @("x64", "arm64")) {
         $planOutput = & (
@@ -479,6 +489,9 @@ try {
         Assert-True `
             -Condition ($plan.architecture -eq $architecture) `
             -Message "ANGLE build plan must resolve $architecture"
+        Assert-True `
+            -Condition ($plan.windows_sdk_version -match '^10\.0\.\d+\.0$') `
+            -Message "ANGLE build plan must report a valid Windows SDK version"
     }
 
     $integrationArchives = @{
