@@ -101,6 +101,35 @@ void main() {
     );
   });
 
+  test('admission diagnostics record only secret-free APS state', () {
+    final source = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final helperStart = source.indexOf(
+      'Future<void> _recordFaceTimeAdmissionTransport',
+    );
+    final helperEnd = source.indexOf('\n  bool authing', helperStart);
+    final helper = source.substring(helperStart, helperEnd);
+
+    expect(source, contains('_recordFaceTimeAdmissionTransport'));
+    expect(source, contains('_recordFaceTimeAdmissionTransport("before-response")'));
+    expect(
+      source,
+      contains('_recordFaceTimeAdmissionTransport("after-response-failure")'),
+    );
+    expect(helper, contains(r'apsState=${status.state}'));
+    expect(helper, contains(r'activePortPresent=${status.activePort != null}'));
+    expect(helper, contains(r'retryWaitPresent=${status.retryWaitSeconds != null}'));
+    expect(helper, contains(r'errorPresent=${status.error != null}'));
+    expect(helper, isNot(contains('status.error}')));
+    expect(
+      helper,
+      contains(r'stage=$stage errorType=${error.runtimeType}'),
+    );
+    expect(helper, isNot(contains('error: error')));
+    expect(helper, isNot(contains('trace:')));
+  });
+
   test('outgoing timeout cannot clear a superseding call', () {
     final source = File(
       'lib/services/rustpush/rustpush_service.dart',

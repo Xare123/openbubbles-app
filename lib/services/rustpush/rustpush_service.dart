@@ -5306,6 +5306,27 @@ class RustPushService extends GetxService {
     markCertified(push);
   }
 
+  Future<void> _recordFaceTimeAdmissionTransport(String stage) async {
+    if (!ss.settings.faceTimeDiagnosticsEnabled.value) return;
+    try {
+      final status = await api.getApsConnectionStatus(
+        aps: pushService.state!.conn,
+      );
+      Logger.info(
+        "FaceTime web admission transport stage=$stage "
+        "apsState=${status.state} "
+        "activePortPresent=${status.activePort != null} "
+        "retryWaitPresent=${status.retryWaitSeconds != null} "
+        "errorPresent=${status.error != null}",
+      );
+    } catch (error) {
+      Logger.warn(
+        "Unable to read FaceTime admission transport state "
+        "stage=$stage errorType=${error.runtimeType}",
+      );
+    }
+  }
+
   bool authing = false;
   Future handleMsgInner(api.PushMessage push) async {
     if (push is api.PushMessage_CircleFinishEvent) {
@@ -5602,6 +5623,7 @@ class RustPushService extends GetxService {
         Logger.info(
           "FaceTime web admission request: usage=${facetime.field0.usage ?? 'unknown'}, approvedGroupPresent=${approvedGroup != null}",
         );
+        await _recordFaceTimeAdmissionTransport("before-response");
         try {
           await api.answerFtRequest(
             facetime: pushService.state!.ftClient,
@@ -5618,6 +5640,7 @@ class RustPushService extends GetxService {
             error: error,
             trace: trace,
           );
+          await _recordFaceTimeAdmissionTransport("after-response-failure");
           rethrow;
         }
       }
