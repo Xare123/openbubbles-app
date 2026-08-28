@@ -213,16 +213,35 @@ pub struct CloudSyncNativeAuthMetadata {
 
 const CLOUD_SYNC_READ_AUTH_WARM_TIMEOUT: Duration = Duration::from_secs(30);
 
-async fn bounded_cloud_sync_read_authentication<F, T, E>(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CloudSyncReadAuthWarmFailure {
+    MessagesContainer,
+    KeychainContainer,
+    SecurityContainer,
+    CloudKitToken,
+}
+
+impl CloudSyncReadAuthWarmFailure {
+    fn safe_code(self) -> &'static str {
+        match self {
+            Self::MessagesContainer => "cloud_sync_native_auth_messages_container_failed",
+            Self::KeychainContainer => "cloud_sync_native_auth_keychain_container_failed",
+            Self::SecurityContainer => "cloud_sync_native_auth_security_container_failed",
+            Self::CloudKitToken => "cloud_sync_native_auth_cloudkit_token_failed",
+        }
+    }
+}
+
+async fn bounded_cloud_sync_read_authentication<F, T>(
     timeout: Duration,
     future: F,
 ) -> anyhow::Result<T>
 where
-    F: Future<Output = Result<T, E>>,
+    F: Future<Output = Result<T, CloudSyncReadAuthWarmFailure>>,
 {
     match tokio::time::timeout(timeout, future).await {
         Ok(Ok(value)) => Ok(value),
-        Ok(Err(_)) => Err(anyhow!("cloud_sync_native_auth_warm_failed")),
+        Ok(Err(failure)) => Err(anyhow!(failure.safe_code())),
         Err(_) => Err(anyhow!("cloud_sync_native_auth_warm_timeout")),
     }
 }
@@ -241,18 +260,27 @@ pub async fn cloud_sync_warm_read_authentication(
         return Err(anyhow!("cloud_sync_native_auth_account_unavailable"));
     }
     bounded_cloud_sync_read_authentication(CLOUD_SYNC_READ_AUTH_WARM_TIMEOUT, async {
-        cloud_messages_client.get_container().await?;
-        cloud_messages_client.keychain.get_container().await?;
+        cloud_messages_client
+            .get_container()
+            .await
+            .map_err(|_| CloudSyncReadAuthWarmFailure::MessagesContainer)?;
+        cloud_messages_client
+            .keychain
+            .get_container()
+            .await
+            .map_err(|_| CloudSyncReadAuthWarmFailure::KeychainContainer)?;
         cloud_messages_client
             .keychain
             .get_security_container()
-            .await?;
+            .await
+            .map_err(|_| CloudSyncReadAuthWarmFailure::SecurityContainer)?;
         cloud_messages_client
             .client
             .token_provider
             .get_mme_token_cached("cloudKitToken")
-            .await?;
-        Ok::<(), PushError>(())
+            .await
+            .map_err(|_| CloudSyncReadAuthWarmFailure::CloudKitToken)?;
+        Ok(())
     })
     .await?;
     let account_after_warm = cloud_messages_client.native_account_identifier().await;
@@ -305,7 +333,7 @@ mod cloud_sync_read_authentication_tests {
     async fn bounded_warm_authentication_times_out_with_only_a_safe_code() {
         let failure = bounded_cloud_sync_read_authentication(
             Duration::from_millis(1),
-            std::future::pending::<Result<(), &'static str>>(),
+            std::future::pending::<Result<(), CloudSyncReadAuthWarmFailure>>(),
         )
         .await
         .expect_err("pending warm authentication must time out");
@@ -314,16 +342,17 @@ mod cloud_sync_read_authentication_tests {
     }
 
     #[tokio::test]
-    async fn bounded_warm_authentication_redacts_inner_failures() {
+    async fn bounded_warm_authentication_returns_only_a_fixed_stage_code() {
         let failure = bounded_cloud_sync_read_authentication(Duration::from_secs(1), async {
-            Err::<(), _>("token=private-value account=user@example.com")
+            Err::<(), _>(CloudSyncReadAuthWarmFailure::CloudKitToken)
         })
         .await
         .expect_err("failed warm authentication must remain content-free");
 
-        assert_eq!(failure.to_string(), "cloud_sync_native_auth_warm_failed");
-        assert!(!failure.to_string().contains("private-value"));
-        assert!(!failure.to_string().contains("user@example.com"));
+        assert_eq!(
+            failure.to_string(),
+            "cloud_sync_native_auth_cloudkit_token_failed"
+        );
     }
 
     #[tokio::test]
@@ -333,7 +362,7 @@ mod cloud_sync_read_authentication_tests {
         let failure =
             bounded_cloud_sync_read_authentication(Duration::from_millis(10), async move {
                 let _guard = timed_initialization.lock().await;
-                std::future::pending::<Result<(), &'static str>>().await
+                std::future::pending::<Result<(), CloudSyncReadAuthWarmFailure>>().await
             })
             .await
             .expect_err("stalled initialization must time out");

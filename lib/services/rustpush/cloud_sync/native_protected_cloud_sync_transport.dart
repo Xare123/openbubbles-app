@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:bluebubbles/src/rust/frb_generated.dart';
 import 'package:bluebubbles/src/rust/lib.dart' as frb_lib;
+import 'package:bluebubbles/utils/logger/logger.dart';
 
 import 'cloud_operation_identity.dart';
 import 'cloud_sync_models.dart';
@@ -816,7 +817,14 @@ final class NativeProtectedCloudSyncTransport
     if ((page == null) == (failure == null)) {
       throw _malformed('invalid_protected_fetch_envelope');
     }
-    if (failure != null) throw _mapFailure(failure);
+    if (failure != null) {
+      final mapped = _mapFailure(failure);
+      Logger.warn(
+        'Cloud Sync V2 protected fetch failed '
+        'category=${mapped.category.name} code=${mapped.safeCode ?? 'none'}',
+      );
+      throw mapped;
+    }
     return _mapPage(scope, page!, generation, maximumChanges);
   }
 

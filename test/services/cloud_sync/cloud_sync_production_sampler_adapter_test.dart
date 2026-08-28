@@ -221,6 +221,10 @@ void main() {
       'cloud_sync_native_auth_account_changed',
       'cloud_sync_native_auth_warm_failed',
       'cloud_sync_native_auth_warm_timeout',
+      'cloud_sync_native_auth_messages_container_failed',
+      'cloud_sync_native_auth_keychain_container_failed',
+      'cloud_sync_native_auth_security_container_failed',
+      'cloud_sync_native_auth_cloudkit_token_failed',
     ]) {
       expect(cloudSyncNativeAuthBridgeSafeCode(frb.AnyhowException(tag)), tag);
     }

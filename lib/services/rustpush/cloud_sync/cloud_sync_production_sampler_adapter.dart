@@ -4,6 +4,7 @@ import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:bluebubbles/src/rust/frb_generated.dart' as frb_generated;
 import 'package:bluebubbles/src/rust/lib.dart' as frb_lib;
 import 'package:bluebubbles/database/database.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     as frb;
 
@@ -80,7 +81,9 @@ final class FrbCloudSyncNativeAuthBinding
         cloudMessagesClient: cloudMessagesClient,
       );
     } catch (error) {
-      throw StateError(cloudSyncNativeAuthBridgeSafeCode(error));
+      final safeCode = cloudSyncNativeAuthBridgeSafeCode(error);
+      Logger.warn('Cloud Sync V2 read authentication failed code=$safeCode');
+      throw StateError(safeCode);
     }
   }
 
@@ -140,6 +143,10 @@ String cloudSyncNativeAuthBridgeSafeCode(Object error) {
     'cloud_sync_native_auth_account_changed',
     'cloud_sync_native_auth_warm_failed',
     'cloud_sync_native_auth_warm_timeout',
+    'cloud_sync_native_auth_messages_container_failed',
+    'cloud_sync_native_auth_keychain_container_failed',
+    'cloud_sync_native_auth_security_container_failed',
+    'cloud_sync_native_auth_cloudkit_token_failed',
     'cloud_sync_native_auth_account_fingerprint_failed',
     'cloud_sync_native_auth_session_fingerprint_failed',
     'cloud_sync_native_auth_store_identity_failed',

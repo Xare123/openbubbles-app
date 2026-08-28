@@ -44,6 +44,7 @@ void main() {
     Duration pausedRetryDelay = const Duration(hours: 6),
     Duration coordinatorLeaseDuration = const Duration(minutes: 5),
     Duration outboxLeaseDuration = const Duration(minutes: 2),
+    bool allowManualPullBackoffOverride = false,
     MemoryCloudSyncObserver? observer,
     String coordinatorId = 'coordinator-a',
     CloudShadowJournalBudget? shadowJournalBudget,
@@ -77,6 +78,7 @@ void main() {
         pausedRetryDelay: pausedRetryDelay,
         coordinatorLeaseDuration: coordinatorLeaseDuration,
         outboxLeaseDuration: outboxLeaseDuration,
+        allowManualPullBackoffOverride: allowManualPullBackoffOverride,
         shadowJournalBudget: shadowJournalBudget ?? CloudShadowJournalBudget(),
         flags: flags,
       ),
@@ -1175,14 +1177,11 @@ void main() {
       expect(first.counters.semanticStageQuarantined, 0);
       expect(first.counters.applied, 1);
       expect((await store.readCheckpoint(scope)).lastAppliedSequence, 3);
-      expect(
-        (await store.inboxEntries(scope)).map((entry) => entry.status),
-        [
-          CloudInboxStatus.quarantined,
-          CloudInboxStatus.quarantined,
-          CloudInboxStatus.applied,
-        ],
-      );
+      expect((await store.inboxEntries(scope)).map((entry) => entry.status), [
+        CloudInboxStatus.quarantined,
+        CloudInboxStatus.quarantined,
+        CloudInboxStatus.applied,
+      ]);
 
       final appliedCallCount = applier.appliedSequences.length;
       final second = await engine().synchronize(
@@ -1494,6 +1493,56 @@ void main() {
     final restarted = engine(coordinatorId: 'coordinator-after-restart');
     await restarted.synchronize(trigger: CloudSyncTrigger.startup);
     expect(transport.fetchCallCount, 1);
+  });
+
+  test(
+    'explicit read-only manual run can probe through durable pull backoff',
+    () async {
+      transport.enqueueFetchFailure(
+        CloudSyncFailure(category: CloudFailureCategory.authorization),
+      );
+      const flags = CloudSyncFeatureFlags(
+        readOnlyFetch: true,
+        semanticApply: false,
+      );
+      final first = await engine(
+        flags: flags,
+      ).synchronize(trigger: CloudSyncTrigger.startup);
+      expect(first.failureCategory, CloudFailureCategory.authorization);
+      expect(transport.fetchCallCount, 1);
+
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          batchId: 'manual-backoff-probe',
+          generation: 1,
+          changes: const [],
+          nextToken: 'fresh-token',
+          hasMore: false,
+        ),
+      );
+      final manual = await engine(
+        flags: flags,
+        allowManualPullBackoffOverride: true,
+        coordinatorId: 'manual-diagnostic',
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(manual.status, CloudSyncRunStatus.completed);
+      expect(transport.fetchCallCount, 2);
+      final checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.consecutivePullFailures, 0);
+      expect(checkpoint.nextPullEligibleAt, isNull);
+    },
+  );
+
+  test('manual pull backoff override rejects write-capable configs', () {
+    expect(
+      () => CloudSyncEngineConfig(
+        allowManualPullBackoffOverride: true,
+        flags: const CloudSyncFeatureFlags(saves: true),
+      ),
+      throwsArgumentError,
+    );
   });
 
   test(

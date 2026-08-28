@@ -72,6 +72,7 @@ class CloudSyncEngineConfig {
     this.maximumDeferredAttempts = 8,
     this.maximumDeferredAge = const Duration(days: 3),
     this.maximumUnknownAttempts = 3,
+    this.allowManualPullBackoffOverride = false,
     CloudShadowJournalBudget? shadowJournalBudget,
     this.flags = const CloudSyncFeatureFlags(),
   }) : shadowJournalBudget = shadowJournalBudget ?? CloudShadowJournalBudget() {
@@ -90,6 +91,7 @@ class CloudSyncEngineConfig {
   final int maximumDeferredAttempts;
   final Duration maximumDeferredAge;
   final int maximumUnknownAttempts;
+  final bool allowManualPullBackoffOverride;
   final CloudShadowJournalBudget shadowJournalBudget;
   final CloudSyncFeatureFlags flags;
 
@@ -140,6 +142,14 @@ class CloudSyncEngineConfig {
     if (maximumDeferredAge.inMicroseconds <= 0 ||
         maximumDeferredAge > maximumAllowedDeferredAge) {
       throw ArgumentError('cloud_sync_config_deferred_age_invalid');
+    }
+    if (allowManualPullBackoffOverride &&
+        (!flags.readOnlyFetch ||
+            flags.saves ||
+            flags.deletions ||
+            flags.profiles ||
+            flags.notificationHints)) {
+      throw ArgumentError('cloud_sync_config_manual_backoff_override_unsafe');
     }
     shadowJournalBudget.validate();
   }
@@ -484,8 +494,8 @@ class CloudSyncEngine {
           preflightUnknown: pullResult.semanticCounters.preflightUnknown,
           tombstoneQuarantined:
               pullResult.semanticCounters.tombstoneQuarantined,
-          semanticUnsupportedServiceQuarantined: pullResult
-              .semanticCounters.semanticUnsupportedServiceQuarantined,
+          semanticUnsupportedServiceQuarantined:
+              pullResult.semanticCounters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
               pullResult.semanticCounters.semanticStageQuarantined,
           retried: pullResult.semanticCounters.retried,
@@ -509,8 +519,8 @@ class CloudSyncEngine {
           preflightUnknown: pullResult.semanticCounters.preflightUnknown,
           tombstoneQuarantined:
               pullResult.semanticCounters.tombstoneQuarantined,
-          semanticUnsupportedServiceQuarantined: pullResult
-              .semanticCounters.semanticUnsupportedServiceQuarantined,
+          semanticUnsupportedServiceQuarantined:
+              pullResult.semanticCounters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
               pullResult.semanticCounters.semanticStageQuarantined,
           retried: pullResult.semanticCounters.retried,
@@ -720,7 +730,12 @@ class CloudSyncEngine {
     var checkpoint = await _store.readCheckpoint(scope);
     final initialNow = _clock();
     final nextEligible = checkpoint.nextPullEligibleAt;
-    if (nextEligible != null && nextEligible.isAfter(initialNow)) {
+    final manualBackoffOverride =
+        trigger == CloudSyncTrigger.manual &&
+        config.allowManualPullBackoffOverride;
+    if (nextEligible != null &&
+        nextEligible.isAfter(initialNow) &&
+        !manualBackoffOverride) {
       _emit(
         CloudSyncEventType.runSkipped,
         at: initialNow,
@@ -1240,8 +1255,9 @@ class CloudSyncEngine {
       preflightUnknown: preflightCode == CloudPreflightCode.unknown ? 1 : 0,
       tombstoneQuarantined: tombstone ? 1 : 0,
       semanticUnsupportedServiceQuarantined: unsupportedService ? 1 : 0,
-      semanticStageQuarantined:
-          !preflight && !tombstone && !unsupportedService ? 1 : 0,
+      semanticStageQuarantined: !preflight && !tombstone && !unsupportedService
+          ? 1
+          : 0,
     );
   }
 

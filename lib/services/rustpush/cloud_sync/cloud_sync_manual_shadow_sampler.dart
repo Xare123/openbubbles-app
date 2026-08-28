@@ -366,6 +366,7 @@ final class CloudSyncManualShadowSampler {
     maximumInboxEntriesPerRun: changeLimit,
     maximumOutboxBatchesPerRun: 1,
     fetchOperationTimeout: _fetchTimeout,
+    allowManualPullBackoffOverride: true,
     shadowJournalBudget: journalBudget,
     flags: const CloudSyncFeatureFlags(
       readOnlyFetch: true,
