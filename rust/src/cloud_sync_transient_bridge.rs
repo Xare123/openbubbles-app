@@ -420,17 +420,66 @@ fn preflight_gzip_fields(
 ) -> Result<(), CloudTransientBridgeFailure> {
     let mut aggregate = 0usize;
     for field in fields {
-        if !gzip_field_requires_preflight(record, presence, *field)? {
+        let requires_preflight = match gzip_field_requires_preflight(record, presence, *field) {
+            Ok(value) => value,
+            Err(failure) => {
+                warn!(
+                    "CloudKit V2 gzip preflight field={} stage=wire_shape",
+                    field.name
+                );
+                return Err(failure);
+            }
+        };
+        if !requires_preflight {
             continue;
         }
-        let Some(compressed) = encrypted_field_bytes(record, key, field.name)? else {
-            continue;
+        let compressed = match encrypted_field_bytes(record, key, field.name) {
+            Ok(Some(value)) => value,
+            Ok(None) => {
+                warn!(
+                    "CloudKit V2 gzip preflight field={} stage=missing_ciphertext",
+                    field.name
+                );
+                return Err(CloudTransientBridgeFailure::MalformedRecord);
+            }
+            Err(failure) => {
+                warn!(
+                    "CloudKit V2 gzip preflight field={} stage=decrypt",
+                    field.name
+                );
+                return Err(failure);
+            }
         };
-        let decompressed = bounded_gunzip(&compressed)?;
+        if compressed.len() < 2 || compressed[..2] != [0x1f, 0x8b] {
+            warn!(
+                "CloudKit V2 gzip preflight field={} stage=header",
+                field.name
+            );
+            return Err(CloudTransientBridgeFailure::MalformedRecord);
+        }
+        let decompressed = match bounded_gunzip(&compressed) {
+            Ok(value) => value,
+            Err(failure) => {
+                let stage = if failure == CloudTransientBridgeFailure::OversizedRecord {
+                    "field_oversized"
+                } else {
+                    "inflate"
+                };
+                warn!(
+                    "CloudKit V2 gzip preflight field={} stage={stage}",
+                    field.name
+                );
+                return Err(failure);
+            }
+        };
         aggregate = aggregate
             .checked_add(decompressed.len())
             .ok_or(CloudTransientBridgeFailure::OversizedRecord)?;
         if aggregate > MAX_DECOMPRESSED_RECORD_BYTES {
+            warn!(
+                "CloudKit V2 gzip preflight field={} stage=record_oversized",
+                field.name
+            );
             return Err(CloudTransientBridgeFailure::OversizedRecord);
         }
     }
