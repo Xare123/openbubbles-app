@@ -142,7 +142,7 @@ void main() {
         privateStorageDirectory: privateStorageDirectory.path,
         fenceStore: fenceStore,
       );
-      var observedBusyFence = false;
+      var observedActiveInterlock = false;
       final sampler = CloudSyncManualShadowSampler(
         readPreflight: () async => readyState(),
         prepareAuthSnapshot: () async {
@@ -155,11 +155,11 @@ void main() {
               isA<CloudKitOperationInterlockException>().having(
                 (error) => error.safeCode,
                 'safeCode',
-                'cloudkit_interlock_busy',
+                'cloudkit_interlock_mode_violation',
               ),
             ),
           );
-          observedBusyFence = true;
+          observedActiveInterlock = true;
           return auth('session-a');
         },
         readAuthSnapshot: () async => auth('session-a'),
@@ -174,7 +174,7 @@ void main() {
       );
 
       await sampler.runConfirmed();
-      expect(observedBusyFence, isTrue);
+      expect(observedActiveInterlock, isTrue);
     },
   );
 

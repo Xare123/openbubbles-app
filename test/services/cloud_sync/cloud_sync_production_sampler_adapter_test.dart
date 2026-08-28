@@ -103,7 +103,11 @@ void main() {
       final second = Object();
       var active = first;
       final warmBlocker = Completer<void>();
-      final binding = _FakeNativeAuthBinding(warmBlocker: warmBlocker);
+      final warmStarted = Completer<void>();
+      final binding = _FakeNativeAuthBinding(
+        warmBlocker: warmBlocker,
+        warmStarted: warmStarted,
+      );
       final provider = CloudSyncProductionAuthSnapshotProvider(
         readActiveClient: () => active,
         nativeAuthBinding: binding,
@@ -114,7 +118,7 @@ void main() {
         kind: CloudKitOperationKind.v2SemanticRead,
         action: provider.prepareReadAuthenticationUnderInterlock,
       );
-      await Future<void>.delayed(Duration.zero);
+      await warmStarted.future;
       active = second;
       warmBlocker.complete();
 
@@ -238,10 +242,11 @@ void main() {
 }
 
 final class _FakeNativeAuthBinding implements CloudSyncNativeAuthBinding {
-  _FakeNativeAuthBinding({this.blocker, this.warmBlocker});
+  _FakeNativeAuthBinding({this.blocker, this.warmBlocker, this.warmStarted});
 
   final Completer<void>? blocker;
   final Completer<void>? warmBlocker;
+  final Completer<void>? warmStarted;
   int calls = 0;
   int warmCalls = 0;
   final List<Object> clients = [];
@@ -253,6 +258,10 @@ final class _FakeNativeAuthBinding implements CloudSyncNativeAuthBinding {
   }) async {
     warmCalls++;
     warmedClients.add(cloudMessagesClient);
+    final started = warmStarted;
+    if (started != null && !started.isCompleted) {
+      started.complete();
+    }
     await warmBlocker?.future;
   }
 
