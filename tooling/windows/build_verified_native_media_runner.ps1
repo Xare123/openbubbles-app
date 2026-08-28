@@ -65,6 +65,104 @@ function Resolve-NuGetExecutable {
     throw "NuGet.exe is required by the Windows WebView plugins, but no existing executable was found."
 }
 
+function Patch-MediaKitVideoAngleD3d9Fallback {
+    param(
+        [Parameter(Mandatory)]
+        [string] $PackageConfigPath
+    )
+
+    if (-not (Test-Path -LiteralPath $PackageConfigPath -PathType Leaf)) {
+        throw "Dart package configuration is missing; cannot apply the reviewed media_kit_video compatibility overlay."
+    }
+
+    $packageConfig = Get-Content -LiteralPath $PackageConfigPath -Raw |
+        ConvertFrom-Json -ErrorAction Stop
+    $matches = @(
+        $packageConfig.packages |
+            Where-Object { $_.name -eq "media_kit_video" }
+    )
+    if ($matches.Count -ne 1) {
+        throw "Expected exactly one media_kit_video package in Dart package configuration, found $($matches.Count)."
+    }
+
+    $packageUri = [Uri] ([string] $matches[0].rootUri)
+    if (-not $packageUri.IsAbsoluteUri -or $packageUri.Scheme -ne "file") {
+        throw "media_kit_video rootUri is not a local file URI."
+    }
+    $packageRoot = $packageUri.LocalPath.TrimEnd('\', '/')
+    $headerPath = Join-Path $packageRoot "windows\angle_surface_manager.h"
+    $sourcePath = Join-Path $packageRoot "windows\angle_surface_manager.cc"
+    foreach ($path in @($headerPath, $sourcePath)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Pinned media_kit_video source is missing the expected Windows file: $path"
+        }
+    }
+
+    $header = (Get-Content -LiteralPath $headerPath -Raw).Replace("`r`n", "`n")
+    $source = (Get-Content -LiteralPath $sourcePath -Raw).Replace("`r`n", "`n")
+    $headerBefore = @"
+  static constexpr EGLint kD3D9DisplayAttributes[] = {
+      EGL_PLATFORM_ANGLE_TYPE_ANGLE,
+      EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE,
+      EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE,
+      EGL_PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE,
+      EGL_NONE,
+  };
+"@
+    $headerAfter = ""
+    $sourceBefore = @"
+          display_ = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE,
+                                              EGL_DEFAULT_DISPLAY,
+                                              kD3D9DisplayAttributes);
+            if (eglInitialize(display_, 0, 0) == EGL_FALSE) {
+              display_ = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE,
+                                                  EGL_DEFAULT_DISPLAY,
+                                                  kWrapDisplayAttributes);
+              if (eglInitialize(display_, 0, 0) == EGL_FALSE) {
+                FAIL("eglGetPlatformDisplayEXT");
+              }
+            }
+"@
+    $sourceAfter = @"
+          display_ = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE,
+                                              EGL_DEFAULT_DISPLAY,
+                                              kWrapDisplayAttributes);
+          if (eglInitialize(display_, 0, 0) == EGL_FALSE) {
+            FAIL("eglGetPlatformDisplayEXT");
+          }
+"@
+
+    $headerCount = ([regex]::Matches($header, [regex]::Escape($headerBefore))).Count
+    $sourceCount = ([regex]::Matches($source, [regex]::Escape($sourceBefore))).Count
+    if ($headerCount -eq 1 -and $sourceCount -eq 1) {
+        [IO.File]::WriteAllText(
+            $headerPath,
+            $header.Replace($headerBefore, $headerAfter),
+            [Text.UTF8Encoding]::new($false)
+        )
+        [IO.File]::WriteAllText(
+            $sourcePath,
+            $source.Replace($sourceBefore, $sourceAfter),
+            [Text.UTF8Encoding]::new($false)
+        )
+        Write-Host "Applied reviewed media_kit_video ANGLE compatibility overlay: removed unsupported D3D9 fallback."
+        return
+    }
+
+    $headerAlreadyPatched =
+        $header -notmatch "EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE" -and
+        $header -match "kWrapDisplayAttributes"
+    $sourceAlreadyPatched =
+        $source -notmatch "kD3D9DisplayAttributes" -and
+        $source -match "kWrapDisplayAttributes"
+    if ($headerAlreadyPatched -and $sourceAlreadyPatched) {
+        Write-Host "Reviewed media_kit_video ANGLE compatibility overlay is already present."
+        return
+    }
+
+    throw "Refusing to patch unexpected media_kit_video ANGLE source layout (header matches: $headerCount, source matches: $sourceCount)."
+}
+
 $repo = Get-NormalizedPath -Path $RepoRoot
 $package = Join-Path $repo "packages\media_kit_libs_windows_video"
 $nuget = Resolve-NuGetExecutable
@@ -153,6 +251,8 @@ try {
             }
             Invoke-Checked -FilePath $flutter -ArgumentList $pubArguments
         }
+        Patch-MediaKitVideoAngleD3d9Fallback `
+            -PackageConfigPath (Join-Path $repo ".dart_tool\package_config.json")
         Invoke-Checked `
             -FilePath "pwsh" `
             -ArgumentList @(
