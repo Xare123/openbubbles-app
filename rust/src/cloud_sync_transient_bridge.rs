@@ -562,6 +562,11 @@ fn cloud_message_type_diagnostic_labels(
         0 => "zero",
         1 => "normal",
         2 => "association",
+        3 => "group_title_change",
+        4 => "location_share_status_change",
+        5 => "message_action",
+        6 => "participant_change",
+        7 => "group_action",
         value if value < 0 => "negative",
         _ => "other_positive",
     };
@@ -2092,6 +2097,22 @@ mod tests {
             cloud_message_service_class("private-service-name"),
             Some("other")
         );
+
+        for (message_type, expected_class) in [
+            (3, "group_title_change"),
+            (4, "location_share_status_change"),
+            (5, "message_action"),
+            (6, "participant_change"),
+            (7, "group_action"),
+        ] {
+            let labels = cloud_message_type_diagnostic_labels(&diagnostic_message(
+                message_type,
+                None,
+                "iMessage",
+            ));
+            assert_eq!(labels.message_type_class, expected_class);
+            assert_eq!(labels.association_presence, "absent");
+        }
     }
 
     #[test]
