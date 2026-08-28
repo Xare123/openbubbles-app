@@ -41,49 +41,67 @@ scanned=0
 
 patch_file() {
     local file="$1"
+    local changed=0
     scanned=$((scanned + 1))
 
-    if grep -q "_findFlutterProject" "$file"; then
-        skipped=$((skipped + 1))
-        return 0
+    if ! grep -q "_findFlutterProject" "$file"; then
+        if ! grep -q "_findFlutterPlugin" "$file"; then
+            echo "  ?? $file does not look like CargoKit's plugin.gradle; leaving it alone" >&2
+            return 0
+        fi
+
+        # Rename the search so it yields the Project rather than the Plugin. The
+        # recursive call is rewritten as its own block first so the remaining
+        # bare `return plugin;` is unambiguously the one inside the plugin loop.
+        perl -0777 -pi -e '
+            s/private Plugin findFlutterPlugin\(/private Project findFlutterProject(/;
+            s/private Plugin _findFlutterPlugin\(/private Project _findFlutterProject(/;
+            s/_findFlutterPlugin\(rootProject\.childProjects\)/_findFlutterProject(rootProject.childProjects)/;
+            s/def plugin = _findFlutterPlugin\(project\.value\.childProjects\);\s*\n(\s*)if \(plugin != null\) \{\s*\n\s*return plugin;\s*\n\s*\}/def found = _findFlutterProject(project.value.childProjects);\n$1if (found != null) {\n$1    return found;\n$1}/;
+            s/if \(plugin\.class\.name == "FlutterPlugin"\) \{\s*\n(\s*)return plugin;/if (plugin.class.name == "FlutterPlugin" ||\n$1        plugin.class.name.endsWith(".FlutterPlugin")) {\n$1    return project.value;/;
+            s/return plugin;/return project.value;/;
+            s/def plugin = findFlutterPlugin\(project\.rootProject\);/def flutterProject = findFlutterProject(project.rootProject);/;
+            s/if \(plugin == null\) \{/if (flutterProject == null) {/;
+            s/\bprint\("Flutter plugin not found/println("Flutter plugin not found/;
+            s/plugin\.getTargetPlatforms\(\)/flutterTargetPlatforms(flutterProject)/g;
+            s/plugin\.project\b/flutterProject/g;
+        ' "$file"
+
+        # getTargetPlatforms moved into FlutterPluginUtils, which is
+        # Kotlin-internal and unreachable from Groovy. Flutter passes
+        # -Ptarget-platform; the fallback matches Flutter's own default.
+        perl -0777 -pi -e '
+            s/(\n    \@Override\n    void apply\(Project project\) \{)/\n    private static List<String> flutterTargetPlatforms(Project flutterProject) {\n        if (flutterProject.hasProperty("target-platform")) {\n            return flutterProject\n                    .property("target-platform")\n                    .toString()\n                    .split(",")\n                    .collect { it.trim() }\n                    .findAll { !it.isEmpty() }\n        }\n        return ["android-arm", "android-arm64", "android-x64"]\n    }\n$1/;
+        ' "$file"
+        changed=1
     fi
 
-    if ! grep -q "_findFlutterPlugin" "$file"; then
-        echo "  ?? $file does not look like CargoKit's plugin.gradle; leaving it alone" >&2
-        return 0
+    # CargoKit historically appended emulator targets to every debug build,
+    # even when Flutter explicitly requested only android-arm64. Preserve that
+    # fallback for unscoped debug builds, but honor an explicit target set.
+    if ! grep -q '!flutterProject.hasProperty("target-platform")' "$file"; then
+        perl -0777 -pi -e '
+            s/if \(buildType == "debug"\) \{\n(\s*)platforms\.add\("android-x86"\)/if (buildType == "debug" \&\&\n$1        !flutterProject.hasProperty("target-platform")) {\n$1platforms.add("android-x86")/;
+        ' "$file"
+        changed=1
     fi
-
-    # Rename the search so it yields the Project rather than the Plugin. The
-    # recursive call is rewritten as its own block first so the remaining bare
-    # `return plugin;` is unambiguously the one inside the plugin loop.
-    perl -0777 -pi -e '
-        s/private Plugin findFlutterPlugin\(/private Project findFlutterProject(/;
-        s/private Plugin _findFlutterPlugin\(/private Project _findFlutterProject(/;
-        s/_findFlutterPlugin\(rootProject\.childProjects\)/_findFlutterProject(rootProject.childProjects)/;
-        s/def plugin = _findFlutterPlugin\(project\.value\.childProjects\);\s*\n(\s*)if \(plugin != null\) \{\s*\n\s*return plugin;\s*\n\s*\}/def found = _findFlutterProject(project.value.childProjects);\n$1if (found != null) {\n$1    return found;\n$1}/;
-        s/if \(plugin\.class\.name == "FlutterPlugin"\) \{\s*\n(\s*)return plugin;/if (plugin.class.name == "FlutterPlugin" ||\n$1        plugin.class.name.endsWith(".FlutterPlugin")) {\n$1    return project.value;/;
-        s/return plugin;/return project.value;/;
-        s/def plugin = findFlutterPlugin\(project\.rootProject\);/def flutterProject = findFlutterProject(project.rootProject);/;
-        s/if \(plugin == null\) \{/if (flutterProject == null) {/;
-        s/\bprint\("Flutter plugin not found/println("Flutter plugin not found/;
-        s/plugin\.getTargetPlatforms\(\)/flutterTargetPlatforms(flutterProject)/g;
-        s/plugin\.project\b/flutterProject/g;
-    ' "$file"
-
-    # getTargetPlatforms moved into FlutterPluginUtils, which is Kotlin-internal
-    # and unreachable from Groovy. Flutter passes -Ptarget-platform; the
-    # fallback list matches the Flutter plugin's own default.
-    perl -0777 -pi -e '
-        s/(\n    \@Override\n    void apply\(Project project\) \{)/\n    private static List<String> flutterTargetPlatforms(Project flutterProject) {\n        if (flutterProject.hasProperty("target-platform")) {\n            return flutterProject\n                    .property("target-platform")\n                    .toString()\n                    .split(",")\n                    .collect { it.trim() }\n                    .findAll { !it.isEmpty() }\n        }\n        return ["android-arm", "android-arm64", "android-x64"]\n    }\n$1/;
-    ' "$file"
 
     if ! grep -q "flutterTargetPlatforms" "$file"; then
         echo "  !! $file: helper was not inserted; the file shape is unexpected" >&2
         return 1
     fi
 
-    echo "  patched $file"
-    patched=$((patched + 1))
+    if ! grep -q '!flutterProject.hasProperty("target-platform")' "$file"; then
+        echo "  !! $file: explicit target-platform guard was not inserted" >&2
+        return 1
+    fi
+
+    if [ "$changed" -eq 1 ]; then
+        echo "  patched $file"
+        patched=$((patched + 1))
+    else
+        skipped=$((skipped + 1))
+    fi
 }
 
 roots=()
