@@ -456,6 +456,27 @@ class _HomeState extends OptimizedState<Home> with WidgetsBindingObserver, TrayL
   final ReceivePort port = ReceivePort();
   bool serverCompatible = true;
   bool fullyLoaded = false;
+  bool _windowsTaskbarOverlayAvailable = true;
+
+  Future<void> _updateWindowsTaskbarOverlay(int count) async {
+    if (!_windowsTaskbarOverlayAvailable) return;
+    try {
+      if (count == 0) {
+        await WindowsTaskbar.resetOverlayIcon();
+      } else if (count <= 9) {
+        await WindowsTaskbar.setOverlayIcon(ThumbnailToolbarAssetIcon('assets/badges/badge-$count.ico'));
+      } else {
+        await WindowsTaskbar.setOverlayIcon(ThumbnailToolbarAssetIcon('assets/badges/badge-10.ico'));
+      }
+    } catch (error, trace) {
+      _windowsTaskbarOverlayAvailable = false;
+      Logger.warn(
+        'Windows taskbar overlay unavailable; disabled for this session',
+        error: error,
+        trace: trace,
+      );
+    }
+  }
 
   @override
   void initState() {
@@ -509,15 +530,7 @@ class _HomeState extends OptimizedState<Home> with WidgetsBindingObserver, TrayL
           if (await temp.exists()) await temp.delete(recursive: true);
 
           /* ----- BADGE ICON LISTENER ----- */
-          GlobalChatService.unreadCount.listen((count) async {
-            if (count == 0) {
-                await WindowsTaskbar.resetOverlayIcon();
-              } else if (count <= 9) {
-                await WindowsTaskbar.setOverlayIcon(ThumbnailToolbarAssetIcon('assets/badges/badge-$count.ico'));
-              } else {
-                await WindowsTaskbar.setOverlayIcon(ThumbnailToolbarAssetIcon('assets/badges/badge-10.ico'));
-              }
-          });
+          GlobalChatService.unreadCount.listen(_updateWindowsTaskbarOverlay);
 
           /* ----- WINDOW EFFECT INITIALIZATION ----- */
           eventDispatcher.stream.listen((event) async {
