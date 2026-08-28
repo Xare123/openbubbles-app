@@ -3,8 +3,23 @@ import 'dart:typed_data';
 
 import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:bluebubbles/helpers/types/helpers/date_helpers.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter/material.dart';
 import 'package:cbor/simple.dart';
+
+api.PasswordManagerMetaData? tryDecodePasswordMetaData(
+  api.PasswordManagerMeta? meta,
+) {
+  if (meta == null) return null;
+  try {
+    return meta.getPasswordData();
+  } catch (_) {
+    Logger.warn(
+      "Unable to decode one iCloud password metadata payload; using basic credential fields",
+    );
+    return null;
+  }
+}
 
 class CredentialField {
   final String label;

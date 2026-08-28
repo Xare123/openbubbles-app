@@ -150,7 +150,8 @@ class _CredentialDetailPanelState
       ],
     ];
 
-    final totp = widget.credential.passwordMeta?.getPasswordData().totp;
+    final totp =
+        tryDecodePasswordMetaData(widget.credential.passwordMeta)?.totp;
     if (totp != null) {
       if (tiles.isNotEmpty) {
         tiles.add(const SettingsDivider());

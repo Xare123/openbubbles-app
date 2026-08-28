@@ -8,6 +8,7 @@ import 'package:bluebubbles/app/wrappers/stateful_boilerplate.dart';
 import 'package:bluebubbles/helpers/ui/ui_helpers.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/services/services.dart';
+import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -42,9 +43,11 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
   }
 
   Future<void> _refreshCliqueStatus() async {
+    await pushService.initFuture;
     final keychain = pushService.state?.icloudServices?.keychain;
     if (keychain == null) {
       if (!mounted) return;
+      manager = null;
       setState(() {
         _isInClique = false;
         _isCheckingClique = false;
@@ -52,24 +55,34 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
       return;
     }
 
-    await pushService.initFuture;
-    final inClique = pushService.cachedInClique;
-    if (inClique && manager == null) {
-      manager = pushService.state!.icloudServices!.passwords!;
+    bool inClique;
+    try {
+      inClique = await pushService.checkClique();
+    } catch (_) {
+      Logger.warn("Unable to refresh iCloud Keychain clique state");
+      inClique = false;
     }
-    if (inClique && manager != null) {
-      await _loadCredentialCaches();
-      await _loadGroups();
-    }
-    pushService.checkClique().then((inclique) {
-      if (!inclique) return;
-      api.syncWifiPasswords(manager: manager!, userApprove: true);
-    });
     if (!mounted) return;
+
+    final currentManager = pushService.state?.icloudServices?.passwords;
+    if (!inClique || currentManager == null) {
+      manager = null;
+      setState(() {
+        _isInClique = false;
+        _isCheckingClique = false;
+      });
+      return;
+    }
+
+    manager = currentManager;
     setState(() {
-      _isInClique = inClique;
+      _isInClique = true;
       _isCheckingClique = false;
     });
+
+    await _loadCredentialCaches();
+    if (!mounted) return;
+    await _loadGroups();
   }
 
   Future<void> _loadGroups() async {
@@ -615,7 +628,7 @@ class _PasswordsPanelState extends OptimizedState<PasswordsPanel> {
         group: passwordGroup,
       );
       final meta = match?.$2;
-      final data = meta?.getPasswordData();
+      final data = tryDecodePasswordMetaData(meta);
       final website = (meta?.srvr ?? password.srvr).trim();
       final groupName = _resolveGroupName(passwordGroup);
       final credential = CredentialEntry(

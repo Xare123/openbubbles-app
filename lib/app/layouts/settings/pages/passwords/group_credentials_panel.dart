@@ -67,7 +67,7 @@ class _GroupCredentialsPanelState
         group: entry.value.$1,
       );
       final meta = match?.$2;
-      final data = meta?.getPasswordData();
+      final data = tryDecodePasswordMetaData(meta);
       items.add(
         CredentialEntry(
           id: entry.key,

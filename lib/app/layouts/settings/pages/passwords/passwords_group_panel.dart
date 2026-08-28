@@ -62,7 +62,7 @@ class _PasswordsGroupPanelState extends OptimizedState<PasswordsGroupPanel> {
           );
           final metaId = match?.$1;
           final meta = match?.$2;
-          final data = meta?.getPasswordData();
+          final data = tryDecodePasswordMetaData(meta);
           final displayGroup = _resolveGroupName(passwordGroup);
           return CredentialEntry(
             id: entry.key,
@@ -135,7 +135,7 @@ class _PasswordsGroupPanelState extends OptimizedState<PasswordsGroupPanel> {
             group: passwordGroup,
           );
           final meta = match?.$2;
-          final data = meta?.getPasswordData();
+          final data = tryDecodePasswordMetaData(meta);
           if (data?.totp == null) {
             continue;
           }
@@ -411,7 +411,7 @@ class _PasswordsGroupPanelState extends OptimizedState<PasswordsGroupPanel> {
     }
 
     if (widget.groupType == PasswordGroupType.codes) {
-      final totp = entry.passwordMeta?.getPasswordData().totp;
+      final totp = tryDecodePasswordMetaData(entry.passwordMeta)?.totp;
       return TotpCodeListTile(
         title: entry.item.title,
         subtitle: entry.item.subtitle,
