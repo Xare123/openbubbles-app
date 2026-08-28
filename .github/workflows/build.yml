@@ -112,10 +112,22 @@ jobs:
       - name: Run the Dart test suite
         run: flutter test
 
+      # The disk-space action intentionally removes the runner tool cache,
+      # including its preinstalled Chrome. Restore an explicit browser and pass
+      # Flutter the action's resolved binary path rather than assuming the
+      # runner exposes `google-chrome`.
+      - name: Set up Chrome for web parity
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+
       # Compile and execute the conditional web implementation in Chrome.
       # The VM copy of this test is not sufficient to catch native imports or
       # accidental web enablement introduced through conditional exports.
       - name: Run CloudKit repair web parity gate
+        env:
+          CHROME_EXECUTABLE: ${{ steps.setup-chrome.outputs.chrome-path }}
         run: >-
           flutter test --platform chrome
           test/services/cloud_sync/cloudkit_quarantine_repair_web_test.dart
