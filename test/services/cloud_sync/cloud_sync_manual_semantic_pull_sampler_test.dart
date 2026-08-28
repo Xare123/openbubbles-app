@@ -8,6 +8,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observabilit
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_testing.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_transport.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/in_memory_cloud_sync_store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -94,6 +95,44 @@ void main() {
 
   tearDown(() {
     privateStorageDirectory.deleteSync(recursive: true);
+  });
+
+  test('semantic report keeps quarantine phases and redacted subtype counts', () {
+    final zone = CloudSyncSemanticPullZoneReport(
+      zoneLabel: 'messages',
+      status: CloudSyncRunStatus.completed,
+      fetched: 3,
+      applied: 0,
+      deferred: 0,
+      quarantined: 3,
+      preflightQuarantined: 1,
+      preflightUnsupportedRecordType: 0,
+      preflightMalformedMetadata: 0,
+      preflightOversizedRecord: 0,
+      preflightInvalidChangeShape: 1,
+      preflightUnknown: 0,
+      startupQuarantined: 1,
+      postFetchQuarantined: 2,
+      tombstoneQuarantined: 1,
+      semanticUnsupportedServiceQuarantined: 1,
+      semanticStageQuarantined: 0,
+      retried: 0,
+      elapsedMilliseconds: 1,
+    );
+
+    final json = zone.toJson();
+
+    expect(json['quarantinePhases'], <String, int>{
+      'startup': 1,
+      'postFetch': 2,
+    });
+    expect(json['tombstoneQuarantined'], 1);
+    expect(json['semanticUnsupportedServiceQuarantined'], 1);
+    expect(json.toString(), isNot(contains('service-name')));
+    expect(json.toString(), isNot(contains('record-id')));
+    expect(json.toString(), isNot(contains('message-body')));
+    expect(json.toString(), isNot(contains('change-token')));
+    expect(json.toString(), isNot(contains('protected-reference')));
   });
 
   test(
@@ -230,6 +269,12 @@ void main() {
         everyElement(<String, int>{'startup': 0, 'postFetch': 0}),
       );
       expect(report.zones.map((zone) => zone.tombstoneQuarantined), [0, 0, 0]);
+      expect(
+        report.zones.map(
+          (zone) => zone.semanticUnsupportedServiceQuarantined,
+        ),
+        [0, 0, 0],
+      );
       expect(report.zones.map((zone) => zone.semanticStageQuarantined), [
         0,
         0,

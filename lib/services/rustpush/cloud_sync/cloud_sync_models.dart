@@ -238,6 +238,7 @@ enum CloudFailureCategory {
   localStorage,
   cancelled,
   unknown,
+  unsupportedService,
 }
 
 extension CloudFailureCategoryBehavior on CloudFailureCategory {
@@ -252,7 +253,8 @@ extension CloudFailureCategoryBehavior on CloudFailureCategory {
     CloudFailureCategory.malformedRecord ||
     CloudFailureCategory.conflict ||
     CloudFailureCategory.cancelled ||
-    CloudFailureCategory.unknown => false,
+    CloudFailureCategory.unknown ||
+    CloudFailureCategory.unsupportedService => false,
   };
 }
 
@@ -1116,6 +1118,7 @@ class CloudSyncRunCounters {
     this.startupQuarantined = 0,
     this.postFetchQuarantined = 0,
     this.tombstoneQuarantined = 0,
+    this.semanticUnsupportedServiceQuarantined = 0,
     this.semanticStageQuarantined = 0,
     this.confirmed = 0,
     this.retried = 0,
@@ -1131,8 +1134,8 @@ class CloudSyncRunCounters {
 
   /// Content-free semantic-inbox quarantine stages. They partition inbox
   /// quarantines; [semanticStageQuarantined] is the residual bucket for any
-  /// non-preflight, non-tombstone terminal result, and [quarantined] may also
-  /// include unclassified outbox work.
+  /// non-preflight, non-tombstone, non-unsupported-service terminal result,
+  /// and [quarantined] may also include unclassified outbox work.
   final int preflightQuarantined;
   final int preflightUnsupportedRecordType;
   final int preflightMalformedMetadata;
@@ -1142,6 +1145,7 @@ class CloudSyncRunCounters {
   final int startupQuarantined;
   final int postFetchQuarantined;
   final int tombstoneQuarantined;
+  final int semanticUnsupportedServiceQuarantined;
   final int semanticStageQuarantined;
   final int confirmed;
   final int retried;
@@ -1166,6 +1170,7 @@ class CloudSyncRunCounters {
     int startupQuarantined = 0,
     int postFetchQuarantined = 0,
     int tombstoneQuarantined = 0,
+    int semanticUnsupportedServiceQuarantined = 0,
     int semanticStageQuarantined = 0,
     int confirmed = 0,
     int retried = 0,
@@ -1191,6 +1196,9 @@ class CloudSyncRunCounters {
       startupQuarantined: this.startupQuarantined + startupQuarantined,
       postFetchQuarantined: this.postFetchQuarantined + postFetchQuarantined,
       tombstoneQuarantined: this.tombstoneQuarantined + tombstoneQuarantined,
+      semanticUnsupportedServiceQuarantined:
+          this.semanticUnsupportedServiceQuarantined +
+          semanticUnsupportedServiceQuarantined,
       semanticStageQuarantined:
           this.semanticStageQuarantined + semanticStageQuarantined,
       confirmed: this.confirmed + confirmed,
@@ -1217,6 +1225,8 @@ class CloudSyncRunCounters {
     startupQuarantined: other.startupQuarantined,
     postFetchQuarantined: other.postFetchQuarantined,
     tombstoneQuarantined: other.tombstoneQuarantined,
+    semanticUnsupportedServiceQuarantined:
+        other.semanticUnsupportedServiceQuarantined,
     semanticStageQuarantined: other.semanticStageQuarantined,
     confirmed: other.confirmed,
     retried: other.retried,

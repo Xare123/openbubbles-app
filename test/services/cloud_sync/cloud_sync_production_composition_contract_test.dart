@@ -208,6 +208,9 @@ void main() {
     expect(semantic, contains('final canaryPassed'));
     expect(semantic, contains('deferred == 0'));
     expect(semantic, contains('quarantined == 0'));
+    expect(semantic, contains('unsupportedServiceQuarantined == 0'));
+    expect(semantic, contains('tombstoneQuarantined == 0'));
+    expect(semantic, contains('disabled tombstones'));
     expect(semantic, contains('retried == 0'));
     expect(semantic, isNot(contains('CloudSyncRunStatus.skipped')));
     expect(semantic, contains('remoteWriteTripwiresIntact'));

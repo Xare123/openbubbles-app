@@ -499,6 +499,19 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                                 0,
                                 (total, zone) => total + zone.quarantined,
                               );
+                              final unsupportedServiceQuarantined =
+                                  report.zones.fold<int>(
+                                0,
+                                (total, zone) =>
+                                    total +
+                                    zone.semanticUnsupportedServiceQuarantined,
+                              );
+                              final tombstoneQuarantined =
+                                  report.zones.fold<int>(
+                                0,
+                                (total, zone) =>
+                                    total + zone.tombstoneQuarantined,
+                              );
                               final retried = report.zones.fold<int>(
                                 0,
                                 (total, zone) => total + zone.retried,
@@ -520,10 +533,12 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                                       CloudSyncRunStatus.completed) &&
                                   deferred == 0 &&
                                   quarantined == 0 &&
+                                  unsupportedServiceQuarantined == 0 &&
+                                  tombstoneQuarantined == 0 &&
                                   retried == 0 &&
                                   report.remoteWriteTripwiresIntact;
                               final totals =
-                                  "Fetched $fetched, applied $applied, deferred $deferred, quarantined $quarantined, retried $retried.";
+                                  "Fetched $fetched, applied $applied, deferred $deferred, quarantined $quarantined (unsupported service $unsupportedServiceQuarantined, disabled tombstones $tombstoneQuarantined), retried $retried.";
                               if (canaryPassed) {
                                 showSnackbar(
                                   "Cloud Sync V2 Complete",

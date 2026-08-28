@@ -262,8 +262,12 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       );
     }
     if (result.quarantineReason != null) {
-      throw const CloudSemanticDecodeFailure(
-        CloudFailureCategory.malformedRecord,
+      throw CloudSemanticDecodeFailure(
+        switch (result.quarantineReason!) {
+          frb_api.CloudSyncTransientQuarantineReason.unsupportedService =>
+            CloudFailureCategory.unsupportedService,
+          _ => CloudFailureCategory.malformedRecord,
+        },
       );
     }
 

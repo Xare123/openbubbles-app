@@ -20,6 +20,7 @@ final class CloudSyncSemanticPullZoneReport {
     required this.startupQuarantined,
     required this.postFetchQuarantined,
     required this.tombstoneQuarantined,
+    required this.semanticUnsupportedServiceQuarantined,
     required this.semanticStageQuarantined,
     required this.retried,
     required this.elapsedMilliseconds,
@@ -42,6 +43,7 @@ final class CloudSyncSemanticPullZoneReport {
   final int startupQuarantined;
   final int postFetchQuarantined;
   final int tombstoneQuarantined;
+  final int semanticUnsupportedServiceQuarantined;
   final int semanticStageQuarantined;
   final int retried;
   final int elapsedMilliseconds;
@@ -68,6 +70,8 @@ final class CloudSyncSemanticPullZoneReport {
       'postFetch': postFetchQuarantined,
     },
     'tombstoneQuarantined': tombstoneQuarantined,
+    'semanticUnsupportedServiceQuarantined':
+        semanticUnsupportedServiceQuarantined,
     'semanticStageQuarantined': semanticStageQuarantined,
     'retried': retried,
     'elapsedMilliseconds': elapsedMilliseconds,
