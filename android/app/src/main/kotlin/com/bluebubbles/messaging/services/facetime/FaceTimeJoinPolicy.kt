@@ -94,10 +94,116 @@ internal data class FaceTimeJoinDecision(
 )
 
 internal object FaceTimeConnectionProbePolicy {
-    const val maxProbes = 12
+    // The old twelve-probe cap could expire before a valid remote RTP stream
+    // started. Keep probing for about a minute, with a second hard count bound
+    // in case callbacks arrive unusually quickly.
+    const val maxDurationMillis = 60_000L
+    const val maxProbes = 48
     const val initialDelayMillis = 500L
     const val pendingDelayMillis = 1500L
-    const val connectedDelayMillis = 5000L
+
+    fun shouldContinue(
+        probeCount: Int,
+        elapsedMillis: Long,
+        joined: Boolean,
+        ending: Boolean,
+        destroyed: Boolean,
+    ): Boolean =
+        !joined &&
+            !ending &&
+            !destroyed &&
+            probeCount < maxProbes &&
+            elapsedMillis < maxDurationMillis
+}
+
+internal enum class FaceTimeWebEndReason {
+    EXPLICIT_LEAVE,
+    RENDERER_GONE,
+}
+
+internal enum class FaceTimeLifecycleEndTrigger {
+    NATIVE_END,
+    BACK,
+    TASK_REMOVAL,
+    RENDERER_GONE,
+    UNEXPECTED_DESTROY,
+    EXPLICIT_WEB_LEAVE,
+    INCOMING_REJECT,
+}
+
+internal enum class FaceTimeRemoteEndAction {
+    /** The existing Apple web control owns the remote leave side effect. */
+    WEB_LEAVE,
+
+    /** The native APN bridge can safely decline an unanswered incoming call. */
+    NATIVE_DECLINE,
+
+    /** The explicit Apple web Leave control already sent the remote effect. */
+    ALREADY_SENT,
+
+    /**
+     * Fail closed instead of sending an incoming decline for an answered or
+     * outgoing call. Kotlin currently has no native cancel_session binding.
+     */
+    NO_SAFE_ACTION,
+}
+
+internal data class FaceTimeLifecycleEndSnapshot(
+    val activeCall: Boolean,
+    val currentActivity: Boolean,
+    val changingConfigurations: Boolean,
+    val inPictureInPicture: Boolean,
+    val incomingCall: Boolean,
+    val answered: Boolean,
+    val rendererAvailable: Boolean,
+)
+
+/**
+ * Owns terminal-call arbitration for one Activity instance.
+ *
+ * A terminal event is consumed once. Configuration changes, picture-in-picture
+ * transitions, and destruction of a replaced Activity are not terminal and do
+ * not consume the gate. Unanswered incoming calls use the native decline path.
+ * Answered/outgoing calls use Apple's web Leave control while its renderer is
+ * available. If that renderer has died, Kotlin has no safe native cancel
+ * binding, so the policy deliberately fails closed instead of misusing decline.
+ */
+internal class FaceTimeLifecycleEndPolicy {
+    private var consumed = false
+
+    val hasConsumedTerminalEvent: Boolean
+        get() = consumed
+
+    fun consume(
+        trigger: FaceTimeLifecycleEndTrigger,
+        snapshot: FaceTimeLifecycleEndSnapshot,
+    ): FaceTimeRemoteEndAction? {
+        val isDestructionSignal =
+            trigger == FaceTimeLifecycleEndTrigger.TASK_REMOVAL ||
+                trigger == FaceTimeLifecycleEndTrigger.UNEXPECTED_DESTROY
+        if (
+            consumed ||
+            !snapshot.activeCall ||
+            !snapshot.currentActivity ||
+            (isDestructionSignal &&
+                (snapshot.changingConfigurations || snapshot.inPictureInPicture))
+        ) {
+            return null
+        }
+
+        consumed = true
+        if (trigger == FaceTimeLifecycleEndTrigger.EXPLICIT_WEB_LEAVE) {
+            return FaceTimeRemoteEndAction.ALREADY_SENT
+        }
+        if (!snapshot.answered && snapshot.incomingCall) {
+            return FaceTimeRemoteEndAction.NATIVE_DECLINE
+        }
+        return if (snapshot.rendererAvailable) {
+            FaceTimeRemoteEndAction.WEB_LEAVE
+        } else {
+            FaceTimeRemoteEndAction.NO_SAFE_ACTION
+        }
+    }
 }
 
 internal class FaceTimeJoinPolicy(

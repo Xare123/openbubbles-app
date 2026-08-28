@@ -18,6 +18,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.util.Rational
 import android.view.View
@@ -79,10 +80,13 @@ class FaceTimeActivity : Activity() {
     private var connectionProbeWatchdogRunnable: Runnable? = null
     private var endFallbackRunnable: Runnable? = null
     private var connectionProbeCount = 0
+    private var connectionProbeStartedAtMillis: Long? = null
     private var nextConnectionProbeId = 0L
     private var awaitingConnectionProbeId: Long? = null
     private var callEnding = false
+    private var rendererAvailable = true
     private val localEndReporter = FaceTimeLocalEndReporter()
+    private val lifecycleEndPolicy = FaceTimeLifecycleEndPolicy()
     private val manualAdmissionRetryState = FaceTimeAdmissionRetryState()
 
     private fun diagnosticsEnabled(): Boolean = FaceTimeDiagnostics.isEnabled(this)
@@ -111,7 +115,8 @@ class FaceTimeActivity : Activity() {
             """(() => { const button = document.getElementById("callcontrols-join-button-session-banner"); return button ? "present:" + (!button.disabled) + ":" + (button.offsetParent !== null) : "missing"; })()"""
         ) { result ->
             if (diagnosticsEnabled()) {
-                Log.i(diagnosticTag, "join button state reason=$reason result=$result mirrorReady=$mirrorReady answered=$answered")
+                val buttonPresent = result?.removeSurrounding("\"")?.startsWith("present:") == true
+                Log.i(diagnosticTag, "join button state reason=$reason present=$buttonPresent mirrorReady=$mirrorReady answered=$answered")
             }
         }
     }
@@ -134,12 +139,27 @@ class FaceTimeActivity : Activity() {
     }
 
     private fun scheduleConnectionProbe(delayMillis: Long = 0) {
-        if (callEnding || isFinishing || isDestroyed ||
-            connectionProbeCount >= FaceTimeConnectionProbePolicy.maxProbes
+        val startedAt = connectionProbeStartedAtMillis
+            ?: SystemClock.elapsedRealtime().also { connectionProbeStartedAtMillis = it }
+        if (!FaceTimeConnectionProbePolicy.shouldContinue(
+                probeCount = connectionProbeCount,
+                elapsedMillis = (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L),
+                joined = joinPolicy.joined,
+                ending = callEnding || isFinishing,
+                destroyed = isDestroyed,
+            )
         ) return
         connectionProbeRunnable?.let(mainHandler::removeCallbacks)
         val runnable = Runnable {
-            if (callEnding || isFinishing || isDestroyed) return@Runnable
+            val elapsedMillis = (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L)
+            if (!FaceTimeConnectionProbePolicy.shouldContinue(
+                    probeCount = connectionProbeCount,
+                    elapsedMillis = elapsedMillis,
+                    joined = joinPolicy.joined,
+                    ending = callEnding || isFinishing,
+                    destroyed = isDestroyed,
+                )
+            ) return@Runnable
             val probeId = ++nextConnectionProbeId
             awaitingConnectionProbeId = probeId
             connectionProbeWatchdogRunnable?.let(mainHandler::removeCallbacks)
@@ -157,7 +177,7 @@ class FaceTimeActivity : Activity() {
     }
 
     private fun onResolvedMediaEvidence(probeId: Long, payload: String) {
-        if (callEnding || isFinishing || isDestroyed) return
+        if (callEnding || joinPolicy.joined || isFinishing || isDestroyed) return
         if (awaitingConnectionProbeId != probeId) return
         awaitingConnectionProbeId = null
         connectionProbeWatchdogRunnable?.let(mainHandler::removeCallbacks)
@@ -182,15 +202,20 @@ class FaceTimeActivity : Activity() {
         val decision = joinPolicy.recordMediaEvidence(evidence)
         if (decision.joined) {
             joinRetryRunnable?.let(mainHandler::removeCallbacks)
+            stopConnectionProbing()
         }
         showCallUi(joined = decision.joined)
-        scheduleConnectionProbe(
-            if (decision.joined) {
-                FaceTimeConnectionProbePolicy.connectedDelayMillis
-            } else {
-                FaceTimeConnectionProbePolicy.pendingDelayMillis
-            },
-        )
+        if (!decision.joined) {
+            scheduleConnectionProbe(FaceTimeConnectionProbePolicy.pendingDelayMillis)
+        }
+    }
+
+    private fun stopConnectionProbing() {
+        connectionProbeRunnable?.let(mainHandler::removeCallbacks)
+        connectionProbeRunnable = null
+        connectionProbeWatchdogRunnable?.let(mainHandler::removeCallbacks)
+        connectionProbeWatchdogRunnable = null
+        awaitingConnectionProbeId = null
     }
 
     private fun scheduleJoinAttempt(reason: String, delayMillis: Long = 0) {
@@ -218,7 +243,7 @@ class FaceTimeActivity : Activity() {
             }
             if (decision.joined) {
                 showCallUi(joined = true)
-                scheduleConnectionProbe(FaceTimeConnectionProbePolicy.connectedDelayMillis)
+                stopConnectionProbing()
                 return@evaluateJavascript
             }
             showCallUi(joined = false)
@@ -236,32 +261,104 @@ class FaceTimeActivity : Activity() {
     }
 
     fun endCall() {
-        if (callEnding) return
+        requestTerminalEnd(FaceTimeLifecycleEndTrigger.NATIVE_END)
+    }
+
+    private fun lifecycleEndSnapshot(): FaceTimeLifecycleEndSnapshot = FaceTimeLifecycleEndSnapshot(
+        activeCall = !callUuid.isNullOrBlank() || answered || joinPolicy.admissionRequested || joinPolicy.joined,
+        currentActivity = activeFaceTimeActivity === this,
+        changingConfigurations = isChangingConfigurations,
+        inPictureInPicture = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode,
+        incomingCall = notificationId != 0,
+        answered = answered,
+        rendererAvailable = rendererAvailable && ::webView.isInitialized,
+    )
+
+    private fun requestTerminalEnd(trigger: FaceTimeLifecycleEndTrigger) {
+        val action = lifecycleEndPolicy.consume(trigger, lifecycleEndSnapshot()) ?: return
         callEnding = true
-        reportLocalCallEnded()
+        stopConnectionProbing()
         joinRetryRunnable?.let(mainHandler::removeCallbacks)
-        binding.connectionStatus.text = "Ending FaceTime..."
-        binding.connectionStatus.visibility = View.VISIBLE
-        binding.endCall.isEnabled = false
+        manualRecoveryRunnable?.let(mainHandler::removeCallbacks)
+        reportLocalCallEnded()
+        if (::binding.isInitialized) {
+            binding.connectionStatus.text = "Ending FaceTime..."
+            binding.connectionStatus.visibility = View.VISIBLE
+            binding.endCall.isEnabled = false
+        }
+
+        when (action) {
+            FaceTimeRemoteEndAction.WEB_LEAVE -> dispatchWebLeave()
+            FaceTimeRemoteEndAction.NATIVE_DECLINE -> dispatchNativeDecline()
+            FaceTimeRemoteEndAction.ALREADY_SENT -> finishTerminalActivity()
+            FaceTimeRemoteEndAction.NO_SAFE_ACTION -> {
+                // NativePushState exposes decline_session only. It does not
+                // expose cancel_session to Kotlin, and using decline for an
+                // answered/outgoing call is semantically unsafe.
+                Log.w(diagnosticTag, "remote end unavailable reason=native_cancel_binding_missing")
+                finishTerminalActivity()
+            }
+        }
+    }
+
+    private fun dispatchWebLeave() {
         val fallback = Runnable {
             if (!isFinishing && !isDestroyed) {
                 if (diagnosticsEnabled()) {
-                    Log.w(diagnosticTag, "native end call fallback finishing activity")
+                    Log.w(diagnosticTag, "web leave timeout; finishing activity")
                 }
                 finishAndRemoveTask()
             }
         }
         endFallbackRunnable = fallback
         mainHandler.postDelayed(fallback, 1500)
-        webView.evaluateJavascript(
-            """(() => { const buttons = Array.from(document.querySelectorAll("button")); const label = (element) => (element?.innerText || element?.textContent || element?.getAttribute?.("aria-label") || "").trim(); const button = document.getElementById("callcontrols-leave-button-session-banner") || buttons.find((item) => /^(leave|end call)$/i.test(label(item))); if (!button) return "missing"; button.click(); return "clicked"; })()"""
-        ) { result ->
-            if (diagnosticsEnabled()) {
-                Log.i(diagnosticTag, "native end call result=$result")
+        val requested = runCatching {
+            webView.evaluateJavascript(
+                """(() => { const buttons = Array.from(document.querySelectorAll("button")); const label = (element) => (element?.innerText || element?.textContent || element?.getAttribute?.("aria-label") || "").trim(); const button = document.getElementById("callcontrols-leave-button-session-banner") || buttons.find((item) => /^(leave|end call)$/i.test(label(item))); if (!button) return "missing"; button.click(); return "clicked"; })()"""
+            ) { result ->
+                if (diagnosticsEnabled()) {
+                    val clicked = result?.trim()?.removeSurrounding("\"") == "clicked"
+                    Log.i(diagnosticTag, "web leave completed clicked=$clicked")
+                }
+                mainHandler.removeCallbacks(fallback)
+                finishTerminalActivity()
             }
+        }.isSuccess
+        if (!requested) {
             mainHandler.removeCallbacks(fallback)
-            mainHandler.postDelayed(fallback, 500)
+            Log.w(diagnosticTag, "web leave unavailable reason=renderer_request_failed")
+            finishTerminalActivity()
         }
+    }
+
+    private fun dispatchNativeDecline() {
+        val activeCallUuid = callUuid
+        if (activeCallUuid.isNullOrBlank()) {
+            Log.w(diagnosticTag, "native decline unavailable reason=missing_call_id")
+            finishTerminalActivity()
+            return
+        }
+        val client = APNClient(applicationContext)
+        client.bind { service: APNService ->
+            try {
+                val pushState = service.pushState
+                if (pushState == null) {
+                    Log.w(diagnosticTag, "native decline unavailable reason=push_state_missing")
+                } else {
+                    pushState.declineFacetime(activeCallUuid)
+                    if (diagnosticsEnabled()) Log.i(diagnosticTag, "native decline dispatched")
+                }
+            } finally {
+                client.destroy()
+            }
+        }
+        finishTerminalActivity()
+    }
+
+    private fun finishTerminalActivity() {
+        endFallbackRunnable?.let(mainHandler::removeCallbacks)
+        endFallbackRunnable = null
+        if (!isFinishing && !isDestroyed) finishAndRemoveTask()
     }
 
     private fun hideControlsForPIP() {
@@ -283,17 +380,7 @@ class FaceTimeActivity : Activity() {
         if (notificationId != 0) {
             DeleteNotificationHandler().deleteNotification(this, notificationId, Constants.newFaceTimeNotificationTag)
         }
-        callUuid?.let { callUuid ->
-            val client = APNClient(applicationContext)
-            client.bind { service: APNService ->
-                try {
-                    service.pushState?.declineFacetime(callUuid)
-                } finally {
-                    client.destroy()
-                }
-            }
-        }
-        finishAndRemoveTask()
+        requestTerminalEnd(FaceTimeLifecycleEndTrigger.INCOMING_REJECT)
     }
 
     private fun invLerp(a: Int, b: Int, x: Int): Float {
@@ -602,10 +689,12 @@ class FaceTimeActivity : Activity() {
     }
 
     override fun onDestroy() {
+        // onStop handles normal task removal first. This is the final safety
+        // net for renderer-independent or otherwise unexpected destruction.
+        requestTerminalEnd(FaceTimeLifecycleEndTrigger.UNEXPECTED_DESTROY)
         joinRetryRunnable?.let(mainHandler::removeCallbacks)
         manualRecoveryRunnable?.let(mainHandler::removeCallbacks)
-        connectionProbeRunnable?.let(mainHandler::removeCallbacks)
-        connectionProbeWatchdogRunnable?.let(mainHandler::removeCallbacks)
+        stopConnectionProbing()
         endFallbackRunnable?.let(mainHandler::removeCallbacks)
         permissionRequests.toList().forEach { runCatching { it.deny() } }
         permissionRequests.clear()
@@ -616,26 +705,26 @@ class FaceTimeActivity : Activity() {
 
         val isCurrentActivity = activeFaceTimeActivity === this
         if (isCurrentActivity) {
-            // Back, task removal, renderer destruction, and external finish
-            // all converge here. The reporter makes this exactly once, and
-            // Dart clears state only when this UUID matches its active call.
-            reportLocalCallEnded()
             activeFaceTimeActivity = null
-            val intent = Intent(this, FaceTimeInCallService::class.java)
-            stopService(intent)
-            serviceStarted = false
+            val preservingCall = isChangingConfigurations ||
+                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode)
+            if (!preservingCall) {
+                val intent = Intent(this, FaceTimeInCallService::class.java)
+                stopService(intent)
+                serviceStarted = false
 
-            // An older FaceTime activity must not mute or reroute a newer call.
-            initialMediaVolume?.let {
-                try {
-                    val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
-                    audioManager.setStreamVolume(
-                        AudioManager.STREAM_MUSIC,
-                        it,
-                        0
-                    )
-                } catch (e: SecurityException) {
-                    Log.w("FaceTime", "Unable to set stream volume!")
+                // An older FaceTime activity must not mute or reroute a newer call.
+                initialMediaVolume?.let {
+                    try {
+                        val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+                        audioManager.setStreamVolume(
+                            AudioManager.STREAM_MUSIC,
+                            it,
+                            0
+                        )
+                    } catch (e: SecurityException) {
+                        Log.w("FaceTime", "Unable to set stream volume!")
+                    }
                 }
             }
         }
@@ -649,12 +738,22 @@ class FaceTimeActivity : Activity() {
         super.onDestroy()
     }
 
+    override fun onStop() {
+        // A removed task reaches onStop while finishing. Back/native end have
+        // already consumed the same one-shot policy; PiP/config transitions do
+        // not qualify and therefore cannot emit a remote side effect.
+        if (isFinishing) {
+            requestTerminalEnd(FaceTimeLifecycleEndTrigger.TASK_REMOVAL)
+        }
+        super.onStop()
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         if (callEnding) {
             super.onBackPressed()
         } else {
-            endCall()
+            requestTerminalEnd(FaceTimeLifecycleEndTrigger.BACK)
         }
     }
 
@@ -743,9 +842,17 @@ class FaceTimeActivity : Activity() {
             cached = CachedWebview(this, name, desc, link)
         }
 
-        cached.endTask = {
-            reportLocalCallEnded()
-            finishAndRemoveTask()
+        rendererAvailable = true
+        cached.endTask = { reason ->
+            when (reason) {
+                FaceTimeWebEndReason.EXPLICIT_LEAVE -> {
+                    requestTerminalEnd(FaceTimeLifecycleEndTrigger.EXPLICIT_WEB_LEAVE)
+                }
+                FaceTimeWebEndReason.RENDERER_GONE -> {
+                    rendererAvailable = false
+                    requestTerminalEnd(FaceTimeLifecycleEndTrigger.RENDERER_GONE)
+                }
+            }
         }
         cached.mediaEvidenceCall = ::onResolvedMediaEvidence
         mirrorReady = cached.mirrorReady

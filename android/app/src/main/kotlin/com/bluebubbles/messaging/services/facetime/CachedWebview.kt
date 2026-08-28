@@ -61,7 +61,7 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
     var mirrorReady = false
     var mirrorReadyCall: (() -> Unit)? = null
     var mediaEvidenceCall: (Long, String) -> Unit = { _, _ -> }
-    var endTask: () -> Unit = {
+    internal var endTask: (FaceTimeWebEndReason) -> Unit = {
         webView.destroy()
         if (FaceTimeActivity.cachedWebview === this) {
             FaceTimeActivity.cachedWebview = null
@@ -290,7 +290,9 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             override fun onPageFinished(view: WebView?, url: String?) {
                 view?.evaluateJavascript(leaveButtonBridgeScript) { result ->
                     if (diagnosticsEnabled()) {
-                        Log.i(diagnosticTag, "leave button bridge result=$result")
+                        val installed = result?.removeSurrounding("\"") in
+                            setOf("installed", "already-installed")
+                        Log.i(diagnosticTag, "leave button bridge installed=$installed")
                     }
                 }
                 FaceTimeDiagnostics.record(
@@ -334,7 +336,7 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                     "web renderer_gone crashed=${detail?.didCrash()} priority=${detail?.rendererPriorityAtExit()}",
                 )
                 Log.e(diagnosticTag, "WebView render process gone crashed=${detail?.didCrash()} priority=${detail?.rendererPriorityAtExit()}")
-                callbackHandler.post { endTask() }
+                callbackHandler.post { endTask(FaceTimeWebEndReason.RENDERER_GONE) }
                 return true
             }
         }
@@ -344,7 +346,7 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             @JavascriptInterface
             fun leave() {
                 Log.i(diagnosticTag, "explicit web leave control invoked")
-                callbackHandler.post { endTask() }
+                callbackHandler.post { endTask(FaceTimeWebEndReason.EXPLICIT_LEAVE) }
             }
             @JavascriptInterface
             fun mirrored() {

@@ -133,6 +133,72 @@ class FaceTimeJoinPolicyTest {
         assertTrue(policy.recordMediaEvidence(withPeer(remotePeer(2, 180))).joined)
     }
 
+    @Test
+    fun delayedRtpAfterOldProbeTwelveCanStillJoinThenStopsProbing() {
+        val policy = FaceTimeJoinPolicy()
+
+        assertTrue(
+            FaceTimeConnectionProbePolicy.shouldContinue(
+                probeCount = 12,
+                elapsedMillis = 20_000,
+                joined = false,
+                ending = false,
+                destroyed = false,
+            ),
+        )
+        assertFalse(policy.recordMediaEvidence(remoteMedia(100)).joined)
+        assertTrue(
+            FaceTimeConnectionProbePolicy.shouldContinue(
+                probeCount = 13,
+                elapsedMillis = 22_000,
+                joined = false,
+                ending = false,
+                destroyed = false,
+            ),
+        )
+        assertTrue(policy.recordMediaEvidence(remoteMedia(180)).joined)
+        assertFalse(
+            FaceTimeConnectionProbePolicy.shouldContinue(
+                probeCount = 14,
+                elapsedMillis = 24_000,
+                joined = policy.joined,
+                ending = false,
+                destroyed = false,
+            ),
+        )
+    }
+
+    @Test
+    fun connectionProbeWindowIsBoundedAndStopsOnEndOrDestroy() {
+        assertFalse(
+            FaceTimeConnectionProbePolicy.shouldContinue(
+                probeCount = 20,
+                elapsedMillis = FaceTimeConnectionProbePolicy.maxDurationMillis,
+                joined = false,
+                ending = false,
+                destroyed = false,
+            ),
+        )
+        assertFalse(
+            FaceTimeConnectionProbePolicy.shouldContinue(
+                probeCount = 2,
+                elapsedMillis = 5_000,
+                joined = false,
+                ending = true,
+                destroyed = false,
+            ),
+        )
+        assertFalse(
+            FaceTimeConnectionProbePolicy.shouldContinue(
+                probeCount = 2,
+                elapsedMillis = 5_000,
+                joined = false,
+                ending = false,
+                destroyed = true,
+            ),
+        )
+    }
+
     private fun remoteMedia(bytes: Long) = FaceTimeMediaEvidence(
         iceState = FaceTimeIceState.CONNECTED,
         remoteAudioTracks = 1,
