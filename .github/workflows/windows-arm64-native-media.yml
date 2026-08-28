@@ -300,7 +300,7 @@ jobs:
             -Architecture $architecture `
             -AngleBundleRoot $angle `
             -LibmpvArchivePath $resolution.libmpv.archive_path `
-            -FlutterRoot "${{ steps.flutter.outputs['cache-path'] }}" `
+            -FlutterRoot "$env:FLUTTER_ROOT" `
             -RepoRoot $shortWorkspace `
             -Configuration release
           if ($LASTEXITCODE -ne 0) {
