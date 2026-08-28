@@ -457,6 +457,13 @@ try {
             -Message "$($file.Name) must parse without PowerShell errors"
     }
 
+    $angleBuildScript = Get-Content -LiteralPath (
+        Join-Path $PSScriptRoot "build_official_angle.ps1"
+    ) -Raw
+    Assert-True `
+        -Condition ($angleBuildScript -match 'Ensure-DepotToolsGitShim') `
+        -Message "ANGLE build must bootstrap pinned depot_tools with the runner Git shim"
+
     foreach ($architecture in @("x64", "arm64")) {
         $planOutput = & (
             Join-Path $PSScriptRoot "build_official_angle.ps1"

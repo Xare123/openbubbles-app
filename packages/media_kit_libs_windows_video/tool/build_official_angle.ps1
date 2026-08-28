@@ -155,6 +155,29 @@ function Write-Utf8NoBom {
     )
 }
 
+function Ensure-DepotToolsGitShim {
+    param(
+        [Parameter(Mandatory)]
+        [string] $DepotToolsPath,
+
+        [Parameter(Mandatory)]
+        [string] $GitPath
+    )
+
+    # The pinned depot_tools revision invokes `git.bat` from Python, but a
+    # fresh pinned checkout does not contain that bootstrap-generated shim.
+    # DEPOT_TOOLS_UPDATE stays disabled so the reviewed source pin cannot
+    # move; provide the same minimal forwarding shim to the runner's Git.
+    $shim = Join-Path $DepotToolsPath "git.bat"
+    if (Test-Path -LiteralPath $shim -PathType Leaf) {
+        return
+    }
+    $escapedGitPath = $GitPath.Replace("%", "%%")
+    Write-Utf8NoBom `
+        -Path $shim `
+        -Content ("@echo off`r`n`"$escapedGitPath`" %*`r`n")
+}
+
 $work = Get-SafeFullPath -Path $WorkRoot -Label "WorkRoot"
 $output = Get-SafeFullPath -Path $OutputRoot -Label "OutputRoot"
 $provenanceFile = (Resolve-Path -LiteralPath $ProvenancePath -ErrorAction Stop).Path
@@ -229,6 +252,8 @@ Ensure-PinnedCheckout `
     -RemoteUrl $provenance.angle.depot_tools_url `
     -Commit $provenance.angle.depot_tools_commit `
     -Git $git
+
+Ensure-DepotToolsGitShim -DepotToolsPath $depotTools -GitPath $git
 
 $env:PATH = "$depotTools;$env:PATH"
 $env:DEPOT_TOOLS_WIN_TOOLCHAIN = "0"
