@@ -302,7 +302,11 @@ jobs:
             -LibmpvArchivePath $resolution.libmpv.archive_path `
             -FlutterRoot "$env:FLUTTER_ROOT" `
             -RepoRoot $shortWorkspace `
-            -Configuration release
+            -Configuration release `
+            -DartDefine @(
+              "OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true",
+              "OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE=true"
+            )
           if ($LASTEXITCODE -ne 0) {
             throw "Verified $architecture runner build failed."
           }

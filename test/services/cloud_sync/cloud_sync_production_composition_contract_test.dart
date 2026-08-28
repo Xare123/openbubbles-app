@@ -122,6 +122,33 @@ void main() {
     expect(workflow, contains("'[canary only]'"));
   });
 
+  test('Windows engineering build exposes read-only sampling only', () {
+    final workflow = File(
+      '.github/workflows/windows-arm64-native-media.yml',
+    ).readAsStringSync();
+    final runnerScript = File(
+      'tooling/windows/build_verified_native_media_runner.ps1',
+    ).readAsStringSync();
+    final buildStart = workflow.indexOf(
+      'Build and verify complete native Windows runner',
+    );
+    final packageStart = workflow.indexOf(
+      'Package attested ANGLE engineering evidence',
+      buildStart,
+    );
+
+    expect(buildStart, greaterThanOrEqualTo(0));
+    expect(packageStart, greaterThan(buildStart));
+    final build = workflow.substring(buildStart, packageStart);
+    expect(build, contains('OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true'));
+    expect(build, contains('OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE=true'));
+    expect(build, isNot(contains('OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL')));
+    expect(build, isNot(contains('OPENBUBBLES_CLOUD_SYNC_V2_OUTBOUND_CANARY')));
+    expect(build, isNot(contains('OPENBUBBLES_CLOUDKIT_WRITER_OWNER')));
+    expect(runnerScript, contains(r'[string[]] $DartDefine = @()'));
+    expect(runnerScript, contains(r'"--dart-define=$definition"'));
+  });
+
   test('production entry point requires both developer safety gates', () {
     final source = File(
       'lib/services/rustpush/rustpush_service.dart',

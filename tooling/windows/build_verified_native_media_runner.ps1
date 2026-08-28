@@ -14,6 +14,8 @@ param(
     [ValidateSet("debug", "profile", "release")]
     [string] $Configuration = "release",
 
+    [string[]] $DartDefine = @(),
+
     [switch] $Offline,
 
     [switch] $SkipPubGet,
@@ -287,11 +289,19 @@ try {
                 throw "CMake did not accept the discovered NuGet executable: $nuget"
             }
         }
+        $buildArguments = @(
+            "build", "windows", "--$Configuration", "--no-pub"
+        )
+        foreach ($definition in $DartDefine) {
+            if ([string]::IsNullOrWhiteSpace($definition) -or
+                $definition -match '[\r\n]') {
+                throw "Dart definitions must be non-empty single-line values."
+            }
+            $buildArguments += "--dart-define=$definition"
+        }
         Invoke-Checked `
             -FilePath $flutter `
-            -ArgumentList @(
-                "build", "windows", "--$Configuration", "--no-pub"
-            )
+            -ArgumentList $buildArguments
     }
     finally {
         Pop-Location
@@ -436,5 +446,6 @@ if ($hostArch -eq $expectedMachine) {
     native_runtime_files = @($packageEvidence.runtime_files).Count
     libmpv_toolchain_abi_load = "passed"
     runtime_smoke = $runtimeSmokeStatus
+    dart_defines = @($DartDefine)
     public_redistribution_allowed = $false
 } | ConvertTo-Json -Depth 6
