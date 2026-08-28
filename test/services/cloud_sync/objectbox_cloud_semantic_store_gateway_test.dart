@@ -310,6 +310,57 @@ void main() {
     expect(map.encryptedRawRecordRef, _protectedReference('W'));
   });
 
+  test(
+    'reopens and upgrades an exact generation-zero record map in place',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final mapId = objectBox.box<CloudRecordMapEntity>().put(
+        CloudRecordMapEntity(
+          mapKey: _recordMapKey(scope, _digestValue('L')),
+          scopeKey: _scopeKey(scope),
+          accountFingerprint: scope.accountFingerprint,
+          zone: scope.zone,
+          logicalEntityKeyHash: _digestValue('L'),
+          serverRecordIdHash: entry.change.recordIdHash,
+          generation: 0,
+          encryptedServerRecordId: entry.change.encryptedServerRecordId!,
+          etagHash: entry.change.etagHash,
+          encryptedRawRecordRef: entry.change.encryptedPayloadReference,
+          updatedAtMs: now.millisecondsSinceEpoch,
+        ),
+      );
+
+      objectBox.close();
+      objectBox = await openStore(directory: directory.path);
+      adapter = _ObjectBoxTestCanonicalAdapter(objectBox)
+        ..activeScope = scope
+        ..activeGeneration = 7
+        ..existingEntities.add((CloudEntityKind.chat, _digestValue('H')));
+      gateway = ObjectBoxCloudSemanticStoreGateway(
+        store: objectBox,
+        canonicalAdapter: adapter,
+        clock: () => now,
+      );
+
+      await gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: _applyAndMark(entry),
+      );
+
+      final map = objectBox.box<CloudRecordMapEntity>().get(mapId)!;
+      expect(map.id, mapId);
+      expect(map.generation, entry.generation);
+      expect(adapter.entityApplyCalls, 1);
+    },
+  );
+
   test('lease takeover fails before canonical mutation', () async {
     final entry = _entry(scope: scope);
     _seedDurableFence(
@@ -734,6 +785,7 @@ void main() {
           zone: scope.zone,
           logicalEntityKeyHash: _digestValue('L'),
           serverRecordIdHash: _digestValue('Z'),
+          generation: entry.generation,
           encryptedServerRecordId: _protectedReference('O'),
           updatedAtMs: now.millisecondsSinceEpoch,
         ),
@@ -753,6 +805,46 @@ void main() {
       expect(objectBox.box<CloudRecordMapEntity>().count(), 1);
     },
   );
+
+  test('generation-zero record maps require exact identity reproof', () async {
+    final entry = _entry(scope: scope);
+    _seedDurableFence(
+      objectBox,
+      entry: entry,
+      leaseFence: leaseFence,
+      now: now,
+    );
+    final mapId = objectBox.box<CloudRecordMapEntity>().put(
+      CloudRecordMapEntity(
+        mapKey: _recordMapKey(scope, _digestValue('L')),
+        scopeKey: _scopeKey(scope),
+        accountFingerprint: scope.accountFingerprint,
+        zone: scope.zone,
+        logicalEntityKeyHash: _digestValue('L'),
+        serverRecordIdHash: entry.change.recordIdHash,
+        generation: 0,
+        encryptedServerRecordId: entry.change.encryptedServerRecordId!,
+        etagHash: entry.change.etagHash,
+        encryptedRawRecordRef: _protectedReference('X'),
+        updatedAtMs: now.millisecondsSinceEpoch,
+      ),
+    );
+
+    await expectLater(
+      gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: _applyAndMark(entry),
+      ),
+      throwsA(_failureCode('semantic_record_map_legacy_reproof_failed')),
+    );
+
+    final map = objectBox.box<CloudRecordMapEntity>().get(mapId)!;
+    expect(map.id, mapId);
+    expect(map.generation, 0);
+    expect(adapter.entityApplyCalls, 0);
+    expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 0);
+  });
 
   test(
     'required payload parents must exactly match snapshot parents',

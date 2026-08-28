@@ -24,6 +24,8 @@ class CloudSemanticSnapshotEntity {}
 
 class CloudSemanticReplayEntity {}
 
+class CloudKitV2QuarantineRepairReceiptEntity {}
+
 class CloudKitWriterAuthorityEntity {}
 
 class CloudKitDeletionIntentEntity {}

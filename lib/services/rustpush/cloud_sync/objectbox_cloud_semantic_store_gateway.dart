@@ -551,7 +551,11 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     final mapKey = _context.recordMapKey(logicalEntityKeyHash);
     final existing = _findRecordMapByKey(mapKey);
     if (existing != null) {
-      _validateRecordMapScope(existing, logicalEntityKeyHash);
+      _validateRecordMapScope(
+        existing,
+        logicalEntityKeyHash,
+        expectedChange: _context.entry.change,
+      );
       if (existing.serverRecordIdHash != _context.entry.change.recordIdHash) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.conflict,
@@ -564,6 +568,11 @@ final class _ObjectBoxCloudSemanticStoreTransaction
       _context.entry.change.recordIdHash,
     );
     for (final collision in collisions) {
+      _validateRecordMapScope(
+        collision,
+        collision.logicalEntityKeyHash,
+        expectedChange: _context.entry.change,
+      );
       if (collision.mapKey != mapKey ||
           collision.logicalEntityKeyHash != logicalEntityKeyHash) {
         throw CloudSyncFailure(
@@ -584,6 +593,7 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         zone: _context.entry.scope.zone,
         logicalEntityKeyHash: logicalEntityKeyHash,
         serverRecordIdHash: _context.entry.change.recordIdHash,
+        generation: _context.entry.generation,
         encryptedServerRecordId: encryptedServerRecordId,
         etagHash: _context.entry.change.etagHash,
         encryptedRawRecordRef: expectedRawReference,
@@ -1058,7 +1068,11 @@ final class _ObjectBoxCloudSemanticStoreTransaction
       _context.recordMapKey(entity.logicalEntityKeyHash),
     );
     if (recordMap != null) {
-      _validateRecordMapScope(recordMap, entity.logicalEntityKeyHash);
+      _validateRecordMapScope(
+        recordMap,
+        entity.logicalEntityKeyHash,
+        expectedChange: _context.entry.change,
+      );
     }
     return CloudSemanticSnapshot(
       kind: _entityKind(entity.entityKind),
@@ -1139,8 +1153,9 @@ final class _ObjectBoxCloudSemanticStoreTransaction
 
   void _validateRecordMapScope(
     CloudRecordMapEntity entity,
-    String logicalEntityKeyHash,
-  ) {
+    String logicalEntityKeyHash, {
+    required CloudFetchedChange expectedChange,
+  }) {
     final scope = _context.entry.scope;
     ObjectBoxCloudSemanticStoreGateway._validateExternalDigest(
       entity.serverRecordIdHash,
@@ -1158,9 +1173,22 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         entity.scopeKey != _context.scopeKey ||
         entity.accountFingerprint != scope.accountFingerprint ||
         entity.zone != scope.zone ||
-        entity.logicalEntityKeyHash != logicalEntityKeyHash) {
+        entity.logicalEntityKeyHash != logicalEntityKeyHash ||
+        (entity.generation != _context.entry.generation &&
+            entity.generation != 0)) {
       throw ObjectBoxCloudSemanticStoreGateway._failure(
         'semantic_record_map_scope_mismatch',
+      );
+    }
+    if (entity.generation == 0 &&
+        (entity.serverRecordIdHash != expectedChange.recordIdHash ||
+            entity.encryptedServerRecordId !=
+                expectedChange.encryptedServerRecordId ||
+            entity.etagHash != expectedChange.etagHash ||
+            entity.encryptedRawRecordRef !=
+                expectedChange.encryptedPayloadReference)) {
+      throw ObjectBoxCloudSemanticStoreGateway._failure(
+        'semantic_record_map_legacy_reproof_failed',
       );
     }
   }
@@ -1348,7 +1376,11 @@ final class _ObjectBoxCloudSemanticStoreTransaction
           'semantic_replay_record_binding_missing',
         );
       }
-      _validateRecordMapScope(recordMap, logicalEntityKeyHash);
+      _validateRecordMapScope(
+        recordMap,
+        logicalEntityKeyHash,
+        expectedChange: _context.entry.change,
+      );
       if (recordMap.serverRecordIdHash != entity.serverRecordIdHash ||
           recordMap.encryptedServerRecordId !=
               _context.entry.change.encryptedServerRecordId ||

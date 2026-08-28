@@ -2216,10 +2216,130 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "31:5051649657745290821",
+      "lastPropertyId": "21:6898568333390897368",
+      "name": "CloudKitV2QuarantineRepairReceiptEntity",
+      "properties": [
+        {
+          "id": "1:6777766792210926324",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:1420384398333994646",
+          "name": "repairKey",
+          "indexId": "78:7085821912516424136",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:1725925246374988531",
+          "name": "scopeGenerationKey",
+          "indexId": "79:8282735010000300067",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "4:7391897616658294912",
+          "name": "changeIdHash",
+          "indexId": "80:3483788582408701777",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "5:2114702826856121347",
+          "name": "converterRevision",
+          "type": 9
+        },
+        {
+          "id": "6:8125053130867057452",
+          "name": "correctionName",
+          "type": 9
+        },
+        {
+          "id": "7:7281315236869926920",
+          "name": "scopeKey",
+          "type": 9
+        },
+        {
+          "id": "8:2880142812355640859",
+          "name": "accountFingerprint",
+          "type": 9
+        },
+        {
+          "id": "9:5378226802182095709",
+          "name": "container",
+          "type": 9
+        },
+        {
+          "id": "10:3261784595794831677",
+          "name": "database",
+          "type": 9
+        },
+        {
+          "id": "11:7508640197172640864",
+          "name": "zone",
+          "type": 9
+        },
+        {
+          "id": "12:8270848255691966372",
+          "name": "streamKind",
+          "type": 9
+        },
+        {
+          "id": "13:2406510382988263716",
+          "name": "schemaVersion",
+          "type": 6
+        },
+        {
+          "id": "14:1685321760902481490",
+          "name": "generation",
+          "type": 6
+        },
+        {
+          "id": "15:9098288398353927251",
+          "name": "inboxSequence",
+          "type": 6
+        },
+        {
+          "id": "16:4946906600101814802",
+          "name": "serverRecordIdHash",
+          "type": 9
+        },
+        {
+          "id": "17:970907524913975214",
+          "name": "outcome",
+          "type": 9
+        },
+        {
+          "id": "18:3843634592452409597",
+          "name": "failureCategory",
+          "type": 9
+        },
+        {
+          "id": "19:4651266963942725107",
+          "name": "safeCode",
+          "type": 9
+        },
+        {
+          "id": "20:3860655671849014655",
+          "name": "logicalEntityKeyHash",
+          "type": 9
+        },
+        {
+          "id": "21:6898568333390897368",
+          "name": "createdAtMs",
+          "type": 6
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "30:156682190547124916",
-  "lastIndexId": "77:1999680227156715272",
+  "lastEntityId": "31:5051649657745290821",
+  "lastIndexId": "80:3483788582408701777",
   "lastRelationId": "1:7492985733214117623",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

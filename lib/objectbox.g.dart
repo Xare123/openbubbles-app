@@ -2585,6 +2585,145 @@ final _entities = <obx_int.ModelEntity>[
     relations: <obx_int.ModelRelation>[],
     backlinks: <obx_int.ModelBacklink>[],
   ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(31, 5051649657745290821),
+    name: 'CloudKitV2QuarantineRepairReceiptEntity',
+    lastPropertyId: const obx_int.IdUid(21, 6898568333390897368),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 6777766792210926324),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 1420384398333994646),
+        name: 'repairKey',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(78, 7085821912516424136),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 1725925246374988531),
+        name: 'scopeGenerationKey',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(79, 8282735010000300067),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 7391897616658294912),
+        name: 'changeIdHash',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(80, 3483788582408701777),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 2114702826856121347),
+        name: 'converterRevision',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 8125053130867057452),
+        name: 'correctionName',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 7281315236869926920),
+        name: 'scopeKey',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 2880142812355640859),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 5378226802182095709),
+        name: 'container',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 3261784595794831677),
+        name: 'database',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 7508640197172640864),
+        name: 'zone',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 8270848255691966372),
+        name: 'streamKind',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(13, 2406510382988263716),
+        name: 'schemaVersion',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(14, 1685321760902481490),
+        name: 'generation',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(15, 9098288398353927251),
+        name: 'inboxSequence',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(16, 4946906600101814802),
+        name: 'serverRecordIdHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(17, 970907524913975214),
+        name: 'outcome',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(18, 3843634592452409597),
+        name: 'failureCategory',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(19, 4651266963942725107),
+        name: 'safeCode',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(20, 3860655671849014655),
+        name: 'logicalEntityKeyHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(21, 6898568333390897368),
+        name: 'createdAtMs',
+        type: 6,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
 ];
 
 /// Shortcut for [obx.Store.new] that passes [getObjectBoxModel] and for Flutter
@@ -2630,8 +2769,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
     // Typically, this is done with `dart run build_runner build`.
     generatorVersion: obx_int.GeneratorVersion.v2025_12_16,
     entities: _entities,
-    lastEntityId: const obx_int.IdUid(30, 156682190547124916),
-    lastIndexId: const obx_int.IdUid(77, 1999680227156715272),
+    lastEntityId: const obx_int.IdUid(31, 5051649657745290821),
+    lastIndexId: const obx_int.IdUid(80, 3483788582408701777),
     lastRelationId: const obx_int.IdUid(1, 7492985733214117623),
     lastSequenceId: const obx_int.IdUid(0, 0),
     retiredEntityUids: const [
@@ -4863,15 +5002,15 @@ obx_int.ModelDefinition getObjectBoxModel() {
             final persistenceLaneParam = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGetNullable(buffer, rootOffset, 44);
+            final fetchedTokenCiphertextParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 18);
             final pendingFetchedTokenCiphertextParam = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGetNullable(buffer, rootOffset, 46);
             final pendingBatchIdParam = const fb.StringReader(
               asciiOptimization: true,
             ).vTableGetNullable(buffer, rootOffset, 48);
-            final fetchedTokenCiphertextParam = const fb.StringReader(
-              asciiOptimization: true,
-            ).vTableGetNullable(buffer, rootOffset, 18);
             final generationParam = const fb.Int64Reader().vTableGet(
               buffer,
               rootOffset,
@@ -6095,6 +6234,185 @@ obx_int.ModelDefinition getObjectBoxModel() {
               sourceKey: sourceKeyParam,
               recordId: recordIdParam,
               reason: reasonParam,
+              createdAtMs: createdAtMsParam,
+            );
+
+            return object;
+          },
+        ),
+    CloudKitV2QuarantineRepairReceiptEntity:
+        obx_int.EntityDefinition<CloudKitV2QuarantineRepairReceiptEntity>(
+          model: _entities[22],
+          toOneRelations: (CloudKitV2QuarantineRepairReceiptEntity object) =>
+              [],
+          toManyRelations: (CloudKitV2QuarantineRepairReceiptEntity object) =>
+              {},
+          getId: (CloudKitV2QuarantineRepairReceiptEntity object) => object.id,
+          setId: (CloudKitV2QuarantineRepairReceiptEntity object, int id) {
+            object.id = id;
+          },
+          objectToFB:
+              (CloudKitV2QuarantineRepairReceiptEntity object, fb.Builder fbb) {
+                final repairKeyOffset = fbb.writeString(object.repairKey);
+                final scopeGenerationKeyOffset = fbb.writeString(
+                  object.scopeGenerationKey,
+                );
+                final changeIdHashOffset = fbb.writeString(object.changeIdHash);
+                final converterRevisionOffset = fbb.writeString(
+                  object.converterRevision,
+                );
+                final correctionNameOffset = fbb.writeString(
+                  object.correctionName,
+                );
+                final scopeKeyOffset = fbb.writeString(object.scopeKey);
+                final accountFingerprintOffset = fbb.writeString(
+                  object.accountFingerprint,
+                );
+                final containerOffset = fbb.writeString(object.container);
+                final databaseOffset = fbb.writeString(object.database);
+                final zoneOffset = fbb.writeString(object.zone);
+                final streamKindOffset = fbb.writeString(object.streamKind);
+                final serverRecordIdHashOffset = fbb.writeString(
+                  object.serverRecordIdHash,
+                );
+                final outcomeOffset = fbb.writeString(object.outcome);
+                final failureCategoryOffset = object.failureCategory == null
+                    ? null
+                    : fbb.writeString(object.failureCategory!);
+                final safeCodeOffset = object.safeCode == null
+                    ? null
+                    : fbb.writeString(object.safeCode!);
+                final logicalEntityKeyHashOffset =
+                    object.logicalEntityKeyHash == null
+                    ? null
+                    : fbb.writeString(object.logicalEntityKeyHash!);
+                fbb.startTable(22);
+                fbb.addInt64(0, object.id);
+                fbb.addOffset(1, repairKeyOffset);
+                fbb.addOffset(2, scopeGenerationKeyOffset);
+                fbb.addOffset(3, changeIdHashOffset);
+                fbb.addOffset(4, converterRevisionOffset);
+                fbb.addOffset(5, correctionNameOffset);
+                fbb.addOffset(6, scopeKeyOffset);
+                fbb.addOffset(7, accountFingerprintOffset);
+                fbb.addOffset(8, containerOffset);
+                fbb.addOffset(9, databaseOffset);
+                fbb.addOffset(10, zoneOffset);
+                fbb.addOffset(11, streamKindOffset);
+                fbb.addInt64(12, object.schemaVersion);
+                fbb.addInt64(13, object.generation);
+                fbb.addInt64(14, object.inboxSequence);
+                fbb.addOffset(15, serverRecordIdHashOffset);
+                fbb.addOffset(16, outcomeOffset);
+                fbb.addOffset(17, failureCategoryOffset);
+                fbb.addOffset(18, safeCodeOffset);
+                fbb.addOffset(19, logicalEntityKeyHashOffset);
+                fbb.addInt64(20, object.createdAtMs);
+                fbb.finish(fbb.endTable());
+                return object.id;
+              },
+          objectFromFB: (obx.Store store, ByteData fbData) {
+            final buffer = fb.BufferContext(fbData);
+            final rootOffset = buffer.derefObject(0);
+            final idParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              4,
+              0,
+            );
+            final repairKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 6, '');
+            final scopeGenerationKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 8, '');
+            final changeIdHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 10, '');
+            final converterRevisionParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 12, '');
+            final correctionNameParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 14, '');
+            final scopeKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 16, '');
+            final accountFingerprintParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 18, '');
+            final containerParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 20, '');
+            final databaseParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 22, '');
+            final zoneParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 24, '');
+            final streamKindParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 26, '');
+            final schemaVersionParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              28,
+              0,
+            );
+            final generationParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              30,
+              0,
+            );
+            final inboxSequenceParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              32,
+              0,
+            );
+            final serverRecordIdHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 34, '');
+            final outcomeParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 36, '');
+            final failureCategoryParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 38);
+            final safeCodeParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 40);
+            final logicalEntityKeyHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGetNullable(buffer, rootOffset, 42);
+            final createdAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              44,
+              0,
+            );
+            final object = CloudKitV2QuarantineRepairReceiptEntity(
+              id: idParam,
+              repairKey: repairKeyParam,
+              scopeGenerationKey: scopeGenerationKeyParam,
+              changeIdHash: changeIdHashParam,
+              converterRevision: converterRevisionParam,
+              correctionName: correctionNameParam,
+              scopeKey: scopeKeyParam,
+              accountFingerprint: accountFingerprintParam,
+              container: containerParam,
+              database: databaseParam,
+              zone: zoneParam,
+              streamKind: streamKindParam,
+              schemaVersion: schemaVersionParam,
+              generation: generationParam,
+              inboxSequence: inboxSequenceParam,
+              serverRecordIdHash: serverRecordIdHashParam,
+              outcome: outcomeParam,
+              failureCategory: failureCategoryParam,
+              safeCode: safeCodeParam,
+              logicalEntityKeyHash: logicalEntityKeyHashParam,
               createdAtMs: createdAtMsParam,
             );
 
@@ -8160,5 +8478,134 @@ class CloudKitDeletionQuarantineEntity_ {
   static final createdAtMs =
       obx.QueryIntegerProperty<CloudKitDeletionQuarantineEntity>(
         _entities[21].properties[5],
+      );
+}
+
+/// [CloudKitV2QuarantineRepairReceiptEntity] entity fields to define ObjectBox queries.
+class CloudKitV2QuarantineRepairReceiptEntity_ {
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.id].
+  static final id =
+      obx.QueryIntegerProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[0],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.repairKey].
+  static final repairKey =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[1],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.scopeGenerationKey].
+  static final scopeGenerationKey =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[2],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.changeIdHash].
+  static final changeIdHash =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[3],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.converterRevision].
+  static final converterRevision =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[4],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.correctionName].
+  static final correctionName =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[5],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.scopeKey].
+  static final scopeKey =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[6],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.accountFingerprint].
+  static final accountFingerprint =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[7],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.container].
+  static final container =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[8],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.database].
+  static final database =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[9],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.zone].
+  static final zone =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[10],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.streamKind].
+  static final streamKind =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[11],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.schemaVersion].
+  static final schemaVersion =
+      obx.QueryIntegerProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[12],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.generation].
+  static final generation =
+      obx.QueryIntegerProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[13],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.inboxSequence].
+  static final inboxSequence =
+      obx.QueryIntegerProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[14],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.serverRecordIdHash].
+  static final serverRecordIdHash =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[15],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.outcome].
+  static final outcome =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[16],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.failureCategory].
+  static final failureCategory =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[17],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.safeCode].
+  static final safeCode =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[18],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.logicalEntityKeyHash].
+  static final logicalEntityKeyHash =
+      obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[19],
+      );
+
+  /// See [CloudKitV2QuarantineRepairReceiptEntity.createdAtMs].
+  static final createdAtMs =
+      obx.QueryIntegerProperty<CloudKitV2QuarantineRepairReceiptEntity>(
+        _entities[22].properties[20],
       );
 }

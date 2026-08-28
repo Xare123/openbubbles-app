@@ -49,7 +49,14 @@ void main() {
           '30:156682190547124916',
         ),
       );
-      expect(model['lastEntityId'], '30:156682190547124916');
+      expect(
+        entities,
+        containsPair(
+          'CloudKitV2QuarantineRepairReceiptEntity',
+          '31:5051649657745290821',
+        ),
+      );
+      expect(model['lastEntityId'], '31:5051649657745290821');
       expect(model['modelVersion'], 5);
       expect(model['modelVersionParserMinimum'], 5);
 

@@ -670,6 +670,70 @@ class CloudSemanticReplayEntity {
   });
 }
 
+/// Immutable receipt for one explicitly allowlisted repair of a terminal
+/// semantic quarantine. The original inbox and replay rows are evidence and
+/// are never updated by the repair lane.
+@Entity()
+class CloudKitV2QuarantineRepairReceiptEntity {
+  int id;
+
+  /// Versioned composite of `scopeGenerationKey`, `changeIdHash`,
+  /// `converterRevision`, and `correctionName`.
+  @Index(type: IndexType.hash64)
+  @Unique()
+  String repairKey;
+
+  @Index(type: IndexType.hash64)
+  String scopeGenerationKey;
+
+  @Index(type: IndexType.hash64)
+  String changeIdHash;
+
+  String converterRevision;
+  String correctionName;
+  String scopeKey;
+  String accountFingerprint;
+  String container;
+  String database;
+  String zone;
+  String streamKind;
+  int schemaVersion;
+  int generation;
+  int inboxSequence;
+  String serverRecordIdHash;
+
+  /// `repaired` or `failed`; this value is immutable.
+  String outcome;
+  String? failureCategory;
+  String? safeCode;
+  String? logicalEntityKeyHash;
+  int createdAtMs;
+
+  CloudKitV2QuarantineRepairReceiptEntity({
+    this.id = 0,
+    required this.repairKey,
+    required this.scopeGenerationKey,
+    required this.changeIdHash,
+    required this.converterRevision,
+    required this.correctionName,
+    required this.scopeKey,
+    required this.accountFingerprint,
+    required this.container,
+    required this.database,
+    required this.zone,
+    required this.streamKind,
+    required this.schemaVersion,
+    required this.generation,
+    required this.inboxSequence,
+    required this.serverRecordIdHash,
+    required this.outcome,
+    this.failureCategory,
+    this.safeCode,
+    this.logicalEntityKeyHash,
+    required this.createdAtMs,
+  });
+}
+
 /// Durable single-writer authority for one Apple account/container/database.
 ///
 /// The account value is an application-scoped one-way fingerprint. Owner,

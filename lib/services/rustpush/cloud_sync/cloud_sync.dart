@@ -6,6 +6,8 @@ export 'cloud_inbox_applier.dart';
 export 'cloudkit_writer_authority.dart';
 export 'cloudkit_writer_mutation_guard.dart';
 export 'cloudkit_writer_ownership.dart';
+export 'cloudkit_quarantine_repair.dart'
+    if (dart.library.html) 'cloudkit_quarantine_repair_web.dart';
 export 'legacy_cloudkit_deletion_intents.dart';
 export 'cloud_operation_identity.dart';
 export 'cloud_protected_page_lease_lifecycle.dart';
