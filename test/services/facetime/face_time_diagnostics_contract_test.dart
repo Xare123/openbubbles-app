@@ -218,11 +218,11 @@ void main() {
       expect(identitySource, contains('get_device_uuid()'));
       expect(
         nativeSource,
-        contains('session_mut(&mut state.sessions, approved)?'),
+        contains('let snapshot = self.snapshot_session(approved).await?'),
       );
       expect(
         nativeSource,
-        contains('session_mut(&mut state.sessions, to_group)?'),
+        contains('self.reconcile_session(snapshot, session).await?'),
       );
       expect(nativeSource, contains('FaceTimeSessionNotFound'));
       expect(
@@ -233,6 +233,80 @@ void main() {
       expect(identitySource, contains('private_data.as_slice()'));
       expect(identitySource, contains('get("com.apple.madrid")'));
       expect(identitySource, contains('is_bridge_owned_push_token'));
+    },
+  );
+
+  test(
+    'FaceTime decline and cancel APIs do not await under the state lock',
+    () {
+      final nativeSource = File('rustpush/src/facetime.rs').readAsStringSync();
+      final bridgeSource = File('rust/src/api/api.rs').readAsStringSync();
+
+      final nativeDeclineStart = nativeSource.indexOf(
+        'pub async fn decline_session(',
+      );
+      final nativeDeclineEnd = nativeSource.indexOf(
+        'pub async fn unprop_conv(',
+        nativeDeclineStart,
+      );
+      final nativeCancelStart = nativeSource.indexOf(
+        'pub async fn cancel_session(',
+      );
+      final nativeCancelEnd = nativeSource.indexOf(
+        'pub async fn add_members(',
+        nativeCancelStart,
+      );
+      final nativeDecline = nativeSource.substring(
+        nativeDeclineStart,
+        nativeDeclineEnd,
+      );
+      final nativeCancel = nativeSource.substring(
+        nativeCancelStart,
+        nativeCancelEnd,
+      );
+
+      expect(nativeDecline, contains('operation_for_session(group_id).await'));
+      expect(nativeDecline, contains('snapshot_session(group_id).await?'));
+      expect(
+        nativeDecline,
+        contains('reconcile_session(snapshot, session).await?'),
+      );
+      expect(nativeDecline, isNot(contains('self.state.write()')));
+      expect(nativeCancel, contains('operation_for_session(group_id).await'));
+      expect(nativeCancel, contains('snapshot_session(group_id).await?'));
+      expect(
+        nativeCancel,
+        contains('reconcile_session(snapshot, session).await?'),
+      );
+      expect(nativeCancel, isNot(contains('self.state.write()')));
+
+      final bridgeDeclineStart = bridgeSource.indexOf(
+        'pub async fn decline_facetime(',
+      );
+      final bridgeDeclineEnd = bridgeSource.indexOf(
+        'pub async fn create_facetime(',
+        bridgeDeclineStart,
+      );
+      final bridgeCancelStart = bridgeSource.indexOf(
+        'pub async fn cancel_facetime(',
+      );
+      final bridgeCancelEnd = bridgeSource.indexOf(
+        'pub async fn validate_targets_facetime(',
+        bridgeCancelStart,
+      );
+      final bridgeDecline = bridgeSource.substring(
+        bridgeDeclineStart,
+        bridgeDeclineEnd,
+      );
+      final bridgeCancel = bridgeSource.substring(
+        bridgeCancelStart,
+        bridgeCancelEnd,
+      );
+
+      expect(bridgeDecline, contains('facetime.decline_session(&guid).await?'));
+      expect(bridgeDecline, isNot(contains('state.write()')));
+      expect(bridgeCancel, contains('facetime.cancel_session(&guid).await?'));
+      expect(bridgeCancel, isNot(contains('state.write()')));
     },
   );
 

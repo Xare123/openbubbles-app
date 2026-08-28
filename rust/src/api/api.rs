@@ -3615,13 +3615,7 @@ pub async fn retry_ft_request(
 }
 
 pub async fn decline_facetime(facetime: &Arc<FTClient>, guid: String) -> anyhow::Result<()> {
-    let mut lock = facetime.state.write().await;
-    let state = lock
-        .sessions
-        .get_mut(&guid)
-        .ok_or(rustpush::PushError::FaceTimeSessionNotFound)?;
-    facetime.ensure_allocations(state, &[]).await?;
-    facetime.decline_invite(state).await?;
+    facetime.decline_session(&guid).await?;
     Ok(())
 }
 
@@ -3636,12 +3630,7 @@ pub async fn create_facetime(
 }
 
 pub async fn cancel_facetime(facetime: &Arc<FTClient>, guid: String) -> anyhow::Result<()> {
-    let mut lock = facetime.state.write().await;
-    let state = lock
-        .sessions
-        .get_mut(&guid)
-        .ok_or(rustpush::PushError::FaceTimeSessionNotFound)?;
-    facetime.unprop_conv(state).await?;
+    facetime.cancel_session(&guid).await?;
     Ok(())
 }
 
