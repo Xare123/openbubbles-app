@@ -334,7 +334,9 @@ if ($actualDepotToolsCommit -ne $provenance.angle.depot_tools_commit) {
 $gn = (Get-Command gn -ErrorAction Stop).Source
 $autoninja = (Get-Command autoninja -ErrorAction Stop).Source
 $targetCpu = if ($Architecture -eq "arm64") { "arm64" } else { "x64" }
-$gnArgs = @($provenance.angle.gn_args_common) + @("target_cpu=`"$targetCpu`"")
+# gn.bat forwards through cmd.exe, which removes unescaped embedded quotes from
+# the --args value. Preserve GN's string literal for target_cpu at that boundary.
+$gnArgs = @($provenance.angle.gn_args_common) + @("target_cpu=\`"$targetCpu\`"")
 $gnArgsText = $gnArgs -join " "
 $buildRoot = Join-Path $angleSource "out\openbubbles-$Architecture-release"
 
