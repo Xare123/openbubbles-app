@@ -5300,8 +5300,14 @@ class RustPushService extends GetxService {
     Chat.softDelete(chat);
   }
 
-  Future handleMsg(api.PushMessage push) async {
-    await handleMsgInner(push).timeout(const Duration(minutes: 3));
+  Future handleMsg(
+    api.PushMessage push, {
+    bool automaticRetry = false,
+  }) async {
+    await handleMsgInner(
+      push,
+      automaticRetry: automaticRetry,
+    ).timeout(const Duration(minutes: 3));
     // if we complete successfully, mark delivery "certified"
     markCertified(push);
   }
@@ -5328,7 +5334,10 @@ class RustPushService extends GetxService {
   }
 
   bool authing = false;
-  Future handleMsgInner(api.PushMessage push) async {
+  Future handleMsgInner(
+    api.PushMessage push, {
+    bool automaticRetry = false,
+  }) async {
     if (push is api.PushMessage_CircleFinishEvent) {
       if (await api.isInClique(
         keychain: pushService.state!.icloudServices!.keychain!,
@@ -5604,6 +5613,16 @@ class RustPushService extends GetxService {
       }
 
       if (facetime is api.FTMessage_LetMeInRequest) {
+        if (automaticRetry) {
+          // The first response may have reached Apple even when its APS
+          // confirmation timed out. Re-evaluating mutable room state here
+          // could turn the original acceptance into an automatic denial.
+          Logger.info(
+            "FaceTime web admission retry skipped: "
+            "stage=dispatch errorType=ambiguous_response",
+          );
+          return;
+        }
         var approvedGroup = chosenFTRoomGuid;
         final incomingAdmission =
             facetime.field0.usage == "incomingcall" ||
@@ -5621,7 +5640,8 @@ class RustPushService extends GetxService {
           approvedGroup = null;
         }
         Logger.info(
-          "FaceTime web admission request: usage=${facetime.field0.usage ?? 'unknown'}, approvedGroupPresent=${approvedGroup != null}",
+          "FaceTime web admission request: "
+          "approvedGroupPresent=${approvedGroup != null}",
         );
         await _recordFaceTimeAdmissionTransport("before-response");
         try {
@@ -5634,11 +5654,10 @@ class RustPushService extends GetxService {
           if (incomingAdmission && incomingRingingCallGuid == approvedGroup) {
             incomingRingingCallGuid = null;
           }
-        } catch (error, trace) {
-          Logger.error(
-            "FaceTime web admission response failed",
-            error: error,
-            trace: trace,
+        } catch (error) {
+          Logger.warn(
+            "FaceTime web admission response failed: "
+            "stage=dispatch errorType=${error.runtimeType}",
           );
           await _recordFaceTimeAdmissionTransport("after-response-failure");
           rethrow;
@@ -7105,7 +7124,7 @@ class RustPushService extends GetxService {
       Logger.info(
         "rustpush_receive handle_start id=$eventId retry=$retryCount",
       );
-      await handleMsg(message);
+      await handleMsg(message, automaticRetry: retryCount > 0);
       Logger.info(
         "rustpush_receive handle_complete id=$eventId retry=$retryCount duration_ms=${_durationMs(handlingStopwatch)} total_ms=${_durationMs(receiveStopwatch)}",
       );

@@ -101,6 +101,77 @@ void main() {
     );
   });
 
+  test(
+    'automatic FaceTime admission retries cannot change the first decision',
+    () {
+      final source = File(
+        'lib/services/rustpush/rustpush_service.dart',
+      ).readAsStringSync();
+      final admissionGuard = source.indexOf(
+        'FaceTime web admission retry skipped:',
+      );
+      final approvedGroup = source.indexOf(
+        'var approvedGroup = chosenFTRoomGuid;',
+        admissionGuard,
+      );
+
+      expect(source, contains('automaticRetry: retryCount > 0'));
+      expect(admissionGuard, greaterThanOrEqualTo(0));
+      expect(approvedGroup, greaterThan(admissionGuard));
+      expect(source, contains('errorType=ambiguous_response'));
+      expect(
+        source,
+        contains(
+          'FaceTime web admission response failed: stage=dispatch errorType=',
+        ),
+      );
+    },
+  );
+
+  test('ordinary FaceTime answer API cannot invoke manual replay', () {
+    final nativeSource = File(
+      'rustpush/src/facetime.rs',
+    ).readAsStringSync();
+    final bridgeSource = File('rust/src/api/api.rs').readAsStringSync();
+    final serviceSource = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+
+    final ordinaryStart = nativeSource.indexOf(
+      'pub async fn respond_letmein(',
+    );
+    final manualStart = nativeSource.indexOf(
+      'pub async fn retry_letmein_manually(',
+      ordinaryStart,
+    );
+    final internalStart = nativeSource.indexOf(
+      'async fn respond_letmein_internal(',
+      manualStart,
+    );
+    final ordinaryBody = nativeSource.substring(ordinaryStart, manualStart);
+    final manualBody = nativeSource.substring(manualStart, internalStart);
+
+    final bridgeStart = bridgeSource.indexOf(
+      'pub async fn answer_ft_request(',
+    );
+    final bridgeEnd = bridgeSource.indexOf(
+      'pub async fn decline_facetime(',
+      bridgeStart,
+    );
+    final bridgeBody = bridgeSource.substring(bridgeStart, bridgeEnd);
+
+    expect(ordinaryBody, contains('approved_group, false'));
+    expect(ordinaryBody, isNot(contains('approved_group, true')));
+    expect(manualBody, contains('approved_group, true'));
+    expect(bridgeBody, contains('.respond_letmein('));
+    expect(bridgeBody, isNot(contains('retry_letmein_manually')));
+    expect(serviceSource, isNot(contains('retryLetmeinManually')));
+    expect(
+      RegExp(r'retry_letmein_manually\(').allMatches(nativeSource),
+      hasLength(1),
+    );
+  });
+
   test('admission diagnostics record only secret-free APS state', () {
     final source = File(
       'lib/services/rustpush/rustpush_service.dart',
