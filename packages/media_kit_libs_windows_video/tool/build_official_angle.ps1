@@ -178,6 +178,46 @@ function Ensure-DepotToolsGitShim {
         -Content ("@echo off`r`n`"$escapedGitPath`" %*`r`n")
 }
 
+function Initialize-PinnedDepotTools {
+    param(
+        [Parameter(Mandatory)]
+        [string] $DepotToolsPath
+    )
+
+    # A detached depot_tools checkout contains source only.  Its normal
+    # update path writes the Python/CIPD bootstrap state, including
+    # python3_bin_reldir.txt, before GN can run.  We deliberately keep
+    # DEPOT_TOOLS_UPDATE disabled below so the reviewed Git pin cannot move;
+    # bootstrap the pinned checkout explicitly instead.
+    $marker = Join-Path $DepotToolsPath "python3_bin_reldir.txt"
+    if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+        $bootstrap = Join-Path $DepotToolsPath "bootstrap\win_tools.bat"
+        if (-not (Test-Path -LiteralPath $bootstrap -PathType Leaf)) {
+            throw "Pinned depot_tools checkout is missing bootstrap/win_tools.bat."
+        }
+        Invoke-Checked `
+            -FilePath $bootstrap `
+            -ArgumentList @() `
+            -WorkingDirectory $DepotToolsPath
+    }
+
+    if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+        throw "Pinned depot_tools bootstrap did not create python3_bin_reldir.txt."
+    }
+    $relativePythonDirectory = (Get-Content -LiteralPath $marker -Raw).Trim()
+    if ([string]::IsNullOrWhiteSpace($relativePythonDirectory) -or
+        [System.IO.Path]::IsPathRooted($relativePythonDirectory) -or
+        $relativePythonDirectory -match '(^|[\\/])\.\.([\\/]|$)') {
+        throw "Pinned depot_tools produced an unsafe Python bootstrap path."
+    }
+    $python3 = Join-Path $DepotToolsPath (
+        Join-Path $relativePythonDirectory "python3.exe"
+    )
+    if (-not (Test-Path -LiteralPath $python3 -PathType Leaf)) {
+        throw "Pinned depot_tools bootstrap is missing its declared Python executable: $python3"
+    }
+}
+
 $work = Get-SafeFullPath -Path $WorkRoot -Label "WorkRoot"
 $output = Get-SafeFullPath -Path $OutputRoot -Label "OutputRoot"
 $provenanceFile = (Resolve-Path -LiteralPath $ProvenancePath -ErrorAction Stop).Path
@@ -252,6 +292,8 @@ Ensure-PinnedCheckout `
     -RemoteUrl $provenance.angle.depot_tools_url `
     -Commit $provenance.angle.depot_tools_commit `
     -Git $git
+
+Initialize-PinnedDepotTools -DepotToolsPath $depotTools
 
 Ensure-DepotToolsGitShim -DepotToolsPath $depotTools -GitPath $git
 

@@ -209,6 +209,18 @@ foreach ($requiredText in @(
         -Condition $workflow.Contains($requiredText) `
         -Message "native-media workflow must contain '$requiredText'"
 }
+$angleBuildPath = Join-Path $package "tool\\build_official_angle.ps1"
+$angleBuild = Get-Content -LiteralPath $angleBuildPath -Raw
+foreach ($requiredText in @(
+    'function Initialize-PinnedDepotTools',
+    'bootstrap\win_tools.bat',
+    'python3_bin_reldir.txt',
+    'DEPOT_TOOLS_UPDATE stays disabled'
+)) {
+    Assert-True `
+        -Condition $angleBuild.Contains($requiredText) `
+        -Message "ANGLE bootstrap must contain '$requiredText'"
+}
 Assert-True `
     -Condition ($workflow -notmatch
         '(?ms)Upload short-lived engineering artifact.*?build[\\/]windows') `
