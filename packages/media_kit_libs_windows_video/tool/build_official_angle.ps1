@@ -225,6 +225,11 @@ function Initialize-PinnedDepotTools {
 }
 
 function Resolve-CompleteWindowsSdk {
+    param(
+        [Parameter(Mandatory)]
+        [string] $VisualStudioVcvarsAll
+    )
+
     $roots = @(
         [Environment]::GetEnvironmentVariable("WindowsSdkDir"),
         (Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10"),
@@ -265,11 +270,18 @@ function Resolve-CompleteWindowsSdk {
         }
     )
 
-    $selected = $candidates |
+    $compatible = @(
+        $candidates | Where-Object {
+            $probe = "call `"$VisualStudioVcvarsAll`" amd64_x86 $($_.version_text) >nul 2>&1"
+            & cmd.exe /d /c $probe
+            $LASTEXITCODE -eq 0
+        }
+    )
+    $selected = $compatible |
         Sort-Object -Property version, root -Descending |
         Select-Object -First 1
     if (-not $selected) {
-        throw "No complete Windows SDK was found. Each candidate must contain Include\\<version>\\um and Lib\\<version>\\um."
+        throw "No complete Windows SDK accepted by Visual Studio was found. Each candidate must contain usable Include\\<version>\\um and Lib\\<version>\\um files."
     }
     return $selected
 }
@@ -350,7 +362,6 @@ exit /b %ERRORLEVEL%
 
 $work = Get-SafeFullPath -Path $WorkRoot -Label "WorkRoot"
 $output = Get-SafeFullPath -Path $OutputRoot -Label "OutputRoot"
-$selectedSdk = Resolve-CompleteWindowsSdk
 $provenanceFile = (Resolve-Path -LiteralPath $ProvenancePath -ErrorAction Stop).Path
 $provenance = Get-Content -LiteralPath $provenanceFile -Raw |
     ConvertFrom-Json -ErrorAction Stop
@@ -374,6 +385,9 @@ foreach ($pin in @(
         throw "Official source pins must be full lowercase Git commit hashes."
     }
 }
+
+$visualStudio = Resolve-VisualStudioInstallation
+$selectedSdk = Resolve-CompleteWindowsSdk -VisualStudioVcvarsAll $visualStudio.vcvarsall
 
 $requiredRuntimeFiles = @($provenance.angle.runtime_files.$Architecture)
 $expectedMachine = if ($Architecture -eq "arm64") { "ARM64" } else { "X64" }
@@ -458,7 +472,6 @@ if ($actualDepotToolsCommit -ne $provenance.angle.depot_tools_commit) {
     throw "depot_tools moved away from its reviewed pin to $actualDepotToolsCommit."
 }
 
-$visualStudio = Resolve-VisualStudioInstallation
 Initialize-SdkCompatibilityShim `
     -WorkRoot $work `
     -SdkVersion $selectedSdk.version_text `

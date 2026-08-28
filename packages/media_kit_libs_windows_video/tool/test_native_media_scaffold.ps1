@@ -473,6 +473,10 @@ try {
         -Condition ($angleBuildScript -match 'Initialize-SdkCompatibilityShim' -and
             $angleBuildScript -match 'GYP_MSVS_OVERRIDE_PATH') `
         -Message "ANGLE build must adapt the pinned SDK request through a local vcvarsall shim"
+    Assert-True `
+        -Condition ($angleBuildScript -match 'cmd\.exe' -and
+            $angleBuildScript -match 'VisualStudioVcvarsAll') `
+        -Message "ANGLE SDK selection must reject SDKs that Visual Studio vcvarsall cannot use"
 
     foreach ($architecture in @("x64", "arm64")) {
         $planOutput = & (
