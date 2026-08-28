@@ -222,6 +222,65 @@ function Initialize-PinnedDepotTools {
     if (-not (Test-Path -LiteralPath $python3 -PathType Leaf)) {
         throw "Pinned depot_tools bootstrap is missing its declared Python executable: $python3"
     }
+    return ([System.IO.Path]::GetFullPath($python3))
+}
+
+function Use-TrustedHostPythonForGeneratedNinja {
+    param(
+        [Parameter(Mandatory)]
+        [string] $BuildRoot,
+
+        [Parameter(Mandatory)]
+        [string] $BootstrapPython,
+
+        [Parameter(Mandatory)]
+        [string] $HostPython
+    )
+
+    $probeOutput = & $BootstrapPython -c "import sys; print(sys.executable)" 2>&1
+    $probeExitCode = $LASTEXITCODE
+    if ($probeExitCode -eq 0) {
+        return [pscustomobject]@{
+            python_path = [System.IO.Path]::GetFullPath($BootstrapPython)
+            fallback = $false
+            reason = "depot_tools bootstrap Python executed successfully"
+            replaced_ninja_files = 0
+        }
+    }
+
+    $probeText = ($probeOutput -join [Environment]::NewLine)
+    if ($probeText -notmatch 'WinError 4551|Application Control policy') {
+        throw "Pinned depot_tools Python failed its execution probe with exit code ${probeExitCode}: $probeText"
+    }
+
+    $hostOutput = & $HostPython -c "import sys; print(sys.executable)" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Smart App Control blocked the pinned depot_tools Python, and the installed host Python failed its execution probe: $($hostOutput -join [Environment]::NewLine)"
+    }
+
+    $bootstrapForward = ([System.IO.Path]::GetFullPath($BootstrapPython)).Replace('\', '/')
+    $bootstrapNinja = $bootstrapForward.Replace(':', '$:')
+    $hostForward = ([System.IO.Path]::GetFullPath($HostPython)).Replace('\', '/')
+    $hostNinja = $hostForward.Replace(':', '$:')
+    $replacedFiles = 0
+    foreach ($ninjaFile in Get-ChildItem -LiteralPath $BuildRoot -Filter '*.ninja' -File -Recurse) {
+        $content = Get-Content -LiteralPath $ninjaFile.FullName -Raw
+        $updated = $content.Replace($bootstrapForward, $hostForward).Replace($bootstrapNinja, $hostNinja)
+        if ($updated -ne $content) {
+            Write-Utf8NoBom -Path $ninjaFile.FullName -Content $updated
+            $replacedFiles++
+        }
+    }
+    if ($replacedFiles -eq 0) {
+        throw "Smart App Control blocked the pinned depot_tools Python, but no generated Ninja command referenced it for replacement."
+    }
+
+    return [pscustomobject]@{
+        python_path = [System.IO.Path]::GetFullPath($HostPython)
+        fallback = $true
+        reason = "Smart App Control blocked depot_tools bootstrap Python (WinError 4551); generated Ninja commands use installed host Python"
+        replaced_ninja_files = $replacedFiles
+    }
 }
 
 function Resolve-CompleteWindowsSdk {
@@ -328,36 +387,199 @@ function Resolve-VisualStudioInstallation {
     throw "No Visual Studio installation with VC\\Auxiliary\\Build\\vcvarsall.bat was found."
 }
 
-function Initialize-SdkCompatibilityShim {
+function Resolve-MsvcAtlInclude {
     param(
         [Parameter(Mandatory)]
-        [string] $WorkRoot,
+        [string] $VisualStudioRoot
+    )
+
+    $toolsetRoot = Join-Path $VisualStudioRoot "VC\Tools\MSVC"
+    if (-not (Test-Path -LiteralPath $toolsetRoot -PathType Container)) {
+        throw "Resolved Visual Studio installation is missing MSVC toolsets: $toolsetRoot"
+    }
+    $candidates = @(
+        Get-ChildItem -LiteralPath $toolsetRoot -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending |
+            ForEach-Object { Join-Path $_.FullName "atlmfc\include" }
+    )
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath (Join-Path $candidate "atlbase.h") -PathType Leaf) {
+            return ([System.IO.Path]::GetFullPath($candidate)).TrimEnd('\', '/')
+        }
+    }
+    throw "MSVC ATL headers were not found below $toolsetRoot. Expected atlmfc\\include\\atlbase.h."
+}
+
+function Initialize-SdkCompatibilityEnvironment {
+    param(
+        [Parameter(Mandatory)]
+        [string] $SdkVersion,
+
+        [Parameter(Mandatory)]
+        [string] $VisualStudioRoot,
+
+        [Parameter(Mandatory)]
+        [string] $AtlInclude
+    )
+
+    if (-not (Test-Path -LiteralPath (Join-Path $VisualStudioRoot "VC\Auxiliary\Build\vcvarsall.bat") -PathType Leaf)) {
+        throw "Resolved Visual Studio root is missing vcvarsall.bat: $VisualStudioRoot"
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $AtlInclude "atlbase.h") -PathType Leaf)) {
+        throw "Resolved MSVC ATL include directory is missing atlbase.h: $AtlInclude"
+    }
+    # Use the real installation root. A wrapper directory breaks ANGLE's
+    # runtime-DLL discovery because it also resolves VC\Redist from this path.
+    # The pinned checkout's SDK constants were adapted immediately above, so
+    # vcvarsall can be called directly with the selected, validated SDK.
+    $env:GYP_MSVS_OVERRIDE_PATH = $VisualStudioRoot
+    # Chromium's Windows config supplies the normal MSVC and Windows SDK
+    # include roots, but ATL lives in the optional atlmfc tree and is not
+    # emitted by that config. Pass the validated directory explicitly so both
+    # the ARM64 target and the x64 host tools use the same installed headers.
+    $env:OPENBUBBLES_ATL_INCLUDE = $AtlInclude
+    $existingInclude = [Environment]::GetEnvironmentVariable("INCLUDE")
+    if ([string]::IsNullOrWhiteSpace($existingInclude)) {
+        $env:INCLUDE = $AtlInclude
+    }
+    elseif ($existingInclude -notlike "*$AtlInclude*") {
+        $env:INCLUDE = "$AtlInclude;$existingInclude"
+    }
+    return [pscustomobject]@{
+        sdk_version = $SdkVersion
+        visual_studio_root = $VisualStudioRoot
+        atl_include = $AtlInclude
+    }
+}
+
+function Apply-SdkCompatibilityPatch {
+    param(
+        [Parameter(Mandatory)]
+        [string] $AngleSource,
 
         [Parameter(Mandatory)]
         [string] $SdkVersion,
 
         [Parameter(Mandatory)]
-        [string] $VisualStudioVcvarsAll
+        [bool] $SkipArm64HostDebugger
     )
 
-    $shimRoot = Join-Path $WorkRoot "vs-sdk-override"
-    $shimPath = Join-Path $shimRoot "VC\Auxiliary\Build\vcvarsall.bat"
-    New-Item -ItemType Directory -Path (Split-Path $shimPath -Parent) -Force | Out-Null
-    $escapedVcvarsAll = $VisualStudioVcvarsAll.Replace("%", "%%")
-    $shim = @"
-@echo off
-set "OPENBUBBLES_REAL_VCVARSALL=$escapedVcvarsAll"
-set "OPENBUBBLES_SDK_VERSION=$SdkVersion"
-if /I "%~2"=="store" (
-  call "%OPENBUBBLES_REAL_VCVARSALL%" "%~1" store "%OPENBUBBLES_SDK_VERSION%"
-) else (
-  call "%OPENBUBBLES_REAL_VCVARSALL%" "%~1" "%OPENBUBBLES_SDK_VERSION%"
-)
-exit /b %ERRORLEVEL%
+    # The reviewed ANGLE pin currently names a newer SDK than is installed on
+    # Windows 11 ARM64 and on the hosted Windows runners. Keep the official
+    # source commit intact, but adapt only its two build-tool version constants
+    # in the disposable checkout to the SDK that vcvarsall accepted above.
+    # Refuse unexpected source text so this cannot silently patch a new layout.
+    $files = @(
+        [pscustomobject]@{
+            relative_path = "build\vs_toolchain.py"
+            expected = "SDK_VERSION = '10.0.28000.0'"
+            replacement = "SDK_VERSION = '$SdkVersion'"
+        },
+        [pscustomobject]@{
+            relative_path = "build\toolchain\win\setup_toolchain.py"
+            expected = "SDK_VERSION = '10.0.28000.0'"
+            replacement = "SDK_VERSION = '$SdkVersion'"
+        }
+    )
+
+    $records = [System.Collections.Generic.List[object]]::new()
+    foreach ($file in $files) {
+        $path = Join-Path $AngleSource $file.relative_path
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Pinned ANGLE checkout is missing required SDK compatibility file: $($file.relative_path)"
+        }
+        $content = Get-Content -LiteralPath $path -Raw
+        $matches = [regex]::Matches($content, [regex]::Escape($file.expected))
+        if ($matches.Count -ne 1) {
+            throw "Expected exactly one reviewed SDK constant in $($file.relative_path), found $($matches.Count)."
+        }
+        Write-Utf8NoBom `
+            -Path $path `
+            -Content $content.Replace($file.expected, $file.replacement)
+        $records.Add([pscustomobject]@{
+            relative_path = $file.relative_path.Replace('\', '/')
+            operation = "replace SDK_VERSION constant"
+            requested_sdk_version = '10.0.28000.0'
+            selected_sdk_version = $SdkVersion
+        })
+    }
+
+    if ($SkipArm64HostDebugger) {
+        $path = Join-Path $AngleSource "build\vs_toolchain.py"
+        $content = Get-Content -LiteralPath $path -Raw
+        $callPattern = "(?m)^[ ]+_CopyDebugger\(target_dir, target_cpu\)"
+        $callMatches = [regex]::Matches($content, $callPattern)
+        if ($callMatches.Count -ne 2) {
+            throw "Expected exactly two ANGLE debugger-copy calls, found $($callMatches.Count)."
+        }
+        $lastCall = $callMatches[$callMatches.Count - 1]
+        $guardedCall = @"
+    if os.environ.get('OPENBUBBLES_ARM64_NATIVE_BUILD') != '1':
+      _CopyDebugger(target_dir, target_cpu)
 "@
-    Write-Utf8NoBom -Path $shimPath -Content $shim.TrimStart()
-    $env:GYP_MSVS_OVERRIDE_PATH = $shimRoot
-    return $shimRoot
+        $updated = $content.Substring(0, $lastCall.Index) +
+            $guardedCall.TrimEnd("`r", "`n") +
+            $content.Substring($lastCall.Index + $lastCall.Length)
+        Write-Utf8NoBom -Path $path -Content $updated
+        $records.Add([pscustomobject]@{
+            relative_path = "build/vs_toolchain.py"
+            operation = "guard x64 host debugger copy for ARM64 build"
+            requested_sdk_version = '10.0.28000.0'
+            selected_sdk_version = $SdkVersion
+        })
+    }
+
+    if ($SdkVersion -eq '10.0.26100.0') {
+        $path = Join-Path $AngleSource "build\config\win\BUILD.gn"
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Pinned ANGLE checkout is missing Windows target-version configuration."
+        }
+        $content = Get-Content -LiteralPath $path -Raw
+        $expected = '"NTDDI_VERSION=NTDDI_WIN11_BR",'
+        $replacement = '"NTDDI_VERSION=NTDDI_WIN11_GA",'
+        $matches = [regex]::Matches($content, [regex]::Escape($expected))
+        if ($matches.Count -ne 1) {
+            throw "Expected exactly one ANGLE Windows target-version constant, found $($matches.Count)."
+        }
+        Write-Utf8NoBom -Path $path -Content $content.Replace($expected, $replacement)
+        $records.Add([pscustomobject]@{
+            relative_path = "build/config/win/BUILD.gn"
+            operation = "map Windows 11 Beta target macro to SDK 26100 GA macro"
+            requested_sdk_version = '10.0.28000.0'
+            selected_sdk_version = $SdkVersion
+        })
+    }
+
+    $path = Join-Path $AngleSource "build\config\win\BUILD.gn"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Pinned ANGLE checkout is missing Windows compiler configuration."
+    }
+    $content = Get-Content -LiteralPath $path -Raw
+    $expected = 'config\("compiler"\)\s*\{'
+    $replacement = @"
+config("compiler") {
+  # ANGLE's Chromium toolchain does not add the optional MSVC ATL include
+  # tree. The build wrapper validates and supplies this path at generation.
+  if (getenv("OPENBUBBLES_ATL_INCLUDE") != "") {
+    include_dirs = [ getenv("OPENBUBBLES_ATL_INCLUDE") ]
+  }
+"@
+    $matches = [regex]::Matches($content, $expected)
+    if ($matches.Count -ne 1) {
+        throw "Expected exactly one ANGLE clang compiler configuration block, found $($matches.Count)."
+    }
+    $updated = $content.Substring(0, $matches[0].Index) +
+        $replacement.TrimEnd("`r", "`n") +
+        $content.Substring($matches[0].Index + $matches[0].Length)
+    Write-Utf8NoBom -Path $path -Content $updated
+    $records.Add([pscustomobject]@{
+        relative_path = "build/config/win/BUILD.gn"
+        operation = "add validated MSVC ATL include directory"
+        requested_sdk_version = '10.0.28000.0'
+        selected_sdk_version = $SdkVersion
+    })
+
+    return @($records)
 }
 
 $work = Get-SafeFullPath -Path $WorkRoot -Label "WorkRoot"
@@ -387,6 +609,7 @@ foreach ($pin in @(
 }
 
 $visualStudio = Resolve-VisualStudioInstallation
+$atlInclude = Resolve-MsvcAtlInclude -VisualStudioRoot $visualStudio.root
 $selectedSdk = Resolve-CompleteWindowsSdk -VisualStudioVcvarsAll $visualStudio.vcvarsall
 
 # Chromium's pinned vs_toolchain.py prefers the conventional Program Files
@@ -427,6 +650,7 @@ $plan = [pscustomobject]@{
     depot_tools_commit = $provenance.angle.depot_tools_commit
     windows_sdk_version = $selectedSdk.version_text
     windows_sdk_root = $selectedSdk.root
+    atl_include = $atlInclude
     required_runtime_files = $requiredRuntimeFiles
 }
 
@@ -448,7 +672,7 @@ Ensure-PinnedCheckout `
     -Commit $provenance.angle.depot_tools_commit `
     -Git $git
 
-Initialize-PinnedDepotTools -DepotToolsPath $depotTools
+$depotToolsPython = Initialize-PinnedDepotTools -DepotToolsPath $depotTools
 
 Ensure-DepotToolsGitShim -DepotToolsPath $depotTools -GitPath $git
 
@@ -480,13 +704,22 @@ if ($actualDepotToolsCommit -ne $provenance.angle.depot_tools_commit) {
     throw "depot_tools moved away from its reviewed pin to $actualDepotToolsCommit."
 }
 
-Initialize-SdkCompatibilityShim `
-    -WorkRoot $work `
+$toolchainEnvironment = Initialize-SdkCompatibilityEnvironment `
     -SdkVersion $selectedSdk.version_text `
-    -VisualStudioVcvarsAll $visualStudio.vcvarsall | Out-Null
+    -VisualStudioRoot $visualStudio.root `
+    -AtlInclude $atlInclude
+$sdkCompatibilityFiles = Apply-SdkCompatibilityPatch `
+    -AngleSource $angleSource `
+    -SdkVersion $selectedSdk.version_text `
+    -SkipArm64HostDebugger ($Architecture -eq "arm64")
+$env:OPENBUBBLES_ARM64_NATIVE_BUILD = if ($Architecture -eq "arm64") { "1" } else { "0" }
 
 $gn = (Get-Command gn -ErrorAction Stop).Source
 $autoninja = (Get-Command autoninja -ErrorAction Stop).Source
+$ninja = Join-Path $angleSource "third_party\ninja\ninja.exe"
+if (-not (Test-Path -LiteralPath $ninja -PathType Leaf)) {
+    throw "Pinned ANGLE checkout is missing its Ninja executable: $ninja"
+}
 $targetCpu = if ($Architecture -eq "arm64") { "arm64" } else { "x64" }
 # gn.bat forwards through cmd.exe, which removes unescaped embedded quotes from
 # the --args value. Preserve GN's string literal for target_cpu at that boundary.
@@ -498,6 +731,10 @@ Invoke-Checked `
     -FilePath $gn `
     -ArgumentList @("gen", $buildRoot, "--args=$gnArgsText") `
     -WorkingDirectory $angleSource
+$pythonExecution = Use-TrustedHostPythonForGeneratedNinja `
+    -BuildRoot $buildRoot `
+    -BootstrapPython $depotToolsPython `
+    -HostPython $python
 Invoke-Checked `
     -FilePath $autoninja `
     -ArgumentList @("-C", $buildRoot, "libEGL", "libGLESv2") `
@@ -593,6 +830,20 @@ Write-Utf8NoBom `
     -Path $gnArgsPath `
     -Content (($gnArgs -join [Environment]::NewLine) + [Environment]::NewLine)
 
+$sdkCompatibilityPath = Join-Path $evidence "sdk-compatibility.txt"
+$sdkCompatibilityLines = @(
+    "official_angle_commit=$($provenance.angle.source_commit)",
+    "requested_sdk_version=10.0.28000.0",
+    "selected_sdk_version=$($selectedSdk.version_text)"
+) + @(
+    $sdkCompatibilityFiles | ForEach-Object {
+        "patched_file=$($_.relative_path) operation=$($_.operation)"
+    }
+)
+Write-Utf8NoBom `
+    -Path $sdkCompatibilityPath `
+    -Content (($sdkCompatibilityLines -join [Environment]::NewLine) + [Environment]::NewLine)
+
 $runtimeEntries = [System.Collections.Generic.List[object]]::new()
 foreach ($relative in $requiredRuntimeFiles) {
     $file = Join-Path $stage $relative
@@ -622,10 +873,11 @@ $manifest = [ordered]@{
         gn_args = $gnArgs
         git_version = Get-CommandText -FilePath $git -ArgumentList @("--version")
         python_version = Get-CommandText -FilePath $python -ArgumentList @("--version")
-        gn_version = Get-CommandText -FilePath $gn -ArgumentList @("--version")
-        ninja_version = Get-CommandText -FilePath $autoninja -ArgumentList @("--version")
+        gn_version = Get-CommandText -FilePath $gn -ArgumentList @("--version") -WorkingDirectory $angleSource
+        ninja_version = Get-CommandText -FilePath $ninja -ArgumentList @("--version") -WorkingDirectory $angleSource
         os_version = [System.Environment]::OSVersion.VersionString
         process_architecture = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+        sdk_compatibility = $sdkCompatibilityFiles
     }
     files = @($runtimeEntries)
     angle_license_sha256 = Get-Sha256Hex -Path (
@@ -637,6 +889,8 @@ $manifest = [ordered]@{
         gclient_revisions_sha256 = Get-Sha256Hex -Path $gclientRevisionsPath
         gn_args_path = "provenance/gn-args.txt"
         gn_args_sha256 = Get-Sha256Hex -Path $gnArgsPath
+        sdk_compatibility_path = "provenance/sdk-compatibility.txt"
+        sdk_compatibility_sha256 = Get-Sha256Hex -Path $sdkCompatibilityPath
     }
 }
 

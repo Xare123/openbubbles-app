@@ -470,9 +470,9 @@ try {
         -Condition ($angleBuildScript -match 'Include.*um' -and $angleBuildScript -match 'Lib.*um') `
         -Message "ANGLE SDK selection must require both Include\\<version>\\um and Lib\\<version>\\um"
     Assert-True `
-        -Condition ($angleBuildScript -match 'Initialize-SdkCompatibilityShim' -and
+        -Condition ($angleBuildScript -match 'Initialize-SdkCompatibilityEnvironment' -and
             $angleBuildScript -match 'GYP_MSVS_OVERRIDE_PATH') `
-        -Message "ANGLE build must adapt the pinned SDK request through a local vcvarsall shim"
+        -Message "ANGLE build must adapt the pinned SDK request through the real validated VS installation"
     Assert-True `
         -Condition ($angleBuildScript -match 'cmd\.exe' -and
             $angleBuildScript -match 'VisualStudioVcvarsAll') `
@@ -481,6 +481,18 @@ try {
         -Condition ($angleBuildScript -match 'vs2022_install' -and
             $angleBuildScript -match 'already-validated installation path') `
         -Message "ANGLE build must pass the resolved VS installation to Chromium toolchain detection"
+    Assert-True `
+        -Condition ($angleBuildScript -match 'Resolve-MsvcAtlInclude' -and
+            $angleBuildScript -match 'atlmfc\\include' -and
+            $angleBuildScript -match 'OPENBUBBLES_ATL_INCLUDE') `
+        -Message "ANGLE build must discover and expose the installed MSVC ATL include tree"
+    Assert-True `
+        -Condition ($angleBuildScript -match 'Apply-SdkCompatibilityPatch' -and
+            $angleBuildScript -match 'requested_sdk_version') `
+        -Message "ANGLE build must record its narrow SDK compatibility overlay"
+    Assert-True `
+        -Condition ($angleBuildScript -match 'sdk-compatibility\.txt') `
+        -Message "ANGLE build must retain SDK compatibility provenance evidence"
 
     foreach ($architecture in @("x64", "arm64")) {
         $planOutput = & (
@@ -500,6 +512,9 @@ try {
         Assert-True `
             -Condition ($plan.windows_sdk_version -match '^10\.0\.\d+\.0$') `
             -Message "ANGLE build plan must report a valid Windows SDK version"
+        Assert-True `
+            -Condition ($plan.atl_include -match '(?i)atlmfc[\\/]include$') `
+            -Message "ANGLE build plan must report the resolved ATL include directory"
     }
 
     $integrationArchives = @{

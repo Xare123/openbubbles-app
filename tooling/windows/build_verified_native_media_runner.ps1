@@ -45,8 +45,29 @@ function Get-NormalizedPath {
     return [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
 }
 
+function Resolve-NuGetExecutable {
+    param([string] $RequestedPath)
+
+    $candidates = @()
+    if ($RequestedPath) {
+        $candidates += $RequestedPath
+    }
+    $command = Get-Command nuget.exe -ErrorAction SilentlyContinue
+    if ($command) {
+        $candidates += $command.Source
+    }
+    $candidates += "C:\Codex\Toolchains\nuget\nuget.exe"
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            return [System.IO.Path]::GetFullPath($candidate)
+        }
+    }
+    throw "NuGet.exe is required by the Windows WebView plugins, but no existing executable was found."
+}
+
 $repo = Get-NormalizedPath -Path $RepoRoot
 $package = Join-Path $repo "packages\media_kit_libs_windows_video"
+$nuget = Resolve-NuGetExecutable
 $verificationModule = Join-Path $package "tool\NativeMediaVerification.psm1"
 $bundleVerifier = Join-Path $package "tool\verify_native_media.ps1"
 $runtimeSmoke = Join-Path $package "tool\runtime_smoke.ps1"
@@ -109,8 +130,10 @@ else {
 
 $previousAngle = $env:MEDIA_KIT_OFFICIAL_ANGLE_ROOT
 $previousArchive = $env:MEDIA_KIT_LIBMPV_ARCHIVE
+$previousPath = $env:PATH
 try {
     $env:MEDIA_KIT_OFFICIAL_ANGLE_ROOT = $angle
+    $env:PATH = "$(Split-Path -Parent $nuget);$env:PATH"
     if ($libmpvArchive) {
         $env:MEDIA_KIT_LIBMPV_ARCHIVE = $libmpvArchive
     }
@@ -136,6 +159,34 @@ try {
                 "-NoLogo", "-NoProfile", "-File", $integrationVerifier,
                 "-RequireEphemeralSymlink"
             )
+        $windowsBuild = Join-Path $repo "build\windows\$Architecture"
+        $cmakeCache = Join-Path $windowsBuild "CMakeCache.txt"
+        if ((Test-Path -LiteralPath $cmakeCache -PathType Leaf) -and
+            (Select-String -LiteralPath $cmakeCache -Pattern '^NUGET:FILEPATH=NUGET-NOTFOUND$' -Quiet)) {
+            $cmakeCommand = Get-Command cmake.exe -ErrorAction Stop
+            $generator = (
+                Select-String -LiteralPath $cmakeCache -Pattern '^CMAKE_GENERATOR:INTERNAL=(.*)$'
+            ).Matches.Groups[1].Value
+            $platform = (
+                Select-String -LiteralPath $cmakeCache -Pattern '^CMAKE_GENERATOR_PLATFORM:INTERNAL=(.*)$'
+            ).Matches.Groups[1].Value
+            if ([string]::IsNullOrWhiteSpace($generator) -or
+                [string]::IsNullOrWhiteSpace($platform)) {
+                throw "The existing Windows CMake cache is missing its generator or platform."
+            }
+            Invoke-Checked `
+                -FilePath $cmakeCommand.Source `
+                -ArgumentList @(
+                    "-S", (Join-Path $repo "windows"),
+                    "-B", $windowsBuild,
+                    "-G", $generator,
+                    "-A", $platform,
+                    "-DNUGET:FILEPATH=$nuget"
+                )
+            if (Select-String -LiteralPath $cmakeCache -Pattern '^NUGET:FILEPATH=NUGET-NOTFOUND$' -Quiet) {
+                throw "CMake did not accept the discovered NuGet executable: $nuget"
+            }
+        }
         Invoke-Checked `
             -FilePath $flutter `
             -ArgumentList @(
@@ -159,6 +210,7 @@ finally {
     else {
         $env:MEDIA_KIT_LIBMPV_ARCHIVE = $previousArchive
     }
+    $env:PATH = $previousPath
 }
 
 $configurationDirectory = (Get-Culture).TextInfo.ToTitleCase($Configuration)
