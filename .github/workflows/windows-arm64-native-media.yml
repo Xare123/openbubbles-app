@@ -92,12 +92,24 @@ jobs:
         run: |
           $package = Join-Path $env:GITHUB_WORKSPACE `
             "packages/media_kit_libs_windows_video"
+          # Keep generated native binaries outside the source package. The
+          # scaffold gate intentionally rejects native binaries anywhere in
+          # the package so a locally generated bundle cannot be mistaken for
+          # reviewed source content.
+          $angle = Join-Path $env:RUNNER_TEMP `
+            "native-media/angle/${{ matrix.arch }}"
+          $packageRoot = [IO.Path]::GetFullPath($package).TrimEnd('\') + '\'
+          $angleRoot = [IO.Path]::GetFullPath($angle).TrimEnd('\') + '\'
+          if ($angleRoot.StartsWith(
+            $packageRoot,
+            [StringComparison]::OrdinalIgnoreCase
+          )) {
+            throw "Refusing to generate native binaries inside the source package."
+          }
           & (Join-Path $package "tool/build_official_angle.ps1") `
             -Architecture "${{ matrix.arch }}" `
             -WorkRoot (Join-Path $env:RUNNER_TEMP "official-angle-work") `
-            -OutputRoot (
-              Join-Path $package "windows/native/${{ matrix.arch }}/angle"
-            )
+            -OutputRoot $angle
 
       - name: Resolve pinned libmpv and verify all native inputs
         shell: pwsh
@@ -105,11 +117,11 @@ jobs:
           $package = Join-Path $env:GITHUB_WORKSPACE `
             "packages/media_kit_libs_windows_video"
           $cache = Join-Path $env:RUNNER_TEMP "native-media"
+          $angle = Join-Path $env:RUNNER_TEMP `
+            "native-media/angle/${{ matrix.arch }}"
           & (Join-Path $package "tool/prepare_native_media.ps1") `
             -Architecture "${{ matrix.arch }}" `
-            -AngleBundleRoot (
-              Join-Path $package "windows/native/${{ matrix.arch }}/angle"
-            ) `
+            -AngleBundleRoot $angle `
             -CacheRoot $cache `
             -GeneratedCmakePath (Join-Path $cache "native-media.cmake") `
             -ResolutionPath (Join-Path $cache "native-media-resolution.json")
@@ -264,8 +276,8 @@ jobs:
           $architecture = "${{ matrix.arch }}"
           $package = Join-Path $env:GITHUB_WORKSPACE `
             "packages/media_kit_libs_windows_video"
-          $angle = Join-Path $package `
-            "windows/native/$architecture/angle"
+          $angle = Join-Path $env:RUNNER_TEMP `
+            "native-media/angle/$architecture"
           $resolution = Get-Content -LiteralPath (
             Join-Path $env:RUNNER_TEMP `
               "native-media/native-media-resolution.json"
@@ -289,7 +301,8 @@ jobs:
           $architecture = "${{ matrix.arch }}"
           $package = Join-Path $env:GITHUB_WORKSPACE `
             "packages/media_kit_libs_windows_video"
-          $angle = Join-Path $package "windows/native/$architecture/angle"
+          $angle = Join-Path $env:RUNNER_TEMP `
+            "native-media/angle/$architecture"
           $resolutionPath = Join-Path $env:RUNNER_TEMP `
             "native-media/native-media-resolution.json"
           $resolution = Get-Content -LiteralPath $resolutionPath -Raw |
