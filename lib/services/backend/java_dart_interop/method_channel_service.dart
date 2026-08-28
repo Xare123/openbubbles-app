@@ -91,6 +91,15 @@ class MethodChannelService extends GetxService {
           rethrow;
         }
         return true;
+      case "apple-network-route":
+        final data = arguments;
+        if (data != null) {
+          pushService.handleAppleNetworkRoute(
+            hasInternet: data["has_internet"] == true,
+            validated: data["validated"] == true,
+          );
+        }
+        return true;
       case "sim-info":
         try {
           List<Object?> info = call.arguments["info"];

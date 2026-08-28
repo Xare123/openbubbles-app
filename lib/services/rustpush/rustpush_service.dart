@@ -20,6 +20,7 @@ import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/services/rustpush/apple_network_health.dart';
+import 'package:bluebubbles/services/rustpush/apple_network_route_policy.dart';
 import 'package:bluebubbles/services/rustpush/cloud_message_upload_state.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
@@ -1834,11 +1835,43 @@ class RustPushService extends GetxService {
         return;
       }
 
-      _networkRefreshTimer?.cancel();
-      final generation = ++_networkRefreshGeneration;
-      _networkRefreshTimer = Timer(const Duration(milliseconds: 750), () {
-        unawaited(_refreshAppleNetworkConnection(generation));
-      });
+      // Android's transport-only Wi-Fi result can represent the local Wi-Fi
+      // Direct link used by wireless Android Auto. APNService reports the
+      // validated default Internet network separately.
+      if (Platform.isAndroid) return;
+
+      _scheduleAppleNetworkRefresh();
+    });
+  }
+
+  void handleAppleNetworkRoute({
+    required bool hasInternet,
+    required bool validated,
+  }) {
+    switch (decideAppleNetworkRoute(
+      hasInternet: hasInternet,
+      validated: validated,
+    )) {
+      case AppleNetworkRouteDecision.offline:
+        _networkRefreshTimer?.cancel();
+        _networkRefreshGeneration++;
+        appleNetworkHealth.value = AppleNetworkHealth.offline;
+        appleNetworkDetail.value = "No validated Internet connection";
+        applePushPort.value = null;
+        return;
+      case AppleNetworkRouteDecision.waitForValidation:
+        return;
+      case AppleNetworkRouteDecision.refresh:
+        _scheduleAppleNetworkRefresh();
+        return;
+    }
+  }
+
+  void _scheduleAppleNetworkRefresh() {
+    _networkRefreshTimer?.cancel();
+    final generation = ++_networkRefreshGeneration;
+    _networkRefreshTimer = Timer(const Duration(milliseconds: 750), () {
+      unawaited(_refreshAppleNetworkConnection(generation));
     });
   }
 

@@ -70,10 +70,28 @@ class APNService : Service(), MsgReceiver {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val job = SupervisorJob()
     val scope = CoroutineScope(Dispatchers.IO + job)
+    private lateinit var appleNetworkMonitor: AppleNetworkMonitor
 
     override fun onCreate() {
         super.onCreate()
         activeService = this
+        appleNetworkMonitor = AppleNetworkMonitor(this, mainHandler) { snapshot ->
+            scope.launch {
+                try {
+                    DartWorker.callMethod(
+                        this@APNService,
+                        "apple-network-route",
+                        mapOf(
+                            "has_internet" to snapshot.hasInternet,
+                            "validated" to snapshot.validated,
+                        ),
+                    )
+                } catch (error: Exception) {
+                    Log.d("AppleNetwork", "Unable to report default network state: ${error.message}")
+                }
+            }
+        }
+        appleNetworkMonitor.start()
     }
 
     fun ready() {
@@ -418,6 +436,7 @@ class APNService : Service(), MsgReceiver {
     }
 
     override fun onDestroy() {
+        appleNetworkMonitor.stop()
         if (activeService === this) {
             activeService = null
         }
