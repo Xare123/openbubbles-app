@@ -119,10 +119,7 @@ void main() {
       expect(admissionGuard, greaterThanOrEqualTo(0));
       expect(approvedGroup, greaterThan(admissionGuard));
       expect(source, contains('errorType=ambiguous_response'));
-      expect(
-        source,
-        contains('FaceTime web admission response failed: "'),
-      );
+      expect(source, contains('FaceTime web admission response failed: "'));
       expect(
         source,
         contains(r'stage=dispatch errorType=${error.runtimeType}'),
@@ -131,17 +128,13 @@ void main() {
   );
 
   test('ordinary FaceTime answer API cannot invoke manual replay', () {
-    final nativeSource = File(
-      'rustpush/src/facetime.rs',
-    ).readAsStringSync();
+    final nativeSource = File('rustpush/src/facetime.rs').readAsStringSync();
     final bridgeSource = File('rust/src/api/api.rs').readAsStringSync();
     final serviceSource = File(
       'lib/services/rustpush/rustpush_service.dart',
     ).readAsStringSync();
 
-    final ordinaryStart = nativeSource.indexOf(
-      'pub async fn respond_letmein(',
-    );
+    final ordinaryStart = nativeSource.indexOf('pub async fn respond_letmein(');
     final manualStart = nativeSource.indexOf(
       'pub async fn retry_letmein_manually(',
       ordinaryStart,
@@ -153,9 +146,7 @@ void main() {
     final ordinaryBody = nativeSource.substring(ordinaryStart, manualStart);
     final manualBody = nativeSource.substring(manualStart, internalStart);
 
-    final bridgeStart = bridgeSource.indexOf(
-      'pub async fn answer_ft_request(',
-    );
+    final bridgeStart = bridgeSource.indexOf('pub async fn answer_ft_request(');
     final bridgeEnd = bridgeSource.indexOf(
       'pub async fn decline_facetime(',
       bridgeStart,
@@ -187,48 +178,63 @@ void main() {
     final helper = source.substring(helperStart, helperEnd);
 
     expect(source, contains('_recordFaceTimeAdmissionTransport'));
-    expect(source, contains('_recordFaceTimeAdmissionTransport("before-response")'));
+    expect(
+      source,
+      contains('_recordFaceTimeAdmissionTransport("before-response")'),
+    );
     expect(
       source,
       contains('_recordFaceTimeAdmissionTransport("after-response-failure")'),
     );
     expect(helper, contains(r'apsState=${status.state}'));
     expect(helper, contains(r'activePortPresent=${status.activePort != null}'));
-    expect(helper, contains(r'retryWaitPresent=${status.retryWaitSeconds != null}'));
-    expect(helper, contains(r'errorPresent=${status.error != null}'));
-    expect(helper, isNot(contains('status.error}')));
     expect(
       helper,
-      contains(r'stage=$stage errorType=${error.runtimeType}'),
+      contains(r'retryWaitPresent=${status.retryWaitSeconds != null}'),
     );
+    expect(helper, contains(r'errorPresent=${status.error != null}'));
+    expect(helper, isNot(contains('status.error}')));
+    expect(helper, contains(r'stage=$stage errorType=${error.runtimeType}'));
     expect(helper, isNot(contains('error: error')));
     expect(helper, isNot(contains('trace:')));
   });
 
-  test('FaceTime admission excludes bridge identities and missing sessions are typed', () {
-    final nativeSource = File('rustpush/src/facetime.rs').readAsStringSync();
-    final identitySource = File(
-      'rustpush/src/ids/identity_manager.rs',
-    ).readAsStringSync();
+  test(
+    'FaceTime admission excludes bridge identities and missing sessions are typed',
+    () {
+      final nativeSource = File('rustpush/src/facetime.rs').readAsStringSync();
+      final identitySource = File(
+        'rustpush/src/ids/identity_manager.rs',
+      ).readAsStringSync();
 
-    expect(
-      nativeSource,
-      contains('get_participants_targets_excluding_bridge_devices'),
-    );
-    expect(identitySource, contains('get_sms_targets(handle, false)'));
-    expect(identitySource, contains('get_sms_targets(handle, true)'));
-    expect(identitySource, contains('cache_needs_refresh'));
-    expect(identitySource, contains('return Err(PushError::BadMsg)'));
-    expect(identitySource, contains('get_device_uuid()'));
-    expect(nativeSource, contains('session_mut(&mut state.sessions, approved)?'));
-    expect(nativeSource, contains('session_mut(&mut state.sessions, to_group)?'));
-    expect(nativeSource, contains('FaceTimeSessionNotFound'));
-    expect(nativeSource, isNot(contains('expect("Approved session not found!")')));
-    expect(nativeSource, isNot(contains('expect("No session")')));
-    expect(identitySource, contains('private_data.as_slice()'));
-    expect(identitySource, contains('get("com.apple.madrid")'));
-    expect(identitySource, contains('is_bridge_owned_push_token'));
-  });
+      expect(
+        nativeSource,
+        contains('get_participants_targets_excluding_bridge_devices'),
+      );
+      expect(identitySource, contains('get_sms_targets(handle, false)'));
+      expect(identitySource, contains('get_sms_targets(handle, true)'));
+      expect(identitySource, contains('cache_needs_refresh'));
+      expect(identitySource, contains('return Err(PushError::BadMsg)'));
+      expect(identitySource, contains('get_device_uuid()'));
+      expect(
+        nativeSource,
+        contains('session_mut(&mut state.sessions, approved)?'),
+      );
+      expect(
+        nativeSource,
+        contains('session_mut(&mut state.sessions, to_group)?'),
+      );
+      expect(nativeSource, contains('FaceTimeSessionNotFound'));
+      expect(
+        nativeSource,
+        isNot(contains('expect("Approved session not found!")')),
+      );
+      expect(nativeSource, isNot(contains('expect("No session")')));
+      expect(identitySource, contains('private_data.as_slice()'));
+      expect(identitySource, contains('get("com.apple.madrid")'));
+      expect(identitySource, contains('is_bridge_owned_push_token'));
+    },
+  );
 
   test('ambiguous admission exposes only a bounded retained retry', () {
     final service = File(
@@ -245,8 +251,9 @@ void main() {
     expect(service, contains('length > 4'));
     expect(service, contains('retryFtRequest'));
     expect(service, contains('facetime-admission-recovery-available'));
-    expect(activity, contains('manualAdmissionRetryUsed'));
+    expect(activity, contains('FaceTimeAdmissionRetryState'));
     expect(activity, contains('facetime-admission-retry'));
+    expect(activity, contains('invokeMethodForBooleanResult'));
     expect(nativeBridge, contains('showAdmissionRecovery'));
   });
 
@@ -290,7 +297,7 @@ void main() {
     );
   });
 
-  test('joined FaceTime UI uses only the web leave control', () {
+  test('joined FaceTime UI preserves a separate native end control', () {
     final activity = File(
       'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeActivity.kt',
     ).readAsStringSync();
@@ -300,12 +307,40 @@ void main() {
 
     expect(
       activity,
-      contains(
-        'binding.nativeCallControls.visibility = if (joined) View.GONE else View.VISIBLE',
-      ),
+      contains('binding.nativeCallControls.visibility = View.VISIBLE'),
     );
-    expect(layout, contains('android:layout_gravity="top|start"'));
-    expect(layout, isNot(contains('android:layout_gravity="top|end"')));
+    expect(
+      layout,
+      contains('android:layout_gravity="bottom|center_horizontal"'),
+    );
+    expect(layout, isNot(contains('android:layout_gravity="top|start"')));
+  });
+
+  test('media evidence reaches Android only after the Promise resolves', () {
+    final activity = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeActivity.kt',
+    ).readAsStringSync();
+    final bridge = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeResolvedMediaBridge.kt',
+    ).readAsStringSync();
+    final cachedWebView = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/CachedWebview.kt',
+    ).readAsStringSync();
+
+    expect(
+      activity,
+      contains('FaceTimeResolvedMediaBridge.requestScript(probeId)'),
+    );
+    expect(
+      bridge,
+      contains('Promise.resolve(window.__obFaceTimeDiagnostics.snapshot())'),
+    );
+    expect(bridge, contains('Native.mediaEvidence(String(probeId), payload)'));
+    expect(
+      cachedWebView,
+      contains('fun mediaEvidence(probeId: String?, payload: String?)'),
+    );
+    expect(cachedWebView, isNot(contains('remoteParticipantCount: counts')));
   });
 
   test('web leave bridge is scoped to an explicit leave-button tap', () {
@@ -370,6 +405,11 @@ void main() {
 
     expect(activity, contains('"facetime-call-ended"'));
     expect(activity, contains('mapOf("callUuid" to endedCallUuid)'));
+    expect(activity, contains('reportLocalCallEnded()'));
+    expect(
+      activity,
+      contains('val isCurrentActivity = activeFaceTimeActivity === this'),
+    );
     expect(activity, contains('invokeMethodOrWorker'));
     expect(nativeBridge, contains('DartWorkManager.createWorker'));
     expect(channel, contains('case "facetime-call-ended":'));

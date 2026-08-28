@@ -8,13 +8,12 @@ import org.junit.Test
 
 class FaceTimeMediaEvidenceParserTest {
     @Test
-    fun parsesRemoteParticipantCountFromWebViewResult() {
+    fun legacyDomParticipantCountIsIgnored() {
         val evidence = FaceTimeMediaEvidenceParser.parse(
             evaluateResult("""{"peerId":2,"iceState":"connected","remoteAudioTracks":1,"mediaBytes":12,"webLeaveVisible":true,"remoteParticipantCount":1}""")
         )
 
-        assertEquals(1, evidence?.remoteParticipantCount)
-        assertTrue(evidence?.hasRemoteParticipant == true)
+        assertTrue(evidence?.hasRemoteMedia == true)
     }
 
     @Test

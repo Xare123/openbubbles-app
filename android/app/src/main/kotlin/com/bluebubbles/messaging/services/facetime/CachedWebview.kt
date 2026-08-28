@@ -60,6 +60,7 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
 
     var mirrorReady = false
     var mirrorReadyCall: (() -> Unit)? = null
+    var mediaEvidenceCall: (Long, String) -> Unit = { _, _ -> }
     var endTask: () -> Unit = {
         webView.destroy()
         if (FaceTimeActivity.cachedWebview === this) {
@@ -76,6 +77,7 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
         mirrorReadyRunnable?.let(callbackHandler::removeCallbacks)
         mirrorReadyRunnable = null
         mirrorReadyCall = null
+        mediaEvidenceCall = { _, _ -> }
         deferredRequestsUpdated = {}
         deferredRequestCanceled = {}
         cancelDeferredPermissions()
@@ -160,7 +162,7 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
           const watchPeer = (pc) => {
             const peerState = {
               id: state.nextPeerId++, peer: pc, iceState: "unknown",
-              previousInboundBytes: null, remoteAudioTracks: new Map(), remoteVideoTracks: new Map()
+              remoteAudioTracks: new Map(), remoteVideoTracks: new Map()
             };
             state.peers.push(peerState);
             updateIceState(peerState);
@@ -218,36 +220,12 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                   .filter((track) => track.readyState !== "ended").length;
                 const remoteVideoTracks = Array.from(peerState.remoteVideoTracks.values())
                   .filter((track) => track.readyState !== "ended").length;
-                const bytesAdvancing = bytesObserved && peerState.previousInboundBytes !== null
-                  && bytes > peerState.previousInboundBytes;
-                peerState.previousInboundBytes = bytesObserved ? bytes : null;
                 candidates.push({
                   peerId: peerState.id, iceState: peerState.iceState,
-                  remoteAudioTracks, remoteVideoTracks,
-                  mediaBytes: bytesObserved ? bytes : null, bytesAdvancing
+                  remoteAudioTracks, remoteVideoTracks, mediaBytes: bytesObserved ? bytes : null
                 });
               }
-              const active = [...candidates].reverse().find((candidate) => candidate.bytesAdvancing)
-                || candidates.at(-1) || null;
-              const labels = Array.from(document.querySelectorAll("button"))
-                .filter((button) => button.offsetParent !== null)
-                .map((button) => (button.innerText || button.textContent || button.getAttribute("aria-label") || "").trim());
-              const leave = labels.some((label) => /^(leave|end call)$/i.test(label));
-              const counts = Array.from(document.querySelectorAll("*"))
-                .filter((element) => element.offsetParent !== null)
-                .map((element) => (element.innerText || element.textContent || "").trim())
-                .map((text) => text.match(/^(\d+)\s*(people|person|participants?)$/i))
-                .filter((match) => match !== null)
-                .map((match) => Number(match[1]));
-              return JSON.stringify({
-                peerId: active ? active.peerId : null,
-                iceState: active ? active.iceState : "unknown",
-                remoteAudioTracks: active ? active.remoteAudioTracks : 0,
-                remoteVideoTracks: active ? active.remoteVideoTracks : 0,
-                mediaBytes: active ? active.mediaBytes : null,
-                webLeaveVisible: leave,
-                remoteParticipantCount: counts.length ? Math.max(...counts) : 0
-              });
+              return JSON.stringify({peers: candidates});
             }
           };
         })();
@@ -393,6 +371,15 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                 if (diagnosticsEnabled()) {
                     Log.i(diagnosticTag, "Native.mirrored received; mirrorReady scheduled")
                 }
+            }
+            @JavascriptInterface
+            fun mediaEvidence(probeId: String?, payload: String?) {
+                // evaluateJavascript does not await Promise results. The page
+                // resolves getStats first, then sends only this bounded JSON
+                // payload over the existing same-page Native bridge.
+                val safeProbeId = probeId?.toLongOrNull()?.takeIf { it > 0 } ?: return
+                val boundedPayload = payload?.takeIf { it.length <= 16 * 1024 } ?: return
+                callbackHandler.post { mediaEvidenceCall(safeProbeId, boundedPayload) }
             }
         }, "Native")
 

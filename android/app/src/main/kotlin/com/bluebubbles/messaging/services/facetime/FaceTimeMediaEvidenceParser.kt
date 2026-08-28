@@ -11,6 +11,9 @@ internal object FaceTimeMediaEvidenceParser {
 
         return runCatching {
             val payload = decodeEvaluateJavascriptResult(raw)
+            val peers = payload.getAsJsonArray("peers")
+                ?.mapNotNull(::parsePeer)
+                .orEmpty()
             FaceTimeMediaEvidence(
                 peerId = payload.get("peerId")?.asString?.toLongOrNull()
                     ?.takeIf { it > 0 && it <= Int.MAX_VALUE }
@@ -20,9 +23,22 @@ internal object FaceTimeMediaEvidenceParser {
                 remoteVideoTracks = boundedInt(payload.get("remoteVideoTracks")),
                 mediaBytes = boundedLong(payload.get("mediaBytes")),
                 webLeaveVisible = payload.get("webLeaveVisible")?.asBoolean ?: false,
-                remoteParticipantCount = boundedIntOrNull(payload.get("remoteParticipantCount")),
+                peers = peers,
             )
         }.getOrNull()
+    }
+
+    private fun parsePeer(value: JsonElement): FaceTimePeerMediaEvidence? {
+        val payload = value.takeIf { it.isJsonObject }?.asJsonObject ?: return null
+        return FaceTimePeerMediaEvidence(
+            peerId = payload.get("peerId")?.asString?.toLongOrNull()
+                ?.takeIf { it > 0 && it <= Int.MAX_VALUE }
+                ?.toInt(),
+            iceState = FaceTimeIceState.fromWireValue(payload.get("iceState")?.asString),
+            remoteAudioTracks = boundedInt(payload.get("remoteAudioTracks")),
+            remoteVideoTracks = boundedInt(payload.get("remoteVideoTracks")),
+            mediaBytes = boundedLong(payload.get("mediaBytes")),
+        )
     }
 
     private fun decodeEvaluateJavascriptResult(raw: String): com.google.gson.JsonObject {

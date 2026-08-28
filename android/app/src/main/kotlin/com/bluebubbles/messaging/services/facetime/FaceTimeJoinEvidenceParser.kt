@@ -4,12 +4,7 @@ import com.google.gson.JsonParser
 
 internal data class FaceTimeJoinEvidence(
     val outcome: FaceTimeJoinOutcome,
-    val webLeaveVisible: Boolean,
-    val remoteParticipantCount: Int?,
-) {
-    val hasRemoteParticipant: Boolean
-        get() = webLeaveVisible && (remoteParticipantCount ?: 0) > 0
-}
+)
 
 /** Parses the bounded JSON result returned by the join-button probe. */
 internal object FaceTimeJoinEvidenceParser {
@@ -23,20 +18,8 @@ internal object FaceTimeJoinEvidenceParser {
                 payload.get("outcome")?.takeIf { it.isJsonPrimitive }?.asString,
             )
             if (outcome == FaceTimeJoinOutcome.UNKNOWN) return null
-            val remoteParticipantCount = payload.get("remoteParticipantCount")
-                ?.takeIf { it.isJsonPrimitive }
-                ?.asString
-                ?.toLongOrNull()
-                ?.coerceAtLeast(0)
-                ?.coerceAtMost(Int.MAX_VALUE.toLong())
-                ?.toInt()
             FaceTimeJoinEvidence(
                 outcome = outcome,
-                webLeaveVisible = payload.get("leaveVisible")
-                    ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isBoolean }
-                    ?.asBoolean
-                    ?: false,
-                remoteParticipantCount = remoteParticipantCount,
             )
         }.getOrNull()
     }

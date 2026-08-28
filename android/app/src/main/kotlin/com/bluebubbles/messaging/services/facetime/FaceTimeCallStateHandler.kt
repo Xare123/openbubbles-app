@@ -48,9 +48,15 @@ class FaceTimeCallStateHandler: MethodCallHandlerImpl() {
         if (state == "ringing") {
             if (FaceTimeActivity.activeFaceTimeActivity == null) {
                 val name = call.argument<String>("name")
-                val desc = call.argument<String>("desc")!!
-                val url = call.argument<String>("url")!!
-                if (FaceTimeActivity.cachedWebview != null && FaceTimeActivity.cachedCallUuid != callUuid) {
+                val desc = call.argument<String>("desc") ?: "FaceTime Call"
+                val url = call.argument<String>("url")?.takeIf(::hasRequiredFaceTimeLaunchData)
+                val validCallUuid = callUuid?.takeIf { it.isNotBlank() }
+                if (url == null || validCallUuid == null) {
+                    Log.w("FaceTimeDiag", "ignoring ringing update without usable call metadata")
+                    result.success(null)
+                    return
+                }
+                if (FaceTimeActivity.cachedWebview != null && FaceTimeActivity.cachedCallUuid != validCallUuid) {
                     FaceTimeActivity.cachedWebview?.let { stale ->
                         stale.cancelCallbacks()
                         stale.webView.destroy()
@@ -61,7 +67,7 @@ class FaceTimeCallStateHandler: MethodCallHandlerImpl() {
                 if (FaceTimeActivity.cachedWebview == null) {
                     // Keep the preloaded page tied to the call/link that created it.
                     FaceTimeActivity.cachedWebview = CachedWebview(context, name, desc, url)
-                    FaceTimeActivity.cachedCallUuid = callUuid
+                    FaceTimeActivity.cachedCallUuid = validCallUuid
                 }
             }
         } else if (state == "timeout") {

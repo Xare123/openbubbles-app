@@ -5236,11 +5236,9 @@ class RustPushService extends GetxService {
       _pendingFaceTimeAdmissionDelegations.remove(delegationUuid);
       Logger.info("FaceTime admission recovery retry sent");
       return true;
-    } catch (error, trace) {
+    } catch (error) {
       Logger.warn(
-        "FaceTime admission recovery retry failed",
-        error: error,
-        trace: trace,
+        "FaceTime admission recovery retry failed type=${error.runtimeType}",
       );
       return false;
     }

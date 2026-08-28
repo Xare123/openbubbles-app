@@ -104,6 +104,37 @@ class MethodCallHandler {
             enqueueWorker()
         }
 
+        /**
+         * Delivers an in-process Dart result to an active UI. This deliberately
+         * does not enqueue a worker: callers use the result to restore a
+         * transient control after a failed action, not to retry a side effect.
+         */
+        fun invokeMethodForBooleanResult(
+            method: String,
+            arguments: Map<String, Any>,
+            callback: (Boolean) -> Unit,
+        ) {
+            val mainEngine = engine
+            if (mainEngine == null) {
+                callback(false)
+                return
+            }
+            MethodChannel(mainEngine.dartExecutor.binaryMessenger, Constants.methodChannel)
+                .invokeMethod(method, arguments, object : MethodChannel.Result {
+                    override fun success(result: Any?) {
+                        callback(result as? Boolean == true)
+                    }
+
+                    override fun error(
+                        errorCode: String,
+                        errorMessage: String?,
+                        errorDetails: Any?,
+                    ) = callback(false)
+
+                    override fun notImplemented() = callback(false)
+                })
+        }
+
         fun invokeMethodCb(method: String, arguments: Map<String, Any>, callback: MethodChannel.Result) {
             if (engine != null) {
                 MethodChannel(engine!!.dartExecutor.binaryMessenger, Constants.methodChannel).invokeMethod(method, arguments, callback)

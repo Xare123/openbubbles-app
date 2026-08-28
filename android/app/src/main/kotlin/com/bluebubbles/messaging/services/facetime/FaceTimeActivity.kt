@@ -76,11 +76,14 @@ class FaceTimeActivity : Activity() {
     private var joinRetryRunnable: Runnable? = null
     private var manualRecoveryRunnable: Runnable? = null
     private var connectionProbeRunnable: Runnable? = null
+    private var connectionProbeWatchdogRunnable: Runnable? = null
     private var endFallbackRunnable: Runnable? = null
     private var connectionProbeCount = 0
+    private var nextConnectionProbeId = 0L
+    private var awaitingConnectionProbeId: Long? = null
     private var callEnding = false
-    private var localEndReported = false
-    private var manualAdmissionRetryUsed = false
+    private val localEndReporter = FaceTimeLocalEndReporter()
+    private val manualAdmissionRetryState = FaceTimeAdmissionRetryState()
 
     private fun diagnosticsEnabled(): Boolean = FaceTimeDiagnostics.isEnabled(this)
 
@@ -91,20 +94,14 @@ class FaceTimeActivity : Activity() {
             const buttons = Array.from(document.querySelectorAll("button"));
             const leave = document.getElementById("callcontrols-leave-button-session-banner") ||
                 buttons.find((button) => /^(leave|end call)$/i.test(label(button)));
-            const people = Array.from(document.querySelectorAll("*"))
-                .filter((element) => visible(element))
-                .map((element) => label(element).match(/^(\d+)\s*(people|person|participants?)$/i))
-                .filter((match) => match !== null)
-                .map((match) => Number(match[1]));
-            const remoteParticipantCount = people.length ? Math.max(...people) : 0;
-            if (visible(leave)) return JSON.stringify({outcome:"already-joined",leaveVisible:true,remoteParticipantCount});
+            if (visible(leave)) return JSON.stringify({outcome:"already-joined",leaveVisible:true});
             const join = document.getElementById("callcontrols-join-button-session-banner") ||
                 buttons.find((button) => /^(join|rejoin)$/i.test(label(button)));
-            if (!join) return JSON.stringify({outcome:"missing",leaveVisible:false,remoteParticipantCount});
-            if (join.disabled || join.getAttribute("aria-disabled") === "true") return JSON.stringify({outcome:"disabled",leaveVisible:false,remoteParticipantCount});
-            if (!visible(join)) return JSON.stringify({outcome:"hidden",leaveVisible:false,remoteParticipantCount});
+            if (!join) return JSON.stringify({outcome:"missing",leaveVisible:false});
+            if (join.disabled || join.getAttribute("aria-disabled") === "true") return JSON.stringify({outcome:"disabled",leaveVisible:false});
+            if (!visible(join)) return JSON.stringify({outcome:"hidden",leaveVisible:false});
             join.click();
-            return JSON.stringify({outcome:"clicked",leaveVisible:false,remoteParticipantCount});
+            return JSON.stringify({outcome:"clicked",leaveVisible:false});
         })()
     """.trimIndent()
 
@@ -122,10 +119,11 @@ class FaceTimeActivity : Activity() {
     private fun showCallUi(joined: Boolean) {
         binding.mainFrame.visibility = View.VISIBLE
         binding.splashLayout.visibility = View.GONE
-        // Apple's joined UI already owns the Leave control. Keep our fallback
-        // only while connecting so the call screen never presents two competing
-        // red controls or obscures participant information.
-        binding.nativeCallControls.visibility = if (joined) View.GONE else View.VISIBLE
+        // Keep an Android-owned end control visible for the entire call. It is
+        // deliberately bottom-centered in the layout so it cannot overlap
+        // Apple's top controls, and remains usable if the web Leave button is
+        // absent or the join signal is wrong.
+        binding.nativeCallControls.visibility = View.VISIBLE
         binding.connectionStatus.visibility = if (joined) View.GONE else View.VISIBLE
         if (!joined) {
             binding.connectionStatus.text = "Finishing FaceTime connection..."
@@ -142,40 +140,57 @@ class FaceTimeActivity : Activity() {
         connectionProbeRunnable?.let(mainHandler::removeCallbacks)
         val runnable = Runnable {
             if (callEnding || isFinishing || isDestroyed) return@Runnable
-            webView.evaluateJavascript(
-                """window.__obFaceTimeDiagnostics ? window.__obFaceTimeDiagnostics.snapshot() : JSON.stringify({peerId:null,iceState:"unknown",remoteAudioTracks:0,remoteVideoTracks:0,mediaBytes:null,webLeaveVisible:false,remoteParticipantCount:0})"""
-            ) { result ->
-                connectionProbeCount += 1
-                val evidence = FaceTimeMediaEvidenceParser.parse(result)
-                if (evidence == null) {
-                    if (diagnosticsEnabled()) {
-                        FaceTimeDiagnostics.record(this, "activity media_probe attempt=$connectionProbeCount result=unavailable")
-                    }
-                    scheduleConnectionProbe(FaceTimeConnectionProbePolicy.pendingDelayMillis)
-                    return@evaluateJavascript
+            val probeId = ++nextConnectionProbeId
+            awaitingConnectionProbeId = probeId
+            connectionProbeWatchdogRunnable?.let(mainHandler::removeCallbacks)
+            val watchdog = Runnable {
+                if (awaitingConnectionProbeId == probeId) {
+                    onResolvedMediaEvidence(probeId, "{\"peers\":[]}")
                 }
-                if (diagnosticsEnabled()) {
-                    FaceTimeDiagnostics.record(
-                        this,
-                        "activity media_probe attempt=$connectionProbeCount ice=${evidence.iceState} remoteAudio=${evidence.remoteAudioTracks} remoteVideo=${evidence.remoteVideoTracks} remotePeople=${evidence.remoteParticipantCount ?: 0} bytes=${evidence.mediaBytes ?: 0}",
-                    )
-                }
-                val decision = joinPolicy.recordMediaEvidence(evidence)
-                if (decision.joined) {
-                    joinRetryRunnable?.let(mainHandler::removeCallbacks)
-                }
-                showCallUi(joined = decision.joined)
-                scheduleConnectionProbe(
-                    if (decision.joined) {
-                        FaceTimeConnectionProbePolicy.connectedDelayMillis
-                    } else {
-                        FaceTimeConnectionProbePolicy.pendingDelayMillis
-                    },
-                )
             }
+            connectionProbeWatchdogRunnable = watchdog
+            mainHandler.postDelayed(watchdog, FaceTimeResolvedMediaBridge.callbackTimeoutMillis)
+            webView.evaluateJavascript(FaceTimeResolvedMediaBridge.requestScript(probeId), null)
         }
         connectionProbeRunnable = runnable
         mainHandler.postDelayed(runnable, delayMillis)
+    }
+
+    private fun onResolvedMediaEvidence(probeId: Long, payload: String) {
+        if (callEnding || isFinishing || isDestroyed) return
+        if (awaitingConnectionProbeId != probeId) return
+        awaitingConnectionProbeId = null
+        connectionProbeWatchdogRunnable?.let(mainHandler::removeCallbacks)
+        connectionProbeWatchdogRunnable = null
+        connectionProbeCount += 1
+        val evidence = FaceTimeMediaEvidenceParser.parse(payload)
+        if (evidence == null) {
+            if (diagnosticsEnabled()) {
+                FaceTimeDiagnostics.record(this, "activity media_probe attempt=$connectionProbeCount result=unavailable")
+            }
+            scheduleConnectionProbe(FaceTimeConnectionProbePolicy.pendingDelayMillis)
+            return
+        }
+        if (diagnosticsEnabled()) {
+            val peerCount = evidence.peerSamples().size
+            val remoteTrackCount = evidence.peerSamples().sumOf { it.remoteAudioTracks + it.remoteVideoTracks }
+            FaceTimeDiagnostics.record(
+                this,
+                "activity media_probe attempt=$connectionProbeCount peers=$peerCount remoteTracks=$remoteTrackCount",
+            )
+        }
+        val decision = joinPolicy.recordMediaEvidence(evidence)
+        if (decision.joined) {
+            joinRetryRunnable?.let(mainHandler::removeCallbacks)
+        }
+        showCallUi(joined = decision.joined)
+        scheduleConnectionProbe(
+            if (decision.joined) {
+                FaceTimeConnectionProbePolicy.connectedDelayMillis
+            } else {
+                FaceTimeConnectionProbePolicy.pendingDelayMillis
+            },
+        )
     }
 
     private fun scheduleJoinAttempt(reason: String, delayMillis: Long = 0) {
@@ -427,15 +442,27 @@ class FaceTimeActivity : Activity() {
         }
 
         binding.retryAdmission.setOnClickListener {
-            if (manualAdmissionRetryUsed) return@setOnClickListener
-            manualAdmissionRetryUsed = true
+            if (!manualAdmissionRetryState.begin()) return@setOnClickListener
             binding.retryAdmission.isEnabled = false
             binding.retryAdmission.text = "Retrying..."
-            MethodCallHandler.invokeMethodOrWorker(
-                applicationContext,
+            MethodCallHandler.invokeMethodForBooleanResult(
                 "facetime-admission-retry",
                 emptyMap(),
-            )
+            ) { success ->
+                runOnUiThread {
+                    if (callEnding || isFinishing || isDestroyed) return@runOnUiThread
+                    manualAdmissionRetryState.complete(success)
+                    binding.retryAdmission.isEnabled = !success
+                    binding.retryAdmission.text = if (success) "Retry sent" else "Retry"
+                    if (!success) {
+                        binding.connectionStatus.visibility = View.VISIBLE
+                        binding.connectionStatus.text = "Admission retry was not sent. Try again."
+                    }
+                    if (diagnosticsEnabled()) {
+                        FaceTimeDiagnostics.record(this, FaceTimeResolvedMediaBridge.admissionRetryDiagnostic(success))
+                    }
+                }
+            }
         }
 
 
@@ -501,9 +528,7 @@ class FaceTimeActivity : Activity() {
     }
 
     private fun reportLocalCallEnded() {
-        if (localEndReported) return
-        val endedCallUuid = callUuid ?: return
-        localEndReported = true
+        val endedCallUuid = localEndReporter.consume(callUuid) ?: return
         MethodCallHandler.invokeMethodOrWorker(
             applicationContext,
             "facetime-call-ended",
@@ -580,6 +605,7 @@ class FaceTimeActivity : Activity() {
         joinRetryRunnable?.let(mainHandler::removeCallbacks)
         manualRecoveryRunnable?.let(mainHandler::removeCallbacks)
         connectionProbeRunnable?.let(mainHandler::removeCallbacks)
+        connectionProbeWatchdogRunnable?.let(mainHandler::removeCallbacks)
         endFallbackRunnable?.let(mainHandler::removeCallbacks)
         permissionRequests.toList().forEach { runCatching { it.deny() } }
         permissionRequests.clear()
@@ -590,6 +616,10 @@ class FaceTimeActivity : Activity() {
 
         val isCurrentActivity = activeFaceTimeActivity === this
         if (isCurrentActivity) {
+            // Back, task removal, renderer destruction, and external finish
+            // all converge here. The reporter makes this exactly once, and
+            // Dart clears state only when this UUID matches its active call.
+            reportLocalCallEnded()
             activeFaceTimeActivity = null
             val intent = Intent(this, FaceTimeInCallService::class.java)
             stopService(intent)
@@ -617,6 +647,15 @@ class FaceTimeActivity : Activity() {
         }
 
         super.onDestroy()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (callEnding) {
+            super.onBackPressed()
+        } else {
+            endCall()
+        }
     }
 
     override fun onRequestPermissionsResult(
@@ -671,7 +710,8 @@ class FaceTimeActivity : Activity() {
         if (callEnding || isFinishing || isDestroyed) return
         binding.nativeCallControls.visibility = View.VISIBLE
         binding.retryAdmission.visibility = View.VISIBLE
-        binding.retryAdmission.isEnabled = !manualAdmissionRetryUsed
+        binding.retryAdmission.isEnabled = !manualAdmissionRetryState.inFlight && !manualAdmissionRetryState.succeeded
+        binding.retryAdmission.text = if (manualAdmissionRetryState.succeeded) "Retry sent" else "Retry"
         binding.connectionStatus.visibility = View.VISIBLE
         binding.connectionStatus.text = "Admission timed out. Retry once if needed."
     }
@@ -707,6 +747,7 @@ class FaceTimeActivity : Activity() {
             reportLocalCallEnded()
             finishAndRemoveTask()
         }
+        cached.mediaEvidenceCall = ::onResolvedMediaEvidence
         mirrorReady = cached.mirrorReady
         cached.mirrorReadyCall = {
             mirrorReady = true
