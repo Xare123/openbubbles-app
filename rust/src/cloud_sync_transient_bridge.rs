@@ -2086,7 +2086,7 @@ mod tests {
         ));
 
         let labels = cloud_message_type_diagnostic_labels(&diagnostic_message(
-            4,
+            8,
             None,
             "private-service-name",
         ));
