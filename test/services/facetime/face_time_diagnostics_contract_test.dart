@@ -203,6 +203,28 @@ void main() {
     expect(helper, isNot(contains('trace:')));
   });
 
+  test('FaceTime admission excludes bridge identities and missing sessions are typed', () {
+    final nativeSource = File('rustpush/src/facetime.rs').readAsStringSync();
+    final identitySource = File(
+      'rustpush/src/ids/identity_manager.rs',
+    ).readAsStringSync();
+
+    expect(
+      nativeSource,
+      contains('get_participants_targets_excluding_bridge_devices'),
+    );
+    expect(identitySource, contains('get_sms_targets(handle, false)'));
+    expect(identitySource, contains('get_device_uuid()'));
+    expect(nativeSource, contains('session_mut(&mut state.sessions, approved)?'));
+    expect(nativeSource, contains('session_mut(&mut state.sessions, to_group)?'));
+    expect(nativeSource, contains('FaceTimeSessionNotFound'));
+    expect(nativeSource, isNot(contains('expect("Approved session not found!")')));
+    expect(nativeSource, isNot(contains('expect("No session")')));
+    expect(identitySource, contains('private_data.as_slice()'));
+    expect(identitySource, contains('get("com.apple.madrid")'));
+    expect(identitySource, contains('is_bridge_owned_push_token'));
+  });
+
   test('outgoing timeout cannot clear a superseding call', () {
     final source = File(
       'lib/services/rustpush/rustpush_service.dart',
