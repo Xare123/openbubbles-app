@@ -477,6 +477,10 @@ try {
         -Condition ($angleBuildScript -match 'cmd\.exe' -and
             $angleBuildScript -match 'VisualStudioVcvarsAll') `
         -Message "ANGLE SDK selection must reject SDKs that Visual Studio vcvarsall cannot use"
+    Assert-True `
+        -Condition ($angleBuildScript -match 'vs2022_install' -and
+            $angleBuildScript -match 'already-validated installation path') `
+        -Message "ANGLE build must pass the resolved VS installation to Chromium toolchain detection"
 
     foreach ($architecture in @("x64", "arm64")) {
         $planOutput = & (

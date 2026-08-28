@@ -389,6 +389,14 @@ foreach ($pin in @(
 $visualStudio = Resolve-VisualStudioInstallation
 $selectedSdk = Resolve-CompleteWindowsSdk -VisualStudioVcvarsAll $visualStudio.vcvarsall
 
+# Chromium's pinned vs_toolchain.py prefers the conventional Program Files
+# location when it detects VS 2022. Windows-on-ARM may install the complete
+# Build Tools workload under Program Files (x86), even when the host process
+# is ARM64. Pass the already-validated installation path explicitly so GN and
+# the subsequent compiler invocations use the same VS instance that accepted
+# the selected SDK.
+$env:vs2022_install = $visualStudio.root
+
 $requiredRuntimeFiles = @($provenance.angle.runtime_files.$Architecture)
 $expectedMachine = if ($Architecture -eq "arm64") { "ARM64" } else { "X64" }
 
