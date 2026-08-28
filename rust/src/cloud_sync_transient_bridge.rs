@@ -412,8 +412,33 @@ fn bounded_gunzip(value: &[u8]) -> Result<Vec<u8>, CloudTransientBridgeFailure> 
     Ok(output)
 }
 
+fn normalize_optional_empty_gzip_field(
+    record: &mut Record,
+    field: GzipFieldSpec,
+    decrypted: &[u8],
+) -> bool {
+    if field.required || !decrypted.is_empty() {
+        return false;
+    }
+    record
+        .record_field
+        .retain(|candidate| field_name(candidate) != Some(field.name));
+    true
+}
+
+fn non_gzip_header_stage(value: &[u8]) -> &'static str {
+    match value {
+        [] => "header_empty",
+        [_] => "header_single_byte",
+        [cmf, flg, ..] if cmf & 0x0f == 8 && (u16::from(*cmf) << 8 | u16::from(*flg)) % 31 == 0 => {
+            "header_zlib"
+        }
+        _ => "header_non_gzip",
+    }
+}
+
 fn preflight_gzip_fields(
-    record: &Record,
+    record: &mut Record,
     key: &PCSEncryptor,
     presence: &CloudRawRecordPresence,
     fields: &[GzipFieldSpec],
@@ -450,9 +475,21 @@ fn preflight_gzip_fields(
                 return Err(failure);
             }
         };
-        if compressed.len() < 2 || compressed[..2] != [0x1f, 0x8b] {
+        // Zero-length plaintext cannot carry an optional protobuf. Normalize
+        // only that exact, unambiguous shape to absence before the typed decoder
+        // reaches its infallible gzip wrapper. Required fields remain strict,
+        // and every non-empty non-gzip value still fails closed.
+        if normalize_optional_empty_gzip_field(record, *field, &compressed) {
             warn!(
-                "CloudKit V2 gzip preflight field={} stage=header",
+                "CloudKit V2 gzip preflight field={} stage=optional_empty_normalized",
+                field.name
+            );
+            continue;
+        }
+        if compressed.len() < 2 || compressed[..2] != [0x1f, 0x8b] {
+            let stage = non_gzip_header_stage(&compressed);
+            warn!(
+                "CloudKit V2 gzip preflight field={} stage={stage}",
                 field.name
             );
             return Err(CloudTransientBridgeFailure::MalformedRecord);
@@ -984,11 +1021,11 @@ pub(crate) async fn cloud_sync_decode_transient_record(
         );
     }
 
-    let record = match Record::decode(raw).map_err(|_| CloudTransientBridgeFailure::MalformedRecord)
-    {
-        Ok(value) => value,
-        Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
-    };
+    let mut record =
+        match Record::decode(raw).map_err(|_| CloudTransientBridgeFailure::MalformedRecord) {
+            Ok(value) => value,
+            Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
+        };
     if let Err(failure) = validate_upsert_record(&envelope, &record) {
         return CloudTransientDecodeOutcome::Failure(failure);
     }
@@ -1039,7 +1076,7 @@ pub(crate) async fn cloud_sync_decode_transient_record(
     let converted = match request.stream {
         CloudNativeStream::Chats => {
             if let Err(failure) = preflight_gzip_fields(
-                &record,
+                &mut record,
                 &record_key,
                 &presence,
                 &[GzipFieldSpec::optional("proto001")],
@@ -1083,7 +1120,7 @@ pub(crate) async fn cloud_sync_decode_transient_record(
         }
         CloudNativeStream::Messages => {
             if let Err(failure) = preflight_gzip_fields(
-                &record,
+                &mut record,
                 &record_key,
                 &presence,
                 &[
@@ -1770,6 +1807,52 @@ mod tests {
             }],
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn only_optional_zero_length_gzip_plaintext_is_normalized_away() {
+        use rustpush::cloudkit_proto::record::field::value::Type;
+
+        let mut optional = gzip_test_record(
+            "msgProto2",
+            Type::EncryptedBytesType as i32,
+            Some(Vec::new()),
+        );
+        assert!(normalize_optional_empty_gzip_field(
+            &mut optional,
+            GzipFieldSpec::optional("msgProto2"),
+            &[],
+        ));
+        assert!(optional.record_field.is_empty());
+
+        let mut required = gzip_test_record(
+            "msgProto",
+            Type::EncryptedBytesType as i32,
+            Some(Vec::new()),
+        );
+        assert!(!normalize_optional_empty_gzip_field(
+            &mut required,
+            GzipFieldSpec::required("msgProto"),
+            &[],
+        ));
+        assert_eq!(required.record_field.len(), 1);
+
+        let mut non_empty =
+            gzip_test_record("msgProto2", Type::EncryptedBytesType as i32, Some(vec![1]));
+        assert!(!normalize_optional_empty_gzip_field(
+            &mut non_empty,
+            GzipFieldSpec::optional("msgProto2"),
+            &[1],
+        ));
+        assert_eq!(non_empty.record_field.len(), 1);
+    }
+
+    #[test]
+    fn non_gzip_header_diagnostics_are_bounded_categories() {
+        assert_eq!(non_gzip_header_stage(&[]), "header_empty");
+        assert_eq!(non_gzip_header_stage(&[0x08]), "header_single_byte");
+        assert_eq!(non_gzip_header_stage(&[0x78, 0x9c]), "header_zlib");
+        assert_eq!(non_gzip_header_stage(b"not-gzip"), "header_non_gzip");
     }
 
     #[test]
