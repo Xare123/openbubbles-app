@@ -195,10 +195,16 @@ function Initialize-PinnedDepotTools {
         if (-not (Test-Path -LiteralPath $bootstrap -PathType Leaf)) {
             throw "Pinned depot_tools checkout is missing bootstrap/win_tools.bat."
         }
-        Invoke-Checked `
-            -FilePath $bootstrap `
-            -ArgumentList @() `
-            -WorkingDirectory $DepotToolsPath
+        Push-Location $DepotToolsPath
+        try {
+            & $bootstrap
+            if ($LASTEXITCODE -ne 0) {
+                throw "Pinned depot_tools bootstrap failed with exit code ${LASTEXITCODE}: $bootstrap"
+            }
+        }
+        finally {
+            Pop-Location
+        }
     }
 
     if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
