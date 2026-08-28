@@ -87,7 +87,20 @@ jobs:
           Get-ComputerInfo |
             Select-Object WindowsProductName, WindowsVersion, OsArchitecture
 
+      # The official source build takes roughly an hour on x64 and longer on
+      # ARM64, while the reviewed source pins and build recipe are immutable.
+      # Cache only the generated bundle. The following preparation step still
+      # verifies every hash, PE machine, export, source revision, and license
+      # manifest before any cached DLL is accepted.
+      - name: Restore verified ANGLE bundle cache
+        id: angle-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ runner.temp }}/native-media/angle/${{ matrix.arch }}
+          key: windows-angle-v1-${{ matrix.arch }}-${{ hashFiles('packages/media_kit_libs_windows_video/provenance/native-dependencies.json', 'packages/media_kit_libs_windows_video/tool/build_official_angle.ps1', 'packages/media_kit_libs_windows_video/tool/NativeMediaVerification.psm1') }}
+
       - name: Build ANGLE from pinned official Google source
+        if: steps.angle-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $package = Join-Path $env:GITHUB_WORKSPACE `
