@@ -1,0 +1,233 @@
+name: CloudKit Evidence Canary
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudkit-canary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  canary-apk:
+    name: CloudKit V2 Evidence Canary APK
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main resolved 2026-08-28
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          channel: stable
+          flutter-version: 3.44.8
+          cache: true
+
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          java-version: '21'
+          distribution: temurin
+
+      - name: Setup Android SDK
+        uses: amyu/setup-android@3fe49086b1abd7c9ef865120d5d4d486fe55ba98 # v5
+
+      - name: Install Protobuf compiler
+        run: sudo apt-get install -y protobuf-compiler
+
+      - name: Cache Pub packages
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-cloudkit-canary-pub-${{ hashFiles('pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cloudkit-canary-pub-
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.local/gradle
+            android/.gradle
+          key: ${{ runner.os }}-cloudkit-canary-gradle-${{ hashFiles('pubspec.lock', 'android/gradle/wrapper/gradle-wrapper.properties', 'android/**/*.gradle*', 'android/**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-cloudkit-canary-gradle-
+
+      - name: Cache Cargo registries
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cloudkit-canary-cargo-${{ hashFiles('rust/Cargo.toml', 'rust/Cargo.lock', 'rustpush/Cargo.toml', 'rustpush/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cloudkit-canary-cargo-
+
+      # The app redirects Gradle's root build directory to ../build, so
+      # CargoKit places the incremental Rust target under this directory. The
+      # source hash and commit keep each run saveable; the lockfile prefix lets
+      # the next source change restore the previous compatible target.
+      - name: Cache incremental CargoKit output
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: build/app/build/build
+          key: ${{ runner.os }}-cloudkit-canary-cargokit-${{ hashFiles('pubspec.lock', 'rust/Cargo.toml', 'rust/Cargo.lock', 'rustpush/Cargo.toml', 'rustpush/Cargo.lock') }}-${{ hashFiles('rust/**/*.rs', 'rustpush/**/*.rs') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-cloudkit-canary-cargokit-${{ hashFiles('pubspec.lock', 'rust/Cargo.toml', 'rust/Cargo.lock', 'rustpush/Cargo.toml', 'rustpush/Cargo.lock') }}-
+            ${{ runner.os }}-cloudkit-canary-cargokit-
+
+      - name: Set up fake Fairplay keys
+        run: |
+          set -euo pipefail
+          mkdir -p rustpush/certs/fairplay
+          cert_names=(
+            "4056631661436364584235346952193"
+            "4056631661436364584235346952194"
+            "4056631661436364584235346952195"
+            "4056631661436364584235346952196"
+            "4056631661436364584235346952197"
+            "4056631661436364584235346952198"
+            "4056631661436364584235346952199"
+            "4056631661436364584235346952200"
+            "4056631661436364584235346952201"
+            "4056631661436364584235346952208"
+          )
+          for name in "${cert_names[@]}"; do
+            cp rustpush/certs/legacy-fairplay/fairplay.pem "rustpush/certs/fairplay/$name.pem"
+            cp rustpush/certs/legacy-fairplay/fairplay.crt "rustpush/certs/fairplay/$name.crt"
+          done
+
+      - name: Install pinned Gradle
+        env:
+          GRADLE_VERSION: 8.9
+          GRADLE_SHA256: d725d707bfabd4dfdc958c624003b3c80accc03f7037b5122c4b1d0ef15cecab
+        run: |
+          set -euo pipefail
+          pinned="$(sed -n 's|^distributionUrl=.*/gradle-\([0-9.]*\)-bin\.zip$|\1|p' \
+            android/gradle/wrapper/gradle-wrapper.properties)"
+          if [ "$pinned" != "$GRADLE_VERSION" ]; then
+            echo "wrapper pins Gradle $pinned but this workflow installs $GRADLE_VERSION" >&2
+            exit 1
+          fi
+          gradle_root="$HOME/.local/gradle"
+          gradle_home="$gradle_root/gradle-${GRADLE_VERSION}"
+          if [ ! -x "$gradle_home/bin/gradle" ]; then
+            archive="$RUNNER_TEMP/gradle-${GRADLE_VERSION}-bin.zip"
+            curl -fsSL -o "$archive" "https://services.gradle.org/distributions/${archive##*/}"
+            echo "${GRADLE_SHA256}  ${archive}" | sha256sum --check --strict
+            mkdir -p "$gradle_root"
+            unzip -q "$archive" -d "$gradle_root"
+          fi
+          test -x "$gradle_home/bin/gradle"
+          echo "$gradle_home/bin" >> "$GITHUB_PATH"
+
+      - name: Patch vendored CargoKit for the Flutter Kotlin plugin
+        run: |
+          set -euo pipefail
+          flutter pub get
+          bash ./tooling/android/patch_pub_cache_cargokit.sh
+
+      - name: Build CloudKit V2 Evidence Canary APK
+        env:
+          REGISTRATION_RELAY_ACCESS_TOKEN: ${{ secrets.REGISTRATION_RELAY_ACCESS_TOKEN }}
+        run: >-
+          flutter build apk --flavor canary --debug --target-platform android-arm64
+          --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true
+          --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true
+          --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE=true
+          --dart-define=OPENBUBBLES_BUILD_COMMIT=${{ github.sha }}
+          "--dart-define=OPENBUBBLES_REGISTRATION_RELAY_ACCESS_TOKEN=$REGISTRATION_RELAY_ACCESS_TOKEN"
+
+      - name: Sign the evidence Canary with its stable key
+        env:
+          CANARY_KEYSTORE_BASE64: ${{ secrets.CANARY_KEYSTORE_BASE64 }}
+          CANARY_KEYSTORE_PASSWORD: ${{ secrets.CANARY_KEYSTORE_PASSWORD }}
+          CANARY_KEY_PASSWORD: ${{ secrets.CANARY_KEY_PASSWORD }}
+          CANARY_KEY_ALIAS: ${{ secrets.CANARY_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-canary-debug.apk
+          keystore="$RUNNER_TEMP/cloudkit-canary.p12"
+          signed_apk="$RUNNER_TEMP/app-canary-debug-signed.apk"
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          apksigner="$(find "$sdk_root/build-tools" -type f -name apksigner -print | sort -V | tail -n 1)"
+
+          test -n "$CANARY_KEYSTORE_BASE64"
+          test -n "$CANARY_KEYSTORE_PASSWORD"
+          test -n "$CANARY_KEY_PASSWORD"
+          test -n "$CANARY_KEY_ALIAS"
+          test -x "$apksigner"
+          printf '%s' "$CANARY_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+
+          "$apksigner" sign \
+            --ks "$keystore" \
+            --ks-key-alias "$CANARY_KEY_ALIAS" \
+            --ks-pass env:CANARY_KEYSTORE_PASSWORD \
+            --key-pass env:CANARY_KEY_PASSWORD \
+            --out "$signed_apk" \
+            "$apk"
+          mv "$signed_apk" "$apk"
+
+          actual_fingerprint="$(
+            "$apksigner" verify --print-certs "$apk" \
+              | sed -n 's/^Signer #1 certificate SHA-256 digest: //p'
+          )"
+          expected_fingerprint='0ea17c1b67581ca79660d33db45af0a36b71ea36a4cbafec5293d3ae80570d79'
+          if [[ "$actual_fingerprint" != "$expected_fingerprint" ]]; then
+            echo "Unexpected Canary signing certificate: $actual_fingerprint" >&2
+            exit 1
+          fi
+
+      - name: Verify the signed Canary APK
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-canary-debug.apk
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          aapt="$(find "$sdk_root/build-tools" -type f -name aapt -print | sort -V | tail -n 1)"
+          apksigner="$(find "$sdk_root/build-tools" -type f -name apksigner -print | sort -V | tail -n 1)"
+          test -x "$aapt"
+          test -x "$apksigner"
+          application_id="$(
+            "$aapt" dump badging "$apk" \
+              | sed -n "s/^package: name='\([^']*\)'.*/\1/p"
+          )"
+          if [[ "$application_id" != 'com.bluebubbles.messaging.cloudkitcanary' ]]; then
+            echo "Unexpected Canary application ID: $application_id" >&2
+            exit 1
+          fi
+          for entry in \
+            lib/arm64-v8a/libflutter.so \
+            lib/arm64-v8a/librust_lib_bluebubbles.so \
+            lib/arm64-v8a/libirondash_engine_context_native.so \
+            lib/arm64-v8a/libsuper_native_extensions.so; do
+            if ! unzip -l "$apk" | grep -q "$entry"; then
+              echo "Canary APK is missing $entry" >&2
+              unzip -l "$apk" | grep 'lib/' >&2 || true
+              exit 1
+            fi
+          done
+          "$apksigner" verify --verbose "$apk" >/dev/null
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: CloudKit V2 Evidence Canary APK (signed debug)
+          path: build/app/outputs/flutter-apk/app-canary-debug.apk
+          retention-days: 7
