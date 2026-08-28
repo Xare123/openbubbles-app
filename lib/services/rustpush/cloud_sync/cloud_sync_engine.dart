@@ -1216,9 +1216,9 @@ class CloudSyncEngine {
 
   CloudSyncRunCounters _addQuarantinedCounter(
     CloudSyncRunCounters counters,
-    CloudInboxEntry entry,
-    {required CloudFailureCategory category},
-  ) {
+    CloudInboxEntry entry, {
+    required CloudFailureCategory category,
+  }) {
     final preflight = entry.change.preflightFailure != null;
     final tombstone = !preflight && entry.change.isTombstone;
     final preflightCode = entry.change.effectivePreflightCode;
