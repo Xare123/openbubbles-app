@@ -121,9 +121,11 @@ void main() {
       expect(source, contains('errorType=ambiguous_response'));
       expect(
         source,
-        contains(
-          'FaceTime web admission response failed: stage=dispatch errorType=',
-        ),
+        contains('FaceTime web admission response failed: "'),
+      );
+      expect(
+        source,
+        contains('stage=dispatch errorType=${error.runtimeType}'),
       );
     },
   );
