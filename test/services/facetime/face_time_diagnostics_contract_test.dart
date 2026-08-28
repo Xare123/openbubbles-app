@@ -125,7 +125,7 @@ void main() {
       );
       expect(
         source,
-        contains('stage=dispatch errorType=${error.runtimeType}'),
+        contains(r'stage=dispatch errorType=${error.runtimeType}'),
       );
     },
   );
