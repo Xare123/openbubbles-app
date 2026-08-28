@@ -144,8 +144,114 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             )
         }
 
-        return patch.script
+        return webRtcDiagnosticBootstrap + patch.script
     }
+
+    // Page-level video elements cannot distinguish a local self-preview from
+    // a remote participant. Track only WebRTC remote tracks and inbound RTP
+    // bytes, then let the native policy require evidence across two samples.
+    private val webRtcDiagnosticBootstrap = """
+        (() => {
+          if (window.__obFaceTimeDiagnostics) return;
+          const state = { peers: [], nextPeerId: 1 };
+          const updateIceState = (peerState) => {
+            peerState.iceState = peerState.peer.iceConnectionState || peerState.peer.connectionState || "unknown";
+          };
+          const watchPeer = (pc) => {
+            const peerState = {
+              id: state.nextPeerId++, peer: pc, iceState: "unknown",
+              previousInboundBytes: null, remoteAudioTracks: new Map(), remoteVideoTracks: new Map()
+            };
+            state.peers.push(peerState);
+            updateIceState(peerState);
+            pc.addEventListener("iceconnectionstatechange", () => updateIceState(peerState));
+            pc.addEventListener("connectionstatechange", () => updateIceState(peerState));
+            pc.addEventListener("track", (event) => {
+              if (!event.track || !event.track.id) return;
+              const tracks = event.track.kind === "audio" ? peerState.remoteAudioTracks
+                : event.track.kind === "video" ? peerState.remoteVideoTracks : null;
+              if (!tracks) return;
+              const track = event.track;
+              tracks.set(track.id, track);
+              track.addEventListener("ended", () => {
+                if (tracks.get(track.id) === track) tracks.delete(track.id);
+              });
+            });
+          };
+          const install = () => {
+            const original = window.RTCPeerConnection;
+            if (!original || window.__obFaceTimeRtcWrapped) return !!original;
+            window.__obFaceTimeRtcWrapped = true;
+            window.RTCPeerConnection = new Proxy(original, {
+              construct(target, args, newTarget) {
+                const peer = Reflect.construct(target, args, newTarget);
+                watchPeer(peer);
+                return peer;
+              }
+            });
+            return true;
+          };
+          install();
+          if (!window.__obFaceTimeRtcInstallTimer) {
+            window.__obFaceTimeRtcInstallTimer = window.setInterval(() => {
+              if (install()) window.clearInterval(window.__obFaceTimeRtcInstallTimer);
+            }, 100);
+          }
+          window.__obFaceTimeDiagnostics = {
+            snapshot: async () => {
+              const candidates = [];
+              for (const peerState of state.peers) {
+                updateIceState(peerState);
+                if (peerState.iceState === "closed") continue;
+                let bytes = 0;
+                let bytesObserved = false;
+                try {
+                  const reports = await peerState.peer.getStats();
+                  reports.forEach((report) => {
+                    if (report.type === "inbound-rtp" && typeof report.bytesReceived === "number") {
+                      bytes += report.bytesReceived;
+                      bytesObserved = true;
+                    }
+                  });
+                } catch (_) {}
+                const remoteAudioTracks = Array.from(peerState.remoteAudioTracks.values())
+                  .filter((track) => track.readyState !== "ended").length;
+                const remoteVideoTracks = Array.from(peerState.remoteVideoTracks.values())
+                  .filter((track) => track.readyState !== "ended").length;
+                const bytesAdvancing = bytesObserved && peerState.previousInboundBytes !== null
+                  && bytes > peerState.previousInboundBytes;
+                peerState.previousInboundBytes = bytesObserved ? bytes : null;
+                candidates.push({
+                  peerId: peerState.id, iceState: peerState.iceState,
+                  remoteAudioTracks, remoteVideoTracks,
+                  mediaBytes: bytesObserved ? bytes : null, bytesAdvancing
+                });
+              }
+              const active = [...candidates].reverse().find((candidate) => candidate.bytesAdvancing)
+                || candidates.at(-1) || null;
+              const labels = Array.from(document.querySelectorAll("button"))
+                .filter((button) => button.offsetParent !== null)
+                .map((button) => (button.innerText || button.textContent || button.getAttribute("aria-label") || "").trim());
+              const leave = labels.some((label) => /^(leave|end call)$/i.test(label));
+              const counts = Array.from(document.querySelectorAll("*"))
+                .filter((element) => element.offsetParent !== null)
+                .map((element) => (element.innerText || element.textContent || "").trim())
+                .map((text) => text.match(/^(\d+)\s*(people|person|participants?)$/i))
+                .filter((match) => match !== null)
+                .map((match) => Number(match[1]));
+              return JSON.stringify({
+                peerId: active ? active.peerId : null,
+                iceState: active ? active.iceState : "unknown",
+                remoteAudioTracks: active ? active.remoteAudioTracks : 0,
+                remoteVideoTracks: active ? active.remoteVideoTracks : 0,
+                mediaBytes: active ? active.mediaBytes : null,
+                webLeaveVisible: leave,
+                remoteParticipantCount: counts.length ? Math.max(...counts) : 0
+              });
+            }
+          };
+        })();
+    """.trimIndent()
 
     init {
         val client = OkHttpClient.Builder()

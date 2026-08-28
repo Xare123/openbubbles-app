@@ -10,6 +10,7 @@ import com.bluebubbles.messaging.services.extension.MessageUpdateHandler
 import com.bluebubbles.messaging.services.extension.StatusQuery
 import com.bluebubbles.messaging.services.extension.TemplateTapHandler
 import com.bluebubbles.messaging.services.facetime.FaceTimeCallStateHandler
+import com.bluebubbles.messaging.services.facetime.FaceTimeActivity
 import com.bluebubbles.messaging.services.facetime.FaceTimeGetActiveCallHandler
 import com.bluebubbles.messaging.services.facetime.FaceTimeLaunchHandler
 import com.bluebubbles.messaging.services.filesystem.GetContentUriPathHandler
@@ -151,6 +152,10 @@ class MethodCallHandler {
             FaceTimeCallStateHandler.tag -> FaceTimeCallStateHandler().handleMethodCall(call, result, context)
             CreateMissedFaceTimeNotification.tag -> CreateMissedFaceTimeNotification().handleMethodCall(call, result, context)
             FaceTimeGetActiveCallHandler.tag -> FaceTimeGetActiveCallHandler().handleMethodCall(call, result, context)
+            "facetime-admission-recovery-available" -> {
+                FaceTimeActivity.activeFaceTimeActivity?.showAdmissionRecovery()
+                result.success(true)
+            }
             RecentContactsRequestHandler.tag -> RecentContactsRequestHandler().handleMethodCall(call, result, context)
             ConversationExemptHandler.tag -> ConversationExemptHandler().handleMethodCall(call, result, context)
             ZenModeSetupHandler.tag -> ZenModeSetupHandler().handleMethodCall(call, result, context)

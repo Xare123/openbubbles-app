@@ -167,10 +167,12 @@ void main() {
     expect(manualBody, contains('approved_group, true'));
     expect(bridgeBody, contains('.respond_letmein('));
     expect(bridgeBody, isNot(contains('retry_letmein_manually')));
+    expect(bridgeSource, contains('pub async fn retry_ft_request('));
     expect(serviceSource, isNot(contains('retryLetmeinManually')));
+    expect(serviceSource, contains('retryFtRequest'));
     expect(
       RegExp(r'retry_letmein_manually\(').allMatches(nativeSource),
-      hasLength(1),
+      hasLength(2),
     );
   });
 
@@ -214,6 +216,9 @@ void main() {
       contains('get_participants_targets_excluding_bridge_devices'),
     );
     expect(identitySource, contains('get_sms_targets(handle, false)'));
+    expect(identitySource, contains('get_sms_targets(handle, true)'));
+    expect(identitySource, contains('cache_needs_refresh'));
+    expect(identitySource, contains('return Err(PushError::BadMsg)'));
     expect(identitySource, contains('get_device_uuid()'));
     expect(nativeSource, contains('session_mut(&mut state.sessions, approved)?'));
     expect(nativeSource, contains('session_mut(&mut state.sessions, to_group)?'));
@@ -223,6 +228,26 @@ void main() {
     expect(identitySource, contains('private_data.as_slice()'));
     expect(identitySource, contains('get("com.apple.madrid")'));
     expect(identitySource, contains('is_bridge_owned_push_token'));
+  });
+
+  test('ambiguous admission exposes only a bounded retained retry', () {
+    final service = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final activity = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/facetime/FaceTimeActivity.kt',
+    ).readAsStringSync();
+    final nativeBridge = File(
+      'android/app/src/main/kotlin/com/bluebubbles/messaging/services/backend_ui_interop/MethodCallHandler.kt',
+    ).readAsStringSync();
+
+    expect(service, contains('_pendingFaceTimeAdmissionDelegations'));
+    expect(service, contains('length > 4'));
+    expect(service, contains('retryFtRequest'));
+    expect(service, contains('facetime-admission-recovery-available'));
+    expect(activity, contains('manualAdmissionRetryUsed'));
+    expect(activity, contains('facetime-admission-retry'));
+    expect(nativeBridge, contains('showAdmissionRecovery'));
   });
 
   test('outgoing timeout cannot clear a superseding call', () {

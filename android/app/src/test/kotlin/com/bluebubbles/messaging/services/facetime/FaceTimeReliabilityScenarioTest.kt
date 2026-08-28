@@ -21,7 +21,11 @@ class FaceTimeReliabilityScenarioTest {
         )
         assertTrue(policy.record("\"clicked\"").retry)
         assertTrue(policy.record("\"hidden\"").retry)
-        assertTrue(policy.record("\"already-joined\"").joined)
+        assertTrue(
+            policy.record(
+                "{\"outcome\":\"already-joined\",\"leaveVisible\":true,\"remoteParticipantCount\":1}",
+            ).joined,
+        )
     }
 
     @Test
@@ -31,7 +35,11 @@ class FaceTimeReliabilityScenarioTest {
         assertTrue(policy.record("\"missing\"").retry)
         assertTrue(policy.record("\"disabled\"").retry)
         assertTrue(policy.record("\"clicked\"").retry)
-        assertTrue(policy.record("\"already-joined\"").joined)
+        assertTrue(
+            policy.record(
+                "{\"outcome\":\"already-joined\",\"leaveVisible\":true,\"remoteParticipantCount\":1}",
+            ).joined,
+        )
         assertFalse(policy.record("\"already-joined\"").retry)
     }
 

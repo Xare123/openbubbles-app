@@ -1731,6 +1731,68 @@ fn wire__crate__api__api__answer_ft_request_impl(
         },
     )
 }
+fn wire__crate__api__api__retry_ft_request_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "retry_ft_request",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_facetime = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Arc<FTClient>>,
+            >>::sse_decode(&mut deserializer);
+            let api_delegation_uuid = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
+                    (move || async move {
+                        let mut api_facetime_guard = None;
+                        let decode_indices_ =
+                            flutter_rust_bridge::for_generated::lockable_compute_decode_order(
+                                vec![flutter_rust_bridge::for_generated::LockableOrderInfo::new(
+                                    &api_facetime,
+                                    0,
+                                    false,
+                                )],
+                            );
+                        for i in decode_indices_ {
+                            match i {
+                                0 => {
+                                    api_facetime_guard =
+                                        Some(api_facetime.lockable_decode_async_ref().await)
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        let api_facetime_guard = api_facetime_guard.unwrap();
+                        let output_ok = crate::api::api::retry_ft_request(
+                            &*api_facetime_guard,
+                            api_delegation_uuid,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__api__approve_circle_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -24987,6 +25049,7 @@ fn pde_ffi_dispatcher_primary_impl(
         32 => wire__crate__api__api__accept_invite_impl(port, ptr, rust_vec_len, data_len),
         33 => wire__crate__api__api__add_album_impl(port, ptr, rust_vec_len, data_len),
         34 => wire__crate__api__api__answer_ft_request_impl(port, ptr, rust_vec_len, data_len),
+        275 => wire__crate__api__api__retry_ft_request_impl(port, ptr, rust_vec_len, data_len),
         35 => wire__crate__api__api__approve_circle_impl(port, ptr, rust_vec_len, data_len),
         36 => wire__crate__api__api__attachment_get_size_impl(port, ptr, rust_vec_len, data_len),
         38 => wire__crate__api__api__auth_phone_impl(port, ptr, rust_vec_len, data_len),

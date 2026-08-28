@@ -185,6 +185,19 @@
             android:text="End"
             android:textColor="@android:color/white"
             android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/retryAdmission"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:text="Retry"
+            android:textSize="10sp"
+            android:visibility="gone" />
     </LinearLayout>
 
 </FrameLayout>

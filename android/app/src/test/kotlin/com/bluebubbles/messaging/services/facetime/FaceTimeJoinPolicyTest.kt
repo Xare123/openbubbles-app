@@ -17,11 +17,40 @@ class FaceTimeJoinPolicyTest {
     }
 
     @Test
-    fun alreadyJoinedIsIdempotent() {
-        val decision = FaceTimeJoinPolicy().record("\"already-joined\"")
+    fun leaveWithoutRemoteEvidenceStaysConnecting() {
+        val decision = FaceTimeJoinPolicy().record(
+            "{\"outcome\":\"already-joined\",\"leaveVisible\":true,\"remoteParticipantCount\":0}"
+        )
+
+        assertFalse(decision.joined)
+        assertTrue(decision.retry)
+    }
+
+    @Test
+    fun remoteParticipantEvidenceCompletesJoin() {
+        val decision = FaceTimeJoinPolicy().record(
+            "{\"outcome\":\"already-joined\",\"leaveVisible\":true,\"remoteParticipantCount\":1}"
+        )
 
         assertTrue(decision.joined)
         assertFalse(decision.retry)
+    }
+
+    @Test
+    fun selfPreviewDoesNotCompleteJoin() {
+        val decision = FaceTimeJoinPolicy().recordMediaEvidence(
+            FaceTimeMediaEvidence(
+                iceState = FaceTimeIceState.CONNECTED,
+                remoteAudioTracks = 0,
+                remoteVideoTracks = 0,
+                mediaBytes = 256,
+                webLeaveVisible = true,
+                peerId = 1,
+                remoteParticipantCount = 0,
+            ),
+        )
+
+        assertFalse(decision.joined)
     }
 
     @Test
@@ -48,4 +77,24 @@ class FaceTimeJoinPolicyTest {
         assertTrue(finalDecision.revealManualRecovery)
         assertFalse(finalDecision.retry)
     }
+
+    @Test
+    fun remoteMediaRequiresAdvancingInboundBytes() {
+        val policy = FaceTimeJoinPolicy()
+        val first = policy.recordMediaEvidence(remoteMedia(128))
+        val second = policy.recordMediaEvidence(remoteMedia(256))
+
+        assertFalse(first.joined)
+        assertTrue(second.joined)
+    }
+
+    private fun remoteMedia(bytes: Long) = FaceTimeMediaEvidence(
+        iceState = FaceTimeIceState.CONNECTED,
+        remoteAudioTracks = 1,
+        remoteVideoTracks = 0,
+        mediaBytes = bytes,
+        webLeaveVisible = true,
+        peerId = 1,
+        remoteParticipantCount = 0,
+    )
 }

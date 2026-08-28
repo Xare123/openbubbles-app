@@ -80,6 +80,7 @@ class FaceTimeActivity : Activity() {
     private var connectionProbeCount = 0
     private var callEnding = false
     private var localEndReported = false
+    private var manualAdmissionRetryUsed = false
 
     private fun diagnosticsEnabled(): Boolean = FaceTimeDiagnostics.isEnabled(this)
 
@@ -90,14 +91,20 @@ class FaceTimeActivity : Activity() {
             const buttons = Array.from(document.querySelectorAll("button"));
             const leave = document.getElementById("callcontrols-leave-button-session-banner") ||
                 buttons.find((button) => /^(leave|end call)$/i.test(label(button)));
-            if (visible(leave)) return "already-joined";
+            const people = Array.from(document.querySelectorAll("*"))
+                .filter((element) => visible(element))
+                .map((element) => label(element).match(/^(\d+)\s*(people|person|participants?)$/i))
+                .filter((match) => match !== null)
+                .map((match) => Number(match[1]));
+            const remoteParticipantCount = people.length ? Math.max(...people) : 0;
+            if (visible(leave)) return JSON.stringify({outcome:"already-joined",leaveVisible:true,remoteParticipantCount});
             const join = document.getElementById("callcontrols-join-button-session-banner") ||
                 buttons.find((button) => /^(join|rejoin)$/i.test(label(button)));
-            if (!join) return "missing";
-            if (join.disabled || join.getAttribute("aria-disabled") === "true") return "disabled";
-            if (!visible(join)) return "hidden";
+            if (!join) return JSON.stringify({outcome:"missing",leaveVisible:false,remoteParticipantCount});
+            if (join.disabled || join.getAttribute("aria-disabled") === "true") return JSON.stringify({outcome:"disabled",leaveVisible:false,remoteParticipantCount});
+            if (!visible(join)) return JSON.stringify({outcome:"hidden",leaveVisible:false,remoteParticipantCount});
             join.click();
-            return "clicked";
+            return JSON.stringify({outcome:"clicked",leaveVisible:false,remoteParticipantCount});
         })()
     """.trimIndent()
 
@@ -129,21 +136,42 @@ class FaceTimeActivity : Activity() {
     }
 
     private fun scheduleConnectionProbe(delayMillis: Long = 0) {
-        if (!diagnosticsEnabled() || callEnding || isFinishing || isDestroyed || connectionProbeCount >= 12) return
+        if (callEnding || isFinishing || isDestroyed ||
+            connectionProbeCount >= FaceTimeConnectionProbePolicy.maxProbes
+        ) return
         connectionProbeRunnable?.let(mainHandler::removeCallbacks)
         val runnable = Runnable {
             if (callEnding || isFinishing || isDestroyed) return@Runnable
             webView.evaluateJavascript(
-                """(() => { const videos = Array.from(document.querySelectorAll("video")); const audios = Array.from(document.querySelectorAll("audio")); const tracks = [...videos, ...audios].flatMap((element) => element.srcObject?.getTracks?.() || []); return "videos=" + videos.length + ",videoReady=" + videos.filter((video) => video.readyState >= 2).length + ",audios=" + audios.length + ",liveTracks=" + tracks.filter((track) => track.readyState === "live").length; })()"""
+                """window.__obFaceTimeDiagnostics ? window.__obFaceTimeDiagnostics.snapshot() : JSON.stringify({peerId:null,iceState:"unknown",remoteAudioTracks:0,remoteVideoTracks:0,mediaBytes:null,webLeaveVisible:false,remoteParticipantCount:0})"""
             ) { result ->
-                if (!diagnosticsEnabled()) return@evaluateJavascript
                 connectionProbeCount += 1
-                FaceTimeDiagnostics.record(
-                    this,
-                    "activity media_probe attempt=$connectionProbeCount result=$result",
+                val evidence = FaceTimeMediaEvidenceParser.parse(result)
+                if (evidence == null) {
+                    if (diagnosticsEnabled()) {
+                        FaceTimeDiagnostics.record(this, "activity media_probe attempt=$connectionProbeCount result=unavailable")
+                    }
+                    scheduleConnectionProbe(FaceTimeConnectionProbePolicy.pendingDelayMillis)
+                    return@evaluateJavascript
+                }
+                if (diagnosticsEnabled()) {
+                    FaceTimeDiagnostics.record(
+                        this,
+                        "activity media_probe attempt=$connectionProbeCount ice=${evidence.iceState} remoteAudio=${evidence.remoteAudioTracks} remoteVideo=${evidence.remoteVideoTracks} remotePeople=${evidence.remoteParticipantCount ?: 0} bytes=${evidence.mediaBytes ?: 0}",
+                    )
+                }
+                val decision = joinPolicy.recordMediaEvidence(evidence)
+                if (decision.joined) {
+                    joinRetryRunnable?.let(mainHandler::removeCallbacks)
+                }
+                showCallUi(joined = decision.joined)
+                scheduleConnectionProbe(
+                    if (decision.joined) {
+                        FaceTimeConnectionProbePolicy.connectedDelayMillis
+                    } else {
+                        FaceTimeConnectionProbePolicy.pendingDelayMillis
+                    },
                 )
-                Log.i(diagnosticTag, "media probe attempt=$connectionProbeCount result=$result")
-                scheduleConnectionProbe(5000)
             }
         }
         connectionProbeRunnable = runnable
@@ -166,7 +194,7 @@ class FaceTimeActivity : Activity() {
             if (diagnosticsEnabled()) {
                 FaceTimeDiagnostics.record(
                     this,
-                    "activity join_attempt reason=$reason attempt=${joinPolicy.attempts} outcome=${decision.outcome} mirrorReady=$mirrorReady answered=$answered",
+                    "activity join_attempt reason=$reason attempt=${joinPolicy.attempts} outcome=${decision.outcome} joined=${decision.joined} mirrorReady=$mirrorReady answered=$answered",
                 )
                 Log.i(
                     diagnosticTag,
@@ -175,15 +203,11 @@ class FaceTimeActivity : Activity() {
             }
             if (decision.joined) {
                 showCallUi(joined = true)
-                scheduleConnectionProbe(1000)
+                scheduleConnectionProbe(FaceTimeConnectionProbePolicy.connectedDelayMillis)
                 return@evaluateJavascript
             }
-            if (decision.outcome == FaceTimeJoinOutcome.CLICKED) {
-                showCallUi(joined = false)
-            }
-            if (decision.revealManualRecovery) {
-                showCallUi(joined = false)
-            }
+            showCallUi(joined = false)
+            scheduleConnectionProbe(FaceTimeConnectionProbePolicy.initialDelayMillis)
             if (decision.retry) {
                 scheduleJoinAttempt("retry-${decision.outcome}", 750)
             } else {
@@ -400,6 +424,18 @@ class FaceTimeActivity : Activity() {
 
         binding.endCall.setOnClickListener {
             endCall()
+        }
+
+        binding.retryAdmission.setOnClickListener {
+            if (manualAdmissionRetryUsed) return@setOnClickListener
+            manualAdmissionRetryUsed = true
+            binding.retryAdmission.isEnabled = false
+            binding.retryAdmission.text = "Retrying..."
+            MethodCallHandler.invokeMethodOrWorker(
+                applicationContext,
+                "facetime-admission-retry",
+                emptyMap(),
+            )
         }
 
 
@@ -630,8 +666,23 @@ class FaceTimeActivity : Activity() {
         mainHandler.postDelayed(recoveryRunnable, 15000)
     }
 
+    /** Shows the one-shot recovery action after an ambiguous admission send. */
+    fun showAdmissionRecovery() {
+        if (callEnding || isFinishing || isDestroyed) return
+        binding.nativeCallControls.visibility = View.VISIBLE
+        binding.retryAdmission.visibility = View.VISIBLE
+        binding.retryAdmission.isEnabled = !manualAdmissionRetryUsed
+        binding.connectionStatus.visibility = View.VISIBLE
+        binding.connectionStatus.text = "Admission timed out. Retry once if needed."
+    }
+
     private fun handleConfig(extras: Bundle) {
-        val link = extras.getString("link")!!
+        val link = extras.getString("link")?.takeIf(::hasRequiredFaceTimeLaunchData)
+        if (link == null) {
+            Log.w(diagnosticTag, "missing FaceTime link while configuring activity")
+            finishAndRemoveTask()
+            return
+        }
         val name = extras.getString("name")
         val requestedCallUuid = extras.getString("callUuid")
         callUuid = requestedCallUuid

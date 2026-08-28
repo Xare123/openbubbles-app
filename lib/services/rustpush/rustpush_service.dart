@@ -5212,6 +5212,39 @@ class RustPushService extends GetxService {
 
   String? chosenFTRoomGuid;
   String? incomingRingingCallGuid;
+  final List<String> _pendingFaceTimeAdmissionDelegations = <String>[];
+
+  void _rememberFaceTimeAdmissionRecovery(String delegationUuid) {
+    if (_pendingFaceTimeAdmissionDelegations.contains(delegationUuid)) return;
+    _pendingFaceTimeAdmissionDelegations.add(delegationUuid);
+    if (_pendingFaceTimeAdmissionDelegations.length > 4) {
+      _pendingFaceTimeAdmissionDelegations.removeAt(0);
+    }
+  }
+
+  Future<bool> retryPendingFaceTimeAdmission() async {
+    if (_pendingFaceTimeAdmissionDelegations.isEmpty ||
+        pushService.state == null) {
+      return false;
+    }
+    final delegationUuid = _pendingFaceTimeAdmissionDelegations.last;
+    try {
+      await api.retryFtRequest(
+        facetime: pushService.state!.ftClient,
+        delegationUuid: delegationUuid,
+      );
+      _pendingFaceTimeAdmissionDelegations.remove(delegationUuid);
+      Logger.info("FaceTime admission recovery retry sent");
+      return true;
+    } catch (error, trace) {
+      Logger.warn(
+        "FaceTime admission recovery retry failed",
+        error: error,
+        trace: trace,
+      );
+      return false;
+    }
+  }
 
   Future<void> markCertified(api.PushMessage push) async {
     if (push is! api.PushMessage_IMessage) return;
@@ -5643,6 +5676,7 @@ class RustPushService extends GetxService {
           "FaceTime web admission request: "
           "approvedGroupPresent=${approvedGroup != null}",
         );
+        final delegationUuid = facetime.field0.delegationUuid;
         await _recordFaceTimeAdmissionTransport("before-response");
         try {
           await api.answerFtRequest(
@@ -5651,6 +5685,9 @@ class RustPushService extends GetxService {
             approvedGroup: approvedGroup,
           );
           Logger.info("FaceTime web admission response sent");
+          if (delegationUuid != null) {
+            _pendingFaceTimeAdmissionDelegations.remove(delegationUuid);
+          }
           if (incomingAdmission && incomingRingingCallGuid == approvedGroup) {
             incomingRingingCallGuid = null;
           }
@@ -5659,6 +5696,17 @@ class RustPushService extends GetxService {
             "FaceTime web admission response failed: "
             "stage=dispatch errorType=${error.runtimeType}",
           );
+          if (delegationUuid != null) {
+            _rememberFaceTimeAdmissionRecovery(delegationUuid);
+            try {
+              await mcs.invokeMethod("facetime-admission-recovery-available");
+            } catch (recoveryError) {
+              Logger.warn(
+                "Unable to expose FaceTime admission recovery "
+                "errorType=${recoveryError.runtimeType}",
+              );
+            }
+          }
           await _recordFaceTimeAdmissionTransport("after-response-failure");
           rethrow;
         }

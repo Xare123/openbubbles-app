@@ -948,6 +948,14 @@ Future<void> answerFtRequest({
   approvedGroup: approvedGroup,
 );
 
+Future<void> retryFtRequest({
+  required ArcFtClient facetime,
+  required String delegationUuid,
+}) => RustLib.instance.api.crateApiApiRetryFtRequest(
+  facetime: facetime,
+  delegationUuid: delegationUuid,
+);
+
 Future<void> declineFacetime({
   required ArcFtClient facetime,
   required String guid,

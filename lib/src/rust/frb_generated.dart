@@ -228,6 +228,11 @@ abstract class RustLibApi extends BaseApi {
     String? approvedGroup,
   });
 
+  Future<void> crateApiApiRetryFtRequest({
+    required ArcFtClient facetime,
+    required String delegationUuid,
+  });
+
   Future<int> crateApiApiApproveCircle({
     required ArcMutexVecActiveCircleSession state,
     required ArcMutexAppleAccountDefaultAnisetteProvider account,
@@ -2964,6 +2969,43 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiApiAnswerFtRequestConstMeta => const TaskConstMeta(
     debugName: "answer_ft_request",
     argNames: ["facetime", "request", "approvedGroup"],
+  );
+
+  @override
+  Future<void> crateApiApiRetryFtRequest({
+    required ArcFtClient facetime,
+    required String delegationUuid,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerArcFTClient(
+            facetime,
+            serializer,
+          );
+          sse_encode_String(delegationUuid, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 275,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiApiRetryFtRequestConstMeta,
+        argValues: [facetime, delegationUuid],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiApiRetryFtRequestConstMeta => const TaskConstMeta(
+    debugName: "retry_ft_request",
+    argNames: ["facetime", "delegationUuid"],
   );
 
   @override
