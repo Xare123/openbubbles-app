@@ -226,7 +226,10 @@ void main() {
     expect(semantic, contains('Local canonical chats, messages, reactions'));
     expect(semantic, contains('No CloudKit uploads or deletes'));
     expect(semantic, contains('no local message deletes'));
-    expect(semantic, contains('tombstones are quarantined'));
+    expect(
+      semantic,
+      contains('tombstones are retained as read-only acknowledgements'),
+    );
     expect(semantic, contains('CloudSyncRunStatus.completed'));
     expect(semantic, contains('expectedZones'));
     expect(semantic, contains('reportedZones.containsAll(expectedZones)'));
@@ -236,7 +239,8 @@ void main() {
     expect(semantic, contains('quarantined == 0'));
     expect(semantic, contains('unsupportedServiceQuarantined == 0'));
     expect(semantic, contains('tombstoneQuarantined == 0'));
-    expect(semantic, contains('disabled tombstones'));
+    expect(semantic, contains('tombstoneReadOnlyAcknowledged'));
+    expect(semantic, contains('tombstone failures'));
     expect(semantic, contains('retried == 0'));
     expect(semantic, isNot(contains('CloudSyncRunStatus.skipped')));
     expect(semantic, contains('remoteWriteTripwiresIntact'));

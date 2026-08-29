@@ -22,6 +22,7 @@ final class CloudSyncSemanticPullZoneReport {
     required this.startupQuarantined,
     required this.postFetchQuarantined,
     required this.tombstoneQuarantined,
+    required this.tombstoneReadOnlyAcknowledged,
     required this.semanticUnsupportedServiceQuarantined,
     required this.semanticStageQuarantined,
     required this.retried,
@@ -53,6 +54,7 @@ final class CloudSyncSemanticPullZoneReport {
   final int startupQuarantined;
   final int postFetchQuarantined;
   final int tombstoneQuarantined;
+  final int tombstoneReadOnlyAcknowledged;
   final int semanticUnsupportedServiceQuarantined;
   final int semanticStageQuarantined;
   final int retried;
@@ -82,6 +84,7 @@ final class CloudSyncSemanticPullZoneReport {
       'postFetch': postFetchQuarantined,
     },
     'tombstoneQuarantined': tombstoneQuarantined,
+    'tombstoneReadOnlyAcknowledged': tombstoneReadOnlyAcknowledged,
     'semanticUnsupportedServiceQuarantined':
         semanticUnsupportedServiceQuarantined,
     'semanticStageQuarantined': semanticStageQuarantined,
@@ -107,7 +110,7 @@ final class CloudSyncSemanticPullReport {
     required Iterable<CloudSyncSemanticPullZoneReport> zones,
   }) : zones = List.unmodifiable(zones);
 
-  static const schemaVersion = 2;
+  static const schemaVersion = 3;
   final DateTime timestampUtc;
   final String platform;
   final String architecture;
@@ -131,7 +134,8 @@ final class CloudSyncSemanticPullReport {
     'automaticTriggersEnabled': false,
     'remoteSavesEnabled': false,
     'remoteDeletesEnabled': false,
-    'tombstonesEnabled': false,
+    'tombstoneSemanticDeletesEnabled': false,
+    'tombstoneReadOnlyAcknowledgementsEnabled': true,
     'pageLimit': pageLimit,
     'changeLimit': changeLimit,
     'outboxCountBefore': outboxCountBefore,

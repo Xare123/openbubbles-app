@@ -23,7 +23,7 @@ abstract interface class CloudSyncStore {
   /// Atomically inserts unseen inbox changes and allocates their monotonically
   /// increasing sequence numbers. For a non-empty semantic page, the new
   /// continuation token is held as pending until all rows in that page are
-  /// terminal; only then may it become the committed fetched token.
+  /// safely acknowledged as applied; quarantined rows remain barriers.
   ///
   /// A crash must commit the journal and its pending-token state together.
   Future<int> journalFetchedBatch(
@@ -75,8 +75,8 @@ abstract interface class CloudSyncStore {
   });
 
   /// Atomically updates the journal entry and advances the checkpoint's
-  /// contiguous terminal position where possible. Fallback transitions must
-  /// match the exact active coordinator owner and generation. A terminal row
+  /// contiguous applied position where possible. Fallback transitions must
+  /// match the exact active coordinator owner and generation. An applied row
   /// may be repeated idempotently, but must never be regressed or replaced.
   Future<void> markInboxApplied(
     CloudSyncScope scope, {

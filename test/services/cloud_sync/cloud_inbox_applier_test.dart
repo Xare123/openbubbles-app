@@ -475,7 +475,7 @@ void main() {
   });
 
   test(
-    'disabled tombstones quarantine without deleting or opening a transaction',
+    'disabled tombstones acknowledge read-only without decoding or opening a transaction',
     () async {
       final inbox = entry(1, tombstone: true);
       decoder.values[inbox.change.changeId] = CloudDecodedMutation.tombstone(
@@ -493,8 +493,9 @@ void main() {
 
       expect(
         (await _apply(applier, inbox)).disposition,
-        CloudInboxApplyDisposition.quarantined,
+        CloudInboxApplyDisposition.tombstoneReadOnlyAcknowledged,
       );
+      expect(decoder.decodeCalls, 0);
       expect(store.transactionCount, 0);
       expect(store.transaction.snapshot('message-key'), isNotNull);
     },
@@ -574,22 +575,24 @@ void main() {
     expect(store.transaction.entityApplyCount, 0);
   });
 
-  test('active native account is revalidated immediately before write',
-      () async {
-    final inbox = entry(1);
-    decodeUpsert(inbox, message());
-    applier = TransactionalCloudInboxApplier(
-      decoder: decoder,
-      store: store,
-      activeScopeRevalidator: () async => false,
-    );
+  test(
+    'active native account is revalidated immediately before write',
+    () async {
+      final inbox = entry(1);
+      decodeUpsert(inbox, message());
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        activeScopeRevalidator: () async => false,
+      );
 
-    final result = await _apply(applier, inbox);
+      final result = await _apply(applier, inbox);
 
-    expect(result.disposition, CloudInboxApplyDisposition.quarantined);
-    expect(result.failureCategory, CloudFailureCategory.conflict);
-    expect(store.transactionCount, 0);
-  });
+      expect(result.disposition, CloudInboxApplyDisposition.quarantined);
+      expect(result.failureCategory, CloudFailureCategory.conflict);
+      expect(store.transactionCount, 0);
+    },
+  );
 
   test('native account revalidation failure remains retryable', () async {
     final inbox = entry(1);
@@ -812,9 +815,11 @@ void main() {
 class _Decoder implements CloudSemanticDecoder {
   final values = <String, CloudDecodedMutation>{};
   final failures = <String, CloudSemanticDecodeFailure>{};
+  int decodeCalls = 0;
 
   @override
   Future<CloudDecodedMutation> decode(CloudInboxEntry entry) async {
+    decodeCalls++;
     final failure = failures[entry.change.changeId];
     if (failure != null) throw failure;
     return values[entry.change.changeId]!;

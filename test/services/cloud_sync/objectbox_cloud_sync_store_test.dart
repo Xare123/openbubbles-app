@@ -173,7 +173,7 @@ void main() {
   });
 
   test(
-    'legacy committed-token page is fenced until retained rows are terminal',
+    'legacy advanced checkpoint with retained quarantine fails closed',
     () async {
       final scope = testScope(
         persistenceLane: CloudSyncPersistenceLane.semantic,
@@ -194,6 +194,14 @@ void main() {
       expect(legacy.pendingBatchId, isNull);
       expect(legacy.hasUnmarkedPendingInbox, isTrue);
 
+      await store.quarantineInbox(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.malformedRecord,
+        now: testEpoch,
+        leaseFence: coordinatorFences[scope.storageKey]!,
+      );
+
       await expectLater(
         journal(
           batch(
@@ -212,15 +220,155 @@ void main() {
         ),
       );
 
+      final retained = await store.readCheckpoint(scope);
+      expect(retained.fetchedToken, 'legacy-advanced-token');
+      expect(retained.hasUnmarkedPendingInbox, isTrue);
+      expect(
+        objectBox.box<CloudInboxChangeEntity>().getAll().single.status,
+        CloudInboxStatus.quarantined.index,
+      );
+    },
+  );
+
+  test(
+    'legacy missing inbox sequence is an unmarked checkpoint barrier',
+    () async {
+      final scope = testScope(
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      await journalShadow(
+        batch(
+          scope,
+          batchId: 'legacy-gap-page',
+          token: 'legacy-gap-token',
+          changes: [testChange(1), testChange(2)],
+        ),
+        now: testEpoch,
+        budget: CloudShadowJournalBudget(),
+      );
+
+      final inbox = objectBox.box<CloudInboxChangeEntity>();
+      final rows = inbox.getAll()
+        ..sort(
+          (left, right) => left.fetchSequence.compareTo(right.fetchSequence),
+        );
+      expect(inbox.remove(rows.first.id), isTrue);
+      inbox.put(
+        rows.last
+          ..status = CloudInboxStatus.applied.index
+          ..completedAtMs = testEpoch.millisecondsSinceEpoch,
+      );
+
+      await reopen();
+      final checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.fetchedSequence, 2);
+      expect(checkpoint.lastAppliedSequence, 0);
+      expect(checkpoint.pendingBatchId, isNull);
+      expect(checkpoint.hasUnmarkedPendingInbox, isTrue);
+    },
+  );
+
+  test('legacy missing sequence blocks a duplicate-only page token', () async {
+    final scope = testScope(persistenceLane: CloudSyncPersistenceLane.semantic);
+    await journalShadow(
+      batch(
+        scope,
+        batchId: 'legacy-gap-source-page',
+        token: 'legacy-gap-old-token',
+        changes: [testChange(1), testChange(2)],
+      ),
+      now: testEpoch,
+      budget: CloudShadowJournalBudget(),
+    );
+
+    final inbox = objectBox.box<CloudInboxChangeEntity>();
+    final rows = inbox.getAll()
+      ..sort(
+        (left, right) => left.fetchSequence.compareTo(right.fetchSequence),
+      );
+    expect(inbox.remove(rows.first.id), isTrue);
+    inbox.put(
+      rows.last
+        ..status = CloudInboxStatus.applied.index
+        ..completedAtMs = testEpoch.millisecondsSinceEpoch,
+    );
+
+    await expectLater(
+      journal(
+        batch(
+          scope,
+          batchId: 'legacy-gap-duplicate-page',
+          token: 'must-not-advance',
+          changes: [testChange(2)],
+        ),
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (error) => error.safeCode,
+          'safeCode',
+          'checkpoint_pending_page_unresolved',
+        ),
+      ),
+    );
+
+    final checkpoint = await store.readCheckpoint(scope);
+    expect(checkpoint.fetchedToken, 'legacy-gap-old-token');
+    expect(checkpoint.lastBatchId, 'legacy-gap-source-page');
+    expect(checkpoint.hasUnmarkedPendingInbox, isTrue);
+  });
+
+  test(
+    'read-only tombstone evidence survives reopen and obeys the applied prefix',
+    () async {
+      final scope = testScope(
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      await journal(
+        batch(
+          scope,
+          batchId: 'read-only-tombstone-page',
+          token: 'read-only-tombstone-token',
+          changes: [testChange(1, tombstone: true), testChange(2)],
+        ),
+      );
+      final fence = coordinatorFences[scope.storageKey]!;
+
       await store.markInboxApplied(
         scope,
         sequence: 1,
         now: testEpoch,
-        leaseFence: coordinatorFences[scope.storageKey]!,
+        leaseFence: fence,
       );
-      final terminal = await store.readCheckpoint(scope);
-      expect(terminal.fetchedToken, 'legacy-advanced-token');
-      expect(terminal.hasUnmarkedPendingInbox, isFalse);
+      final partial = await store.readCheckpoint(scope);
+      expect(partial.lastAppliedSequence, 1);
+      expect(partial.fetchedToken, isNull);
+      expect(partial.pendingBatchId, 'read-only-tombstone-page');
+
+      await reopen();
+      final durableRows = objectBox.box<CloudInboxChangeEntity>().getAll()
+        ..sort(
+          (left, right) => left.fetchSequence.compareTo(right.fetchSequence),
+        );
+      final tombstone = durableRows.first;
+      expect(tombstone.status, CloudInboxStatus.applied.index);
+      expect(tombstone.isTombstone, isTrue);
+      expect(tombstone.encryptedServerRecordId, 'protected:server-record-1');
+      expect(tombstone.protectedSystemFieldsRef, 'protected:system-fields-1');
+      expect(tombstone.encryptedPayloadRef, isNull);
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 0);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 0);
+      expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+
+      await store.markInboxApplied(
+        scope,
+        sequence: 2,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+      final completed = await store.readCheckpoint(scope);
+      expect(completed.lastAppliedSequence, 2);
+      expect(completed.fetchedToken, 'read-only-tombstone-token');
+      expect(completed.pendingBatchId, isNull);
     },
   );
 
@@ -528,98 +676,110 @@ void main() {
     },
   );
 
-  test(
-    'promotes a page token after applied and quarantined rows reach the floor',
-    () async {
-      final scope = testScope();
-      final page = batch(
+  test('promotes a page token only after every row is applied', () async {
+    final scope = testScope();
+    final page = batch(
+      scope,
+      batchId: 'page-1-batch',
+      token: 'page-1-next-token',
+      changes: [for (var index = 1; index <= 50; index++) testChange(index)],
+    );
+
+    expect(await journal(page), 50);
+    final pending = await store.readCheckpoint(scope);
+    expect(pending.pendingBatchId, 'page-1-batch');
+    expect(pending.fetchedToken, isNull);
+    expect(pending.fetchedSequence, 50);
+    expect(pending.lastAppliedSequence, 0);
+
+    final fence = coordinatorFences[scope.storageKey]!;
+    for (var sequence = 1; sequence <= 38; sequence++) {
+      await store.markInboxApplied(
         scope,
-        batchId: 'page-1-batch',
-        token: 'page-1-next-token',
-        changes: [
-          for (var index = 1; index <= 50; index++) testChange(index),
-        ],
+        sequence: sequence,
+        now: testEpoch,
+        leaseFence: fence,
       );
-
-      expect(await journal(page), 50);
-      final pending = await store.readCheckpoint(scope);
-      expect(pending.pendingBatchId, 'page-1-batch');
-      expect(pending.fetchedToken, isNull);
-      expect(pending.fetchedSequence, 50);
-      expect(pending.lastAppliedSequence, 0);
-
-      final fence = coordinatorFences[scope.storageKey]!;
-      for (var sequence = 1; sequence <= 38; sequence++) {
-        await store.markInboxApplied(
-          scope,
-          sequence: sequence,
-          now: testEpoch,
-          leaseFence: fence,
-        );
-      }
-      for (var sequence = 39; sequence <= 50; sequence++) {
-        await store.quarantineInbox(
-          scope,
-          sequence: sequence,
-          category: CloudFailureCategory.malformedRecord,
-          now: testEpoch,
-          leaseFence: fence,
-        );
-      }
-
-      final terminal = await store.readCheckpoint(scope);
-      expect(terminal.pendingBatchId, isNull);
-      expect(terminal.hasUnmarkedPendingInbox, isFalse);
-      expect(terminal.fetchedToken, 'page-1-next-token');
-      expect(terminal.fetchedSequence, 50);
-      expect(terminal.lastAppliedSequence, 50);
-
-      final persistedRows = objectBox.box<CloudInboxChangeEntity>().getAll();
-      expect(
-        persistedRows.where(
-          (row) => row.status == CloudInboxStatus.applied.index,
-        ),
-        hasLength(38),
-      );
-      expect(
-        persistedRows.where(
-          (row) => row.status == CloudInboxStatus.quarantined.index,
-        ),
-        hasLength(12),
-      );
-      final persistedCheckpoint = objectBox
-          .box<CloudSyncCheckpointEntity>()
-          .getAll()
-          .single;
-      expect(persistedCheckpoint.pendingBatchId, isNull);
-      expect(persistedCheckpoint.pendingFetchedTokenCiphertext, isNull);
-      expect(persistedCheckpoint.fetchedTokenCiphertext, isNotNull);
-
-      // Replaying the exact page is idempotent and must not reopen its batch.
-      expect(await journal(page), 0);
-      final replayed = await store.readCheckpoint(scope);
-      expect(replayed.pendingBatchId, isNull);
-      expect(replayed.fetchedToken, 'page-1-next-token');
-      expect(replayed.fetchedSequence, 50);
-      expect(replayed.lastAppliedSequence, 50);
-
-      // The store exposes the committed token to the next fetch and accepts a
-      // subsequent page without reopening the terminalized batch.
-      final nextFetchCheckpoint = await store.readCheckpoint(scope);
-      expect(nextFetchCheckpoint.fetchedToken, 'page-1-next-token');
-      final nextPage = batch(
+    }
+    for (var sequence = 39; sequence <= 50; sequence++) {
+      await store.quarantineInbox(
         scope,
-        batchId: 'page-2-batch',
-        token: 'page-2-next-token',
-        changes: [testChange(51)],
+        sequence: sequence,
+        category: CloudFailureCategory.malformedRecord,
+        now: testEpoch,
+        leaseFence: fence,
       );
-      expect(await journal(nextPage), 1);
-      expect(
-        (await store.readCheckpoint(scope)).pendingBatchId,
-        'page-2-batch',
-      );
-    },
-  );
+    }
+
+    final blocked = await store.readCheckpoint(scope);
+    expect(blocked.pendingBatchId, 'page-1-batch');
+    // This is a normally marked pending page, not a legacy committed-token
+    // page. Its pending batch ID is the fetch barrier.
+    expect(blocked.hasUnmarkedPendingInbox, isFalse);
+    expect(blocked.fetchedToken, isNull);
+    expect(blocked.fetchedSequence, 50);
+    expect(blocked.lastAppliedSequence, 38);
+
+    final persistedRows = objectBox.box<CloudInboxChangeEntity>().getAll();
+    expect(
+      persistedRows.where(
+        (row) => row.status == CloudInboxStatus.applied.index,
+      ),
+      hasLength(38),
+    );
+    expect(
+      persistedRows.where(
+        (row) => row.status == CloudInboxStatus.quarantined.index,
+      ),
+      hasLength(12),
+    );
+    final persistedCheckpoint = objectBox
+        .box<CloudSyncCheckpointEntity>()
+        .getAll()
+        .single;
+    expect(persistedCheckpoint.pendingBatchId, 'page-1-batch');
+    expect(persistedCheckpoint.pendingFetchedTokenCiphertext, isNotNull);
+    expect(persistedCheckpoint.fetchedTokenCiphertext, isNull);
+
+    // Even the exact page cannot be re-journaled while its quarantine barrier
+    // is unresolved; the engine must repair or rebootstrap first.
+    await expectLater(
+      journal(page),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (error) => error.safeCode,
+          'safeCode',
+          'checkpoint_pending_page_unresolved',
+        ),
+      ),
+    );
+    final replayed = await store.readCheckpoint(scope);
+    expect(replayed.pendingBatchId, 'page-1-batch');
+    expect(replayed.fetchedToken, isNull);
+    expect(replayed.fetchedSequence, 50);
+    expect(replayed.lastAppliedSequence, 38);
+
+    // The store does not expose a committed token or admit a subsequent
+    // page while the quarantined row remains a barrier.
+    final nextFetchCheckpoint = await store.readCheckpoint(scope);
+    expect(nextFetchCheckpoint.fetchedToken, isNull);
+    final nextPage = batch(
+      scope,
+      batchId: 'page-2-batch',
+      token: 'page-2-next-token',
+      changes: [testChange(51)],
+    );
+    await expectLater(
+      journal(nextPage),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (error) => error.safeCode,
+          'safeCode',
+          'checkpoint_pending_page_unresolved',
+        ),
+      ),
+    );
+  });
 
   test('duplicate inbox sequence lookup fails closed', () async {
     final scope = testScope();

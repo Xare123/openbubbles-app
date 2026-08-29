@@ -100,25 +100,23 @@ Nothing here needs a device or an Apple account.
    it. This is a question for the first live fetch, but the transport must be
    able to *record* the distinction before that run, or the run cannot answer it.
 
-4. ~~**Decide what unblocks a stalled applied floor.**~~ **Done: advance
-   through terminal quarantine while retaining the journal evidence.**
-   `_advanceContiguousApplied` now treats both `applied` and `quarantined` as
-   terminal. Pending and retryable rows still block the floor.
+4. ~~**Decide what unblocks a stalled applied floor.**~~ **Done: acknowledge
+   disabled tombstones read-only, while keeping failed records as barriers.**
+   `tombstoneReadOnlyAcknowledged` is persisted as an applied inbox row without
+   decoding, deleting, or opening a semantic transaction. Generic
+   `quarantined` rows remain nonterminal: they do not advance
+   `_advanceContiguousApplied`, do not promote a pending token, and block later
+   inbox rows and transport fetches.
 
-   The consequence chain is worth stating plainly. One malformed record blocks
-   the floor, the pending journal keeps growing, the journal budget eventually
-   refuses further fetches, and sync stops. If the stall outlasts the CloudKit
-   change-token lifetime the token expires and the cost is a full re-bootstrap
-   of the entire zone, which is far worse than the single record that caused it.
-   That lifetime is undocumented, so no safe stall duration can be assumed.
+   The consequence chain is intentional. A malformed or otherwise failed row
+   preserves its protected source reference, failure category, and replay
+   evidence, but prevents the engine from silently skipping it. Recovery must
+   explicitly review and change that durable disposition; no automatic
+   checkpoint advance is allowed.
 
-   The retained quarantine row preserves the protected source reference,
-   failure category, and replay evidence for a later decoder or targeted
-   recovery. It is not silently deleted. The tradeoff is explicit: CloudKit
-   will not automatically re-offer that change after the terminal floor moves,
-   so a future fetch-by-record-name repair path remains useful. This is safer
-   than allowing one malformed record to stop an entire zone indefinitely when
-   Apple's change-token lifetime is undocumented.
+   An unmarked `fetchedSequence > appliedSequence` gap also fails closed, even
+   when the missing sequence has no inbox row to query. A duplicate-only page
+   cannot use that corrupt or legacy state to promote a newer token.
 
 Additional safety closures in this stage:
 

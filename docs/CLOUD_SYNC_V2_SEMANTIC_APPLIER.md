@@ -45,7 +45,8 @@ must atomically:
 4. Apply the transient payload to the canonical entity, write the semantic
    snapshot, and upsert the protected record map.
 5. Commit exactly one replay outcome (`applied`, `appliedWithConflict`, or
-   `quarantined`) and the matching inbox terminal state.
+   `quarantined`) and the matching inbox state. Only an applied inbox row
+   advances the contiguous checkpoint; a quarantined row remains a barrier.
 
 The transaction callback is synchronous by design. An adapter must not await
 network, native decoding, or another isolate while an ObjectBox write

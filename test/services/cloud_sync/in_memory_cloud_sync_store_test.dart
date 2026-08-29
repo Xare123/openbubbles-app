@@ -35,7 +35,7 @@ void main() {
   });
 
   test(
-    'journals page durably, promotes only after terminal, and deduplicates',
+    'journals page durably, promotes only after applied, and deduplicates',
     () async {
       final batch = CloudFetchBatch(
         scope: scope,
@@ -80,7 +80,7 @@ void main() {
       expect(promoted.pendingBatchId, isNull);
       await store.releaseCoordinatorLease(scope, leaseFence: fence);
 
-      // A refetched page is now safe to deduplicate against the terminal
+      // A refetched page is now safe to deduplicate against the applied
       // journal and advance its continuation token exactly once.
       expect(await _journal(store, batch), 0);
       expect(
@@ -137,7 +137,7 @@ void main() {
   });
 
   test(
-    'terminal checkpoint advances through applied and quarantined rows',
+    'quarantined rows block the applied floor and page-token promotion',
     () async {
       await _journal(
         store,
@@ -181,13 +181,14 @@ void main() {
         now: testEpoch,
         leaseFence: fence,
       );
-      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 3);
-      expect((await store.readCheckpoint(scope)).fetchedToken, 'token');
+      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 2);
+      expect((await store.readCheckpoint(scope)).fetchedToken, isNull);
+      expect((await store.readCheckpoint(scope)).pendingBatchId, 'batch-1');
     },
   );
 
   test(
-    'failed first record retains the old token until the whole page is terminal',
+    'failed first record retains the old token until every row is applied',
     () async {
       await _journal(
         store,
@@ -231,7 +232,7 @@ void main() {
         leaseFence: fence,
       );
       expect((await store.readCheckpoint(scope)).fetchedToken, 'new-token');
-      // A repeated terminal transition cannot promote a second time or alter
+      // A repeated applied transition cannot promote a second time or alter
       // the already committed token.
       await store.markInboxApplied(
         scope,

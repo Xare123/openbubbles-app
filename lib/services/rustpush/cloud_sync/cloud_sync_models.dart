@@ -519,8 +519,8 @@ class CloudSyncCheckpoint {
   final bool hasUnmarkedPendingInbox;
   final int fetchedSequence;
 
-  /// Highest contiguous terminal inbox sequence. Applied and quarantined rows
-  /// advance it; pending and retryable rows continue to block it.
+  /// Highest contiguous safely acknowledged inbox sequence. Only rows
+  /// persisted as applied advance it; pending and quarantined rows block it.
   final int lastAppliedSequence;
   final int mutationRevisionCounter;
   final int consecutivePullFailures;
@@ -1076,13 +1076,28 @@ class CloudSyncRunRecord {
   final CloudFailureCategory? failureCategory;
 }
 
-enum CloudInboxApplyDisposition { applied, deferred, retryable, quarantined }
+enum CloudInboxApplyDisposition {
+  applied,
+  tombstoneReadOnlyAcknowledged,
+  deferred,
+  retryable,
+  quarantined,
+}
 
 class CloudInboxApplyResult {
   const CloudInboxApplyResult.applied({this.inboxStatusPersisted = false})
     : disposition = CloudInboxApplyDisposition.applied,
       failureCategory = null,
       retryAfter = null;
+
+  /// A server-confirmed tombstone was deliberately retained as protected
+  /// evidence because this build is not permitted to delete canonical state.
+  /// The engine may acknowledge only the inbox row as applied.
+  const CloudInboxApplyResult.tombstoneReadOnlyAcknowledged()
+    : disposition = CloudInboxApplyDisposition.tombstoneReadOnlyAcknowledged,
+      failureCategory = null,
+      retryAfter = null,
+      inboxStatusPersisted = false;
 
   const CloudInboxApplyResult.deferred({
     this.failureCategory = CloudFailureCategory.dependency,
@@ -1126,6 +1141,7 @@ class CloudSyncRunCounters {
     this.startupQuarantined = 0,
     this.postFetchQuarantined = 0,
     this.tombstoneQuarantined = 0,
+    this.tombstoneReadOnlyAcknowledged = 0,
     this.semanticUnsupportedServiceQuarantined = 0,
     this.semanticStageQuarantined = 0,
     this.confirmed = 0,
@@ -1153,6 +1169,7 @@ class CloudSyncRunCounters {
   final int startupQuarantined;
   final int postFetchQuarantined;
   final int tombstoneQuarantined;
+  final int tombstoneReadOnlyAcknowledged;
   final int semanticUnsupportedServiceQuarantined;
   final int semanticStageQuarantined;
   final int confirmed;
@@ -1178,6 +1195,7 @@ class CloudSyncRunCounters {
     int startupQuarantined = 0,
     int postFetchQuarantined = 0,
     int tombstoneQuarantined = 0,
+    int tombstoneReadOnlyAcknowledged = 0,
     int semanticUnsupportedServiceQuarantined = 0,
     int semanticStageQuarantined = 0,
     int confirmed = 0,
@@ -1204,6 +1222,8 @@ class CloudSyncRunCounters {
       startupQuarantined: this.startupQuarantined + startupQuarantined,
       postFetchQuarantined: this.postFetchQuarantined + postFetchQuarantined,
       tombstoneQuarantined: this.tombstoneQuarantined + tombstoneQuarantined,
+      tombstoneReadOnlyAcknowledged:
+          this.tombstoneReadOnlyAcknowledged + tombstoneReadOnlyAcknowledged,
       semanticUnsupportedServiceQuarantined:
           this.semanticUnsupportedServiceQuarantined +
           semanticUnsupportedServiceQuarantined,
@@ -1233,6 +1253,7 @@ class CloudSyncRunCounters {
     startupQuarantined: other.startupQuarantined,
     postFetchQuarantined: other.postFetchQuarantined,
     tombstoneQuarantined: other.tombstoneQuarantined,
+    tombstoneReadOnlyAcknowledged: other.tombstoneReadOnlyAcknowledged,
     semanticUnsupportedServiceQuarantined:
         other.semanticUnsupportedServiceQuarantined,
     semanticStageQuarantined: other.semanticStageQuarantined,

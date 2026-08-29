@@ -960,10 +960,10 @@ class TransactionalCloudInboxApplier
     if (entry.change.isTombstone && !_allowTombstones) {
       // Do not ask the native decoder for a reversible plaintext identity when
       // this build is forbidden to delete canonical state. The protected raw
-      // tombstone remains in the quarantined inbox for future reprocessing.
-      return const CloudInboxApplyResult.quarantined(
-        failureCategory: CloudFailureCategory.conflict,
-      );
+      // tombstone remains in the inbox as evidence; only its local journal row
+      // is acknowledged so it cannot block later, independent records.
+      _recordDiagnostic('tombstone_read_only_acknowledged');
+      return const CloudInboxApplyResult.tombstoneReadOnlyAcknowledged();
     }
     final CloudDecodedMutation decoded;
     try {

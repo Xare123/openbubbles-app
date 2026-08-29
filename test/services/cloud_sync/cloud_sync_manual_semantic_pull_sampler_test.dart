@@ -79,6 +79,7 @@ CloudSyncSemanticPullZoneReport _zoneReport({
   startupQuarantined: 0,
   postFetchQuarantined: 0,
   tombstoneQuarantined: 0,
+  tombstoneReadOnlyAcknowledged: 0,
   semanticUnsupportedServiceQuarantined: 0,
   semanticStageQuarantined: 0,
   retried: 0,
@@ -427,6 +428,7 @@ void main() {
         startupQuarantined: 1,
         postFetchQuarantined: 2,
         tombstoneQuarantined: 1,
+        tombstoneReadOnlyAcknowledged: 2,
         semanticUnsupportedServiceQuarantined: 1,
         semanticStageQuarantined: 0,
         retried: 0,
@@ -441,6 +443,7 @@ void main() {
         'postFetch': 2,
       });
       expect(json['tombstoneQuarantined'], 1);
+      expect(json['tombstoneReadOnlyAcknowledged'], 2);
       expect(json['semanticUnsupportedServiceQuarantined'], 1);
       expect(json['semanticDiagnostics'], <String, int>{
         'native_quarantined_unsupported_service': 1,
@@ -587,6 +590,11 @@ void main() {
         everyElement(<String, int>{'startup': 0, 'postFetch': 0}),
       );
       expect(report.zones.map((zone) => zone.tombstoneQuarantined), [0, 0, 0]);
+      expect(report.zones.map((zone) => zone.tombstoneReadOnlyAcknowledged), [
+        0,
+        0,
+        0,
+      ]);
       expect(
         report.zones.map((zone) => zone.semanticUnsupportedServiceQuarantined),
         [0, 0, 0],

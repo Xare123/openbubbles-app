@@ -193,8 +193,9 @@ Lease manifests and in-progress files live in dedicated `.leases` and `.temporar
 
 ObjectBox is the mark authority. Its complete snapshot includes native
 references from every inbox row, including pending, applied, and quarantined
-terminal rows, plus outbox rows, record maps, attachment materializations, and
-every protected checkpoint. Applied inbox rows are intentionally never
+rows. Quarantined rows remain nonterminal checkpoint barriers. The snapshot
+also includes outbox rows, record maps, attachment materializations, and every
+protected checkpoint. Applied inbox rows are intentionally never
 collectible until a separately reviewed compaction policy removes those rows.
 Enumeration runs in one ObjectBox read transaction and pages row materialization
 in batches of 1,024 to bound transient entity memory.

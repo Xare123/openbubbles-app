@@ -195,13 +195,14 @@ final class CloudKitV2QuarantineRepairResult {
       disposition == CloudKitV2QuarantineRepairDisposition.alreadyRepaired;
 }
 
-/// Local-only, opt-in repair lane for terminal semantic quarantines.
+/// Local-only, opt-in repair lane for semantic quarantines.
 ///
 /// The correction is materialized before the ObjectBox write transaction. A
-/// successful repair changes only canonical state, its semantic snapshot, and
-/// a new immutable receipt. A deterministic failure changes only the failure
-/// receipt; dependency and authorization failures remain retryable and do not
-/// create a permanent receipt.
+/// successful repair changes canonical state, its semantic snapshot, the
+/// repaired inbox state, and a new immutable receipt in one transaction. The
+/// original semantic replay evidence remains unchanged. A deterministic
+/// failure changes only the failure receipt; dependency and authorization
+/// failures remain retryable and do not create a permanent receipt.
 final class CloudKitV2QuarantineRepairGateway {
   CloudKitV2QuarantineRepairGateway({
     required Store store,
@@ -397,11 +398,28 @@ final class CloudKitV2QuarantineRepairGateway {
     );
   }
 
-  CloudInboxEntry _readTerminalEntryLocked(_RepairContext context) {
+  CloudInboxEntry _readTerminalEntryLocked(
+    _RepairContext context, {
+    bool allowRepairedApplied = false,
+  }) {
     final row = _findInboxByChangeKey(context.changeKey);
     if (row == null) throw _failure('quarantine_repair_inbox_missing');
     final replay = _findReplayByKey(context.replayKey);
-    _validateTerminalPair(context, row, replay);
+    _validateTerminalPair(
+      context,
+      row,
+      replay,
+      allowRepairedApplied: allowRepairedApplied,
+    );
+
+    final CloudInboxStatus status;
+    if (row.status == CloudInboxStatus.applied.index) {
+      status = CloudInboxStatus.applied;
+    } else if (row.status == CloudInboxStatus.quarantined.index) {
+      status = CloudInboxStatus.quarantined;
+    } else {
+      throw _failure('quarantine_repair_inbox_status_invalid');
+    }
 
     final changeType = switch (row.changeType) {
       'save' => CloudChangeType.save,
@@ -428,7 +446,7 @@ final class CloudKitV2QuarantineRepairGateway {
                 isUtc: true,
               ),
       ),
-      status: CloudInboxStatus.quarantined,
+      status: status,
       attemptCount: row.retryCount,
       createdAt: DateTime.fromMillisecondsSinceEpoch(
         row.createdAtMs,
@@ -453,7 +471,7 @@ final class CloudKitV2QuarantineRepairGateway {
     ObjectBoxCloudSemanticFence.validateEntryContext(
       entry: entry,
       leaseFence: context.leaseFence,
-      expectedInboxStatus: CloudInboxStatus.quarantined,
+      expectedInboxStatus: status,
     );
     return entry;
   }
@@ -467,7 +485,11 @@ final class CloudKitV2QuarantineRepairGateway {
       final existing = _findReceipt(context);
       if (existing != null) {
         _validateReceipt(context, existing);
-        final currentEntry = _readTerminalEntryLocked(context);
+        _rejectLegacyAdvancedQuarantineLocked(context);
+        final currentEntry = _readTerminalEntryLocked(
+          context,
+          allowRepairedApplied: existing.outcome == 'repaired',
+        );
         if (existing.outcome == 'repaired') {
           _validateExistingRepairedReceiptLocked(
             context,
@@ -482,7 +504,7 @@ final class CloudKitV2QuarantineRepairGateway {
           entry: currentEntry,
           leaseFence: context.leaseFence,
           nowMs: _clock().toUtc().millisecondsSinceEpoch,
-          expectedInboxStatus: CloudInboxStatus.quarantined,
+          expectedInboxStatus: currentEntry.status,
           canonicalAdapter: _canonicalAdapter,
         );
         return _resultFromReceipt(existing, existing: true);
@@ -639,9 +661,17 @@ final class CloudKitV2QuarantineRepairGateway {
         throw _failure('quarantine_repair_evidence_artifact_missing');
       }
       final receiptCreatedAtMs = _clock().toUtc().millisecondsSinceEpoch;
+      inbox!
+        ..status = CloudInboxStatus.applied.index
+        ..failureCategory = null
+        ..nextEligibleAtMs = 0
+        ..completedAtMs = receiptCreatedAtMs
+        ..updatedAtMs = receiptCreatedAtMs;
+      _inbox.put(inbox);
+      _advanceAppliedCheckpointLocked(context, receiptCreatedAtMs);
       final evidenceDigest = _CloudKitV2RepairEvidenceDigest.compute(
         context: context,
-        inbox: inbox!,
+        inbox: inbox,
         replay: replay!,
         outcome: 'repaired',
         failureCategory: null,
@@ -732,7 +762,11 @@ final class CloudKitV2QuarantineRepairGateway {
         if (existing != null) {
           try {
             _validateReceipt(context, existing);
-            final entry = _readTerminalEntryLocked(context);
+            _rejectLegacyAdvancedQuarantineLocked(context);
+            final entry = _readTerminalEntryLocked(
+              context,
+              allowRepairedApplied: existing.outcome == 'repaired',
+            );
             if (existing.outcome == 'repaired') {
               _validateExistingRepairedReceiptLocked(context, existing, entry);
             } else {
@@ -743,7 +777,7 @@ final class CloudKitV2QuarantineRepairGateway {
               entry: entry,
               leaseFence: context.leaseFence,
               nowMs: _clock().toUtc().millisecondsSinceEpoch,
-              expectedInboxStatus: CloudInboxStatus.quarantined,
+              expectedInboxStatus: entry.status,
               canonicalAdapter: _canonicalAdapter,
             );
             return _resultFromReceipt(existing, existing: true);
@@ -978,10 +1012,10 @@ final class CloudKitV2QuarantineRepairGateway {
     }
   }
 
-  /// A repaired predecessor remains quarantined by design: the original
-  /// evidence is immutable. It may satisfy ordering only when its exact
-  /// durable receipt still proves that original terminal pair, snapshot, map,
-  /// and canonical owner have not changed.
+  /// Applied predecessors are checkpoint-safe. A legacy quarantined
+  /// predecessor may satisfy ordering only when its exact durable receipt
+  /// still proves the original terminal pair, snapshot, map, and canonical
+  /// owner; new repairs atomically transition their inbox row to applied.
   void _validatePredecessorsLocked(
     _RepairContext context,
     CloudInboxEntry entry,
@@ -1002,8 +1036,20 @@ final class CloudKitV2QuarantineRepairGateway {
         checkpoint.schemaVersion != context.scope.schemaVersion ||
         checkpoint.persistenceLane != context.scope.persistenceLane.name ||
         checkpoint.generation != context.generation ||
-        checkpoint.fetchedSequence < entry.sequence ||
-        checkpoint.appliedSequence < entry.sequence) {
+        checkpoint.fetchedSequence < entry.sequence) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'quarantine_repair_checkpoint_sequence_unproven',
+      );
+    }
+    if (_hasLegacyAdvancedQuarantineLocked(context, checkpoint)) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode:
+            'quarantine_repair_legacy_checkpoint_advanced_past_quarantine',
+      );
+    }
+    if (checkpoint.appliedSequence >= entry.sequence) {
       throw CloudSyncFailure(
         category: CloudFailureCategory.dependency,
         safeCode: 'quarantine_repair_checkpoint_sequence_unproven',
@@ -1095,6 +1141,117 @@ final class CloudKitV2QuarantineRepairGateway {
     }
   }
 
+  bool _hasLegacyAdvancedQuarantineLocked(
+    _RepairContext context,
+    CloudSyncCheckpointEntity checkpoint,
+  ) {
+    if (checkpoint.appliedSequence <= 0) return false;
+    final query =
+        _inbox
+            .query(
+              CloudInboxChangeEntity_.scopeKey
+                  .equals(context.scopeKey)
+                  .and(
+                    CloudInboxChangeEntity_.generation.equals(
+                      context.generation,
+                    ),
+                  )
+                  .and(
+                    CloudInboxChangeEntity_.status.equals(
+                      CloudInboxStatus.quarantined.index,
+                    ),
+                  )
+                  .and(
+                    CloudInboxChangeEntity_.fetchSequence.lessThan(
+                      checkpoint.appliedSequence + 1,
+                    ),
+                  ),
+            )
+            .build()
+          ..limit = 1;
+    try {
+      return query.findFirst() != null;
+    } finally {
+      query.close();
+    }
+  }
+
+  void _rejectLegacyAdvancedQuarantineLocked(_RepairContext context) {
+    final checkpoint = _findCheckpoint(context);
+    if (checkpoint != null &&
+        _hasLegacyAdvancedQuarantineLocked(context, checkpoint)) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode:
+            'quarantine_repair_legacy_checkpoint_advanced_past_quarantine',
+      );
+    }
+  }
+
+  void _advanceAppliedCheckpointLocked(_RepairContext context, int nowMs) {
+    final checkpoint = _findCheckpoint(context);
+    if (checkpoint == null ||
+        checkpoint.accountFingerprint != context.scope.accountFingerprint ||
+        checkpoint.container != context.scope.container ||
+        checkpoint.database != context.scope.database ||
+        checkpoint.zone != context.scope.zone ||
+        checkpoint.streamKind != context.scope.streamKind.name ||
+        checkpoint.schemaVersion != context.scope.schemaVersion ||
+        checkpoint.persistenceLane != context.scope.persistenceLane.name ||
+        checkpoint.generation != context.generation ||
+        checkpoint.appliedSequence < 0 ||
+        checkpoint.appliedSequence > checkpoint.fetchedSequence) {
+      throw _failure('quarantine_repair_checkpoint_sequence_unproven');
+    }
+
+    var next = checkpoint.appliedSequence + 1;
+    while (next <= checkpoint.fetchedSequence) {
+      final rows = _findInboxAtSequence(context, next);
+      if (rows.length != 1 ||
+          rows.single.status != CloudInboxStatus.applied.index) {
+        break;
+      }
+      next++;
+    }
+    final appliedThrough = next - 1;
+    if (appliedThrough != checkpoint.appliedSequence) {
+      checkpoint
+        ..appliedSequence = appliedThrough
+        ..updatedAtMs = nowMs;
+      _store.box<CloudSyncCheckpointEntity>().put(checkpoint);
+    }
+
+    final pendingBatchId = checkpoint.pendingBatchId;
+    if (pendingBatchId == null) return;
+    final query = _inbox
+        .query(
+          CloudInboxChangeEntity_.scopeKey
+              .equals(context.scopeKey)
+              .and(
+                CloudInboxChangeEntity_.generation.equals(context.generation),
+              )
+              .and(CloudInboxChangeEntity_.batchId.equals(pendingBatchId)),
+        )
+        .build();
+    final rows = <CloudInboxChangeEntity>[];
+    try {
+      rows.addAll(query.find());
+    } finally {
+      query.close();
+    }
+    if (rows.isEmpty ||
+        rows.any((row) => row.status != CloudInboxStatus.applied.index)) {
+      return;
+    }
+    if (checkpoint.pendingBatchId != pendingBatchId) return;
+    checkpoint
+      ..fetchedTokenCiphertext = checkpoint.pendingFetchedTokenCiphertext
+      ..pendingFetchedTokenCiphertext = null
+      ..pendingBatchId = null
+      ..updatedAtMs = nowMs;
+    _store.box<CloudSyncCheckpointEntity>().put(checkpoint);
+  }
+
   CloudKitV2QuarantineRepairResult _revalidateExistingReceipt(
     _RepairContext context,
     CloudKitV2QuarantineRepairReceiptEntity receipt,
@@ -1109,7 +1266,11 @@ final class CloudKitV2QuarantineRepairGateway {
     try {
       _validateReceipt(context, receipt);
       _store.runInTransaction(TxMode.read, () {
-        final entry = _readTerminalEntryLocked(context);
+        _rejectLegacyAdvancedQuarantineLocked(context);
+        final entry = _readTerminalEntryLocked(
+          context,
+          allowRepairedApplied: receipt.outcome == 'repaired',
+        );
         if (receipt.outcome == 'repaired') {
           _validateExistingRepairedReceiptLocked(context, receipt, entry);
         } else {
@@ -1120,7 +1281,7 @@ final class CloudKitV2QuarantineRepairGateway {
           entry: entry,
           leaseFence: context.leaseFence,
           nowMs: _clock().toUtc().millisecondsSinceEpoch,
-          expectedInboxStatus: CloudInboxStatus.quarantined,
+          expectedInboxStatus: entry.status,
           canonicalAdapter: _canonicalAdapter,
         );
       });
@@ -1666,6 +1827,7 @@ final class CloudKitV2QuarantineRepairGateway {
     CloudInboxChangeEntity? inbox,
     CloudSemanticReplayEntity? replay, {
     CloudInboxEntry? expectedEntry,
+    bool allowRepairedApplied = false,
   }) {
     if (inbox == null || replay == null) {
       throw _failure('quarantine_repair_terminal_pair_missing');
@@ -1675,13 +1837,17 @@ final class CloudKitV2QuarantineRepairGateway {
         expectedEntry?.change.recordIdHash ?? inbox.serverRecordIdHash;
     final expectedPayloadSha256 =
         expectedEntry?.change.payloadSha256 ?? inbox.payloadSha256;
+    final inboxIsQuarantined =
+        inbox.status == CloudInboxStatus.quarantined.index;
+    final inboxIsRepairedApplied =
+        allowRepairedApplied && inbox.status == CloudInboxStatus.applied.index;
     if (inbox.changeKey != context.changeKey ||
         inbox.changeIdHash != context.changeIdHash ||
         inbox.scopeKey != context.scopeKey ||
         inbox.accountFingerprint != scope.accountFingerprint ||
         inbox.zone != scope.zone ||
         inbox.generation != context.generation ||
-        inbox.status != CloudInboxStatus.quarantined.index ||
+        (!inboxIsQuarantined && !inboxIsRepairedApplied) ||
         inbox.changeType != CloudChangeType.save.name ||
         inbox.isTombstone ||
         inbox.completedAtMs == 0 ||
@@ -1705,8 +1871,10 @@ final class CloudKitV2QuarantineRepairGateway {
         replay.inboxSequence != inbox.fetchSequence ||
         replay.changeType != CloudChangeType.save.name ||
         replay.terminalOutcome != 'quarantined' ||
-        inbox.failureCategory !=
-            context.correction.expectedOriginalQuarantineReason.name ||
+        (inboxIsQuarantined &&
+            inbox.failureCategory !=
+                context.correction.expectedOriginalQuarantineReason.name) ||
+        (inboxIsRepairedApplied && inbox.failureCategory != null) ||
         replay.terminalSafeCode !=
             context.correction.expectedOriginalTerminalSafeCode) {
       throw _failure('quarantine_repair_terminal_pair_invalid');
@@ -1722,7 +1890,8 @@ final class CloudKitV2QuarantineRepairGateway {
     CloudSemanticReplayEntity replay,
   ) {
     final change = expected.change;
-    if (expected.status != CloudInboxStatus.quarantined ||
+    if ((expected.status != CloudInboxStatus.quarantined &&
+            expected.status != CloudInboxStatus.applied) ||
         expected.completedAt == null ||
         inbox.changeIdHash != change.changeId ||
         inbox.serverRecordIdHash != change.recordIdHash ||
@@ -1788,9 +1957,12 @@ final class CloudKitV2QuarantineRepairGateway {
         receipt.evidenceDigestSha256 == null ||
         !RegExp(r'^[0-9a-f]{64}$').hasMatch(receipt.evidenceDigestSha256!) ||
         (receipt.outcome == 'repaired' &&
-            receipt.logicalEntityKeyHash == null) ||
+            (receipt.logicalEntityKeyHash == null ||
+                receipt.failureCategory != null ||
+                receipt.safeCode != null)) ||
         (receipt.outcome == 'failed' &&
-            (receipt.failureCategory == null ||
+            (receipt.logicalEntityKeyHash != null ||
+                receipt.failureCategory == null ||
                 !_isTerminalFailureCategory(receipt.failureCategory!) ||
                 receipt.safeCode == null ||
                 !_safeCodePattern.hasMatch(receipt.safeCode!)))) {
@@ -1929,7 +2101,7 @@ final class CloudKitV2QuarantineRepairGateway {
 final class _CloudKitV2RepairEvidenceDigest {
   const _CloudKitV2RepairEvidenceDigest._();
 
-  static const version = 'cloudkit-quarantine-repair-evidence-v1';
+  static const version = 'cloudkit-quarantine-repair-evidence-v2';
 
   static String compute({
     required _RepairContext context,

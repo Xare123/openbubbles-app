@@ -296,7 +296,6 @@ class InMemoryCloudSyncStore
       final entry = _requireInboxEntry(scope, sequence);
       if (entry.status == CloudInboxStatus.quarantined &&
           entry.lastFailure == category) {
-        _advanceContiguousAppliedPosition(scope);
         return;
       }
       if (entry.status != CloudInboxStatus.pending) {
@@ -312,7 +311,6 @@ class InMemoryCloudSyncStore
         completedAt: now,
         clearNextEligibleAt: true,
       );
-      _advanceContiguousAppliedPosition(scope);
     });
   }
 
@@ -1156,10 +1154,16 @@ class InMemoryCloudSyncStore
     CloudSyncCheckpoint checkpoint,
   ) {
     if (checkpoint.pendingBatchId != null) return false;
+    // Without a pending-page marker, any fetched/applied sequence gap is a
+    // legacy or corrupt checkpoint. The missing row may not be queryable, so
+    // looking only for a non-applied row is insufficient.
+    if (checkpoint.fetchedSequence > checkpoint.lastAppliedSequence) {
+      return true;
+    }
     return _inbox[scope.storageKey]?.values.any(
           (entry) =>
               entry.generation == checkpoint.generation &&
-              entry.status == CloudInboxStatus.pending,
+              entry.status != CloudInboxStatus.applied,
         ) ??
         false;
   }
@@ -1179,7 +1183,7 @@ class InMemoryCloudSyncStore
     var checkpoint = _checkpoint(scope);
     final entries = _inbox[scope.storageKey];
     var next = checkpoint.lastAppliedSequence + 1;
-    while (_isTerminalInboxStatus(entries?[next]?.status)) {
+    while (_isAppliedInboxStatus(entries?[next]?.status)) {
       next++;
     }
     final appliedThrough = next - 1;
@@ -1196,7 +1200,7 @@ class InMemoryCloudSyncStore
     );
     if (pendingEntries == null ||
         pendingEntries.isEmpty ||
-        pendingEntries.any((entry) => !_isTerminalInboxStatus(entry.status))) {
+        pendingEntries.any((entry) => !_isAppliedInboxStatus(entry.status))) {
       return;
     }
     _checkpoints[scope.storageKey] = checkpoint.copyWith(
@@ -1207,9 +1211,8 @@ class InMemoryCloudSyncStore
     _pendingFetchedTokens.remove(scope.storageKey);
   }
 
-  bool _isTerminalInboxStatus(CloudInboxStatus? status) =>
-      status == CloudInboxStatus.applied ||
-      status == CloudInboxStatus.quarantined;
+  bool _isAppliedInboxStatus(CloudInboxStatus? status) =>
+      status == CloudInboxStatus.applied;
 
   int _recoverExpiredOutboxLeasesLocked(CloudSyncScope scope, DateTime now) {
     final entries = _outbox[scope.storageKey];

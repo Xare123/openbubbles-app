@@ -21,6 +21,7 @@ CloudSyncSemanticPullZoneReport _zone(
   int startupQuarantined = 0,
   int postFetchQuarantined = 1,
   int tombstoneQuarantined = 0,
+  int tombstoneReadOnlyAcknowledged = 0,
   int semanticUnsupportedServiceQuarantined = 0,
   int semanticStageQuarantined = 1,
   int retried = 0,
@@ -28,30 +29,29 @@ CloudSyncSemanticPullZoneReport _zone(
     'canonical_chat_relation_unavailable': 1,
     'native_ready': 1,
   },
-}) =>
-    CloudSyncSemanticPullZoneReport(
-      zoneLabel: label,
-      status: CloudSyncRunStatus.completed,
-      fetched: fetched,
-      applied: applied,
-      deferred: deferred,
-      quarantined: quarantined,
-      preflightQuarantined: preflightQuarantined,
-      preflightUnsupportedRecordType: preflightUnsupportedRecordType,
-      preflightMalformedMetadata: preflightMalformedMetadata,
-      preflightOversizedRecord: preflightOversizedRecord,
-      preflightInvalidChangeShape: preflightInvalidChangeShape,
-      preflightUnknown: preflightUnknown,
-      startupQuarantined: startupQuarantined,
-      postFetchQuarantined: postFetchQuarantined,
-      tombstoneQuarantined: tombstoneQuarantined,
-      semanticUnsupportedServiceQuarantined:
-          semanticUnsupportedServiceQuarantined,
-      semanticStageQuarantined: semanticStageQuarantined,
-      retried: retried,
-      elapsedMilliseconds: 5,
-      diagnosticCounts: diagnosticCounts,
-    );
+}) => CloudSyncSemanticPullZoneReport(
+  zoneLabel: label,
+  status: CloudSyncRunStatus.completed,
+  fetched: fetched,
+  applied: applied,
+  deferred: deferred,
+  quarantined: quarantined,
+  preflightQuarantined: preflightQuarantined,
+  preflightUnsupportedRecordType: preflightUnsupportedRecordType,
+  preflightMalformedMetadata: preflightMalformedMetadata,
+  preflightOversizedRecord: preflightOversizedRecord,
+  preflightInvalidChangeShape: preflightInvalidChangeShape,
+  preflightUnknown: preflightUnknown,
+  startupQuarantined: startupQuarantined,
+  postFetchQuarantined: postFetchQuarantined,
+  tombstoneQuarantined: tombstoneQuarantined,
+  tombstoneReadOnlyAcknowledged: tombstoneReadOnlyAcknowledged,
+  semanticUnsupportedServiceQuarantined: semanticUnsupportedServiceQuarantined,
+  semanticStageQuarantined: semanticStageQuarantined,
+  retried: retried,
+  elapsedMilliseconds: 5,
+  diagnosticCounts: diagnosticCounts,
+);
 
 CloudSyncSemanticPullReport _report(
   DateTime timestamp, {
@@ -75,10 +75,7 @@ CloudSyncSemanticPullReport _report(
       fetched: chatFetched,
       diagnosticCounts:
           chatDiagnosticCounts ??
-          const {
-            'canonical_chat_relation_unavailable': 1,
-            'native_ready': 1,
-          },
+          const {'canonical_chat_relation_unavailable': 1, 'native_ready': 1},
     ),
     _zone('messages'),
     _zone('attachments'),
@@ -109,7 +106,10 @@ void main() {
 
     expect(file.path, contains('obcs2-semantic-'));
     final json = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-    expect(json['schemaVersion'], 2);
+    expect(json['schemaVersion'], 3);
+    expect(json['tombstoneSemanticDeletesEnabled'], isFalse);
+    expect(json['tombstoneReadOnlyAcknowledgementsEnabled'], isTrue);
+    expect(json, isNot(contains('tombstonesEnabled')));
     final zones = json['zones'] as List<dynamic>;
     expect(
       (zones.first as Map<String, dynamic>)['semanticDiagnostics'],
@@ -202,6 +202,7 @@ void main() {
       _zone('chats', startupQuarantined: 201),
       _zone('chats', postFetchQuarantined: 201),
       _zone('chats', tombstoneQuarantined: 201),
+      _zone('chats', tombstoneReadOnlyAcknowledged: 201),
       _zone('chats', semanticUnsupportedServiceQuarantined: 201),
       _zone('chats', semanticStageQuarantined: 201),
     ];
@@ -235,9 +236,7 @@ void main() {
     final file = await writer.write(
       _report(
         DateTime.utc(2026, 8, 29, 1, 2, 3),
-        chatDiagnosticCounts: const {
-          'projection_repaired_chat_alias': 74,
-        },
+        chatDiagnosticCounts: const {'projection_repaired_chat_alias': 74},
       ),
     );
     final json = jsonDecode(await file.readAsString()) as Map<String, dynamic>;

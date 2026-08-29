@@ -310,9 +310,7 @@ void main() {
         batchSize: 50,
         maximumFetchPagesPerRun: 4,
         maximumInboxEntriesPerRun: 200,
-      ).synchronize(
-        trigger: CloudSyncTrigger.manual,
-      );
+      ).synchronize(trigger: CloudSyncTrigger.manual);
 
       expect(result.status, CloudSyncRunStatus.completed);
       expect(result.counters.fetched, 4);
@@ -481,7 +479,7 @@ void main() {
   );
 
   test(
-    'legacy unmarked pending page blocks transport until its row is terminal',
+    'legacy unmarked pending page blocks transport until its row is applied',
     () async {
       await seedShadowJournal(
         CloudFetchBatch(
@@ -512,6 +510,57 @@ void main() {
       expect(checkpoint.fetchedToken, 'legacy-advanced-token');
       expect(checkpoint.hasUnmarkedPendingInbox, isTrue);
       expect(checkpoint.lastAppliedSequence, 0);
+    },
+  );
+
+  test(
+    'legacy advanced checkpoint with retained quarantine fails closed before fetch',
+    () async {
+      await seedShadowJournal(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1)],
+          batchId: 'legacy-quarantined-page',
+          generation: 1,
+          nextToken: 'legacy-advanced-token',
+          hasMore: true,
+        ),
+        now: clock.value,
+      );
+      final fence = (await store.tryAcquireCoordinatorLease(
+        scope,
+        ownerId: 'legacy-quarantine-seed',
+        now: clock.value,
+        leaseDuration: const Duration(minutes: 5),
+      ))!;
+      await store.quarantineInbox(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.malformedRecord,
+        now: clock.value,
+        leaseFence: fence,
+      );
+      await store.releaseCoordinatorLease(scope, leaseFence: fence);
+
+      transport.fetchHandler = (scope, token, generation, limit) async {
+        fail('transport must remain fenced for a retained quarantine');
+      };
+
+      final result = await engine().synchronize(
+        trigger: CloudSyncTrigger.startup,
+      );
+
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.failureCategory, CloudFailureCategory.dependency);
+      expect(transport.fetchCallCount, 0);
+      final checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.fetchedToken, 'legacy-advanced-token');
+      expect(checkpoint.hasUnmarkedPendingInbox, isTrue);
+      expect(checkpoint.lastAppliedSequence, 0);
+      expect(
+        (await store.inboxEntries(scope)).single.status,
+        CloudInboxStatus.quarantined,
+      );
     },
   );
 
@@ -705,7 +754,7 @@ void main() {
   );
 
   test(
-    'quarantine stages survive startup and post-fetch aggregation',
+    'startup quarantine blocks later fetch and preserves phase aggregation',
     () async {
       await seedGeneralJournal(
         CloudFetchBatch(
@@ -745,7 +794,7 @@ void main() {
         maximumInboxEntriesPerRun: 3,
       ).synchronize(trigger: CloudSyncTrigger.manual);
 
-      expect(result.counters.quarantined, 3);
+      expect(result.counters.quarantined, 1);
       expect(result.counters.preflightQuarantined, 1);
       expect(result.counters.preflightInvalidChangeShape, 1);
       expect(result.counters.preflightUnsupportedRecordType, 0);
@@ -753,10 +802,12 @@ void main() {
       expect(result.counters.preflightOversizedRecord, 0);
       expect(result.counters.preflightUnknown, 0);
       expect(result.counters.startupQuarantined, 1);
-      expect(result.counters.postFetchQuarantined, 2);
-      expect(result.counters.tombstoneQuarantined, 1);
-      expect(result.counters.semanticUnsupportedServiceQuarantined, 1);
+      expect(result.counters.postFetchQuarantined, 0);
+      expect(result.counters.tombstoneQuarantined, 0);
+      expect(result.counters.semanticUnsupportedServiceQuarantined, 0);
       expect(result.counters.semanticStageQuarantined, 0);
+      expect(transport.fetchCallCount, 0);
+      expect(applier.appliedSequences, isEmpty);
       expect(
         result.counters.preflightQuarantined +
             result.counters.tombstoneQuarantined +
@@ -1133,7 +1184,7 @@ void main() {
   });
 
   test(
-    'terminal quarantine advances the floor without dropping later data',
+    'generic quarantine blocks later rows and page-token promotion',
     () async {
       transport.enqueueFetchBatch(
         CloudFetchBatch(
@@ -1157,16 +1208,18 @@ void main() {
       expect(result.counters.semanticStageQuarantined, 1);
       expect(result.counters.preflightQuarantined, 0);
       expect(result.counters.tombstoneQuarantined, 0);
-      expect(result.counters.applied, 1);
-      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 2);
+      expect(result.counters.applied, 0);
+      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 0);
+      expect((await store.readCheckpoint(scope)).fetchedToken, isNull);
+      expect(applier.appliedSequences, [1]);
       final entries = await store.inboxEntries(scope);
       expect(entries[0].status, CloudInboxStatus.quarantined);
-      expect(entries[1].status, CloudInboxStatus.applied);
+      expect(entries[1].status, CloudInboxStatus.pending);
     },
   );
 
   test(
-    'unsupported-service quarantine advances mixed terminal history idempotently',
+    'read-only tombstone acknowledgement advances mixed history idempotently',
     () async {
       transport.enqueueFetchBatch(
         CloudFetchBatch(
@@ -1182,26 +1235,29 @@ void main() {
           hasMore: false,
         ),
       );
-      applier.resultsBySequence[1] = const CloudInboxApplyResult.quarantined(
-        failureCategory: CloudFailureCategory.unsupportedService,
-      );
-      applier.resultsBySequence[2] = const CloudInboxApplyResult.quarantined(
-        failureCategory: CloudFailureCategory.conflict,
-      );
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.applied();
+      applier.resultsBySequence[2] =
+          const CloudInboxApplyResult.tombstoneReadOnlyAcknowledged();
+      applier.resultsBySequence[3] = const CloudInboxApplyResult.applied();
 
       final first = await engine().synchronize(
         trigger: CloudSyncTrigger.manual,
       );
 
-      expect(first.counters.quarantined, 2);
-      expect(first.counters.semanticUnsupportedServiceQuarantined, 1);
-      expect(first.counters.tombstoneQuarantined, 1);
+      expect(first.counters.quarantined, 0);
+      expect(first.counters.semanticUnsupportedServiceQuarantined, 0);
+      expect(first.counters.tombstoneQuarantined, 0);
+      expect(first.counters.tombstoneReadOnlyAcknowledged, 1);
       expect(first.counters.semanticStageQuarantined, 0);
-      expect(first.counters.applied, 1);
+      expect(first.counters.applied, 2);
       expect((await store.readCheckpoint(scope)).lastAppliedSequence, 3);
+      expect(
+        (await store.readCheckpoint(scope)).fetchedToken,
+        'mixed-terminal-token',
+      );
       expect((await store.inboxEntries(scope)).map((entry) => entry.status), [
-        CloudInboxStatus.quarantined,
-        CloudInboxStatus.quarantined,
+        CloudInboxStatus.applied,
+        CloudInboxStatus.applied,
         CloudInboxStatus.applied,
       ]);
 
@@ -1213,6 +1269,7 @@ void main() {
       expect(second.counters.quarantined, 0);
       expect(second.counters.semanticUnsupportedServiceQuarantined, 0);
       expect(second.counters.tombstoneQuarantined, 0);
+      expect(second.counters.tombstoneReadOnlyAcknowledged, 0);
       expect(second.counters.semanticStageQuarantined, 0);
       expect(applier.appliedSequences.length, appliedCallCount);
       expect((await store.readCheckpoint(scope)).lastAppliedSequence, 3);

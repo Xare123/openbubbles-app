@@ -165,7 +165,7 @@ void main() {
     },
   );
 
-  test('promotes a pending page token with its final terminal row', () async {
+  test('promotes a pending page token with its final applied row', () async {
     final entry = _entry(scope: scope);
     _seedDurableFence(
       objectBox,
@@ -193,7 +193,7 @@ void main() {
   });
 
   test(
-    'does not promote a page token while a sibling row is pending',
+    'does not promote a page token while a sibling row is quarantined',
     () async {
       final entry = _entry(scope: scope);
       _seedDurableFence(
@@ -210,7 +210,8 @@ void main() {
               changeKey: _scopedDigest(scope, 'change', siblingChangeId),
             )
             ..changeIdHash = siblingChangeId
-            ..fetchSequence = 2;
+            ..fetchSequence = 2
+            ..status = CloudInboxStatus.quarantined.index;
       inboxBox.put(sibling);
       final checkpoint =
           objectBox.box<CloudSyncCheckpointEntity>().getAll().single
@@ -235,7 +236,7 @@ void main() {
       expect(retained.pendingBatchId, entry.batchId);
       expect(
         inboxBox.getAll().where((row) => row.fetchSequence == 2).single.status,
-        CloudInboxStatus.pending.index,
+        CloudInboxStatus.quarantined.index,
       );
     },
   );
@@ -1396,7 +1397,7 @@ void main() {
           .getAll()
           .single
           .appliedSequence,
-      1,
+      0,
     );
   });
 

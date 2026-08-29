@@ -194,13 +194,15 @@ in this exact zone order: chats, messages, attachments. Each zone is bounded to
 four pages of 50 changes, or 200 records total. This canary may project chats,
 messages, reactions, and attachment metadata into the isolated Beta ObjectBox
 profile. It must not download media bodies or apply profiles, display clears,
-group photos, or tombstones.
+group photos, or tombstones. Disabled tombstones are retained as protected,
+read-only acknowledgements and do not delete canonical local state.
 
 The UI may report `Cloud Sync V2 Complete` only when all three zones report
 `completed`, no zone is skipped, deferred, quarantined, or retried counts are
-zero, and the remote-write/outbox tripwire remains zero. Any other outcome is
-`Cloud Sync V2 Stopped Safely`; preserve the redacted report and do not repeat
-until the cause is understood.
+zero, and the remote-write/outbox tripwire remains zero. The separate
+read-only-tombstone acknowledgement count is expected evidence, not a
+quarantine failure. Any other outcome is `Cloud Sync V2 Stopped Safely`;
+preserve the redacted report and do not repeat until the cause is understood.
 
 Immediately run the semantic pull once more in the same account session. The
 replay must create zero duplicate logical records, retain monotonic state, and

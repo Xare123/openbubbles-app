@@ -427,6 +427,8 @@ class CloudSyncEngine {
           preflightUnknown: startupApply.counters.preflightUnknown,
           startupQuarantined: startupApply.counters.quarantined,
           tombstoneQuarantined: startupApply.counters.tombstoneQuarantined,
+          tombstoneReadOnlyAcknowledged:
+              startupApply.counters.tombstoneReadOnlyAcknowledged,
           semanticUnsupportedServiceQuarantined:
               startupApply.counters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
@@ -449,6 +451,8 @@ class CloudSyncEngine {
           preflightUnknown: startupApply.counters.preflightUnknown,
           startupQuarantined: startupApply.counters.quarantined,
           tombstoneQuarantined: startupApply.counters.tombstoneQuarantined,
+          tombstoneReadOnlyAcknowledged:
+              startupApply.counters.tombstoneReadOnlyAcknowledged,
           semanticUnsupportedServiceQuarantined:
               startupApply.counters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
@@ -499,6 +503,8 @@ class CloudSyncEngine {
           preflightUnknown: pullResult.semanticCounters.preflightUnknown,
           tombstoneQuarantined:
               pullResult.semanticCounters.tombstoneQuarantined,
+          tombstoneReadOnlyAcknowledged:
+              pullResult.semanticCounters.tombstoneReadOnlyAcknowledged,
           semanticUnsupportedServiceQuarantined:
               pullResult.semanticCounters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
@@ -524,6 +530,8 @@ class CloudSyncEngine {
           preflightUnknown: pullResult.semanticCounters.preflightUnknown,
           tombstoneQuarantined:
               pullResult.semanticCounters.tombstoneQuarantined,
+          tombstoneReadOnlyAcknowledged:
+              pullResult.semanticCounters.tombstoneReadOnlyAcknowledged,
           semanticUnsupportedServiceQuarantined:
               pullResult.semanticCounters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
@@ -559,6 +567,8 @@ class CloudSyncEngine {
           preflightUnknown: postFetchApply.counters.preflightUnknown,
           postFetchQuarantined: postFetchApply.counters.quarantined,
           tombstoneQuarantined: postFetchApply.counters.tombstoneQuarantined,
+          tombstoneReadOnlyAcknowledged:
+              postFetchApply.counters.tombstoneReadOnlyAcknowledged,
           semanticUnsupportedServiceQuarantined:
               postFetchApply.counters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
@@ -581,6 +591,8 @@ class CloudSyncEngine {
           preflightUnknown: postFetchApply.counters.preflightUnknown,
           postFetchQuarantined: postFetchApply.counters.quarantined,
           tombstoneQuarantined: postFetchApply.counters.tombstoneQuarantined,
+          tombstoneReadOnlyAcknowledged:
+              postFetchApply.counters.tombstoneReadOnlyAcknowledged,
           semanticUnsupportedServiceQuarantined:
               postFetchApply.counters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
@@ -1010,6 +1022,8 @@ class CloudSyncEngine {
               pageApply.counters.preflightInvalidChangeShape,
           preflightUnknown: pageApply.counters.preflightUnknown,
           tombstoneQuarantined: pageApply.counters.tombstoneQuarantined,
+          tombstoneReadOnlyAcknowledged:
+              pageApply.counters.tombstoneReadOnlyAcknowledged,
           semanticUnsupportedServiceQuarantined:
               pageApply.counters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined: pageApply.counters.semanticStageQuarantined,
@@ -1017,8 +1031,8 @@ class CloudSyncEngine {
         );
         semanticProcessedEntries += pageApply.processedEntries;
         checkpoint = await _store.readCheckpoint(scope);
-        // A retryable/deferred predecessor keeps the committed token at the
-        // prior page. Do not fetch another page until this page is terminal.
+        // Any non-applied predecessor keeps the committed token at the prior
+        // page. Do not fetch another page until every row is applied.
         if (checkpoint.pendingBatchId != null ||
             semanticProcessedEntries >= maximumInboxEntries) {
           break;
@@ -1152,6 +1166,24 @@ class CloudSyncEngine {
           counters = counters.add(applied: 1);
           canApplyNextSequence = true;
           break;
+        case CloudInboxApplyDisposition.tombstoneReadOnlyAcknowledged:
+          if (!entry.change.isTombstone || preflightFailure != null) {
+            throw CloudSyncFailure(
+              category: CloudFailureCategory.localStorage,
+              safeCode: 'tombstone_read_only_acknowledgement_invalid',
+            );
+          }
+          if (!result.inboxStatusPersisted) {
+            await _store.markInboxApplied(
+              scope,
+              sequence: entry.sequence,
+              now: now,
+              leaseFence: _requireActiveLeaseFence(),
+            );
+          }
+          counters = counters.add(tombstoneReadOnlyAcknowledged: 1);
+          canApplyNextSequence = true;
+          break;
         case CloudInboxApplyDisposition.deferred:
         case CloudInboxApplyDisposition.retryable:
           final category =
@@ -1176,7 +1208,6 @@ class CloudSyncEngine {
               entry,
               category: category,
             );
-            canApplyNextSequence = true;
             break;
           }
           final nextEligibleAt = _backoff.nextEligibleAt(
@@ -1217,10 +1248,10 @@ class CloudSyncEngine {
             entry,
             category: result.failureCategory ?? CloudFailureCategory.unknown,
           );
-          canApplyNextSequence = true;
           break;
       }
-      // A pending/deferred/retryable predecessor remains the causal barrier.
+      // A pending/deferred/retryable/quarantined predecessor remains the
+      // causal barrier.
       // Do not let a later journal row mutate canonical state in this run.
       if (!canApplyNextSequence) break;
     }

@@ -820,7 +820,6 @@ class ObjectBoxCloudSyncStore
       final status = _inboxStatusFromInt(entity.status);
       if (status == CloudInboxStatus.quarantined &&
           entity.failureCategory == category.name) {
-        _promotePendingFetchedTokenIfTerminalLocked(scope, transactionNowMs);
         return;
       }
       if (status != CloudInboxStatus.pending) {
@@ -834,7 +833,6 @@ class ObjectBoxCloudSyncStore
         ..completedAtMs = transactionNowMs
         ..updatedAtMs = transactionNowMs;
       _inbox.put(entity);
-      _advanceContiguousAppliedLocked(scope, transactionNowMs);
     });
   }
 
@@ -2131,7 +2129,7 @@ class ObjectBoxCloudSyncStore
     while (true) {
       final entity = _findInboxBySequenceLocked(scope, next);
       if (entity == null ||
-          !_isTerminalInboxStatus(_inboxStatusFromInt(entity.status))) {
+          !_isAppliedInboxStatus(_inboxStatusFromInt(entity.status))) {
         break;
       }
       next++;
@@ -2189,11 +2187,6 @@ class ObjectBoxCloudSyncStore
                     CloudInboxChangeEntity_.status.notEquals(
                       _inboxStatusToInt(CloudInboxStatus.applied),
                     ),
-                  )
-                  .and(
-                    CloudInboxChangeEntity_.status.notEquals(
-                      _inboxStatusToInt(CloudInboxStatus.quarantined),
-                    ),
                   ),
             )
             .build()
@@ -2221,6 +2214,10 @@ class ObjectBoxCloudSyncStore
     CloudSyncCheckpointEntity checkpoint,
   ) {
     if (checkpoint.pendingBatchId != null) return false;
+    // A missing sequence has no row for the query below to discover. Treat
+    // every unmarked fetched/applied gap as unsafe legacy state and require an
+    // explicit recovery path instead of advancing a continuation token.
+    if (checkpoint.fetchedSequence > checkpoint.appliedSequence) return true;
     final query =
         _inbox
             .query(
@@ -2232,8 +2229,8 @@ class ObjectBoxCloudSyncStore
                     ),
                   )
                   .and(
-                    CloudInboxChangeEntity_.status.equals(
-                      _inboxStatusToInt(CloudInboxStatus.pending),
+                    CloudInboxChangeEntity_.status.notEquals(
+                      _inboxStatusToInt(CloudInboxStatus.applied),
                     ),
                   ),
             )
@@ -2246,9 +2243,8 @@ class ObjectBoxCloudSyncStore
     }
   }
 
-  bool _isTerminalInboxStatus(CloudInboxStatus status) =>
-      status == CloudInboxStatus.applied ||
-      status == CloudInboxStatus.quarantined;
+  bool _isAppliedInboxStatus(CloudInboxStatus status) =>
+      status == CloudInboxStatus.applied;
 
   void _validateTransition(CloudOutboxTransition transition) {
     if (transition.type == CloudOutboxTransitionType.retryable &&

@@ -105,7 +105,7 @@ void main() {
 
       final gateway = ObjectBoxCloudSemanticStoreGateway(
         store: objectBox,
-        canonicalAdapter: _NoMutationCanonicalAdapter(
+        canonicalAdapter: _RoundTripCanonicalAdapter(
           objectBox,
           scope: scope,
           generation: checkpoint.generation,
@@ -116,7 +116,24 @@ void main() {
         entry: reopenedEntry,
         leaseFence: fence,
         action: (transaction) {
-          transaction.quarantineChange(changeId, 'roundtrip_fixture');
+          final logicalEntityKeyHash = _digest('L');
+          transaction.applyEntity(
+            payload: CloudMessageEntityPayload(
+              logicalEntityKeyHash: logicalEntityKeyHash,
+              canonicalGuid: 'roundtrip-message-guid',
+              chatAliasKeyHash: _digest('H'),
+              chatIdentifier: 'iMessage;-;roundtrip-chat',
+              body: 'roundtrip fixture',
+              senderHandle: 'roundtrip-handle',
+            ),
+            snapshot: CloudSemanticSnapshot(
+              kind: CloudEntityKind.message,
+              logicalEntityKeyHash: logicalEntityKeyHash,
+              etagHash: _digest('E'),
+              encryptedRawRecordReference: _reference('P'),
+            ),
+          );
+          transaction.markChangeApplied(changeId);
         },
       );
 
@@ -125,14 +142,14 @@ void main() {
           .getAll()
           .single;
       expect(durableInbox.changeIdHash, changeId);
-      expect(durableInbox.status, CloudInboxStatus.quarantined.index);
+      expect(durableInbox.status, CloudInboxStatus.applied.index);
       expect(
         objectBox
             .box<CloudSemanticReplayEntity>()
             .getAll()
             .single
             .terminalOutcome,
-        'quarantined',
+        'applied',
       );
       expect(
         (await journalStore.readCheckpoint(scope)).fetchedToken,
@@ -147,9 +164,9 @@ String _digest(String character) => List.filled(43, character).join();
 
 String _reference(String character) => 'obcs2.ref.${_digest(character)}';
 
-final class _NoMutationCanonicalAdapter
+final class _RoundTripCanonicalAdapter
     implements CloudCanonicalSemanticEntityAdapter {
-  _NoMutationCanonicalAdapter(
+  _RoundTripCanonicalAdapter(
     this.store, {
     required this.scope,
     required this.generation,
@@ -189,7 +206,7 @@ final class _NoMutationCanonicalAdapter
     required CloudSemanticEntityPayload payload,
     required CloudSemanticSnapshot snapshot,
   }) {
-    throw StateError('canonical mutation is outside this fixture');
+    return CloudCanonicalSemanticMutationReceipt.committed;
   }
 
   @override

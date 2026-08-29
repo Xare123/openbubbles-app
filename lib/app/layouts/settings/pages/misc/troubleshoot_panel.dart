@@ -434,7 +434,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                             containerColor: Colors.teal,
                           ),
                           title: "Run Semantic Pull Canary",
-                          subtitle: "Developer-only bounded read. Local canonical chats, messages, reactions, and attachment metadata may be added or updated. No CloudKit uploads or deletes, no local message deletes, and tombstones are quarantined.",
+                          subtitle: "Developer-only bounded read. Local canonical chats, messages, reactions, and attachment metadata may be added or updated. No CloudKit uploads or deletes, no local message deletes, and tombstones are retained as read-only acknowledgements.",
                           trailing: cloudSyncV2Running.value
                               ? SizedBox(
                                   width: 20,
@@ -463,7 +463,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                                   style: context.theme.textTheme.titleLarge,
                                 ),
                                 content: Text(
-                                  "This performs one manual, bounded CloudKit read. Local canonical chats, messages, reactions, and attachment metadata may be added or updated. It will not upload or delete CloudKit records, delete local messages, or apply tombstones. Tombstones are quarantined. No background run is enabled.",
+                                  "This performs one manual, bounded CloudKit read. Local canonical chats, messages, reactions, and attachment metadata may be added or updated. It will not upload or delete CloudKit records, delete local messages, or apply tombstones. Tombstones are retained and acknowledged locally without deleting canonical state. No background run is enabled.",
                                   style: context.theme.textTheme.bodyLarge,
                                 ),
                                 actions: [
@@ -512,6 +512,13 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                                 (total, zone) =>
                                     total + zone.tombstoneQuarantined,
                               );
+                              final tombstoneReadOnlyAcknowledged =
+                                  report.zones.fold<int>(
+                                0,
+                                (total, zone) =>
+                                    total +
+                                    zone.tombstoneReadOnlyAcknowledged,
+                              );
                               final retried = report.zones.fold<int>(
                                 0,
                                 (total, zone) => total + zone.retried,
@@ -538,7 +545,7 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                                   retried == 0 &&
                                   report.remoteWriteTripwiresIntact;
                               final totals =
-                                  "Fetched $fetched, applied $applied, deferred $deferred, quarantined $quarantined (unsupported service $unsupportedServiceQuarantined, disabled tombstones $tombstoneQuarantined), retried $retried.";
+                                  "Fetched $fetched, applied $applied, read-only tombstones acknowledged $tombstoneReadOnlyAcknowledged, deferred $deferred, quarantined $quarantined (unsupported service $unsupportedServiceQuarantined, tombstone failures $tombstoneQuarantined), retried $retried.";
                               if (canaryPassed) {
                                 showSnackbar(
                                   "Cloud Sync V2 Complete",

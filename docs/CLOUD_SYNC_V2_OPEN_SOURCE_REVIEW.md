@@ -62,10 +62,11 @@ A checkpoint is valid only for one:
 
 `account fingerprint + container + database + zone + stream + schema version`
 
-The page journal, quarantined-record decisions, and replacement continuation
-token must commit atomically. A record that was neither journaled nor durably
-quarantined blocks token advancement. Repeating a completed page must create no
-new logical work.
+The page journal and replacement continuation token must commit atomically.
+Every row in that page must be durably applied, including an explicitly
+read-only tombstone acknowledgement, before the token can advance. A
+quarantined row remains a nonterminal barrier. Repeating a completed page must
+create no new logical work.
 
 ### 3. Poison-record handling
 

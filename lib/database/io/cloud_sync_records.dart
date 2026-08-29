@@ -38,16 +38,16 @@ class CloudSyncCheckpointEntity {
   String? fetchedTokenCiphertext;
 
   /// Protected continuation token for the most recently journaled page.
-  /// This is promoted only after every row in [pendingBatchId] is terminal.
+  /// This is promoted only after every row in [pendingBatchId] is applied.
   String? pendingFetchedTokenCiphertext;
   String? pendingBatchId;
   int generation;
   String? lastBatchId;
   int fetchedSequence;
 
-  /// Highest contiguous terminal inbox sequence. The historical field name is
-  /// retained for schema compatibility; both applied and quarantined rows are
-  /// terminal and advance this floor.
+  /// Highest contiguous applied inbox sequence. The historical field name is
+  /// retained for schema compatibility. Quarantined rows do not advance this
+  /// floor or the continuation token.
   int appliedSequence;
   int lastSuccessfulAtMs;
   int lastAttemptAtMs;
@@ -721,7 +721,10 @@ class CloudSemanticReplayEntity {
   int inboxSequence;
   String changeType;
 
-  /// One legal terminal state: applied, appliedWithConflict, or quarantined.
+  /// One durable semantic outcome: applied, appliedWithConflict, or
+  /// quarantined. Only an applied inbox journal row is checkpoint-safe;
+  /// quarantine remains a causal barrier until a proven repair marks it
+  /// applied.
   ///
   /// A pending semantic attempt is never persisted. Keeping one closed
   /// outcome prevents contradictory applied/quarantined/conflicted flags.

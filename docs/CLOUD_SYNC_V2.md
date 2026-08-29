@@ -178,7 +178,8 @@ can be reused across containers, databases, streams, or schema generations.
 - Original PCS ciphertext or an encrypted local reference. Do not duplicate
   decrypted message content in the sync journal.
 - Fetch sequence
-- `pending`, `applied`, or `quarantined` status
+- `pending`, `applied`, or `quarantined` status. Quarantine is retained as a
+  nonterminal barrier; only an applied row advances the contiguous position.
 - Typed failure category and retry count
 
 ### `CloudOutboxOperation`
@@ -204,7 +205,8 @@ can be reused across containers, databases, streams, or schema generations.
 ### `CloudSyncRun`
 
 - Trigger and architecture
-- Fetched, applied, quarantined, confirmed, and retried counts
+- Fetched, applied, read-only tombstone acknowledgement, quarantined,
+  confirmed, and retried counts
 - Redacted timing and failure categories
 - Start and finish timestamps
 
@@ -227,14 +229,20 @@ the ObjectBox transaction.
 ## Pull transaction
 
 1. Fetch records with record ID, etag, type, server metadata, and next token.
-2. Persist the inbox batch and fetched token in one ObjectBox transaction.
+2. Persist the inbox batch and fetched-token candidate in one ObjectBox
+   transaction; keep the candidate pending until every row is applied.
 3. Apply inbox entries separately through the shared semantic upsert pipeline.
-4. Mark each entry `applied` only after its local mutation commits.
-5. Quarantine malformed or undecryptable records. Never silently drop them.
-6. Advance the applied position only through a contiguous successful range.
+4. Mark each entry `applied` only after its local mutation commits. A disabled
+   tombstone is acknowledged as applied without decoding, deleting, or opening
+   a semantic transaction; its protected row remains as evidence.
+5. Quarantine malformed, undecryptable, or otherwise failed records. Never
+   silently drop them. A quarantined row remains a nonterminal barrier.
+6. Advance the applied position and promote the pending token only through a
+   contiguous range of rows persisted as `applied`.
 
-This makes a crash or malformed record recoverable without replaying the entire
-zone or permanently skipping a change.
+This makes a crash recoverable without replaying the entire zone. A malformed
+or otherwise failed record remains blocking until an explicit reviewed recovery
+path changes its durable disposition, so the engine cannot silently skip it.
 
 ### Read-only shadow journal budget
 
