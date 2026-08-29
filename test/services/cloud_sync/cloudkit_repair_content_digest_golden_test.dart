@@ -50,6 +50,34 @@ void main() {
         ),
       ),
     );
+    expect(
+      CloudKitV2CanonicalRepairDigest.forPayload(
+        _basicMessage(service: CloudSemanticService.iMessage),
+      ),
+      isNot(
+        CloudKitV2CanonicalRepairDigest.forPayload(
+          _basicMessage(service: CloudSemanticService.sms),
+        ),
+      ),
+    );
+    expect(
+      CloudKitV2CanonicalRepairDigest.forPayload(
+        _reaction(
+          removed: false,
+          parentPart: null,
+          service: CloudSemanticService.iMessage,
+        ),
+      ),
+      isNot(
+        CloudKitV2CanonicalRepairDigest.forPayload(
+          _reaction(
+            removed: false,
+            parentPart: null,
+            service: CloudSemanticService.sms,
+          ),
+        ),
+      ),
+    );
   });
 }
 
@@ -118,6 +146,7 @@ const _flags = CloudSemanticKnownMessageFlags(
 CloudMessageEntityPayload _basicMessage({
   String? body = 'body',
   CloudSemanticKnownMessageFlags? knownFlags = _flags,
+  CloudSemanticService service = CloudSemanticService.iMessage,
 }) => CloudMessageEntityPayload(
   logicalEntityKeyHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   canonicalGuid: 'guid',
@@ -127,7 +156,7 @@ CloudMessageEntityPayload _basicMessage({
   senderHandle: 'sender',
   createdAt: DateTime.fromMillisecondsSinceEpoch(1, isUtc: true),
   error: 2,
-  service: CloudSemanticService.iMessage,
+  service: service,
   subjectState: CloudSemanticFieldState.value,
   subject: 'subject',
   bodyState: CloudSemanticFieldState.value,
@@ -217,6 +246,7 @@ CloudMessageEntityPayload _nestedMessage({required List<int> retractedParts}) {
 CloudReactionEntityPayload _reaction({
   required bool removed,
   required int? parentPart,
+  CloudSemanticService service = CloudSemanticService.iMessage,
 }) => CloudReactionEntityPayload(
   logicalEntityKeyHash: 'ddddddddddddddddddddddddddddddddddddddddddd',
   canonicalGuid: removed ? 'reaction-remove' : 'reaction-add',
@@ -228,7 +258,7 @@ CloudReactionEntityPayload _reaction({
   associatedEmoji: '🔥',
   createdAt: DateTime.fromMillisecondsSinceEpoch(5, isUtc: true),
   error: 0,
-  service: CloudSemanticService.iMessage,
+  service: service,
   knownFlags: _flags,
   readAtState: CloudSemanticFieldState.value,
   readAt: DateTime.fromMillisecondsSinceEpoch(6, isUtc: true),

@@ -1897,6 +1897,28 @@ fn build_association(
             None,
         ));
     };
+    if associated_type == 0 {
+        // Treat explicit zero as the standalone-message sentinel only in the
+        // unambiguous shape observed on normal messages. A parent or any
+        // non-zero/partial range remains malformed.
+        let range_is_standalone = matches!(
+            (
+                proto.associated_message_range_location,
+                proto.associated_message_range_length,
+            ),
+            (None, None) | (Some(0), Some(0))
+        );
+        if proto.associated_message_guid.is_some() || !range_is_standalone {
+            return Err(CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedParent,
+            ));
+        }
+        return Ok((
+            CloudCanonicalMessageAssociation::None,
+            CloudCanonicalEntityKind::Message,
+            None,
+        ));
+    }
     if associated_type == 2 {
         return Err(CloudCanonicalConversionOutcome::Deferred(
             CloudCanonicalDeferredReason::UnsupportedSticker,
@@ -3239,6 +3261,49 @@ mod tests {
                 "msgType={message_type}",
             );
         }
+    }
+
+    #[test]
+    fn explicit_zero_association_sentinel_accepts_only_standalone_shape() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut standalone = normal_message(Some("hello"));
+        standalone.msg_proto.0.associated_message_type = Some(0);
+        standalone.msg_proto.0.associated_message_range_location = Some(0);
+        standalone.msg_proto.0.associated_message_range_length = Some(0);
+        assert!(matches!(
+            convert_message(
+                &context(&hasher, "server-zero-association", None),
+                &message_presence(),
+                &standalone,
+            ),
+            CloudCanonicalConversionOutcome::Ready(_)
+        ));
+
+        let mut parented = standalone.clone();
+        parented.msg_proto.0.associated_message_guid = Some("p:0/parent-guid".to_owned());
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-zero-association-parented", None),
+                &message_presence(),
+                &parented,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedParent
+            )
+        );
+
+        let mut nonzero_range = standalone;
+        nonzero_range.msg_proto.0.associated_message_range_length = Some(1);
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-zero-association-nonzero-range", None),
+                &message_presence(),
+                &nonzero_range,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedParent
+            )
+        );
     }
 
     #[test]

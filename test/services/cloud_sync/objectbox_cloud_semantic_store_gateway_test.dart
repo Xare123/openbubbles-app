@@ -387,29 +387,55 @@ void main() {
     _expectNoSemanticMutation(objectBox, adapter);
   });
 
-  test('generation mismatch fails before canonical mutation', () async {
+  test('independent lease and data generations commit safely', () async {
     final entry = _entry(scope: scope);
-    const mismatchedFence = CloudCoordinatorLeaseFence(
+    const laterLeaseFence = CloudCoordinatorLeaseFence(
       ownerId: 'semantic-test-owner',
       generation: 8,
     );
     _seedDurableFence(
       objectBox,
       entry: entry,
-      leaseFence: mismatchedFence,
+      leaseFence: laterLeaseFence,
       now: now,
     );
 
-    await expectLater(
-      gateway.writeTransaction<void>(
-        entry: entry,
-        leaseFence: mismatchedFence,
-        action: _applyAndMark(entry),
-      ),
-      throwsA(_failureCode('semantic_generation_fence_mismatch')),
+    await gateway.writeTransaction<void>(
+      entry: entry,
+      leaseFence: laterLeaseFence,
+      action: _applyAndMark(entry),
     );
-    _expectNoSemanticMutation(objectBox, adapter);
+
+    expect(adapter.entityApplyCalls, 1);
+    expect(
+      objectBox.box<CloudInboxChangeEntity>().getAll().single.status,
+      CloudInboxStatus.applied.index,
+    );
   });
+
+  test(
+    'checkpoint generation mismatch fails before canonical mutation',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+        checkpointGeneration: 8,
+      );
+
+      await expectLater(
+        gateway.writeTransaction<void>(
+          entry: entry,
+          leaseFence: leaseFence,
+          action: _applyAndMark(entry),
+        ),
+        throwsA(_failureCode('semantic_checkpoint_fence_lost')),
+      );
+      _expectNoSemanticMutation(objectBox, adapter);
+    },
+  );
 
   test('expired lease fails before canonical mutation', () async {
     final entry = _entry(scope: scope);

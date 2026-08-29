@@ -584,11 +584,22 @@ fn typed_record<T: CloudKitRecord>(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct CloudMessageTypeDiagnosticLabels {
+    message_type_numeric: i64,
     message_type_class: &'static str,
     association_presence: &'static str,
+    association_type_numeric: Option<u32>,
     association_type_class: &'static str,
     parent_reference_class: &'static str,
+    associated_range_location: Option<u32>,
+    associated_range_length: Option<u32>,
     associated_range_class: &'static str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CloudMessageServiceDiagnostic {
+    class: &'static str,
+    length: usize,
+    sha256_prefix: String,
 }
 
 fn cloud_message_service_class(service: &str) -> Option<&'static str> {
@@ -600,6 +611,8 @@ fn cloud_message_service_class(service: &str) -> Option<&'static str> {
         Some("imessage_case_variant")
     } else if service == "SMS" {
         Some("sms")
+    } else if service == "RCS" {
+        Some("rcs")
     } else if service == "FaceTime" {
         Some("facetime")
     } else {
@@ -630,6 +643,7 @@ fn cloud_message_type_diagnostic_labels(
     };
     let association_type_class = match proto.associated_message_type {
         None => "none",
+        Some(0) => "zero",
         Some(2) => "sticker",
         Some(2000..=2007) => "reaction_add",
         Some(3000..=3007) => "reaction_remove",
@@ -648,25 +662,42 @@ fn cloud_message_type_diagnostic_labels(
         proto.associated_message_range_length,
     ) {
         (None, None) => "absent",
-        (Some(_), Some(_)) => "complete",
+        (Some(0), Some(0)) => "zero_pair",
+        (Some(_), Some(_)) => "complete_nonzero",
         _ => "partial",
     };
 
     CloudMessageTypeDiagnosticLabels {
+        message_type_numeric: message.r#type,
         message_type_class,
         association_presence,
+        association_type_numeric: proto.associated_message_type,
         association_type_class,
         parent_reference_class,
+        associated_range_location: proto.associated_message_range_location,
+        associated_range_length: proto.associated_message_range_length,
         associated_range_class,
     }
 }
 
-fn cloud_message_proto4_service_class(message: &CloudMessage) -> Option<&'static str> {
-    message
+fn cloud_message_proto4_service_diagnostic(
+    message: &CloudMessage,
+) -> Option<CloudMessageServiceDiagnostic> {
+    let service = message
         .msg_proto_4
         .as_ref()
-        .and_then(|proto| proto.0.service.as_deref())
-        .and_then(cloud_message_service_class)
+        .and_then(|proto| proto.0.service.as_deref())?;
+    let class = cloud_message_service_class(service)?;
+    let digest = Sha256::digest(service.as_bytes());
+    let sha256_prefix = format!(
+        "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        digest[0], digest[1], digest[2], digest[3], digest[4], digest[5]
+    );
+    Some(CloudMessageServiceDiagnostic {
+        class,
+        length: service.len(),
+        sha256_prefix,
+    })
 }
 
 fn cloud_message_requires_unsupported_type_diagnostic(message: &CloudMessage) -> bool {
@@ -1298,17 +1329,26 @@ pub(crate) async fn cloud_sync_decode_transient_record(
             if let Some(service_class) = cloud_message_service_class(&message.service) {
                 warn!("CloudKit V2 transient message service_class={service_class}");
             }
-            if let Some(proto4_service_class) = cloud_message_proto4_service_class(&message) {
-                warn!("CloudKit V2 transient message proto4_service_class={proto4_service_class}");
+            if let Some(proto4_service) = cloud_message_proto4_service_diagnostic(&message) {
+                warn!(
+                    "CloudKit V2 transient message proto4_service_class={} proto4_service_length={} proto4_service_sha256_prefix={}",
+                    proto4_service.class,
+                    proto4_service.length,
+                    proto4_service.sha256_prefix,
+                );
             }
             if cloud_message_requires_unsupported_type_diagnostic(&message) {
                 let labels = cloud_message_type_diagnostic_labels(&message);
                 warn!(
-                    "CloudKit V2 transient message message_type_class={} association_presence={} association_type_class={} parent_reference_class={} associated_range_class={}",
+                    "CloudKit V2 transient message message_type_numeric={} message_type_class={} association_presence={} association_type_numeric={:?} association_type_class={} parent_reference_class={} associated_range_location={:?} associated_range_length={:?} associated_range_class={}",
+                    labels.message_type_numeric,
                     labels.message_type_class,
                     labels.association_presence,
+                    labels.association_type_numeric,
                     labels.association_type_class,
                     labels.parent_reference_class,
+                    labels.associated_range_location,
+                    labels.associated_range_length,
                     labels.associated_range_class,
                 );
             }
@@ -2167,10 +2207,14 @@ mod tests {
         assert_eq!(
             normal_labels,
             CloudMessageTypeDiagnosticLabels {
+                message_type_numeric: 1,
                 message_type_class: "normal",
                 association_presence: "absent",
+                association_type_numeric: None,
                 association_type_class: "none",
                 parent_reference_class: "absent",
+                associated_range_location: None,
+                associated_range_length: None,
                 associated_range_class: "absent",
             }
         );
@@ -2204,6 +2248,7 @@ mod tests {
             cloud_message_service_class("private-service-name"),
             Some("other")
         );
+        assert_eq!(cloud_message_service_class("RCS"), Some("rcs"));
 
         for (message_type, expected_class) in [
             (3, "group_title_change"),
@@ -2225,6 +2270,7 @@ mod tests {
     #[test]
     fn association_diagnostic_labels_are_fixed_and_content_free() {
         for (associated_type, expected_type_class) in [
+            (0, "zero"),
             (2, "sticker"),
             (2007, "reaction_add"),
             (3007, "reaction_remove"),
@@ -2236,9 +2282,13 @@ mod tests {
             message.msg_proto.0.associated_message_range_location = Some(0);
             message.msg_proto.0.associated_message_range_length = Some(4);
             let labels = cloud_message_type_diagnostic_labels(&message);
+            assert_eq!(labels.message_type_numeric, 1);
+            assert_eq!(labels.association_type_numeric, Some(associated_type));
             assert_eq!(labels.association_type_class, expected_type_class);
             assert_eq!(labels.parent_reference_class, "p");
-            assert_eq!(labels.associated_range_class, "complete");
+            assert_eq!(labels.associated_range_location, Some(0));
+            assert_eq!(labels.associated_range_length, Some(4));
+            assert_eq!(labels.associated_range_class, "complete_nonzero");
             assert!(!format!("{labels:?}").contains("private-parent-identifier"));
         }
 
@@ -2259,6 +2309,14 @@ mod tests {
         assert_eq!(
             cloud_message_type_diagnostic_labels(&partial).associated_range_class,
             "partial"
+        );
+
+        let mut zero_pair = diagnostic_message(1, Some(0), "iMessage");
+        zero_pair.msg_proto.0.associated_message_range_location = Some(0);
+        zero_pair.msg_proto.0.associated_message_range_length = Some(0);
+        assert_eq!(
+            cloud_message_type_diagnostic_labels(&zero_pair).associated_range_class,
+            "zero_pair"
         );
     }
 
@@ -2287,24 +2345,29 @@ mod tests {
     #[test]
     fn proto4_service_diagnostic_is_optional_and_allowlisted() {
         let absent = diagnostic_message_with_proto4_service(None);
-        assert_eq!(cloud_message_proto4_service_class(&absent), None);
+        assert_eq!(cloud_message_proto4_service_diagnostic(&absent), None);
 
         let exact = diagnostic_message_with_proto4_service(Some("iMessage"));
-        assert_eq!(cloud_message_proto4_service_class(&exact), None);
+        assert_eq!(cloud_message_proto4_service_diagnostic(&exact), None);
 
         for (service, expected_class) in [
             ("", "empty"),
             ("IMESSAGE", "imessage_case_variant"),
             ("iMessage ", "other"),
             ("SMS", "sms"),
+            ("RCS", "rcs"),
             ("FaceTime", "facetime"),
             ("private-service-name", "other"),
         ] {
             let message = diagnostic_message_with_proto4_service(Some(service));
-            assert_eq!(
-                cloud_message_proto4_service_class(&message),
-                Some(expected_class)
-            );
+            let diagnostic = cloud_message_proto4_service_diagnostic(&message)
+                .expect("non-iMessage services are diagnosed");
+            assert_eq!(diagnostic.class, expected_class);
+            assert_eq!(diagnostic.length, service.len());
+            assert_eq!(diagnostic.sha256_prefix.len(), 12);
+            if !service.is_empty() {
+                assert!(!diagnostic.sha256_prefix.contains(service));
+            }
             assert_ne!(expected_class, service);
         }
     }

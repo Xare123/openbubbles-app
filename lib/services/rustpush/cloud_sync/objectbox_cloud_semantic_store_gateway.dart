@@ -110,9 +110,11 @@ final class ObjectBoxCloudSemanticFence {
         'semantic_protected_reference_missing',
       );
     }
-    if (entry.generation <= 0 ||
-        leaseFence.generation <= 0 ||
-        leaseFence.generation != entry.generation) {
+    // The inbox generation is the CloudKit reset/data epoch. The lease
+    // generation is an independently increasing coordinator-takeover epoch.
+    // Their durable records are validated separately below; requiring the two
+    // counters to be numerically equal rejects every valid later lease owner.
+    if (entry.generation <= 0 || leaseFence.generation <= 0) {
       throw CloudSyncFailure(
         category: CloudFailureCategory.dependency,
         safeCode: 'semantic_generation_fence_mismatch',
@@ -138,9 +140,7 @@ final class ObjectBoxCloudSemanticFence {
     required CloudInboxStatus expectedInboxStatus,
     required CloudCanonicalSemanticEntityAdapter canonicalAdapter,
   }) {
-    if (entry.generation <= 0 ||
-        leaseFence.generation <= 0 ||
-        leaseFence.generation != entry.generation) {
+    if (entry.generation <= 0 || leaseFence.generation <= 0) {
       throw CloudSyncFailure(
         category: CloudFailureCategory.dependency,
         safeCode: 'semantic_generation_fence_mismatch',

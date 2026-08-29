@@ -2386,6 +2386,13 @@ fn repair_digest_bodies(
     }
 }
 
+fn cloudkit_repair_service_name(service: CloudSyncTransientService) -> &'static str {
+    match service {
+        CloudSyncTransientService::IMessage => "iMessage",
+        CloudSyncTransientService::Sms => "sms",
+    }
+}
+
 fn cloudkit_repair_content_digest(payload: &CloudSyncTransientPayload) -> Option<String> {
     let value = payload.message.as_ref()?;
     if let Some(kind) = value.reaction_kind {
@@ -2409,7 +2416,7 @@ fn cloudkit_repair_content_digest(payload: &CloudSyncTransientPayload) -> Option
         writer.optional_string("associatedEmoji", value.associated_emoji.as_deref());
         writer.integer("createdAtMs", value.created_at_millis);
         writer.integer("error", value.error);
-        writer.string("service", "iMessage");
+        writer.string("service", cloudkit_repair_service_name(value.service));
         repair_digest_flags(&mut writer, Some(&value.known_flags));
         writer.string(
             "readAtState",
@@ -2445,7 +2452,7 @@ fn cloudkit_repair_message_content_digest(
     writer.string("senderHandle", &value.sender_handle);
     writer.integer("createdAtMs", value.created_at_millis);
     writer.integer("error", value.error);
-    writer.string("service", "iMessage");
+    writer.string("service", cloudkit_repair_service_name(value.service));
     writer.string(
         "subjectState",
         repair_digest_field_state(value.subject_state),
@@ -2799,6 +2806,18 @@ mod cloudkit_repair_digest_tests {
             digest(&reaction(false, None)),
             digest(&reaction(false, Some(0)))
         );
+
+        let imessage = basic_message("body");
+        let mut sms = imessage.clone();
+        sms.service = CloudSyncTransientService::Sms;
+        assert_eq!(cloudkit_repair_service_name(imessage.service), "iMessage");
+        assert_eq!(cloudkit_repair_service_name(sms.service), "sms");
+        assert_ne!(digest(&imessage), digest(&sms));
+
+        let imessage_reaction = reaction(false, None);
+        let mut sms_reaction = imessage_reaction.clone();
+        sms_reaction.service = CloudSyncTransientService::Sms;
+        assert_ne!(digest(&imessage_reaction), digest(&sms_reaction));
     }
 }
 
