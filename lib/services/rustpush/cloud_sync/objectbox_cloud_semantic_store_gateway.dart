@@ -66,6 +66,19 @@ abstract interface class CloudCanonicalSemanticEntityAdapter {
   });
 }
 
+/// Narrow local-only capability used when an already-applied chat must be
+/// projected again after an adapter bug is fixed. Implementations must not
+/// route this call through message, attachment, tombstone, or sync-control
+/// mutation paths.
+abstract interface class CloudAppliedChatProjectionRepairAdapter {
+  CloudCanonicalSemanticMutationReceipt repairChatProjection({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudChatEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  });
+}
+
 enum _SemanticReplayOutcome { applied, appliedWithConflict, quarantined }
 
 enum _SemanticTransactionPhase { open, appliedTerminal, quarantinedTerminal }
@@ -290,7 +303,9 @@ final class CloudObjectBoxDurableFence {
 /// ObjectBox write transaction as canonical state, snapshot metadata, record
 /// mapping, replay outcome, and inbox terminal status.
 final class ObjectBoxCloudSemanticStoreGateway
-    implements CloudSemanticStoreGateway {
+    implements
+        CloudSemanticStoreGateway,
+        CloudAppliedProjectionRepairStoreGateway {
   ObjectBoxCloudSemanticStoreGateway({
     required Store store,
     required CloudCanonicalSemanticEntityAdapter canonicalAdapter,
@@ -302,7 +317,9 @@ final class ObjectBoxCloudSemanticStoreGateway
        _inbox = store.box<CloudInboxChangeEntity>(),
        _recordMaps = store.box<CloudRecordMapEntity>(),
        _snapshots = store.box<CloudSemanticSnapshotEntity>(),
-       _replay = store.box<CloudSemanticReplayEntity>() {
+       _replay = store.box<CloudSemanticReplayEntity>(),
+       _chats = store.box<Chat>(),
+       _chatAliases = store.box<CloudSemanticChatAliasEntity>() {
     if (!identical(canonicalAdapter.store, store)) {
       throw ArgumentError('canonical_adapter_store_mismatch');
     }
@@ -338,6 +355,8 @@ final class ObjectBoxCloudSemanticStoreGateway
   final Box<CloudRecordMapEntity> _recordMaps;
   final Box<CloudSemanticSnapshotEntity> _snapshots;
   final Box<CloudSemanticReplayEntity> _replay;
+  final Box<Chat> _chats;
+  final Box<CloudSemanticChatAliasEntity> _chatAliases;
 
   @override
   Future<T> writeTransaction<T>({
@@ -404,6 +423,357 @@ final class ObjectBoxCloudSemanticStoreGateway
       return Future<T>.error(_failure('semantic_canonical_write_failed'));
     } finally {
       _activeStores.remove(_store);
+    }
+  }
+
+  @override
+  Future<List<CloudInboxEntry>> readAppliedProjectionRepairCandidates({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int limit,
+  }) async {
+    if (generation <= 0 || limit <= 0 || limit > 4096) {
+      throw ArgumentError('projection_repair_request_invalid');
+    }
+    if (scope.streamKind != CloudSyncStreamKind.messages ||
+        scope.zone != 'chatManateeZone') {
+      return const <CloudInboxEntry>[];
+    }
+
+    return _store.runInTransaction(TxMode.read, () {
+      final scopeKey =
+          'scope2:${_SemanticTransactionContext._digest(scope.storageKey)}';
+      final query =
+          (_inbox.query(
+                CloudInboxChangeEntity_.scopeKey
+                    .equals(scopeKey)
+                    .and(CloudInboxChangeEntity_.generation.equals(generation))
+                    .and(
+                      CloudInboxChangeEntity_.status.equals(
+                        CloudInboxStatus.applied.index,
+                      ),
+                    )
+                    .and(CloudInboxChangeEntity_.isTombstone.equals(false)),
+              )..order(
+                CloudInboxChangeEntity_.fetchSequence,
+                flags: Order.descending,
+              ))
+              .build();
+      try {
+        final candidates = <CloudInboxEntry>[];
+        final seenLogicalKeys = <String>{};
+        for (final row in query.find()) {
+          final entry = _appliedEntryFromEntity(scope, row);
+          final context = _SemanticTransactionContext.prepare(
+            entry: entry,
+            leaseFence: leaseFence,
+          );
+          ObjectBoxCloudSemanticFence.validateLocked(
+            store: _store,
+            entry: entry,
+            leaseFence: leaseFence,
+            nowMs: _clock().toUtc().millisecondsSinceEpoch,
+            expectedInboxStatus: CloudInboxStatus.applied,
+            canonicalAdapter: _canonicalAdapter,
+          );
+          final logicalEntityKeyHash = _currentAppliedLogicalKey(context, row);
+          if (logicalEntityKeyHash == null ||
+              !seenLogicalKeys.add(logicalEntityKeyHash) ||
+              _hasServiceIdentifierAlias(context, logicalEntityKeyHash)) {
+            continue;
+          }
+          candidates.add(entry);
+          if (candidates.length == limit) break;
+        }
+        return List<CloudInboxEntry>.unmodifiable(candidates);
+      } finally {
+        query.close();
+      }
+    });
+  }
+
+  @override
+  Future<void> repairAppliedProjection({
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required CloudSemanticEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  }) {
+    if (payload is! CloudChatEntityPayload ||
+        snapshot.kind != CloudEntityKind.chat ||
+        payload.logicalEntityKeyHash != snapshot.logicalEntityKeyHash ||
+        entry.scope.zone != 'chatManateeZone') {
+      return Future<void>.error(
+        _malformed('projection_repair_chat_shape_invalid'),
+      );
+    }
+    try {
+      ObjectBoxCloudSemanticFence.validateEntryContext(
+        entry: entry,
+        leaseFence: leaseFence,
+        expectedInboxStatus: CloudInboxStatus.applied,
+      );
+    } on CloudSyncFailure catch (failure) {
+      return Future<void>.error(failure);
+    } catch (_) {
+      return Future<void>.error(_failure('projection_repair_context_invalid'));
+    }
+    if (!_activeStores.add(_store)) {
+      return Future<void>.error(
+        _failure('semantic_nested_transaction_forbidden'),
+      );
+    }
+
+    try {
+      final context = _SemanticTransactionContext.prepare(
+        entry: entry,
+        leaseFence: leaseFence,
+      );
+      _store.runInTransaction(TxMode.write, () {
+        final updatedAtMs = _clock().toUtc().millisecondsSinceEpoch;
+        final durable = ObjectBoxCloudSemanticFence.validateLocked(
+          store: _store,
+          entry: entry,
+          leaseFence: leaseFence,
+          nowMs: updatedAtMs,
+          expectedInboxStatus: CloudInboxStatus.applied,
+          canonicalAdapter: _canonicalAdapter,
+        );
+        final transaction = _ObjectBoxCloudSemanticStoreTransaction(
+          context: context,
+          updatedAtMs: updatedAtMs,
+          inboxEntity: durable.inbox,
+          checkpointEntity: durable.checkpoint,
+          checkpoints: _checkpoints,
+          inbox: _inbox,
+          recordMaps: _recordMaps,
+          snapshots: _snapshots,
+          replay: _replay,
+          canonicalAdapter: _canonicalAdapter,
+        );
+        try {
+          transaction.repairAppliedProjection(
+            payload: payload,
+            snapshot: snapshot,
+          );
+          transaction.validateCompletion();
+        } finally {
+          transaction.invalidate();
+        }
+      });
+      return Future<void>.value();
+    } on CloudSyncFailure catch (failure) {
+      return Future<void>.error(failure);
+    } catch (_) {
+      return Future<void>.error(
+        _failure('projection_repair_canonical_write_failed'),
+      );
+    } finally {
+      _activeStores.remove(_store);
+    }
+  }
+
+  CloudInboxEntry _appliedEntryFromEntity(
+    CloudSyncScope scope,
+    CloudInboxChangeEntity row,
+  ) {
+    if (row.status != CloudInboxStatus.applied.index ||
+        row.failureCategory != null ||
+        row.preflightCategory != null ||
+        row.preflightCode != null ||
+        row.completedAtMs <= 0 ||
+        row.changeType != CloudChangeType.save.name ||
+        row.isTombstone) {
+      throw _failure('projection_repair_applied_row_invalid');
+    }
+    return CloudInboxEntry(
+      scope: scope,
+      sequence: row.fetchSequence,
+      change: CloudFetchedChange(
+        changeId: row.changeIdHash,
+        recordIdHash: row.serverRecordIdHash,
+        etagHash: row.etagHash,
+        type: CloudChangeType.save,
+        encryptedServerRecordId: row.encryptedServerRecordId,
+        protectedSystemFieldsReference: row.protectedSystemFieldsRef,
+        encryptedPayloadReference: row.encryptedPayloadRef,
+        payloadSha256: row.payloadSha256,
+        serverModifiedAt: row.serverModifiedAtMs == 0
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(
+                row.serverModifiedAtMs,
+                isUtc: true,
+              ),
+      ),
+      status: CloudInboxStatus.applied,
+      attemptCount: row.retryCount,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        row.createdAtMs,
+        isUtc: true,
+      ),
+      batchId: row.batchId,
+      generation: row.generation,
+      completedAt: DateTime.fromMillisecondsSinceEpoch(
+        row.completedAtMs,
+        isUtc: true,
+      ),
+    );
+  }
+
+  String? _currentAppliedLogicalKey(
+    _SemanticTransactionContext context,
+    CloudInboxChangeEntity row,
+  ) {
+    final replayQuery =
+        _replay
+            .query(
+              CloudSemanticReplayEntity_.replayKey.equals(context.replayKey),
+            )
+            .build()
+          ..limit = 2;
+    late final List<CloudSemanticReplayEntity> replayRows;
+    try {
+      replayRows = replayQuery.find();
+    } finally {
+      replayQuery.close();
+    }
+    if (replayRows.length != 1) {
+      throw _failure('projection_repair_replay_not_unique');
+    }
+    final replay = replayRows.single;
+    final logicalEntityKeyHash = replay.logicalEntityKeyHash;
+    final outcome = replay.terminalOutcome;
+    if (replay.scopeGenerationKey != context.scopeGenerationKey ||
+        replay.scopeKey != context.scopeKey ||
+        replay.accountFingerprint != context.entry.scope.accountFingerprint ||
+        replay.container != context.entry.scope.container ||
+        replay.database != context.entry.scope.database ||
+        replay.zone != context.entry.scope.zone ||
+        replay.streamKind != context.entry.scope.streamKind.name ||
+        replay.schemaVersion != context.entry.scope.schemaVersion ||
+        replay.generation != context.entry.generation ||
+        replay.changeIdHash != context.changeIdHash ||
+        replay.serverRecordIdHash != row.serverRecordIdHash ||
+        replay.payloadSha256 != row.payloadSha256 ||
+        replay.protectedPayloadReferenceHash != context.payloadReferenceHash ||
+        replay.inboxSequence != row.fetchSequence ||
+        replay.changeType != row.changeType ||
+        logicalEntityKeyHash == null ||
+        !_base64UrlDigestPattern.hasMatch(logicalEntityKeyHash) ||
+        (outcome != _SemanticReplayOutcome.applied.name &&
+            outcome != _SemanticReplayOutcome.appliedWithConflict.name)) {
+      throw _failure('projection_repair_replay_binding_invalid');
+    }
+
+    final mapQuery =
+        _recordMaps
+            .query(
+              CloudRecordMapEntity_.mapKey.equals(
+                context.recordMapKey(logicalEntityKeyHash),
+              ),
+            )
+            .build()
+          ..limit = 2;
+    late final List<CloudRecordMapEntity> maps;
+    try {
+      maps = mapQuery.find();
+    } finally {
+      mapQuery.close();
+    }
+    if (maps.length != 1) {
+      throw _failure('projection_repair_record_map_not_unique');
+    }
+    final map = maps.single;
+    if (map.scopeKey != context.scopeKey ||
+        map.accountFingerprint != context.entry.scope.accountFingerprint ||
+        map.zone != context.entry.scope.zone ||
+        map.logicalEntityKeyHash != logicalEntityKeyHash ||
+        map.generation != context.entry.generation) {
+      throw _failure('projection_repair_record_map_scope_invalid');
+    }
+    if (map.serverRecordIdHash != row.serverRecordIdHash ||
+        map.encryptedServerRecordId != row.encryptedServerRecordId ||
+        map.etagHash != row.etagHash ||
+        map.encryptedRawRecordRef != row.encryptedPayloadRef) {
+      // A newer applied row owns this logical entity. Replaying the stale
+      // payload could roll presentation state backward, so skip it.
+      return null;
+    }
+    return logicalEntityKeyHash;
+  }
+
+  bool _hasServiceIdentifierAlias(
+    _SemanticTransactionContext context,
+    String logicalEntityKeyHash,
+  ) {
+    final query = _chatAliases
+        .query(
+          CloudSemanticChatAliasEntity_.scopeGenerationKey
+              .equals(context.scopeGenerationKey)
+              .and(
+                CloudSemanticChatAliasEntity_.chatLogicalEntityKeyHash.equals(
+                  logicalEntityKeyHash,
+                ),
+              )
+              .and(
+                CloudSemanticChatAliasEntity_.aliasKind.equals(
+                  CloudSemanticChatAliasKind.serviceIdentifier.name,
+                ),
+              ),
+        )
+        .build();
+    try {
+      final rows = query.find();
+      for (final row in rows) {
+        if (row.scopeKey != context.scopeKey ||
+            row.accountFingerprint != context.entry.scope.accountFingerprint ||
+            row.container != context.entry.scope.container ||
+            row.database != context.entry.scope.database ||
+            row.zone != context.entry.scope.zone ||
+            row.streamKind != context.entry.scope.streamKind.name ||
+            row.schemaVersion != context.entry.scope.schemaVersion ||
+            row.generation != context.entry.generation ||
+            row.chatLogicalEntityKeyHash != logicalEntityKeyHash ||
+            (row.service != CloudSemanticService.iMessage.name &&
+                row.service != CloudSemanticService.sms.name) ||
+            row.aliasKind !=
+                CloudSemanticChatAliasKind.serviceIdentifier.name ||
+            !_base64UrlDigestPattern.hasMatch(row.aliasKeyHash) ||
+            !_lowerHexDigestPattern.hasMatch(row.canonicalGuidHash) ||
+            !_lowerHexDigestPattern.hasMatch(row.canonicalGuidLookupHash) ||
+            row.chatId <= 0) {
+          throw _failure('projection_repair_alias_binding_invalid');
+        }
+        final chat = _chats.get(row.chatId);
+        final canonicalGuid = chat?.guid;
+        if (canonicalGuid == null || canonicalGuid.isEmpty) {
+          throw _failure('projection_repair_alias_chat_invalid');
+        }
+        final expectedGuidHash = CloudCanonicalIdentityDigest.forCanonicalGuid(
+          scope: context.entry.scope,
+          generation: context.entry.generation,
+          kind: CloudEntityKind.chat,
+          logicalEntityKeyHash: logicalEntityKeyHash,
+          canonicalGuid: canonicalGuid,
+        );
+        final expectedLookupHash =
+            CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+              scope: context.entry.scope,
+              generation: context.entry.generation,
+              canonicalGuid: canonicalGuid,
+            );
+        final expectedBindingKey =
+            'semantic-chat-alias1:${sha256.convert(utf8.encode('${context.entry.scope.storageKey}\u001f${context.entry.generation}\u001f${row.service}\u001f${CloudSemanticChatAliasKind.serviceIdentifier.name}\u001f${row.aliasKeyHash}')).toString()}';
+        if (row.bindingKey != expectedBindingKey ||
+            row.canonicalGuidHash != expectedGuidHash ||
+            row.canonicalGuidLookupHash != expectedLookupHash) {
+          throw _failure('projection_repair_alias_ownership_invalid');
+        }
+      }
+      return rows.isNotEmpty;
+    } finally {
+      query.close();
     }
   }
 
@@ -556,6 +926,7 @@ final class _ObjectBoxCloudSemanticStoreTransaction
 
   bool _active = true;
   bool _canonicalMutationPerformed = false;
+  bool _projectionRepairPerformed = false;
   bool _recordMapWritten = false;
   _SemanticTransactionPhase _phase = _SemanticTransactionPhase.open;
   String? _boundLogicalEntityKeyHash;
@@ -793,6 +1164,84 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         existingId: existing?.id ?? 0,
       ),
     );
+  }
+
+  /// Re-applies an exact, already-committed chat payload only to the canonical
+  /// local projection. All durable sync-control evidence remains immutable.
+  void repairAppliedProjection({
+    required CloudSemanticEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  }) {
+    _ensureActive();
+    _ensureOpen();
+    if (_canonicalMutationPerformed ||
+        _recordMapWritten ||
+        _projectionRepairPerformed ||
+        payload is! CloudChatEntityPayload ||
+        payload.kind != CloudEntityKind.chat ||
+        snapshot.kind != CloudEntityKind.chat ||
+        payload.logicalEntityKeyHash != snapshot.logicalEntityKeyHash) {
+      throw ObjectBoxCloudSemanticStoreGateway._failure(
+        'projection_repair_transaction_invalid',
+      );
+    }
+    if (!hasAppliedChange(_context.entry.change.changeId)) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'projection_repair_terminal_outcome_invalid',
+      );
+    }
+    final replay = _findReplay();
+    if (replay == null ||
+        replay.logicalEntityKeyHash != snapshot.logicalEntityKeyHash) {
+      throw ObjectBoxCloudSemanticStoreGateway._failure(
+        'projection_repair_logical_binding_invalid',
+      );
+    }
+
+    _validatePayloadParent(payload, snapshot);
+    _validateSnapshot(snapshot);
+    final local = readSnapshot(
+      kind: snapshot.kind,
+      logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
+    );
+    if (local == null) {
+      throw ObjectBoxCloudSemanticStoreGateway._failure(
+        'projection_repair_snapshot_missing',
+      );
+    }
+    final decision = const CloudMergePolicy().merge(
+      local: local,
+      incoming: snapshot,
+      parentExists: true,
+    );
+    if (decision.action != CloudMergeAction.noChange ||
+        decision.conflicts.isNotEmpty) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'projection_repair_snapshot_changed',
+      );
+    }
+
+    if (_canonicalAdapter is! CloudAppliedChatProjectionRepairAdapter) {
+      throw ObjectBoxCloudSemanticStoreGateway._failure(
+        'projection_repair_adapter_unavailable',
+      );
+    }
+    final repairAdapter =
+        _canonicalAdapter as CloudAppliedChatProjectionRepairAdapter;
+    final receipt = repairAdapter.repairChatProjection(
+      scope: _context.entry.scope,
+      generation: _context.entry.generation,
+      payload: payload,
+      snapshot: snapshot,
+    );
+    if (receipt != CloudCanonicalSemanticMutationReceipt.committed) {
+      throw ObjectBoxCloudSemanticStoreGateway._failure(
+        'projection_repair_canonical_apply_uncommitted',
+      );
+    }
+    _projectionRepairPerformed = true;
   }
 
   @override

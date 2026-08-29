@@ -56,7 +56,11 @@ void main() {
           '31:5051649657745290821',
         ),
       );
-      expect(model['lastEntityId'], '31:5051649657745290821');
+      expect(
+        entities,
+        containsPair('CloudSemanticChatAliasEntity', '32:3377435011161314855'),
+      );
+      expect(model['lastEntityId'], '32:3377435011161314855');
       expect(model['modelVersion'], 5);
       expect(model['modelVersionParserMinimum'], 5);
 
@@ -147,6 +151,18 @@ void main() {
         receiptProperties['evidenceDigestSha256']?['id'],
         '26:4954038203640662813',
       );
+
+      final chatAliasProperties = propertiesFor('CloudSemanticChatAliasEntity');
+      expect(chatAliasProperties['bindingKey']?['id'], '2:7332341716914930469');
+      expect(
+        chatAliasProperties['bindingKey']?['indexId'],
+        '85:5536211795662003449',
+      );
+      expect(
+        chatAliasProperties['aliasKeyHash']?['id'],
+        '14:3699140591669288204',
+      );
+      expect(chatAliasProperties['chatId']?['id'], '18:1466186784207767557');
     },
   );
 }

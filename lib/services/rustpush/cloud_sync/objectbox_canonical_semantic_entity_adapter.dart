@@ -199,7 +199,11 @@ final class CloudCanonicalIdentityDigest {
 /// paths, or media bytes into canonical entities. The only production
 /// composition is the separately compile-gated manual semantic pull canary.
 final class ObjectBoxCanonicalSemanticEntityAdapter
-    implements CloudCanonicalSemanticEntityAdapter {
+    implements
+        CloudCanonicalSemanticEntityAdapter,
+        CloudAppliedChatProjectionRepairAdapter {
+  static final RegExp _externalDigestPattern = RegExp(r'^[A-Za-z0-9_-]{43}$');
+
   ObjectBoxCanonicalSemanticEntityAdapter({
     required this.store,
     required this._activeScopeProvider,
@@ -215,7 +219,8 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
        _handles = store.box<Handle>(),
        _messages = store.box<Message>(),
        _attachments = store.box<Attachment>(),
-       _snapshots = store.box<CloudSemanticSnapshotEntity>();
+       _snapshots = store.box<CloudSemanticSnapshotEntity>(),
+       _chatAliases = store.box<CloudSemanticChatAliasEntity>();
 
   @override
   final Store store;
@@ -233,6 +238,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
   final Box<Message> _messages;
   final Box<Attachment> _attachments;
   final Box<CloudSemanticSnapshotEntity> _snapshots;
+  final Box<CloudSemanticChatAliasEntity> _chatAliases;
 
   @override
   bool isActiveAccountScope({
@@ -394,6 +400,48 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
   }
 
   @override
+  CloudCanonicalSemanticMutationReceipt repairChatProjection({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudChatEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  }) {
+    _requireActiveScope(scope, generation);
+    if (snapshot.kind != CloudEntityKind.chat ||
+        payload.logicalEntityKeyHash != snapshot.logicalEntityKeyHash) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.malformedRecord,
+        safeCode: 'canonical_chat_repair_snapshot_mismatch',
+      );
+    }
+    _validateMutationIdentitySet(payload);
+    final canonicalGuid = _resolveCanonicalGuid(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: payload.logicalEntityKeyHash,
+    );
+    if (canonicalGuid == null) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'canonical_identity_unavailable',
+      );
+    }
+    _requireCanonicalIdentityOwnership(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: payload.logicalEntityKeyHash,
+      canonicalGuid: canonicalGuid,
+    );
+    return _repairExistingChatAliases(
+      scope: scope,
+      generation: generation,
+      payload: payload,
+    );
+  }
+
+  @override
   CloudCanonicalSemanticMutationReceipt applyTombstone({
     required CloudSyncScope scope,
     required int generation,
@@ -455,6 +503,118 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     return CloudCanonicalSemanticMutationReceipt.committed;
   }
 
+  CloudCanonicalSemanticMutationReceipt _repairExistingChatAliases({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudChatEntityPayload payload,
+  }) {
+    if (payload.service == null ||
+        payload.style == null ||
+        payload.aliases.isEmpty ||
+        !payload.aliases.any(
+          (alias) => alias.kind == CloudSemanticChatAliasKind.serviceIdentifier,
+        ) ||
+        payload.aliases.any(
+          (alias) => !_externalDigestPattern.hasMatch(alias.keyHash),
+        )) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.malformedRecord,
+        safeCode: 'canonical_chat_repair_shape_invalid',
+      );
+    }
+    final guid = _resolveCanonicalGuid(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: payload.logicalEntityKeyHash,
+    );
+    if (guid == null) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'canonical_identity_unavailable',
+      );
+    }
+    if (guid != payload.canonicalGuid) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_identity_mismatch',
+      );
+    }
+    final chat = _findChat(guid);
+    final chatId = chat?.id;
+    if (chat == null || chatId == null || chatId <= 0) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'canonical_chat_repair_target_unavailable',
+      );
+    }
+    final service = payload.service!;
+    final expectedStyle = switch (payload.style!) {
+      CloudSemanticChatStyle.direct => 45,
+      CloudSemanticChatStyle.group => 43,
+    };
+    if (chat.style != null && chat.style != expectedStyle) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_chat_style_conflict',
+      );
+    }
+    if (chat.isRpSms != (service == CloudSemanticService.sms)) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_chat_service_conflict',
+      );
+    }
+    final aliasMatch = _findChatByIdentifier(payload.chatIdentifier, service);
+    if (aliasMatch != null && aliasMatch.id != chatId) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_chat_alias_conflict',
+      );
+    }
+
+    final canonicalGuidHash = CloudCanonicalIdentityDigest.forCanonicalGuid(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: payload.logicalEntityKeyHash,
+      canonicalGuid: guid,
+    );
+    final canonicalGuidLookupHash =
+        CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+          scope: scope,
+          generation: generation,
+          canonicalGuid: guid,
+        );
+    for (final alias in payload.aliases) {
+      _validateChatAliasClaim(
+        scope: scope,
+        generation: generation,
+        service: service,
+        alias: alias,
+        logicalEntityKeyHash: payload.logicalEntityKeyHash,
+        canonicalGuidHash: canonicalGuidHash,
+        canonicalGuidLookupHash: canonicalGuidLookupHash,
+        expectedChat: chat,
+      );
+    }
+    final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+    for (final alias in payload.aliases) {
+      _putChatAlias(
+        scope: scope,
+        generation: generation,
+        service: service,
+        alias: alias,
+        logicalEntityKeyHash: payload.logicalEntityKeyHash,
+        canonicalGuidHash: canonicalGuidHash,
+        canonicalGuidLookupHash: canonicalGuidLookupHash,
+        chatId: chatId,
+        updatedAtMs: nowMs,
+      );
+    }
+    return CloudCanonicalSemanticMutationReceipt.committed;
+  }
+
   CloudCanonicalSemanticMutationReceipt _applyChatUpsert({
     required CloudSyncScope scope,
     required int generation,
@@ -462,7 +622,14 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
   }) {
     if (payload.service == null ||
         payload.style == null ||
-        (payload.groupVersion != null && payload.groupVersion! < 0)) {
+        (payload.groupVersion != null && payload.groupVersion! < 0) ||
+        payload.aliases.isEmpty ||
+        !payload.aliases.any(
+          (alias) => alias.kind == CloudSemanticChatAliasKind.serviceIdentifier,
+        ) ||
+        payload.aliases.any(
+          (alias) => !_externalDigestPattern.hasMatch(alias.keyHash),
+        )) {
       throw CloudSyncFailure(
         category: CloudFailureCategory.malformedRecord,
         safeCode: 'canonical_chat_shape_invalid',
@@ -526,6 +693,32 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       );
     }
 
+    final canonicalGuidHash = CloudCanonicalIdentityDigest.forCanonicalGuid(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: payload.logicalEntityKeyHash,
+      canonicalGuid: guid,
+    );
+    final canonicalGuidLookupHash =
+        CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+          scope: scope,
+          generation: generation,
+          canonicalGuid: guid,
+        );
+    for (final alias in payload.aliases) {
+      _validateChatAliasClaim(
+        scope: scope,
+        generation: generation,
+        service: service,
+        alias: alias,
+        logicalEntityKeyHash: payload.logicalEntityKeyHash,
+        canonicalGuidHash: canonicalGuidHash,
+        canonicalGuidLookupHash: canonicalGuidLookupHash,
+        expectedChat: chat,
+      );
+    }
+
     final incomingVersion = switch (payload.groupVersionState) {
       CloudSemanticFieldState.value => payload.groupVersion,
       CloudSemanticFieldState.absent ||
@@ -576,7 +769,8 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       }
     }
 
-    _chats.put(chat);
+    final chatId = _chats.put(chat);
+    chat.id ??= chatId;
     if (replacesParticipants) {
       final attached = _chats.get(chat.id!);
       if (attached == null) {
@@ -588,6 +782,21 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       attached.handles.clear();
       attached.handles.addAll(participantHandles);
       attached.handles.applyToDb();
+    }
+
+    final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+    for (final alias in payload.aliases) {
+      _putChatAlias(
+        scope: scope,
+        generation: generation,
+        service: service,
+        alias: alias,
+        logicalEntityKeyHash: payload.logicalEntityKeyHash,
+        canonicalGuidHash: canonicalGuidHash,
+        canonicalGuidLookupHash: canonicalGuidLookupHash,
+        chatId: chatId,
+        updatedAtMs: nowMs,
+      );
     }
 
     return CloudCanonicalSemanticMutationReceipt.committed;
@@ -661,11 +870,32 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       payloadCanonicalGuid: payload.canonicalGuid,
     );
     final service = payload.service!;
-    final chat = _findChatByIdentifier(payload.chatIdentifier, service);
+    if (!_externalDigestPattern.hasMatch(payload.chatAliasKeyHash)) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.malformedRecord,
+        safeCode: 'canonical_message_chat_alias_invalid',
+      );
+    }
+    final chat = _resolveChatByAlias(
+      scope: scope,
+      generation: generation,
+      service: service,
+      aliasKeyHash: payload.chatAliasKeyHash,
+    );
     if (chat == null) {
       throw CloudSyncFailure(
         category: CloudFailureCategory.dependency,
         safeCode: 'canonical_message_chat_unavailable',
+      );
+    }
+    final exactIdentifierMatch = _findChatByIdentifier(
+      payload.chatIdentifier,
+      service,
+    );
+    if (exactIdentifierMatch != null && exactIdentifierMatch.id != chat.id) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_message_chat_conflict',
       );
     }
 
@@ -739,7 +969,17 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       case CloudSemanticFieldState.absent:
         break;
       case CloudSemanticFieldState.value:
-        message.attributedBody = _attributedBodies(payload.attributedBodies);
+        final attributedBodies = _attributedBodies(payload.attributedBodies);
+        message.attributedBody = attributedBodies;
+        // Apple can omit the plain `t` field while carrying the complete
+        // message text in the attributed body. The normal Messages import
+        // path treats that first attributed string as Message.text; preserve
+        // the same invariant so fullText, notifications, search, and the
+        // conversation list do not mislabel a real message as empty.
+        if (payload.bodyState == CloudSemanticFieldState.absent &&
+            attributedBodies.isNotEmpty) {
+          message.text = attributedBodies.first.string;
+        }
       case CloudSemanticFieldState.explicitClear:
         message.attributedBody = [];
     }
@@ -1276,6 +1516,210 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       snapshot.schemaVersion == scope.schemaVersion &&
       snapshot.generation == generation;
 
+  void _validateChatAliasClaim({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudSemanticService service,
+    required CloudSemanticChatAlias alias,
+    required String logicalEntityKeyHash,
+    required String canonicalGuidHash,
+    required String canonicalGuidLookupHash,
+    required Chat? expectedChat,
+  }) {
+    final bindingKey = _chatAliasBindingKey(
+      scope: scope,
+      generation: generation,
+      service: service,
+      kind: alias.kind,
+      aliasKeyHash: alias.keyHash,
+    );
+    final existing = _findChatAlias(bindingKey);
+    if (existing == null) return;
+    if (!_chatAliasMatchesScope(existing, scope, generation) ||
+        existing.bindingKey != bindingKey ||
+        existing.service != service.name ||
+        existing.aliasKind != alias.kind.name ||
+        existing.aliasKeyHash != alias.keyHash ||
+        !_externalDigestPattern.hasMatch(existing.aliasKeyHash) ||
+        !CloudCanonicalIdentityDigest.isValid(existing.canonicalGuidHash) ||
+        !CloudCanonicalIdentityDigest.isValid(
+          existing.canonicalGuidLookupHash,
+        )) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'canonical_chat_alias_unproven',
+      );
+    }
+    if (existing.chatLogicalEntityKeyHash != logicalEntityKeyHash ||
+        existing.canonicalGuidHash != canonicalGuidHash ||
+        existing.canonicalGuidLookupHash != canonicalGuidLookupHash) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_chat_alias_conflict',
+      );
+    }
+    final boundChat = _chats.get(existing.chatId);
+    if (boundChat == null ||
+        expectedChat == null ||
+        boundChat.id != expectedChat.id ||
+        boundChat.guid != expectedChat.guid) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_chat_alias_conflict',
+      );
+    }
+    _requireCanonicalIdentityOwnership(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: logicalEntityKeyHash,
+      canonicalGuid: boundChat.guid,
+    );
+  }
+
+  void _putChatAlias({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudSemanticService service,
+    required CloudSemanticChatAlias alias,
+    required String logicalEntityKeyHash,
+    required String canonicalGuidHash,
+    required String canonicalGuidLookupHash,
+    required int chatId,
+    required int updatedAtMs,
+  }) {
+    final bindingKey = _chatAliasBindingKey(
+      scope: scope,
+      generation: generation,
+      service: service,
+      kind: alias.kind,
+      aliasKeyHash: alias.keyHash,
+    );
+    final existing = _findChatAlias(bindingKey);
+    _chatAliases.put(
+      CloudSemanticChatAliasEntity(
+        id: existing?.id ?? 0,
+        bindingKey: bindingKey,
+        scopeGenerationKey: _scopeGenerationKey(scope, generation),
+        scopeKey: _scopeKey(scope),
+        accountFingerprint: scope.accountFingerprint,
+        container: scope.container,
+        database: scope.database,
+        zone: scope.zone,
+        streamKind: scope.streamKind.name,
+        schemaVersion: scope.schemaVersion,
+        generation: generation,
+        service: service.name,
+        aliasKind: alias.kind.name,
+        aliasKeyHash: alias.keyHash,
+        chatLogicalEntityKeyHash: logicalEntityKeyHash,
+        canonicalGuidHash: canonicalGuidHash,
+        canonicalGuidLookupHash: canonicalGuidLookupHash,
+        chatId: chatId,
+        updatedAtMs: updatedAtMs,
+      ),
+    );
+  }
+
+  Chat? _resolveChatByAlias({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudSemanticService service,
+    required String aliasKeyHash,
+  }) {
+    const kind = CloudSemanticChatAliasKind.serviceIdentifier;
+    final bindingKey = _chatAliasBindingKey(
+      scope: scope,
+      generation: generation,
+      service: service,
+      kind: kind,
+      aliasKeyHash: aliasKeyHash,
+    );
+    final binding = _findChatAlias(bindingKey);
+    if (binding == null) return null;
+    if (!_chatAliasMatchesScope(binding, scope, generation) ||
+        binding.bindingKey != bindingKey ||
+        binding.service != service.name ||
+        binding.aliasKind != kind.name ||
+        binding.aliasKeyHash != aliasKeyHash ||
+        !_externalDigestPattern.hasMatch(binding.aliasKeyHash) ||
+        !CloudCanonicalIdentityDigest.isValid(binding.canonicalGuidHash) ||
+        !CloudCanonicalIdentityDigest.isValid(
+          binding.canonicalGuidLookupHash,
+        )) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'canonical_message_chat_alias_unproven',
+      );
+    }
+
+    final chat = _chats.get(binding.chatId);
+    if (chat == null) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'canonical_message_chat_unavailable',
+      );
+    }
+    if (chat.isRpSms != (service == CloudSemanticService.sms)) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_message_chat_conflict',
+      );
+    }
+    final expectedGuidHash = CloudCanonicalIdentityDigest.forCanonicalGuid(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: binding.chatLogicalEntityKeyHash,
+      canonicalGuid: chat.guid,
+    );
+    final expectedLookupHash =
+        CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+          scope: scope,
+          generation: generation,
+          canonicalGuid: chat.guid,
+        );
+    if (binding.canonicalGuidHash != expectedGuidHash ||
+        binding.canonicalGuidLookupHash != expectedLookupHash) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'canonical_message_chat_alias_unproven',
+      );
+    }
+    _requireCanonicalIdentityOwnership(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: binding.chatLogicalEntityKeyHash,
+      canonicalGuid: chat.guid,
+    );
+    return chat;
+  }
+
+  bool _chatAliasMatchesScope(
+    CloudSemanticChatAliasEntity binding,
+    CloudSyncScope scope,
+    int generation,
+  ) =>
+      binding.scopeGenerationKey == _scopeGenerationKey(scope, generation) &&
+      binding.scopeKey == _scopeKey(scope) &&
+      binding.accountFingerprint == scope.accountFingerprint &&
+      binding.container == scope.container &&
+      binding.database == scope.database &&
+      binding.zone == scope.zone &&
+      binding.streamKind == scope.streamKind.name &&
+      binding.schemaVersion == scope.schemaVersion &&
+      binding.generation == generation;
+
+  static String _chatAliasBindingKey({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudSemanticService service,
+    required CloudSemanticChatAliasKind kind,
+    required String aliasKeyHash,
+  }) =>
+      'semantic-chat-alias1:${sha256.convert(utf8.encode('${scope.storageKey}\u001f$generation\u001f${service.name}\u001f${kind.name}\u001f$aliasKeyHash')).toString()}';
+
   static String _scopeKey(CloudSyncScope scope) =>
       'scope2:${sha256.convert(utf8.encode(scope.storageKey)).toString()}';
 
@@ -1491,6 +1935,26 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     }
   }
 
+  CloudSemanticChatAliasEntity? _findChatAlias(String bindingKey) {
+    final query =
+        _chatAliases
+            .query(CloudSemanticChatAliasEntity_.bindingKey.equals(bindingKey))
+            .build()
+          ..limit = 2;
+    try {
+      final matches = query.find();
+      if (matches.length > 1) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'canonical_chat_alias_conflict',
+        );
+      }
+      return matches.isEmpty ? null : matches.first;
+    } finally {
+      query.close();
+    }
+  }
+
   Chat? _findChatByIdentifier(
     String chatIdentifier,
     CloudSemanticService service,
@@ -1505,9 +1969,16 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
                   ),
             )
             .build()
-          ..limit = 1;
+          ..limit = 2;
     try {
-      return query.findFirst();
+      final matches = query.find();
+      if (matches.length > 1) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'canonical_chat_alias_conflict',
+        );
+      }
+      return matches.isEmpty ? null : matches.first;
     } finally {
       query.close();
     }

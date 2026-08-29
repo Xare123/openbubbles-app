@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
@@ -391,6 +392,80 @@ void main() {
   );
 
   test(
+    'repairs applied chat projection before transport and releases its lease',
+    () async {
+      final events = <String>[];
+      final stores = <String, InMemoryCloudSyncStore>{};
+      late _RepairingFakeCloudInboxApplier chatApplier;
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async {
+          final store = InMemoryCloudSyncStore();
+          stores[scope.zone] = store;
+          return store;
+        },
+        createRawTransport: (auth, scope) async {
+          events.add('transport:${scope.zone}');
+          return FakeCloudSyncTransport();
+        },
+        createInboxApplier: (auth, scope, generation) async {
+          events.add('applier:${scope.zone}');
+          if (scope.zone == 'chatManateeZone') {
+            chatApplier = _RepairingFakeCloudInboxApplier(
+              onRepair: (repairScope, repairGeneration, leaseFence, limit) {
+                events.add('repair:${repairScope.zone}');
+                expect(repairGeneration, generation);
+                expect(leaseFence.ownerId, contains(auth.nativeSessionId));
+                expect(
+                  limit,
+                  CloudSyncManualSemanticPullSampler.projectionRepairLimit,
+                );
+              },
+            );
+            return chatApplier;
+          }
+          return FakeCloudInboxApplier();
+        },
+      );
+
+      await sampler.runConfirmed();
+
+      expect(chatApplier.repairCalls, 1);
+      expect(events, const [
+        'applier:chatManateeZone',
+        'repair:chatManateeZone',
+        'transport:chatManateeZone',
+        'applier:messageManateeZone',
+        'transport:messageManateeZone',
+        'applier:attachmentManateeZone',
+        'transport:attachmentManateeZone',
+      ]);
+      final chatScope = CloudSyncScope(
+        accountFingerprint: _accountFingerprintA,
+        container: CloudSyncManualSemanticPullSampler.container,
+        database: CloudSyncManualSemanticPullSampler.database,
+        zone: 'chatManateeZone',
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      final replacementLease = await stores['chatManateeZone']!
+          .tryAcquireCoordinatorLease(
+            chatScope,
+            ownerId: 'post-repair-test-owner',
+            now: DateTime.now().toUtc(),
+            leaseDuration: const Duration(minutes: 1),
+          );
+      expect(replacementLease, isNotNull);
+      await stores['chatManateeZone']!.releaseCoordinatorLease(
+        chatScope,
+        leaseFence: replacementLease!,
+      );
+    },
+  );
+
+  test(
     'provided applier is the only semantic application path and confirmation remains unreachable',
     () async {
       final transports = <FakeCloudSyncTransport>[];
@@ -662,4 +737,32 @@ final class _JoinableTransport extends FakeCloudSyncTransport
 
   @override
   Future<void> quiesceNativeOperations() => quiesce();
+}
+
+typedef _ProjectionRepairCallback =
+    void Function(
+      CloudSyncScope scope,
+      int generation,
+      CloudCoordinatorLeaseFence leaseFence,
+      int limit,
+    );
+
+final class _RepairingFakeCloudInboxApplier extends FakeCloudInboxApplier
+    implements CloudAppliedProjectionRepairer {
+  _RepairingFakeCloudInboxApplier({required this.onRepair});
+
+  final _ProjectionRepairCallback onRepair;
+  int repairCalls = 0;
+
+  @override
+  Future<int> repairAppliedProjections({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int limit,
+  }) async {
+    repairCalls++;
+    onRepair(scope, generation, leaseFence, limit);
+    return 1;
+  }
 }

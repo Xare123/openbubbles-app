@@ -22,6 +22,8 @@ class CloudAttachmentMaterializationEntity {}
 
 class CloudSemanticSnapshotEntity {}
 
+class CloudSemanticChatAliasEntity {}
+
 class CloudSemanticReplayEntity {}
 
 class CloudKitV2QuarantineRepairReceiptEntity {}

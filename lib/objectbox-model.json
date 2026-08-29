@@ -2379,10 +2379,130 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "32:3377435011161314855",
+      "lastPropertyId": "19:3770450974933446658",
+      "name": "CloudSemanticChatAliasEntity",
+      "properties": [
+        {
+          "id": "1:7098698173187578007",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:7332341716914930469",
+          "name": "bindingKey",
+          "indexId": "85:5536211795662003449",
+          "type": 9,
+          "flags": 4128
+        },
+        {
+          "id": "3:4522292004414699675",
+          "name": "scopeGenerationKey",
+          "indexId": "86:5498017635733736126",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "4:5691373220113581910",
+          "name": "scopeKey",
+          "indexId": "87:161385650125103915",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "5:5870590435073970821",
+          "name": "accountFingerprint",
+          "indexId": "88:2925673776145547192",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "6:3204701015430636685",
+          "name": "container",
+          "type": 9
+        },
+        {
+          "id": "7:449595904166386716",
+          "name": "database",
+          "type": 9
+        },
+        {
+          "id": "8:7321898202427631255",
+          "name": "zone",
+          "indexId": "89:163652056999796140",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "9:4180639133089376432",
+          "name": "streamKind",
+          "type": 9
+        },
+        {
+          "id": "10:2338409620707299785",
+          "name": "schemaVersion",
+          "type": 6
+        },
+        {
+          "id": "11:1136144536363908509",
+          "name": "generation",
+          "type": 6
+        },
+        {
+          "id": "12:1606053567096911372",
+          "name": "service",
+          "type": 9
+        },
+        {
+          "id": "13:964348894877183208",
+          "name": "aliasKind",
+          "type": 9
+        },
+        {
+          "id": "14:3699140591669288204",
+          "name": "aliasKeyHash",
+          "indexId": "90:3844818839047269102",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "15:5622254289795034031",
+          "name": "chatLogicalEntityKeyHash",
+          "indexId": "91:8421387141140277905",
+          "type": 9,
+          "flags": 4096
+        },
+        {
+          "id": "16:7493638054866292008",
+          "name": "canonicalGuidHash",
+          "type": 9
+        },
+        {
+          "id": "17:8892010839062139306",
+          "name": "canonicalGuidLookupHash",
+          "type": 9
+        },
+        {
+          "id": "18:1466186784207767557",
+          "name": "chatId",
+          "indexId": "92:7759272949562488518",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "19:3770450974933446658",
+          "name": "updatedAtMs",
+          "type": 6
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "31:5051649657745290821",
-  "lastIndexId": "84:3233573957190533269",
+  "lastEntityId": "32:3377435011161314855",
+  "lastIndexId": "92:7759272949562488518",
   "lastRelationId": "1:7492985733214117623",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

@@ -484,7 +484,12 @@ class GetChats extends AsyncTask<List<dynamic>, List<Chat>> {
         queryBuilder = Database.chats.query(Chat_.dateDeleted.isNull().and(Chat_
             .isRoutingStub
             .equals(false)
-            .or(Chat_.isRoutingStub.isNull())));
+            .or(Chat_.isRoutingStub.isNull())))
+          ..backlink(
+              Message_.chat,
+              Message_.dateDeleted
+                  .isNull()
+                  .and(Message_.dateCreated.notNull()));
       }
 
       // Build the query, applying some sorting so we get data in the correct order.
@@ -1876,7 +1881,22 @@ class Chat {
   }
 
   static int? count() {
-    return Database.chats.count();
+    if (kIsWeb) return Database.chats.count();
+    final query = (Database.chats.query(Chat_.dateDeleted.isNull().and(Chat_
+            .isRoutingStub
+            .equals(false)
+            .or(Chat_.isRoutingStub.isNull())))
+          ..backlink(
+              Message_.chat,
+              Message_.dateDeleted
+                  .isNull()
+                  .and(Message_.dateCreated.notNull())))
+        .build();
+    try {
+      return query.count();
+    } finally {
+      query.close();
+    }
   }
 
   Future<List<Attachment>> getAttachmentsAsync(

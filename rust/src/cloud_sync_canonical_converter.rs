@@ -1743,6 +1743,16 @@ pub(crate) fn convert_chat(
         Err(error) => return validation_quarantine(error),
     };
     let mut aliases = Vec::new();
+    let mut alias_keys = HashSet::new();
+    let mut add_alias = |kind: CloudCanonicalAliasKind,
+                         value: &str|
+     -> Result<(), CloudCanonicalValidationFailure> {
+        let hash = context.hasher.canonical_alias_key_hash(kind, value)?;
+        if alias_keys.insert((kind, hash.value().to_owned())) {
+            aliases.push(CloudCanonicalAlias::new(kind, hash));
+        }
+        Ok(())
+    };
     for (kind, value) in [
         (CloudCanonicalAliasKind::ChatGroupId, chat.group_id.as_str()),
         (
@@ -1754,11 +1764,23 @@ pub(crate) fn convert_chat(
             chat.chat_identifier.as_str(),
         ),
     ] {
-        let hash = match context.hasher.canonical_alias_key_hash(kind, value) {
-            Ok(value) => value,
-            Err(error) => return validation_quarantine(error),
-        };
-        aliases.push(CloudCanonicalAlias::new(kind, hash));
+        if let Err(error) = add_alias(kind, value) {
+            return validation_quarantine(error);
+        }
+    }
+    // A message's `chatID` is not guaranteed to equal the chat record's
+    // `cid`. Historical group migrations can leave it pointing at `gid`,
+    // `ogid`, or a legacy group identifier. Hash every exact wire identity in
+    // the same service-identifier domain used by message records so the Dart
+    // projection can join them without persisting or normalizing plaintext.
+    for value in [
+        chat.group_id.as_str(),
+        chat.original_group_id.as_str(),
+        chat.chat_identifier.as_str(),
+    ] {
+        if let Err(error) = add_alias(CloudCanonicalAliasKind::ChatServiceIdentifier, value) {
+            return validation_quarantine(error);
+        }
     }
     if let Some(properties) = properties {
         for legacy in &properties.legacy_group_identifiers {
@@ -1767,17 +1789,14 @@ pub(crate) fn convert_chat(
                     CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
                 );
             }
-            let hash = match context.hasher.canonical_alias_key_hash(
+            for kind in [
                 CloudCanonicalAliasKind::ChatLegacyGroupIdentifier,
-                legacy,
-            ) {
-                Ok(value) => value,
-                Err(error) => return validation_quarantine(error),
-            };
-            aliases.push(CloudCanonicalAlias::new(
-                CloudCanonicalAliasKind::ChatLegacyGroupIdentifier,
-                hash,
-            ));
+                CloudCanonicalAliasKind::ChatServiceIdentifier,
+            ] {
+                if let Err(error) = add_alias(kind, legacy) {
+                    return validation_quarantine(error);
+                }
+            }
         }
     }
 
@@ -2657,6 +2676,22 @@ mod tests {
             mutation.envelope().entity_kind(),
             CloudCanonicalEntityKind::Chat
         );
+        for wire_identity in [
+            "chat-direct",
+            "chat-direct-original",
+            "iMessage;-;+15555550100",
+        ] {
+            let expected = hasher
+                .canonical_alias_key_hash(
+                    CloudCanonicalAliasKind::ChatServiceIdentifier,
+                    wire_identity,
+                )
+                .expect("service alias hash");
+            assert!(mutation.envelope().aliases().iter().any(|alias| {
+                alias.kind() == CloudCanonicalAliasKind::ChatServiceIdentifier
+                    && alias.key_hash() == &expected
+            }));
+        }
         let Some(CloudCanonicalPayload::Chat(payload)) = mutation.payload() else {
             panic!("chat payload expected");
         };

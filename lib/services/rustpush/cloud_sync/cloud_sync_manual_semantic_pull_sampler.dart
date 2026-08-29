@@ -1,4 +1,5 @@
 import 'cloud_shadow_journal_budget.dart';
+import 'cloud_inbox_applier.dart';
 import 'cloud_sync_dev_gate.dart';
 import 'cloud_sync_engine.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
@@ -68,6 +69,7 @@ final class CloudSyncManualSemanticPullSampler {
   ];
   static const pageLimit = 1;
   static const changeLimit = 50;
+  static const projectionRepairLimit = 256;
   static const _maximumFetchTimeout = Duration(seconds: 45);
   static final _journalBudget = CloudShadowJournalBudget(
     maximumEntriesPerScope: 512,
@@ -133,6 +135,15 @@ final class CloudSyncManualSemanticPullSampler {
         scope,
         checkpoint.generation,
       );
+      final config = _config();
+      await _repairAppliedProjections(
+        auth: auth,
+        scope: scope,
+        generation: checkpoint.generation,
+        store: store,
+        inboxApplier: inboxApplier,
+        leaseDuration: config.coordinatorLeaseDuration,
+      );
       final rawTransport = await _createRawTransport(auth, scope);
       try {
         final guardedTransport = AccountBoundShadowTransport(
@@ -152,7 +163,7 @@ final class CloudSyncManualSemanticPullSampler {
           store: store,
           transport: guardedTransport,
           inboxApplier: inboxApplier,
-          config: _config(),
+          config: config,
           observer: observer,
         );
         final result = await engine.synchronize(
@@ -228,6 +239,40 @@ final class CloudSyncManualSemanticPullSampler {
       _observerFactory == null
       ? const NoopCloudSyncObserver()
       : _observerFactory(scope);
+
+  Future<void> _repairAppliedProjections({
+    required CloudSyncNativeAuthSnapshot auth,
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudSyncStore store,
+    required CloudInboxApplier inboxApplier,
+    required Duration leaseDuration,
+  }) async {
+    if (scope.zone != 'chatManateeZone' ||
+        inboxApplier is! CloudAppliedProjectionRepairer) {
+      return;
+    }
+    final repairer = inboxApplier as CloudAppliedProjectionRepairer;
+    final leaseFence = await store.tryAcquireCoordinatorLease(
+      scope,
+      ownerId: 'manual-semantic-projection-repair-${auth.nativeSessionId}',
+      now: DateTime.now().toUtc(),
+      leaseDuration: leaseDuration,
+    );
+    if (leaseFence == null) {
+      throw StateError('cloud_sync_projection_repair_lease_unavailable');
+    }
+    try {
+      await repairer.repairAppliedProjections(
+        scope: scope,
+        generation: generation,
+        leaseFence: leaseFence,
+        limit: projectionRepairLimit,
+      );
+    } finally {
+      await store.releaseCoordinatorLease(scope, leaseFence: leaseFence);
+    }
+  }
 
   Future<void> _flushObserver(CloudSyncObserver observer) async {
     if (observer case FlushableCloudSyncObserver flushable) {

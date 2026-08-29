@@ -967,6 +967,22 @@ fn validate_canonical_identity_bindings(
                     return Err(CloudCanonicalValidationFailure::InvalidPayload);
                 }
             }
+            for value in [
+                payload.group_id(),
+                payload.original_group_id(),
+                payload.chat_identifier(),
+            ] {
+                let expected_alias_hash = hasher.canonical_alias_key_hash(
+                    CloudCanonicalAliasKind::ChatServiceIdentifier,
+                    value,
+                )?;
+                if !mutation.envelope().aliases().iter().any(|alias| {
+                    alias.kind() == CloudCanonicalAliasKind::ChatServiceIdentifier
+                        && alias.key_hash() == &expected_alias_hash
+                }) {
+                    return Err(CloudCanonicalValidationFailure::InvalidPayload);
+                }
+            }
             hasher.canonical_entity_key_hash(CloudCanonicalEntityKind::Chat, payload.guid())?
         }
         CloudCanonicalPayload::Message(payload) => {
@@ -1659,6 +1675,11 @@ mod tests {
                 CloudCanonicalAliasKind::ChatOriginalGroupId,
                 "original-group-id",
             ),
+            (CloudCanonicalAliasKind::ChatServiceIdentifier, "group-id"),
+            (
+                CloudCanonicalAliasKind::ChatServiceIdentifier,
+                "original-group-id",
+            ),
             (
                 CloudCanonicalAliasKind::ChatServiceIdentifier,
                 "iMessage;-;+15555550100",
@@ -1666,12 +1687,14 @@ mod tests {
         ]
         .into_iter()
         .map(|(kind, value)| {
-            let key_hash =
-                if tamper_service_alias && kind == CloudCanonicalAliasKind::ChatServiceIdentifier {
-                    CloudCanonicalHash::new(digest('a')).unwrap()
-                } else {
-                    hasher.canonical_alias_key_hash(kind, value).unwrap()
-                };
+            let key_hash = if tamper_service_alias
+                && kind == CloudCanonicalAliasKind::ChatServiceIdentifier
+                && value == "iMessage;-;+15555550100"
+            {
+                CloudCanonicalHash::new(digest('a')).unwrap()
+            } else {
+                hasher.canonical_alias_key_hash(kind, value).unwrap()
+            };
             CloudCanonicalAlias::new(kind, key_hash)
         })
         .collect();

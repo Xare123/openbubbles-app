@@ -606,6 +606,75 @@ class CloudSemanticSnapshotEntity {
   });
 }
 
+/// Content-free, account- and generation-scoped binding from one authenticated
+/// CloudKit chat alias to the canonical local chat row it identifies.
+@Entity()
+class CloudSemanticChatAliasEntity {
+  int id;
+
+  /// Digest over the complete scope, generation, service, and alias hash.
+  @Index(type: IndexType.hash64)
+  @Unique()
+  String bindingKey;
+
+  @Index(type: IndexType.hash64)
+  String scopeGenerationKey;
+
+  @Index(type: IndexType.hash64)
+  String scopeKey;
+
+  @Index(type: IndexType.hash64)
+  String accountFingerprint;
+
+  String container;
+  String database;
+
+  @Index(type: IndexType.hash64)
+  String zone;
+
+  String streamKind;
+  int schemaVersion;
+  int generation;
+  String service;
+  String aliasKind;
+
+  @Index(type: IndexType.hash64)
+  String aliasKeyHash;
+
+  @Index(type: IndexType.hash64)
+  String chatLogicalEntityKeyHash;
+
+  String canonicalGuidHash;
+  String canonicalGuidLookupHash;
+
+  @Index()
+  int chatId;
+
+  int updatedAtMs;
+
+  CloudSemanticChatAliasEntity({
+    this.id = 0,
+    required this.bindingKey,
+    required this.scopeGenerationKey,
+    required this.scopeKey,
+    required this.accountFingerprint,
+    required this.container,
+    required this.database,
+    required this.zone,
+    required this.streamKind,
+    required this.schemaVersion,
+    required this.generation,
+    required this.service,
+    required this.aliasKind,
+    required this.aliasKeyHash,
+    required this.chatLogicalEntityKeyHash,
+    required this.canonicalGuidHash,
+    required this.canonicalGuidLookupHash,
+    required this.chatId,
+    required this.updatedAtMs,
+  });
+}
+
 /// Durable replay, quarantine, and conflict state for one decoded change.
 ///
 /// The change identity is re-digested with the complete account scope and

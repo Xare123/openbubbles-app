@@ -1152,6 +1152,12 @@ frb.CloudSyncTransientChatPayload _chatPayload({
   chatIdentifier: 'iMessage;-;chat',
   groupId: 'group-id',
   originalGroupId: 'original-group-id',
+  aliases: const [
+    frb.CloudSyncTransientChatAlias(
+      kind: frb.CloudSyncTransientChatAliasKind.serviceIdentifier,
+      keyHash: _chatHash,
+    ),
+  ],
   service: frb.CloudSyncTransientService.iMessage,
   style: frb.CloudSyncTransientChatStyle.direct,
   participantHandles: participantHandles,

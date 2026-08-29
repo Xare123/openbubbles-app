@@ -17,7 +17,6 @@ import 'package:get/get.dart' hide Response;
 import 'package:tuple/tuple.dart';
 import 'package:universal_io/io.dart';
 import 'package:bluebubbles/database/database.dart';
-import 'package:bluebubbles/src/rust/api/api.dart' as api;
 
 ChatsService chats = Get.isRegistered<ChatsService>() ? Get.find<ChatsService>() : Get.put(ChatsService());
 
@@ -41,7 +40,13 @@ class ChatsService extends GetxService {
     if (!kIsWeb) {
       // watch for new chats
       (() async {
-        final countQuery = (Database.chats.query(Chat_.dateDeleted.isNull().and(Chat_.telephonyId.isNull()).and(Chat_.isRoutingStub.equals(false).or(Chat_.isRoutingStub.isNull())))..order(Chat_.id, flags: Order.descending))
+        final countQuery = (Database.chats.query(Chat_.dateDeleted.isNull().and(Chat_.telephonyId.isNull()).and(Chat_.isRoutingStub.equals(false).or(Chat_.isRoutingStub.isNull())))
+              ..backlink(
+                  Message_.chat,
+                  Message_.dateDeleted
+                      .isNull()
+                      .and(Message_.dateCreated.notNull()))
+              ..order(Chat_.id, flags: Order.descending))
             .watch(triggerImmediately: true);
         countSub = countQuery.listen((event) async {
           if (!ss.settings.finishedSetup.value) return;

@@ -597,6 +597,12 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       chatIdentifier: payload.chatIdentifier,
       groupId: payload.groupId,
       originalGroupId: payload.originalGroupId,
+      aliases: payload.aliases.map(
+        (alias) => CloudSemanticChatAlias(
+          kind: _chatAliasKind(alias.kind),
+          keyHash: _requireExternalDigest(alias.keyHash),
+        ),
+      ),
       service: _service(payload.service),
       style: _chatStyle(payload.style),
       displayNameState: _fieldState(payload.displayNameState),
@@ -612,6 +618,19 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       groupPhotoGuid: payload.groupPhotoGuid,
     );
   }
+
+  CloudSemanticChatAliasKind _chatAliasKind(
+    frb_api.CloudSyncTransientChatAliasKind value,
+  ) => switch (value) {
+    frb_api.CloudSyncTransientChatAliasKind.groupId =>
+      CloudSemanticChatAliasKind.groupId,
+    frb_api.CloudSyncTransientChatAliasKind.originalGroupId =>
+      CloudSemanticChatAliasKind.originalGroupId,
+    frb_api.CloudSyncTransientChatAliasKind.serviceIdentifier =>
+      CloudSemanticChatAliasKind.serviceIdentifier,
+    frb_api.CloudSyncTransientChatAliasKind.legacyGroupIdentifier =>
+      CloudSemanticChatAliasKind.legacyGroupIdentifier,
+  };
 
   CloudMessageEntityPayload _messagePayload(
     frb_api.CloudSyncTransientPayload value,

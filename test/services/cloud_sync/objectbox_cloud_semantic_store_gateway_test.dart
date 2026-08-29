@@ -1469,6 +1469,183 @@ void main() {
       _expectNoSemanticMutation(objectBox, adapter);
     },
   );
+
+  test(
+    'repairs an applied chat alias without changing durable sync control',
+    () async {
+      final chatScope = _scope(zone: 'chatManateeZone');
+      final entry = _entry(scope: chatScope);
+      adapter.activeScope = chatScope;
+      objectBox.box<Chat>().put(
+        Chat(guid: 'chat-guid', chatIdentifier: 'iMessage;-;chat', style: 45),
+      );
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+
+      final legacyPayload = _chatPayload(includeServiceIdentifierAlias: false);
+      final snapshot = _chatSnapshot();
+      await gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: (transaction) {
+          transaction.applyEntity(payload: legacyPayload, snapshot: snapshot);
+          transaction.markChangeApplied(entry.change.changeId);
+        },
+      );
+      expect(objectBox.box<CloudSemanticChatAliasEntity>().count(), 0);
+
+      final identityRegistry = TransientCloudCanonicalIdentityRegistry();
+      final activeScope = CloudCanonicalActiveScope(
+        scope: chatScope,
+        generation: entry.generation,
+      );
+      final currentAdapter = ObjectBoxCanonicalSemanticEntityAdapter(
+        store: objectBox,
+        activeScopeProvider: () => activeScope,
+        identityResolver: identityRegistry,
+        semanticApplyEnabled: true,
+        allowChatUpserts: true,
+      );
+      final currentGateway = ObjectBoxCloudSemanticStoreGateway(
+        store: objectBox,
+        canonicalAdapter: currentAdapter,
+        clock: () => now,
+      );
+      final repairedPayload = _chatPayload(
+        includeServiceIdentifierAlias: true,
+        participantHandles: const ['mailto:new-participant@example.com'],
+      );
+      final repairer = TransactionalCloudInboxApplier(
+        decoder: _FixedDecoder(
+          CloudDecodedMutation.upsert(
+            scope: chatScope,
+            generation: entry.generation,
+            changeId: entry.change.changeId,
+            snapshot: snapshot,
+            payload: repairedPayload,
+          ),
+        ),
+        store: currentGateway,
+        identityRegistrar: identityRegistry,
+        activeScopeRevalidator: () async => true,
+      );
+
+      final candidates = await currentGateway
+          .readAppliedProjectionRepairCandidates(
+            scope: chatScope,
+            generation: entry.generation,
+            leaseFence: leaseFence,
+            limit: 8,
+          );
+      expect(candidates, hasLength(1));
+      final controlBefore = _durableSyncControlFingerprint(objectBox);
+      final handleCountBefore = objectBox.box<Handle>().count();
+      final chatBefore = objectBox.box<Chat>().getAll().single;
+      final participantIdsBefore = chatBefore.handles
+          .map((handle) => handle.id)
+          .toList(growable: false);
+      final displayNameBefore = chatBefore.displayName;
+
+      expect(
+        await repairer.repairAppliedProjections(
+          scope: chatScope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          limit: 8,
+        ),
+        1,
+      );
+
+      expect(_durableSyncControlFingerprint(objectBox), controlBefore);
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+      expect(objectBox.box<Chat>().count(), 1);
+      expect(objectBox.box<Handle>().count(), handleCountBefore);
+      final chatAfter = objectBox.box<Chat>().getAll().single;
+      expect(chatAfter.displayName, displayNameBefore);
+      expect(
+        chatAfter.handles.map((handle) => handle.id).toList(growable: false),
+        participantIdsBefore,
+      );
+      final aliases = objectBox.box<CloudSemanticChatAliasEntity>().getAll();
+      expect(aliases, hasLength(1));
+      expect(
+        aliases.single.aliasKind,
+        CloudSemanticChatAliasKind.serviceIdentifier.name,
+      );
+      expect(
+        await currentGateway.readAppliedProjectionRepairCandidates(
+          scope: chatScope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          limit: 8,
+        ),
+        isEmpty,
+      );
+
+      final repairedAlias = aliases.single;
+      final validCanonicalGuidHash = repairedAlias.canonicalGuidHash;
+      repairedAlias.canonicalGuidHash = List.filled(64, '0').join();
+      objectBox.box<CloudSemanticChatAliasEntity>().put(repairedAlias);
+      await expectLater(
+        currentGateway.readAppliedProjectionRepairCandidates(
+          scope: chatScope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          limit: 8,
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'projection_repair_alias_ownership_invalid',
+          ),
+        ),
+      );
+      repairedAlias.canonicalGuidHash = validCanonicalGuidHash;
+      objectBox.box<CloudSemanticChatAliasEntity>().put(repairedAlias);
+
+      final changedSnapshot = CloudSemanticSnapshot(
+        kind: CloudEntityKind.chat,
+        logicalEntityKeyHash: snapshot.logicalEntityKeyHash,
+        groupVersion: 1,
+        etagHash: snapshot.etagHash,
+        encryptedRawRecordReference: snapshot.encryptedRawRecordReference,
+      );
+      final changedMutation = CloudDecodedMutation.upsert(
+        scope: chatScope,
+        generation: entry.generation,
+        changeId: entry.change.changeId,
+        snapshot: changedSnapshot,
+        payload: repairedPayload,
+      );
+      final identityLease = identityRegistry.bind(changedMutation);
+      try {
+        await expectLater(
+          currentGateway.repairAppliedProjection(
+            entry: candidates.single,
+            leaseFence: leaseFence,
+            payload: repairedPayload,
+            snapshot: changedSnapshot,
+          ),
+          throwsA(
+            isA<CloudSyncFailure>().having(
+              (failure) => failure.safeCode,
+              'safeCode',
+              'projection_repair_snapshot_changed',
+            ),
+          ),
+        );
+      } finally {
+        identityLease.release();
+      }
+      expect(_durableSyncControlFingerprint(objectBox), controlBefore);
+      expect(objectBox.box<CloudSemanticChatAliasEntity>().count(), 1);
+    },
+  );
 }
 
 CloudSyncScope _scope({String? account, String zone = 'messageManateeZone'}) {
@@ -1547,6 +1724,38 @@ CloudMessageEntityPayload _payload() {
     chatIdentifier: 'iMessage;-;chat',
     body: 'secret message body',
     senderHandle: 'secret@example.com',
+  );
+}
+
+CloudSemanticSnapshot _chatSnapshot() {
+  return CloudSemanticSnapshot(
+    kind: CloudEntityKind.chat,
+    logicalEntityKeyHash: _digestValue('L'),
+    etagHash: _digestValue('E'),
+    encryptedRawRecordReference: _protectedReference('W'),
+  );
+}
+
+CloudChatEntityPayload _chatPayload({
+  required bool includeServiceIdentifierAlias,
+  Iterable<String> participantHandles = const [],
+}) {
+  return CloudChatEntityPayload(
+    logicalEntityKeyHash: _digestValue('L'),
+    canonicalGuid: 'chat-guid',
+    chatIdentifier: 'iMessage;-;chat',
+    displayName: 'Cloud chat',
+    participantHandles: participantHandles,
+    aliases: includeServiceIdentifierAlias
+        ? [
+            CloudSemanticChatAlias(
+              kind: CloudSemanticChatAliasKind.serviceIdentifier,
+              keyHash: _digestValue('H'),
+            ),
+          ]
+        : const [],
+    service: CloudSemanticService.iMessage,
+    style: CloudSemanticChatStyle.direct,
   );
 }
 
@@ -1698,6 +1907,130 @@ String _digestValue(String character) => List.filled(43, character).join();
 
 String _protectedReference(String character) =>
     'obcs2.ref.${_digestValue(character)}';
+
+String _durableSyncControlFingerprint(Store store) {
+  final checkpoints = store.box<CloudSyncCheckpointEntity>().getAll()
+    ..sort((left, right) => left.id.compareTo(right.id));
+  final inbox = store.box<CloudInboxChangeEntity>().getAll()
+    ..sort((left, right) => left.id.compareTo(right.id));
+  final maps = store.box<CloudRecordMapEntity>().getAll()
+    ..sort((left, right) => left.id.compareTo(right.id));
+  final snapshots = store.box<CloudSemanticSnapshotEntity>().getAll()
+    ..sort((left, right) => left.id.compareTo(right.id));
+  final replay = store.box<CloudSemanticReplayEntity>().getAll()
+    ..sort((left, right) => left.id.compareTo(right.id));
+  return jsonEncode({
+    'checkpoint': checkpoints
+        .map(
+          (row) => [
+            row.id,
+            row.checkpointKey,
+            row.fetchedTokenCiphertext,
+            row.pendingFetchedTokenCiphertext,
+            row.pendingBatchId,
+            row.generation,
+            row.lastBatchId,
+            row.fetchedSequence,
+            row.appliedSequence,
+            row.lastSuccessfulAtMs,
+            row.lastAttemptAtMs,
+            row.lastErrorCategory,
+            row.backoffAttempt,
+            row.nextEligibleAtMs,
+            row.mutationRevisionCounter,
+            row.updatedAtMs,
+          ],
+        )
+        .toList(),
+    'inbox': inbox
+        .map(
+          (row) => [
+            row.id,
+            row.changeKey,
+            row.changeIdHash,
+            row.serverRecordIdHash,
+            row.etagHash,
+            row.changeType,
+            row.encryptedServerRecordId,
+            row.protectedSystemFieldsRef,
+            row.encryptedPayloadRef,
+            row.payloadSha256,
+            row.batchId,
+            row.generation,
+            row.fetchSequence,
+            row.status,
+            row.isTombstone,
+            row.preflightCategory,
+            row.failureCategory,
+            row.preflightCode,
+            row.retryCount,
+            row.nextEligibleAtMs,
+            row.completedAtMs,
+            row.updatedAtMs,
+          ],
+        )
+        .toList(),
+    'recordMap': maps
+        .map(
+          (row) => [
+            row.id,
+            row.mapKey,
+            row.logicalEntityKeyHash,
+            row.serverRecordIdHash,
+            row.generation,
+            row.encryptedServerRecordId,
+            row.etagHash,
+            row.encryptedRawRecordRef,
+            row.updatedAtMs,
+          ],
+        )
+        .toList(),
+    'snapshot': snapshots
+        .map(
+          (row) => [
+            row.id,
+            row.snapshotKey,
+            row.generation,
+            row.entityKind,
+            row.logicalEntityKeyHash,
+            row.canonicalGuidHash,
+            row.canonicalGuidLookupHash,
+            row.parentLogicalKeyHash,
+            row.immutableContentDigest,
+            row.createdAtMs,
+            row.readAtMs,
+            row.deliveredAtMs,
+            row.editPartsJson,
+            row.retractedAtMs,
+            row.groupVersion,
+            row.groupMetadataDigest,
+            row.etagHash,
+            row.updatedAtMs,
+          ],
+        )
+        .toList(),
+    'replay': replay
+        .map(
+          (row) => [
+            row.id,
+            row.replayKey,
+            row.generation,
+            row.changeIdHash,
+            row.serverRecordIdHash,
+            row.logicalEntityKeyHash,
+            row.payloadSha256,
+            row.protectedPayloadReferenceHash,
+            row.inboxSequence,
+            row.changeType,
+            row.terminalOutcome,
+            row.terminalSafeCode,
+            row.updatedAtMs,
+          ],
+        )
+        .toList(),
+    'outboxCount': store.box<CloudOutboxOperationEntity>().count(),
+  });
+}
 
 final class _FixedDecoder implements CloudSemanticDecoder {
   const _FixedDecoder(this._mutation);

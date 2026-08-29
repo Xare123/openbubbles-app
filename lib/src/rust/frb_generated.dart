@@ -16481,36 +16481,58 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudSyncTransientChatAlias dco_decode_cloud_sync_transient_chat_alias(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return CloudSyncTransientChatAlias(
+      kind: dco_decode_cloud_sync_transient_chat_alias_kind(arr[0]),
+      keyHash: dco_decode_String(arr[1]),
+    );
+  }
+
+  @protected
+  CloudSyncTransientChatAliasKind
+  dco_decode_cloud_sync_transient_chat_alias_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return CloudSyncTransientChatAliasKind.values[raw as int];
+  }
+
+  @protected
   CloudSyncTransientChatPayload dco_decode_cloud_sync_transient_chat_payload(
     dynamic raw,
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 18)
-      throw Exception('unexpected arr length: expect 18 but see ${arr.length}');
+    if (arr.length != 19)
+      throw Exception('unexpected arr length: expect 19 but see ${arr.length}');
     return CloudSyncTransientChatPayload(
       logicalEntityKeyHash: dco_decode_String(arr[0]),
       canonicalGuid: dco_decode_String(arr[1]),
       chatIdentifier: dco_decode_String(arr[2]),
       groupId: dco_decode_String(arr[3]),
       originalGroupId: dco_decode_String(arr[4]),
-      service: dco_decode_cloud_sync_transient_service(arr[5]),
-      style: dco_decode_cloud_sync_transient_chat_style(arr[6]),
-      participantHandles: dco_decode_list_String(arr[7]),
-      displayNameState: dco_decode_cloud_sync_transient_field_state(arr[8]),
-      displayName: dco_decode_opt_String(arr[9]),
+      aliases: dco_decode_list_cloud_sync_transient_chat_alias(arr[5]),
+      service: dco_decode_cloud_sync_transient_service(arr[6]),
+      style: dco_decode_cloud_sync_transient_chat_style(arr[7]),
+      participantHandles: dco_decode_list_String(arr[8]),
+      displayNameState: dco_decode_cloud_sync_transient_field_state(arr[9]),
+      displayName: dco_decode_opt_String(arr[10]),
       lastAddressedHandleState: dco_decode_cloud_sync_transient_field_state(
-        arr[10],
+        arr[11],
       ),
-      lastAddressedHandle: dco_decode_opt_String(arr[11]),
-      groupVersionState: dco_decode_cloud_sync_transient_field_state(arr[12]),
-      groupVersion: dco_decode_opt_box_autoadd_u_32(arr[13]),
+      lastAddressedHandle: dco_decode_opt_String(arr[12]),
+      groupVersionState: dco_decode_cloud_sync_transient_field_state(arr[13]),
+      groupVersion: dco_decode_opt_box_autoadd_u_32(arr[14]),
       lastSeenMessageGuidState: dco_decode_cloud_sync_transient_field_state(
-        arr[14],
+        arr[15],
       ),
-      lastSeenMessageGuid: dco_decode_opt_String(arr[15]),
-      groupPhotoGuidState: dco_decode_cloud_sync_transient_field_state(arr[16]),
-      groupPhotoGuid: dco_decode_opt_String(arr[17]),
+      lastSeenMessageGuid: dco_decode_opt_String(arr[16]),
+      groupPhotoGuidState: dco_decode_cloud_sync_transient_field_state(arr[17]),
+      groupPhotoGuid: dco_decode_opt_String(arr[18]),
     );
   }
 
@@ -17452,6 +17474,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>)
         .map(dco_decode_cloud_sync_transient_attributed_body)
+        .toList();
+  }
+
+  @protected
+  List<CloudSyncTransientChatAlias>
+  dco_decode_list_cloud_sync_transient_chat_alias(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(dco_decode_cloud_sync_transient_chat_alias)
         .toList();
   }
 
@@ -25950,6 +25981,28 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  CloudSyncTransientChatAlias sse_decode_cloud_sync_transient_chat_alias(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_kind = sse_decode_cloud_sync_transient_chat_alias_kind(
+      deserializer,
+    );
+    var var_keyHash = sse_decode_String(deserializer);
+    return CloudSyncTransientChatAlias(kind: var_kind, keyHash: var_keyHash);
+  }
+
+  @protected
+  CloudSyncTransientChatAliasKind
+  sse_decode_cloud_sync_transient_chat_alias_kind(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return CloudSyncTransientChatAliasKind.values[inner];
+  }
+
+  @protected
   CloudSyncTransientChatPayload sse_decode_cloud_sync_transient_chat_payload(
     SseDeserializer deserializer,
   ) {
@@ -25959,6 +26012,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_chatIdentifier = sse_decode_String(deserializer);
     var var_groupId = sse_decode_String(deserializer);
     var var_originalGroupId = sse_decode_String(deserializer);
+    var var_aliases = sse_decode_list_cloud_sync_transient_chat_alias(
+      deserializer,
+    );
     var var_service = sse_decode_cloud_sync_transient_service(deserializer);
     var var_style = sse_decode_cloud_sync_transient_chat_style(deserializer);
     var var_participantHandles = sse_decode_list_String(deserializer);
@@ -25986,6 +26042,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       chatIdentifier: var_chatIdentifier,
       groupId: var_groupId,
       originalGroupId: var_originalGroupId,
+      aliases: var_aliases,
       service: var_service,
       style: var_style,
       participantHandles: var_participantHandles,
@@ -27235,6 +27292,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var ans_ = <CloudSyncTransientAttributedBody>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_cloud_sync_transient_attributed_body(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<CloudSyncTransientChatAlias>
+  sse_decode_list_cloud_sync_transient_chat_alias(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <CloudSyncTransientChatAlias>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_cloud_sync_transient_chat_alias(deserializer));
     }
     return ans_;
   }
@@ -36988,6 +37060,25 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_cloud_sync_transient_chat_alias(
+    CloudSyncTransientChatAlias self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_cloud_sync_transient_chat_alias_kind(self.kind, serializer);
+    sse_encode_String(self.keyHash, serializer);
+  }
+
+  @protected
+  void sse_encode_cloud_sync_transient_chat_alias_kind(
+    CloudSyncTransientChatAliasKind self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
   void sse_encode_cloud_sync_transient_chat_payload(
     CloudSyncTransientChatPayload self,
     SseSerializer serializer,
@@ -36998,6 +37089,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.chatIdentifier, serializer);
     sse_encode_String(self.groupId, serializer);
     sse_encode_String(self.originalGroupId, serializer);
+    sse_encode_list_cloud_sync_transient_chat_alias(self.aliases, serializer);
     sse_encode_cloud_sync_transient_service(self.service, serializer);
     sse_encode_cloud_sync_transient_chat_style(self.style, serializer);
     sse_encode_list_String(self.participantHandles, serializer);
@@ -37931,6 +38023,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_cloud_sync_transient_attributed_body(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_cloud_sync_transient_chat_alias(
+    List<CloudSyncTransientChatAlias> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_cloud_sync_transient_chat_alias(item, serializer);
     }
   }
 

@@ -300,6 +300,20 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
   CloudEntityKind get kind => CloudEntityKind.message;
 }
 
+enum CloudSemanticChatAliasKind {
+  groupId,
+  originalGroupId,
+  serviceIdentifier,
+  legacyGroupIdentifier,
+}
+
+final class CloudSemanticChatAlias {
+  const CloudSemanticChatAlias({required this.kind, required this.keyHash});
+
+  final CloudSemanticChatAliasKind kind;
+  final String keyHash;
+}
+
 final class CloudChatEntityPayload extends CloudSemanticEntityPayload {
   CloudChatEntityPayload({
     required this.logicalEntityKeyHash,
@@ -307,6 +321,7 @@ final class CloudChatEntityPayload extends CloudSemanticEntityPayload {
     required this.chatIdentifier,
     required this.displayName,
     required Iterable<String> participantHandles,
+    Iterable<CloudSemanticChatAlias> aliases = const [],
     this.groupId,
     this.originalGroupId,
     this.service,
@@ -320,7 +335,8 @@ final class CloudChatEntityPayload extends CloudSemanticEntityPayload {
     this.lastSeenMessageGuid,
     this.groupPhotoGuidState = CloudSemanticFieldState.absent,
     this.groupPhotoGuid,
-  }) : displayNameState =
+  }) : aliases = List.unmodifiable(aliases),
+       displayNameState =
            displayNameState ??
            (displayName == null
                ? CloudSemanticFieldState.absent
@@ -334,6 +350,13 @@ final class CloudChatEntityPayload extends CloudSemanticEntityPayload {
     }
     if (this.participantHandles.any((handle) => handle.isEmpty)) {
       throw ArgumentError('cloud_chat_payload_participant_invalid');
+    }
+    final aliasKeys = <(CloudSemanticChatAliasKind, String)>{};
+    for (final alias in this.aliases) {
+      if (alias.keyHash.isEmpty ||
+          !aliasKeys.add((alias.kind, alias.keyHash))) {
+        throw ArgumentError('cloud_chat_payload_alias_invalid');
+      }
     }
     _validateSemanticField(this.displayNameState, displayName, 'display_name');
     _validateSemanticField(
@@ -360,6 +383,7 @@ final class CloudChatEntityPayload extends CloudSemanticEntityPayload {
   final String chatIdentifier;
   final String? groupId;
   final String? originalGroupId;
+  final List<CloudSemanticChatAlias> aliases;
   final CloudSemanticService? service;
   final CloudSemanticChatStyle? style;
   final CloudSemanticFieldState displayNameState;
@@ -739,6 +763,37 @@ abstract interface class CloudSemanticStoreGateway {
   });
 }
 
+/// Optional local-only repair surface for a projection bug discovered after
+/// an inbox change was already committed. Implementations must leave the
+/// checkpoint, inbox terminal state, replay record, and record map unchanged.
+abstract interface class CloudAppliedProjectionRepairStoreGateway {
+  Future<List<CloudInboxEntry>> readAppliedProjectionRepairCandidates({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int limit,
+  });
+
+  Future<void> repairAppliedProjection({
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required CloudSemanticEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  });
+}
+
+/// Optional capability used by the manual semantic Canary before it processes
+/// the pending prefix. It re-decodes only durable applied rows selected by the
+/// store and cannot fetch, save, delete, or move a CloudKit checkpoint.
+abstract interface class CloudAppliedProjectionRepairer {
+  Future<int> repairAppliedProjections({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int limit,
+  });
+}
+
 abstract interface class CloudSemanticStoreTransaction {
   CloudSyncScope get activeScope;
   int get activeGeneration;
@@ -781,7 +836,8 @@ abstract interface class CloudSemanticStoreTransaction {
   void recordConflict(String changeId, String safeCode);
 }
 
-class TransactionalCloudInboxApplier implements CloudInboxApplier {
+class TransactionalCloudInboxApplier
+    implements CloudInboxApplier, CloudAppliedProjectionRepairer {
   const TransactionalCloudInboxApplier({
     required this._decoder,
     required this._store,
@@ -799,6 +855,102 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
   final Future<bool> Function()? _activeScopeRevalidator;
   final bool _allowTombstones;
   final CloudSyncSemanticDiagnosticRecorder? _diagnosticRecorder;
+
+  @override
+  Future<int> repairAppliedProjections({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int limit,
+  }) async {
+    final repairStore = _store;
+    final registrar = _identityRegistrar;
+    if (repairStore is! CloudAppliedProjectionRepairStoreGateway ||
+        registrar == null) {
+      return 0;
+    }
+    final projectionStore =
+        repairStore as CloudAppliedProjectionRepairStoreGateway;
+    if (generation <= 0 || limit <= 0 || limit > 4096) {
+      throw ArgumentError('cloud_projection_repair_request_invalid');
+    }
+
+    final candidates = await projectionStore
+        .readAppliedProjectionRepairCandidates(
+          scope: scope,
+          generation: generation,
+          leaseFence: leaseFence,
+          limit: limit,
+        );
+    var repaired = 0;
+    for (final entry in candidates) {
+      if (entry.scope != scope ||
+          entry.generation != generation ||
+          entry.status != CloudInboxStatus.applied ||
+          entry.change.isTombstone) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'projection_repair_candidate_invalid',
+        );
+      }
+
+      final CloudDecodedMutation decoded;
+      try {
+        decoded = await _decoder.decode(entry);
+      } on CloudSemanticDecodeFailure catch (failure) {
+        _recordDiagnostic(
+          'projection_repair_decoder_${_safeCodeSegment(failure.category.name)}',
+        );
+        if (failure.category.isRetryable) {
+          throw CloudSyncFailure(
+            category: failure.category,
+            safeCode: failure.safeCode ?? 'projection_repair_decode_retryable',
+          );
+        }
+        continue;
+      } catch (_) {
+        _recordDiagnostic('projection_repair_decoder_unknown');
+        continue;
+      }
+
+      final snapshot = decoded.snapshot;
+      final payload = decoded.payload;
+      if (decoded.scope != entry.scope ||
+          decoded.generation != entry.generation ||
+          decoded.changeId != entry.change.changeId ||
+          decoded.kind != CloudDecodedMutationKind.upsert ||
+          snapshot == null ||
+          payload is! CloudChatEntityPayload ||
+          snapshot.kind != CloudEntityKind.chat ||
+          snapshot.logicalEntityKeyHash != payload.logicalEntityKeyHash) {
+        _recordDiagnostic('projection_repair_decoded_shape_invalid');
+        continue;
+      }
+
+      CloudTransientCanonicalIdentityLease? identityLease;
+      try {
+        identityLease = registrar.bind(decoded);
+        if (_activeScopeRevalidator != null &&
+            !await _activeScopeRevalidator()) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.conflict,
+            safeCode: 'projection_repair_active_scope_changed',
+          );
+        }
+        await projectionStore.repairAppliedProjection(
+          entry: entry,
+          leaseFence: leaseFence,
+          payload: payload,
+          snapshot: snapshot,
+        );
+        repaired++;
+        _recordDiagnostic('projection_repaired_chat_alias');
+      } finally {
+        identityLease?.release();
+      }
+    }
+    return repaired;
+  }
 
   @override
   Future<CloudInboxApplyResult> apply(

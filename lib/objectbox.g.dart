@@ -2770,6 +2770,138 @@ final _entities = <obx_int.ModelEntity>[
     relations: <obx_int.ModelRelation>[],
     backlinks: <obx_int.ModelBacklink>[],
   ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(32, 3377435011161314855),
+    name: 'CloudSemanticChatAliasEntity',
+    lastPropertyId: const obx_int.IdUid(19, 3770450974933446658),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 7098698173187578007),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 7332341716914930469),
+        name: 'bindingKey',
+        type: 9,
+        flags: 4128,
+        indexId: const obx_int.IdUid(85, 5536211795662003449),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 4522292004414699675),
+        name: 'scopeGenerationKey',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(86, 5498017635733736126),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 5691373220113581910),
+        name: 'scopeKey',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(87, 161385650125103915),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 5870590435073970821),
+        name: 'accountFingerprint',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(88, 2925673776145547192),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 3204701015430636685),
+        name: 'container',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 449595904166386716),
+        name: 'database',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 7321898202427631255),
+        name: 'zone',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(89, 163652056999796140),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 4180639133089376432),
+        name: 'streamKind',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 2338409620707299785),
+        name: 'schemaVersion',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 1136144536363908509),
+        name: 'generation',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 1606053567096911372),
+        name: 'service',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(13, 964348894877183208),
+        name: 'aliasKind',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(14, 3699140591669288204),
+        name: 'aliasKeyHash',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(90, 3844818839047269102),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(15, 5622254289795034031),
+        name: 'chatLogicalEntityKeyHash',
+        type: 9,
+        flags: 4096,
+        indexId: const obx_int.IdUid(91, 8421387141140277905),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(16, 7493638054866292008),
+        name: 'canonicalGuidHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(17, 8892010839062139306),
+        name: 'canonicalGuidLookupHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(18, 1466186784207767557),
+        name: 'chatId',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(92, 7759272949562488518),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(19, 3770450974933446658),
+        name: 'updatedAtMs',
+        type: 6,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
 ];
 
 /// Shortcut for [obx.Store.new] that passes [getObjectBoxModel] and for Flutter
@@ -2815,8 +2947,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
     // Typically, this is done with `dart run build_runner build`.
     generatorVersion: obx_int.GeneratorVersion.v2025_12_16,
     entities: _entities,
-    lastEntityId: const obx_int.IdUid(31, 5051649657745290821),
-    lastIndexId: const obx_int.IdUid(84, 3233573957190533269),
+    lastEntityId: const obx_int.IdUid(32, 3377435011161314855),
+    lastIndexId: const obx_int.IdUid(92, 7759272949562488518),
     lastRelationId: const obx_int.IdUid(1, 7492985733214117623),
     lastSequenceId: const obx_int.IdUid(0, 0),
     retiredEntityUids: const [
@@ -6527,6 +6659,163 @@ obx_int.ModelDefinition getObjectBoxModel() {
             return object;
           },
         ),
+    CloudSemanticChatAliasEntity:
+        obx_int.EntityDefinition<CloudSemanticChatAliasEntity>(
+          model: _entities[23],
+          toOneRelations: (CloudSemanticChatAliasEntity object) => [],
+          toManyRelations: (CloudSemanticChatAliasEntity object) => {},
+          getId: (CloudSemanticChatAliasEntity object) => object.id,
+          setId: (CloudSemanticChatAliasEntity object, int id) {
+            object.id = id;
+          },
+          objectToFB: (CloudSemanticChatAliasEntity object, fb.Builder fbb) {
+            final bindingKeyOffset = fbb.writeString(object.bindingKey);
+            final scopeGenerationKeyOffset = fbb.writeString(
+              object.scopeGenerationKey,
+            );
+            final scopeKeyOffset = fbb.writeString(object.scopeKey);
+            final accountFingerprintOffset = fbb.writeString(
+              object.accountFingerprint,
+            );
+            final containerOffset = fbb.writeString(object.container);
+            final databaseOffset = fbb.writeString(object.database);
+            final zoneOffset = fbb.writeString(object.zone);
+            final streamKindOffset = fbb.writeString(object.streamKind);
+            final serviceOffset = fbb.writeString(object.service);
+            final aliasKindOffset = fbb.writeString(object.aliasKind);
+            final aliasKeyHashOffset = fbb.writeString(object.aliasKeyHash);
+            final chatLogicalEntityKeyHashOffset = fbb.writeString(
+              object.chatLogicalEntityKeyHash,
+            );
+            final canonicalGuidHashOffset = fbb.writeString(
+              object.canonicalGuidHash,
+            );
+            final canonicalGuidLookupHashOffset = fbb.writeString(
+              object.canonicalGuidLookupHash,
+            );
+            fbb.startTable(20);
+            fbb.addInt64(0, object.id);
+            fbb.addOffset(1, bindingKeyOffset);
+            fbb.addOffset(2, scopeGenerationKeyOffset);
+            fbb.addOffset(3, scopeKeyOffset);
+            fbb.addOffset(4, accountFingerprintOffset);
+            fbb.addOffset(5, containerOffset);
+            fbb.addOffset(6, databaseOffset);
+            fbb.addOffset(7, zoneOffset);
+            fbb.addOffset(8, streamKindOffset);
+            fbb.addInt64(9, object.schemaVersion);
+            fbb.addInt64(10, object.generation);
+            fbb.addOffset(11, serviceOffset);
+            fbb.addOffset(12, aliasKindOffset);
+            fbb.addOffset(13, aliasKeyHashOffset);
+            fbb.addOffset(14, chatLogicalEntityKeyHashOffset);
+            fbb.addOffset(15, canonicalGuidHashOffset);
+            fbb.addOffset(16, canonicalGuidLookupHashOffset);
+            fbb.addInt64(17, object.chatId);
+            fbb.addInt64(18, object.updatedAtMs);
+            fbb.finish(fbb.endTable());
+            return object.id;
+          },
+          objectFromFB: (obx.Store store, ByteData fbData) {
+            final buffer = fb.BufferContext(fbData);
+            final rootOffset = buffer.derefObject(0);
+            final idParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              4,
+              0,
+            );
+            final bindingKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 6, '');
+            final scopeGenerationKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 8, '');
+            final scopeKeyParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 10, '');
+            final accountFingerprintParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 12, '');
+            final containerParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 14, '');
+            final databaseParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 16, '');
+            final zoneParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 18, '');
+            final streamKindParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 20, '');
+            final schemaVersionParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              22,
+              0,
+            );
+            final generationParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              24,
+              0,
+            );
+            final serviceParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 26, '');
+            final aliasKindParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 28, '');
+            final aliasKeyHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 30, '');
+            final chatLogicalEntityKeyHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 32, '');
+            final canonicalGuidHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 34, '');
+            final canonicalGuidLookupHashParam = const fb.StringReader(
+              asciiOptimization: true,
+            ).vTableGet(buffer, rootOffset, 36, '');
+            final chatIdParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              38,
+              0,
+            );
+            final updatedAtMsParam = const fb.Int64Reader().vTableGet(
+              buffer,
+              rootOffset,
+              40,
+              0,
+            );
+            final object = CloudSemanticChatAliasEntity(
+              id: idParam,
+              bindingKey: bindingKeyParam,
+              scopeGenerationKey: scopeGenerationKeyParam,
+              scopeKey: scopeKeyParam,
+              accountFingerprint: accountFingerprintParam,
+              container: containerParam,
+              database: databaseParam,
+              zone: zoneParam,
+              streamKind: streamKindParam,
+              schemaVersion: schemaVersionParam,
+              generation: generationParam,
+              service: serviceParam,
+              aliasKind: aliasKindParam,
+              aliasKeyHash: aliasKeyHashParam,
+              chatLogicalEntityKeyHash: chatLogicalEntityKeyHashParam,
+              canonicalGuidHash: canonicalGuidHashParam,
+              canonicalGuidLookupHash: canonicalGuidLookupHashParam,
+              chatId: chatIdParam,
+              updatedAtMs: updatedAtMsParam,
+            );
+
+            return object;
+          },
+        ),
   };
 
   return obx_int.ModelDefinition(model, bindings);
@@ -8757,5 +9046,116 @@ class CloudKitV2QuarantineRepairReceiptEntity_ {
   static final evidenceDigestSha256 =
       obx.QueryStringProperty<CloudKitV2QuarantineRepairReceiptEntity>(
         _entities[22].properties[25],
+      );
+}
+
+/// [CloudSemanticChatAliasEntity] entity fields to define ObjectBox queries.
+class CloudSemanticChatAliasEntity_ {
+  /// See [CloudSemanticChatAliasEntity.id].
+  static final id = obx.QueryIntegerProperty<CloudSemanticChatAliasEntity>(
+    _entities[23].properties[0],
+  );
+
+  /// See [CloudSemanticChatAliasEntity.bindingKey].
+  static final bindingKey =
+      obx.QueryStringProperty<CloudSemanticChatAliasEntity>(
+        _entities[23].properties[1],
+      );
+
+  /// See [CloudSemanticChatAliasEntity.scopeGenerationKey].
+  static final scopeGenerationKey =
+      obx.QueryStringProperty<CloudSemanticChatAliasEntity>(
+        _entities[23].properties[2],
+      );
+
+  /// See [CloudSemanticChatAliasEntity.scopeKey].
+  static final scopeKey = obx.QueryStringProperty<CloudSemanticChatAliasEntity>(
+    _entities[23].properties[3],
+  );
+
+  /// See [CloudSemanticChatAliasEntity.accountFingerprint].
+  static final accountFingerprint =
+      obx.QueryStringProperty<CloudSemanticChatAliasEntity>(
+        _entities[23].properties[4],
+      );
+
+  /// See [CloudSemanticChatAliasEntity.container].
+  static final container =
+      obx.QueryStringProperty<CloudSemanticChatAliasEntity>(
+        _entities[23].properties[5],
+      );
+
+  /// See [CloudSemanticChatAliasEntity.database].
+  static final database = obx.QueryStringProperty<CloudSemanticChatAliasEntity>(
+    _entities[23].properties[6],
+  );
+
+  /// See [CloudSemanticChatAliasEntity.zone].
+  static final zone = obx.QueryStringProperty<CloudSemanticChatAliasEntity>(
+    _entities[23].properties[7],
+  );
+
+  /// See [CloudSemanticChatAliasEntity.streamKind].
+  static final streamKind =
+      obx.QueryStringProperty<CloudSemanticChatAliasEntity>(
+        _entities[23].properties[8],
+      );
+
+  /// See [CloudSemanticChatAliasEntity.schemaVersion].
+  static final schemaVersion =
+      obx.QueryIntegerProperty<CloudSemanticChatAliasEntity>(
+        _entities[23].properties[9],
+      );
+
+  /// See [CloudSemanticChatAliasEntity.generation].
+  static final generation =
+      obx.QueryIntegerProperty<CloudSemanticChatAliasEntity>(
+        _entities[23].properties[10],
+      );
+
+  /// See [CloudSemanticChatAliasEntity.service].
+  static final service = obx.QueryStringProperty<CloudSemanticChatAliasEntity>(
+    _entities[23].properties[11],
+  );
+
+  /// See [CloudSemanticChatAliasEntity.aliasKind].
+  static final aliasKind =
+      obx.QueryStringProperty<CloudSemanticChatAliasEntity>(
+        _entities[23].properties[12],
+      );
+
+  /// See [CloudSemanticChatAliasEntity.aliasKeyHash].
+  static final aliasKeyHash =
+      obx.QueryStringProperty<CloudSemanticChatAliasEntity>(
+        _entities[23].properties[13],
+      );
+
+  /// See [CloudSemanticChatAliasEntity.chatLogicalEntityKeyHash].
+  static final chatLogicalEntityKeyHash =
+      obx.QueryStringProperty<CloudSemanticChatAliasEntity>(
+        _entities[23].properties[14],
+      );
+
+  /// See [CloudSemanticChatAliasEntity.canonicalGuidHash].
+  static final canonicalGuidHash =
+      obx.QueryStringProperty<CloudSemanticChatAliasEntity>(
+        _entities[23].properties[15],
+      );
+
+  /// See [CloudSemanticChatAliasEntity.canonicalGuidLookupHash].
+  static final canonicalGuidLookupHash =
+      obx.QueryStringProperty<CloudSemanticChatAliasEntity>(
+        _entities[23].properties[16],
+      );
+
+  /// See [CloudSemanticChatAliasEntity.chatId].
+  static final chatId = obx.QueryIntegerProperty<CloudSemanticChatAliasEntity>(
+    _entities[23].properties[17],
+  );
+
+  /// See [CloudSemanticChatAliasEntity.updatedAtMs].
+  static final updatedAtMs =
+      obx.QueryIntegerProperty<CloudSemanticChatAliasEntity>(
+        _entities[23].properties[18],
       );
 }

@@ -2096,6 +2096,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_cloud_sync_transient_attributed_body(dynamic raw);
 
   @protected
+  CloudSyncTransientChatAlias dco_decode_cloud_sync_transient_chat_alias(
+    dynamic raw,
+  );
+
+  @protected
+  CloudSyncTransientChatAliasKind
+  dco_decode_cloud_sync_transient_chat_alias_kind(dynamic raw);
+
+  @protected
   CloudSyncTransientChatPayload dco_decode_cloud_sync_transient_chat_payload(
     dynamic raw,
   );
@@ -2332,6 +2341,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   List<CloudSyncTransientAttributedBody>
   dco_decode_list_cloud_sync_transient_attributed_body(dynamic raw);
+
+  @protected
+  List<CloudSyncTransientChatAlias>
+  dco_decode_list_cloud_sync_transient_chat_alias(dynamic raw);
 
   @protected
   List<CloudSyncTransientEditPart>
@@ -5685,6 +5698,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   sse_decode_cloud_sync_transient_attributed_body(SseDeserializer deserializer);
 
   @protected
+  CloudSyncTransientChatAlias sse_decode_cloud_sync_transient_chat_alias(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncTransientChatAliasKind
+  sse_decode_cloud_sync_transient_chat_alias_kind(SseDeserializer deserializer);
+
+  @protected
   CloudSyncTransientChatPayload sse_decode_cloud_sync_transient_chat_payload(
     SseDeserializer deserializer,
   );
@@ -5955,6 +5977,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   sse_decode_list_cloud_sync_transient_attributed_body(
     SseDeserializer deserializer,
   );
+
+  @protected
+  List<CloudSyncTransientChatAlias>
+  sse_decode_list_cloud_sync_transient_chat_alias(SseDeserializer deserializer);
 
   @protected
   List<CloudSyncTransientEditPart>
@@ -9935,6 +9961,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_cloud_sync_transient_chat_alias(
+    CloudSyncTransientChatAlias self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_transient_chat_alias_kind(
+    CloudSyncTransientChatAliasKind self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cloud_sync_transient_chat_payload(
     CloudSyncTransientChatPayload self,
     SseSerializer serializer,
@@ -10246,6 +10284,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_cloud_sync_transient_attributed_body(
     List<CloudSyncTransientAttributedBody> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_cloud_sync_transient_chat_alias(
+    List<CloudSyncTransientChatAlias> self,
     SseSerializer serializer,
   );
 

@@ -682,6 +682,14 @@ pub enum CloudSyncTransientChatStyle {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CloudSyncTransientChatAliasKind {
+    GroupId,
+    OriginalGroupId,
+    ServiceIdentifier,
+    LegacyGroupIdentifier,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CloudSyncTransientReactionKind {
     Heart,
     Like,
@@ -821,6 +829,12 @@ pub struct CloudSyncTransientSnapshot {
 /// Transient chat content. This type has no Debug, Display, serde, or durable
 /// representation and must flow directly into the canonical applier.
 #[derive(Clone)]
+pub struct CloudSyncTransientChatAlias {
+    pub kind: CloudSyncTransientChatAliasKind,
+    pub key_hash: String,
+}
+
+#[derive(Clone)]
 pub struct CloudSyncTransientChatPayload {
     pub logical_entity_key_hash: String,
     /// Validated application-level chat GUID. Transient typed memory only.
@@ -829,6 +843,8 @@ pub struct CloudSyncTransientChatPayload {
     pub chat_identifier: String,
     pub group_id: String,
     pub original_group_id: String,
+    /// Content-free aliases already authenticated by the canonical envelope.
+    pub aliases: Vec<CloudSyncTransientChatAlias>,
     pub service: CloudSyncTransientService,
     pub style: CloudSyncTransientChatStyle,
     pub participant_handles: Vec<String>,
@@ -2123,6 +2139,20 @@ fn map_cloud_sync_transient_chat_style(
     }
 }
 
+fn map_cloud_sync_transient_chat_alias_kind(
+    kind: crate::cloud_sync_canonical_dto::CloudCanonicalAliasKind,
+) -> CloudSyncTransientChatAliasKind {
+    use crate::cloud_sync_canonical_dto::CloudCanonicalAliasKind as Canonical;
+    match kind {
+        Canonical::ChatGroupId => CloudSyncTransientChatAliasKind::GroupId,
+        Canonical::ChatOriginalGroupId => CloudSyncTransientChatAliasKind::OriginalGroupId,
+        Canonical::ChatServiceIdentifier => CloudSyncTransientChatAliasKind::ServiceIdentifier,
+        Canonical::ChatLegacyGroupIdentifier => {
+            CloudSyncTransientChatAliasKind::LegacyGroupIdentifier
+        }
+    }
+}
+
 fn map_cloud_sync_transient_reaction_kind(
     kind: crate::cloud_sync_canonical_dto::CloudCanonicalReactionKind,
 ) -> CloudSyncTransientReactionKind {
@@ -2864,6 +2894,7 @@ fn map_cloud_sync_transient_snapshot(
 
 fn map_cloud_sync_transient_payload(
     logical_entity_key_hash: &str,
+    aliases: &[crate::cloud_sync_canonical_dto::CloudCanonicalAlias],
     payload: &crate::cloud_sync_canonical_dto::CloudCanonicalPayload,
 ) -> Option<CloudSyncTransientPayload> {
     use crate::cloud_sync_canonical_dto::CloudCanonicalPayload as Canonical;
@@ -2881,6 +2912,13 @@ fn map_cloud_sync_transient_payload(
                 chat_identifier: payload.chat_identifier().to_owned(),
                 group_id: payload.group_id().to_owned(),
                 original_group_id: payload.original_group_id().to_owned(),
+                aliases: aliases
+                    .iter()
+                    .map(|alias| CloudSyncTransientChatAlias {
+                        kind: map_cloud_sync_transient_chat_alias_kind(alias.kind()),
+                        key_hash: alias.key_hash().value().to_owned(),
+                    })
+                    .collect(),
                 service: map_cloud_sync_transient_service(payload.service()),
                 style: map_cloud_sync_transient_chat_style(payload.style()),
                 participant_handles: payload.participant_handles().to_vec(),
@@ -3278,6 +3316,7 @@ pub async fn cloud_sync_decode_protected_change(
             let payload = mutation.payload().and_then(|payload| {
                 map_cloud_sync_transient_payload(
                     envelope.logical_entity_key_hash().value(),
+                    envelope.aliases(),
                     payload,
                 )
             });
