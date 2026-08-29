@@ -460,7 +460,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     required int generation,
     required CloudChatEntityPayload payload,
   }) {
-    if (payload.service != CloudSemanticService.iMessage ||
+    if (payload.service == null ||
         payload.style == null ||
         (payload.groupVersion != null && payload.groupVersion! < 0)) {
       throw CloudSyncFailure(
@@ -488,7 +488,9 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       );
     }
 
-    final aliasMatch = _findChatByIdentifier(payload.chatIdentifier);
+    final service = payload.service!;
+    final isSms = service == CloudSemanticService.sms;
+    final aliasMatch = _findChatByIdentifier(payload.chatIdentifier, service);
     if (aliasMatch != null && aliasMatch.guid != guid) {
       throw CloudSyncFailure(
         category: CloudFailureCategory.conflict,
@@ -506,6 +508,12 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       throw CloudSyncFailure(
         category: CloudFailureCategory.conflict,
         safeCode: 'canonical_chat_style_conflict',
+      );
+    }
+    if (chat != null && chat.isRpSms != isSms) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_chat_service_conflict',
       );
     }
     if (!isCreate &&
@@ -529,7 +537,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
             (chat.groupVersion == null ||
                 incomingVersion > chat.groupVersion!));
     final participantHandles = replacesParticipants
-        ? _resolveParticipantHandles(payload.participantHandles)
+        ? _resolveParticipantHandles(payload.participantHandles, service)
         : const <Handle>[];
 
     chat ??= Chat(
@@ -539,6 +547,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     );
     chat.chatIdentifier = payload.chatIdentifier;
     chat.style = style;
+    chat.isRpSms = isSms;
 
     if (!chat.lockChatName) {
       switch (payload.displayNameState) {
@@ -584,9 +593,13 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     return CloudCanonicalSemanticMutationReceipt.committed;
   }
 
-  List<Handle> _resolveParticipantHandles(Iterable<String> rawHandles) {
+  List<Handle> _resolveParticipantHandles(
+    Iterable<String> rawHandles,
+    CloudSemanticService service,
+  ) {
     final handles = <Handle>[];
     final seen = <String>{};
+    final serviceName = _serviceName(service);
     for (final raw in rawHandles) {
       final normalized = _normalizeHandle(raw);
       if (normalized == null) {
@@ -595,13 +608,13 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
           safeCode: 'canonical_chat_participant_invalid',
         );
       }
-      final uniqueKey = '${normalized.address}/iMessage';
+      final uniqueKey = '${normalized.address}/$serviceName';
       if (!seen.add(uniqueKey)) continue;
       var handle = _findHandle(uniqueKey);
       if (handle == null) {
         handle = Handle(
           address: normalized.address,
-          service: 'iMessage',
+          service: serviceName,
           uniqueAddressAndService: uniqueKey,
         );
         final id = _handles.put(handle);
@@ -622,7 +635,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     required int generation,
     required CloudMessageEntityPayload payload,
   }) {
-    if (payload.service != CloudSemanticService.iMessage ||
+    if (payload.service == null ||
         payload.createdAt == null ||
         payload.knownFlags == null ||
         payload.associationKind != CloudSemanticAssociationKind.none) {
@@ -647,7 +660,8 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       logicalEntityKeyHash: payload.logicalEntityKeyHash,
       payloadCanonicalGuid: payload.canonicalGuid,
     );
-    final chat = _findChatByIdentifier(payload.chatIdentifier);
+    final service = payload.service!;
+    final chat = _findChatByIdentifier(payload.chatIdentifier, service);
     if (chat == null) {
       throw CloudSyncFailure(
         category: CloudFailureCategory.dependency,
@@ -656,7 +670,11 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     }
 
     final flags = payload.knownFlags!;
-    final sender = _resolveMessageSender(payload.senderHandle, flags.fromMe);
+    final sender = _resolveMessageSender(
+      payload.senderHandle,
+      flags.fromMe,
+      service,
+    );
     var message = _findMessage(guid);
     if (message != null) {
       if (message.chat.targetId != 0 && message.chat.targetId != chat.id) {
@@ -812,7 +830,11 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     }
 
     final flags = payload.knownFlags!;
-    final sender = _resolveMessageSender(payload.senderHandle, flags.fromMe);
+    final sender = _resolveMessageSender(
+      payload.senderHandle,
+      flags.fromMe,
+      payload.service!,
+    );
     var reaction = _findMessage(guid);
     if (reaction != null) {
       if (reaction.associatedMessageGuid != parentGuid ||
@@ -1272,7 +1294,11 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       _findMessage(guid) != null ||
       _findAttachment(guid) != null;
 
-  Handle? _resolveMessageSender(String raw, bool fromMe) {
+  Handle? _resolveMessageSender(
+    String raw,
+    bool fromMe,
+    CloudSemanticService service,
+  ) {
     if (raw.isEmpty && fromMe) return null;
     final normalized = _normalizeHandle(raw);
     if (normalized == null) {
@@ -1281,12 +1307,13 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         safeCode: 'canonical_message_sender_invalid',
       );
     }
-    final key = '${normalized.address}/iMessage';
+    final serviceName = _serviceName(service);
+    final key = '${normalized.address}/$serviceName';
     var handle = _findHandle(key);
     if (handle == null) {
       handle = Handle(
         address: normalized.address,
-        service: 'iMessage',
+        service: serviceName,
         uniqueAddressAndService: key,
       );
       final id = _handles.put(handle);
@@ -1464,9 +1491,20 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     }
   }
 
-  Chat? _findChatByIdentifier(String chatIdentifier) {
+  Chat? _findChatByIdentifier(
+    String chatIdentifier,
+    CloudSemanticService service,
+  ) {
     final query =
-        _chats.query(Chat_.chatIdentifier.equals(chatIdentifier)).build()
+        _chats
+            .query(
+              Chat_.chatIdentifier
+                  .equals(chatIdentifier)
+                  .and(
+                    Chat_.isRpSms.equals(service == CloudSemanticService.sms),
+                  ),
+            )
+            .build()
           ..limit = 1;
     try {
       return query.findFirst();
@@ -1474,6 +1512,11 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       query.close();
     }
   }
+
+  static String _serviceName(CloudSemanticService service) => switch (service) {
+    CloudSemanticService.iMessage => 'iMessage',
+    CloudSemanticService.sms => 'SMS',
+  };
 
   Handle? _findHandle(String uniqueAddressAndService) {
     final query =

@@ -3603,7 +3603,7 @@ class CloudSyncTransientChatPayload {
   /// Validated application-level chat GUID. Transient typed memory only.
   final String canonicalGuid;
 
-  /// Validated iMessage chat identifier used to bind message records.
+  /// Validated chat identifier used to bind message records.
   final String chatIdentifier;
   final String groupId;
   final String originalGroupId;
@@ -4174,7 +4174,7 @@ enum CloudSyncTransientReactionKind {
   stickerBack,
 }
 
-enum CloudSyncTransientService { iMessage }
+enum CloudSyncTransientService { iMessage, sms }
 
 /// Content-free canonical snapshot. The opaque protected source reference is
 /// retained so unknown semantics can be retried by a later decoder.

@@ -10,7 +10,7 @@ enum CloudDecodedMutationKind { upsert, tombstone }
 
 enum CloudSemanticFieldState { absent, value, explicitClear }
 
-enum CloudSemanticService { iMessage }
+enum CloudSemanticService { iMessage, sms }
 
 enum CloudSemanticChatStyle { direct, group }
 

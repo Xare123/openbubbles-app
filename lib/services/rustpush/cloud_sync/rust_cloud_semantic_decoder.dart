@@ -475,6 +475,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       switch (value) {
         frb_api.CloudSyncTransientService.iMessage =>
           CloudSemanticService.iMessage,
+        frb_api.CloudSyncTransientService.sms => CloudSemanticService.sms,
       };
 
   CloudSemanticChatStyle _chatStyle(

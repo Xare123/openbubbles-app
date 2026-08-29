@@ -205,6 +205,155 @@ void main() {
     expect(store.box<Handle>().count(), 2);
   });
 
+  test('projects exact SMS chats and messages without iMessage aliasing', () {
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowChatUpserts: true,
+      allowMessageUpserts: true,
+    );
+    const identifier = 'SMS;-;+19492476163';
+    store.box<Handle>().put(
+      Handle(
+        address: '+19492476163',
+        service: 'iMessage',
+        uniqueAddressAndService: '+19492476163/iMessage',
+      ),
+    );
+
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _chatPayload(
+          logicalEntityKeyHash: chatHash,
+          canonicalGuid: 'chat-guid',
+          chatIdentifier: identifier,
+          participantHandles: const ['tel:+19492476163'],
+          service: CloudSemanticService.sms,
+        ),
+        snapshot: _snapshot(CloudEntityKind.chat, chatHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    final messagePayload = _messagePayload(
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: 'message-guid',
+      chatIdentifier: identifier,
+      senderHandle: 'tel:+19492476163',
+      service: CloudSemanticService.sms,
+    );
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: messagePayload,
+        snapshot: _snapshot(
+          CloudEntityKind.message,
+          messageHash,
+          parentLogicalKeyHash: chatHash,
+        ),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: 'message-guid',
+    );
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: messagePayload,
+        snapshot: _snapshot(
+          CloudEntityKind.message,
+          messageHash,
+          parentLogicalKeyHash: chatHash,
+        ),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+
+    final chat = store.box<Chat>().getAll().single;
+    final message = store.box<Message>().getAll().single;
+    expect(chat.isRpSms, isTrue);
+    expect(chat.handles.single.uniqueAddressAndService, '+19492476163/SMS');
+    expect(message.chat.targetId, chat.id);
+    final smsSenderQuery =
+        store
+            .box<Handle>()
+            .query(Handle_.uniqueAddressAndService.equals('+19492476163/SMS'))
+            .build()
+          ..limit = 1;
+    try {
+      final smsSender = smsSenderQuery.findFirst();
+      expect(smsSender, isNotNull);
+      expect(message.handleId, smsSender!.id);
+    } finally {
+      smsSenderQuery.close();
+    }
+    expect(
+      store
+          .box<Handle>()
+          .getAll()
+          .map((handle) => handle.uniqueAddressAndService)
+          .toSet(),
+      {'+19492476163/iMessage', '+19492476163/SMS'},
+    );
+  });
+
+  test('keeps identical chat identifiers isolated by service', () {
+    const identifier = 'shared-service-identifier';
+    store.box<Chat>().put(
+      Chat(
+        guid: 'existing-imessage-chat',
+        chatIdentifier: identifier,
+        isRpSms: false,
+      ),
+    );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowChatUpserts: true,
+    );
+
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _chatPayload(
+          logicalEntityKeyHash: chatHash,
+          canonicalGuid: 'chat-guid',
+          chatIdentifier: identifier,
+          service: CloudSemanticService.sms,
+        ),
+        snapshot: _snapshot(CloudEntityKind.chat, chatHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+
+    final chats = store.box<Chat>().getAll();
+    expect(chats, hasLength(2));
+    expect(
+      chats
+          .singleWhere((chat) => chat.guid == 'existing-imessage-chat')
+          .isRpSms,
+      isFalse,
+    );
+    expect(
+      chats.singleWhere((chat) => chat.guid == 'chat-guid').isRpSms,
+      isTrue,
+    );
+  });
+
   test('rejects an exact chat-alias conflict without creating rows', () {
     store.box<Chat>().put(
       Chat(
@@ -2315,6 +2464,7 @@ CloudChatEntityPayload _chatPayload({
   String? displayName = 'Cloud chat',
   CloudSemanticFieldState? displayNameState,
   Iterable<String> participantHandles = const [],
+  CloudSemanticService service = CloudSemanticService.iMessage,
   CloudSemanticChatStyle style = CloudSemanticChatStyle.direct,
   int? groupVersion,
 }) => CloudChatEntityPayload(
@@ -2324,7 +2474,7 @@ CloudChatEntityPayload _chatPayload({
   displayName: displayName,
   displayNameState: displayNameState,
   participantHandles: participantHandles,
-  service: CloudSemanticService.iMessage,
+  service: service,
   style: style,
   groupVersionState: groupVersion == null
       ? CloudSemanticFieldState.absent
@@ -2352,6 +2502,7 @@ CloudMessageEntityPayload _messagePayload({
   CloudSemanticFieldState? attributedBodiesState,
   Uint8List? decodedExtensionPayload,
   CloudSemanticFieldState? decodedExtensionPayloadState,
+  CloudSemanticService service = CloudSemanticService.iMessage,
   CloudSemanticKnownMessageFlags? knownFlags,
 }) => CloudMessageEntityPayload(
   logicalEntityKeyHash: logicalEntityKeyHash,
@@ -2361,7 +2512,7 @@ CloudMessageEntityPayload _messagePayload({
   body: body,
   senderHandle: senderHandle,
   createdAt: createdAt ?? testEpoch,
-  service: CloudSemanticService.iMessage,
+  service: service,
   subjectState: subjectState,
   subject: subject,
   bodyState: bodyState,

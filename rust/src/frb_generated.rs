@@ -20288,6 +20288,7 @@ impl SseDecode for crate::api::api::CloudSyncTransientService {
         let mut inner = <i32>::sse_decode(deserializer);
         return match inner {
             0 => crate::api::api::CloudSyncTransientService::IMessage,
+            1 => crate::api::api::CloudSyncTransientService::Sms,
             _ => unreachable!("Invalid variant for CloudSyncTransientService: {}", inner),
         };
     }
@@ -29406,6 +29407,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientServic
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         match self {
             Self::IMessage => 0.into_dart(),
+            Self::Sms => 1.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -35836,6 +35838,7 @@ impl SseEncode for crate::api::api::CloudSyncTransientService {
         <i32>::sse_encode(
             match self {
                 crate::api::api::CloudSyncTransientService::IMessage => 0,
+                crate::api::api::CloudSyncTransientService::Sms => 1,
                 _ => {
                     unimplemented!("");
                 }

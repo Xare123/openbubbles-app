@@ -55,6 +55,24 @@ void main() {
     expect(request.entry.change.encryptedPayloadReference, _sourceReference);
   });
 
+  test('maps the exact native SMS service without iMessage aliasing', () async {
+    final entry = _entry();
+    bindings.result = _readyMessage(
+      entry,
+      payload: frb.CloudSyncTransientPayload(
+        message: _messagePayload(
+          service: frb.CloudSyncTransientService.sms,
+          chatIdentifier: 'SMS;-;+19492476163',
+        ),
+      ),
+    );
+
+    final payload =
+        (await decoder().decode(entry)).payload! as CloudMessageEntityPayload;
+    expect(payload.service, CloudSemanticService.sms);
+    expect(payload.chatIdentifier, 'SMS;-;+19492476163');
+  });
+
   test('maps every currently representable native payload lane', () async {
     final entry = _entry();
     final cases =
@@ -1020,6 +1038,9 @@ frb.CloudSyncTransientSnapshot _snapshotFor(
 frb.CloudSyncTransientMessagePayload _messagePayload({
   String logicalEntityKeyHash = _messageHash,
   String canonicalGuid = 'message-guid',
+  frb.CloudSyncTransientService service =
+      frb.CloudSyncTransientService.iMessage,
+  String chatIdentifier = 'iMessage;-;chat',
   int createdAtMillis = 1787385600000,
   int error = 0,
   frb.CloudSyncTransientFieldState subjectState =
@@ -1069,11 +1090,11 @@ frb.CloudSyncTransientMessagePayload _messagePayload({
   logicalEntityKeyHash: logicalEntityKeyHash,
   canonicalGuid: canonicalGuid,
   chatAliasKeyHash: _chatHash,
-  chatIdentifier: 'iMessage;-;chat',
+  chatIdentifier: chatIdentifier,
   senderHandle: 'sender@example.invalid',
   createdAtMillis: createdAtMillis,
   error: error,
-  service: frb.CloudSyncTransientService.iMessage,
+  service: service,
   subjectState: subjectState,
   subject: subject,
   bodyState: bodyState,
