@@ -191,10 +191,10 @@ deterministic, with no duplicate logical changes and no token regression.
 
 Proceed only after both shadow passes are clean. Run one manual semantic pull
 in this exact zone order: chats, messages, attachments. Each zone is bounded to
-one page and 50 changes. This canary may project chats, messages, reactions,
-and attachment metadata into the isolated Beta ObjectBox profile. It must not
-download media bodies or apply profiles, display clears, group photos, or
-tombstones.
+four pages of 50 changes, or 200 records total. This canary may project chats,
+messages, reactions, and attachment metadata into the isolated Beta ObjectBox
+profile. It must not download media bodies or apply profiles, display clears,
+group photos, or tombstones.
 
 The UI may report `Cloud Sync V2 Complete` only when all three zones report
 `completed`, no zone is skipped, deferred, quarantined, or retried counts are

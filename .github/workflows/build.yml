@@ -436,7 +436,7 @@ jobs:
             exit 1
           fi
 
-      - name: Verify the evidence canary APK carries all native libraries
+      - name: Verify the evidence canary identity, signature, and native libraries
         run: |
           set -euo pipefail
           apk=build/app/outputs/flutter-apk/app-canary-debug.apk
@@ -446,7 +446,13 @@ jobs:
               | sort -V \
               | tail -n 1
           )"
+          apksigner="$(
+            find "$sdk_root/build-tools" -type f -name apksigner -print \
+              | sort -V \
+              | tail -n 1
+          )"
           test -x "$aapt"
+          test -x "$apksigner"
           application_id="$(
             "$aapt" dump badging "$apk" \
               | sed -n "s/^package: name='\([^']*\)'.*/\1/p"
@@ -466,6 +472,11 @@ jobs:
               exit 1
             fi
           done
+          signature_report="$("$apksigner" verify --verbose "$apk")"
+          if ! grep -Eq '^Verified using v2 scheme.*: true$' <<< "$signature_report"; then
+            echo "evidence canary APK is not signed with APK Signature Scheme v2" >&2
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v7
         with:
