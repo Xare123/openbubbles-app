@@ -1,5 +1,6 @@
 import 'cloud_sync_shadow_report_file.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_semantic_pull_report_file.dart';
 import 'cloudkit_operation_interlock.dart';
 import 'cloudkit_writer_authority.dart';
 
@@ -86,6 +87,17 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_semantic_pull_disabled',
   'cloud_sync_semantic_pull_quiescing',
   'cloud_sync_semantic_pull_quiescence_timeout',
+  'cloud_sync_semantic_report_already_exists',
+  'cloud_sync_semantic_report_directory_invalid',
+  'cloud_sync_semantic_report_directory_unavailable',
+  'cloud_sync_semantic_report_directory_untrusted',
+  'cloud_sync_semantic_report_metadata_invalid',
+  'cloud_sync_semantic_report_read_only_invariant_invalid',
+  'cloud_sync_semantic_report_storage_unavailable',
+  'cloud_sync_semantic_report_too_large',
+  'cloud_sync_semantic_report_write_failed',
+  'cloud_sync_semantic_report_zone_count_invalid',
+  'cloud_sync_semantic_report_zone_invalid',
   'cloud_sync_semantic_remote_write_tripwire',
   'cloud_sync_shadow_controller_active',
   'cloud_sync_shadow_controller_disposed',
@@ -144,6 +156,7 @@ const _cloudSyncV2SafeFailureCodes = <String>{
 String cloudSyncV2SafeFailureCode(Object error) {
   final String? candidate = switch (error) {
     CloudSyncShadowReportFileException() => error.safeCode,
+    CloudSyncSemanticPullReportFileException() => error.safeCode,
     CloudSyncFailure() => error.safeCode,
     CloudKitOperationInterlockException() => error.safeCode,
     CloudKitWriterAuthorityFailure() => error.safeCode,

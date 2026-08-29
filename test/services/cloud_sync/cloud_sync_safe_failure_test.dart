@@ -1,4 +1,5 @@
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report_file.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_report_file.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
@@ -38,6 +39,41 @@ void main() {
         const CloudKitOperationInterlockException('cloudkit_interlock_busy'),
       ),
       'cloudkit_interlock_busy',
+    );
+  });
+
+  test('exposes every reviewed semantic report code', () {
+    const codes = <String>{
+      'cloud_sync_semantic_report_already_exists',
+      'cloud_sync_semantic_report_directory_invalid',
+      'cloud_sync_semantic_report_directory_unavailable',
+      'cloud_sync_semantic_report_directory_untrusted',
+      'cloud_sync_semantic_report_metadata_invalid',
+      'cloud_sync_semantic_report_read_only_invariant_invalid',
+      'cloud_sync_semantic_report_storage_unavailable',
+      'cloud_sync_semantic_report_too_large',
+      'cloud_sync_semantic_report_write_failed',
+      'cloud_sync_semantic_report_zone_count_invalid',
+      'cloud_sync_semantic_report_zone_invalid',
+    };
+    for (final code in codes) {
+      expect(
+        cloudSyncV2SafeFailureCode(
+          CloudSyncSemanticPullReportFileException(code),
+        ),
+        code,
+      );
+    }
+  });
+
+  test('collapses an unreviewed semantic report code', () {
+    expect(
+      cloudSyncV2SafeFailureCode(
+        const CloudSyncSemanticPullReportFileException(
+          'cloud_sync_semantic_report_secret_path',
+        ),
+      ),
+      'cloud_sync_unknown_failure',
     );
   });
 

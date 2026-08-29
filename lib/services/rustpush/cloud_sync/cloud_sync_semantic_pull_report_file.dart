@@ -18,11 +18,14 @@ final class CloudSyncSemanticPullReportFileWriter {
       throw ArgumentError.value(maximumRetainedReports);
     }
     if (!path.isWithin(_trustedStorageRoot.path, _directory.path)) {
-      throw ArgumentError('cloud_sync_semantic_report_directory_invalid');
+      throw const CloudSyncSemanticPullReportFileException(
+        'cloud_sync_semantic_report_directory_invalid',
+      );
     }
   }
 
   static const int maximumEncodedBytes = 256 * 1024;
+  static const int maximumDiagnosticCount = 65535;
   static final RegExp _ownedReportName = RegExp(
     r'^obcs2-semantic-[0-9]{1,24}\.json$',
   );
@@ -155,8 +158,14 @@ final class CloudSyncSemanticPullReportFileWriter {
           zone.quarantined > report.changeLimit ||
           zone.elapsedMilliseconds < 0 ||
           zone.elapsedMilliseconds > 10 * 60 * 1000 ||
+          // Diagnostic events are not record counters. A single fetched chat
+          // can emit several alias diagnostics, and same-generation projection
+          // repair can inspect more rows than the one-page fetch limit. The
+          // collector already rejects non-positive counts. A separate ceiling
+          // catches corrupt aggregates without conflating them with the fetch
+          // page or projection-repair limits.
           zone.diagnosticCounts.values.any(
-            (count) => count <= 0 || count > report.changeLimit,
+            (count) => count > maximumDiagnosticCount,
           )) {
         return 'cloud_sync_semantic_report_zone_invalid';
       }
