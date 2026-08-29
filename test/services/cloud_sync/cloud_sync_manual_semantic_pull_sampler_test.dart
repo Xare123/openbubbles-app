@@ -164,6 +164,7 @@ void main() {
         semanticStageQuarantined: 0,
         retried: 0,
         elapsedMilliseconds: 1,
+        diagnosticCounts: const {'native_quarantined_unsupported_service': 1},
       );
 
       final json = zone.toJson();
@@ -174,6 +175,9 @@ void main() {
       });
       expect(json['tombstoneQuarantined'], 1);
       expect(json['semanticUnsupportedServiceQuarantined'], 1);
+      expect(json['semanticDiagnostics'], <String, int>{
+        'native_quarantined_unsupported_service': 1,
+      });
       expect(json.toString(), isNot(contains('service-name')));
       expect(json.toString(), isNot(contains('record-id')));
       expect(json.toString(), isNot(contains('message-body')));

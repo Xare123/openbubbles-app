@@ -41,6 +41,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protocol_evi
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector_health.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report_file.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_report.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_report_file.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/legacy_cloud_chat_repair.dart';
@@ -7371,8 +7372,13 @@ class RustPushService extends GetxService {
       observerFactory: _cloudSyncV2EvidenceObserverFactory(),
     );
     final report = await adapter.sampler.runConfirmed();
+    final reportFile = await CloudSyncSemanticPullReportFileWriter(
+      privateReportDirectory: join(statePath, 'cloud-sync-v2', 'reports'),
+      trustedStorageRoot: statePath,
+    ).write(report);
     Logger.info(
-        "Cloud Sync V2 semantic canary report=${jsonEncode(report.toJson())}");
+        "Cloud Sync V2 semantic canary report_file=${basename(reportFile.path)} "
+        "report=${jsonEncode(report.toJson())}");
     return report;
   }
 

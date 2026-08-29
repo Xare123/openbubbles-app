@@ -1,10 +1,11 @@
 import 'cloud_sync_engine.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_observability.dart';
+import 'cloud_sync_semantic_diagnostics.dart';
 
 /// Content-free result for one developer-confirmed local semantic projection.
 final class CloudSyncSemanticPullZoneReport {
-  const CloudSyncSemanticPullZoneReport({
+  CloudSyncSemanticPullZoneReport({
     required this.zoneLabel,
     required this.status,
     required this.fetched,
@@ -24,9 +25,13 @@ final class CloudSyncSemanticPullZoneReport {
     required this.semanticStageQuarantined,
     required this.retried,
     required this.elapsedMilliseconds,
+    Map<String, int> diagnosticCounts = const <String, int>{},
     this.failureCategory,
     this.skipReason,
-  });
+  }) : diagnosticCounts =
+           CloudSyncSemanticDiagnosticCollector.validatedSnapshot(
+             diagnosticCounts,
+           );
 
   final String zoneLabel;
   final CloudSyncRunStatus status;
@@ -47,6 +52,7 @@ final class CloudSyncSemanticPullZoneReport {
   final int semanticStageQuarantined;
   final int retried;
   final int elapsedMilliseconds;
+  final Map<String, int> diagnosticCounts;
   final CloudFailureCategory? failureCategory;
   final CloudSyncSkipReason? skipReason;
 
@@ -75,6 +81,7 @@ final class CloudSyncSemanticPullZoneReport {
     'semanticStageQuarantined': semanticStageQuarantined,
     'retried': retried,
     'elapsedMilliseconds': elapsedMilliseconds,
+    'semanticDiagnostics': diagnosticCounts,
     'failureCategory': failureCategory?.name,
     'skipReason': skipReason?.name,
   };
@@ -93,7 +100,7 @@ final class CloudSyncSemanticPullReport {
     required Iterable<CloudSyncSemanticPullZoneReport> zones,
   }) : zones = List.unmodifiable(zones);
 
-  static const schemaVersion = 1;
+  static const schemaVersion = 2;
   final DateTime timestampUtc;
   final String platform;
   final String architecture;

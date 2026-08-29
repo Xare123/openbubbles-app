@@ -7,6 +7,7 @@ import 'cloud_inbox_applier.dart';
 import 'cloud_merge_policy.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_semantic_diagnostics.dart';
 
 final class CloudTombstoneIdentity {
   const CloudTombstoneIdentity({
@@ -118,11 +119,13 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     required String storageDirectory,
     RustCloudSemanticDecodeBindings? bindings,
     CloudTombstoneIdentityResolver? tombstoneIdentityResolver,
+    CloudSyncSemanticDiagnosticRecorder? diagnosticRecorder,
   }) => RustCloudSemanticDecoder._(
     readAuthSnapshot,
     _validateStorageDirectory(storageDirectory),
     bindings ?? FrbRustCloudSemanticDecodeBindings(),
     tombstoneIdentityResolver,
+    diagnosticRecorder,
   );
 
   RustCloudSemanticDecoder._(
@@ -130,6 +133,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     this._storageDirectory,
     this._bindings,
     this._tombstoneIdentityResolver,
+    this._diagnosticRecorder,
   );
 
   static final RegExp _externalDigest = RegExp(r'^[A-Za-z0-9_-]{43}$');
@@ -145,6 +149,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
   final String _storageDirectory;
   final RustCloudSemanticDecodeBindings _bindings;
   final CloudTombstoneIdentityResolver? _tombstoneIdentityResolver;
+  final CloudSyncSemanticDiagnosticRecorder? _diagnosticRecorder;
 
   @override
   Future<CloudDecodedMutation> decode(CloudInboxEntry entry) async {
@@ -185,17 +190,23 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       ),
     );
 
-    _logContentFreeNativeDisposition(_nativeStream(entry.scope), result);
+    final nativeDisposition = _nativeDisposition(result);
+    _logContentFreeNativeDisposition(
+      _nativeStream(entry.scope),
+      nativeDisposition,
+    );
+    _recordDiagnostic('native_$nativeDisposition');
 
     final currentAuth = await _readAuthSnapshot();
     if (!auth.sameIdentity(currentAuth)) {
       throw const CloudSemanticDecodeFailure(CloudFailureCategory.conflict);
     }
-    return _mapResult(entry, result, tombstoneIdentity);
+    final decoded = _mapResult(entry, result, tombstoneIdentity);
+    _recordDiagnostic('decoder_ready');
+    return decoded;
   }
 
-  static void _logContentFreeNativeDisposition(
-    String stream,
+  static String _nativeDisposition(
     frb_api.CloudSyncTransientDecodeResult result,
   ) {
     final hasReadyField =
@@ -205,23 +216,56 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         result.snapshot != null ||
         result.payload != null ||
         result.tombstone != null;
-    final disposition = switch ((
+    return switch ((
       hasReadyField,
       result.deferredReason,
       result.quarantineReason,
       result.failureCode,
     )) {
       (true, null, null, null) => 'ready',
-      (false, final deferred?, null, null) => 'deferred:${deferred.name}',
+      (false, final deferred?, null, null) =>
+        'deferred_${_safeCodeSegment(deferred.name)}',
       (false, null, final quarantine?, null) =>
-        'quarantined:${quarantine.name}',
-      (false, null, null, final failure?) => 'failure:${failure.name}',
+        'quarantined_${_safeCodeSegment(quarantine.name)}',
+      (false, null, null, final failure?) =>
+        'failure_${_safeCodeSegment(failure.name)}',
       _ => 'invalid_disposition_shape',
     };
+  }
+
+  static void _logContentFreeNativeDisposition(
+    String stream,
+    String disposition,
+  ) {
+    final logDisposition = _displayDisposition(disposition);
     Logger.info(
       'CloudKit V2 semantic native outcome stream=$stream '
-      'disposition=$disposition',
+      'disposition=$logDisposition',
     );
+  }
+
+  static String _displayDisposition(String value) {
+    for (final prefix in const <String>[
+      'deferred_',
+      'quarantined_',
+      'failure_',
+    ]) {
+      if (value.startsWith(prefix)) {
+        final words = value.substring(prefix.length).split('_');
+        final camel =
+            words.first +
+            words
+                .skip(1)
+                .map(
+                  (word) => word.isEmpty
+                      ? word
+                      : '${word[0].toUpperCase()}${word.substring(1)}',
+                )
+                .join();
+        return '${prefix.substring(0, prefix.length - 1)}:$camel';
+      }
+    }
+    return value;
   }
 
   CloudDecodedMutation _mapResult(
@@ -401,6 +445,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     if (populated != 1) {
       throw const CloudSemanticDecodeFailure(
         CloudFailureCategory.malformedRecord,
+        safeCode: 'decoder_payload_lane_count_invalid',
       );
     }
     return switch (kind) {
@@ -468,6 +513,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         (value.attachmentLogicalKeyHash == null)) {
       throw const CloudSemanticDecodeFailure(
         CloudFailureCategory.malformedRecord,
+        safeCode: 'decoder_text_run_attachment_shape_invalid',
       );
     }
     return CloudSemanticTextRun(
@@ -539,6 +585,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         )) {
       throw const CloudSemanticDecodeFailure(
         CloudFailureCategory.malformedRecord,
+        safeCode: 'decoder_chat_shape_invalid',
       );
     }
     return CloudChatEntityPayload(
@@ -605,7 +652,10 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
             frb_api.CloudSyncTransientFieldState.absent ||
         !_associationShapeMatches(payload, isReaction: false) ||
         !_replyShapeMatches(payload)) {
-      throw const CloudSemanticDecodeFailure(CloudFailureCategory.dependency);
+      throw const CloudSemanticDecodeFailure(
+        CloudFailureCategory.dependency,
+        safeCode: 'decoder_message_shape_unsupported',
+      );
     }
     return CloudMessageEntityPayload(
       logicalEntityKeyHash: _requireExternalDigest(
@@ -703,7 +753,10 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
             (payload.associatedEmojiState !=
                     frb_api.CloudSyncTransientFieldState.value ||
                 payload.associatedEmoji == null))) {
-      throw const CloudSemanticDecodeFailure(CloudFailureCategory.dependency);
+      throw const CloudSemanticDecodeFailure(
+        CloudFailureCategory.dependency,
+        safeCode: 'decoder_reaction_shape_unsupported',
+      );
     }
     final baseType = switch (reactionKind) {
       frb_api.CloudSyncTransientReactionKind.heart => 'love',
@@ -757,7 +810,10 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         ) ||
         (payload.protectedLocalReference != null &&
             !_protectedReference.hasMatch(payload.protectedLocalReference!))) {
-      throw const CloudSemanticDecodeFailure(CloudFailureCategory.dependency);
+      throw const CloudSemanticDecodeFailure(
+        CloudFailureCategory.dependency,
+        safeCode: 'decoder_attachment_shape_unsupported',
+      );
     }
     return CloudAttachmentEntityPayload(
       logicalEntityKeyHash: _requireExternalDigest(
@@ -963,6 +1019,17 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     }
     return value.toInt();
   }
+
+  void _recordDiagnostic(String safeCode) {
+    _diagnosticRecorder?.call(safeCode);
+  }
+
+  static String _safeCodeSegment(String value) => value
+      .replaceAllMapped(
+        RegExp(r'([a-z0-9])([A-Z])'),
+        (match) => '${match.group(1)}_${match.group(2)}',
+      )
+      .toLowerCase();
 
   CloudFailureCategory _failureCategory(
     frb_api.CloudSyncTransientFailureCode value,

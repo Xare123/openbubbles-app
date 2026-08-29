@@ -624,6 +624,35 @@ void main() {
     },
   );
 
+  test('diagnostics preserve decoder and canonical apply safe codes', () async {
+    final diagnostics = <String>[];
+    final decoderFailure = entry(1);
+    decoder.failures[decoderFailure.change.changeId] =
+        const CloudSemanticDecodeFailure(
+          CloudFailureCategory.malformedRecord,
+          safeCode: 'decoder_chat_shape_invalid',
+        );
+    applier = TransactionalCloudInboxApplier(
+      decoder: decoder,
+      store: store,
+      diagnosticRecorder: diagnostics.add,
+    );
+
+    await _apply(applier, decoderFailure);
+    expect(diagnostics, ['decoder_chat_shape_invalid']);
+
+    diagnostics.clear();
+    final applyFailure = entry(2);
+    decodeUpsert(applyFailure, message());
+    store.failure = CloudSyncFailure(
+      category: CloudFailureCategory.dependency,
+      safeCode: 'canonical_chat_relation_unavailable',
+    );
+
+    await _apply(applier, applyFailure);
+    expect(diagnostics, ['canonical_chat_relation_unavailable']);
+  });
+
   test('typed retryable decoder failures remain retryable', () async {
     final inbox = entry(1);
     const retryableCategories = [
@@ -797,6 +826,7 @@ class _MemorySemanticStore implements CloudSemanticStoreGateway {
     : transaction = _MemoryTransaction(scope, generation);
 
   final _MemoryTransaction transaction;
+  CloudSyncFailure? failure;
   int transactionCount = 0;
 
   @override
@@ -806,6 +836,8 @@ class _MemorySemanticStore implements CloudSemanticStoreGateway {
     required T Function(CloudSemanticStoreTransaction transaction) action,
   }) async {
     transactionCount++;
+    final configuredFailure = failure;
+    if (configuredFailure != null) throw configuredFailure;
     return action(transaction);
   }
 }

@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'cloud_merge_policy.dart';
+import 'cloud_sync_semantic_diagnostics.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_store.dart';
 import 'cloud_sync_transport.dart';
@@ -718,9 +719,10 @@ abstract interface class CloudTransientCanonicalIdentityRegistrar {
 }
 
 class CloudSemanticDecodeFailure implements Exception {
-  const CloudSemanticDecodeFailure(this.category);
+  const CloudSemanticDecodeFailure(this.category, {this.safeCode});
 
   final CloudFailureCategory category;
+  final String? safeCode;
 }
 
 /// Transactional gateway to the app's canonical local message store.
@@ -787,6 +789,7 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
     this._identityRegistrar,
     this._activeScopeRevalidator,
     this._allowTombstones = false,
+    this._diagnosticRecorder,
   });
 
   final CloudSemanticDecoder _decoder;
@@ -795,6 +798,7 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
   final CloudTransientCanonicalIdentityRegistrar? _identityRegistrar;
   final Future<bool> Function()? _activeScopeRevalidator;
   final bool _allowTombstones;
+  final CloudSyncSemanticDiagnosticRecorder? _diagnosticRecorder;
 
   @override
   Future<CloudInboxApplyResult> apply(
@@ -813,6 +817,10 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
     try {
       decoded = await _decoder.decode(entry);
     } on CloudSemanticDecodeFailure catch (failure) {
+      _recordDiagnostic(
+        failure.safeCode ??
+            'decoder_${_safeCodeSegment(failure.category.name)}',
+      );
       if (failure.category.isRetryable) {
         return CloudInboxApplyResult.retryable(
           failureCategory: failure.category,
@@ -822,6 +830,7 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
         failureCategory: failure.category,
       );
     } catch (_) {
+      _recordDiagnostic('decoder_unknown');
       return const CloudInboxApplyResult.quarantined(
         failureCategory: CloudFailureCategory.unknown,
       );
@@ -865,6 +874,7 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
       try {
         identityLease = _identityRegistrar.bind(decoded);
       } catch (_) {
+        _recordDiagnostic('identity_registration_failed');
         return const CloudInboxApplyResult.quarantined(
           failureCategory: CloudFailureCategory.conflict,
         );
@@ -875,11 +885,13 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
       if (_activeScopeRevalidator != null) {
         try {
           if (!await _activeScopeRevalidator()) {
+            _recordDiagnostic('active_scope_changed');
             return const CloudInboxApplyResult.quarantined(
               failureCategory: CloudFailureCategory.conflict,
             );
           }
         } catch (_) {
+          _recordDiagnostic('active_scope_revalidation_failed');
           return const CloudInboxApplyResult.retryable(
             failureCategory: CloudFailureCategory.authorization,
           );
@@ -915,6 +927,9 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
         },
       );
     } on CloudSyncFailure catch (failure) {
+      _recordDiagnostic(
+        failure.safeCode ?? 'apply_${_safeCodeSegment(failure.category.name)}',
+      );
       if (failure.category.isRetryable) {
         return CloudInboxApplyResult.retryable(
           failureCategory: failure.category,
@@ -925,6 +940,7 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
         failureCategory: failure.category,
       );
     } catch (_) {
+      _recordDiagnostic('apply_unknown');
       return const CloudInboxApplyResult.quarantined(
         failureCategory: CloudFailureCategory.unknown,
       );
@@ -932,6 +948,17 @@ class TransactionalCloudInboxApplier implements CloudInboxApplier {
       identityLease?.release();
     }
   }
+
+  void _recordDiagnostic(String safeCode) {
+    _diagnosticRecorder?.call(safeCode);
+  }
+
+  static String _safeCodeSegment(String value) => value
+      .replaceAllMapped(
+        RegExp(r'([a-z0-9])([A-Z])'),
+        (match) => '${match.group(1)}_${match.group(2)}',
+      )
+      .toLowerCase();
 
   CloudInboxApplyResult _applyUpsert(
     CloudSemanticStoreTransaction transaction,

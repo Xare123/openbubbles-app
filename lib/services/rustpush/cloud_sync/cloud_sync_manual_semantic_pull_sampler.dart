@@ -23,6 +23,8 @@ typedef CloudSyncSemanticInboxApplierFactory =
       CloudSyncScope scope,
       int generation,
     );
+typedef CloudSyncSemanticDiagnosticSnapshotReader =
+    Map<String, int> Function(CloudSyncScope scope);
 
 /// Developer-only one-shot CloudKit reader that may project supported records
 /// into canonical local ObjectBox entities but has no remote write capability.
@@ -40,6 +42,7 @@ final class CloudSyncManualSemanticPullSampler {
     required this.architecture,
     required this.buildCommit,
     this._observerFactory,
+    this._readDiagnosticCounts,
     bool? compileGateOverrideForTest,
     Duration? fetchTimeoutOverrideForTest,
   }) : _operationInterlock = CloudKitOperationInterlock(
@@ -83,6 +86,7 @@ final class CloudSyncManualSemanticPullSampler {
   final String architecture;
   final String buildCommit;
   final CloudSyncObserverFactory? _observerFactory;
+  final CloudSyncSemanticDiagnosticSnapshotReader? _readDiagnosticCounts;
   final Duration _fetchTimeout;
   final bool _enabled;
   bool _active = false;
@@ -185,6 +189,8 @@ final class CloudSyncManualSemanticPullSampler {
             elapsedMilliseconds: result.finishedAt
                 .difference(result.startedAt)
                 .inMilliseconds,
+            diagnosticCounts:
+                _readDiagnosticCounts?.call(scope) ?? const <String, int>{},
             failureCategory: result.failureCategory,
             skipReason: result.skipReason,
           ),

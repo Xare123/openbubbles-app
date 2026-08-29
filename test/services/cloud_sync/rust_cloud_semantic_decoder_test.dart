@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_diagnostics.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/rust_cloud_semantic_decoder.dart';
 import 'package:bluebubbles/src/rust/api/api.dart' as frb;
 import 'package:bluebubbles/utils/logger/logger.dart';
@@ -24,11 +25,13 @@ void main() {
 
   RustCloudSemanticDecoder decoder({
     CloudTombstoneIdentityResolver? tombstoneResolver,
+    CloudSyncSemanticDiagnosticRecorder? diagnosticRecorder,
   }) => RustCloudSemanticDecoder(
     readAuthSnapshot: () async => currentAuth,
     storageDirectory: r'C:\private\cloud-sync',
     bindings: bindings,
     tombstoneIdentityResolver: tombstoneResolver,
+    diagnosticRecorder: diagnosticRecorder,
   );
 
   test('maps a native message upsert and passes every source fence', () async {
@@ -251,6 +254,7 @@ void main() {
     'logs only the bounded native disposition for unsupported service',
     () async {
       final output = _CapturingLogOutput();
+      final diagnostics = CloudSyncSemanticDiagnosticCollector();
       final previousLogger = Logger;
       Logger = BaseLogger();
       Logger.currentOutput = output;
@@ -265,7 +269,7 @@ void main() {
         );
 
         await _expectFailure(
-          decoder().decode(entry),
+          decoder(diagnosticRecorder: diagnostics.record).decode(entry),
           CloudFailureCategory.unsupportedService,
         );
 
@@ -275,6 +279,9 @@ void main() {
         expect(message, isNot(contains(_sourceReference)));
         expect(message, isNot(contains(_payloadSha)));
         expect(message, isNot(contains('iMessage')));
+        expect(diagnostics.snapshot(), <String, int>{
+          'native_quarantined_unsupported_service': 1,
+        });
       } finally {
         Logger = previousLogger;
       }

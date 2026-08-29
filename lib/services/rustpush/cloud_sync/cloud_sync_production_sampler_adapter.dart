@@ -20,6 +20,7 @@ import 'native_protected_cloud_sync_transport.dart';
 import 'objectbox_canonical_semantic_entity_adapter.dart';
 import 'objectbox_cloud_semantic_store_gateway.dart';
 import 'cloud_sync_protector.dart';
+import 'cloud_sync_semantic_diagnostics.dart';
 import 'cloud_sync_outbound_admission.dart';
 import 'cloud_sync_writer_authority.dart';
 import 'cloudkit_operation_interlock.dart';
@@ -234,6 +235,8 @@ final class CloudSyncProductionSemanticPullAdapter {
     RustCloudSemanticDecodeBindings? semanticDecodeBindings,
     bool? compileGateOverrideForTest,
   }) {
+    final diagnosticCollectors =
+        <String, CloudSyncSemanticDiagnosticCollector>{};
     final authBinding = nativeAuthBinding ?? FrbCloudSyncNativeAuthBinding();
     final authProvider = CloudSyncProductionAuthSnapshotProvider(
       readActiveClient: readActiveClient,
@@ -260,6 +263,8 @@ final class CloudSyncProductionSemanticPullAdapter {
             bindings: transportBindings,
           ),
       createInboxApplier: (snapshot, scope, generation) async {
+        final diagnostics = CloudSyncSemanticDiagnosticCollector();
+        diagnosticCollectors[scope.zone] = diagnostics;
         final identityRegistry = TransientCloudCanonicalIdentityRegistry();
         final activeScope = CloudCanonicalActiveScope(
           scope: scope,
@@ -288,6 +293,7 @@ final class CloudSyncProductionSemanticPullAdapter {
             readAuthSnapshot: authProvider.capture,
             storageDirectory: privateStorageDirectory,
             bindings: semanticDecodeBindings,
+            diagnosticRecorder: diagnostics.record,
           ),
           store: gateway,
           identityRegistrar: identityRegistry,
@@ -297,8 +303,11 @@ final class CloudSyncProductionSemanticPullAdapter {
                 identical(snapshot.cloudMessagesClient, readActiveClient());
           },
           allowTombstones: false,
+          diagnosticRecorder: diagnostics.record,
         );
       },
+      readDiagnosticCounts: (scope) =>
+          diagnosticCollectors[scope.zone]?.snapshot() ?? const <String, int>{},
       operationFenceStore: durableStore,
       privateStorageDirectory: privateStorageDirectory,
       platform: platform,
