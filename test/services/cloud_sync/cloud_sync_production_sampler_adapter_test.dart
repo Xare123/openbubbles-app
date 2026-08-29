@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/in_memory_cloud_sync_store.dart';
@@ -247,9 +248,10 @@ void main() {
   test('native writer pause bridge round-trips one opaque token', () async {
     final events = <String>[];
     final binding = FrbCloudSyncNativeWriterPause(
-      pauseCall: () async {
+      tokenFactory: () => BigInt.from(7),
+      pauseCall: (token) async {
         events.add('pause');
-        return BigInt.from(7);
+        return token;
       },
       resumeCall: (token) async {
         events.add('resume-$token');
@@ -263,9 +265,59 @@ void main() {
     expect(events, <String>['pause', 'resume-7']);
   });
 
+  test('native writer resume retries a lost bridge response', () async {
+    var resumeCalls = 0;
+    final binding = FrbCloudSyncNativeWriterPause(
+      tokenFactory: () => BigInt.from(9),
+      pauseCall: (token) async => token,
+      resumeCall: (_) async {
+        resumeCalls++;
+        if (resumeCalls == 1) {
+          throw Exception('response lost after native release');
+        }
+      },
+    );
+
+    final token = await binding.pause();
+    await binding.resume(token);
+
+    expect(resumeCalls, 2);
+  });
+
+  test('native writer resume does not retry an invalid token', () async {
+    var resumeCalls = 0;
+    final binding = FrbCloudSyncNativeWriterPause(
+      tokenFactory: () => BigInt.from(11),
+      pauseCall: (token) async => token,
+      resumeCall: (_) async {
+        resumeCalls++;
+        throw frb.AnyhowException(
+          'cloud_sync_native_writer_resume_token_invalid',
+        );
+      },
+    );
+
+    await expectLater(
+      binding.resume(BigInt.from(11)),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'cloud_sync_native_writer_resume_token_invalid',
+        ),
+      ),
+    );
+    expect(resumeCalls, 1);
+  });
+
   test('native writer pause bridge rejects invalid tokens locally', () async {
+    var pauseCalls = 0;
     final invalidPause = FrbCloudSyncNativeWriterPause(
-      pauseCall: () async => BigInt.zero,
+      tokenFactory: () => BigInt.zero,
+      pauseCall: (token) async {
+        pauseCalls++;
+        return token;
+      },
       resumeCall: (_) async {},
     );
     await expectLater(
@@ -278,10 +330,12 @@ void main() {
         ),
       ),
     );
+    expect(pauseCalls, 0);
 
     var resumeCalls = 0;
     final invalidResume = FrbCloudSyncNativeWriterPause(
-      pauseCall: () async => BigInt.one,
+      tokenFactory: () => BigInt.one,
+      pauseCall: (token) async => token,
       resumeCall: (_) async => resumeCalls++,
     );
     await expectLater(
@@ -295,6 +349,56 @@ void main() {
       ),
     );
     expect(resumeCalls, 0);
+  });
+
+  test('native writer pause retries a lost response with one token', () async {
+    final tokens = <BigInt>[];
+    var pauseCalls = 0;
+    final binding = FrbCloudSyncNativeWriterPause(
+      tokenFactory: () => BigInt.from(41),
+      retryDelay: Duration.zero,
+      pauseCall: (token) async {
+        tokens.add(token);
+        pauseCalls++;
+        if (pauseCalls == 1) {
+          throw Exception('response lost after native activation');
+        }
+        return token;
+      },
+      resumeCall: (_) async {},
+    );
+
+    expect(await binding.pause(), BigInt.from(41));
+    expect(tokens, <BigInt>[BigInt.from(41), BigInt.from(41)]);
+  });
+
+  test('ambiguous pause failure cancels the caller-owned token', () async {
+    final resumed = <BigInt>[];
+    final binding = FrbCloudSyncNativeWriterPause(
+      tokenFactory: () => BigInt.from(43),
+      bridgeCallTimeout: const Duration(milliseconds: 5),
+      retryDelay: Duration.zero,
+      pauseCall: (_) => Completer<BigInt>().future,
+      resumeCall: (token) async => resumed.add(token),
+    );
+
+    await expectLater(binding.pause(), throwsStateError);
+    expect(resumed, <BigInt>[BigInt.from(43)]);
+  });
+
+  test('unconfirmed pause cleanup is reported fail-closed', () async {
+    final binding = FrbCloudSyncNativeWriterPause(
+      tokenFactory: () => BigInt.from(47),
+      bridgeCallTimeout: const Duration(milliseconds: 5),
+      retryDelay: Duration.zero,
+      pauseCall: (_) => Completer<BigInt>().future,
+      resumeCall: (_) => Completer<void>().future,
+    );
+
+    await expectLater(
+      binding.pause(),
+      throwsA(isA<CloudSyncNativeWriterPauseUncertain>()),
+    );
   });
 
   test('native writer pause bridge exposes only reviewed tags', () {

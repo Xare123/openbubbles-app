@@ -1,5 +1,8 @@
 // ignore_for_file: prefer_initializing_formals
 
+import 'dart:async';
+import 'dart:math';
+
 import 'package:bluebubbles/src/rust/api/api.dart' as frb_api;
 import 'package:bluebubbles/src/rust/frb_generated.dart' as frb_generated;
 import 'package:bluebubbles/src/rust/lib.dart' as frb_lib;
@@ -158,11 +161,12 @@ String cloudSyncNativeAuthBridgeSafeCode(Object error) {
   return 'cloud_sync_native_auth_bridge_failed';
 }
 
-typedef CloudSyncNativeWriterPauseCall = Future<BigInt> Function();
+typedef CloudSyncNativeWriterPauseCall = Future<BigInt> Function(BigInt token);
 typedef CloudSyncNativeWriterResumeCall = Future<void> Function(BigInt token);
+typedef CloudSyncNativeWriterPauseTokenFactory = BigInt Function();
 
-/// Production bridge that pauses Passwords and iCloud Keychain CloudKit work
-/// for the complete semantic pull.
+/// Production bridge that pauses every native CloudKit writer workflow for the
+/// complete semantic pull.
 ///
 /// The native gate owns the actual exclusion permit. Dart carries only its
 /// opaque, positive token and exposes only reviewed failure codes.
@@ -171,24 +175,89 @@ final class FrbCloudSyncNativeWriterPause
   FrbCloudSyncNativeWriterPause({
     CloudSyncNativeWriterPauseCall? pauseCall,
     CloudSyncNativeWriterResumeCall? resumeCall,
+    CloudSyncNativeWriterPauseTokenFactory? tokenFactory,
+    Duration bridgeCallTimeout = const Duration(seconds: 35),
+    Duration retryDelay = const Duration(milliseconds: 100),
   }) : _pauseCall = pauseCall,
-       _resumeCall = resumeCall;
+       _resumeCall = resumeCall,
+       _tokenFactory = tokenFactory ?? _createPauseToken,
+       _bridgeCallTimeout = bridgeCallTimeout,
+       _retryDelay = retryDelay {
+    if (bridgeCallTimeout <= Duration.zero || retryDelay < Duration.zero) {
+      throw ArgumentError('cloud_sync_native_writer_pause_timing_invalid');
+    }
+  }
 
   final CloudSyncNativeWriterPauseCall? _pauseCall;
   final CloudSyncNativeWriterResumeCall? _resumeCall;
+  final CloudSyncNativeWriterPauseTokenFactory _tokenFactory;
+  final Duration _bridgeCallTimeout;
+  final Duration _retryDelay;
+  static const _maximumBridgeAttempts = 3;
+  static final Random _secureRandom = Random.secure();
+
+  static BigInt _createPauseToken() {
+    do {
+      final high = BigInt.from(_secureRandom.nextInt(1 << 30));
+      final low = BigInt.from(_secureRandom.nextInt(1 << 30));
+      final token = (high << 30) | low;
+      if (token > BigInt.zero) return token;
+    } while (true);
+  }
 
   @override
   Future<Object> pause() async {
+    late final BigInt token;
     try {
-      final token =
-          await (_pauseCall ?? frb_api.cloudSyncPausePasswordCloudkitWriters)();
-      if (token <= BigInt.zero) {
-        throw StateError('cloud_sync_native_writer_pause_token_invalid');
-      }
-      return token;
-    } catch (error) {
-      throw StateError(cloudSyncNativeWriterPauseBridgeSafeCode(error));
+      token = _tokenFactory();
+    } catch (_) {
+      throw StateError('cloud_sync_native_writer_pause_token_invalid');
     }
+    if (token <= BigInt.zero || token.bitLength > 64) {
+      throw StateError('cloud_sync_native_writer_pause_token_invalid');
+    }
+
+    final pauseCall =
+        _pauseCall ??
+        (token) => frb_api.cloudSyncPausePasswordCloudkitWriters(token: token);
+    var finalSafeCode = 'cloud_sync_native_writer_pause_bridge_failed';
+    var ambiguousAttempt = false;
+    for (var attempt = 1; attempt <= _maximumBridgeAttempts; attempt++) {
+      try {
+        final returnedToken = await pauseCall(
+          token,
+        ).timeout(_bridgeCallTimeout);
+        if (returnedToken != token) {
+          ambiguousAttempt = true;
+          finalSafeCode = 'cloud_sync_native_writer_pause_token_invalid';
+          break;
+        }
+        return token;
+      } catch (error) {
+        finalSafeCode = cloudSyncNativeWriterPauseBridgeSafeCode(error);
+        if (error is TimeoutException ||
+            (finalSafeCode != 'cloud_sync_native_writer_pause_already_active' &&
+                finalSafeCode !=
+                    'cloud_sync_native_writer_pause_token_invalid')) {
+          ambiguousAttempt = true;
+        }
+        if (finalSafeCode == 'cloud_sync_native_writer_pause_token_invalid') {
+          break;
+        }
+        if (attempt < _maximumBridgeAttempts && _retryDelay > Duration.zero) {
+          await Future<void>.delayed(_retryDelay);
+        }
+      }
+    }
+
+    if (ambiguousAttempt) {
+      try {
+        await _resumeToken(token, allowInvalidTokenAsAbsent: true);
+      } catch (_) {
+        throw const CloudSyncNativeWriterPauseUncertain();
+      }
+    }
+    throw StateError(finalSafeCode);
   }
 
   @override
@@ -196,13 +265,33 @@ final class FrbCloudSyncNativeWriterPause
     if (token is! BigInt || token <= BigInt.zero) {
       throw StateError('cloud_sync_native_writer_resume_token_invalid');
     }
-    try {
-      await (_resumeCall ?? frb_api.cloudSyncResumePasswordCloudkitWriters)(
-        token,
-      );
-    } catch (error) {
-      throw StateError(cloudSyncNativeWriterPauseBridgeSafeCode(error));
+    await _resumeToken(token);
+  }
+
+  Future<void> _resumeToken(
+    BigInt token, {
+    bool allowInvalidTokenAsAbsent = false,
+  }) async {
+    final resumeCall =
+        _resumeCall ??
+        (token) => frb_api.cloudSyncResumePasswordCloudkitWriters(token: token);
+    var finalSafeCode = 'cloud_sync_native_writer_pause_bridge_failed';
+    for (var attempt = 1; attempt <= _maximumBridgeAttempts; attempt++) {
+      try {
+        await resumeCall(token).timeout(_bridgeCallTimeout);
+        return;
+      } catch (error) {
+        finalSafeCode = cloudSyncNativeWriterPauseBridgeSafeCode(error);
+        if (finalSafeCode == 'cloud_sync_native_writer_resume_token_invalid') {
+          if (allowInvalidTokenAsAbsent) return;
+          break;
+        }
+        if (attempt < _maximumBridgeAttempts && _retryDelay > Duration.zero) {
+          await Future<void>.delayed(_retryDelay);
+        }
+      }
     }
+    throw StateError(finalSafeCode);
   }
 }
 

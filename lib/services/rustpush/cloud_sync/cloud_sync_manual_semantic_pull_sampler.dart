@@ -27,7 +27,7 @@ typedef CloudSyncSemanticInboxApplierFactory =
 typedef CloudSyncSemanticDiagnosticSnapshotReader =
     Map<String, int> Function(CloudSyncScope scope);
 
-/// Native exclusion for CloudKit-capable Passwords and keychain operations.
+/// Native exclusion for every CloudKit-capable writer workflow.
 ///
 /// The Dart operation interlock covers app-owned CloudKit entry points, but
 /// APS handlers can start inside Rust without crossing that boundary. A
@@ -36,6 +36,16 @@ abstract interface class CloudSyncNativeWriterPause {
   Future<Object> pause();
 
   Future<void> resume(Object token);
+}
+
+/// The bridge could not confirm whether a caller-owned native pause token was
+/// canceled or released. The sampler remains active until process restart so
+/// it cannot start another pull against an uncertain native gate.
+final class CloudSyncNativeWriterPauseUncertain implements Exception {
+  const CloudSyncNativeWriterPauseUncertain();
+
+  @override
+  String toString() => 'cloud_sync_native_writer_pause_resume_unconfirmed';
 }
 
 /// Developer-only one-shot CloudKit reader that may project supported records
@@ -114,20 +124,32 @@ final class CloudSyncManualSemanticPullSampler {
     if (!_enabled) throw StateError('cloud_sync_semantic_pull_disabled');
     if (_active) throw StateError('cloud_sync_semantic_pull_active');
     _active = true;
+    var pauseEstablishedOrUncertain = false;
+    var resumeConfirmed = false;
     try {
       return await _operationInterlock.runExclusive(
         kind: CloudKitOperationKind.v2SemanticRead,
         action: () async {
-          final pauseToken = await _nativeWriterPause.pause();
+          late final Object pauseToken;
+          try {
+            pauseToken = await _nativeWriterPause.pause();
+            pauseEstablishedOrUncertain = true;
+          } on CloudSyncNativeWriterPauseUncertain {
+            pauseEstablishedOrUncertain = true;
+            rethrow;
+          }
           try {
             return await _runConfirmedUnderInterlock();
           } finally {
             await _nativeWriterPause.resume(pauseToken);
+            resumeConfirmed = true;
           }
         },
       );
     } finally {
-      _active = false;
+      if (!pauseEstablishedOrUncertain || resumeConfirmed) {
+        _active = false;
+      }
     }
   }
 

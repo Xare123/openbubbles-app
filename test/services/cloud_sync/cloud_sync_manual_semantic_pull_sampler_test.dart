@@ -213,6 +213,56 @@ void main() {
     expect(sampler.isActive, isFalse);
   });
 
+  test(
+    'unconfirmed native pause cleanup keeps the sampler fail-closed',
+    () async {
+      final nativeWriterPause = _RecordingNativeWriterPause(
+        pauseError: const CloudSyncNativeWriterPauseUncertain(),
+      );
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        nativeWriterPause: nativeWriterPause,
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async => InMemoryCloudSyncStore(),
+        createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+        createInboxApplier: (auth, scope, generation) async =>
+            FakeCloudInboxApplier(),
+      );
+
+      await expectLater(
+        sampler.runConfirmed(),
+        throwsA(isA<CloudSyncNativeWriterPauseUncertain>()),
+      );
+      expect(nativeWriterPause.resumeCalls, 0);
+      expect(sampler.isActive, isTrue);
+      await expectLater(sampler.runConfirmed(), throwsStateError);
+    },
+  );
+
+  test('unconfirmed native resume keeps the sampler fail-closed', () async {
+    final nativeWriterPause = _RecordingNativeWriterPause(
+      resumeError: StateError('cloud_sync_native_writer_resume_failed'),
+    );
+    final sampler = _sampler(
+      privateStorageDirectory: privateStorageDirectory,
+      operationFenceStore: InMemoryCloudSyncStore(),
+      nativeWriterPause: nativeWriterPause,
+      readPreflight: () async => throw StateError('preflight-failed'),
+      readAuthSnapshot: () async => _auth(),
+      createStore: (scope) async => InMemoryCloudSyncStore(),
+      createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+      createInboxApplier: (auth, scope, generation) async =>
+          FakeCloudInboxApplier(),
+    );
+
+    await expectLater(sampler.runConfirmed(), throwsStateError);
+    expect(nativeWriterPause.resumeCalls, 1);
+    expect(sampler.isActive, isTrue);
+    await expectLater(sampler.runConfirmed(), throwsStateError);
+  });
+
   test('native writer pause resumes after a semantic failure', () async {
     final nativeWriterPause = _RecordingNativeWriterPause();
     final sampler = _sampler(
@@ -995,10 +1045,11 @@ final class _RecordingFlushableObserver implements FlushableCloudSyncObserver {
 }
 
 final class _RecordingNativeWriterPause implements CloudSyncNativeWriterPause {
-  _RecordingNativeWriterPause({this.events, this.pauseError});
+  _RecordingNativeWriterPause({this.events, this.pauseError, this.resumeError});
 
   final List<String>? events;
   final Object? pauseError;
+  final Object? resumeError;
   final Object token = Object();
   int pauseCalls = 0;
   int resumeCalls = 0;
@@ -1017,6 +1068,8 @@ final class _RecordingNativeWriterPause implements CloudSyncNativeWriterPause {
     expect(value, same(token));
     resumeCalls++;
     events?.add('resume-native-writers');
+    final error = resumeError;
+    if (error != null) throw error;
   }
 }
 
