@@ -672,6 +672,7 @@ pub enum CloudSyncTransientFieldState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CloudSyncTransientService {
     IMessage,
+    Sms,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -824,7 +825,7 @@ pub struct CloudSyncTransientChatPayload {
     pub logical_entity_key_hash: String,
     /// Validated application-level chat GUID. Transient typed memory only.
     pub canonical_guid: String,
-    /// Validated iMessage chat identifier used to bind message records.
+    /// Validated chat identifier used to bind message records.
     pub chat_identifier: String,
     pub group_id: String,
     pub original_group_id: String,
@@ -2090,6 +2091,25 @@ fn map_cloud_sync_transient_service(
     use crate::cloud_sync_canonical_dto::CloudCanonicalService as Canonical;
     match service {
         Canonical::IMessage => CloudSyncTransientService::IMessage,
+        Canonical::Sms => CloudSyncTransientService::Sms,
+    }
+}
+
+#[cfg(test)]
+mod cloud_sync_transient_service_tests {
+    use super::*;
+    use crate::cloud_sync_canonical_dto::CloudCanonicalService;
+
+    #[test]
+    fn maps_only_the_two_exactly_supported_services() {
+        assert_eq!(
+            map_cloud_sync_transient_service(CloudCanonicalService::IMessage),
+            CloudSyncTransientService::IMessage
+        );
+        assert_eq!(
+            map_cloud_sync_transient_service(CloudCanonicalService::Sms),
+            CloudSyncTransientService::Sms
+        );
     }
 }
 

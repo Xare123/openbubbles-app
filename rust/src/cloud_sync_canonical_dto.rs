@@ -54,6 +54,7 @@ pub(crate) enum CloudCanonicalAliasKind {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum CloudCanonicalService {
     IMessage,
+    Sms,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

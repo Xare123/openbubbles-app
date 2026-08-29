@@ -1630,11 +1630,15 @@ pub(crate) fn convert_chat(
     ) {
         return CloudCanonicalConversionOutcome::Quarantined(reason);
     }
-    if chat.service_name != "iMessage" {
-        return CloudCanonicalConversionOutcome::Quarantined(
-            CloudCanonicalQuarantineReason::UnsupportedService,
-        );
-    }
+    let service = match chat.service_name.as_str() {
+        "iMessage" => CloudCanonicalService::IMessage,
+        "SMS" => CloudCanonicalService::Sms,
+        _ => {
+            return CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::UnsupportedService,
+            )
+        }
+    };
     let style = match chat.style {
         45 => CloudCanonicalChatStyle::Direct,
         43 => CloudCanonicalChatStyle::Group,
@@ -1786,7 +1790,7 @@ pub(crate) fn convert_chat(
         chat.chat_identifier.clone(),
         chat.group_id.clone(),
         chat.original_group_id.clone(),
-        CloudCanonicalService::IMessage,
+        service,
         style,
         chat.participants
             .iter()
@@ -1981,6 +1985,7 @@ fn build_reply(
 fn reject_unsupported_message_content(
     proto: &MessageProto,
     proto_4: Option<&MessageProto4>,
+    service: CloudCanonicalService,
 ) -> Option<CloudCanonicalConversionOutcome> {
     if proto.payload_data.is_some() {
         return Some(CloudCanonicalConversionOutcome::Deferred(
@@ -2000,14 +2005,16 @@ fn reject_unsupported_message_content(
                 CloudCanonicalDeferredReason::UnsupportedOffGridMetadata,
             ));
         }
-        if proto_4
-            .service
-            .as_deref()
-            .is_some_and(|service| service != "iMessage")
-        {
-            return Some(CloudCanonicalConversionOutcome::Quarantined(
-                CloudCanonicalQuarantineReason::UnsupportedService,
-            ));
+        if let Some(proto_4_service) = proto_4.service.as_deref() {
+            let expected = match service {
+                CloudCanonicalService::IMessage => "iMessage",
+                CloudCanonicalService::Sms => "SMS",
+            };
+            if proto_4_service != expected {
+                return Some(CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::UnsupportedService,
+                ));
+            }
         }
     }
     None
@@ -2026,11 +2033,15 @@ pub(crate) fn convert_message(
     ) {
         return CloudCanonicalConversionOutcome::Quarantined(reason);
     }
-    if message.service != "iMessage" {
-        return CloudCanonicalConversionOutcome::Quarantined(
-            CloudCanonicalQuarantineReason::UnsupportedService,
-        );
-    }
+    let service = match message.service.as_str() {
+        "iMessage" => CloudCanonicalService::IMessage,
+        "SMS" => CloudCanonicalService::Sms,
+        _ => {
+            return CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::UnsupportedService,
+            )
+        }
+    };
     if message.guid.is_empty() || message.chat_id.is_empty() {
         return CloudCanonicalConversionOutcome::Quarantined(
             CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
@@ -2039,7 +2050,7 @@ pub(crate) fn convert_message(
     let proto = &message.msg_proto.0;
     let proto_2 = message.msg_proto_2.as_ref().map(|value| &value.0);
     let proto_4 = message.msg_proto_4.as_ref().map(|value| &value.0);
-    if let Some(outcome) = reject_unsupported_message_content(proto, proto_4) {
+    if let Some(outcome) = reject_unsupported_message_content(proto, proto_4, service) {
         return outcome;
     }
     let (association, entity_kind, association_parent_hash) =
@@ -2160,7 +2171,7 @@ pub(crate) fn convert_message(
         message.sender.clone(),
         created_at_millis,
         message.error,
-        CloudCanonicalService::IMessage,
+        service,
         subject,
         text,
         attributed_content.field,
@@ -3548,20 +3559,127 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_service_and_message_type_are_typed_quarantines() {
+    fn sms_service_is_supported_for_chat_and_message_conversion() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
-        let mut service = normal_message(Some("hello"));
-        service.service = "SMS".to_owned();
+        let mut chat = direct_chat();
+        chat.service_name = "SMS".to_owned();
+        let chat_outcome = convert_chat(
+            &context(&hasher, "server-sms-chat", None),
+            &chat_required_presence(false),
+            &chat,
+        );
+        let CloudCanonicalConversionOutcome::Ready(chat_mutation) = chat_outcome else {
+            panic!("SMS chat should convert");
+        };
+        let Some(CloudCanonicalPayload::Chat(chat_payload)) = chat_mutation.payload() else {
+            panic!("chat payload expected");
+        };
+        assert_eq!(chat_payload.service(), CloudCanonicalService::Sms);
+
+        let mut message = normal_message(Some("hello"));
+        message.service = "SMS".to_owned();
+        let message_outcome = convert_message(
+            &context(&hasher, "server-sms-message", None),
+            &message_presence(),
+            &message,
+        );
+        let CloudCanonicalConversionOutcome::Ready(message_mutation) = message_outcome else {
+            panic!("SMS message should convert");
+        };
+        let Some(CloudCanonicalPayload::Message(message_payload)) = message_mutation.payload()
+        else {
+            panic!("message payload expected");
+        };
+        assert_eq!(message_payload.service(), CloudCanonicalService::Sms);
+    }
+
+    #[test]
+    fn unknown_rcs_and_facetime_services_remain_typed_quarantines() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        for service_name in ["RCS", "FaceTime", "carrier-extension", "sms"] {
+            let mut chat = direct_chat();
+            chat.service_name = service_name.to_owned();
+            assert_eq!(
+                convert_chat(
+                    &context(&hasher, "server-unsupported-chat", None),
+                    &chat_required_presence(false),
+                    &chat,
+                ),
+                CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::UnsupportedService
+                ),
+                "chat service={service_name}"
+            );
+
+            let mut message = normal_message(Some("hello"));
+            message.service = service_name.to_owned();
+            assert_eq!(
+                convert_message(
+                    &context(&hasher, "server-unsupported-message", None),
+                    &message_presence(),
+                    &message,
+                ),
+                CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::UnsupportedService
+                ),
+                "message service={service_name}"
+            );
+        }
+    }
+
+    #[test]
+    fn message_proto4_service_must_match_the_exact_top_level_service() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut sms = normal_message(Some("hello"));
+        sms.service = "SMS".to_owned();
+        sms.msg_proto_4 = Some(GZipWrapper(MessageProto4 {
+            service: Some("SMS".to_owned()),
+            ..Default::default()
+        }));
+        assert!(matches!(
+            convert_message(
+                &context(&hasher, "server-sms-matching-proto4", None),
+                &message_presence(),
+                &sms,
+            ),
+            CloudCanonicalConversionOutcome::Ready(_)
+        ));
+
+        sms.msg_proto_4 = Some(GZipWrapper(MessageProto4 {
+            service: Some("RCS".to_owned()),
+            ..Default::default()
+        }));
         assert_eq!(
             convert_message(
-                &context(&hasher, "server-message", None),
+                &context(&hasher, "server-sms-conflicting-proto4", None),
                 &message_presence(),
-                &service,
+                &sms,
             ),
             CloudCanonicalConversionOutcome::Quarantined(
                 CloudCanonicalQuarantineReason::UnsupportedService
             )
         );
+
+        let mut imessage = normal_message(Some("hello"));
+        imessage.msg_proto_4 = Some(GZipWrapper(MessageProto4 {
+            service: Some("SMS".to_owned()),
+            ..Default::default()
+        }));
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-imessage-conflicting-proto4", None),
+                &message_presence(),
+                &imessage,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::UnsupportedService
+            )
+        );
+    }
+
+    #[test]
+    fn unsupported_message_type_remains_a_typed_quarantine() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let mut message_type = normal_message(Some("hello"));
         message_type.r#type = 99;
         assert_eq!(
