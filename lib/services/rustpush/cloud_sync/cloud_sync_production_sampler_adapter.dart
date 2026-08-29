@@ -52,6 +52,11 @@ final class CloudSyncNativeAuthMetadata {
 abstract interface class CloudSyncNativeAuthBinding {
   Future<void> warmReadAuthentication({required Object cloudMessagesClient});
 
+  Future<void> warmReadAuthenticationUnderWriterPause({
+    required Object cloudMessagesClient,
+    required BigInt pauseToken,
+  });
+
   Future<CloudSyncNativeAuthMetadata> capture({
     required Object cloudMessagesClient,
     required String privateStorageDirectory,
@@ -83,6 +88,32 @@ final class FrbCloudSyncNativeAuthBinding
     try {
       await api.crateApiApiCloudSyncWarmReadAuthentication(
         cloudMessagesClient: cloudMessagesClient,
+      );
+    } catch (error) {
+      final safeCode = cloudSyncNativeAuthBridgeSafeCode(error);
+      Logger.warn('Cloud Sync V2 read authentication failed code=$safeCode');
+      throw StateError(safeCode);
+    }
+  }
+
+  @override
+  Future<void> warmReadAuthenticationUnderWriterPause({
+    required Object cloudMessagesClient,
+    required BigInt pauseToken,
+  }) async {
+    if (pauseToken <= BigInt.zero || pauseToken.bitLength > 64) {
+      throw StateError('cloud_sync_native_auth_writer_pause_scope_failed');
+    }
+    if (cloudMessagesClient
+        is! frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider) {
+      throw StateError('cloud_sync_native_auth_client_type_invalid');
+    }
+    // ignore: invalid_use_of_internal_member
+    final api = _apiOverride ?? frb_generated.RustLib.instance.api;
+    try {
+      await api.crateApiApiCloudSyncWarmReadAuthenticationUnderWriterPause(
+        cloudMessagesClient: cloudMessagesClient,
+        pauseToken: pauseToken,
       );
     } catch (error) {
       final safeCode = cloudSyncNativeAuthBridgeSafeCode(error);
@@ -147,6 +178,7 @@ String cloudSyncNativeAuthBridgeSafeCode(Object error) {
     'cloud_sync_native_auth_account_changed',
     'cloud_sync_native_auth_warm_failed',
     'cloud_sync_native_auth_warm_timeout',
+    'cloud_sync_native_auth_writer_pause_scope_failed',
     'cloud_sync_native_auth_messages_container_failed',
     'cloud_sync_native_auth_keychain_container_failed',
     'cloud_sync_native_auth_security_container_failed',
@@ -411,7 +443,8 @@ final class CloudSyncProductionSemanticPullAdapter {
     );
     sampler = CloudSyncManualSemanticPullSampler(
       readPreflight: readPreflight,
-      prepareAuthSnapshot: authProvider.prepareReadAuthenticationUnderInterlock,
+      prepareAuthSnapshot:
+          authProvider.prepareReadAuthenticationUnderNativeWriterPause,
       readAuthSnapshot: authProvider.capture,
       createStore: (scope) async => durableStore,
       createRawTransport: (snapshot, scope) async =>
@@ -659,14 +692,36 @@ final class CloudSyncProductionAuthSnapshotProvider {
   /// The caller must already hold the CloudKit operation interlock.
   Future<CloudSyncNativeAuthSnapshot?>
   prepareReadAuthenticationUnderInterlock() async {
-    CloudKitOperationInterlock.requireActiveAny(const <CloudKitOperationKind>{
+    CloudKitOperationInterlock.requireActive(
       CloudKitOperationKind.v2ShadowRead,
-      CloudKitOperationKind.v2SemanticRead,
-    });
+    );
     final before = await capture();
     if (before == null) return null;
     await _nativeAuthBinding.warmReadAuthentication(
       cloudMessagesClient: before.cloudMessagesClient,
+    );
+    if (!identical(before.cloudMessagesClient, _readActiveClient())) {
+      return null;
+    }
+    final after = await capture();
+    return before.sameIdentity(after) ? after : null;
+  }
+
+  Future<CloudSyncNativeAuthSnapshot?>
+  prepareReadAuthenticationUnderNativeWriterPause(Object pauseToken) async {
+    CloudKitOperationInterlock.requireActive(
+      CloudKitOperationKind.v2SemanticRead,
+    );
+    if (pauseToken is! BigInt ||
+        pauseToken <= BigInt.zero ||
+        pauseToken.bitLength > 64) {
+      throw StateError('cloud_sync_native_auth_writer_pause_scope_failed');
+    }
+    final before = await capture();
+    if (before == null) return null;
+    await _nativeAuthBinding.warmReadAuthenticationUnderWriterPause(
+      cloudMessagesClient: before.cloudMessagesClient,
+      pauseToken: pauseToken,
     );
     if (!identical(before.cloudMessagesClient, _readActiveClient())) {
       return null;

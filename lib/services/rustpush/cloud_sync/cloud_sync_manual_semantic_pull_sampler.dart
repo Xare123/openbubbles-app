@@ -26,6 +26,8 @@ typedef CloudSyncSemanticInboxApplierFactory =
     );
 typedef CloudSyncSemanticDiagnosticSnapshotReader =
     Map<String, int> Function(CloudSyncScope scope);
+typedef CloudSyncPausedPreparedAuthSnapshotReader =
+    Future<CloudSyncNativeAuthSnapshot?> Function(Object pauseToken);
 
 /// Native exclusion for every CloudKit-capable writer workflow.
 ///
@@ -100,7 +102,7 @@ final class CloudSyncManualSemanticPullSampler {
   );
 
   final CloudSyncShadowPreflightReader _readPreflight;
-  final CloudSyncPreparedAuthSnapshotReader _prepareAuthSnapshot;
+  final CloudSyncPausedPreparedAuthSnapshotReader _prepareAuthSnapshot;
   final CloudSyncNativeAuthSnapshotReader _readAuthSnapshot;
   final CloudSyncSemanticStoreFactory _createStore;
   final CloudSyncSemanticRawTransportFactory _createRawTransport;
@@ -139,7 +141,7 @@ final class CloudSyncManualSemanticPullSampler {
             rethrow;
           }
           try {
-            return await _runConfirmedUnderInterlock();
+            return await _runConfirmedUnderInterlock(pauseToken);
           } finally {
             await _nativeWriterPause.resume(pauseToken);
             resumeConfirmed = true;
@@ -153,10 +155,12 @@ final class CloudSyncManualSemanticPullSampler {
     }
   }
 
-  Future<CloudSyncSemanticPullReport> _runConfirmedUnderInterlock() async {
+  Future<CloudSyncSemanticPullReport> _runConfirmedUnderInterlock(
+    Object pauseToken,
+  ) async {
     final before = await _readPreflight();
     _validatePreflight(before);
-    final auth = await _prepareAuthSnapshot();
+    final auth = await _prepareAuthSnapshot(pauseToken);
     if (auth == null) throw StateError('account_unavailable');
 
     final reports = <CloudSyncSemanticPullZoneReport>[];

@@ -91,7 +91,7 @@ CloudSyncManualSemanticPullSampler _sampler({
   required Directory privateStorageDirectory,
   required CloudSyncShadowPreflightReader readPreflight,
   required CloudSyncNativeAuthSnapshotReader readAuthSnapshot,
-  CloudSyncPreparedAuthSnapshotReader? prepareAuthSnapshot,
+  CloudSyncPausedPreparedAuthSnapshotReader? prepareAuthSnapshot,
   required CloudSyncSemanticStoreFactory createStore,
   required CloudSyncSemanticRawTransportFactory createRawTransport,
   required CloudSyncSemanticInboxApplierFactory createInboxApplier,
@@ -102,7 +102,8 @@ CloudSyncManualSemanticPullSampler _sampler({
   CloudSyncObserverFactory? observerFactory,
 }) => CloudSyncManualSemanticPullSampler(
   readPreflight: readPreflight,
-  prepareAuthSnapshot: prepareAuthSnapshot ?? readAuthSnapshot,
+  prepareAuthSnapshot:
+      prepareAuthSnapshot ?? (pauseToken) => readAuthSnapshot(),
   readAuthSnapshot: readAuthSnapshot,
   createStore: createStore,
   createRawTransport: createRawTransport,
@@ -142,7 +143,8 @@ void main() {
         events.add('preflight');
         return _readyState();
       },
-      prepareAuthSnapshot: () async {
+      prepareAuthSnapshot: (pauseToken) async {
+        expect(pauseToken, same(nativeWriterPause.token));
         events.add('prepare-auth');
         return _auth();
       },
@@ -378,7 +380,7 @@ void main() {
         operationFenceStore: fenceStore,
         readPreflight: () async => _readyState(),
         readAuthSnapshot: () async => _auth(),
-        prepareAuthSnapshot: () async {
+        prepareAuthSnapshot: (pauseToken) async {
           await expectLater(
             competing.runExclusive(
               kind: CloudKitOperationKind.legacyReadWrite,

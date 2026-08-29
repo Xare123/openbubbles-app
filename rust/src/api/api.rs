@@ -36,7 +36,10 @@ pub use broadcast::Receiver;
 pub use mpsc::Sender;
 use prost::Message as prostMessage;
 use rand::Rng;
-use rustpush::cloudkit_operation_gate::with_cloudkit_writer_operation;
+use rustpush::cloudkit_operation_gate::{
+    acquire_cloudkit_read_authentication, with_cloudkit_writer_operation,
+    CloudKitReadAuthenticationPermit,
+};
 pub use rustpush::cloudkit_proto::EscrowData;
 pub use rustpush::findmy::{FindMyFriendsClient, FindMyPhoneClient};
 pub use rustpush::passwords::PasswordManager;
@@ -219,6 +222,7 @@ const CLOUD_SYNC_READ_AUTH_WARM_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CloudSyncReadAuthWarmFailure {
+    WriterPauseScope,
     MessagesContainer,
     KeychainContainer,
     SecurityContainer,
@@ -228,6 +232,7 @@ enum CloudSyncReadAuthWarmFailure {
 impl CloudSyncReadAuthWarmFailure {
     fn safe_code(self) -> &'static str {
         match self {
+            Self::WriterPauseScope => "cloud_sync_native_auth_writer_pause_scope_failed",
             Self::MessagesContainer => "cloud_sync_native_auth_messages_container_failed",
             Self::KeychainContainer => "cloud_sync_native_auth_keychain_container_failed",
             Self::SecurityContainer => "cloud_sync_native_auth_security_container_failed",
@@ -259,25 +264,60 @@ where
 pub async fn cloud_sync_warm_read_authentication(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
 ) -> anyhow::Result<()> {
+    cloud_sync_warm_read_authentication_inner(cloud_messages_client, None).await
+}
+
+/// Authenticates the read-only Cloud Sync V2 containers under the exact
+/// native writer-pause token established by the semantic Canary.
+pub async fn cloud_sync_warm_read_authentication_under_writer_pause(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    pause_token: u64,
+) -> anyhow::Result<()> {
+    let permit = acquire_cloudkit_read_authentication(pause_token)
+        .map_err(|_| anyhow!(CloudSyncReadAuthWarmFailure::WriterPauseScope.safe_code()))?;
+    cloud_sync_warm_read_authentication_inner(cloud_messages_client, Some(&permit)).await
+}
+
+async fn cloud_sync_warm_read_authentication_inner(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    read_authentication_permit: Option<&CloudKitReadAuthenticationPermit<'_>>,
+) -> anyhow::Result<()> {
     let account_before_warm = cloud_messages_client.native_account_identifier().await;
     if account_before_warm.is_empty() {
         return Err(anyhow!("cloud_sync_native_auth_account_unavailable"));
     }
     bounded_cloud_sync_read_authentication(CLOUD_SYNC_READ_AUTH_WARM_TIMEOUT, async {
-        cloud_messages_client
-            .get_container()
-            .await
-            .map_err(|_| CloudSyncReadAuthWarmFailure::MessagesContainer)?;
-        cloud_messages_client
-            .keychain
-            .get_container()
-            .await
-            .map_err(|_| CloudSyncReadAuthWarmFailure::KeychainContainer)?;
-        cloud_messages_client
-            .keychain
-            .get_security_container()
-            .await
-            .map_err(|_| CloudSyncReadAuthWarmFailure::SecurityContainer)?;
+        if let Some(permit) = read_authentication_permit {
+            cloud_messages_client
+                .get_container_for_read_authentication(permit)
+                .await
+                .map_err(|_| CloudSyncReadAuthWarmFailure::MessagesContainer)?;
+            cloud_messages_client
+                .keychain
+                .get_container_for_read_authentication(permit)
+                .await
+                .map_err(|_| CloudSyncReadAuthWarmFailure::KeychainContainer)?;
+            cloud_messages_client
+                .keychain
+                .get_security_container_for_read_authentication(permit)
+                .await
+                .map_err(|_| CloudSyncReadAuthWarmFailure::SecurityContainer)?;
+        } else {
+            cloud_messages_client
+                .get_container()
+                .await
+                .map_err(|_| CloudSyncReadAuthWarmFailure::MessagesContainer)?;
+            cloud_messages_client
+                .keychain
+                .get_container()
+                .await
+                .map_err(|_| CloudSyncReadAuthWarmFailure::KeychainContainer)?;
+            cloud_messages_client
+                .keychain
+                .get_security_container()
+                .await
+                .map_err(|_| CloudSyncReadAuthWarmFailure::SecurityContainer)?;
+        }
         cloud_messages_client
             .client
             .token_provider
@@ -428,6 +468,14 @@ mod cloud_sync_password_writer_pause_bridge_tests {
 #[cfg(test)]
 mod cloud_sync_read_authentication_tests {
     use super::*;
+
+    #[test]
+    fn writer_pause_scope_failure_has_a_fixed_safe_code() {
+        assert_eq!(
+            CloudSyncReadAuthWarmFailure::WriterPauseScope.safe_code(),
+            "cloud_sync_native_auth_writer_pause_scope_failed"
+        );
+    }
 
     #[tokio::test]
     async fn bounded_warm_authentication_times_out_with_only_a_safe_code() {

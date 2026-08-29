@@ -227,6 +227,7 @@ void main() {
 final class _FakeAuthBinding implements CloudSyncNativeAuthBinding {
   int captureCalls = 0;
   int warmCalls = 0;
+  int pausedWarmCalls = 0;
   void Function(int call)? afterCapture;
   CloudSyncNativeAuthMetadata Function(int call)? metadataForCall;
 
@@ -235,6 +236,14 @@ final class _FakeAuthBinding implements CloudSyncNativeAuthBinding {
     required Object cloudMessagesClient,
   }) async {
     warmCalls++;
+  }
+
+  @override
+  Future<void> warmReadAuthenticationUnderWriterPause({
+    required Object cloudMessagesClient,
+    required BigInt pauseToken,
+  }) async {
+    pausedWarmCalls++;
   }
 
   @override

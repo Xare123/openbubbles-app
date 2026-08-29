@@ -117,15 +117,84 @@ void main() {
 
       final pending = interlock.runExclusive(
         kind: CloudKitOperationKind.v2SemanticRead,
-        action: provider.prepareReadAuthenticationUnderInterlock,
+        action: () => provider.prepareReadAuthenticationUnderNativeWriterPause(
+          BigInt.from(17),
+        ),
       );
       await warmStarted.future;
       active = second;
       warmBlocker.complete();
 
       expect(await pending, isNull);
-      expect(binding.warmCalls, 1);
+      expect(binding.warmCalls, 0);
+      expect(binding.pausedWarmCalls, 1);
+      expect(binding.pauseTokens, <BigInt>[BigInt.from(17)]);
       expect(binding.calls, 1);
+    },
+  );
+
+  test(
+    'semantic read authentication forwards the exact writer pause token',
+    () async {
+      final client = Object();
+      final binding = _FakeNativeAuthBinding();
+      final provider = CloudSyncProductionAuthSnapshotProvider(
+        readActiveClient: () => client,
+        nativeAuthBinding: binding,
+        privateStorageDirectory: 'private-storage',
+      );
+      final token = BigInt.parse('18446744073709551615');
+
+      final snapshot = await interlock.runExclusive(
+        kind: CloudKitOperationKind.v2SemanticRead,
+        action: () =>
+            provider.prepareReadAuthenticationUnderNativeWriterPause(token),
+      );
+
+      expect(snapshot, isNotNull);
+      expect(binding.warmCalls, 0);
+      expect(binding.pausedWarmCalls, 1);
+      expect(binding.pausedWarmedClients.single, same(client));
+      expect(binding.pauseTokens, <BigInt>[token]);
+      expect(binding.calls, 2);
+    },
+  );
+
+  test(
+    'semantic read authentication rejects invalid pause tokens before capture',
+    () async {
+      final binding = _FakeNativeAuthBinding();
+      final provider = CloudSyncProductionAuthSnapshotProvider(
+        readActiveClient: Object.new,
+        nativeAuthBinding: binding,
+        privateStorageDirectory: 'private-storage',
+      );
+
+      for (final token in <Object>[
+        BigInt.zero,
+        BigInt.from(-1),
+        BigInt.one << 64,
+        'not-a-native-token',
+      ]) {
+        await expectLater(
+          interlock.runExclusive(
+            kind: CloudKitOperationKind.v2SemanticRead,
+            action: () =>
+                provider.prepareReadAuthenticationUnderNativeWriterPause(token),
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              'cloud_sync_native_auth_writer_pause_scope_failed',
+            ),
+          ),
+        );
+      }
+
+      expect(binding.calls, 0);
+      expect(binding.warmCalls, 0);
+      expect(binding.pausedWarmCalls, 0);
     },
   );
 
@@ -150,6 +219,46 @@ void main() {
     expect(binding.calls, 0);
     expect(binding.warmCalls, 0);
   });
+
+  test(
+    'semantic read authentication requires the semantic interlock',
+    () async {
+      final binding = _FakeNativeAuthBinding();
+      final provider = CloudSyncProductionAuthSnapshotProvider(
+        readActiveClient: Object.new,
+        nativeAuthBinding: binding,
+        privateStorageDirectory: 'private-storage',
+      );
+
+      await expectLater(
+        provider.prepareReadAuthenticationUnderNativeWriterPause(BigInt.one),
+        throwsA(
+          isA<CloudKitOperationInterlockException>().having(
+            (error) => error.safeCode,
+            'safeCode',
+            'cloudkit_interlock_required',
+          ),
+        ),
+      );
+      await expectLater(
+        interlock.runExclusive(
+          kind: CloudKitOperationKind.v2ShadowRead,
+          action: () => provider
+              .prepareReadAuthenticationUnderNativeWriterPause(BigInt.one),
+        ),
+        throwsA(
+          isA<CloudKitOperationInterlockException>().having(
+            (error) => error.safeCode,
+            'safeCode',
+            'cloudkit_interlock_mode_violation',
+          ),
+        ),
+      );
+      expect(binding.calls, 0);
+      expect(binding.warmCalls, 0);
+      expect(binding.pausedWarmCalls, 0);
+    },
+  );
 
   test('read authentication warm rejects every write interlock', () async {
     final client = Object();
@@ -216,12 +325,31 @@ void main() {
     },
   );
 
+  test('production binding rejects an invalid pause token locally', () async {
+    final binding = FrbCloudSyncNativeAuthBinding();
+
+    await expectLater(
+      binding.warmReadAuthenticationUnderWriterPause(
+        cloudMessagesClient: Object(),
+        pauseToken: BigInt.zero,
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'cloud_sync_native_auth_writer_pause_scope_failed',
+        ),
+      ),
+    );
+  });
+
   test('native auth bridge classification exposes only reviewed tags', () {
     for (final tag in <String>[
       'cloud_sync_native_auth_account_unavailable',
       'cloud_sync_native_auth_account_changed',
       'cloud_sync_native_auth_warm_failed',
       'cloud_sync_native_auth_warm_timeout',
+      'cloud_sync_native_auth_writer_pause_scope_failed',
       'cloud_sync_native_auth_messages_container_failed',
       'cloud_sync_native_auth_keychain_container_failed',
       'cloud_sync_native_auth_security_container_failed',
@@ -440,8 +568,11 @@ final class _FakeNativeAuthBinding implements CloudSyncNativeAuthBinding {
   final Completer<void>? warmStarted;
   int calls = 0;
   int warmCalls = 0;
+  int pausedWarmCalls = 0;
   final List<Object> clients = [];
   final List<Object> warmedClients = [];
+  final List<Object> pausedWarmedClients = [];
+  final List<BigInt> pauseTokens = [];
 
   @override
   Future<void> warmReadAuthentication({
@@ -449,6 +580,21 @@ final class _FakeNativeAuthBinding implements CloudSyncNativeAuthBinding {
   }) async {
     warmCalls++;
     warmedClients.add(cloudMessagesClient);
+    final started = warmStarted;
+    if (started != null && !started.isCompleted) {
+      started.complete();
+    }
+    await warmBlocker?.future;
+  }
+
+  @override
+  Future<void> warmReadAuthenticationUnderWriterPause({
+    required Object cloudMessagesClient,
+    required BigInt pauseToken,
+  }) async {
+    pausedWarmCalls++;
+    pausedWarmedClients.add(cloudMessagesClient);
+    pauseTokens.add(pauseToken);
     final started = warmStarted;
     if (started != null && !started.isCompleted) {
       started.complete();
