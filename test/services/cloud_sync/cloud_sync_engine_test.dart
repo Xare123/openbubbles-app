@@ -333,7 +333,9 @@ void main() {
       final checkpoint = await store.readCheckpoint(scope);
       expect(checkpoint.fetchedToken, 'token-page-four');
       expect(checkpoint.lastAppliedSequence, 4);
-      expect(renewingStore.renewalCalls, greaterThanOrEqualTo(8));
+      // The test clock is fixed, so interval-based renewals are coalesced.
+      // Each fetched page still forces a renewal before its journal commit.
+      expect(renewingStore.renewalCalls, greaterThanOrEqualTo(4));
     },
   );
 
