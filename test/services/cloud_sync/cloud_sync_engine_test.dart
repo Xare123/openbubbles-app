@@ -50,13 +50,14 @@ void main() {
     String coordinatorId = 'coordinator-a',
     CloudShadowJournalBudget? shadowJournalBudget,
     CloudSyncWriterAuthority? writerAuthorityOverride,
+    CloudInboxApplier? inboxApplierOverride,
   }) {
     return CloudSyncEngine(
       scope: scope,
       coordinatorId: coordinatorId,
       store: store,
       transport: transport,
-      inboxApplier: applier,
+      inboxApplier: inboxApplierOverride ?? applier,
       writerAuthority: flags.saves
           ? writerAuthorityOverride ?? writerAuthority
           : null,
@@ -234,7 +235,12 @@ void main() {
 
     final result = await engine().synchronize(trigger: CloudSyncTrigger.manual);
 
-    expect(result.status, CloudSyncRunStatus.completed);
+    expect(
+      result.status,
+      CloudSyncRunStatus.completed,
+      reason:
+          'failure=${result.failureCategory?.name} safeCode=${result.failureSafeCode}',
+    );
     expect(writerExclusion.runCallCount, 1);
     expect(writerExclusion.observedKinds, [CloudKitOperationKind.v2ReadWrite]);
     expect(result.counters.fetched, 2);
@@ -253,6 +259,45 @@ void main() {
     expect(store.runs.single.architectureName, 'generic');
     expect(store.runs.single.modeName, 'durable-saves/completed');
   });
+
+  test(
+    'holds the write exclusion through prepared remote submission consumption',
+    () async {
+      final operation = testOutboxOperation(scope, 990);
+      await store.enqueueOutbox(operation);
+      transport.writePreflightHandler = (_, _, _) async {
+        expect(writerExclusion.isActive, isTrue);
+      };
+      transport.preparedSubmissionHandler =
+          (_, preparedSubmission, persistedIdentity) async {
+            expect(writerExclusion.isActive, isTrue);
+            return CloudPushBatchResult(
+              outcomes: [
+                CloudPushOutcome(
+                  operationId: preparedSubmission.operationIds.single,
+                  disposition: CloudPushDisposition.confirmed,
+                ),
+              ],
+            );
+          };
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: false,
+          semanticApply: false,
+          saves: true,
+        ),
+        maximumOutboxBatches: 1,
+      ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+      expect(result.status, CloudSyncRunStatus.completed);
+      expect(result.counters.confirmed, 1);
+      expect(transport.prepareSubmissionCallCount, 1);
+      expect(transport.consumePreparedSubmissionCallCount, 1);
+      expect(writerExclusion.runCallCount, 1);
+      expect(writerExclusion.isActive, isFalse);
+    },
+  );
 
   test(
     'passes persisted tokens across four pages, renews, and applies in order',
@@ -784,6 +829,124 @@ void main() {
       expect(applier.appliedSequences, [1]);
       expect(transport.fetchCallCount, 1);
       expect((await store.readCheckpoint(scope)).lastAppliedSequence, 1);
+    },
+  );
+
+  test(
+    'normal semantic startup reprojects retained rows before inbox and fetch',
+    () async {
+      final events = <String>[];
+      final retainedApplier = _RetainedProjectionEngineApplier(
+        onReproject: (requestedScope, generation, leaseFence, limit) async {
+          events.add('retained');
+          expect(requestedScope, scope);
+          expect(generation, 1);
+          expect(leaseFence.ownerId, isNotEmpty);
+          expect(limit, 3);
+          return const CloudRetainedProjectionResult(
+            examined: 2,
+            reprojected: 1,
+            retained: 1,
+          );
+        },
+      );
+      transport.fetchHandler =
+          (requestedScope, previousToken, generation, limit) async {
+            events.add('fetch');
+            return CloudFetchBatch(
+              scope: requestedScope,
+              changes: const [],
+              batchId: 'after-retained-reprojection',
+              generation: generation,
+              nextToken: previousToken,
+              hasMore: false,
+            );
+          };
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          saves: false,
+        ),
+        maximumInboxEntriesPerRun: 3,
+        inboxApplierOverride: retainedApplier,
+      ).synchronize(trigger: CloudSyncTrigger.startup);
+
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.failureCategory, CloudFailureCategory.dependency);
+      expect(result.failureSafeCode, 'retained_projection_incomplete');
+      expect(result.counters.applied, 1);
+      expect(retainedApplier.reprojectCalls, 1);
+      expect(events, const ['retained', 'fetch']);
+      expect(transport.fetchCallCount, 1);
+    },
+  );
+
+  test(
+    'retained reprojection failure fails closed before transport and releases lease',
+    () async {
+      final retainedApplier = _RetainedProjectionEngineApplier(
+        onReproject: (_, _, _, _) async => throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'retained_projection_test_failure',
+        ),
+      );
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          saves: false,
+        ),
+        inboxApplierOverride: retainedApplier,
+      ).synchronize(trigger: CloudSyncTrigger.startup);
+
+      expect(result.status, CloudSyncRunStatus.failed);
+      expect(result.failureCategory, CloudFailureCategory.localStorage);
+      expect(result.failureSafeCode, 'cloud_sync_unknown_failure');
+      expect(transport.fetchCallCount, 0);
+      final replacementFence = await store.tryAcquireCoordinatorLease(
+        scope,
+        ownerId: 'after-retained-projection-failure',
+        now: clock.value,
+        leaseDuration: const Duration(minutes: 1),
+      );
+      expect(replacementFence, isNotNull);
+    },
+  );
+
+  test(
+    'successful retained window reports a degraded run while backlog remains',
+    () async {
+      final retainedApplier = _RetainedProjectionEngineApplier(
+        onReproject: (_, _, _, limit) async {
+          expect(limit, 1);
+          return const CloudRetainedProjectionResult(
+            examined: 1,
+            reprojected: 1,
+            retained: 0,
+            hasRemaining: true,
+          );
+        },
+      );
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: false,
+          semanticApply: true,
+          saves: false,
+        ),
+        maximumInboxEntriesPerRun: 1,
+        inboxApplierOverride: retainedApplier,
+      ).synchronize(trigger: CloudSyncTrigger.startup);
+
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.failureCategory, CloudFailureCategory.dependency);
+      expect(result.failureSafeCode, 'retained_projection_incomplete');
+      expect(result.counters.applied, 1);
+      expect(retainedApplier.reprojectCalls, 1);
+      expect(transport.fetchCallCount, 0);
     },
   );
 
@@ -3072,6 +3235,33 @@ class _RecoveryTrackingStore extends InMemoryCloudSyncStore {
   }) {
     recoverExpiredOutboxLeaseCalls++;
     return super.recoverExpiredOutboxLeases(scope, now: now);
+  }
+}
+
+typedef _RetainedProjectionEngineCallback =
+    Future<CloudRetainedProjectionResult> Function(
+      CloudSyncScope scope,
+      int generation,
+      CloudCoordinatorLeaseFence leaseFence,
+      int limit,
+    );
+
+final class _RetainedProjectionEngineApplier extends FakeCloudInboxApplier
+    implements CloudRetainedProjectionReprocessor {
+  _RetainedProjectionEngineApplier({required this.onReproject});
+
+  final _RetainedProjectionEngineCallback onReproject;
+  int reprojectCalls = 0;
+
+  @override
+  Future<CloudRetainedProjectionResult> reprojectRetainedUnprojected({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int limit,
+  }) async {
+    reprojectCalls++;
+    return onReproject(scope, generation, leaseFence, limit);
   }
 }
 

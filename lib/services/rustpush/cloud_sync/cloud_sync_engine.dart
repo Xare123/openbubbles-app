@@ -415,6 +415,10 @@ class CloudSyncEngine {
           maximumDeferredAttempts: config.maximumDeferredAttempts,
           maximumDeferredAge: config.maximumDeferredAge,
           leaseFence: _requireActiveLeaseFence(),
+          allowLegacyReadOnlyTombstoneAcknowledgement:
+              _inboxApplier is CloudReadOnlyTombstoneAcknowledgementPolicy &&
+              (_inboxApplier as CloudReadOnlyTombstoneAcknowledgementPolicy)
+                  .readOnlyTombstoneAcknowledgementsEnabled,
         );
         counters = counters.add(
           retainedUnprojected: recovered.retainedUnprojected,
@@ -427,6 +431,49 @@ class CloudSyncEngine {
               recovered.tombstoneReadOnlyAcknowledged,
         );
         semanticInboxPhaseStarted = recovered.retainedUnprojected > 0;
+      }
+
+      // A legacy build could commit the CloudKit cursor while retaining a
+      // decoded save outside the canonical store. Reproject those durable
+      // source rows under this run's coordinator fence before any new fetch.
+      // The capability is optional so generic and shadow appliers retain their
+      // existing behavior.
+      if (config.flags.semanticApply &&
+          remainingInboxEntries > 0 &&
+          !_isCancelled(cancellationToken) &&
+          _inboxApplier is CloudRetainedProjectionReprocessor) {
+        await _renewCoordinatorLeaseOrThrow();
+        final checkpoint = await _store.readCheckpoint(scope);
+        final reprocessor = _inboxApplier as CloudRetainedProjectionReprocessor;
+        final reprojection = await reprocessor.reprojectRetainedUnprojected(
+          scope: scope,
+          generation: checkpoint.generation,
+          leaseFence: _requireActiveLeaseFence(),
+          limit: remainingInboxEntries,
+        );
+        if (reprojection.examined < 0 ||
+            reprojection.reprojected < 0 ||
+            reprojection.retained < 0 ||
+            reprojection.examined !=
+                reprojection.reprojected + reprojection.retained ||
+            (reprojection.retained > 0 && !reprojection.hasRemaining) ||
+            reprojection.examined > remainingInboxEntries) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.localStorage,
+            safeCode: 'retained_projection_result_invalid',
+          );
+        }
+        semanticInboxPhaseStarted =
+            semanticInboxPhaseStarted || reprojection.examined > 0;
+        semanticInboxCounters = semanticInboxCounters.add(
+          applied: reprojection.reprojected,
+        );
+        counters = counters.add(applied: reprojection.reprojected);
+        remainingInboxEntries -= reprojection.examined;
+        if (reprojection.hasRemaining) {
+          degradedFailure = CloudFailureCategory.dependency;
+          degradedFailureSafeCode = 'retained_projection_incomplete';
+        }
       }
 
       // A restart may leave semantic rows waiting in the durable inbox. Apply

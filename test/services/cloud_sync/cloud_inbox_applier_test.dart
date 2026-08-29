@@ -38,6 +38,12 @@ void main() {
     );
   }
 
+  CloudInboxEntry retainedEntry(int sequence, {bool tombstone = false}) =>
+      entry(
+        sequence,
+        tombstone: tombstone,
+      ).copyWith(status: CloudInboxStatus.retainedUnprojected);
+
   CloudSemanticSnapshot message({
     String key = 'message-key',
     String? parentKey,
@@ -305,6 +311,316 @@ void main() {
     expect(store.transaction.appliedChanges, isEmpty);
     expect(store.transaction.entityApplyCount, 0);
   });
+
+  test(
+    'reprojects a retained upsert and commits its local projection',
+    () async {
+      final inbox = retainedEntry(1);
+      final snapshot = message();
+      decodeUpsert(inbox, snapshot);
+      store.retainedEntries.add(inbox);
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        identityRegistrar: _IdentityRegistrar(),
+      );
+
+      final result = await applier.reprojectRetainedUnprojected(
+        scope: scope,
+        generation: 3,
+        leaseFence: _testLeaseFence,
+        limit: 256,
+      );
+
+      expect(result.examined, 1);
+      expect(result.reprojected, 1);
+      expect(result.retained, 0);
+      expect(store.retainedEntries.single.status, CloudInboxStatus.applied);
+      expect(store.transaction.snapshot('message-key'), snapshot);
+      expect(store.transaction.appliedChanges, {inbox.change.changeId});
+      expect(store.transaction.entityApplyCount, 1);
+      expect(store.retainedTransactionCount, 1);
+    },
+  );
+
+  test('reports retained backlog beyond a fully successful window', () async {
+    final first = retainedEntry(1);
+    final second = retainedEntry(2);
+    decodeUpsert(first, message(key: 'first-message-key'));
+    decodeUpsert(second, message(key: 'second-message-key'));
+    store.retainedEntries.addAll([first, second]);
+    applier = TransactionalCloudInboxApplier(
+      decoder: decoder,
+      store: store,
+      identityRegistrar: _IdentityRegistrar(),
+    );
+
+    final result = await applier.reprojectRetainedUnprojected(
+      scope: scope,
+      generation: 3,
+      leaseFence: _testLeaseFence,
+      limit: 1,
+    );
+
+    expect(result.examined, 1);
+    expect(result.reprojected, 1);
+    expect(result.retained, 0);
+    expect(result.hasRemaining, isTrue);
+    expect(store.retainedEntries[0].status, CloudInboxStatus.applied);
+    expect(
+      store.retainedEntries[1].status,
+      CloudInboxStatus.retainedUnprojected,
+    );
+  });
+
+  test('retained decode failure leaves the source row retained', () async {
+    final inbox = retainedEntry(1);
+    store.retainedEntries.add(inbox);
+    decoder.failures[inbox.change.changeId] = const CloudSemanticDecodeFailure(
+      CloudFailureCategory.malformedRecord,
+    );
+    applier = TransactionalCloudInboxApplier(
+      decoder: decoder,
+      store: store,
+      identityRegistrar: _IdentityRegistrar(),
+    );
+
+    final result = await applier.reprojectRetainedUnprojected(
+      scope: scope,
+      generation: 3,
+      leaseFence: _testLeaseFence,
+      limit: 256,
+    );
+
+    expect(result.examined, 1);
+    expect(result.reprojected, 0);
+    expect(result.retained, 1);
+    expect(result.hasRemaining, isTrue);
+    expect(
+      store.retainedEntries.single.status,
+      CloudInboxStatus.retainedUnprojected,
+    );
+    expect(store.retainedEntries.single.attemptCount, 1);
+    expect(store.retainedFailureRecordCount, 1);
+    expect(store.retainedTransactionCount, 0);
+    expect(store.transaction.appliedChanges, isEmpty);
+  });
+
+  test(
+    'retained authorization failure aborts without rotating the row',
+    () async {
+      final inbox = retainedEntry(1);
+      store.retainedEntries.add(inbox);
+      decoder.failures[inbox.change.changeId] =
+          const CloudSemanticDecodeFailure(CloudFailureCategory.authorization);
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        identityRegistrar: _IdentityRegistrar(),
+      );
+
+      await expectLater(
+        applier.reprojectRetainedUnprojected(
+          scope: scope,
+          generation: 3,
+          leaseFence: _testLeaseFence,
+          limit: 256,
+        ),
+        throwsA(
+          isA<CloudSyncFailure>()
+              .having(
+                (failure) => failure.category,
+                'category',
+                CloudFailureCategory.authorization,
+              )
+              .having(
+                (failure) => failure.safeCode,
+                'safeCode',
+                'retained_projection_authorization_changed',
+              ),
+        ),
+      );
+
+      expect(
+        store.retainedEntries.single.status,
+        CloudInboxStatus.retainedUnprojected,
+      );
+      expect(store.retainedEntries.single.attemptCount, 0);
+      expect(store.retainedFailureRecordCount, 0);
+      expect(store.retainedTransactionCount, 0);
+      expect(store.transaction.appliedChanges, isEmpty);
+    },
+  );
+
+  test(
+    'retained upsert with a missing parent remains deferred and retained',
+    () async {
+      final inbox = retainedEntry(1);
+      final snapshot = CloudSemanticSnapshot(
+        kind: CloudEntityKind.reaction,
+        logicalEntityKeyHash: 'reaction-key',
+        parentLogicalKeyHash: 'missing-parent',
+        immutableContentDigest: 'reaction-digest',
+      );
+      decodeUpsert(inbox, snapshot);
+      store.retainedEntries.add(inbox);
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        identityRegistrar: _IdentityRegistrar(),
+      );
+
+      final result = await applier.reprojectRetainedUnprojected(
+        scope: scope,
+        generation: 3,
+        leaseFence: _testLeaseFence,
+        limit: 256,
+      );
+
+      expect(result.examined, 1);
+      expect(result.reprojected, 0);
+      expect(result.retained, 1);
+      expect(result.hasRemaining, isTrue);
+      expect(
+        store.retainedEntries.single.status,
+        CloudInboxStatus.retainedUnprojected,
+      );
+      expect(store.transaction.entityApplyCount, 0);
+      expect(store.transaction.appliedChanges, isEmpty);
+      expect(store.retainedFailureRecordCount, 1);
+    },
+  );
+
+  test('retained upsert with an existing replay remains retained', () async {
+    final inbox = retainedEntry(1);
+    decodeUpsert(inbox, message());
+    store.retainedEntries.add(inbox);
+    store.transaction.appliedChanges.add(inbox.change.changeId);
+    applier = TransactionalCloudInboxApplier(
+      decoder: decoder,
+      store: store,
+      identityRegistrar: _IdentityRegistrar(),
+    );
+
+    final result = await applier.reprojectRetainedUnprojected(
+      scope: scope,
+      generation: 3,
+      leaseFence: _testLeaseFence,
+      limit: 256,
+    );
+
+    expect(result.examined, 1);
+    expect(result.reprojected, 0);
+    expect(result.retained, 1);
+    expect(result.hasRemaining, isTrue);
+    expect(
+      store.retainedEntries.single.status,
+      CloudInboxStatus.retainedUnprojected,
+    );
+    expect(store.transaction.entityApplyCount, 0);
+    expect(store.retainedTransactionCount, 1);
+    expect(store.retainedFailureRecordCount, 1);
+  });
+
+  test('failure in one retained row does not stop later rows', () async {
+    final deferred = retainedEntry(1);
+    final deferredSnapshot = CloudSemanticSnapshot(
+      kind: CloudEntityKind.reaction,
+      logicalEntityKeyHash: 'reaction-key',
+      parentLogicalKeyHash: 'missing-parent',
+      immutableContentDigest: 'reaction-digest',
+    );
+    decodeUpsert(deferred, deferredSnapshot);
+
+    final successful = retainedEntry(2);
+    final successfulSnapshot = message(
+      key: 'second-message-key',
+      content: 'second-content',
+    );
+    decodeUpsert(successful, successfulSnapshot);
+    store.retainedEntries.addAll([deferred, successful]);
+    applier = TransactionalCloudInboxApplier(
+      decoder: decoder,
+      store: store,
+      identityRegistrar: _IdentityRegistrar(),
+    );
+
+    final result = await applier.reprojectRetainedUnprojected(
+      scope: scope,
+      generation: 3,
+      leaseFence: _testLeaseFence,
+      limit: 256,
+    );
+
+    expect(result.examined, 2);
+    expect(result.reprojected, 1);
+    expect(result.retained, 1);
+    expect(result.hasRemaining, isTrue);
+    expect(
+      store.retainedEntries[0].status,
+      CloudInboxStatus.retainedUnprojected,
+    );
+    expect(store.retainedEntries[1].status, CloudInboxStatus.applied);
+    expect(
+      store.transaction.snapshot('second-message-key'),
+      successfulSnapshot,
+    );
+    expect(store.transaction.entityApplyCount, 1);
+    expect(store.transaction.appliedChanges, {successful.change.changeId});
+  });
+
+  test(
+    'bounded retained retries rotate so a later recoverable row is reached',
+    () async {
+      final first = retainedEntry(1);
+      final second = retainedEntry(2);
+      final recoverable = retainedEntry(3);
+      decoder.failures[first.change.changeId] =
+          const CloudSemanticDecodeFailure(
+            CloudFailureCategory.malformedRecord,
+          );
+      decoder.failures[second.change.changeId] =
+          const CloudSemanticDecodeFailure(
+            CloudFailureCategory.malformedRecord,
+          );
+      final recoverableSnapshot = message(
+        key: 'later-message-key',
+        content: 'later-content',
+      );
+      decodeUpsert(recoverable, recoverableSnapshot);
+      store.retainedEntries.addAll([first, second, recoverable]);
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        identityRegistrar: _IdentityRegistrar(),
+      );
+
+      final firstRun = await applier.reprojectRetainedUnprojected(
+        scope: scope,
+        generation: 3,
+        leaseFence: _testLeaseFence,
+        limit: 2,
+      );
+      final secondRun = await applier.reprojectRetainedUnprojected(
+        scope: scope,
+        generation: 3,
+        leaseFence: _testLeaseFence,
+        limit: 1,
+      );
+
+      expect(firstRun.examined, 2);
+      expect(firstRun.reprojected, 0);
+      expect(firstRun.hasRemaining, isTrue);
+      expect(secondRun.examined, 1);
+      expect(secondRun.reprojected, 1);
+      expect(store.retainedEntries[2].status, CloudInboxStatus.applied);
+      expect(
+        store.transaction.snapshot('later-message-key'),
+        recoverableSnapshot,
+      );
+      expect(store.retainedFailureRecordCount, 2);
+    },
+  );
 
   test('reply message requires a message parent, not a chat parent', () async {
     final inbox = entry(1);
@@ -827,13 +1143,32 @@ class _Decoder implements CloudSemanticDecoder {
   }
 }
 
-class _MemorySemanticStore implements CloudSemanticStoreGateway {
+class _IdentityRegistrar implements CloudTransientCanonicalIdentityRegistrar {
+  int bindCalls = 0;
+
+  @override
+  CloudTransientCanonicalIdentityLease bind(CloudDecodedMutation mutation) {
+    bindCalls++;
+    return _IdentityLease();
+  }
+}
+
+class _IdentityLease implements CloudTransientCanonicalIdentityLease {
+  @override
+  void release() {}
+}
+
+class _MemorySemanticStore
+    implements CloudSemanticStoreGateway, CloudRetainedProjectionStoreGateway {
   _MemorySemanticStore({required CloudSyncScope scope, required int generation})
     : transaction = _MemoryTransaction(scope, generation);
 
   final _MemoryTransaction transaction;
+  final retainedEntries = <CloudInboxEntry>[];
   CloudSyncFailure? failure;
   int transactionCount = 0;
+  int retainedTransactionCount = 0;
+  int retainedFailureRecordCount = 0;
 
   @override
   Future<T> writeTransaction<T>({
@@ -845,6 +1180,85 @@ class _MemorySemanticStore implements CloudSemanticStoreGateway {
     final configuredFailure = failure;
     if (configuredFailure != null) throw configuredFailure;
     return action(transaction);
+  }
+
+  @override
+  Future<List<CloudInboxEntry>> readRetainedProjectionCandidates({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int limit,
+  }) async {
+    final candidates =
+        retainedEntries
+            .where(
+              (entry) =>
+                  entry.scope == scope &&
+                  entry.generation == generation &&
+                  entry.status == CloudInboxStatus.retainedUnprojected &&
+                  entry.change.type == CloudChangeType.save &&
+                  !entry.change.isTombstone,
+            )
+            .toList()
+          ..sort((left, right) {
+            final attempts = left.attemptCount.compareTo(right.attemptCount);
+            return attempts != 0
+                ? attempts
+                : left.sequence.compareTo(right.sequence);
+          });
+    return candidates.take(limit).toList();
+  }
+
+  @override
+  Future<void> recordRetainedProjectionFailure({
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) async {
+    final index = retainedEntries.indexWhere(
+      (candidate) => candidate.change.changeId == entry.change.changeId,
+    );
+    if (index < 0 ||
+        retainedEntries[index].status != CloudInboxStatus.retainedUnprojected) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'retained_projection_row_changed',
+      );
+    }
+    retainedFailureRecordCount++;
+    retainedEntries[index] = retainedEntries[index].copyWith(
+      attemptCount: retainedEntries[index].attemptCount + 1,
+    );
+  }
+
+  @override
+  Future<T> writeRetainedProjectionTransaction<T>({
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required T Function(CloudSemanticStoreTransaction transaction) action,
+  }) async {
+    retainedTransactionCount++;
+    final index = retainedEntries.indexWhere(
+      (candidate) => candidate.change.changeId == entry.change.changeId,
+    );
+    if (index < 0 ||
+        retainedEntries[index].status != CloudInboxStatus.retainedUnprojected) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'retained_projection_row_changed',
+      );
+    }
+    final result = action(transaction);
+    if (!transaction.appliedChanges.contains(entry.change.changeId)) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'retained_projection_replay_missing',
+      );
+    }
+    retainedEntries[index] = retainedEntries[index].copyWith(
+      status: CloudInboxStatus.applied,
+      completedAt: entry.createdAt,
+    );
+    return result;
   }
 }
 

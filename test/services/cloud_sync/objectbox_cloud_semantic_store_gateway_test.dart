@@ -1833,6 +1833,300 @@ void main() {
       expect(objectBox.box<CloudSemanticChatAliasEntity>().count(), 1);
     },
   );
+
+  test(
+    'retained reprojection commits local projection without moving cursor',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final retained = inboxBox.getAll().single
+        ..status = CloudInboxStatus.retainedUnprojected.index
+        ..retryCount = 3
+        ..failureCategory = CloudFailureCategory.dependency.name
+        ..nextEligibleAtMs = 0
+        ..completedAtMs = now.millisecondsSinceEpoch;
+      inboxBox.put(retained);
+      final checkpointBox = objectBox.box<CloudSyncCheckpointEntity>();
+      final checkpoint = checkpointBox.getAll().single
+        ..fetchedTokenCiphertext = 'protected-current-token'
+        ..pendingFetchedTokenCiphertext = null
+        ..pendingBatchId = null
+        ..appliedSequence = entry.sequence;
+      checkpointBox.put(checkpoint);
+
+      final identityRegistry = TransientCloudCanonicalIdentityRegistry();
+      final reprocessor = TransactionalCloudInboxApplier(
+        decoder: _FixedDecoder(
+          CloudDecodedMutation.upsert(
+            scope: scope,
+            generation: entry.generation,
+            changeId: entry.change.changeId,
+            snapshot: _snapshot(),
+            payload: _payload(),
+          ),
+        ),
+        store: gateway,
+        identityRegistrar: identityRegistry,
+        activeScopeRevalidator: () async => true,
+      );
+
+      final result = await reprocessor.reprojectRetainedUnprojected(
+        scope: scope,
+        generation: entry.generation,
+        leaseFence: leaseFence,
+        limit: 8,
+      );
+
+      expect(result.examined, 1);
+      expect(result.reprojected, 1);
+      expect(result.retained, 0);
+      expect(adapter.entityApplyCalls, 1);
+      expect(objectBox.box<CloudSyncRunEntity>().count(), 1);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 1);
+      expect(objectBox.box<CloudRecordMapEntity>().count(), 1);
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 1);
+      final projected = inboxBox.getAll().single;
+      expect(projected.status, CloudInboxStatus.applied.index);
+      expect(projected.failureCategory, isNull);
+      expect(projected.retryCount, 3);
+      expect(projected.batchId, entry.batchId);
+      expect(projected.fetchSequence, entry.sequence);
+      final unchangedCheckpoint = checkpointBox.getAll().single;
+      expect(
+        unchangedCheckpoint.fetchedTokenCiphertext,
+        'protected-current-token',
+      );
+      expect(unchangedCheckpoint.pendingFetchedTokenCiphertext, isNull);
+      expect(unchangedCheckpoint.pendingBatchId, isNull);
+      expect(unchangedCheckpoint.fetchedSequence, entry.sequence);
+      expect(unchangedCheckpoint.appliedSequence, entry.sequence);
+      expect(
+        await gateway.readRetainedProjectionCandidates(
+          scope: scope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          limit: 8,
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'retained reprojection rolls back canonical state and records fair retry',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final retained = inboxBox.getAll().single
+        ..status = CloudInboxStatus.retainedUnprojected.index
+        ..retryCount = 4
+        ..failureCategory = CloudFailureCategory.malformedRecord.name
+        ..nextEligibleAtMs = 0
+        ..completedAtMs = now.millisecondsSinceEpoch;
+      inboxBox.put(retained);
+      final checkpointBox = objectBox.box<CloudSyncCheckpointEntity>();
+      final checkpoint = checkpointBox.getAll().single
+        ..fetchedTokenCiphertext = 'protected-current-token'
+        ..appliedSequence = entry.sequence;
+      checkpointBox.put(checkpoint);
+      final checkpointBefore = jsonEncode(
+        checkpointBox
+            .getAll()
+            .map(
+              (row) => [
+                row.fetchedTokenCiphertext,
+                row.pendingFetchedTokenCiphertext,
+                row.pendingBatchId,
+                row.generation,
+                row.fetchedSequence,
+                row.appliedSequence,
+                row.mutationRevisionCounter,
+              ],
+            )
+            .toList(),
+      );
+      adapter.throwAfterCanonicalWrite = StateError('forced rollback');
+      final identityRegistry = TransientCloudCanonicalIdentityRegistry();
+      final reprocessor = TransactionalCloudInboxApplier(
+        decoder: _FixedDecoder(
+          CloudDecodedMutation.upsert(
+            scope: scope,
+            generation: entry.generation,
+            changeId: entry.change.changeId,
+            snapshot: _snapshot(),
+            payload: _payload(),
+          ),
+        ),
+        store: gateway,
+        identityRegistrar: identityRegistry,
+        activeScopeRevalidator: () async => true,
+      );
+
+      final result = await reprocessor.reprojectRetainedUnprojected(
+        scope: scope,
+        generation: entry.generation,
+        leaseFence: leaseFence,
+        limit: 8,
+      );
+
+      expect(result.examined, 1);
+      expect(result.reprojected, 0);
+      expect(result.retained, 1);
+      expect(result.hasRemaining, isTrue);
+      expect(objectBox.box<CloudSyncRunEntity>().count(), 0);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 0);
+      expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 0);
+      final preserved = inboxBox.getAll().single;
+      expect(preserved.status, CloudInboxStatus.retainedUnprojected.index);
+      expect(
+        preserved.failureCategory,
+        CloudFailureCategory.malformedRecord.name,
+      );
+      expect(preserved.retryCount, 5);
+      expect(preserved.updatedAtMs, now.millisecondsSinceEpoch + 1);
+      expect(preserved.completedAtMs, now.millisecondsSinceEpoch);
+      expect(preserved.encryptedServerRecordId, _protectedReference('S'));
+      expect(preserved.protectedSystemFieldsRef, _protectedReference('F'));
+      expect(preserved.encryptedPayloadRef, _protectedReference('W'));
+      expect(
+        jsonEncode(
+          checkpointBox
+              .getAll()
+              .map(
+                (row) => [
+                  row.fetchedTokenCiphertext,
+                  row.pendingFetchedTokenCiphertext,
+                  row.pendingBatchId,
+                  row.generation,
+                  row.fetchedSequence,
+                  row.appliedSequence,
+                  row.mutationRevisionCounter,
+                ],
+              )
+              .toList(),
+        ),
+        checkpointBefore,
+      );
+    },
+  );
+
+  test(
+    'retained candidate rotation survives restart and reaches later rows',
+    () async {
+      final firstEntry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: firstEntry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final first = inboxBox.getAll().single
+        ..status = CloudInboxStatus.retainedUnprojected.index
+        ..retryCount = 4
+        ..failureCategory = CloudFailureCategory.malformedRecord.name
+        ..nextEligibleAtMs = 0
+        ..completedAtMs = now.millisecondsSinceEpoch;
+      inboxBox.put(first);
+      final secondChangeId = _digestValue('D');
+      final second =
+          _copyInbox(
+              first,
+              changeKey: _scopedDigest(scope, 'change', secondChangeId),
+            )
+            ..changeIdHash = secondChangeId
+            ..serverRecordIdHash = _digestValue('T')
+            ..fetchSequence = 2;
+      final thirdChangeId = _digestValue('G');
+      final third =
+          _copyInbox(
+              first,
+              changeKey: _scopedDigest(scope, 'change', thirdChangeId),
+            )
+            ..changeIdHash = thirdChangeId
+            ..serverRecordIdHash = _digestValue('U')
+            ..fetchSequence = 3;
+      inboxBox.putMany([second, third]);
+      final checkpointBox = objectBox.box<CloudSyncCheckpointEntity>();
+      final checkpoint = checkpointBox.getAll().single
+        ..fetchedSequence = 3
+        ..appliedSequence = 3;
+      checkpointBox.put(checkpoint);
+
+      final firstWindow = await gateway.readRetainedProjectionCandidates(
+        scope: scope,
+        generation: firstEntry.generation,
+        leaseFence: leaseFence,
+        limit: 2,
+      );
+      expect(firstWindow.map((entry) => entry.sequence), [1, 2]);
+      for (final entry in firstWindow) {
+        await gateway.recordRetainedProjectionFailure(
+          entry: entry,
+          leaseFence: leaseFence,
+        );
+      }
+      final rotatedRows = inboxBox.getAll()
+        ..sort(
+          (left, right) => left.fetchSequence.compareTo(right.fetchSequence),
+        );
+      expect(rotatedRows.map((row) => row.retryCount), [5, 5, 4]);
+      expect(rotatedRows[0].updatedAtMs, now.millisecondsSinceEpoch + 1);
+      expect(rotatedRows[1].updatedAtMs, now.millisecondsSinceEpoch + 1);
+      expect(rotatedRows[2].updatedAtMs, now.millisecondsSinceEpoch);
+      expect(
+        rotatedRows.map((row) => row.failureCategory),
+        everyElement(CloudFailureCategory.malformedRecord.name),
+      );
+      expect(
+        rotatedRows.map((row) => row.completedAtMs),
+        everyElement(now.millisecondsSinceEpoch),
+      );
+
+      objectBox.close();
+      objectBox = await openStore(directory: directory.path);
+      adapter = _ObjectBoxTestCanonicalAdapter(objectBox)
+        ..activeScope = scope
+        ..activeGeneration = firstEntry.generation
+        ..existingEntities.add((CloudEntityKind.chat, _digestValue('H')));
+      gateway = ObjectBoxCloudSemanticStoreGateway(
+        store: objectBox,
+        canonicalAdapter: adapter,
+        clock: () => now,
+      );
+
+      final secondWindow = await gateway.readRetainedProjectionCandidates(
+        scope: scope,
+        generation: firstEntry.generation,
+        leaseFence: leaseFence,
+        limit: 2,
+      );
+      expect(secondWindow.map((entry) => entry.sequence), [3, 1]);
+      await expectLater(
+        gateway.recordRetainedProjectionFailure(
+          entry: secondWindow.first,
+          leaseFence: const CloudCoordinatorLeaseFence(
+            ownerId: 'stale-retained-owner',
+            generation: 7,
+          ),
+        ),
+        throwsA(_failureCode('semantic_coordinator_lease_fence_lost')),
+      );
+    },
+  );
 }
 
 CloudSyncScope _scope({String? account, String zone = 'messageManateeZone'}) {

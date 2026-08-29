@@ -305,7 +305,8 @@ final class CloudObjectBoxDurableFence {
 final class ObjectBoxCloudSemanticStoreGateway
     implements
         CloudSemanticStoreGateway,
-        CloudAppliedProjectionRepairStoreGateway {
+        CloudAppliedProjectionRepairStoreGateway,
+        CloudRetainedProjectionStoreGateway {
   ObjectBoxCloudSemanticStoreGateway({
     required Store store,
     required CloudCanonicalSemanticEntityAdapter canonicalAdapter,
@@ -363,12 +364,79 @@ final class ObjectBoxCloudSemanticStoreGateway
     required CloudInboxEntry entry,
     required CloudCoordinatorLeaseFence leaseFence,
     required T Function(CloudSemanticStoreTransaction transaction) action,
+  }) => _writeSemanticTransaction(
+    entry: entry,
+    leaseFence: leaseFence,
+    expectedInboxStatus: CloudInboxStatus.pending,
+    advanceCheckpointOnTerminal: true,
+    action: action,
+  );
+
+  @override
+  Future<T> writeRetainedProjectionTransaction<T>({
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required T Function(CloudSemanticStoreTransaction transaction) action,
+  }) => _writeSemanticTransaction(
+    entry: entry,
+    leaseFence: leaseFence,
+    expectedInboxStatus: CloudInboxStatus.retainedUnprojected,
+    advanceCheckpointOnTerminal: false,
+    action: action,
+  );
+
+  @override
+  Future<void> recordRetainedProjectionFailure({
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
   }) {
     try {
       ObjectBoxCloudSemanticFence.validateEntryContext(
         entry: entry,
         leaseFence: leaseFence,
-        expectedInboxStatus: CloudInboxStatus.pending,
+        expectedInboxStatus: CloudInboxStatus.retainedUnprojected,
+      );
+      _store.runInTransaction(TxMode.write, () {
+        final sampledAtMs = _clock().toUtc().millisecondsSinceEpoch;
+        final durable = ObjectBoxCloudSemanticFence.validateLocked(
+          store: _store,
+          entry: entry,
+          leaseFence: leaseFence,
+          nowMs: sampledAtMs,
+          expectedInboxStatus: CloudInboxStatus.retainedUnprojected,
+          canonicalAdapter: _canonicalAdapter,
+        );
+        final row = durable.inbox;
+        final rotatedAtMs = sampledAtMs > row.updatedAtMs
+            ? sampledAtMs
+            : row.updatedAtMs + 1;
+        row
+          ..retryCount += 1
+          ..updatedAtMs = rotatedAtMs;
+        _inbox.put(row);
+      });
+      return Future<void>.value();
+    } on CloudSyncFailure catch (failure) {
+      return Future<void>.error(failure);
+    } catch (_) {
+      return Future<void>.error(
+        _failure('retained_projection_failure_record_failed'),
+      );
+    }
+  }
+
+  Future<T> _writeSemanticTransaction<T>({
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required CloudInboxStatus expectedInboxStatus,
+    required bool advanceCheckpointOnTerminal,
+    required T Function(CloudSemanticStoreTransaction transaction) action,
+  }) {
+    try {
+      ObjectBoxCloudSemanticFence.validateEntryContext(
+        entry: entry,
+        leaseFence: leaseFence,
+        expectedInboxStatus: expectedInboxStatus,
       );
     } on CloudSyncFailure catch (failure) {
       return Future<T>.error(failure);
@@ -392,12 +460,15 @@ final class ObjectBoxCloudSemanticStoreGateway
         final durable = _validateDurableFenceLocked(
           context: context,
           nowMs: updatedAtMs,
+          expectedInboxStatus: expectedInboxStatus,
         );
         final transaction = _ObjectBoxCloudSemanticStoreTransaction(
           context: context,
           updatedAtMs: updatedAtMs,
           inboxEntity: durable.inbox,
           checkpointEntity: durable.checkpoint,
+          initialInboxStatus: expectedInboxStatus,
+          advanceCheckpointOnTerminal: advanceCheckpointOnTerminal,
           checkpoints: _checkpoints,
           inbox: _inbox,
           recordMaps: _recordMaps,
@@ -424,6 +495,64 @@ final class ObjectBoxCloudSemanticStoreGateway
     } finally {
       _activeStores.remove(_store);
     }
+  }
+
+  @override
+  Future<List<CloudInboxEntry>> readRetainedProjectionCandidates({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int limit,
+  }) async {
+    if (generation <= 0 || limit <= 0 || limit > 4096) {
+      throw ArgumentError('retained_projection_request_invalid');
+    }
+
+    return _store.runInTransaction(TxMode.read, () {
+      final scopeKey =
+          'scope2:${_SemanticTransactionContext._digest(scope.storageKey)}';
+      final query =
+          (_inbox.query(
+                  CloudInboxChangeEntity_.scopeKey
+                      .equals(scopeKey)
+                      .and(
+                        CloudInboxChangeEntity_.generation.equals(generation),
+                      )
+                      .and(
+                        CloudInboxChangeEntity_.status.equals(
+                          CloudInboxStatus.retainedUnprojected.index,
+                        ),
+                      )
+                      .and(
+                        CloudInboxChangeEntity_.changeType.equals(
+                          CloudChangeType.save.name,
+                        ),
+                      )
+                      .and(CloudInboxChangeEntity_.isTombstone.equals(false)),
+                )
+                ..order(CloudInboxChangeEntity_.updatedAtMs)
+                ..order(CloudInboxChangeEntity_.fetchSequence))
+              .build();
+      try {
+        final candidates = <CloudInboxEntry>[];
+        for (final row in query.find()) {
+          final entry = _retainedEntryFromEntity(scope, row);
+          ObjectBoxCloudSemanticFence.validateLocked(
+            store: _store,
+            entry: entry,
+            leaseFence: leaseFence,
+            nowMs: _clock().toUtc().millisecondsSinceEpoch,
+            expectedInboxStatus: CloudInboxStatus.retainedUnprojected,
+            canonicalAdapter: _canonicalAdapter,
+          );
+          candidates.add(entry);
+          if (candidates.length == limit) break;
+        }
+        return List<CloudInboxEntry>.unmodifiable(candidates);
+      } finally {
+        query.close();
+      }
+    });
   }
 
   @override
@@ -545,6 +674,8 @@ final class ObjectBoxCloudSemanticStoreGateway
           updatedAtMs: updatedAtMs,
           inboxEntity: durable.inbox,
           checkpointEntity: durable.checkpoint,
+          initialInboxStatus: CloudInboxStatus.applied,
+          advanceCheckpointOnTerminal: false,
           checkpoints: _checkpoints,
           inbox: _inbox,
           recordMaps: _recordMaps,
@@ -614,6 +745,63 @@ final class ObjectBoxCloudSemanticStoreGateway
       ),
       batchId: row.batchId,
       generation: row.generation,
+      completedAt: DateTime.fromMillisecondsSinceEpoch(
+        row.completedAtMs,
+        isUtc: true,
+      ),
+    );
+  }
+
+  CloudInboxEntry _retainedEntryFromEntity(
+    CloudSyncScope scope,
+    CloudInboxChangeEntity row,
+  ) {
+    if (row.status != CloudInboxStatus.retainedUnprojected.index ||
+        row.preflightCategory != null ||
+        row.preflightCode != null ||
+        row.completedAtMs <= 0 ||
+        row.nextEligibleAtMs != 0 ||
+        row.changeType != CloudChangeType.save.name ||
+        row.isTombstone) {
+      throw _failure('retained_projection_row_invalid');
+    }
+    final String? rawFailure = row.failureCategory;
+    final CloudFailureCategory? lastFailure;
+    try {
+      lastFailure = rawFailure == null
+          ? null
+          : CloudFailureCategory.values.byName(rawFailure);
+    } catch (_) {
+      throw _failure('retained_projection_failure_category_invalid');
+    }
+    return CloudInboxEntry(
+      scope: scope,
+      sequence: row.fetchSequence,
+      change: CloudFetchedChange(
+        changeId: row.changeIdHash,
+        recordIdHash: row.serverRecordIdHash,
+        etagHash: row.etagHash,
+        type: CloudChangeType.save,
+        encryptedServerRecordId: row.encryptedServerRecordId,
+        protectedSystemFieldsReference: row.protectedSystemFieldsRef,
+        encryptedPayloadReference: row.encryptedPayloadRef,
+        payloadSha256: row.payloadSha256,
+        serverModifiedAt: row.serverModifiedAtMs == 0
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(
+                row.serverModifiedAtMs,
+                isUtc: true,
+              ),
+      ),
+      status: CloudInboxStatus.retainedUnprojected,
+      attemptCount: row.retryCount,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        row.createdAtMs,
+        isUtc: true,
+      ),
+      batchId: row.batchId,
+      generation: row.generation,
+      lastFailure: lastFailure,
       completedAt: DateTime.fromMillisecondsSinceEpoch(
         row.completedAtMs,
         isUtc: true,
@@ -780,12 +968,13 @@ final class ObjectBoxCloudSemanticStoreGateway
   CloudObjectBoxDurableFence _validateDurableFenceLocked({
     required _SemanticTransactionContext context,
     required int nowMs,
+    CloudInboxStatus expectedInboxStatus = CloudInboxStatus.pending,
   }) => ObjectBoxCloudSemanticFence.validateLocked(
     store: _store,
     entry: context.entry,
     leaseFence: context.leaseFence,
     nowMs: nowMs,
-    expectedInboxStatus: CloudInboxStatus.pending,
+    expectedInboxStatus: expectedInboxStatus,
     canonicalAdapter: _canonicalAdapter,
   );
 
@@ -905,6 +1094,8 @@ final class _ObjectBoxCloudSemanticStoreTransaction
     required this._updatedAtMs,
     required this._inboxEntity,
     required this._checkpointEntity,
+    required this._initialInboxStatus,
+    required this._advanceCheckpointOnTerminal,
     required this._checkpoints,
     required this._inbox,
     required this._recordMaps,
@@ -917,6 +1108,8 @@ final class _ObjectBoxCloudSemanticStoreTransaction
   final int _updatedAtMs;
   final CloudInboxChangeEntity _inboxEntity;
   final CloudSyncCheckpointEntity _checkpointEntity;
+  final CloudInboxStatus _initialInboxStatus;
+  final bool _advanceCheckpointOnTerminal;
   final Box<CloudSyncCheckpointEntity> _checkpoints;
   final Box<CloudInboxChangeEntity> _inbox;
   final Box<CloudRecordMapEntity> _recordMaps;
@@ -1356,7 +1549,7 @@ final class _ObjectBoxCloudSemanticStoreTransaction
       );
     }
     if (_phase != _SemanticTransactionPhase.open &&
-        _inboxEntity.status == CloudInboxStatus.pending.index) {
+        _inboxEntity.status == _initialInboxStatus.index) {
       throw ObjectBoxCloudSemanticStoreGateway._failure(
         'semantic_inbox_terminal_missing',
       );
@@ -1388,7 +1581,15 @@ final class _ObjectBoxCloudSemanticStoreTransaction
         _inboxEntity.status == CloudInboxStatus.applied.index;
     final alreadyQuarantined =
         _inboxEntity.status == CloudInboxStatus.quarantined.index;
+    final retainedProjection =
+        _initialInboxStatus == CloudInboxStatus.retainedUnprojected;
     if (outcome == _SemanticReplayOutcome.quarantined) {
+      if (retainedProjection) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'retained_projection_quarantine_forbidden',
+        );
+      }
       if (alreadyApplied) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.conflict,
@@ -1418,7 +1619,9 @@ final class _ObjectBoxCloudSemanticStoreTransaction
       ..completedAtMs = _updatedAtMs
       ..updatedAtMs = _updatedAtMs;
     _inbox.put(_inboxEntity);
-    _advanceContiguousApplied();
+    if (_advanceCheckpointOnTerminal) {
+      _advanceContiguousApplied();
+    }
   }
 
   void _advanceContiguousApplied() {

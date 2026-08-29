@@ -796,6 +796,169 @@ void main() {
   );
 
   test(
+    'normal engine reprojects retained rows for every capable semantic zone',
+    () async {
+      final events = <String>[];
+      final stores = <String, InMemoryCloudSyncStore>{};
+      final reprocessors = <String, _RetainedProjectionFakeApplier>{};
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async {
+          final store = InMemoryCloudSyncStore();
+          stores[scope.zone] = store;
+          return store;
+        },
+        createRawTransport: (auth, scope) async {
+          events.add('transport:${scope.zone}');
+          final transport = FakeCloudSyncTransport();
+          transport.fetchHandler =
+              (requestedScope, previousToken, generation, limit) async {
+                events.add('fetch:${requestedScope.zone}');
+                return CloudFetchBatch(
+                  scope: requestedScope,
+                  changes: const [],
+                  batchId: 'retained-${requestedScope.zone}',
+                  generation: generation,
+                  nextToken: previousToken,
+                  hasMore: false,
+                );
+              };
+          return transport;
+        },
+        createInboxApplier: (auth, scope, generation) async {
+          events.add('applier:${scope.zone}');
+          final applier = _RetainedProjectionFakeApplier(
+            onReproject:
+                (reprojectScope, reprojectGeneration, leaseFence, limit) async {
+                  events.add('retained:${reprojectScope.zone}');
+                  expect(reprojectGeneration, generation);
+                  expect(leaseFence.ownerId, contains(auth.nativeSessionId));
+                  expect(
+                    limit,
+                    CloudSyncManualSemanticPullSampler.pageLimit *
+                        CloudSyncManualSemanticPullSampler.changeLimit,
+                  );
+                },
+          );
+          reprocessors[scope.zone] = applier;
+          return applier;
+        },
+      );
+
+      await sampler.runConfirmed();
+
+      expect(events, const [
+        'applier:chatManateeZone',
+        'transport:chatManateeZone',
+        'retained:chatManateeZone',
+        'fetch:chatManateeZone',
+        'applier:messageManateeZone',
+        'transport:messageManateeZone',
+        'retained:messageManateeZone',
+        'fetch:messageManateeZone',
+        'applier:attachmentManateeZone',
+        'transport:attachmentManateeZone',
+        'retained:attachmentManateeZone',
+        'fetch:attachmentManateeZone',
+      ]);
+      expect(reprocessors.values.map((applier) => applier.reprojectCalls), [
+        1,
+        1,
+        1,
+      ]);
+
+      for (final zone in CloudSyncManualSemanticPullSampler.zones) {
+        final scope = CloudSyncScope(
+          accountFingerprint: _accountFingerprintA,
+          container: CloudSyncManualSemanticPullSampler.container,
+          database: CloudSyncManualSemanticPullSampler.database,
+          zone: zone,
+          persistenceLane: CloudSyncPersistenceLane.semantic,
+        );
+        final replacementLease = await stores[zone]!.tryAcquireCoordinatorLease(
+          scope,
+          ownerId: 'post-retained-reprojection-$zone',
+          now: DateTime.now().toUtc(),
+          leaseDuration: const Duration(minutes: 1),
+        );
+        expect(replacementLease, isNotNull);
+        await stores[zone]!.releaseCoordinatorLease(
+          scope,
+          leaseFence: replacementLease!,
+        );
+      }
+    },
+  );
+
+  test(
+    'retained projection failure releases engine lease and skips remote fetch',
+    () async {
+      final events = <String>[];
+      final transports = <String, FakeCloudSyncTransport>{};
+      late InMemoryCloudSyncStore chatStore;
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async {
+          final store = InMemoryCloudSyncStore();
+          if (scope.zone == 'chatManateeZone') chatStore = store;
+          return store;
+        },
+        createRawTransport: (auth, scope) async {
+          events.add('transport:${scope.zone}');
+          final transport = FakeCloudSyncTransport();
+          transports[scope.zone] = transport;
+          return transport;
+        },
+        createInboxApplier: (auth, scope, generation) async {
+          if (scope.zone != 'chatManateeZone') return FakeCloudInboxApplier();
+          return _RetainedProjectionFakeApplier(
+            onReproject: (scope, generation, leaseFence, limit) async {
+              events.add('retained-failure:${scope.zone}');
+              throw StateError('retained_projection_test_failure');
+            },
+          );
+        },
+      );
+
+      final report = await sampler.runConfirmed();
+
+      expect(events, const [
+        'transport:chatManateeZone',
+        'retained-failure:chatManateeZone',
+        'transport:messageManateeZone',
+        'transport:attachmentManateeZone',
+      ]);
+      expect(report.zones.first.status, CloudSyncRunStatus.failed);
+      expect(report.zones.first.failureCategory, CloudFailureCategory.unknown);
+      expect(transports['chatManateeZone']!.fetchCallCount, 0);
+      final scope = CloudSyncScope(
+        accountFingerprint: _accountFingerprintA,
+        container: CloudSyncManualSemanticPullSampler.container,
+        database: CloudSyncManualSemanticPullSampler.database,
+        zone: 'chatManateeZone',
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      final replacementLease = await chatStore.tryAcquireCoordinatorLease(
+        scope,
+        ownerId: 'post-retained-failure-test-owner',
+        now: DateTime.now().toUtc(),
+        leaseDuration: const Duration(minutes: 1),
+      );
+      expect(replacementLease, isNotNull);
+      await chatStore.releaseCoordinatorLease(
+        scope,
+        leaseFence: replacementLease!,
+      );
+    },
+  );
+
+  test(
     'provided applier is the only semantic application path and confirmation remains unreachable',
     () async {
       final transports = <FakeCloudSyncTransport>[];
@@ -1106,6 +1269,14 @@ typedef _ProjectionRepairCallback =
       int limit,
     );
 
+typedef _RetainedProjectionCallback =
+    Future<void> Function(
+      CloudSyncScope scope,
+      int generation,
+      CloudCoordinatorLeaseFence leaseFence,
+      int limit,
+    );
+
 final class _RepairingFakeCloudInboxApplier extends FakeCloudInboxApplier
     implements CloudAppliedProjectionRepairer {
   _RepairingFakeCloudInboxApplier({required this.onRepair});
@@ -1123,5 +1294,29 @@ final class _RepairingFakeCloudInboxApplier extends FakeCloudInboxApplier
     repairCalls++;
     onRepair(scope, generation, leaseFence, limit);
     return 1;
+  }
+}
+
+final class _RetainedProjectionFakeApplier extends FakeCloudInboxApplier
+    implements CloudRetainedProjectionReprocessor {
+  _RetainedProjectionFakeApplier({required this.onReproject});
+
+  final _RetainedProjectionCallback onReproject;
+  int reprojectCalls = 0;
+
+  @override
+  Future<CloudRetainedProjectionResult> reprojectRetainedUnprojected({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int limit,
+  }) async {
+    reprojectCalls++;
+    await onReproject(scope, generation, leaseFence, limit);
+    return const CloudRetainedProjectionResult(
+      examined: 0,
+      reprojected: 0,
+      retained: 0,
+    );
   }
 }

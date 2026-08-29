@@ -158,6 +158,53 @@ abstract interface class CloudInboxApplier {
   });
 }
 
+/// Optional local-only recovery surface for durable source records that were
+/// retained after the transport cursor advanced but were never projected into
+/// the canonical store.
+///
+/// Implementations must not fetch, write CloudKit, apply tombstones, or mutate
+/// checkpoint tokens. A row may leave [CloudInboxStatus.retainedUnprojected]
+/// only in the same transaction that commits its complete local projection.
+abstract interface class CloudRetainedProjectionReprocessor {
+  Future<CloudRetainedProjectionResult> reprojectRetainedUnprojected({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int limit,
+  });
+}
+
+final class CloudRetainedProjectionResult {
+  const CloudRetainedProjectionResult({
+    required this.examined,
+    required this.reprojected,
+    required this.retained,
+    bool? hasRemaining,
+  }) : assert(examined >= 0),
+       assert(reprojected >= 0),
+       assert(retained >= 0),
+       assert(examined == reprojected + retained),
+       hasRemaining = hasRemaining ?? retained > 0;
+
+  final int examined;
+  final int reprojected;
+  final int retained;
+
+  /// True when at least one durable retained row still awaits projection,
+  /// including rows beyond this run's bounded candidate window.
+  final bool hasRemaining;
+}
+
+/// Optional semantic policy exposed to the engine for legacy recovery only.
+///
+/// A current read-only applier can acknowledge a protected CloudKit tombstone
+/// without decoding it or deleting canonical state. The store uses this
+/// capability only to repair checkpoints written by an older build that had
+/// already advanced its applied floor across quarantined tombstones.
+abstract interface class CloudReadOnlyTombstoneAcknowledgementPolicy {
+  bool get readOnlyTombstoneAcknowledgementsEnabled;
+}
+
 enum CloudServerConflictDisposition { mergedForRetry, retryable, quarantined }
 
 class CloudServerConflictResolution {

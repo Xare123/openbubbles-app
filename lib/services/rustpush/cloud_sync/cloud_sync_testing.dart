@@ -11,6 +11,9 @@ final class FakeCloudKitOperationExclusion
     implements CloudKitOperationExclusion {
   int runCallCount = 0;
   final List<CloudKitOperationKind> observedKinds = [];
+  int _activeDepth = 0;
+
+  bool get isActive => _activeDepth > 0;
 
   @override
   Future<T> runExclusive<T>({
@@ -19,7 +22,12 @@ final class FakeCloudKitOperationExclusion
   }) async {
     runCallCount++;
     observedKinds.add(kind);
-    return action();
+    _activeDepth++;
+    try {
+      return await action();
+    } finally {
+      _activeDepth--;
+    }
   }
 }
 

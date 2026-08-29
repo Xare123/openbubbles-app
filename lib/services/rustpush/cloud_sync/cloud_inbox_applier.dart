@@ -794,6 +794,33 @@ abstract interface class CloudAppliedProjectionRepairer {
   });
 }
 
+/// Durable storage half of [CloudRetainedProjectionReprocessor]. Candidate
+/// selection is read-only. The write method must fence the exact retained row
+/// and roll all local projection writes back if [action] throws.
+abstract interface class CloudRetainedProjectionStoreGateway {
+  Future<List<CloudInboxEntry>> readRetainedProjectionCandidates({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int limit,
+  });
+
+  Future<T> writeRetainedProjectionTransaction<T>({
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required T Function(CloudSemanticStoreTransaction transaction) action,
+  });
+
+  /// Records one unsuccessful local reprojection attempt without changing the
+  /// retained status, checkpoint, protected references, or canonical state.
+  /// Implementations must fence the exact row and durably move it behind rows
+  /// that have not been attempted as recently.
+  Future<void> recordRetainedProjectionFailure({
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
+  });
+}
+
 abstract interface class CloudSemanticStoreTransaction {
   CloudSyncScope get activeScope;
   int get activeGeneration;
@@ -837,7 +864,11 @@ abstract interface class CloudSemanticStoreTransaction {
 }
 
 class TransactionalCloudInboxApplier
-    implements CloudInboxApplier, CloudAppliedProjectionRepairer {
+    implements
+        CloudInboxApplier,
+        CloudAppliedProjectionRepairer,
+        CloudRetainedProjectionReprocessor,
+        CloudReadOnlyTombstoneAcknowledgementPolicy {
   const TransactionalCloudInboxApplier({
     required this._decoder,
     required this._store,
@@ -855,6 +886,179 @@ class TransactionalCloudInboxApplier
   final Future<bool> Function()? _activeScopeRevalidator;
   final bool _allowTombstones;
   final CloudSyncSemanticDiagnosticRecorder? _diagnosticRecorder;
+
+  @override
+  bool get readOnlyTombstoneAcknowledgementsEnabled => !_allowTombstones;
+
+  @override
+  Future<CloudRetainedProjectionResult> reprojectRetainedUnprojected({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int limit,
+  }) async {
+    final retainedStore = _store;
+    final registrar = _identityRegistrar;
+    if (retainedStore is! CloudRetainedProjectionStoreGateway ||
+        registrar == null) {
+      return const CloudRetainedProjectionResult(
+        examined: 0,
+        reprojected: 0,
+        retained: 0,
+      );
+    }
+    final projectionStore =
+        retainedStore as CloudRetainedProjectionStoreGateway;
+    if (generation <= 0 || limit <= 0 || limit > 4096) {
+      throw ArgumentError('cloud_retained_projection_request_invalid');
+    }
+
+    final candidates = await projectionStore.readRetainedProjectionCandidates(
+      scope: scope,
+      generation: generation,
+      leaseFence: leaseFence,
+      limit: limit,
+    );
+    var reprojected = 0;
+    for (final entry in candidates) {
+      if (entry.scope != scope ||
+          entry.generation != generation ||
+          entry.status != CloudInboxStatus.retainedUnprojected ||
+          entry.change.type != CloudChangeType.save ||
+          entry.change.isTombstone) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'retained_projection_candidate_invalid',
+        );
+      }
+
+      final CloudDecodedMutation decoded;
+      try {
+        decoded = await _decoder.decode(entry);
+      } on CloudSemanticDecodeFailure catch (failure) {
+        _recordDiagnostic(
+          'retained_projection_decoder_${_safeCodeSegment(failure.category.name)}',
+        );
+        if (failure.category == CloudFailureCategory.authorization) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.authorization,
+            safeCode:
+                failure.safeCode ?? 'retained_projection_authorization_changed',
+          );
+        }
+        await projectionStore.recordRetainedProjectionFailure(
+          entry: entry,
+          leaseFence: leaseFence,
+        );
+        continue;
+      } catch (_) {
+        _recordDiagnostic('retained_projection_decoder_unknown');
+        await projectionStore.recordRetainedProjectionFailure(
+          entry: entry,
+          leaseFence: leaseFence,
+        );
+        continue;
+      }
+
+      final snapshot = decoded.snapshot;
+      final payload = decoded.payload;
+      if (decoded.scope != entry.scope ||
+          decoded.generation != entry.generation ||
+          decoded.changeId != entry.change.changeId ||
+          decoded.kind != CloudDecodedMutationKind.upsert ||
+          decoded.tombstone != null ||
+          snapshot == null ||
+          payload == null ||
+          snapshot.kind != payload.kind ||
+          snapshot.logicalEntityKeyHash != payload.logicalEntityKeyHash) {
+        _recordDiagnostic('retained_projection_decoded_shape_invalid');
+        await projectionStore.recordRetainedProjectionFailure(
+          entry: entry,
+          leaseFence: leaseFence,
+        );
+        continue;
+      }
+
+      CloudTransientCanonicalIdentityLease? identityLease;
+      try {
+        identityLease = registrar.bind(decoded);
+        if (_activeScopeRevalidator != null) {
+          final stillActive = await _activeScopeRevalidator();
+          if (!stillActive) {
+            throw CloudSyncFailure(
+              category: CloudFailureCategory.authorization,
+              safeCode: 'retained_projection_active_scope_changed',
+            );
+          }
+        }
+        await projectionStore.writeRetainedProjectionTransaction<void>(
+          entry: entry,
+          leaseFence: leaseFence,
+          action: (transaction) {
+            if (transaction.activeScope != entry.scope ||
+                transaction.activeGeneration != entry.generation) {
+              throw CloudSyncFailure(
+                category: CloudFailureCategory.conflict,
+                safeCode: 'retained_projection_scope_mismatch',
+              );
+            }
+            if (transaction.hasAppliedChange(decoded.changeId)) {
+              throw CloudSyncFailure(
+                category: CloudFailureCategory.conflict,
+                safeCode: 'retained_projection_replay_exists',
+              );
+            }
+            final result = _applyUpsert(transaction, decoded);
+            if (result.disposition != CloudInboxApplyDisposition.applied ||
+                !result.inboxStatusPersisted) {
+              throw CloudSyncFailure(
+                category:
+                    result.failureCategory ?? CloudFailureCategory.conflict,
+                safeCode:
+                    result.safeCode ?? 'retained_projection_not_projected',
+              );
+            }
+          },
+        );
+        reprojected++;
+        _recordDiagnostic('retained_projection_reprojected');
+      } on CloudSyncFailure catch (failure) {
+        _recordDiagnostic(
+          failure.safeCode ??
+              'retained_projection_${_safeCodeSegment(failure.category.name)}',
+        );
+        if (failure.category == CloudFailureCategory.authorization) rethrow;
+        await projectionStore.recordRetainedProjectionFailure(
+          entry: entry,
+          leaseFence: leaseFence,
+        );
+      } catch (_) {
+        _recordDiagnostic('retained_projection_unknown');
+        await projectionStore.recordRetainedProjectionFailure(
+          entry: entry,
+          leaseFence: leaseFence,
+        );
+      } finally {
+        identityLease?.release();
+      }
+    }
+    final retained = candidates.length - reprojected;
+    var hasRemaining = retained > 0;
+    if (!hasRemaining && candidates.length == limit) {
+      hasRemaining = (await projectionStore.readRetainedProjectionCandidates(
+        scope: scope,
+        generation: generation,
+        leaseFence: leaseFence,
+        limit: 1,
+      )).isNotEmpty;
+    }
+    return CloudRetainedProjectionResult(
+      examined: candidates.length,
+      reprojected: reprojected,
+      retained: retained,
+      hasRemaining: hasRemaining,
+    );
+  }
 
   @override
   Future<int> repairAppliedProjections({
