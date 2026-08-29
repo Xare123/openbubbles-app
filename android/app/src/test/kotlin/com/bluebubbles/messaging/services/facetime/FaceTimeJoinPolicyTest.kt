@@ -90,7 +90,7 @@ class FaceTimeJoinPolicyTest {
     }
 
     @Test
-    fun mediaLossClearsJoinedButDoesNotBlindlyRetryAfterCompletedJoin() {
+    fun oneFlatStatsIntervalKeepsAnAlreadyJoinedCallAdmitted() {
         val policy = FaceTimeJoinPolicy()
         policy.record("\"clicked\"")
         policy.recordMediaEvidence(
@@ -114,20 +114,103 @@ class FaceTimeJoinPolicyTest {
             )
         ).joined)
 
+        val decision = policy.recordMediaEvidence(connectedEvidence(mediaBytes = 1024))
+
+        assertTrue(decision.joined)
+        assertTrue(policy.completedJoin)
+        assertEquals(FaceTimeJoinOutcome.MEDIA_CONNECTED, decision.outcome)
+        assertFalse(decision.retry)
+    }
+
+    @Test
+    fun consecutiveFlatStatsIntervalsEventuallyReportMediaFailure() {
+        val policy = admittedPolicy()
+
+        repeat(FaceTimeConnectionProbePolicy.consecutiveStalledSamplesBeforeMediaLoss - 1) {
+            assertTrue(policy.recordMediaEvidence(connectedEvidence(mediaBytes = 1024)).joined)
+        }
+        val stalled = policy.recordMediaEvidence(connectedEvidence(mediaBytes = 1024))
+
+        assertFalse(stalled.joined)
+        assertEquals(FaceTimeJoinOutcome.MEDIA_FAILED, stalled.outcome)
+        assertFalse(stalled.retry)
+    }
+
+    @Test
+    fun advancingMediaResetsTheStallHysteresis() {
+        val policy = admittedPolicy()
+
+        assertTrue(policy.recordMediaEvidence(connectedEvidence(mediaBytes = 1024)).joined)
+        assertTrue(policy.recordMediaEvidence(connectedEvidence(mediaBytes = 1024)).joined)
+        assertTrue(policy.recordMediaEvidence(connectedEvidence(mediaBytes = 2048)).joined)
+        repeat(FaceTimeConnectionProbePolicy.consecutiveStalledSamplesBeforeMediaLoss - 1) {
+            assertTrue(policy.recordMediaEvidence(connectedEvidence(mediaBytes = 2048)).joined)
+        }
+    }
+
+    @Test
+    fun terminalIceFailureStillDemotesAnAdmittedCallImmediately() {
+        val policy = admittedPolicy()
+
         val decision = policy.recordMediaEvidence(
             FaceTimeMediaEvidence(
-                iceState = FaceTimeIceState.DISCONNECTED,
+                iceState = FaceTimeIceState.FAILED,
                 remoteAudioTracks = 0,
                 remoteVideoTracks = 0,
                 mediaBytes = null,
-                webLeaveVisible = true,
-            )
+                webLeaveVisible = false,
+            ),
         )
 
         assertFalse(decision.joined)
-        assertTrue(policy.completedJoin)
-        assertEquals(FaceTimeJoinOutcome.MEDIA_PENDING, decision.outcome)
-        assertFalse(decision.retry)
+        assertEquals(FaceTimeJoinOutcome.MEDIA_FAILED, decision.outcome)
+    }
+
+    @Test
+    fun advancingEncryptedTransportDoesNotAdmitWhenDecodedVideoIsFlat() {
+        val policy = FaceTimeJoinPolicy()
+
+        policy.recordMediaEvidence(decodedVideoEvidence(mediaBytes = 100, framesDecoded = 0))
+        val transportOnly = policy.recordMediaEvidence(
+            decodedVideoEvidence(mediaBytes = 200, framesDecoded = 0),
+        )
+        val decoded = policy.recordMediaEvidence(
+            decodedVideoEvidence(mediaBytes = 300, framesDecoded = 1),
+        )
+
+        assertFalse(transportOnly.joined)
+        assertTrue(decoded.joined)
+    }
+
+    @Test
+    fun advancingNonConcealedAudioSamplesCanAdmitAudioOnlyMedia() {
+        val policy = FaceTimeJoinPolicy()
+
+        policy.recordMediaEvidence(decodedAudioEvidence(mediaBytes = 100, samples = 1000, concealed = 100))
+        val concealedOnly = policy.recordMediaEvidence(
+            decodedAudioEvidence(mediaBytes = 200, samples = 1100, concealed = 200),
+        )
+        val decoded = policy.recordMediaEvidence(
+            decodedAudioEvidence(mediaBytes = 300, samples = 1300, concealed = 250),
+        )
+
+        assertFalse(concealedOnly.joined)
+        assertTrue(decoded.joined)
+    }
+
+    @Test
+    fun decodedCountersCanAdmitWhenTransportBytesAreUnavailable() {
+        val policy = FaceTimeJoinPolicy()
+
+        policy.recordMediaEvidence(
+            decodedVideoEvidence(mediaBytes = null, framesDecoded = 10),
+        )
+        val decoded = policy.recordMediaEvidence(
+            decodedVideoEvidence(mediaBytes = null, framesDecoded = 11),
+        )
+
+        assertTrue(decoded.joined)
+        assertEquals(FaceTimeJoinOutcome.MEDIA_CONNECTED, decoded.outcome)
     }
 
     @Test
@@ -198,10 +281,11 @@ class FaceTimeJoinPolicyTest {
     }
 
     @Test
-    fun nativeEndRemainsAvailableAndMovesAwayFromWebLeave() {
-        assertTrue(FaceTimeControlPolicy.shouldShowNativeEndControl())
-        assertEquals(FaceTimeNativeEndPlacement.TOP_RIGHT, FaceTimeControlPolicy.nativeEndPlacement(false))
-        assertEquals(FaceTimeNativeEndPlacement.BOTTOM_LEFT, FaceTimeControlPolicy.nativeEndPlacement(true))
+    fun nativeEndIsSuppressedWheneverTheWebLeaveControlIsVisible() {
+        assertFalse(FaceTimeControlPolicy.shouldShowNativeEndControl(false, webLeaveObservationFresh = false))
+        assertTrue(FaceTimeControlPolicy.shouldShowNativeEndControl(false, webLeaveObservationFresh = true))
+        assertFalse(FaceTimeControlPolicy.shouldShowNativeEndControl(true, webLeaveObservationFresh = true))
+        assertEquals(FaceTimeNativeEndPlacement.TOP_RIGHT, FaceTimeControlPolicy.nativeEndPlacement())
     }
 
     @Test
@@ -209,5 +293,44 @@ class FaceTimeJoinPolicyTest {
         assertEquals(80, FaceTimeConnectionProbePolicy.maxProbes)
         assertTrue(FaceTimeConnectionProbePolicy.pendingDelayMillis in 750L..1500L)
         assertTrue(FaceTimeConnectionProbePolicy.initialDelayMillis < FaceTimeConnectionProbePolicy.pendingDelayMillis)
+        assertTrue(FaceTimeConnectionProbePolicy.consecutiveStalledSamplesBeforeMediaLoss >= 2)
     }
+
+    private fun admittedPolicy(): FaceTimeJoinPolicy {
+        val policy = FaceTimeJoinPolicy()
+        policy.recordMediaEvidence(connectedEvidence(mediaBytes = 512))
+        assertTrue(policy.recordMediaEvidence(connectedEvidence(mediaBytes = 1024)).joined)
+        return policy
+    }
+
+    private fun connectedEvidence(mediaBytes: Long) = FaceTimeMediaEvidence(
+        iceState = FaceTimeIceState.CONNECTED,
+        remoteAudioTracks = 1,
+        remoteVideoTracks = 1,
+        mediaBytes = mediaBytes,
+        webLeaveVisible = true,
+        peerId = 1,
+    )
+
+    private fun decodedVideoEvidence(mediaBytes: Long?, framesDecoded: Long) = FaceTimeMediaEvidence(
+        iceState = FaceTimeIceState.CONNECTED,
+        remoteAudioTracks = 0,
+        remoteVideoTracks = 1,
+        mediaBytes = mediaBytes,
+        webLeaveVisible = true,
+        peerId = 1,
+        videoFramesDecoded = framesDecoded,
+    )
+
+    private fun decodedAudioEvidence(mediaBytes: Long, samples: Long, concealed: Long) = FaceTimeMediaEvidence(
+        iceState = FaceTimeIceState.CONNECTED,
+        remoteAudioTracks = 1,
+        remoteVideoTracks = 0,
+        mediaBytes = mediaBytes,
+        webLeaveVisible = true,
+        peerId = 1,
+        audioSamplesReceived = samples,
+        audioConcealedSamples = concealed,
+        audioJitterBufferEmittedCount = samples,
+    )
 }

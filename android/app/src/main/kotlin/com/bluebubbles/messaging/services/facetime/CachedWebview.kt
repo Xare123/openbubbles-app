@@ -15,6 +15,7 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import okhttp3.Cache
@@ -23,11 +24,49 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.net.URI
+import java.util.UUID
 
 @SuppressLint("SetJavaScriptEnabled")
 class CachedWebview(context: Context, name: String?, desc: String, url: String) {
     companion object {
         private const val diagnosticTag = "FaceTimeDiag"
+        private const val faceTimePageHost = "facetime.apple.com"
+        private val trustedResourceDomains = setOf("apple.com", "icloud.com")
+
+        private fun trustedHttpsHost(url: String): String? = try {
+            val uri = URI(url)
+            if (!uri.scheme.equals("https", ignoreCase = true) ||
+                uri.rawUserInfo != null ||
+                uri.port !in listOf(-1, 443)
+            ) {
+                null
+            } else {
+                uri.host?.lowercase()?.trimEnd('.')
+            }
+        } catch (_: Exception) {
+            null
+        }
+
+        internal fun isTrustedFaceTimePageUrl(url: String): Boolean =
+            trustedHttpsHost(url) == faceTimePageHost
+
+        internal fun isTrustedFaceTimeResourceUrl(url: String): Boolean {
+            val host = trustedHttpsHost(url) ?: return false
+            return trustedResourceDomains.any { domain ->
+                host == domain || host.endsWith(".$domain")
+            }
+        }
+
+        internal fun isMainBundleUrl(url: String): Boolean {
+            if (!isTrustedFaceTimeResourceUrl(url)) return false
+            val path = try {
+                URI(url).path
+            } catch (_: Exception) {
+                null
+            } ?: return false
+            return path.substringAfterLast('/').equals("main.js", ignoreCase = true)
+        }
 
         /**
          * Return a JavaScript string literal for values supplied by the user.
@@ -80,9 +119,22 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
     private val applicationContext = context.applicationContext
     private val callbackHandler = Handler(Looper.getMainLooper())
     private var mirrorReadyRunnable: Runnable? = null
+    private val mediaEvidenceGate = FaceTimeResolvedMediaCallbackGate()
+    private val webLeaveVisibilityGate = FaceTimeWebLeaveVisibilityGate()
+    @Volatile
+    private var latestWebLeaveVisibility: Boolean? = null
+    @Volatile
+    private var callbackGeneration = 0L
+    @Volatile
+    private var currentPageTrusted = isTrustedFaceTimePageUrl(url)
+    private val bridgeToken = UUID.randomUUID().toString()
+
+    private fun isCurrentPageTrusted(): Boolean = currentPageTrusted
 
     var mirrorReady = false
     var mirrorReadyCall: (() -> Unit)? = null
+    var mediaEvidenceCall: (Long, String) -> Unit = { _, _ -> }
+    var webLeaveVisibilityCall: (Boolean) -> Unit = {}
     var endTask: () -> Unit = {
         webView.destroy()
         FaceTimeActivity.cachedWebview = null
@@ -92,11 +144,25 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
     var deferredRequestsUpdated: () -> Unit = {}
 
     fun cancelCallbacks() {
+        callbackGeneration += 1
         mirrorReadyRunnable?.let(callbackHandler::removeCallbacks)
         mirrorReadyRunnable = null
         mirrorReadyCall = null
+        mediaEvidenceGate.reset()
+        mediaEvidenceCall = { _, _ -> }
+        webLeaveVisibilityGate.reset()
+        latestWebLeaveVisibility = null
+        webLeaveVisibilityCall = {}
         deferredRequestsUpdated = {}
     }
+
+    fun expectMediaEvidence(probeId: Long): Boolean = mediaEvidenceGate.expect(probeId)
+
+    fun cancelMediaEvidenceProbe(probeId: Long) {
+        mediaEvidenceGate.cancel(probeId)
+    }
+
+    fun currentWebLeaveVisibility(): Boolean? = latestWebLeaveVisibility
 
     private fun safeResourceLabel(requestUrl: String?): String {
         if (requestUrl == null) return "unknown"
@@ -146,12 +212,15 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
         string = string
             .replace(""""GenericToast\.Waiting": *"Waiting to be let in…",""".toRegex(), """"GenericToast.Waiting":"Connecting…",""")
             .replace(""""SessionBanner\.FaceTime": *"FaceTime Call",""".toRegex(), """"SessionBanner.FaceTime":"$desc",""")
-            .replace("this.onLeave.notifyListeners()", "Native.leave(), this.onLeave.notifyListeners()")
+            .replace(
+                "this.onLeave.notifyListeners()",
+                "window.__obFaceTimeNativeEvent?.(\"leave\"), this.onLeave.notifyListeners()",
+            )
 
         if (name != null) {
             val javascriptName = javascriptStringLiteral(name)
             string = string.replace(submitNamePattern) { match ->
-                "${match.groupValues[1]} ${match.groupValues[2]}($javascriptName).then(() => Native.mirrored());"
+                "${match.groupValues[1]} ${match.groupValues[2]}($javascriptName).then(() => window.__obFaceTimeNativeEvent?.(\"mirrored\"));"
             }
         }
 
@@ -170,10 +239,23 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
 
     private val webRtcDiagnosticBootstrap = """
         (() => {
+          if (window.top !== window.self) return;
           if (window.__obFaceTimeDiagnostics) return;
+          const nativeBridgeToken = "__OB_NATIVE_BRIDGE_TOKEN__";
+          const sendNativeEvent = (event, first = "", second = "") => {
+            try {
+              if (event === "leave") Native.leave(nativeBridgeToken);
+              else if (event === "mirrored") Native.mirrored(nativeBridgeToken);
+              else if (event === "media-evidence") Native.mediaEvidence(nativeBridgeToken, first, second);
+              else if (event === "web-leave-visibility") Native.webLeaveVisibility(nativeBridgeToken, first);
+            } catch (_) {}
+          };
+          window.__obFaceTimeNativeEvent = sendNativeEvent;
           const state = {
             peers: [],
             nextPeerId: 1,
+            leaveObserver: null,
+            lastReportedLeaveVisible: null,
           };
           const updateIceState = (peerState) => {
             peerState.iceState = peerState.peer.iceConnectionState || peerState.peer.connectionState || "unknown";
@@ -184,13 +266,22 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
               peer: pc,
               iceState: "unknown",
               previousInboundBytes: null,
+              previousVideoFramesDecoded: null,
+              previousAudioDecodedSamples: null,
+              previousAudioJitterBufferEmittedCount: null,
               remoteAudioTracks: new Map(),
               remoteVideoTracks: new Map()
             };
             state.peers.push(peerState);
             updateIceState(peerState);
-            pc.addEventListener("iceconnectionstatechange", () => updateIceState(peerState));
-            pc.addEventListener("connectionstatechange", () => updateIceState(peerState));
+            const refreshConnectionState = () => {
+              updateIceState(peerState);
+              if (peerState.iceState === "closed") {
+                state.peers = state.peers.filter((candidate) => candidate !== peerState);
+              }
+            };
+            pc.addEventListener("iceconnectionstatechange", refreshConnectionState);
+            pc.addEventListener("connectionstatechange", refreshConnectionState);
             pc.addEventListener("track", (event) => {
               if (!event.track || !event.track.id) return;
               const tracks = event.track.kind === "audio"
@@ -222,10 +313,25 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
               .trim()
               .replace(/\s+/g, " ")
               .toLowerCase();
-          const isVisible = (button) =>
-            button.hidden !== true &&
-            button.getAttribute("aria-hidden") !== "true" &&
-            button.offsetParent !== null;
+          const isVisible = (button) => {
+            if (!button || button.hidden === true || button.getAttribute("aria-hidden") === "true") {
+              return false;
+            }
+            const style = typeof window.getComputedStyle === "function"
+              ? window.getComputedStyle(button)
+              : null;
+            if (style && (
+              style.display === "none" ||
+              style.visibility === "hidden" ||
+              style.visibility === "collapse" ||
+              Number.parseFloat(style.opacity || "1") === 0
+            )) {
+              return false;
+            }
+            if (typeof button.getBoundingClientRect !== "function") return true;
+            const bounds = button.getBoundingClientRect();
+            return bounds.width > 0 && bounds.height > 0;
+          };
           const controlState = (names) => {
             const matches = Array.from(document.querySelectorAll("button"))
               .filter((button) => names.includes(controlText(button)));
@@ -237,7 +343,35 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             );
             return { visible, enabled, count: matches.length };
           };
+          const sendLeaveVisibility = (visible) => {
+            if (state.lastReportedLeaveVisible === visible) return;
+            sendNativeEvent("web-leave-visibility", visible ? "true" : "false");
+            state.lastReportedLeaveVisible = visible;
+          };
+          const reportLeaveVisibility = () => {
+            const visible = controlState(["leave", "end call"]).visible;
+            sendLeaveVisibility(visible);
+          };
+          const installLeaveObserver = () => {
+            if (state.leaveObserver || typeof window.MutationObserver !== "function" || !document.documentElement) {
+              return false;
+            }
+            state.leaveObserver = new window.MutationObserver(reportLeaveVisibility);
+            state.leaveObserver.observe(document.documentElement, {
+              attributes: true,
+              attributeFilter: ["aria-hidden", "aria-label", "class", "hidden", "style"],
+              characterData: true,
+              childList: true,
+              subtree: true,
+            });
+            window.addEventListener("resize", reportLeaveVisibility, { passive: true });
+            reportLeaveVisibility();
+            return true;
+          };
           install();
+          if (!installLeaveObserver() && document.addEventListener) {
+            document.addEventListener("DOMContentLoaded", installLeaveObserver, { once: true });
+          }
           if (!window.__obFaceTimeRtcInstallTimer) {
             window.__obFaceTimeRtcInstallTimer = window.setInterval(() => {
               if (install()) window.clearInterval(window.__obFaceTimeRtcInstallTimer);
@@ -251,6 +385,14 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                 if (peerState.iceState === "closed") continue;
                 let bytes = 0;
                 let bytesObserved = false;
+                let videoFramesDecoded = 0;
+                let videoFramesDecodedObserved = false;
+                let audioSamplesReceived = 0;
+                let audioSamplesReceivedObserved = false;
+                let audioConcealedSamples = 0;
+                let audioConcealedSamplesObserved = false;
+                let audioJitterBufferEmittedCount = 0;
+                let audioJitterBufferEmittedCountObserved = false;
                 const peer = peerState.peer;
                 try {
                   const reports = await peer.getStats();
@@ -258,6 +400,26 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                     if (report.type === "inbound-rtp" && typeof report.bytesReceived === "number") {
                       bytes += report.bytesReceived;
                       bytesObserved = true;
+                    }
+                    if (report.type !== "inbound-rtp") return;
+                    const kind = report.kind || report.mediaType || null;
+                    if ((kind === "video" || kind === null) && typeof report.framesDecoded === "number") {
+                      videoFramesDecoded += report.framesDecoded;
+                      videoFramesDecodedObserved = true;
+                    }
+                    const isAudio = kind === "audio" ||
+                      (kind === null && typeof report.totalSamplesReceived === "number");
+                    if (isAudio && typeof report.totalSamplesReceived === "number") {
+                      audioSamplesReceived += report.totalSamplesReceived;
+                      audioSamplesReceivedObserved = true;
+                    }
+                    if (isAudio && typeof report.concealedSamples === "number") {
+                      audioConcealedSamples += report.concealedSamples;
+                      audioConcealedSamplesObserved = true;
+                    }
+                    if (isAudio && typeof report.jitterBufferEmittedCount === "number") {
+                      audioJitterBufferEmittedCount += report.jitterBufferEmittedCount;
+                      audioJitterBufferEmittedCountObserved = true;
                     }
                   });
                 } catch (_) {}
@@ -268,19 +430,57 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                 const bytesAdvancing = bytesObserved &&
                   peerState.previousInboundBytes !== null &&
                   bytes > peerState.previousInboundBytes;
+                const audioDecodedSamples = audioSamplesReceivedObserved
+                  ? Math.max(0, audioSamplesReceived - (audioConcealedSamplesObserved ? audioConcealedSamples : 0))
+                  : null;
+                const decodedAdvancing = (
+                  videoFramesDecodedObserved &&
+                  peerState.previousVideoFramesDecoded !== null &&
+                  videoFramesDecoded > peerState.previousVideoFramesDecoded
+                ) || (
+                  audioDecodedSamples !== null &&
+                  peerState.previousAudioDecodedSamples !== null &&
+                  audioDecodedSamples > peerState.previousAudioDecodedSamples
+                ) || (
+                  audioJitterBufferEmittedCountObserved &&
+                  peerState.previousAudioJitterBufferEmittedCount !== null &&
+                  audioJitterBufferEmittedCount > peerState.previousAudioJitterBufferEmittedCount
+                );
                 peerState.previousInboundBytes = bytesObserved ? bytes : null;
+                peerState.previousVideoFramesDecoded = videoFramesDecodedObserved ? videoFramesDecoded : null;
+                peerState.previousAudioDecodedSamples = audioDecodedSamples;
+                peerState.previousAudioJitterBufferEmittedCount = audioJitterBufferEmittedCountObserved
+                  ? audioJitterBufferEmittedCount
+                  : null;
                 candidates.push({
                   peerId: peerState.id,
                   iceState: peerState.iceState,
                   remoteAudioTracks,
                   remoteVideoTracks,
                   mediaBytes: bytesObserved ? bytes : null,
+                  videoFramesDecoded: videoFramesDecodedObserved ? videoFramesDecoded : null,
+                  audioSamplesReceived: audioSamplesReceivedObserved ? audioSamplesReceived : null,
+                  audioConcealedSamples: audioConcealedSamplesObserved ? audioConcealedSamples : null,
+                  audioJitterBufferEmittedCount: audioJitterBufferEmittedCountObserved
+                    ? audioJitterBufferEmittedCount
+                    : null,
                   bytesAdvancing,
+                  decodedAdvancing,
+                  connectedWithTrack: (peerState.iceState === "connected" || peerState.iceState === "completed") &&
+                    remoteAudioTracks + remoteVideoTracks > 0,
                 });
               }
-              const active = [...candidates].reverse().find((candidate) => candidate.bytesAdvancing)
-                || candidates.at(-1)
+              const latest = candidates.at(-1) || null;
+              const latestIsTerminal = latest &&
+                (latest.iceState === "failed" || latest.iceState === "closed");
+              const advancing = [...candidates].reverse().find((candidate) => candidate.decodedAdvancing)
+                || [...candidates].reverse().find((candidate) => candidate.bytesAdvancing)
                 || null;
+              const newestConnectedWithTrack = [...candidates].reverse()
+                .find((candidate) => candidate.connectedWithTrack) || null;
+              const active = latestIsTerminal
+                ? (advancing || latest)
+                : (newestConnectedWithTrack || advancing || latest);
               const controls = {
                 join: controlState(["join"]),
                 rejoin: controlState(["rejoin"]),
@@ -292,13 +492,24 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                 remoteAudioTracks: active ? active.remoteAudioTracks : 0,
                 remoteVideoTracks: active ? active.remoteVideoTracks : 0,
                 mediaBytes: active ? active.mediaBytes : null,
+                ...(active && active.videoFramesDecoded !== null
+                  ? { videoFramesDecoded: active.videoFramesDecoded } : {}),
+                ...(active && active.audioSamplesReceived !== null
+                  ? { audioSamplesReceived: active.audioSamplesReceived } : {}),
+                ...(active && active.audioConcealedSamples !== null
+                  ? { audioConcealedSamples: active.audioConcealedSamples } : {}),
+                ...(active && active.audioJitterBufferEmittedCount !== null
+                  ? { audioJitterBufferEmittedCount: active.audioJitterBufferEmittedCount } : {}),
                 webLeaveVisible: controls.leave.visible,
                 webControls: controls
               });
             }
           };
         })();
-    """.trimIndent()
+    """.trimIndent().replace(
+        "\"__OB_NATIVE_BRIDGE_TOKEN__\"",
+        javascriptStringLiteral(bridgeToken),
+    )
 
     init {
         val client = OkHttpClient.Builder()
@@ -310,14 +521,31 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             )
             .build()
         webView.settings.javaScriptEnabled = true
+        webView.settings.allowFileAccess = false
+        webView.settings.allowContentAccess = false
+        webView.settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        webView.settings.javaScriptCanOpenWindowsAutomatically = false
+        webView.settings.setSupportMultipleWindows(false)
         webView.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: WebResourceRequest?,
+            ): Boolean {
+                if (request == null || !request.isForMainFrame) return false
+                val trusted = isTrustedFaceTimePageUrl(request.url.toString())
+                if (!trusted && diagnosticsEnabled()) {
+                    Log.w(diagnosticTag, "blocked untrusted main-frame navigation")
+                }
+                return !trusted
+            }
+
             override fun shouldInterceptRequest(
                 view: WebView?,
                 request: WebResourceRequest?
             ): WebResourceResponse? {
                 if (request == null) return null
-                if (!request.url.toString().endsWith("main.js")) {
-                    if (diagnosticsEnabled() && request.url.lastPathSegment == "main.js") {
+                if (!isMainBundleUrl(request.url.toString())) {
+                    if (diagnosticsEnabled() && request.url.lastPathSegment?.equals("main.js", ignoreCase = true) == true) {
                         Log.w(diagnosticTag, "main.js candidate was not intercepted because its URL has a suffix")
                     }
                     return null
@@ -344,13 +572,14 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                currentPageTrusted = url?.let(::isTrustedFaceTimePageUrl) == true
                 if (diagnosticsEnabled()) {
                     Log.i(diagnosticTag, "page started ${safeResourceLabel(url)}")
                 }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
-                if (diagnosticsEnabled()) {
+                if (diagnosticsEnabled() && url?.let(::isTrustedFaceTimePageUrl) == true) {
                     FaceTimeDiagnostics.logStage(
                         applicationContext,
                         FaceTimeDiagnosticStage.WEBVIEW_LOADED,
@@ -389,11 +618,13 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
 
         webView.addJavascriptInterface(object {
             @JavascriptInterface
-            fun leave() {
+            fun leave(token: String?) {
+                if (token != bridgeToken || !isCurrentPageTrusted()) return
                 callbackHandler.post { endTask() }
             }
             @JavascriptInterface
-            fun mirrored() {
+            fun mirrored(token: String?) {
+                if (token != bridgeToken || !isCurrentPageTrusted()) return
                 if (mirrorReady || mirrorReadyRunnable != null) {
                     if (diagnosticsEnabled()) {
                         Log.i(diagnosticTag, "duplicate Native.mirrored ignored")
@@ -414,11 +645,48 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
                     Log.i(diagnosticTag, "Native.mirrored received; mirrorReady scheduled")
                 }
             }
+            @JavascriptInterface
+            fun mediaEvidence(token: String?, probeId: String?, payload: String?) {
+                if (token != bridgeToken || !isCurrentPageTrusted()) return
+                // evaluateJavascript does not await Promise results. The page
+                // resolves getStats first, then sends only this bounded JSON
+                // payload over the existing same-page Native bridge.
+                val safeProbeId = probeId?.toLongOrNull()?.takeIf { it > 0 } ?: return
+                val boundedPayload = payload?.takeIf {
+                    it.length <= FaceTimeResolvedMediaBridge.maxCallbackPayloadLength
+                } ?: return
+                if (!mediaEvidenceGate.accept(safeProbeId, boundedPayload)) return
+                val generation = callbackGeneration
+                callbackHandler.post {
+                    if (callbackGeneration == generation) {
+                        mediaEvidenceCall(safeProbeId, boundedPayload)
+                    }
+                }
+            }
+            @JavascriptInterface
+            fun webLeaveVisibility(token: String?, rawVisible: String?) {
+                if (token != bridgeToken || !isCurrentPageTrusted()) return
+                val visible = webLeaveVisibilityGate.accept(rawVisible) ?: return
+                latestWebLeaveVisibility = visible
+                val generation = callbackGeneration
+                callbackHandler.post {
+                    if (callbackGeneration == generation) {
+                        webLeaveVisibilityCall(visible)
+                    }
+                }
+            }
         }, "Native")
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest?) {
                 if (request == null) return
+                if (!isTrustedFaceTimePageUrl(request.origin.toString()) || !isCurrentPageTrusted()) {
+                    if (diagnosticsEnabled()) {
+                        Log.w(diagnosticTag, "rejected WebView permission request from untrusted origin")
+                    }
+                    request.deny()
+                    return
+                }
                 if (diagnosticsEnabled()) {
                     FaceTimeDiagnostics.logStage(
                         applicationContext,
@@ -447,7 +715,14 @@ class CachedWebview(context: Context, name: String?, desc: String, url: String) 
             }
         }
 
-        webView.loadUrl(url)
+        if (isTrustedFaceTimePageUrl(url)) {
+            webView.loadUrl(url)
+        } else {
+            if (diagnosticsEnabled()) {
+                Log.w(diagnosticTag, "refused to load untrusted FaceTime URL")
+            }
+            webView.loadData("<html><body></body></html>", "text/html", "utf-8")
+        }
     }
 
 }

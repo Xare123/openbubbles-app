@@ -1,6 +1,8 @@
 package com.bluebubbles.messaging.services.facetime
 
+import android.webkit.PermissionRequest
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -28,5 +30,36 @@ class FaceTimePermissionPolicyTest {
         assertFalse(FaceTimePermissionPolicy.isGranted(results, 1))
         assertFalse(FaceTimePermissionPolicy.isGranted(results, -1))
         assertFalse(FaceTimePermissionPolicy.isGranted(results, 2))
+    }
+
+    @Test
+    fun webPermissionGrantDropsUnsupportedAndDuplicateResources() {
+        assertArrayEquals(
+            arrayOf(
+                PermissionRequest.RESOURCE_VIDEO_CAPTURE,
+                PermissionRequest.RESOURCE_AUDIO_CAPTURE,
+            ),
+            FaceTimePermissionPolicy.supportedWebResources(
+                arrayOf(
+                    PermissionRequest.RESOURCE_VIDEO_CAPTURE,
+                    PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID,
+                    PermissionRequest.RESOURCE_VIDEO_CAPTURE,
+                    PermissionRequest.RESOURCE_AUDIO_CAPTURE,
+                ),
+                setOf(
+                    PermissionRequest.RESOURCE_VIDEO_CAPTURE,
+                    PermissionRequest.RESOURCE_AUDIO_CAPTURE,
+                ),
+            ),
+        )
+        assertTrue(
+            FaceTimePermissionPolicy.supportedWebResources(
+                arrayOf(PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID),
+                setOf(
+                    PermissionRequest.RESOURCE_VIDEO_CAPTURE,
+                    PermissionRequest.RESOURCE_AUDIO_CAPTURE,
+                ),
+            ).isEmpty(),
+        )
     }
 }

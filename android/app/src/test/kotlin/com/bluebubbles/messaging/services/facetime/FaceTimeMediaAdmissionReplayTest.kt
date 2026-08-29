@@ -81,6 +81,17 @@ class FaceTimeMediaAdmissionReplayTest {
         assertTrue(admitted.joined)
         assertEquals(FaceTimeJoinOutcome.MEDIA_CONNECTED, admitted.outcome)
 
+        repeat(FaceTimeConnectionProbePolicy.consecutiveStalledSamplesBeforeMediaLoss - 1) {
+            assertTrue(policy.recordMediaEvidence(
+                evidence(
+                    iceState = FaceTimeIceState.DISCONNECTED,
+                    remoteAudioTracks = 0,
+                    remoteVideoTracks = 0,
+                    mediaBytes = null,
+                    peerId = null,
+                ),
+            ).joined)
+        }
         val mediaLoss = policy.recordMediaEvidence(
             evidence(
                 iceState = FaceTimeIceState.DISCONNECTED,
@@ -91,7 +102,7 @@ class FaceTimeMediaAdmissionReplayTest {
             ),
         )
         assertFalse(mediaLoss.joined)
-        assertEquals(FaceTimeJoinOutcome.MEDIA_PENDING, mediaLoss.outcome)
+        assertEquals(FaceTimeJoinOutcome.MEDIA_FAILED, mediaLoss.outcome)
         assertTrue(policy.completedJoin)
         assertFalse(mediaLoss.retry)
     }

@@ -42,6 +42,19 @@ class FaceTimeMediaEvidenceParserTest {
     }
 
     @Test
+    fun parsesDecodedAndJitterBufferCountersSeparately() {
+        val evidence = FaceTimeMediaEvidenceParser.parse(
+            """{"iceState":"connected","remoteAudioTracks":1,"remoteVideoTracks":1,"mediaBytes":1000,"videoFramesDecoded":12,"audioSamplesReceived":4800,"audioConcealedSamples":300,"audioJitterBufferEmittedCount":5100}"""
+        )
+
+        assertEquals(12L, evidence?.videoFramesDecoded)
+        assertEquals(4800L, evidence?.audioSamplesReceived)
+        assertEquals(300L, evidence?.audioConcealedSamples)
+        assertEquals(4500L, evidence?.audioDecodedSamples)
+        assertEquals(5100L, evidence?.audioJitterBufferEmittedCount)
+    }
+
+    @Test
     fun malformedOuterOrInnerJsonReturnsUnavailable() {
         assertNull(FaceTimeMediaEvidenceParser.parse("{not-json"))
         assertNull(FaceTimeMediaEvidenceParser.parse(asEvaluateJavascriptString("{not-json")))

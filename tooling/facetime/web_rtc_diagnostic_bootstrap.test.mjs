@@ -4,6 +4,7 @@ import vm from "node:vm";
 import {
   createWebRtcDiagnosticHarness,
   loadProductionBootstrap,
+  loadProductionControlScript,
 } from "./web_rtc_diagnostic_harness.mjs";
 
 test("the production WebRTC bootstrap remains JavaScript-parseable", () => {
@@ -11,6 +12,22 @@ test("the production WebRTC bootstrap remains JavaScript-parseable", () => {
   assert.doesNotThrow(() => new vm.Script(bootstrap));
   assert.match(bootstrap, /RTCPeerConnection/);
   assert.match(bootstrap, /__obFaceTimeDiagnostics/);
+  assert.match(bootstrap, /window\.top !== window\.self/);
+});
+
+test("the production bridge is not installed in subframes", async () => {
+  const harness = await createWebRtcDiagnosticHarness([], { topLevel: false });
+
+  assert.equal(harness.window.__obFaceTimeDiagnostics, undefined);
+  assert.equal(harness.window.__obFaceTimeNativeEvent, undefined);
+});
+
+test("the production Join and End control scripts remain parseable", () => {
+  for (const propertyName of ["joinButtonScript", "endCallScript"]) {
+    assert.doesNotThrow(() => new vm.Script(loadProductionControlScript(propertyName)));
+  }
+  assert.match(loadProductionControlScript("endCallScript"), /candidates\.find/);
+  assert.match(loadProductionControlScript("endCallScript"), /getBoundingClientRect/);
 });
 
 test("a stale connected peer does not mask the current failed peer", async () => {
@@ -159,6 +176,56 @@ test("a reset counter is not considered advancing peer activity", async () => {
   assert.equal(snapshot.iceState, "checking");
 });
 
+test("decoded media advancement selects the rendering peer before transport bytes", async () => {
+  const harness = await createWebRtcDiagnosticHarness([
+    {
+      iceConnectionState: "connected",
+      stats: [{ type: "inbound-rtp", kind: "video", bytesReceived: 100, framesDecoded: 1 }],
+    },
+    {
+      iceConnectionState: "connected",
+      stats: [{ type: "inbound-rtp", kind: "video", bytesReceived: 1000, framesDecoded: 0 }],
+    },
+  ]);
+  harness.peers[0].addRemoteTrack(harness.createTrack("decoded-video", "video"));
+  await harness.snapshot();
+  harness.peers[0].stats = [
+    { type: "inbound-rtp", kind: "video", bytesReceived: 101, framesDecoded: 2 },
+  ];
+  harness.peers[1].stats = [
+    { type: "inbound-rtp", kind: "video", bytesReceived: 2000, framesDecoded: 0 },
+  ];
+
+  const snapshot = await harness.snapshot();
+
+  assert.equal(snapshot.peerId, 1);
+  assert.equal(snapshot.videoFramesDecoded, 2);
+});
+
+test("a newer connected tracked peer supersedes an older advancing peer", async () => {
+  const harness = await createWebRtcDiagnosticHarness([
+    {
+      iceConnectionState: "connected",
+      stats: [{ type: "inbound-rtp", kind: "video", bytesReceived: 100, framesDecoded: 1 }],
+    },
+    {
+      iceConnectionState: "connected",
+      stats: [{ type: "inbound-rtp", kind: "video", bytesReceived: 10, framesDecoded: 0 }],
+    },
+  ]);
+  harness.peers[0].addRemoteTrack(harness.createTrack("old-video", "video"));
+  harness.peers[1].addRemoteTrack(harness.createTrack("new-video", "video"));
+  await harness.snapshot();
+  harness.peers[0].stats = [
+    { type: "inbound-rtp", kind: "video", bytesReceived: 200, framesDecoded: 2 },
+  ];
+
+  const snapshot = await harness.snapshot();
+
+  assert.equal(snapshot.peerId, 2);
+  assert.equal(snapshot.videoFramesDecoded, 0);
+});
+
 test("the DOM diagnostic distinguishes visible, hidden, and disabled Join/Rejoin/Leave controls", async () => {
   const harness = await createWebRtcDiagnosticHarness([
     { iceConnectionState: "connected", stats: harnessStats(10) },
@@ -212,6 +279,49 @@ test("the DOM diagnostic follows Join/Rejoin/Leave mutations between snapshots",
   });
 });
 
+test("fixed-position controls remain visible without an offset parent", async () => {
+  const harness = await createWebRtcDiagnosticHarness([
+    { iceConnectionState: "connected", stats: harnessStats(10) },
+  ]);
+  harness.window.document.querySelectorAll = () => [
+    button("Leave", {
+      offsetParent: null,
+      rectWidth: 120,
+      rectHeight: 48,
+      computedStyle: { display: "block", visibility: "visible", opacity: "1", position: "fixed" },
+    }),
+  ];
+
+  assert.equal((await harness.snapshot()).webControls.leave.visible, true);
+});
+
+test("the mutation observer reports Leave visibility changes once per state", async () => {
+  const harness = await createWebRtcDiagnosticHarness([
+    { iceConnectionState: "connected", stats: harnessStats(10) },
+  ]);
+  let buttons = [];
+  harness.window.document.querySelectorAll = () => buttons;
+
+  assert.deepEqual(
+    harness.nativeEvents.map((event) => [event.event, event.visible]),
+    [["web-leave-visibility", "false"]],
+  );
+  buttons = [button("Leave", { offsetParent: {} })];
+  harness.triggerMutation();
+  harness.triggerMutation();
+  buttons = [];
+  harness.triggerMutation();
+
+  assert.deepEqual(
+    harness.nativeEvents.map((event) => [event.event, event.visible]),
+    [
+      ["web-leave-visibility", "false"],
+      ["web-leave-visibility", "true"],
+      ["web-leave-visibility", "false"],
+    ],
+  );
+});
+
 test("duplicate bootstrap installation does not double-wrap new peers", async () => {
   const harness = await createWebRtcDiagnosticHarness();
   const diagnostics = harness.window.__obFaceTimeDiagnostics;
@@ -232,13 +342,27 @@ function harnessStats(inboundBytes) {
   return [{ type: "inbound-rtp", bytesReceived: inboundBytes }];
 }
 
-function button(text, { offsetParent, disabled = false, ariaDisabled = false }) {
+function button(
+  text,
+  {
+    offsetParent,
+    disabled = false,
+    ariaDisabled = false,
+    rectWidth = offsetParent === null ? 0 : 100,
+    rectHeight = offsetParent === null ? 0 : 40,
+    computedStyle = { display: "block", visibility: "visible", opacity: "1" },
+  },
+) {
   return {
     innerText: text,
     textContent: text,
     offsetParent,
     hidden: false,
     disabled,
+    computedStyle,
+    getBoundingClientRect() {
+      return { width: rectWidth, height: rectHeight };
+    },
     getAttribute(name) {
       if (name === "aria-disabled") return ariaDisabled ? "true" : null;
       if (name === "aria-hidden") return null;

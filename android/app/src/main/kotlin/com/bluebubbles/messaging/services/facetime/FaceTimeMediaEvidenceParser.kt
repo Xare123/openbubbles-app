@@ -26,6 +26,12 @@ internal object FaceTimeMediaEvidenceParser {
                 remoteVideoTracks = parseBoundedInt(fieldValue(decodedPayload, "remoteVideoTracks")),
                 mediaBytes = parseNullableBoundedLong(fieldValue(decodedPayload, "mediaBytes")),
                 webLeaveVisible = fieldValue(decodedPayload, "webLeaveVisible")?.toBoolean() ?: false,
+                videoFramesDecoded = parseNullableBoundedLong(fieldValue(decodedPayload, "videoFramesDecoded")),
+                audioSamplesReceived = parseNullableBoundedLong(fieldValue(decodedPayload, "audioSamplesReceived")),
+                audioConcealedSamples = parseNullableBoundedLong(fieldValue(decodedPayload, "audioConcealedSamples")),
+                audioJitterBufferEmittedCount = parseNullableBoundedLong(
+                    fieldValue(decodedPayload, "audioJitterBufferEmittedCount"),
+                ),
             )
         } catch (_: Exception) {
             null

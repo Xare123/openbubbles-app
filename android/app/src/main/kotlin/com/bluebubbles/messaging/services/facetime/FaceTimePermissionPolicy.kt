@@ -11,4 +11,12 @@ internal object FaceTimePermissionPolicy {
         permissionCount > 0 &&
             permissionCount == grantResults.size &&
             grantResults.all { it == grantedResult }
+
+    fun supportedWebResources(
+        requestedResources: Array<String>,
+        supportedResources: Set<String>,
+    ): Array<String> = requestedResources
+        .filter(supportedResources::contains)
+        .distinct()
+        .toTypedArray()
 }
