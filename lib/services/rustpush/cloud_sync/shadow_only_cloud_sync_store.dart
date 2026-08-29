@@ -165,6 +165,7 @@ final class ShadowOnlyCloudSyncStore
     required int maximumDeferredAttempts,
     required Duration maximumDeferredAge,
     required CloudCoordinatorLeaseFence leaseFence,
+    bool allowLegacyReadOnlyTombstoneAcknowledgement = false,
   }) => _blocked();
 
   @override

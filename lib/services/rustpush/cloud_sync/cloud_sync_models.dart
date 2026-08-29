@@ -589,14 +589,45 @@ class CloudSyncCheckpoint {
 /// already committed before projection status became independently durable.
 class CloudInboxRetentionRecovery {
   const CloudInboxRetentionRecovery({
-    this.retainedUnprojected = 0,
-    this.tombstoneReadOnlyAcknowledged = 0,
-  });
+    required this.retainedUnprojected,
+    required this.tombstoneReadOnlyAcknowledged,
+    required this.previousAppliedSequence,
+    required this.recomputedAppliedSequence,
+    required this.legacyFloorInflated,
+    required this.recoveryComplete,
+    this.firstUnresolvedSequence,
+    this.firstUnresolvedStatus,
+    this.firstUnresolvedCategory,
+  }) : assert(retainedUnprojected >= 0),
+       assert(tombstoneReadOnlyAcknowledged >= 0),
+       assert(previousAppliedSequence >= 0),
+       assert(recomputedAppliedSequence >= 0),
+       assert(
+         (firstUnresolvedSequence == null) == (firstUnresolvedStatus == null),
+       ),
+       assert(recoveryComplete == (firstUnresolvedSequence == null));
 
   final int retainedUnprojected;
 
   /// Subset of [retainedUnprojected] that are read-only tombstones.
   final int tombstoneReadOnlyAcknowledged;
+
+  /// Persisted projection floor before journal reconciliation.
+  final int previousAppliedSequence;
+
+  /// Largest contiguous terminal prefix proven from sequence one.
+  final int recomputedAppliedSequence;
+
+  /// Whether the persisted floor crossed a non-terminal journal row.
+  final bool legacyFloorInflated;
+
+  /// First row that still blocks projection, if any.
+  final int? firstUnresolvedSequence;
+  final CloudInboxStatus? firstUnresolvedStatus;
+  final CloudFailureCategory? firstUnresolvedCategory;
+
+  /// True only when every fetched row has a durable terminal disposition.
+  final bool recoveryComplete;
 }
 
 class CloudOutboxSubmissionIdentity {

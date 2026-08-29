@@ -130,6 +130,9 @@ void main() {
       'preflight_oversized_record',
       'preflight_unknown',
       'preflight_unsupported_record_type',
+      'retained_projection_incomplete',
+      'retained_projection_authorization_changed',
+      'messages_cloud_tombstone_projection_unavailable',
       'semantic_parent_missing',
     };
     for (final code in codes) {

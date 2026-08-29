@@ -325,6 +325,7 @@ class InMemoryCloudSyncStore
     required int maximumDeferredAttempts,
     required Duration maximumDeferredAge,
     required CloudCoordinatorLeaseFence leaseFence,
+    bool allowLegacyReadOnlyTombstoneAcknowledgement = false,
   }) {
     return _lock.synchronized(() async {
       _requireActiveCoordinatorLeaseLocked(scope, leaseFence, now);
@@ -342,18 +343,44 @@ class InMemoryCloudSyncStore
         );
       }
 
+      if (checkpoint.lastAppliedSequence > checkpoint.fetchedSequence) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'inbox_retention_checkpoint_invalid',
+        );
+      }
+      final previousAppliedSequence = checkpoint.lastAppliedSequence;
+      var terminalPrefix = 0;
+      for (final entry in rows) {
+        if (!_isTerminalInboxStatus(entry.status)) break;
+        terminalPrefix = entry.sequence;
+      }
+      final legacyAppliedFloorInflated =
+          checkpoint.pendingBatchId == null &&
+          checkpoint.lastAppliedSequence > terminalPrefix;
+
       var retained = 0;
       var tombstones = 0;
       for (final entry in rows) {
+        final legacyReadOnlyTombstone =
+            allowLegacyReadOnlyTombstoneAcknowledgement &&
+            legacyAppliedFloorInflated &&
+            entry.sequence <= checkpoint.lastAppliedSequence &&
+            entry.lastFailure == CloudFailureCategory.conflict &&
+            entry.change.isTombstone &&
+            entry.change.type == CloudChangeType.delete &&
+            entry.change.preflightFailure == null &&
+            entry.change.preflightCode == null;
         if (entry.status != CloudInboxStatus.quarantined ||
-            !_mayRetainUnprojected(
-              entry,
-              category: entry.lastFailure,
-              now: now,
-              maximumDeferredAttempts: maximumDeferredAttempts,
-              maximumDeferredAge: maximumDeferredAge,
-              includeCurrentAttempt: false,
-            )) {
+            (!legacyReadOnlyTombstone &&
+                !_mayRetainUnprojected(
+                  entry,
+                  category: entry.lastFailure,
+                  now: now,
+                  maximumDeferredAttempts: maximumDeferredAttempts,
+                  maximumDeferredAge: maximumDeferredAge,
+                  includeCurrentAttempt: false,
+                ))) {
           continue;
         }
         _inbox[scope.storageKey]![entry.sequence] = entry.copyWith(
@@ -364,10 +391,31 @@ class InMemoryCloudSyncStore
         retained++;
         if (entry.change.isTombstone) tombstones++;
       }
-      _advanceContiguousAppliedPosition(scope);
+      final recomputedAppliedSequence = _recomputeContiguousAppliedPosition(
+        scope,
+      );
+      final reconciledRows =
+          (_inbox[scope.storageKey]?.values ?? const <CloudInboxEntry>[])
+              .where((entry) => entry.generation == checkpoint.generation)
+              .toList()
+            ..sort((left, right) => left.sequence.compareTo(right.sequence));
+      CloudInboxEntry? firstUnresolved;
+      for (final entry in reconciledRows) {
+        if (!_isTerminalInboxStatus(entry.status)) {
+          firstUnresolved = entry;
+          break;
+        }
+      }
       return CloudInboxRetentionRecovery(
         retainedUnprojected: retained,
         tombstoneReadOnlyAcknowledged: tombstones,
+        previousAppliedSequence: previousAppliedSequence,
+        recomputedAppliedSequence: recomputedAppliedSequence,
+        legacyFloorInflated: legacyAppliedFloorInflated,
+        firstUnresolvedSequence: firstUnresolved?.sequence,
+        firstUnresolvedStatus: firstUnresolved?.status,
+        firstUnresolvedCategory: firstUnresolved?.lastFailure,
+        recoveryComplete: firstUnresolved == null,
       );
     });
   }
@@ -1328,6 +1376,30 @@ class InMemoryCloudSyncStore
       checkpoint = checkpoint.copyWith(lastAppliedSequence: appliedThrough);
       _checkpoints[scope.storageKey] = checkpoint;
     }
+    _promotePendingFetchedTokenIfTerminal(scope, checkpoint);
+  }
+
+  int _recomputeContiguousAppliedPosition(CloudSyncScope scope) {
+    var checkpoint = _checkpoint(scope);
+    final entries = _inbox[scope.storageKey];
+    var next = 1;
+    while (_isTerminalInboxStatus(entries?[next]?.status)) {
+      next++;
+    }
+    final appliedThrough = next - 1;
+    if (appliedThrough != checkpoint.lastAppliedSequence) {
+      checkpoint = checkpoint.copyWith(lastAppliedSequence: appliedThrough);
+      _checkpoints[scope.storageKey] = checkpoint;
+    }
+    _promotePendingFetchedTokenIfTerminal(scope, checkpoint);
+    return appliedThrough;
+  }
+
+  void _promotePendingFetchedTokenIfTerminal(
+    CloudSyncScope scope,
+    CloudSyncCheckpoint checkpoint,
+  ) {
+    final entries = _inbox[scope.storageKey];
     final pendingBatchId = checkpoint.pendingBatchId;
     if (pendingBatchId == null) return;
     if (checkpoint.lastAppliedSequence != checkpoint.fetchedSequence) return;

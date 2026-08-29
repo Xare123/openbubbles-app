@@ -141,6 +141,364 @@ void main() {
     );
   }
 
+  CloudSyncScope messagesCloudScope(
+    String zone, {
+    String account = testAccountFingerprintA,
+  }) {
+    return CloudSyncScope(
+      accountFingerprint: account,
+      container: 'com.apple.messages.cloud',
+      database: 'private',
+      zone: zone,
+      streamKind: CloudSyncStreamKind.messages,
+      schemaVersion: 2,
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+  }
+
+  Future<void> seedCompletedAppliedMessagesCloudScope(
+    CloudSyncScope scope,
+  ) async {
+    await journal(
+      batch(
+        scope,
+        batchId: 'completed-${scope.zone}',
+        token: 'completed-token-${scope.zone}',
+        changes: [testChange(1)],
+      ),
+    );
+    await store.markInboxApplied(
+      scope,
+      sequence: 1,
+      now: testEpoch,
+      leaseFence: coordinatorFences[scope.storageKey]!,
+    );
+    await store.recordPullSuccess(scope, now: testEpoch);
+  }
+
+  Future<void> seedCompleteMessagesCloudAccount({
+    String account = testAccountFingerprintA,
+  }) async {
+    for (final zone in const [
+      'chatManateeZone',
+      'messageManateeZone',
+      'attachmentManateeZone',
+    ]) {
+      await seedCompletedAppliedMessagesCloudScope(
+        messagesCloudScope(zone, account: account),
+      );
+    }
+  }
+
+  Future<CloudOutboxOperation> enqueueMessagesCloudOutbound() async {
+    return store.enqueueOutboxMutation(
+      draft(messagesCloudScope('messageManateeZone'), 9901),
+    );
+  }
+
+  Future<void> expectMessagesCloudProjectionBlocked(
+    Future<Object?> operation,
+  ) async {
+    await expectLater(
+      operation,
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode,
+          'safeCode',
+          'messages_cloud_account_projection_incomplete',
+        ),
+      ),
+    );
+  }
+
+  test(
+    'production Messages in iCloud outbound leasing blocks when a sibling checkpoint is missing',
+    () async {
+      await seedCompletedAppliedMessagesCloudScope(
+        messagesCloudScope('messageManateeZone'),
+      );
+      final operation = await enqueueMessagesCloudOutbound();
+
+      await expectMessagesCloudProjectionBlocked(
+        store.leaseEligibleOutbox(
+          messagesCloudScope('messageManateeZone'),
+          now: testEpoch,
+          limit: 1,
+          leaseId: 'messages-cloud-missing-sibling',
+          leaseDuration: const Duration(minutes: 1),
+          allowedActions: const {CloudOutboxAction.save},
+        ),
+      );
+      expect(
+        objectBox
+            .box<CloudOutboxOperationEntity>()
+            .getAll()
+            .singleWhere((row) => row.operationId == operation.operationId)
+            .state,
+        CloudOutboxStatus.pending.index,
+      );
+    },
+  );
+
+  test(
+    'production Messages in iCloud outbound leasing allows three completed applied journals',
+    () async {
+      await seedCompleteMessagesCloudAccount();
+      final operation = await enqueueMessagesCloudOutbound();
+
+      final leased = await store.leaseEligibleOutbox(
+        messagesCloudScope('messageManateeZone'),
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'messages-cloud-all-applied',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+
+      expect(leased.map((value) => value.operationId), [operation.operationId]);
+    },
+  );
+
+  test(
+    'production Messages in iCloud outbound leasing blocks pending quarantined and retained siblings',
+    () async {
+      const cases = [
+        (label: 'pending', status: CloudInboxStatus.pending),
+        (label: 'quarantined', status: CloudInboxStatus.quarantined),
+        (label: 'retained', status: CloudInboxStatus.retainedUnprojected),
+      ];
+
+      for (final value in cases) {
+        final account = switch (value.label) {
+          'pending' => testAccountFingerprintA,
+          'quarantined' => testAccountFingerprintB,
+          _ => List.filled(43, 'C').join(),
+        };
+        await seedCompleteMessagesCloudAccount(account: account);
+        final sibling = messagesCloudScope(
+          'attachmentManateeZone',
+          account: account,
+        );
+        await journal(
+          batch(
+            sibling,
+            batchId: 'unsafe-${value.label}',
+            token: 'unsafe-token-${value.label}',
+            changes: [testChange(2)],
+          ),
+        );
+        final fence = coordinatorFences[sibling.storageKey]!;
+        if (value.status == CloudInboxStatus.quarantined) {
+          await store.quarantineInbox(
+            sibling,
+            sequence: 2,
+            category: CloudFailureCategory.malformedRecord,
+            now: testEpoch,
+            leaseFence: fence,
+          );
+        } else if (value.status == CloudInboxStatus.retainedUnprojected) {
+          await store.markInboxRetainedUnprojected(
+            sibling,
+            sequence: 2,
+            category: CloudFailureCategory.unsupportedService,
+            now: testEpoch,
+            maximumDeferredAttempts: 8,
+            maximumDeferredAge: const Duration(days: 3),
+            leaseFence: fence,
+          );
+        }
+
+        final primary = messagesCloudScope(
+          'messageManateeZone',
+          account: account,
+        );
+        final operation = await store.enqueueOutboxMutation(
+          draft(primary, 9902 + cases.indexOf(value)),
+        );
+        await expectMessagesCloudProjectionBlocked(
+          store.leaseEligibleOutbox(
+            primary,
+            now: testEpoch,
+            limit: 1,
+            leaseId: 'messages-cloud-${value.label}',
+            leaseDuration: const Duration(minutes: 1),
+            allowedActions: const {CloudOutboxAction.save},
+          ),
+        );
+        expect(
+          objectBox
+              .box<CloudOutboxOperationEntity>()
+              .getAll()
+              .singleWhere((row) => row.operationId == operation.operationId)
+              .state,
+          CloudOutboxStatus.pending.index,
+          reason: value.label,
+        );
+      }
+    },
+  );
+
+  test(
+    'read-only retained tombstone explicitly blocks Messages in iCloud writes',
+    () async {
+      await seedCompleteMessagesCloudAccount();
+      final sibling = messagesCloudScope('attachmentManateeZone');
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final retainedTombstone =
+          inboxBox.getAll().singleWhere(
+              (row) =>
+                  row.accountFingerprint == sibling.accountFingerprint &&
+                  row.zone == sibling.zone,
+            )
+            ..status = CloudInboxStatus.retainedUnprojected.index
+            ..changeType = CloudChangeType.delete.name
+            ..isTombstone = true
+            ..etagHash = null
+            ..encryptedPayloadRef = null
+            ..payloadSha256 = null
+            ..failureCategory = CloudFailureCategory.conflict.name;
+      inboxBox.put(retainedTombstone);
+      final operation = await enqueueMessagesCloudOutbound();
+
+      await expectLater(
+        store.leaseEligibleOutbox(
+          messagesCloudScope('messageManateeZone'),
+          now: testEpoch,
+          limit: 1,
+          leaseId: 'messages-cloud-retained-tombstone',
+          leaseDuration: const Duration(minutes: 1),
+          allowedActions: const {CloudOutboxAction.save},
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'messages_cloud_tombstone_projection_unavailable',
+          ),
+        ),
+      );
+      expect(
+        inboxBox.get(retainedTombstone.id)!.status,
+        CloudInboxStatus.retainedUnprojected.index,
+      );
+      expect(
+        objectBox
+            .box<CloudOutboxOperationEntity>()
+            .getAll()
+            .singleWhere((row) => row.operationId == operation.operationId)
+            .state,
+        CloudOutboxStatus.pending.index,
+      );
+    },
+  );
+
+  test(
+    'incomplete Messages in iCloud checkpoints for another account do not block leasing',
+    () async {
+      await seedCompleteMessagesCloudAccount();
+      final otherSibling = messagesCloudScope(
+        'chatManateeZone',
+        account: testAccountFingerprintB,
+      );
+      await journal(
+        batch(
+          otherSibling,
+          batchId: 'other-account-pending',
+          token: 'other-account-token',
+          changes: [testChange(1)],
+        ),
+      );
+
+      final operation = await enqueueMessagesCloudOutbound();
+      final leased = await store.leaseEligibleOutbox(
+        messagesCloudScope('messageManateeZone'),
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'messages-cloud-other-account',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+
+      expect(leased.map((value) => value.operationId), [operation.operationId]);
+    },
+  );
+
+  test(
+    'generic semantic scope keeps legacy same-scope outbound leasing behavior',
+    () async {
+      final scope = testScope(
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      await seedCompletedAppliedMessagesCloudScope(
+        CloudSyncScope(
+          accountFingerprint: scope.accountFingerprint,
+          container: scope.container,
+          database: scope.database,
+          zone: scope.zone,
+          streamKind: scope.streamKind,
+          schemaVersion: scope.schemaVersion,
+          persistenceLane: scope.persistenceLane,
+        ),
+      );
+      final operation = await store.enqueueOutboxMutation(draft(scope, 9906));
+
+      final leased = await store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'generic-semantic-scope',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+
+      expect(leased.map((value) => value.operationId), [operation.operationId]);
+    },
+  );
+
+  test(
+    'Messages in iCloud submission start rechecks siblings after a valid lease',
+    () async {
+      await seedCompleteMessagesCloudAccount();
+      final primary = messagesCloudScope('messageManateeZone');
+      final operation = await store.enqueueOutboxMutation(draft(primary, 9907));
+      final leased = await store.leaseEligibleOutbox(
+        primary,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'messages-cloud-toctou',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      );
+      expect(leased.single.operationId, operation.operationId);
+
+      final sibling = messagesCloudScope('attachmentManateeZone');
+      await journal(
+        batch(
+          sibling,
+          batchId: 'unsafe-after-valid-lease',
+          token: 'unsafe-after-valid-lease-token',
+          changes: [testChange(2)],
+        ),
+      );
+
+      await expectMessagesCloudProjectionBlocked(
+        store.markOutboxSubmissionStarted(
+          primary,
+          leaseId: 'messages-cloud-toctou',
+          submissionIdentity: testSubmissionIdentity([operation.operationId]),
+          now: testEpoch,
+        ),
+      );
+      final row = objectBox
+          .box<CloudOutboxOperationEntity>()
+          .getAll()
+          .singleWhere((value) => value.operationId == operation.operationId);
+      expect(row.state, CloudOutboxStatus.leased.index);
+      expect(row.appleRequestUuid, isNull);
+      expect(row.appleOperationUuid, isNull);
+    },
+  );
+
   test('persists content-free preflight reason across reopen', () async {
     final scope = testScope();
     await journal(
@@ -239,7 +597,7 @@ void main() {
         token: 'legacy-observed-advanced-token',
         changes: [
           for (var sequence = 1; sequence <= 600; sequence++)
-            testChange(sequence),
+            testChange(sequence, tombstone: sequence >= 56 && sequence <= 128),
         ],
       ),
       now: testEpoch,
@@ -253,7 +611,8 @@ void main() {
       if (row.fetchSequence >= 56 && row.fetchSequence <= 128) {
         row
           ..status = CloudInboxStatus.quarantined.index
-          ..failureCategory = CloudFailureCategory.conflict.name;
+          ..failureCategory = CloudFailureCategory.conflict.name
+          ..retryCount = 1;
       } else if (row.fetchSequence >= 129 && row.fetchSequence <= 251) {
         row.status = CloudInboxStatus.retainedUnprojected.index;
       } else {
@@ -311,7 +670,294 @@ void main() {
       ),
     );
     expect(await store.hasNonterminalOutbox(scope), isTrue);
+
+    String evidenceFingerprint(CloudInboxChangeEntity row) {
+      return sha256
+          .convert(
+            utf8.encode(
+              jsonEncode(<Object?>[
+                row.changeKey,
+                row.changeIdHash,
+                row.scopeKey,
+                row.accountFingerprint,
+                row.zone,
+                row.serverRecordIdHash,
+                row.etagHash,
+                row.changeType,
+                row.encryptedServerRecordId,
+                row.protectedSystemFieldsRef,
+                row.encryptedPayloadRef,
+                row.payloadSha256,
+                row.batchId,
+                row.generation,
+                row.fetchSequence,
+                row.isTombstone,
+                row.preflightCategory,
+                row.preflightCode,
+                row.failureCategory,
+                row.retryCount,
+                row.serverModifiedAtMs,
+                row.createdAtMs,
+              ]),
+            ),
+          )
+          .toString();
+    }
+
+    final evidenceBefore = <int, String>{
+      for (final row in rows.where(
+        (row) => row.fetchSequence >= 56 && row.fetchSequence <= 128,
+      ))
+        row.fetchSequence: evidenceFingerprint(row),
+    };
+    final snapshotsBefore = objectBox
+        .box<CloudSemanticSnapshotEntity>()
+        .count();
+    final mapsBefore = objectBox.box<CloudRecordMapEntity>().count();
+    final replaysBefore = objectBox.box<CloudSemanticReplayEntity>().count();
+    final outboxBefore = objectBox.box<CloudOutboxOperationEntity>().count();
+    final generationBefore = observed.generation;
+    final recovered = await store.recoverRetainedInboxBarriers(
+      scope,
+      now: testEpoch,
+      maximumDeferredAttempts: 8,
+      maximumDeferredAge: const Duration(days: 3),
+      leaseFence: coordinatorFences[scope.storageKey]!,
+      allowLegacyReadOnlyTombstoneAcknowledgement: true,
+    );
+
+    expect(recovered.retainedUnprojected, 73);
+    expect(recovered.tombstoneReadOnlyAcknowledged, 73);
+    expect(recovered.previousAppliedSequence, 600);
+    expect(recovered.recomputedAppliedSequence, 600);
+    expect(recovered.legacyFloorInflated, isTrue);
+    expect(recovered.recoveryComplete, isTrue);
+    expect(recovered.firstUnresolvedSequence, isNull);
+    expect(recovered.firstUnresolvedStatus, isNull);
+    expect(recovered.firstUnresolvedCategory, isNull);
+
+    final repairedCheckpoint = await store.readCheckpoint(scope);
+    expect(repairedCheckpoint.generation, generationBefore);
+    expect(repairedCheckpoint.fetchedToken, 'legacy-observed-advanced-token');
+    expect(repairedCheckpoint.fetchedSequence, 600);
+    expect(repairedCheckpoint.lastAppliedSequence, 600);
+    expect(repairedCheckpoint.pendingBatchId, isNull);
+    expect(repairedCheckpoint.hasUnmarkedPendingInbox, isFalse);
+    final repairedRows = inboxBox.getAll();
+    expect(
+      repairedRows.where((row) => row.status == CloudInboxStatus.applied.index),
+      hasLength(404),
+    );
+    expect(
+      repairedRows.where(
+        (row) => row.status == CloudInboxStatus.retainedUnprojected.index,
+      ),
+      hasLength(196),
+    );
+    expect(
+      repairedRows.where(
+        (row) => row.status == CloudInboxStatus.quarantined.index,
+      ),
+      isEmpty,
+    );
+    expect(<int, String>{
+      for (final row in repairedRows.where(
+        (row) => row.fetchSequence >= 56 && row.fetchSequence <= 128,
+      ))
+        row.fetchSequence: evidenceFingerprint(row),
+    }, evidenceBefore);
+    expect(
+      objectBox.box<CloudSemanticSnapshotEntity>().count(),
+      snapshotsBefore,
+    );
+    expect(objectBox.box<CloudRecordMapEntity>().count(), mapsBefore);
+    expect(objectBox.box<CloudSemanticReplayEntity>().count(), replaysBefore);
+    expect(objectBox.box<CloudOutboxOperationEntity>().count(), outboxBefore);
+
+    final leased = await store.leaseEligibleOutbox(
+      scope,
+      now: testEpoch,
+      limit: 1,
+      leaseId: 'legacy-observed-repaired-lease',
+      leaseDuration: const Duration(minutes: 1),
+      allowedActions: const {CloudOutboxAction.save},
+    );
+    expect(leased, hasLength(1));
+
+    final repeated = await store.recoverRetainedInboxBarriers(
+      scope,
+      now: testEpoch,
+      maximumDeferredAttempts: 8,
+      maximumDeferredAge: const Duration(days: 3),
+      leaseFence: coordinatorFences[scope.storageKey]!,
+      allowLegacyReadOnlyTombstoneAcknowledgement: true,
+    );
+    expect(repeated.retainedUnprojected, 0);
+    expect(repeated.tombstoneReadOnlyAcknowledged, 0);
+    expect(repeated.legacyFloorInflated, isFalse);
+    expect(repeated.recomputedAppliedSequence, 600);
+    expect(repeated.recoveryComplete, isTrue);
+
+    await reopen();
+    final durableCheckpoint = await store.readCheckpoint(scope);
+    expect(durableCheckpoint.fetchedToken, 'legacy-observed-advanced-token');
+    expect(durableCheckpoint.lastAppliedSequence, 600);
+    expect(durableCheckpoint.hasUnmarkedPendingInbox, isFalse);
   });
+
+  test(
+    'legacy tombstone repair rejects disabled policy, preflight, and replay evidence',
+    () async {
+      const cases = [
+        (
+          label: 'policy-disabled',
+          account: testAccountFingerprintA,
+          streamKind: CloudSyncStreamKind.messages,
+          allow: false,
+          preflight: false,
+          replay: false,
+        ),
+        (
+          label: 'preflight-present',
+          account: testAccountFingerprintB,
+          streamKind: CloudSyncStreamKind.messages,
+          allow: true,
+          preflight: true,
+          replay: false,
+        ),
+        (
+          label: 'semantic-replay-present',
+          account: testAccountFingerprintA,
+          streamKind: CloudSyncStreamKind.profiles,
+          allow: true,
+          preflight: false,
+          replay: true,
+        ),
+      ];
+
+      for (final value in cases) {
+        final scope = testScope(
+          account: value.account,
+          streamKind: value.streamKind,
+          persistenceLane: CloudSyncPersistenceLane.semantic,
+        );
+        await journalShadow(
+          batch(
+            scope,
+            batchId: 'legacy-guard-${value.label}',
+            token: 'legacy-guard-token-${value.label}',
+            changes: [
+              testChange(1),
+              testChange(
+                2,
+                tombstone: true,
+                preflightFailure: value.preflight
+                    ? CloudFailureCategory.malformedRecord
+                    : null,
+                preflightCode: value.preflight
+                    ? CloudPreflightCode.invalidChangeShape
+                    : null,
+              ),
+            ],
+          ),
+          now: testEpoch,
+          budget: CloudShadowJournalBudget(),
+        );
+
+        final checkpointBox = objectBox.box<CloudSyncCheckpointEntity>();
+        final checkpoint = checkpointBox.getAll().singleWhere(
+          (row) =>
+              row.accountFingerprint == value.account &&
+              row.streamKind == value.streamKind.name,
+        );
+        final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+        final rows =
+            inboxBox
+                .getAll()
+                .where((row) => row.scopeKey == checkpoint.checkpointKey)
+                .toList()
+              ..sort(
+                (left, right) =>
+                    left.fetchSequence.compareTo(right.fetchSequence),
+              );
+        rows.first.status = CloudInboxStatus.applied.index;
+        rows.last
+          ..status = CloudInboxStatus.quarantined.index
+          ..failureCategory = CloudFailureCategory.conflict.name
+          ..retryCount = 1;
+        inboxBox.putMany(rows);
+
+        checkpoint
+          ..appliedSequence = 2
+          ..pendingBatchId = null
+          ..pendingFetchedTokenCiphertext = null;
+        checkpointBox.put(checkpoint);
+
+        if (value.replay) {
+          objectBox.box<CloudSemanticReplayEntity>().put(
+            CloudSemanticReplayEntity(
+              replayKey: 'legacy-guard-replay-${value.label}',
+              scopeGenerationKey: 'legacy-guard-generation-${value.label}',
+              scopeKey: rows.last.scopeKey,
+              accountFingerprint: value.account,
+              container: scope.container,
+              database: scope.database,
+              zone: scope.zone,
+              streamKind: value.streamKind.name,
+              schemaVersion: scope.schemaVersion,
+              generation: 1,
+              changeIdHash: rows.last.changeIdHash,
+              serverRecordIdHash: rows.last.serverRecordIdHash,
+              inboxSequence: 2,
+              changeType: CloudChangeType.delete.name,
+              terminalOutcome: 'quarantined',
+              updatedAtMs: testEpoch.millisecondsSinceEpoch,
+            ),
+          );
+        }
+
+        final recovered = await store.recoverRetainedInboxBarriers(
+          scope,
+          now: testEpoch,
+          maximumDeferredAttempts: 8,
+          maximumDeferredAge: const Duration(days: 3),
+          leaseFence: coordinatorFences[scope.storageKey]!,
+          allowLegacyReadOnlyTombstoneAcknowledgement: value.allow,
+        );
+
+        expect(recovered.retainedUnprojected, 0, reason: value.label);
+        expect(recovered.tombstoneReadOnlyAcknowledged, 0, reason: value.label);
+        expect(recovered.previousAppliedSequence, 2, reason: value.label);
+        expect(recovered.recomputedAppliedSequence, 1, reason: value.label);
+        expect(recovered.legacyFloorInflated, isTrue, reason: value.label);
+        expect(recovered.recoveryComplete, isFalse, reason: value.label);
+        expect(recovered.firstUnresolvedSequence, 2, reason: value.label);
+        expect(
+          recovered.firstUnresolvedStatus,
+          CloudInboxStatus.quarantined,
+          reason: value.label,
+        );
+        expect(
+          recovered.firstUnresolvedCategory,
+          CloudFailureCategory.conflict,
+          reason: value.label,
+        );
+        final durable = await store.readCheckpoint(scope);
+        expect(durable.lastAppliedSequence, 1, reason: value.label);
+        expect(
+          durable.fetchedToken,
+          'legacy-guard-token-${value.label}',
+          reason: value.label,
+        );
+        expect(durable.hasUnmarkedPendingInbox, isTrue, reason: value.label);
+        expect(
+          inboxBox.get(rows.last.id)!.status,
+          CloudInboxStatus.quarantined.index,
+          reason: value.label,
+        );
+      }
+    },
+  );
 
   test(
     'legacy deterministic quarantine becomes terminal without losing evidence',

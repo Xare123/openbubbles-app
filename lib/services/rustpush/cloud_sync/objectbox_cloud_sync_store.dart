@@ -37,6 +37,7 @@ class ObjectBoxCloudSyncStore
        _recordMaps = store.box<CloudRecordMapEntity>(),
        _attachmentMaterializations = store
            .box<CloudAttachmentMaterializationEntity>(),
+       _semanticReplays = store.box<CloudSemanticReplayEntity>(),
        _runs = store.box<CloudSyncRunEntity>();
 
   factory ObjectBoxCloudSyncStore.fromDatabase({
@@ -46,6 +47,13 @@ class ObjectBoxCloudSyncStore
   }
 
   static const int _maximumRetainedRunsPerScope = 256;
+  static const String _messagesCloudContainer = 'com.apple.messages.cloud';
+  static const String _messagesCloudDatabase = 'private';
+  static const Set<String> _messagesCloudSemanticZones = <String>{
+    'chatManateeZone',
+    'messageManateeZone',
+    'attachmentManateeZone',
+  };
 
   final Store _store;
   final CloudSyncProtector _protector;
@@ -57,6 +65,7 @@ class ObjectBoxCloudSyncStore
   final Box<CloudOutboxOperationEntity> _outbox;
   final Box<CloudRecordMapEntity> _recordMaps;
   final Box<CloudAttachmentMaterializationEntity> _attachmentMaterializations;
+  final Box<CloudSemanticReplayEntity> _semanticReplays;
   final Box<CloudSyncRunEntity> _runs;
 
   @override
@@ -833,6 +842,7 @@ class ObjectBoxCloudSyncStore
     required int maximumDeferredAttempts,
     required Duration maximumDeferredAge,
     required CloudCoordinatorLeaseFence leaseFence,
+    bool allowLegacyReadOnlyTombstoneAcknowledgement = false,
   }) async {
     return _store.runInTransaction(TxMode.write, () {
       final transactionNowMs = _nowMs();
@@ -863,6 +873,26 @@ class ObjectBoxCloudSyncStore
       )) {
         throw _storageFailure('inbox_retention_journal_scope_mismatch');
       }
+      if (checkpoint.appliedSequence > checkpoint.fetchedSequence) {
+        throw _storageFailure('inbox_retention_checkpoint_invalid');
+      }
+      final previousAppliedSequence = checkpoint.appliedSequence;
+      var terminalPrefix = 0;
+      for (final row in rows) {
+        if (!_isAppliedInboxStatus(_inboxStatusFromInt(row.status))) break;
+        terminalPrefix = row.fetchSequence;
+      }
+      final legacyAppliedFloorInflated =
+          checkpoint.pendingBatchId == null &&
+          checkpoint.appliedSequence > terminalPrefix;
+      final replayedSequences =
+          allowLegacyReadOnlyTombstoneAcknowledgement &&
+              legacyAppliedFloorInflated
+          ? _semanticReplayInboxSequencesLocked(
+              scope,
+              generation: checkpoint.generation,
+            )
+          : const <int>{};
 
       final effectiveNow = DateTime.fromMillisecondsSinceEpoch(
         transactionNowMs,
@@ -872,15 +902,26 @@ class ObjectBoxCloudSyncStore
       var tombstones = 0;
       for (final row in rows) {
         final entry = _inboxFromEntity(scope, row);
+        final legacyReadOnlyTombstone =
+            allowLegacyReadOnlyTombstoneAcknowledgement &&
+            legacyAppliedFloorInflated &&
+            entry.sequence <= checkpoint.appliedSequence &&
+            entry.lastFailure == CloudFailureCategory.conflict &&
+            entry.change.isTombstone &&
+            entry.change.type == CloudChangeType.delete &&
+            row.preflightCategory == null &&
+            row.preflightCode == null &&
+            !replayedSequences.contains(entry.sequence);
         if (entry.status != CloudInboxStatus.quarantined ||
-            !_mayRetainUnprojected(
-              entry,
-              category: entry.lastFailure,
-              now: effectiveNow,
-              maximumDeferredAttempts: maximumDeferredAttempts,
-              maximumDeferredAge: maximumDeferredAge,
-              includeCurrentAttempt: false,
-            )) {
+            (!legacyReadOnlyTombstone &&
+                !_mayRetainUnprojected(
+                  entry,
+                  category: entry.lastFailure,
+                  now: effectiveNow,
+                  maximumDeferredAttempts: maximumDeferredAttempts,
+                  maximumDeferredAge: maximumDeferredAge,
+                  includeCurrentAttempt: false,
+                ))) {
           continue;
         }
         candidates.add(row);
@@ -894,10 +935,34 @@ class ObjectBoxCloudSyncStore
           ..updatedAtMs = transactionNowMs;
         _inbox.put(row);
       }
-      _advanceContiguousAppliedLocked(scope, transactionNowMs);
+      final recomputedAppliedSequence =
+          _recomputeContiguousAppliedFromJournalLocked(
+            scope,
+            checkpoint: checkpoint,
+            rows: rows,
+            nowMs: transactionNowMs,
+          );
+      CloudInboxChangeEntity? firstUnresolved;
+      for (final row in rows) {
+        if (!_isAppliedInboxStatus(_inboxStatusFromInt(row.status))) {
+          firstUnresolved = row;
+          break;
+        }
+      }
       return CloudInboxRetentionRecovery(
         retainedUnprojected: candidates.length,
         tombstoneReadOnlyAcknowledged: tombstones,
+        previousAppliedSequence: previousAppliedSequence,
+        recomputedAppliedSequence: recomputedAppliedSequence,
+        legacyFloorInflated: legacyAppliedFloorInflated,
+        firstUnresolvedSequence: firstUnresolved?.fetchSequence,
+        firstUnresolvedStatus: firstUnresolved == null
+            ? null
+            : _inboxStatusFromInt(firstUnresolved.status),
+        firstUnresolvedCategory: firstUnresolved == null
+            ? null
+            : _failureOrNull(firstUnresolved.failureCategory),
+        recoveryComplete: firstUnresolved == null,
       );
     });
   }
@@ -1287,10 +1352,12 @@ class ObjectBoxCloudSyncStore
     final leaseIdHash = _digest('outbox-lease\u001f$leaseId');
     return _store.runInTransaction(TxMode.write, () {
       final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
-      if (_hasBlockingOutboxLocked(scope) &&
-          (checkpoint.pendingBatchId != null ||
-              _hasUnmarkedPendingInboxLocked(scope, checkpoint))) {
-        throw _storageFailure('checkpoint_pending_page_unresolved');
+      if (_hasBlockingOutboxLocked(scope)) {
+        if (checkpoint.pendingBatchId != null ||
+            _hasUnmarkedPendingInboxLocked(scope, checkpoint)) {
+          throw _storageFailure('checkpoint_pending_page_unresolved');
+        }
+        _requireMessagesCloudAccountProjectionReadyLocked(scope);
       }
       _fenceStaleOutboxLocked(scope, checkpoint: checkpoint, nowMs: nowMs);
       _recoverExpiredOutboxLeasesLocked(scope, nowMs);
@@ -1425,6 +1492,7 @@ class ObjectBoxCloudSyncStore
     final nowMs = now.millisecondsSinceEpoch;
     return _store.runInTransaction(TxMode.write, () {
       final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
+      _requireMessagesCloudAccountProjectionReadyLocked(scope);
       final entities = <String, CloudOutboxOperationEntity>{};
       for (final operationId in ids) {
         if (entities.containsKey(operationId)) {
@@ -2289,6 +2357,27 @@ class ObjectBoxCloudSyncStore
     _promotePendingFetchedTokenIfTerminalLocked(scope, nowMs);
   }
 
+  int _recomputeContiguousAppliedFromJournalLocked(
+    CloudSyncScope scope, {
+    required CloudSyncCheckpointEntity checkpoint,
+    required List<CloudInboxChangeEntity> rows,
+    required int nowMs,
+  }) {
+    var appliedThrough = 0;
+    for (final row in rows) {
+      if (!_isAppliedInboxStatus(_inboxStatusFromInt(row.status))) break;
+      appliedThrough = row.fetchSequence;
+    }
+    if (checkpoint.appliedSequence != appliedThrough) {
+      checkpoint
+        ..appliedSequence = appliedThrough
+        ..updatedAtMs = nowMs;
+      _checkpoints.put(checkpoint);
+    }
+    _promotePendingFetchedTokenIfTerminalLocked(scope, nowMs);
+    return appliedThrough;
+  }
+
   void _promotePendingFetchedTokenIfTerminalLocked(
     CloudSyncScope scope,
     int nowMs,
@@ -2388,6 +2477,91 @@ class ObjectBoxCloudSyncStore
     return true;
   }
 
+  void _requireMessagesCloudAccountProjectionReadyLocked(CloudSyncScope scope) {
+    if (!_isMessagesCloudSemanticScope(scope)) return;
+
+    for (final zone in _messagesCloudSemanticZones) {
+      final siblingScope = CloudSyncScope(
+        accountFingerprint: scope.accountFingerprint,
+        container: scope.container,
+        database: scope.database,
+        zone: zone,
+        streamKind: scope.streamKind,
+        schemaVersion: scope.schemaVersion,
+        persistenceLane: scope.persistenceLane,
+      );
+      final checkpoint = _findCheckpointByKeyLocked(_scopeKey(siblingScope));
+      if (checkpoint == null) {
+        throw _storageFailure('messages_cloud_account_projection_incomplete');
+      }
+      _validateCheckpointScope(checkpoint, siblingScope);
+      // A read-only tombstone is durable evidence, not a completed local
+      // projection. Never weaken this gate or relabel it as applied. A future
+      // ownership-capable tombstone adapter must prove and commit the exact
+      // bounded deletion before this account may write to CloudKit.
+      if (_hasRetainedTombstoneLocked(siblingScope, checkpoint)) {
+        throw _storageFailure(
+          'messages_cloud_tombstone_projection_unavailable',
+        );
+      }
+      if (checkpoint.generation <= 0 ||
+          checkpoint.lastSuccessfulAtMs <= 0 ||
+          checkpoint.lastErrorCategory != null ||
+          checkpoint.backoffAttempt != 0 ||
+          checkpoint.nextEligibleAtMs != 0 ||
+          checkpoint.pendingBatchId != null ||
+          checkpoint.pendingFetchedTokenCiphertext != null ||
+          checkpoint.appliedSequence != checkpoint.fetchedSequence ||
+          !_isCompleteAppliedInboxJournalLocked(siblingScope, checkpoint)) {
+        throw _storageFailure('messages_cloud_account_projection_incomplete');
+      }
+    }
+  }
+
+  bool _hasRetainedTombstoneLocked(
+    CloudSyncScope scope,
+    CloudSyncCheckpointEntity checkpoint,
+  ) => _findInboxForScopeLocked(scope).any(
+    (row) =>
+        row.generation == checkpoint.generation &&
+        row.status == CloudInboxStatus.retainedUnprojected.index &&
+        row.changeType == CloudChangeType.delete.name &&
+        row.isTombstone,
+  );
+
+  bool _isMessagesCloudSemanticScope(CloudSyncScope scope) =>
+      scope.container == _messagesCloudContainer &&
+      scope.database == _messagesCloudDatabase &&
+      scope.streamKind == CloudSyncStreamKind.messages &&
+      scope.schemaVersion == cloudSyncSchemaVersion &&
+      scope.persistenceLane == CloudSyncPersistenceLane.semantic &&
+      _messagesCloudSemanticZones.contains(scope.zone);
+
+  bool _isCompleteAppliedInboxJournalLocked(
+    CloudSyncScope scope,
+    CloudSyncCheckpointEntity checkpoint,
+  ) {
+    final rows =
+        _findInboxForScopeLocked(
+            scope,
+          ).where((row) => row.generation == checkpoint.generation).toList()
+          ..sort(
+            (left, right) => left.fetchSequence.compareTo(right.fetchSequence),
+          );
+    if (rows.length != checkpoint.fetchedSequence) return false;
+    for (final (index, row) in rows.indexed) {
+      if (row.fetchSequence != index + 1 ||
+          row.scopeKey != _scopeKey(scope) ||
+          row.accountFingerprint != scope.accountFingerprint ||
+          row.zone != scope.zone ||
+          row.generation != checkpoint.generation ||
+          _inboxStatusFromInt(row.status) != CloudInboxStatus.applied) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   bool _hasUnmarkedPendingInboxLocked(
     CloudSyncScope scope,
     CloudSyncCheckpointEntity checkpoint,
@@ -2430,6 +2604,24 @@ class ObjectBoxCloudSyncStore
   bool _isAppliedInboxStatus(CloudInboxStatus status) =>
       status == CloudInboxStatus.applied ||
       status == CloudInboxStatus.retainedUnprojected;
+
+  Set<int> _semanticReplayInboxSequencesLocked(
+    CloudSyncScope scope, {
+    required int generation,
+  }) {
+    final query = _semanticReplays
+        .query(
+          CloudSemanticReplayEntity_.scopeKey
+              .equals(_scopeKey(scope))
+              .and(CloudSemanticReplayEntity_.generation.equals(generation)),
+        )
+        .build();
+    try {
+      return query.find().map((row) => row.inboxSequence).toSet();
+    } finally {
+      query.close();
+    }
+  }
 
   bool _mayRetainUnprojected(
     CloudInboxEntry entry, {

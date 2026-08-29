@@ -108,6 +108,7 @@ abstract interface class CloudSyncStore {
     required int maximumDeferredAttempts,
     required Duration maximumDeferredAge,
     required CloudCoordinatorLeaseFence leaseFence,
+    bool allowLegacyReadOnlyTombstoneAcknowledgement = false,
   });
 
   Future<void> markInboxRetryable(

@@ -305,6 +305,14 @@ void main() {
     );
 
     expect(recovered.retainedUnprojected, 0);
+    expect(recovered.tombstoneReadOnlyAcknowledged, 0);
+    expect(recovered.previousAppliedSequence, 0);
+    expect(recovered.recomputedAppliedSequence, 0);
+    expect(recovered.legacyFloorInflated, isFalse);
+    expect(recovered.firstUnresolvedSequence, 1);
+    expect(recovered.firstUnresolvedStatus, CloudInboxStatus.quarantined);
+    expect(recovered.firstUnresolvedCategory, CloudFailureCategory.conflict);
+    expect(recovered.recoveryComplete, isFalse);
     expect(
       (await store.inboxEntries(scope)).single.status,
       CloudInboxStatus.quarantined,
@@ -313,6 +321,187 @@ void main() {
     expect(checkpoint.lastAppliedSequence, 0);
     expect(checkpoint.fetchedToken, isNull);
   });
+
+  test(
+    'read-only tombstone acknowledgement requires proof of an inflated floor',
+    () async {
+      final batch = CloudFetchBatch(
+        scope: scope,
+        changes: [testChange(1), testChange(2, tombstone: true), testChange(3)],
+        batchId: 'policy-gated-tombstone-page',
+        generation: 1,
+        nextToken: 'policy-gated-tombstone-token',
+        hasMore: false,
+      );
+      final fence = (await store.tryAcquireCoordinatorLease(
+        scope,
+        ownerId: 'policy-gated-tombstone-owner',
+        now: testEpoch,
+        leaseDuration: const Duration(minutes: 5),
+      ))!;
+      final checkpoint = await store.readCheckpoint(scope);
+      final admission = await store.journalShadowFetchedBatch(
+        batch,
+        now: testEpoch,
+        budget: CloudShadowJournalBudget(),
+        leaseFence: fence,
+        expectedGeneration: checkpoint.generation,
+        expectedFetchedToken: checkpoint.fetchedToken,
+      );
+      expect(admission.insertedEntries, 3);
+
+      await store.markInboxApplied(
+        scope,
+        sequence: 1,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+      await store.quarantineInbox(
+        scope,
+        sequence: 2,
+        category: CloudFailureCategory.conflict,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+      final before = (await store.inboxEntries(
+        scope,
+      )).singleWhere((entry) => entry.sequence == 2);
+
+      final recovered = await store.recoverRetainedInboxBarriers(
+        scope,
+        now: testEpoch,
+        maximumDeferredAttempts: 8,
+        maximumDeferredAge: const Duration(days: 3),
+        leaseFence: fence,
+        allowLegacyReadOnlyTombstoneAcknowledgement: true,
+      );
+
+      expect(recovered.retainedUnprojected, 0);
+      expect(recovered.tombstoneReadOnlyAcknowledged, 0);
+      expect(recovered.previousAppliedSequence, 1);
+      expect(recovered.recomputedAppliedSequence, 1);
+      expect(recovered.legacyFloorInflated, isFalse);
+      expect(recovered.firstUnresolvedSequence, 2);
+      expect(recovered.firstUnresolvedStatus, CloudInboxStatus.quarantined);
+      expect(recovered.firstUnresolvedCategory, CloudFailureCategory.conflict);
+      expect(recovered.recoveryComplete, isFalse);
+
+      final after = (await store.inboxEntries(
+        scope,
+      )).singleWhere((entry) => entry.sequence == 2);
+      expect(after.status, CloudInboxStatus.quarantined);
+      expect(after.lastFailure, CloudFailureCategory.conflict);
+      expect(after.change.changeId, before.change.changeId);
+      expect(after.change.recordIdHash, before.change.recordIdHash);
+      expect(
+        after.change.encryptedServerRecordId,
+        before.change.encryptedServerRecordId,
+      );
+      expect(
+        after.change.protectedSystemFieldsReference,
+        before.change.protectedSystemFieldsReference,
+      );
+      expect(after.change.isTombstone, isTrue);
+      expect(
+        (await store.readCheckpoint(scope)).fetchedToken,
+        'policy-gated-tombstone-token',
+      );
+
+      final repeated = await store.recoverRetainedInboxBarriers(
+        scope,
+        now: testEpoch.add(const Duration(minutes: 1)),
+        maximumDeferredAttempts: 8,
+        maximumDeferredAge: const Duration(days: 3),
+        leaseFence: fence,
+        allowLegacyReadOnlyTombstoneAcknowledgement: true,
+      );
+      expect(repeated.retainedUnprojected, 0);
+      expect(repeated.tombstoneReadOnlyAcknowledged, 0);
+      expect(repeated.previousAppliedSequence, 1);
+      expect(repeated.recomputedAppliedSequence, 1);
+      expect(repeated.legacyFloorInflated, isFalse);
+      expect(repeated.firstUnresolvedSequence, 2);
+      expect(repeated.firstUnresolvedStatus, CloudInboxStatus.quarantined);
+      expect(repeated.firstUnresolvedCategory, CloudFailureCategory.conflict);
+      expect(repeated.recoveryComplete, isFalse);
+    },
+  );
+
+  test(
+    'mixed conflict tombstone and non-tombstone stay barriers without legacy proof',
+    () async {
+      final batch = CloudFetchBatch(
+        scope: scope,
+        changes: [
+          testChange(1),
+          testChange(2, tombstone: true),
+          testChange(3),
+          testChange(4),
+        ],
+        batchId: 'mixed-conflict-page',
+        generation: 1,
+        nextToken: 'mixed-conflict-token',
+        hasMore: false,
+      );
+      final fence = (await store.tryAcquireCoordinatorLease(
+        scope,
+        ownerId: 'mixed-conflict-owner',
+        now: testEpoch,
+        leaseDuration: const Duration(minutes: 5),
+      ))!;
+      final checkpoint = await store.readCheckpoint(scope);
+      final admission = await store.journalShadowFetchedBatch(
+        batch,
+        now: testEpoch,
+        budget: CloudShadowJournalBudget(),
+        leaseFence: fence,
+        expectedGeneration: checkpoint.generation,
+        expectedFetchedToken: checkpoint.fetchedToken,
+      );
+      expect(admission.insertedEntries, 4);
+      await store.markInboxApplied(
+        scope,
+        sequence: 1,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+      for (final sequence in [2, 3]) {
+        await store.quarantineInbox(
+          scope,
+          sequence: sequence,
+          category: CloudFailureCategory.conflict,
+          now: testEpoch,
+          leaseFence: fence,
+        );
+      }
+
+      final recovered = await store.recoverRetainedInboxBarriers(
+        scope,
+        now: testEpoch,
+        maximumDeferredAttempts: 8,
+        maximumDeferredAge: const Duration(days: 3),
+        leaseFence: fence,
+        allowLegacyReadOnlyTombstoneAcknowledgement: true,
+      );
+
+      expect(recovered.retainedUnprojected, 0);
+      expect(recovered.tombstoneReadOnlyAcknowledged, 0);
+      expect(recovered.previousAppliedSequence, 1);
+      expect(recovered.recomputedAppliedSequence, 1);
+      expect(recovered.legacyFloorInflated, isFalse);
+      expect(recovered.firstUnresolvedSequence, 2);
+      expect(recovered.firstUnresolvedStatus, CloudInboxStatus.quarantined);
+      expect(recovered.firstUnresolvedCategory, CloudFailureCategory.conflict);
+      expect(recovered.recoveryComplete, isFalse);
+      final entries = await store.inboxEntries(scope);
+      expect(
+        entries
+            .where((entry) => entry.sequence == 2 || entry.sequence == 3)
+            .map((entry) => entry.status),
+        everyElement(CloudInboxStatus.quarantined),
+      );
+    },
+  );
 
   test('dependency retention requires both attempt and age bounds', () async {
     await _journal(
