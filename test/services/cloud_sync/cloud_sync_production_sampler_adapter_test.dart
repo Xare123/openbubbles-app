@@ -243,6 +243,89 @@ void main() {
       'cloud_sync_native_auth_bridge_failed',
     );
   });
+
+  test('native writer pause bridge round-trips one opaque token', () async {
+    final events = <String>[];
+    final binding = FrbCloudSyncNativeWriterPause(
+      pauseCall: () async {
+        events.add('pause');
+        return BigInt.from(7);
+      },
+      resumeCall: (token) async {
+        events.add('resume-$token');
+      },
+    );
+
+    final token = await binding.pause();
+    await binding.resume(token);
+
+    expect(token, BigInt.from(7));
+    expect(events, <String>['pause', 'resume-7']);
+  });
+
+  test('native writer pause bridge rejects invalid tokens locally', () async {
+    final invalidPause = FrbCloudSyncNativeWriterPause(
+      pauseCall: () async => BigInt.zero,
+      resumeCall: (_) async {},
+    );
+    await expectLater(
+      invalidPause.pause(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'cloud_sync_native_writer_pause_token_invalid',
+        ),
+      ),
+    );
+
+    var resumeCalls = 0;
+    final invalidResume = FrbCloudSyncNativeWriterPause(
+      pauseCall: () async => BigInt.one,
+      resumeCall: (_) async => resumeCalls++,
+    );
+    await expectLater(
+      invalidResume.resume(1),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'cloud_sync_native_writer_resume_token_invalid',
+        ),
+      ),
+    );
+    expect(resumeCalls, 0);
+  });
+
+  test('native writer pause bridge exposes only reviewed tags', () {
+    for (final tag in <String>[
+      'cloud_sync_native_writer_pause_already_active',
+      'cloud_sync_native_writer_pause_failed',
+      'cloud_sync_native_writer_pause_timeout',
+      'cloud_sync_native_writer_pause_token_invalid',
+      'cloud_sync_native_writer_resume_failed',
+      'cloud_sync_native_writer_resume_token_invalid',
+    ]) {
+      expect(
+        cloudSyncNativeWriterPauseBridgeSafeCode(frb.AnyhowException(tag)),
+        tag,
+      );
+    }
+    expect(
+      cloudSyncNativeWriterPauseBridgeSafeCode(
+        frb.AnyhowException(
+          'prefix cloud_sync_native_writer_pause_timeout suffix',
+        ),
+      ),
+      'cloud_sync_native_writer_pause_bridge_failed',
+    );
+    expect(
+      cloudSyncNativeWriterPauseBridgeSafeCode(
+        Exception('token=private-value account=user@example.com'),
+      ),
+      'cloud_sync_native_writer_pause_bridge_failed',
+    );
+  });
 }
 
 final class _FakeNativeAuthBinding implements CloudSyncNativeAuthBinding {

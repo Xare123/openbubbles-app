@@ -96,6 +96,7 @@ CloudSyncManualSemanticPullSampler _sampler({
   required CloudSyncSemanticRawTransportFactory createRawTransport,
   required CloudSyncSemanticInboxApplierFactory createInboxApplier,
   required CloudSyncStore operationFenceStore,
+  CloudSyncNativeWriterPause? nativeWriterPause,
   bool enabled = true,
   Duration? fetchTimeout,
   CloudSyncObserverFactory? observerFactory,
@@ -106,6 +107,7 @@ CloudSyncManualSemanticPullSampler _sampler({
   createStore: createStore,
   createRawTransport: createRawTransport,
   createInboxApplier: createInboxApplier,
+  nativeWriterPause: nativeWriterPause ?? _RecordingNativeWriterPause(),
   operationFenceStore: operationFenceStore,
   privateStorageDirectory: privateStorageDirectory.path,
   platform: 'windows',
@@ -127,6 +129,108 @@ void main() {
 
   tearDown(() {
     privateStorageDirectory.deleteSync(recursive: true);
+  });
+
+  test('native writer pause encloses the complete semantic run', () async {
+    final events = <String>[];
+    final nativeWriterPause = _RecordingNativeWriterPause(events: events);
+    final sampler = _sampler(
+      privateStorageDirectory: privateStorageDirectory,
+      operationFenceStore: InMemoryCloudSyncStore(),
+      nativeWriterPause: nativeWriterPause,
+      readPreflight: () async {
+        events.add('preflight');
+        return _readyState();
+      },
+      prepareAuthSnapshot: () async {
+        events.add('prepare-auth');
+        return _auth();
+      },
+      readAuthSnapshot: () async => _auth(),
+      createStore: (scope) async => InMemoryCloudSyncStore(),
+      createRawTransport: (auth, scope) async {
+        final transport = FakeCloudSyncTransport();
+        transport.fetchHandler = (scope, token, generation, limit) async {
+          events.add('fetch-${scope.zone}');
+          return CloudFetchBatch(
+            scope: scope,
+            changes: const [],
+            batchId: 'empty-${scope.zone}',
+            generation: generation,
+            nextToken: null,
+            hasMore: false,
+          );
+        };
+        return transport;
+      },
+      createInboxApplier: (auth, scope, generation) async =>
+          FakeCloudInboxApplier(),
+    );
+
+    await sampler.runConfirmed();
+
+    expect(events.first, 'pause-native-writers');
+    expect(events[1], 'preflight');
+    expect(events, contains('prepare-auth'));
+    expect(events.last, 'resume-native-writers');
+    expect(nativeWriterPause.pauseCalls, 1);
+    expect(nativeWriterPause.resumeCalls, 1);
+  });
+
+  test('native writer pause failure performs no semantic work', () async {
+    var preflightCalls = 0;
+    final nativeWriterPause = _RecordingNativeWriterPause(
+      pauseError: StateError('cloud_sync_native_writer_pause_timeout'),
+    );
+    final sampler = _sampler(
+      privateStorageDirectory: privateStorageDirectory,
+      operationFenceStore: InMemoryCloudSyncStore(),
+      nativeWriterPause: nativeWriterPause,
+      readPreflight: () async {
+        preflightCalls++;
+        return _readyState();
+      },
+      readAuthSnapshot: () async => _auth(),
+      createStore: (scope) async => InMemoryCloudSyncStore(),
+      createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+      createInboxApplier: (auth, scope, generation) async =>
+          FakeCloudInboxApplier(),
+    );
+
+    await expectLater(
+      sampler.runConfirmed(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'cloud_sync_native_writer_pause_timeout',
+        ),
+      ),
+    );
+    expect(preflightCalls, 0);
+    expect(nativeWriterPause.pauseCalls, 1);
+    expect(nativeWriterPause.resumeCalls, 0);
+    expect(sampler.isActive, isFalse);
+  });
+
+  test('native writer pause resumes after a semantic failure', () async {
+    final nativeWriterPause = _RecordingNativeWriterPause();
+    final sampler = _sampler(
+      privateStorageDirectory: privateStorageDirectory,
+      operationFenceStore: InMemoryCloudSyncStore(),
+      nativeWriterPause: nativeWriterPause,
+      readPreflight: () async => throw StateError('preflight-failed'),
+      readAuthSnapshot: () async => _auth(),
+      createStore: (scope) async => InMemoryCloudSyncStore(),
+      createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+      createInboxApplier: (auth, scope, generation) async =>
+          FakeCloudInboxApplier(),
+    );
+
+    await expectLater(sampler.runConfirmed(), throwsStateError);
+    expect(nativeWriterPause.pauseCalls, 1);
+    expect(nativeWriterPause.resumeCalls, 1);
+    expect(sampler.isActive, isFalse);
   });
 
   for (final testCase in <({String input, String expected})>[
@@ -888,6 +992,32 @@ final class _RecordingFlushableObserver implements FlushableCloudSyncObserver {
 
   @override
   Future<void> flush() async => flushed = true;
+}
+
+final class _RecordingNativeWriterPause implements CloudSyncNativeWriterPause {
+  _RecordingNativeWriterPause({this.events, this.pauseError});
+
+  final List<String>? events;
+  final Object? pauseError;
+  final Object token = Object();
+  int pauseCalls = 0;
+  int resumeCalls = 0;
+
+  @override
+  Future<Object> pause() async {
+    pauseCalls++;
+    events?.add('pause-native-writers');
+    final error = pauseError;
+    if (error != null) throw error;
+    return token;
+  }
+
+  @override
+  Future<void> resume(Object value) async {
+    expect(value, same(token));
+    resumeCalls++;
+    events?.add('resume-native-writers');
+  }
 }
 
 final class _JoinableTransport extends FakeCloudSyncTransport

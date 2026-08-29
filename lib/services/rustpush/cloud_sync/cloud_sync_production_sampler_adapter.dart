@@ -158,6 +158,75 @@ String cloudSyncNativeAuthBridgeSafeCode(Object error) {
   return 'cloud_sync_native_auth_bridge_failed';
 }
 
+typedef CloudSyncNativeWriterPauseCall = Future<BigInt> Function();
+typedef CloudSyncNativeWriterResumeCall = Future<void> Function(BigInt token);
+
+/// Production bridge that pauses Passwords and iCloud Keychain CloudKit work
+/// for the complete semantic pull.
+///
+/// The native gate owns the actual exclusion permit. Dart carries only its
+/// opaque, positive token and exposes only reviewed failure codes.
+final class FrbCloudSyncNativeWriterPause
+    implements CloudSyncNativeWriterPause {
+  FrbCloudSyncNativeWriterPause({
+    CloudSyncNativeWriterPauseCall? pauseCall,
+    CloudSyncNativeWriterResumeCall? resumeCall,
+  }) : _pauseCall = pauseCall,
+       _resumeCall = resumeCall;
+
+  final CloudSyncNativeWriterPauseCall? _pauseCall;
+  final CloudSyncNativeWriterResumeCall? _resumeCall;
+
+  @override
+  Future<Object> pause() async {
+    try {
+      final token =
+          await (_pauseCall ?? frb_api.cloudSyncPausePasswordCloudkitWriters)();
+      if (token <= BigInt.zero) {
+        throw StateError('cloud_sync_native_writer_pause_token_invalid');
+      }
+      return token;
+    } catch (error) {
+      throw StateError(cloudSyncNativeWriterPauseBridgeSafeCode(error));
+    }
+  }
+
+  @override
+  Future<void> resume(Object token) async {
+    if (token is! BigInt || token <= BigInt.zero) {
+      throw StateError('cloud_sync_native_writer_resume_token_invalid');
+    }
+    try {
+      await (_resumeCall ?? frb_api.cloudSyncResumePasswordCloudkitWriters)(
+        token,
+      );
+    } catch (error) {
+      throw StateError(cloudSyncNativeWriterPauseBridgeSafeCode(error));
+    }
+  }
+}
+
+/// Classifies only fixed native writer-gate tags. Arbitrary exception text is
+/// never returned or logged.
+String cloudSyncNativeWriterPauseBridgeSafeCode(Object error) {
+  const reviewed = <String>{
+    'cloud_sync_native_writer_pause_already_active',
+    'cloud_sync_native_writer_pause_failed',
+    'cloud_sync_native_writer_pause_timeout',
+    'cloud_sync_native_writer_pause_token_invalid',
+    'cloud_sync_native_writer_resume_failed',
+    'cloud_sync_native_writer_resume_token_invalid',
+  };
+  final candidate = switch (error) {
+    frb.AnyhowException() => error.message,
+    StateError() => error.message.toString(),
+    _ => null,
+  };
+  return reviewed.contains(candidate)
+      ? candidate!
+      : 'cloud_sync_native_writer_pause_bridge_failed';
+}
+
 typedef ActiveCloudMessagesClientReader = Object? Function();
 
 /// Dormant production composition for the developer-only manual sampler.
@@ -233,6 +302,7 @@ final class CloudSyncProductionSemanticPullAdapter {
     RustCloudSyncProtectionBindings? protectionBindings,
     NativeProtectedCloudSyncBindings? transportBindings,
     RustCloudSemanticDecodeBindings? semanticDecodeBindings,
+    CloudSyncNativeWriterPause? nativeWriterPause,
     bool? compileGateOverrideForTest,
   }) {
     final diagnosticCollectors =
@@ -306,6 +376,7 @@ final class CloudSyncProductionSemanticPullAdapter {
           diagnosticRecorder: diagnostics.record,
         );
       },
+      nativeWriterPause: nativeWriterPause ?? FrbCloudSyncNativeWriterPause(),
       readDiagnosticCounts: (scope) =>
           diagnosticCollectors[scope.zone]?.snapshot() ?? const <String, int>{},
       operationFenceStore: durableStore,

@@ -27,6 +27,17 @@ typedef CloudSyncSemanticInboxApplierFactory =
 typedef CloudSyncSemanticDiagnosticSnapshotReader =
     Map<String, int> Function(CloudSyncScope scope);
 
+/// Native exclusion for CloudKit-capable Passwords and keychain operations.
+///
+/// The Dart operation interlock covers app-owned CloudKit entry points, but
+/// APS handlers can start inside Rust without crossing that boundary. A
+/// semantic pull must hold this pause for its complete authenticated run.
+abstract interface class CloudSyncNativeWriterPause {
+  Future<Object> pause();
+
+  Future<void> resume(Object token);
+}
+
 /// Developer-only one-shot CloudKit reader that may project supported records
 /// into canonical local ObjectBox entities but has no remote write capability.
 final class CloudSyncManualSemanticPullSampler {
@@ -37,6 +48,7 @@ final class CloudSyncManualSemanticPullSampler {
     required this._createStore,
     required this._createRawTransport,
     required this._createInboxApplier,
+    required this._nativeWriterPause,
     required CloudSyncStore operationFenceStore,
     required String privateStorageDirectory,
     required this.platform,
@@ -83,6 +95,7 @@ final class CloudSyncManualSemanticPullSampler {
   final CloudSyncSemanticStoreFactory _createStore;
   final CloudSyncSemanticRawTransportFactory _createRawTransport;
   final CloudSyncSemanticInboxApplierFactory _createInboxApplier;
+  final CloudSyncNativeWriterPause _nativeWriterPause;
   final CloudKitOperationInterlock _operationInterlock;
   final String platform;
   final String architecture;
@@ -104,7 +117,14 @@ final class CloudSyncManualSemanticPullSampler {
     try {
       return await _operationInterlock.runExclusive(
         kind: CloudKitOperationKind.v2SemanticRead,
-        action: _runConfirmedUnderInterlock,
+        action: () async {
+          final pauseToken = await _nativeWriterPause.pause();
+          try {
+            return await _runConfirmedUnderInterlock();
+          } finally {
+            await _nativeWriterPause.resume(pauseToken);
+          }
+        },
       );
     } finally {
       _active = false;

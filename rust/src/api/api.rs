@@ -21,7 +21,7 @@ use std::{
     collections::HashSet,
     fs::{self, File},
     future::Future,
-    io::{Cursor, Read, Write},
+    io::{Cursor, ErrorKind, Read, Write},
     ops::Deref,
     panic,
     str::FromStr,
@@ -39,6 +39,9 @@ use rand::Rng;
 pub use rustpush::cloudkit_proto::EscrowData;
 pub use rustpush::findmy::{FindMyFriendsClient, FindMyPhoneClient};
 pub use rustpush::passwords::PasswordManager;
+use rustpush::passwords::{
+    pause_password_cloudkit_operations, resume_password_cloudkit_operations,
+};
 pub use rustpush::sharedstreams::{SharedAlbum, SyncStatus};
 pub use rustpush::DebugMutex as Mutex;
 pub use rustpush::IdmsAuthListener;
@@ -323,6 +326,88 @@ pub async fn cloud_sync_capture_auth_snapshot(
         account_fingerprint,
         protected_store_identity,
     })
+}
+
+fn cloud_sync_password_writer_pause_error(error: rustpush::PushError) -> anyhow::Error {
+    match error {
+        rustpush::PushError::IoError(error) if error.kind() == ErrorKind::TimedOut => {
+            anyhow!("cloud_sync_native_writer_pause_timeout")
+        }
+        rustpush::PushError::IoError(error) if error.kind() == ErrorKind::WouldBlock => {
+            anyhow!("cloud_sync_native_writer_pause_already_active")
+        }
+        _ => anyhow!("cloud_sync_native_writer_pause_failed"),
+    }
+}
+
+fn cloud_sync_password_writer_resume_error(error: rustpush::PushError) -> anyhow::Error {
+    match error {
+        rustpush::PushError::IoError(error) if error.kind() == ErrorKind::PermissionDenied => {
+            anyhow!("cloud_sync_native_writer_resume_token_invalid")
+        }
+        _ => anyhow!("cloud_sync_native_writer_resume_failed"),
+    }
+}
+
+/// Pauses Passwords and iCloud Keychain CloudKit work for one semantic pull.
+///
+/// The returned opaque token is required to release the pause. Failure details
+/// are collapsed to fixed codes before crossing the FRB boundary.
+pub async fn cloud_sync_pause_password_cloudkit_writers() -> anyhow::Result<u64> {
+    pause_password_cloudkit_operations()
+        .await
+        .map_err(cloud_sync_password_writer_pause_error)
+}
+
+/// Releases the Passwords and iCloud Keychain pause matching `token`.
+pub async fn cloud_sync_resume_password_cloudkit_writers(token: u64) -> anyhow::Result<()> {
+    resume_password_cloudkit_operations(token)
+        .await
+        .map_err(cloud_sync_password_writer_resume_error)
+}
+
+#[cfg(test)]
+mod cloud_sync_password_writer_pause_bridge_tests {
+    use super::*;
+
+    #[test]
+    fn pause_bridge_exposes_only_fixed_failure_codes() {
+        let timeout = cloud_sync_password_writer_pause_error(rustpush::PushError::IoError(
+            std::io::Error::new(ErrorKind::TimedOut, "sensitive detail"),
+        ));
+        assert_eq!(
+            timeout.to_string(),
+            "cloud_sync_native_writer_pause_timeout"
+        );
+
+        let busy = cloud_sync_password_writer_pause_error(rustpush::PushError::IoError(
+            std::io::Error::new(ErrorKind::WouldBlock, "sensitive detail"),
+        ));
+        assert_eq!(
+            busy.to_string(),
+            "cloud_sync_native_writer_pause_already_active"
+        );
+
+        let unknown = cloud_sync_password_writer_pause_error(rustpush::PushError::BadMsg);
+        assert_eq!(unknown.to_string(), "cloud_sync_native_writer_pause_failed");
+    }
+
+    #[test]
+    fn resume_bridge_exposes_only_fixed_failure_codes() {
+        let invalid = cloud_sync_password_writer_resume_error(rustpush::PushError::IoError(
+            std::io::Error::new(ErrorKind::PermissionDenied, "sensitive detail"),
+        ));
+        assert_eq!(
+            invalid.to_string(),
+            "cloud_sync_native_writer_resume_token_invalid"
+        );
+
+        let unknown = cloud_sync_password_writer_resume_error(rustpush::PushError::BadMsg);
+        assert_eq!(
+            unknown.to_string(),
+            "cloud_sync_native_writer_resume_failed"
+        );
+    }
 }
 
 #[cfg(test)]
