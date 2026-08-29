@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/attachment/attachment_holder.dart';
 import 'package:bluebubbles/app/layouts/conversation_view/widgets/message/message_holder.dart';
@@ -18,6 +19,63 @@ MessageWidgetController mwc(Message message) => Get.isRegistered<MessageWidgetCo
 
 MessageWidgetController? getActiveMwc(String guid) =>
     Get.isRegistered<MessageWidgetController>(tag: guid) ? Get.find<MessageWidgetController>(tag: guid) : null;
+
+/// Returns the stable portion of a message that affects its rendered content.
+///
+/// CloudKit projection can fill these fields after a message widget has already
+/// been mounted. This deliberately excludes delivery/read timestamps and
+/// [Message.dateEdited], because those are lifecycle metadata rather than a
+/// reliable indication that the rendered content changed.
+String messagePresentationSignature(Message message) {
+  final attachments = <Attachment?>[
+    ...message.dbAttachments,
+    ...message.attachments,
+  ];
+  final attachmentPresentation = attachments
+      .map((attachment) => attachment == null
+          ? 'null'
+          : jsonEncode(_canonicalizePresentationValue(<String, dynamic>{
+              'guid': attachment.guid ?? 'id:${attachment.id ?? 'null'}',
+              'uti': attachment.uti,
+              'mimeType': attachment.mimeType,
+              'isOutgoing': attachment.isOutgoing,
+              'transferName': attachment.transferName,
+              'totalBytes': attachment.totalBytes,
+              'height': attachment.height,
+              'width': attachment.width,
+              'webUrl': attachment.webUrl,
+              'hasLivePhoto': attachment.hasLivePhoto,
+              'byteLength': attachment.bytes?.length,
+            })))
+      .toSet()
+      .toList()
+    ..sort();
+
+  final value = <String, dynamic>{
+    'text': message.text,
+    'subject': message.subject,
+    'attributedBody': message.attributedBody.map((body) => body.toMap()).toList(),
+    'messageSummaryInfo': message.messageSummaryInfo.map((summary) => summary.toJson()).toList(),
+    'hasAttachments': message.hasAttachments,
+    'attachmentPresentation': attachmentPresentation,
+  };
+
+  return jsonEncode(_canonicalizePresentationValue(value));
+}
+
+dynamic _canonicalizePresentationValue(dynamic value) {
+  if (value is Map) {
+    final entries = value.entries
+        .map((entry) => MapEntry(entry.key.toString(), _canonicalizePresentationValue(entry.value)))
+        .toList()
+      ..sort((a, b) => a.key.compareTo(b.key));
+    return <String, dynamic>{for (final entry in entries) entry.key: entry.value};
+  }
+  if (value is Iterable) {
+    return value.map(_canonicalizePresentationValue).toList();
+  }
+  return value;
+}
 
 class MessageWidgetController extends StatefulController with GetSingleTickerProviderStateMixin {
   final RxBool showEdits = false.obs;
@@ -94,8 +152,10 @@ class MessageWidgetController extends StatefulController with GetSingleTickerPro
   void updateMessage(Message newItem) {
     final chat = message.chat.target?.guid ?? cvController?.chat.guid ?? cm.activeChat!.chat.guid;
     final oldGuid = message.guid;
+    final previousPresentationSignature = messagePresentationSignature(message);
     if (newItem.guid != oldGuid && oldGuid!.contains("temp")) {
       message = Message.merge(newItem, message);
+      _refreshPresentationIfNeeded(previousPresentationSignature);
       ms(chat).updateMessage(message, oldGuid: oldGuid);
       updateWidgets<MessageHolder>(null);
       // mark this for the new guid
@@ -106,8 +166,9 @@ class MessageWidgetController extends StatefulController with GetSingleTickerPro
     } else if (newItem.dateDelivered != message.dateDelivered ||
         newItem.dateRead != message.dateRead ||
         newItem.didNotifyRecipient != message.didNotifyRecipient) {
-      final edited = newItem.dateEdited != message.dateEdited;
+      final dateEditedChanged = newItem.dateEdited != message.dateEdited;
       message = Message.merge(newItem, message);
+      final presentationChanged = _refreshPresentationIfNeeded(previousPresentationSignature);
       ms(chat).updateMessage(message);
       // update the latest 2 messages in case their indicators need to go away
       final messages = ms(chat)
@@ -119,19 +180,29 @@ class MessageWidgetController extends StatefulController with GetSingleTickerPro
       for (Message m in messages.take(2)) {
         getActiveMwc(m.guid!)?.updateWidgets<DeliveredIndicator>(null);
       }
-      if (edited) {
-        parts.clear();
-        buildMessageParts();
+      if (dateEditedChanged && !presentationChanged) {
+        // Preserve the existing edit lifecycle notification even when the
+        // payload did not change enough to require rebuilding message parts.
         updateWidgets<MessageHolder>(null);
       }
       updateWidgets<DeliveredIndicator>(null);
-    } else if (newItem.dateEdited != message.dateEdited || message.dateScheduled != null || newItem.error != message.error) {
+    } else if (newItem.dateEdited != message.dateEdited ||
+        message.dateScheduled != null ||
+        newItem.error != message.error ||
+        previousPresentationSignature != messagePresentationSignature(newItem)) {
       message = Message.merge(newItem, message);
-      parts.clear();
-      buildMessageParts();
+      _refreshPresentationIfNeeded(previousPresentationSignature);
       ms(chat).updateMessage(message);
       updateWidgets<MessageHolder>(null);
     }
+  }
+
+  bool _refreshPresentationIfNeeded(String previousSignature) {
+    if (previousSignature == messagePresentationSignature(message)) return false;
+    parts.clear();
+    buildMessageParts();
+    updateWidgets<MessageHolder>(null);
+    return true;
   }
 
   void updateThreadOriginator(Message newItem) {

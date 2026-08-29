@@ -488,6 +488,7 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
     final latestMessage = controller.chat.latestMessage;
     subtitle = _notificationSubtitle(latestMessage);
     cachedLatestMessageGuid = latestMessage.guid;
+    cachedDateCreated = latestMessage.dateCreated;
     cachedDateEdited = latestMessage.dateEdited;
     isFromMe = latestMessage.isFromMe ?? false;
     isDelivered = controller.chat.isGroup || !isFromMe || controller.chat.latestMessage.dateDelivered != null
@@ -505,24 +506,27 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
           final message = await runAsync(() {
             return query.findFirst();
           });
+          final previousIsFromMe = isFromMe;
+          final previousIsDelivered = isDelivered;
           isFromMe = message?.isFromMe ?? false;
           isDelivered = controller.chat.isGroup || !isFromMe || message?.dateDelivered != null || message?.dateRead != null;
-          // check if we really need to update this widget
-          if (message != null && (message.guid != cachedLatestMessageGuid || message.dateEdited != cachedDateEdited)) {
+          final deliveryChanged = previousIsFromMe != isFromMe ||
+              previousIsDelivered != isDelivered;
+          final shouldRecomputeSubtitle = message != null &&
+              (message.guid != cachedLatestMessageGuid ||
+                  message.dateEdited != cachedDateEdited ||
+                  subtitle == "Empty message");
+          if (message != null && shouldRecomputeSubtitle) {
             message.handle = message.getHandle();
             String newSubtitle = _notificationSubtitle(message, fallback: subtitle);
-            if (newSubtitle != subtitle) {
+            if (newSubtitle != subtitle || deliveryChanged) {
               if (!mounted) return;
               setState(() {
                 subtitle = newSubtitle;
                 fakeText = faker.lorem.words(subtitle.split(" ").length).join(" ");
               });
             }
-          } else if (!controller.chat.isGroup
-              && message != null
-              && message.isFromMe!
-              && (message.dateDelivered != null || message.dateRead != null)) {
-            // update delivered status
+          } else if (deliveryChanged && mounted) {
             setState(() {});
           }
           cachedLatestMessageGuid = message?.guid;
@@ -546,21 +550,30 @@ class _ChatSubtitleState extends CustomState<ChatSubtitle, void, ConversationTil
       });
       sub = WebListeners.newMessage.listen((tuple) {
         final message = tuple.item1;
-        if (tuple.item2?.guid == controller.chat.guid && (cachedDateCreated == null || message.dateCreated!.isAfter(cachedDateCreated!))) {
+        final sameMessage = message.guid == cachedLatestMessageGuid;
+        final newerMessage = cachedDateCreated == null ||
+            message.dateCreated == null ||
+            message.dateCreated!.isAfter(cachedDateCreated!);
+        if (tuple.item2?.guid == controller.chat.guid && (sameMessage || newerMessage)) {
+          final previousIsFromMe = isFromMe;
+          final previousIsDelivered = isDelivered;
           isFromMe = message.isFromMe ?? false;
           isDelivered = controller.chat.isGroup || !isFromMe || message.dateDelivered != null || message.dateRead != null;
-          if (message.guid != cachedLatestMessageGuid || message.dateEdited != cachedDateEdited) {
-            String newSubtitle = _notificationSubtitle(message, fallback: subtitle);
-            if (newSubtitle != subtitle) {
+          final deliveryChanged = previousIsFromMe != isFromMe ||
+              previousIsDelivered != isDelivered;
+          final shouldRecomputeSubtitle =
+              message.guid != cachedLatestMessageGuid ||
+              message.dateEdited != cachedDateEdited ||
+              subtitle == "Empty message";
+          if (shouldRecomputeSubtitle) {
+            final newSubtitle = _notificationSubtitle(message, fallback: subtitle);
+            if (newSubtitle != subtitle || deliveryChanged) {
               setState(() {
                 subtitle = newSubtitle;
                 fakeText = faker.lorem.words(subtitle.split(" ").length).join(" ");
               });
             }
-          } else if (!controller.chat.isGroup
-              && message.isFromMe!
-              && (message.dateDelivered != null || message.dateRead != null)) {
-            // update delivered status
+          } else if (deliveryChanged) {
             setState(() {});
           }
           cachedDateCreated = message.dateCreated;
