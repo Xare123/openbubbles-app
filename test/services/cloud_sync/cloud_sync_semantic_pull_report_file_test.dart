@@ -8,6 +8,22 @@ import 'package:universal_io/io.dart';
 
 CloudSyncSemanticPullZoneReport _zone(
   String label, {
+  int fetched = 1,
+  int applied = 0,
+  int deferred = 0,
+  int quarantined = 1,
+  int preflightQuarantined = 0,
+  int preflightUnsupportedRecordType = 0,
+  int preflightMalformedMetadata = 0,
+  int preflightOversizedRecord = 0,
+  int preflightInvalidChangeShape = 0,
+  int preflightUnknown = 0,
+  int startupQuarantined = 0,
+  int postFetchQuarantined = 1,
+  int tombstoneQuarantined = 0,
+  int semanticUnsupportedServiceQuarantined = 0,
+  int semanticStageQuarantined = 1,
+  int retried = 0,
   Map<String, int> diagnosticCounts = const {
     'canonical_chat_relation_unavailable': 1,
     'native_ready': 1,
@@ -16,22 +32,23 @@ CloudSyncSemanticPullZoneReport _zone(
     CloudSyncSemanticPullZoneReport(
       zoneLabel: label,
       status: CloudSyncRunStatus.completed,
-      fetched: 1,
-      applied: 0,
-      deferred: 0,
-      quarantined: 1,
-      preflightQuarantined: 0,
-      preflightUnsupportedRecordType: 0,
-      preflightMalformedMetadata: 0,
-      preflightOversizedRecord: 0,
-      preflightInvalidChangeShape: 0,
-      preflightUnknown: 0,
-      startupQuarantined: 0,
-      postFetchQuarantined: 1,
-      tombstoneQuarantined: 0,
-      semanticUnsupportedServiceQuarantined: 0,
-      semanticStageQuarantined: 1,
-      retried: 0,
+      fetched: fetched,
+      applied: applied,
+      deferred: deferred,
+      quarantined: quarantined,
+      preflightQuarantined: preflightQuarantined,
+      preflightUnsupportedRecordType: preflightUnsupportedRecordType,
+      preflightMalformedMetadata: preflightMalformedMetadata,
+      preflightOversizedRecord: preflightOversizedRecord,
+      preflightInvalidChangeShape: preflightInvalidChangeShape,
+      preflightUnknown: preflightUnknown,
+      startupQuarantined: startupQuarantined,
+      postFetchQuarantined: postFetchQuarantined,
+      tombstoneQuarantined: tombstoneQuarantined,
+      semanticUnsupportedServiceQuarantined:
+          semanticUnsupportedServiceQuarantined,
+      semanticStageQuarantined: semanticStageQuarantined,
+      retried: retried,
       elapsedMilliseconds: 5,
       diagnosticCounts: diagnosticCounts,
     );
@@ -39,19 +56,23 @@ CloudSyncSemanticPullZoneReport _zone(
 CloudSyncSemanticPullReport _report(
   DateTime timestamp, {
   int outboxCountAfter = 0,
+  int pageLimit = 4,
+  int changeLimit = 50,
+  int chatFetched = 1,
   Map<String, int>? chatDiagnosticCounts,
 }) => CloudSyncSemanticPullReport(
   timestampUtc: timestamp,
   platform: 'windows',
   architecture: 'arm64',
   buildCommit: 'test-commit',
-  pageLimit: 1,
-  changeLimit: 50,
+  pageLimit: pageLimit,
+  changeLimit: changeLimit,
   outboxCountBefore: 0,
   outboxCountAfter: outboxCountAfter,
   zones: [
     _zone(
       'chats',
+      fetched: chatFetched,
       diagnosticCounts:
           chatDiagnosticCounts ??
           const {
@@ -122,6 +143,87 @@ void main() {
         ),
       ),
     );
+  });
+
+  test('accepts the four-page 200-record contract', () async {
+    final writer = CloudSyncSemanticPullReportFileWriter(
+      privateReportDirectory: reports.path,
+      trustedStorageRoot: root.path,
+    );
+    await writer.write(
+      _report(
+        DateTime.utc(2026, 8, 29, 1, 2, 3),
+        pageLimit: 4,
+        changeLimit: 50,
+        chatFetched: 200,
+        chatDiagnosticCounts: const {'native_ready': 1},
+      ),
+    );
+  });
+
+  test('rejects non-four page limits and counters above 200', () async {
+    final writer = CloudSyncSemanticPullReportFileWriter(
+      privateReportDirectory: reports.path,
+      trustedStorageRoot: root.path,
+    );
+    for (final candidate in [
+      _report(DateTime.utc(2026, 8, 29, 1, 2, 3), pageLimit: 1),
+      _report(
+        DateTime.utc(2026, 8, 29, 1, 2, 4),
+        pageLimit: 4,
+        changeLimit: 50,
+        chatFetched: 201,
+      ),
+    ]) {
+      await expectLater(
+        writer.write(candidate),
+        throwsA(isA<CloudSyncSemanticPullReportFileException>()),
+      );
+    }
+  });
+
+  test('bounds retry and quarantine subtype counters at 200', () async {
+    final writer = CloudSyncSemanticPullReportFileWriter(
+      privateReportDirectory: reports.path,
+      trustedStorageRoot: root.path,
+    );
+    final invalidZones = [
+      _zone('chats', fetched: 201),
+      _zone('chats', applied: 201),
+      _zone('chats', deferred: 201),
+      _zone('chats', quarantined: 201),
+      _zone('chats', retried: 201),
+      _zone('chats', preflightQuarantined: 201),
+      _zone('chats', preflightUnsupportedRecordType: 201),
+      _zone('chats', preflightMalformedMetadata: 201),
+      _zone('chats', preflightOversizedRecord: 201),
+      _zone('chats', preflightInvalidChangeShape: 201),
+      _zone('chats', preflightUnknown: 201),
+      _zone('chats', startupQuarantined: 201),
+      _zone('chats', postFetchQuarantined: 201),
+      _zone('chats', tombstoneQuarantined: 201),
+      _zone('chats', semanticUnsupportedServiceQuarantined: 201),
+      _zone('chats', semanticStageQuarantined: 201),
+    ];
+    for (var index = 0; index < invalidZones.length; index++) {
+      final zone = invalidZones[index];
+      await expectLater(
+        writer.write(
+          CloudSyncSemanticPullReport(
+            timestampUtc: DateTime.utc(2026, 8, 29, 1, 3, index),
+            platform: 'windows',
+            architecture: 'arm64',
+            buildCommit: 'test-commit',
+            pageLimit: 4,
+            changeLimit: 50,
+            outboxCountBefore: 0,
+            outboxCountAfter: 0,
+            zones: [zone, _zone('messages'), _zone('attachments')],
+          ),
+        ),
+        throwsA(isA<CloudSyncSemanticPullReportFileException>()),
+      );
+    }
   });
 
   test('accepts diagnostic counts above the one-page fetch limit', () async {

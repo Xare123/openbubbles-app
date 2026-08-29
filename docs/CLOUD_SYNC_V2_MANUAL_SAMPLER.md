@@ -12,7 +12,7 @@ timestamp: 2026-08-01
 ## Decision
 
 Build a one-shot sampler available only in explicitly enabled developer builds.
-It is created after a confirmation, fetches at most one bounded page from each
+It is created after a confirmation, fetches at most four bounded pages from each
 Messages zone, writes only protected V2 journal/checkpoint metadata, exports an
 allowlisted report, and disposes immediately.
 
@@ -57,7 +57,7 @@ zones:
 
 Sampler limits:
 
-- one page per zone;
+- four pages per zone, at most 200 records per zone per invocation;
 - at most 50 changes per page;
 - 8 MiB pending journal budget per scope;
 - 512 pending entries per scope;
@@ -66,6 +66,10 @@ Sampler limits:
 - automatic triggers off;
 - read-only fetch on;
 - semantic apply, saves, deletions, profiles, and notification hints off.
+
+The 512-entry journal budget applies to shadow-mode pending entries. Semantic
+mode retains terminal journal evidence separately; its developer-only
+invocation remains bounded to four sequential pages (200 records) per zone.
 
 Use one shared protector and ObjectBox store. Construct one read-only engine per
 zone and run them sequentially through `CloudSyncShadowRuntime`.

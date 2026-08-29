@@ -58,6 +58,35 @@ CloudFetchedChange _change(String id) => CloudFetchedChange(
   payloadSha256: 'payload-$id',
 );
 
+CloudSyncSemanticPullZoneReport _zoneReport({
+  CloudFailureCategory? failureCategory,
+  String? failureSafeCode,
+}) => CloudSyncSemanticPullZoneReport(
+  zoneLabel: 'chats',
+  status: failureCategory == null
+      ? CloudSyncRunStatus.completed
+      : CloudSyncRunStatus.degraded,
+  fetched: 0,
+  applied: 0,
+  deferred: 0,
+  quarantined: 0,
+  preflightQuarantined: 0,
+  preflightUnsupportedRecordType: 0,
+  preflightMalformedMetadata: 0,
+  preflightOversizedRecord: 0,
+  preflightInvalidChangeShape: 0,
+  preflightUnknown: 0,
+  startupQuarantined: 0,
+  postFetchQuarantined: 0,
+  tombstoneQuarantined: 0,
+  semanticUnsupportedServiceQuarantined: 0,
+  semanticStageQuarantined: 0,
+  retried: 0,
+  elapsedMilliseconds: 0,
+  failureCategory: failureCategory,
+  failureSafeCode: failureSafeCode,
+);
+
 CloudSyncManualSemanticPullSampler _sampler({
   required Directory privateStorageDirectory,
   required CloudSyncShadowPreflightReader readPreflight,
@@ -99,6 +128,87 @@ void main() {
   tearDown(() {
     privateStorageDirectory.deleteSync(recursive: true);
   });
+
+  for (final testCase in <({String input, String expected})>[
+    (input: 'network', expected: 'network'),
+    (input: 'http-unknown', expected: 'http-unknown'),
+    (input: 'cloudkit-reset-required', expected: 'cloudkit-reset-required'),
+    (
+      input: 'cloudkit-change-token-expired',
+      expected: 'cloudkit-change-token-expired',
+    ),
+    (input: 'malformed-response', expected: 'malformed-response'),
+    (
+      input: 'unreviewed_but_pattern_safe',
+      expected: 'cloud_sync_unknown_failure',
+    ),
+  ]) {
+    test(
+      'reports only allowlisted pull failure safe codes: ${testCase.input}',
+      () async {
+        final sampler = _sampler(
+          privateStorageDirectory: privateStorageDirectory,
+          operationFenceStore: InMemoryCloudSyncStore(),
+          readPreflight: () async => _readyState(),
+          readAuthSnapshot: () async => _auth(),
+          createStore: (scope) async => InMemoryCloudSyncStore(),
+          createRawTransport: (auth, scope) async {
+            final transport = FakeCloudSyncTransport();
+            transport.fetchHandler = (scope, token, generation, limit) async {
+              if (scope.zone == 'chatManateeZone') {
+                throw CloudSyncFailure(
+                  category: CloudFailureCategory.network,
+                  safeCode: testCase.input,
+                );
+              }
+              return CloudFetchBatch(
+                scope: scope,
+                changes: const [],
+                batchId: 'empty-${scope.zone}',
+                generation: generation,
+                nextToken: null,
+                hasMore: false,
+              );
+            };
+            return transport;
+          },
+          createInboxApplier: (auth, scope, generation) async =>
+              FakeCloudInboxApplier(),
+        );
+
+        final report = await sampler.runConfirmed();
+        final failedZone = report.zones.singleWhere(
+          (zone) => zone.zoneLabel == 'chats',
+        );
+
+        expect(failedZone.failureCategory, CloudFailureCategory.network);
+        expect(failedZone.failureSafeCode, testCase.expected);
+        expect(failedZone.toJson()['failureSafeCode'], testCase.expected);
+        expect(
+          report.zones
+              .where((zone) => zone.zoneLabel != 'chats')
+              .map((zone) => zone.failureSafeCode),
+          everyElement(isNull),
+        );
+      },
+    );
+  }
+
+  test(
+    'zone report rejects invalid code text and omits codes without failures',
+    () {
+      final invalid = _zoneReport(
+        failureCategory: CloudFailureCategory.network,
+        failureSafeCode: 'invalid code text',
+      );
+      final completedWithCode = _zoneReport(failureSafeCode: 'http-unknown');
+
+      expect(invalid.failureSafeCode, 'cloud_sync_unknown_failure');
+      expect(invalid.toJson()['failureSafeCode'], 'cloud_sync_unknown_failure');
+      expect(completedWithCode.failureSafeCode, isNull);
+      expect(completedWithCode.toJson()['failureSafeCode'], isNull);
+    },
+  );
 
   test(
     'read authentication preparation runs under the semantic interlock',
@@ -390,6 +500,62 @@ void main() {
       );
     },
   );
+
+  test('pulls four pages per zone without writes or outbox changes', () async {
+    final transports = <String, FakeCloudSyncTransport>{};
+    final sampler = _sampler(
+      privateStorageDirectory: privateStorageDirectory,
+      operationFenceStore: InMemoryCloudSyncStore(),
+      readPreflight: () async => _readyState(),
+      readAuthSnapshot: () async => _auth(),
+      createStore: (scope) async {
+        final store = InMemoryCloudSyncStore();
+        return store;
+      },
+      createRawTransport: (auth, scope) async {
+        final transport = FakeCloudSyncTransport();
+        transport.fetchHandler = (requestedScope, token, generation, limit) {
+          final page = transport.fetchCallCount;
+          expect(limit, 50);
+          return Future.value(
+            CloudFetchBatch(
+              scope: requestedScope,
+              changes: [
+                for (var index = 0; index < 50; index++)
+                  _change('${requestedScope.zone}-$page-$index'),
+              ],
+              batchId: '${requestedScope.zone}-$page',
+              generation: generation,
+              nextToken: 'token-$page',
+              hasMore: true,
+            ),
+          );
+        };
+        transports[scope.zone] = transport;
+        return transport;
+      },
+      createInboxApplier: (auth, scope, generation) async =>
+          FakeCloudInboxApplier(),
+    );
+
+    final report = await sampler.runConfirmed();
+
+    expect(report.pageLimit, 4);
+    expect(report.changeLimit, 50);
+    expect(report.outboxCountBefore, 0);
+    expect(report.outboxCountAfter, 0);
+    expect(report.zones.map((zone) => zone.fetched), [200, 200, 200]);
+    expect(transports.values.map((transport) => transport.fetchCallCount), [
+      4,
+      4,
+      4,
+    ]);
+    expect(transports.values.map((transport) => transport.pushCallCount), [
+      0,
+      0,
+      0,
+    ]);
+  });
 
   test(
     'repairs applied chat projection before transport and releases its lease',

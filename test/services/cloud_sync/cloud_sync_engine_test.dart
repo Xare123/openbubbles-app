@@ -35,6 +35,7 @@ void main() {
       saves: true,
     ),
     int batchSize = 256,
+    int maximumFetchPagesPerRun = 8,
     int maximumInboxEntriesPerRun = 512,
     int maximumOutboxBatches = 8,
     Duration fetchOperationTimeout = const Duration(seconds: 45),
@@ -69,6 +70,7 @@ void main() {
       clock: clock.call,
       config: CloudSyncEngineConfig(
         maximumBatchSize: batchSize,
+        maximumFetchPagesPerRun: maximumFetchPagesPerRun,
         maximumInboxEntriesPerRun: maximumInboxEntriesPerRun,
         maximumOutboxBatchesPerRun: maximumOutboxBatches,
         fetchOperationTimeout: fetchOperationTimeout,
@@ -253,13 +255,15 @@ void main() {
   });
 
   test(
-    'passes persisted tokens across three pages and applies them in order',
+    'passes persisted tokens across four pages, renews, and applies in order',
     () async {
+      final renewingStore = _CountingCoordinatorRenewalStore();
+      store = renewingStore;
       transport.fetchHandler =
           (requestedScope, previousToken, generation, limit) async {
             expect(requestedScope, scope);
             expect(generation, 1);
-            expect(limit, 256);
+            expect(limit, 50);
             switch (previousToken) {
               case null:
                 return CloudFetchBatch(
@@ -286,34 +290,50 @@ void main() {
                   batchId: 'batch-page-three',
                   generation: generation,
                   nextToken: 'token-page-three',
-                  hasMore: false,
+                  hasMore: true,
+                );
+              case 'token-page-three':
+                return CloudFetchBatch(
+                  scope: scope,
+                  changes: [testChange(4)],
+                  batchId: 'batch-page-four',
+                  generation: generation,
+                  nextToken: 'token-page-four',
+                  hasMore: true,
                 );
               default:
                 fail('unexpected continuation token: $previousToken');
             }
           };
 
-      final result = await engine().synchronize(
+      final result = await engine(
+        batchSize: 50,
+        maximumFetchPagesPerRun: 4,
+        maximumInboxEntriesPerRun: 200,
+      ).synchronize(
         trigger: CloudSyncTrigger.manual,
       );
 
       expect(result.status, CloudSyncRunStatus.completed);
-      expect(result.counters.fetched, 3);
-      expect(result.counters.applied, 3);
+      expect(result.counters.fetched, 4);
+      expect(result.counters.applied, 4);
       expect(transport.observedFetchTokens, [
         null,
         'token-page-one',
         'token-page-two',
+        'token-page-three',
       ]);
-      expect(applier.appliedSequences, [1, 2, 3]);
+      expect(applier.appliedSequences, [1, 2, 3, 4]);
       expect((await store.inboxEntries(scope)).map((entry) => entry.batchId), [
         'batch-page-one',
         'batch-page-two',
         'batch-page-three',
+        'batch-page-four',
       ]);
       final checkpoint = await store.readCheckpoint(scope);
-      expect(checkpoint.fetchedToken, 'token-page-three');
-      expect(checkpoint.lastAppliedSequence, 3);
+      expect(checkpoint.fetchedToken, 'token-page-four');
+      expect(checkpoint.lastAppliedSequence, 4);
+      expect(renewingStore.renewalCalls, greaterThanOrEqualTo(8));
     },
   );
 
@@ -2940,6 +2960,26 @@ class _RecoveryOrderedProtectedWriteTransport extends FakeCloudSyncTransport
       scope,
       submissionIdentity: submissionIdentity,
       operations: operations,
+    );
+  }
+}
+
+class _CountingCoordinatorRenewalStore extends InMemoryCloudSyncStore {
+  int renewalCalls = 0;
+
+  @override
+  Future<bool> renewCoordinatorLease(
+    CloudSyncScope scope, {
+    required CloudCoordinatorLeaseFence leaseFence,
+    required DateTime now,
+    required Duration leaseDuration,
+  }) {
+    renewalCalls++;
+    return super.renewCoordinatorLease(
+      scope,
+      leaseFence: leaseFence,
+      now: now,
+      leaseDuration: leaseDuration,
     );
   }
 }

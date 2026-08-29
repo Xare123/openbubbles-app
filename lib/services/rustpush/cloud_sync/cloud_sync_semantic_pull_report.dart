@@ -1,6 +1,7 @@
 import 'cloud_sync_engine.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_observability.dart';
+import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_semantic_diagnostics.dart';
 
 /// Content-free result for one developer-confirmed local semantic projection.
@@ -27,11 +28,15 @@ final class CloudSyncSemanticPullZoneReport {
     required this.elapsedMilliseconds,
     Map<String, int> diagnosticCounts = const <String, int>{},
     this.failureCategory,
+    String? failureSafeCode,
     this.skipReason,
   }) : diagnosticCounts =
            CloudSyncSemanticDiagnosticCollector.validatedSnapshot(
              diagnosticCounts,
-           );
+           ),
+       failureSafeCode = failureCategory == null
+           ? null
+           : cloudSyncV2SafeFailureCodeForCandidate(failureSafeCode);
 
   final String zoneLabel;
   final CloudSyncRunStatus status;
@@ -54,6 +59,7 @@ final class CloudSyncSemanticPullZoneReport {
   final int elapsedMilliseconds;
   final Map<String, int> diagnosticCounts;
   final CloudFailureCategory? failureCategory;
+  final String? failureSafeCode;
   final CloudSyncSkipReason? skipReason;
 
   Map<String, Object?> toJson() => {
@@ -83,6 +89,7 @@ final class CloudSyncSemanticPullZoneReport {
     'elapsedMilliseconds': elapsedMilliseconds,
     'semanticDiagnostics': diagnosticCounts,
     'failureCategory': failureCategory?.name,
+    'failureSafeCode': failureSafeCode,
     'skipReason': skipReason?.name,
   };
 }

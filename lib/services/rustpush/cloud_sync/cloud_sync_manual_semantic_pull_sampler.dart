@@ -67,7 +67,7 @@ final class CloudSyncManualSemanticPullSampler {
     'messageManateeZone',
     'attachmentManateeZone',
   ];
-  static const pageLimit = 1;
+  static const pageLimit = 4;
   static const changeLimit = 50;
   static const projectionRepairLimit = 256;
   static const _maximumFetchTimeout = Duration(seconds: 45);
@@ -203,6 +203,7 @@ final class CloudSyncManualSemanticPullSampler {
             diagnosticCounts:
                 _readDiagnosticCounts?.call(scope) ?? const <String, int>{},
             failureCategory: result.failureCategory,
+            failureSafeCode: result.failureSafeCode,
             skipReason: result.skipReason,
           ),
         );
@@ -291,7 +292,7 @@ final class CloudSyncManualSemanticPullSampler {
   CloudSyncEngineConfig _config() => CloudSyncEngineConfig(
     maximumBatchSize: changeLimit,
     maximumFetchPagesPerRun: pageLimit,
-    maximumInboxEntriesPerRun: changeLimit,
+    maximumInboxEntriesPerRun: pageLimit * changeLimit,
     maximumOutboxBatchesPerRun: 1,
     fetchOperationTimeout: _fetchTimeout,
     allowManualPullBackoffOverride: true,

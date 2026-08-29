@@ -135,7 +135,7 @@ final class CloudSyncSemanticPullReportFileWriter {
         !report.timestampUtc.isUtc) {
       return 'cloud_sync_semantic_report_metadata_invalid';
     }
-    if (report.pageLimit != 1 ||
+    if (report.pageLimit != 4 ||
         report.changeLimit != 50 ||
         report.outboxCountBefore != 0 ||
         report.outboxCountAfter != 0) {
@@ -145,17 +145,42 @@ final class CloudSyncSemanticPullReportFileWriter {
       return 'cloud_sync_semantic_report_zone_count_invalid';
     }
     final labels = <String>{};
+    final maximumZoneRecords = report.pageLimit * report.changeLimit;
     for (final zone in report.zones) {
       if (!_supportedZoneLabels.contains(zone.zoneLabel) ||
           !labels.add(zone.zoneLabel) ||
           zone.fetched < 0 ||
-          zone.fetched > report.changeLimit ||
+          zone.fetched > maximumZoneRecords ||
           zone.applied < 0 ||
-          zone.applied > report.changeLimit ||
+          zone.applied > maximumZoneRecords ||
           zone.deferred < 0 ||
-          zone.deferred > report.changeLimit ||
+          zone.deferred > maximumZoneRecords ||
           zone.quarantined < 0 ||
-          zone.quarantined > report.changeLimit ||
+          zone.quarantined > maximumZoneRecords ||
+          zone.preflightQuarantined < 0 ||
+          zone.preflightQuarantined > maximumZoneRecords ||
+          zone.preflightUnsupportedRecordType < 0 ||
+          zone.preflightUnsupportedRecordType > maximumZoneRecords ||
+          zone.preflightMalformedMetadata < 0 ||
+          zone.preflightMalformedMetadata > maximumZoneRecords ||
+          zone.preflightOversizedRecord < 0 ||
+          zone.preflightOversizedRecord > maximumZoneRecords ||
+          zone.preflightInvalidChangeShape < 0 ||
+          zone.preflightInvalidChangeShape > maximumZoneRecords ||
+          zone.preflightUnknown < 0 ||
+          zone.preflightUnknown > maximumZoneRecords ||
+          zone.startupQuarantined < 0 ||
+          zone.startupQuarantined > maximumZoneRecords ||
+          zone.postFetchQuarantined < 0 ||
+          zone.postFetchQuarantined > maximumZoneRecords ||
+          zone.tombstoneQuarantined < 0 ||
+          zone.tombstoneQuarantined > maximumZoneRecords ||
+          zone.semanticUnsupportedServiceQuarantined < 0 ||
+          zone.semanticUnsupportedServiceQuarantined > maximumZoneRecords ||
+          zone.semanticStageQuarantined < 0 ||
+          zone.semanticStageQuarantined > maximumZoneRecords ||
+          zone.retried < 0 ||
+          zone.retried > maximumZoneRecords ||
           zone.elapsedMilliseconds < 0 ||
           zone.elapsedMilliseconds > 10 * 60 * 1000 ||
           // Diagnostic events are not record counters. A single fetched chat

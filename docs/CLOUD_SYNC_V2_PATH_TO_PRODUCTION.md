@@ -159,8 +159,8 @@ Protection there is no server-side fallback at all; and local 2FA entry.
    never-populated zone are indistinguishable in the report. Confirm upload
    from the Mac first or this stage proves only that transport works.
 8. **Run one semantic pull canary, then one immediate replay in the same
-   session.** It processes chats, messages, then attachments, at one page and
-   50 changes per zone. A pass requires all three exact zones to complete, zero
+   session.** It processes chats, messages, then attachments, at four pages and
+   50 changes per page per zone. A pass requires all three exact zones to complete, zero
    deferred, quarantined, or retried records, and unchanged empty outbox
    tripwires. The replay must be in-session: the journal budget rejects pending
    entries older than 24 hours, so a next-day replay can be legitimately

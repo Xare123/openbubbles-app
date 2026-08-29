@@ -11,6 +11,7 @@ import 'cloud_sync_backoff.dart';
 import 'cloud_sync_cancellation.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_observability.dart';
+import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_store.dart';
 import 'cloud_sync_transport.dart';
 import 'cloud_sync_write_transport.dart';
@@ -165,6 +166,7 @@ class CloudSyncRunResult {
     required this.finishedAt,
     this.skipReason,
     this.failureCategory,
+    this.failureSafeCode,
     this.shadowJournalBlockReason,
   });
 
@@ -174,6 +176,7 @@ class CloudSyncRunResult {
   final DateTime finishedAt;
   final CloudSyncSkipReason? skipReason;
   final CloudFailureCategory? failureCategory;
+  final String? failureSafeCode;
   final CloudShadowJournalBlockReason? shadowJournalBlockReason;
 }
 
@@ -390,6 +393,7 @@ class CloudSyncEngine {
       }
       var pullSucceeded = !config.flags.readOnlyFetch;
       CloudFailureCategory? degradedFailure;
+      String? degradedFailureSafeCode;
       CloudShadowJournalBlockReason? shadowJournalBlockReason;
       var remainingInboxEntries = config.maximumInboxEntriesPerRun;
       var semanticInboxCounters = const CloudSyncRunCounters();
@@ -471,6 +475,7 @@ class CloudSyncEngine {
         );
         pullSucceeded = pullResult.succeeded;
         degradedFailure = pullResult.failureCategory;
+        degradedFailureSafeCode = pullResult.failureSafeCode;
         shadowJournalBlockReason = pullResult.journalBlockReason;
         semanticInboxPhaseStarted =
             semanticInboxPhaseStarted ||
@@ -644,6 +649,7 @@ class CloudSyncEngine {
         startedAt: startedAt,
         finishedAt: finishedAt,
         failureCategory: degradedFailure,
+        failureSafeCode: degradedFailureSafeCode,
         shadowJournalBlockReason: shadowJournalBlockReason,
       );
     } on CloudSyncFailure catch (error) {
@@ -663,6 +669,7 @@ class CloudSyncEngine {
         startedAt: startedAt,
         finishedAt: finishedAt,
         failureCategory: error.category,
+        failureSafeCode: error.safeCode,
       );
     } catch (_) {
       final finishedAt = _clock();
@@ -858,6 +865,7 @@ class CloudSyncEngine {
             fetched: fetched,
             succeeded: false,
             failureCategory: pausedError.category,
+            failureSafeCode: pausedError.safeCode,
             journalUsage: journalUsage,
           );
         } catch (_) {
@@ -2341,6 +2349,7 @@ class CloudSyncEngine {
     required DateTime finishedAt,
     CloudSyncSkipReason? skipReason,
     CloudFailureCategory? failureCategory,
+    String? failureSafeCode,
     CloudShadowJournalBlockReason? shadowJournalBlockReason,
   }) async {
     final result = CloudSyncRunResult(
@@ -2350,6 +2359,9 @@ class CloudSyncEngine {
       finishedAt: finishedAt,
       skipReason: skipReason,
       failureCategory: failureCategory,
+      failureSafeCode: failureCategory == null
+          ? null
+          : cloudSyncV2SafeFailureCodeForCandidate(failureSafeCode),
       shadowJournalBlockReason: shadowJournalBlockReason,
     );
     try {
@@ -2388,6 +2400,7 @@ class _PullResult {
     required this.fetched,
     required this.succeeded,
     this.failureCategory,
+    this.failureSafeCode,
     CloudShadowJournalUsage? journalUsage,
     this.rejectedEntries = 0,
     this.journalBlockReason,
@@ -2398,6 +2411,7 @@ class _PullResult {
   final int fetched;
   final bool succeeded;
   final CloudFailureCategory? failureCategory;
+  final String? failureSafeCode;
   final CloudShadowJournalUsage journalUsage;
   final int rejectedEntries;
   final CloudShadowJournalBlockReason? journalBlockReason;

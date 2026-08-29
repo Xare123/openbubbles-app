@@ -99,6 +99,15 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_semantic_report_zone_count_invalid',
   'cloud_sync_semantic_report_zone_invalid',
   'cloud_sync_semantic_remote_write_tripwire',
+  'cloudkit-authorization',
+  'cloudkit-change-token-expired',
+  'cloudkit-conflict',
+  'cloudkit-continuation-no-progress',
+  'cloudkit-permanent',
+  'cloudkit-reset-required',
+  'cloudkit-server',
+  'cloudkit-throttled',
+  'cloudkit-unknown',
   'cloud_sync_shadow_controller_active',
   'cloud_sync_shadow_controller_disposed',
   'cloud_sync_shadow_auth_prepare_failed',
@@ -122,6 +131,13 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloudkit_interlock_required',
   'cloudkit_interlock_storage_unavailable',
   'cloudkit_interlock_unavailable',
+  'fetch_timeout',
+  'generation_mismatch',
+  'http-authorization',
+  'http-server',
+  'http-throttled',
+  'http-timeout',
+  'http-unknown',
   'cloudkit_writer_authority_requires_manual_recovery',
   'cloudkit_writer_build_owner_mismatch',
   'cloudkit_writer_identity_changed',
@@ -142,11 +158,16 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'not_ui_isolate',
   'objectbox_not_ready',
   'outbox_not_empty',
+  'local-storage',
+  'malformed-response',
+  'network',
+  'pcs-unavailable',
   'protector_unavailable',
   'rustpush_not_ready',
   'storage_unavailable',
   'unsupported_cloud_zone',
   'unsupported_platform',
+  'unknown',
 };
 
 /// Returns only a fixed diagnostic code safe for logs and user-visible copy.
@@ -163,7 +184,14 @@ String cloudSyncV2SafeFailureCode(Object error) {
     StateError() => error.message.toString(),
     _ => null,
   };
-  return _cloudSyncV2SafeFailureCodes.contains(candidate)
-      ? candidate!
-      : 'cloud_sync_unknown_failure';
+  return cloudSyncV2SafeFailureCodeForCandidate(candidate);
 }
+
+/// Returns an allowlisted diagnostic code for a known failure value.
+///
+/// This is intentionally closed: a syntactically valid string is not enough
+/// to reach a persisted report, log, or user-visible surface.
+String cloudSyncV2SafeFailureCodeForCandidate(String? candidate) =>
+    _cloudSyncV2SafeFailureCodes.contains(candidate)
+    ? candidate!
+    : 'cloud_sync_unknown_failure';
