@@ -168,6 +168,14 @@ abstract interface class CloudSyncStore {
   /// Atomically leases eligible operations. Confirmed dependencies are
   /// enforced by the store so callers cannot upload a message before its
   /// attachments.
+  ///
+  /// This method is the outbound checkpoint safety boundary. In the same
+  /// transaction or critical section that changes a row to `leased`, an
+  /// implementation must reject with `checkpoint_pending_page_unresolved`
+  /// whenever the scope has both a non-terminal outbox row and either a
+  /// pending page or unmarked pending inbox evidence. A separate presence or
+  /// checkpoint probe is only an early-exit optimization and cannot satisfy
+  /// this invariant.
   Future<List<CloudOutboxOperation>> leaseEligibleOutbox(
     CloudSyncScope scope, {
     required DateTime now,
@@ -294,6 +302,16 @@ abstract interface class CloudSyncUnknownOutcomeLeasingStore {
     required String leaseId,
     required Duration leaseDuration,
   });
+}
+
+/// Read-only optimization used to avoid entering an outbound path when a
+/// semantic checkpoint is known to contain an unresolved page.
+///
+/// This probe is deliberately not a write-safety boundary. Implementations of
+/// [CloudSyncStore.leaseEligibleOutbox] must independently enforce the atomic
+/// checkpoint fence documented on that method.
+abstract interface class CloudSyncOutboxPresenceStore {
+  Future<bool> hasNonterminalOutbox(CloudSyncScope scope);
 }
 
 /// Crash-recovery metadata for native protected page blobs.

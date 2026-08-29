@@ -230,6 +230,89 @@ void main() {
     },
   );
 
+  test('observed 600-row legacy floor cannot lease outbound work', () async {
+    final scope = testScope(persistenceLane: CloudSyncPersistenceLane.semantic);
+    final admission = await journalShadow(
+      batch(
+        scope,
+        batchId: 'legacy-observed-600-page',
+        token: 'legacy-observed-advanced-token',
+        changes: [
+          for (var sequence = 1; sequence <= 600; sequence++)
+            testChange(sequence),
+        ],
+      ),
+      now: testEpoch,
+      budget: CloudShadowJournalBudget(),
+    );
+    expect(admission.insertedEntries, 600);
+
+    final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+    final rows = inboxBox.getAll();
+    for (final row in rows) {
+      if (row.fetchSequence >= 56 && row.fetchSequence <= 128) {
+        row
+          ..status = CloudInboxStatus.quarantined.index
+          ..failureCategory = CloudFailureCategory.conflict.name;
+      } else if (row.fetchSequence >= 129 && row.fetchSequence <= 251) {
+        row.status = CloudInboxStatus.retainedUnprojected.index;
+      } else {
+        row.status = CloudInboxStatus.applied.index;
+      }
+      row
+        ..completedAtMs = testEpoch.millisecondsSinceEpoch
+        ..updatedAtMs = testEpoch.millisecondsSinceEpoch;
+    }
+    inboxBox.putMany(rows);
+
+    final checkpointBox = objectBox.box<CloudSyncCheckpointEntity>();
+    final persistedCheckpoint = checkpointBox.getAll().single
+      ..appliedSequence = 600
+      ..pendingBatchId = null
+      ..pendingFetchedTokenCiphertext = null;
+    checkpointBox.put(persistedCheckpoint);
+
+    final observed = await store.readCheckpoint(scope);
+    expect(observed.fetchedSequence, 600);
+    expect(observed.lastAppliedSequence, 600);
+    expect(observed.pendingBatchId, isNull);
+    expect(observed.hasUnmarkedPendingInbox, isTrue);
+    expect(
+      rows.where((row) => row.status == CloudInboxStatus.applied.index),
+      hasLength(404),
+    );
+    expect(
+      rows.where(
+        (row) => row.status == CloudInboxStatus.retainedUnprojected.index,
+      ),
+      hasLength(123),
+    );
+    expect(
+      rows.where((row) => row.status == CloudInboxStatus.quarantined.index),
+      hasLength(73),
+    );
+
+    await store.enqueueOutboxMutation(draft(scope, 600));
+    await expectLater(
+      store.leaseEligibleOutbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+        leaseId: 'legacy-observed-lease',
+        leaseDuration: const Duration(minutes: 1),
+        allowedActions: const {CloudOutboxAction.save},
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode,
+          'safeCode',
+          'checkpoint_pending_page_unresolved',
+        ),
+      ),
+    );
+    expect(await store.hasNonterminalOutbox(scope), isTrue);
+  });
+
   test(
     'legacy deterministic quarantine becomes terminal without losing evidence',
     () async {
@@ -807,9 +890,11 @@ void main() {
       final value = draft(scope, 901, protectedLeaseReference: reference);
 
       expect(value.protectedLeaseReference, reference);
+      expect(await store.hasNonterminalOutbox(scope), isFalse);
 
       final admitted = await store.enqueueOutboxMutation(value);
       expect(admitted.protectedLeaseReference, reference);
+      expect(await store.hasNonterminalOutbox(scope), isTrue);
       expect(
         await store.readNonterminalProtectedOutboundLeaseReferences(
           maximumCount: 4096,
@@ -817,6 +902,7 @@ void main() {
         {reference},
       );
       await reopen();
+      expect(await store.hasNonterminalOutbox(scope), isTrue);
       expect(
         await store.readNonterminalProtectedOutboundLeaseReferences(
           maximumCount: 4096,

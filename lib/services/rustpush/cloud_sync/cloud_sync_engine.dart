@@ -226,6 +226,9 @@ class CloudSyncEngine {
        _unknownOutcomeStore = store is CloudSyncUnknownOutcomeLeasingStore
            ? store as CloudSyncUnknownOutcomeLeasingStore
            : null,
+       _outboxPresenceStore = store is CloudSyncOutboxPresenceStore
+           ? store as CloudSyncOutboxPresenceStore
+           : null,
        _protectedPageLeaseLifecycle =
            store is CloudProtectedPageLeaseAdoptionStore &&
                _protectedLeaseTransportFor(transport) != null
@@ -246,6 +249,9 @@ class CloudSyncEngine {
     }
     if (this.config.flags.saves && _unknownOutcomeStore == null) {
       throw ArgumentError('cloud_sync_unknown_outcome_store_required');
+    }
+    if (this.config.flags.saves && _outboxPresenceStore == null) {
+      throw ArgumentError('cloud_sync_outbox_presence_store_required');
     }
     if (this.config.flags.saves && _writerExclusion == null) {
       throw ArgumentError('cloud_sync_writer_exclusion_required');
@@ -277,6 +283,7 @@ class CloudSyncEngine {
   final CloudSyncWriterAuthority? _writerAuthority;
   final CloudKitOperationExclusion? _writerExclusion;
   final CloudSyncUnknownOutcomeLeasingStore? _unknownOutcomeStore;
+  final CloudSyncOutboxPresenceStore? _outboxPresenceStore;
   final CloudProtectedPageLeaseLifecycle? _protectedPageLeaseLifecycle;
   final CloudInboxApplier _inboxApplier;
   final CloudSyncBackoffPolicy _backoff;
@@ -433,6 +440,10 @@ class CloudSyncEngine {
           maximumEntries: remainingInboxEntries,
           emitEvent: false,
         );
+        if (startupApply.failureCategory != null) {
+          degradedFailure = startupApply.failureCategory;
+          degradedFailureSafeCode = startupApply.failureSafeCode;
+        }
         semanticInboxCounters = semanticInboxCounters.add(
           applied: startupApply.counters.applied,
           deferred: startupApply.counters.deferred,
@@ -502,8 +513,16 @@ class CloudSyncEngine {
           shadowJournalRejectedEntries: pullResult.rejectedEntries,
         );
         pullSucceeded = pullResult.succeeded;
-        degradedFailure = pullResult.failureCategory;
-        degradedFailureSafeCode = pullResult.failureSafeCode;
+        final previousFailure = degradedFailure;
+        final previousFailureSafeCode = degradedFailureSafeCode;
+        if (pullResult.failureCategory != null) {
+          degradedFailure = pullResult.failureCategory;
+          degradedFailureSafeCode =
+              pullResult.failureSafeCode ??
+              (pullResult.failureCategory == previousFailure
+                  ? previousFailureSafeCode
+                  : null);
+        }
         shadowJournalBlockReason = pullResult.journalBlockReason;
         semanticInboxPhaseStarted =
             semanticInboxPhaseStarted ||
@@ -577,6 +596,10 @@ class CloudSyncEngine {
           maximumEntries: remainingInboxEntries,
           emitEvent: false,
         );
+        if (postFetchApply.failureCategory != null) {
+          degradedFailure = postFetchApply.failureCategory;
+          degradedFailureSafeCode = postFetchApply.failureSafeCode;
+        }
         semanticInboxCounters = semanticInboxCounters.add(
           applied: postFetchApply.counters.applied,
           deferred: postFetchApply.counters.deferred,
@@ -800,6 +823,8 @@ class CloudSyncEngine {
     var sawSuccessfulPage = false;
     var semanticCounters = const CloudSyncRunCounters();
     var semanticProcessedEntries = 0;
+    CloudFailureCategory? pageBlockingFailureCategory;
+    String? pageBlockingFailureSafeCode;
     var authenticationRefreshUsed = false;
     var pcsRefreshUsed = false;
     var journalUsage = CloudShadowJournalUsage.empty;
@@ -1059,6 +1084,10 @@ class CloudSyncEngine {
           retried: pageApply.counters.retried,
         );
         semanticProcessedEntries += pageApply.processedEntries;
+        if (pageApply.failureCategory != null) {
+          pageBlockingFailureCategory = pageApply.failureCategory;
+          pageBlockingFailureSafeCode = pageApply.failureSafeCode;
+        }
         checkpoint = await _store.readCheckpoint(scope);
         // Any non-applied predecessor keeps the committed token at the prior
         // page. Do not fetch another page until every row is applied.
@@ -1081,8 +1110,9 @@ class CloudSyncEngine {
       fetched: fetched,
       succeeded: sawSuccessfulPage,
       failureCategory: pageRemainsPending
-          ? CloudFailureCategory.dependency
+          ? pageBlockingFailureCategory ?? CloudFailureCategory.dependency
           : null,
+      failureSafeCode: pageRemainsPending ? pageBlockingFailureSafeCode : null,
       journalUsage: journalUsage,
       semanticCounters: semanticCounters,
       semanticProcessedEntries: semanticProcessedEntries,
@@ -1121,6 +1151,8 @@ class CloudSyncEngine {
   }) async {
     var counters = const CloudSyncRunCounters();
     var processedEntries = 0;
+    CloudFailureCategory? blockingFailureCategory;
+    String? blockingFailureSafeCode;
     while (processedEntries < maximumEntries) {
       if (_isCancelled(cancellationToken)) break;
       final entries = await _store.readEligibleInbox(
@@ -1138,6 +1170,7 @@ class CloudSyncEngine {
       if (preflightFailure != null) {
         result = CloudInboxApplyResult.quarantined(
           failureCategory: preflightFailure,
+          safeCode: _preflightSafeCode(entry.change.effectivePreflightCode),
         );
       } else {
         try {
@@ -1156,10 +1189,12 @@ class CloudSyncEngine {
                       entry.attemptCount + 1 < config.maximumUnknownAttempts)
               ? CloudInboxApplyResult.retryable(
                   failureCategory: error.category,
+                  safeCode: error.safeCode,
                   retryAfter: error.retryAfter,
                 )
               : CloudInboxApplyResult.quarantined(
                   failureCategory: error.category,
+                  safeCode: error.safeCode,
                 );
         } catch (_) {
           result = entry.attemptCount + 1 < config.maximumUnknownAttempts
@@ -1175,8 +1210,9 @@ class CloudSyncEngine {
       if (result.disposition == CloudInboxApplyDisposition.quarantined &&
           result.failureCategory == CloudFailureCategory.unknown &&
           entry.attemptCount + 1 < config.maximumUnknownAttempts) {
-        result = const CloudInboxApplyResult.retryable(
+        result = CloudInboxApplyResult.retryable(
           failureCategory: CloudFailureCategory.unknown,
+          safeCode: result.safeCode,
         );
       }
 
@@ -1308,7 +1344,12 @@ class CloudSyncEngine {
       // causal barrier. Applied and explicitly retained-unprojected rows are
       // terminal and allow the independent next record to proceed.
       // Do not let a later journal row mutate canonical state in this run.
-      if (!canApplyNextSequence) break;
+      if (!canApplyNextSequence) {
+        blockingFailureCategory =
+            result.failureCategory ?? CloudFailureCategory.unknown;
+        blockingFailureSafeCode = result.safeCode;
+        break;
+      }
     }
     if (emitEvent) {
       _emit(
@@ -1320,6 +1361,8 @@ class CloudSyncEngine {
     return _InboxApplyResult(
       counters: counters,
       processedEntries: processedEntries,
+      failureCategory: blockingFailureCategory,
+      failureSafeCode: blockingFailureSafeCode,
     );
   }
 
@@ -1355,6 +1398,15 @@ class CloudSyncEngine {
     );
   }
 
+  String _preflightSafeCode(CloudPreflightCode? code) => switch (code) {
+    CloudPreflightCode.unsupportedRecordType =>
+      'preflight_unsupported_record_type',
+    CloudPreflightCode.malformedMetadata => 'preflight_malformed_metadata',
+    CloudPreflightCode.oversizedRecord => 'preflight_oversized_record',
+    CloudPreflightCode.invalidChangeShape => 'preflight_invalid_change_shape',
+    CloudPreflightCode.unknown || null => 'preflight_unknown',
+  };
+
   bool _shouldRetainDeferredInboxEntry(CloudInboxEntry entry, DateTime now) {
     final age = now.difference(entry.createdAt);
     return entry.attemptCount + 1 >= config.maximumDeferredAttempts &&
@@ -1367,6 +1419,17 @@ class CloudSyncEngine {
     CloudSyncCancellationToken? cancellationToken,
   }) async {
     var counters = const CloudSyncRunCounters();
+
+    if (await _outboxPresenceStore!.hasNonterminalOutbox(scope)) {
+      final checkpoint = await _store.readCheckpoint(scope);
+      if (checkpoint.pendingBatchId != null ||
+          checkpoint.hasUnmarkedPendingInbox) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'checkpoint_pending_page_unresolved',
+        );
+      }
+    }
 
     // A push-only localOutbox run bypasses _pullChanges, which is otherwise
     // where the protected-store lifecycle recovers crash leftovers. Recovery
@@ -2506,10 +2569,14 @@ class _InboxApplyResult {
   const _InboxApplyResult({
     required this.counters,
     required this.processedEntries,
+    this.failureCategory,
+    this.failureSafeCode,
   });
 
   final CloudSyncRunCounters counters;
   final int processedEntries;
+  final CloudFailureCategory? failureCategory;
+  final String? failureSafeCode;
 }
 
 class _OutboxPreparation {

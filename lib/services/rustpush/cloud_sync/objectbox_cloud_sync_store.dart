@@ -20,6 +20,7 @@ class ObjectBoxCloudSyncStore
     implements
         CloudSyncStore,
         CloudSyncUnknownOutcomeLeasingStore,
+        CloudSyncOutboxPresenceStore,
         CloudProtectedPageLeaseAdoptionStore,
         CloudProtectedOutboundLeaseAdoptionStore {
   ObjectBoxCloudSyncStore({
@@ -510,6 +511,13 @@ class ObjectBoxCloudSyncStore
         }
       }
       return Set<String>.unmodifiable(references);
+    });
+  }
+
+  @override
+  Future<bool> hasNonterminalOutbox(CloudSyncScope scope) async {
+    return _store.runInTransaction(TxMode.read, () {
+      return _hasBlockingOutboxLocked(scope);
     });
   }
 
@@ -1279,6 +1287,11 @@ class ObjectBoxCloudSyncStore
     final leaseIdHash = _digest('outbox-lease\u001f$leaseId');
     return _store.runInTransaction(TxMode.write, () {
       final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
+      if (_hasBlockingOutboxLocked(scope) &&
+          (checkpoint.pendingBatchId != null ||
+              _hasUnmarkedPendingInboxLocked(scope, checkpoint))) {
+        throw _storageFailure('checkpoint_pending_page_unresolved');
+      }
       _fenceStaleOutboxLocked(scope, checkpoint: checkpoint, nowMs: nowMs);
       _recoverExpiredOutboxLeasesLocked(scope, nowMs);
       final allEntities = _findOutboxForScopeLocked(scope).toList();
@@ -2604,6 +2617,40 @@ class ObjectBoxCloudSyncStore
         .build();
     try {
       return query.find();
+    } finally {
+      query.close();
+    }
+  }
+
+  bool _hasBlockingOutboxLocked(CloudSyncScope scope) {
+    final blockingState = CloudOutboxOperationEntity_.state
+        .equals(_outboxStatusToInt(CloudOutboxStatus.pending))
+        .or(
+          CloudOutboxOperationEntity_.state.equals(
+            _outboxStatusToInt(CloudOutboxStatus.leased),
+          ),
+        )
+        .or(
+          CloudOutboxOperationEntity_.state.equals(
+            _outboxStatusToInt(CloudOutboxStatus.paused),
+          ),
+        )
+        .or(
+          CloudOutboxOperationEntity_.state.equals(
+            _outboxStatusToInt(CloudOutboxStatus.unknownOutcome),
+          ),
+        );
+    final query =
+        _outbox
+            .query(
+              CloudOutboxOperationEntity_.scopeKey
+                  .equals(_scopeKey(scope))
+                  .and(blockingState),
+            )
+            .build()
+          ..limit = 1;
+    try {
+      return query.findFirst() != null;
     } finally {
       query.close();
     }

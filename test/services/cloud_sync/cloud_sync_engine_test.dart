@@ -451,7 +451,7 @@ void main() {
       );
 
       expect(first.status, CloudSyncRunStatus.degraded);
-      expect(first.failureCategory, CloudFailureCategory.dependency);
+      expect(first.failureCategory, CloudFailureCategory.network);
       expect(first.counters.retried, 1);
       expect(first.counters.applied, 0);
       expect(transport.observedFetchTokens, [null]);
@@ -512,6 +512,110 @@ void main() {
       expect(checkpoint.lastAppliedSequence, 0);
     },
   );
+
+  test('semantic barrier safe code survives a matching pull fence', () async {
+    await seedShadowJournal(
+      CloudFetchBatch(
+        scope: scope,
+        changes: [testChange(1)],
+        batchId: 'legacy-message-barrier',
+        generation: 1,
+        nextToken: 'legacy-message-token',
+        hasMore: true,
+      ),
+      now: clock.value,
+    );
+    applier.resultsBySequence[1] = const CloudInboxApplyResult.retryable(
+      failureCategory: CloudFailureCategory.dependency,
+      safeCode: 'canonical_message_chat_unavailable',
+    );
+    transport.fetchHandler = (scope, token, generation, limit) async {
+      fail('transport must remain fenced for an unmarked pending page');
+    };
+
+    final result = await engine().synchronize(
+      trigger: CloudSyncTrigger.startup,
+    );
+
+    expect(result.status, CloudSyncRunStatus.degraded);
+    expect(result.failureCategory, CloudFailureCategory.dependency);
+    expect(result.failureSafeCode, 'canonical_message_chat_unavailable');
+    expect(transport.fetchCallCount, 0);
+    expect((await store.readCheckpoint(scope)).fetchedToken, isNotNull);
+  });
+
+  test('freshly fetched semantic barrier reports its safe code', () async {
+    transport.enqueueFetchBatch(
+      CloudFetchBatch(
+        scope: scope,
+        changes: [testChange(1)],
+        batchId: 'fresh-message-barrier',
+        generation: 1,
+        nextToken: 'fresh-message-token',
+        hasMore: false,
+      ),
+    );
+    applier.resultsBySequence[1] = const CloudInboxApplyResult.retryable(
+      failureCategory: CloudFailureCategory.dependency,
+      safeCode: 'canonical_message_chat_unavailable',
+    );
+
+    final result = await engine(
+      flags: const CloudSyncFeatureFlags(
+        readOnlyFetch: true,
+        semanticApply: true,
+      ),
+    ).synchronize(trigger: CloudSyncTrigger.manual);
+
+    expect(result.status, CloudSyncRunStatus.degraded);
+    expect(result.failureCategory, CloudFailureCategory.dependency);
+    expect(result.failureSafeCode, 'canonical_message_chat_unavailable');
+    expect(transport.fetchCallCount, 1);
+  });
+
+  const preflightSafeCodeCases = <CloudPreflightCode, String>{
+    CloudPreflightCode.unsupportedRecordType:
+        'preflight_unsupported_record_type',
+    CloudPreflightCode.malformedMetadata: 'preflight_malformed_metadata',
+    CloudPreflightCode.oversizedRecord: 'preflight_oversized_record',
+    CloudPreflightCode.invalidChangeShape: 'preflight_invalid_change_shape',
+    CloudPreflightCode.unknown: 'preflight_unknown',
+  };
+  for (final preflightCase in preflightSafeCodeCases.entries) {
+    test(
+      'content-free ${preflightCase.key.name} preflight code survives a blocking failure',
+      () async {
+        transport.enqueueFetchBatch(
+          CloudFetchBatch(
+            scope: scope,
+            changes: [
+              testChange(
+                1,
+                preflightFailure: CloudFailureCategory.conflict,
+                preflightCode: preflightCase.key,
+              ),
+            ],
+            batchId: 'fresh-preflight-barrier',
+            generation: 1,
+            nextToken: 'fresh-preflight-token',
+            hasMore: false,
+          ),
+        );
+
+        final result = await engine(
+          flags: const CloudSyncFeatureFlags(
+            readOnlyFetch: true,
+            semanticApply: true,
+          ),
+        ).synchronize(trigger: CloudSyncTrigger.manual);
+
+        expect(result.status, CloudSyncRunStatus.degraded);
+        expect(result.failureCategory, CloudFailureCategory.conflict);
+        expect(result.failureSafeCode, preflightCase.value);
+        expect(applier.appliedSequences, isEmpty);
+      },
+    );
+  }
 
   test(
     'legacy deterministic quarantine becomes retained before fetch',
@@ -1007,6 +1111,41 @@ void main() {
         ),
       ),
     );
+  });
+
+  test('push-only run is fenced by an unresolved checkpoint page', () async {
+    store = _OutboxPresenceRaceStore();
+    await seedShadowJournal(
+      CloudFetchBatch(
+        scope: scope,
+        changes: [testChange(1)],
+        batchId: 'legacy-outbound-fence-page',
+        generation: 1,
+        nextToken: 'legacy-outbound-fence-token',
+        hasMore: true,
+      ),
+      now: clock.value,
+    );
+    await store.enqueueOutbox(testOutboxOperation(scope, 710));
+    transport.writePreflightHandler = (_, _, _) async {
+      fail('writer preflight must remain fenced');
+    };
+
+    final result = await engine(
+      flags: const CloudSyncFeatureFlags(readOnlyFetch: false, saves: true),
+      maximumOutboxBatches: 1,
+    ).synchronize(trigger: CloudSyncTrigger.localOutbox);
+
+    expect(result.status, CloudSyncRunStatus.failed);
+    expect(result.failureCategory, CloudFailureCategory.localStorage);
+    expect(result.failureSafeCode, 'checkpoint_pending_page_unresolved');
+    expect(transport.prepareSubmissionCallCount, 0);
+    expect(transport.pushCallCount, 0);
+    expect(
+      (await store.outboxEntries(scope)).single.status,
+      CloudOutboxStatus.pending,
+    );
+    expect((store as _OutboxPresenceRaceStore).hiddenPresenceChecks, 1);
   });
 
   test(
@@ -2933,6 +3072,16 @@ class _RecoveryTrackingStore extends InMemoryCloudSyncStore {
   }) {
     recoverExpiredOutboxLeaseCalls++;
     return super.recoverExpiredOutboxLeases(scope, now: now);
+  }
+}
+
+class _OutboxPresenceRaceStore extends InMemoryCloudSyncStore {
+  int hiddenPresenceChecks = 0;
+
+  @override
+  Future<bool> hasNonterminalOutbox(CloudSyncScope scope) async {
+    hiddenPresenceChecks++;
+    return false;
   }
 }
 

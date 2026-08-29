@@ -10,7 +10,10 @@ import 'cloud_sync_store.dart';
 /// Transactional reference implementation used by unit tests and adapter
 /// development. It is not durable across process restarts.
 class InMemoryCloudSyncStore
-    implements CloudSyncStore, CloudSyncUnknownOutcomeLeasingStore {
+    implements
+        CloudSyncStore,
+        CloudSyncUnknownOutcomeLeasingStore,
+        CloudSyncOutboxPresenceStore {
   final Lock _lock = Lock();
   final Map<String, CloudSyncCheckpoint> _checkpoints = {};
   final Map<String, String?> _pendingFetchedTokens = {};
@@ -36,6 +39,17 @@ class InMemoryCloudSyncStore
       return List.unmodifiable(
         _outbox[scope.storageKey]?.values ?? const <CloudOutboxOperation>[],
       );
+    });
+  }
+
+  @override
+  Future<bool> hasNonterminalOutbox(CloudSyncScope scope) {
+    return _lock.synchronized(() async {
+      final entries = _outbox[scope.storageKey];
+      return entries != null &&
+          entries.values.any(
+            (operation) => _isBlockingOutboxStatus(operation.status),
+          );
     });
   }
 
@@ -559,9 +573,21 @@ class InMemoryCloudSyncStore
     _requirePositiveLimit(limit);
     if (leaseId.isEmpty) throw ArgumentError.value(leaseId, 'leaseId');
     return _lock.synchronized(() async {
+      final entries = _outbox[scope.storageKey];
+      final checkpoint = _checkpoint(scope);
+      if (entries != null &&
+          entries.values.any(
+            (operation) => _isBlockingOutboxStatus(operation.status),
+          ) &&
+          (checkpoint.pendingBatchId != null ||
+              _hasUnmarkedPendingInbox(scope, checkpoint))) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'checkpoint_pending_page_unresolved',
+        );
+      }
       _fenceStaleOutboxLocked(scope, now: now);
       _recoverExpiredOutboxLeasesLocked(scope, now);
-      final entries = _outbox[scope.storageKey];
       if (entries == null) return const <CloudOutboxOperation>[];
 
       final blockingByLogicalKey = <String, CloudOutboxOperation>{};

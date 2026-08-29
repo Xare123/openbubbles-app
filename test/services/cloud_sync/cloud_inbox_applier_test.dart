@@ -299,10 +299,9 @@ void main() {
       ),
     );
 
-    expect(
-      (await _apply(applier, inbox)).disposition,
-      CloudInboxApplyDisposition.deferred,
-    );
+    final result = await _apply(applier, inbox);
+    expect(result.disposition, CloudInboxApplyDisposition.deferred);
+    expect(result.safeCode, 'semantic_parent_missing');
     expect(store.transaction.appliedChanges, isEmpty);
     expect(store.transaction.entityApplyCount, 0);
   });
@@ -641,8 +640,9 @@ void main() {
       diagnosticRecorder: diagnostics.add,
     );
 
-    await _apply(applier, decoderFailure);
+    final decoderResult = await _apply(applier, decoderFailure);
     expect(diagnostics, ['decoder_chat_shape_invalid']);
+    expect(decoderResult.safeCode, 'decoder_chat_shape_invalid');
 
     diagnostics.clear();
     final applyFailure = entry(2);
@@ -652,8 +652,9 @@ void main() {
       safeCode: 'canonical_chat_relation_unavailable',
     );
 
-    await _apply(applier, applyFailure);
+    final applyResult = await _apply(applier, applyFailure);
     expect(diagnostics, ['canonical_chat_relation_unavailable']);
+    expect(applyResult.safeCode, 'canonical_chat_relation_unavailable');
   });
 
   test('typed retryable decoder failures remain retryable', () async {

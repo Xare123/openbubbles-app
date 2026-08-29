@@ -1114,6 +1114,7 @@ class CloudInboxApplyResult {
   const CloudInboxApplyResult.applied({this.inboxStatusPersisted = false})
     : disposition = CloudInboxApplyDisposition.applied,
       failureCategory = null,
+      safeCode = null,
       retryAfter = null;
 
   /// A server-confirmed tombstone was deliberately retained as protected
@@ -1122,29 +1123,34 @@ class CloudInboxApplyResult {
   const CloudInboxApplyResult.tombstoneReadOnlyAcknowledged()
     : disposition = CloudInboxApplyDisposition.tombstoneReadOnlyAcknowledged,
       failureCategory = null,
+      safeCode = null,
       retryAfter = null,
       inboxStatusPersisted = false;
 
   const CloudInboxApplyResult.deferred({
     this.failureCategory = CloudFailureCategory.dependency,
+    this.safeCode,
     this.retryAfter,
   }) : disposition = CloudInboxApplyDisposition.deferred,
        inboxStatusPersisted = false;
 
   const CloudInboxApplyResult.retryable({
     required this.failureCategory,
+    this.safeCode,
     this.retryAfter,
   }) : disposition = CloudInboxApplyDisposition.retryable,
        inboxStatusPersisted = false;
 
   const CloudInboxApplyResult.quarantined({
     required this.failureCategory,
+    this.safeCode,
     this.inboxStatusPersisted = false,
   }) : disposition = CloudInboxApplyDisposition.quarantined,
        retryAfter = null;
 
   final CloudInboxApplyDisposition disposition;
   final CloudFailureCategory? failureCategory;
+  final String? safeCode;
   final Duration? retryAfter;
 
   /// True only when the semantic gateway committed the canonical mutation,

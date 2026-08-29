@@ -118,6 +118,25 @@ void main() {
     );
   });
 
+  test('exposes reviewed semantic barrier codes', () {
+    const codes = <String>{
+      'canonical_attachment_owner_unavailable',
+      'canonical_message_chat_unavailable',
+      'canonical_message_reply_parent_unavailable',
+      'canonical_reaction_parent_unavailable',
+      'checkpoint_pending_page_unresolved',
+      'preflight_invalid_change_shape',
+      'preflight_malformed_metadata',
+      'preflight_oversized_record',
+      'preflight_unknown',
+      'preflight_unsupported_record_type',
+      'semantic_parent_missing',
+    };
+    for (final code in codes) {
+      expect(cloudSyncV2SafeFailureCodeForCandidate(code), code);
+    }
+  });
+
   test('exposes reviewed shadow stage codes', () {
     const codes = <String>{
       'cloud_sync_shadow_auth_prepare_failed',

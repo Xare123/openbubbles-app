@@ -969,17 +969,19 @@ class TransactionalCloudInboxApplier
     try {
       decoded = await _decoder.decode(entry);
     } on CloudSemanticDecodeFailure catch (failure) {
-      _recordDiagnostic(
-        failure.safeCode ??
-            'decoder_${_safeCodeSegment(failure.category.name)}',
-      );
+      final safeCode =
+          failure.safeCode ??
+          'decoder_${_safeCodeSegment(failure.category.name)}';
+      _recordDiagnostic(safeCode);
       if (failure.category.isRetryable) {
         return CloudInboxApplyResult.retryable(
           failureCategory: failure.category,
+          safeCode: safeCode,
         );
       }
       return CloudInboxApplyResult.quarantined(
         failureCategory: failure.category,
+        safeCode: safeCode,
       );
     } catch (_) {
       _recordDiagnostic('decoder_unknown');
@@ -1079,17 +1081,20 @@ class TransactionalCloudInboxApplier
         },
       );
     } on CloudSyncFailure catch (failure) {
-      _recordDiagnostic(
-        failure.safeCode ?? 'apply_${_safeCodeSegment(failure.category.name)}',
-      );
+      final safeCode =
+          failure.safeCode ??
+          'apply_${_safeCodeSegment(failure.category.name)}';
+      _recordDiagnostic(safeCode);
       if (failure.category.isRetryable) {
         return CloudInboxApplyResult.retryable(
           failureCategory: failure.category,
+          safeCode: safeCode,
           retryAfter: failure.retryAfter,
         );
       }
       return CloudInboxApplyResult.quarantined(
         failureCategory: failure.category,
+        safeCode: safeCode,
       );
     } catch (_) {
       _recordDiagnostic('apply_unknown');
@@ -1133,7 +1138,9 @@ class TransactionalCloudInboxApplier
     );
 
     if (decision.action == CloudMergeAction.defer) {
-      return const CloudInboxApplyResult.deferred();
+      return const CloudInboxApplyResult.deferred(
+        safeCode: 'semantic_parent_missing',
+      );
     }
 
     if (decision.action == CloudMergeAction.quarantine ||
