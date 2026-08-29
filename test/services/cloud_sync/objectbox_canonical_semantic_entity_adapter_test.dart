@@ -6,6 +6,7 @@ import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_merge_policy.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_diagnostics.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_canonical_semantic_entity_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_semantic_store_gateway.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/transient_cloud_canonical_identity_registry.dart';
@@ -507,8 +508,10 @@ void main() {
           style: CloudSemanticChatStyle.group,
           participantHandles: const [
             'mailto:alice@example.com',
+            'MAILTO:alice@example.com',
             'alice@example.com',
             'tel:+19492476163',
+            'TEL:+19492476163',
             '+19492476163',
           ],
         ),
@@ -700,41 +703,54 @@ void main() {
   test(
     'rolls back participant and chat rows when a participant is invalid',
     () {
+      final diagnostics = <String>[];
       final adapter = _newAdapter(
         store: store,
         activeScopeProvider: () => activeScope,
         resolver: resolver,
+        diagnosticRecorder: diagnostics.add,
         semanticApplyEnabled: true,
         allowChatUpserts: true,
       );
 
-      expect(
-        () => store.runInTransaction(TxMode.write, () {
-          adapter.applyEntity(
-            scope: scope,
-            generation: generation,
-            payload: _chatPayload(
-              logicalEntityKeyHash: chatHash,
-              canonicalGuid: 'chat-guid',
-              chatIdentifier: 'iMessage;+;invalid',
-              participantHandles: const [
-                'mailto:valid@example.com',
-                'not a valid participant',
-              ],
+      const invalidShapes = {
+        'not a valid participant':
+            'canonical_participant_shape_telephone_invalid',
+        'urn:apple:opaque': 'canonical_participant_shape_unknown_scheme',
+        ' mailto:valid@example.com':
+            'canonical_participant_shape_outer_whitespace',
+      };
+      for (final invalidShape in invalidShapes.entries) {
+        diagnostics.clear();
+        expect(
+          () => store.runInTransaction(TxMode.write, () {
+            adapter.applyEntity(
+              scope: scope,
+              generation: generation,
+              payload: _chatPayload(
+                logicalEntityKeyHash: chatHash,
+                canonicalGuid: 'chat-guid',
+                chatIdentifier: 'iMessage;+;invalid',
+                participantHandles: [
+                  'mailto:valid@example.com',
+                  invalidShape.key,
+                ],
+              ),
+              snapshot: _snapshot(CloudEntityKind.chat, chatHash),
+            );
+          }),
+          throwsA(
+            predicate<CloudSyncFailure>(
+              (failure) =>
+                  failure.safeCode == 'canonical_chat_participant_invalid',
             ),
-            snapshot: _snapshot(CloudEntityKind.chat, chatHash),
-          );
-        }),
-        throwsA(
-          predicate<CloudSyncFailure>(
-            (failure) =>
-                failure.safeCode == 'canonical_chat_participant_invalid',
           ),
-        ),
-      );
-      expect(store.box<Chat>().count(), 0);
-      expect(store.box<Handle>().count(), 0);
-      expect(store.box<CloudSemanticChatAliasEntity>().count(), 0);
+        );
+        expect(diagnostics, [invalidShape.value]);
+        expect(store.box<Chat>().count(), 0);
+        expect(store.box<Handle>().count(), 0);
+        expect(store.box<CloudSemanticChatAliasEntity>().count(), 0);
+      }
     },
   );
 
@@ -1046,6 +1062,341 @@ void main() {
 
     expect(store.box<Message>().getAll().single.chat.targetId, smsChatId);
     expect(store.box<CloudSemanticChatAliasEntity>().count(), 2);
+  });
+
+  test('resolves a message chat through the chat-zone ownership scope', () {
+    final chatScope = CloudSyncScope(
+      accountFingerprint: testAccountFingerprintA,
+      container: 'container',
+      database: 'private',
+      zone: 'chatManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    final messageScope = CloudSyncScope(
+      accountFingerprint: testAccountFingerprintA,
+      container: 'container',
+      database: 'private',
+      zone: 'messageManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    const chatGeneration = 7;
+    const messageGeneration = 11;
+    _seedCheckpoint(store, scope: chatScope, generation: chatGeneration);
+    const identifier = 'iMessage;-;cross-zone-chat';
+    final chatId = store.box<Chat>().put(
+      Chat(guid: 'cross-zone-chat-guid', chatIdentifier: identifier, style: 45),
+    );
+    _seedChatOwnershipAndAlias(
+      store,
+      scope: chatScope,
+      generation: chatGeneration,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: 'cross-zone-chat-guid',
+      chatIdentifier: identifier,
+      chatId: chatId,
+    );
+    final crossZoneResolver = _Resolver()
+      ..put(
+        scope: messageScope,
+        generation: messageGeneration,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: messageHash,
+        canonicalGuid: 'cross-zone-message-guid',
+      );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => CloudCanonicalActiveScope(
+        scope: messageScope,
+        generation: messageGeneration,
+      ),
+      resolver: crossZoneResolver,
+      chatDependencyScope: CloudCanonicalActiveScope(
+        scope: chatScope,
+        generation: chatGeneration,
+      ),
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+
+    expect(
+      adapter.applyEntity(
+        scope: messageScope,
+        generation: messageGeneration,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'cross-zone-message-guid',
+          chatIdentifier: identifier,
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    expect(store.box<Message>().getAll().single.chat.targetId, chatId);
+  });
+
+  test('does not accept a stale cross-zone chat ownership generation', () {
+    final chatScope = CloudSyncScope(
+      accountFingerprint: testAccountFingerprintA,
+      container: 'container',
+      database: 'private',
+      zone: 'chatManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    final messageScope = CloudSyncScope(
+      accountFingerprint: testAccountFingerprintA,
+      container: 'container',
+      database: 'private',
+      zone: 'messageManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    const identifier = 'iMessage;-;stale-cross-zone-chat';
+    _seedCheckpoint(store, scope: chatScope, generation: 4);
+    final chatId = store.box<Chat>().put(
+      Chat(guid: 'stale-chat-guid', chatIdentifier: identifier, style: 45),
+    );
+    _seedChatOwnershipAndAlias(
+      store,
+      scope: chatScope,
+      generation: 3,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: 'stale-chat-guid',
+      chatIdentifier: identifier,
+      chatId: chatId,
+    );
+    final crossZoneResolver = _Resolver()
+      ..put(
+        scope: messageScope,
+        generation: 9,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: messageHash,
+        canonicalGuid: 'stale-message-guid',
+      );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () =>
+          CloudCanonicalActiveScope(scope: messageScope, generation: 9),
+      resolver: crossZoneResolver,
+      chatDependencyScope: CloudCanonicalActiveScope(
+        scope: chatScope,
+        generation: 4,
+      ),
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+
+    expect(
+      () => adapter.applyEntity(
+        scope: messageScope,
+        generation: 9,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'stale-message-guid',
+          chatIdentifier: identifier,
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) => failure.safeCode == 'canonical_message_chat_unavailable',
+        ),
+      ),
+    );
+    expect(store.box<Message>().count(), 0);
+  });
+
+  test('rejects a dependency generation advanced after capture', () {
+    final chatScope = CloudSyncScope(
+      accountFingerprint: testAccountFingerprintA,
+      container: 'container',
+      database: 'private',
+      zone: 'chatManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    final messageScope = CloudSyncScope(
+      accountFingerprint: testAccountFingerprintA,
+      container: 'container',
+      database: 'private',
+      zone: 'messageManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    const identifier = 'iMessage;-;advanced-cross-zone-chat';
+    _seedCheckpoint(store, scope: chatScope, generation: 3);
+    final chatId = store.box<Chat>().put(
+      Chat(guid: 'advanced-chat-guid', chatIdentifier: identifier, style: 45),
+    );
+    _seedChatOwnershipAndAlias(
+      store,
+      scope: chatScope,
+      generation: 3,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: 'advanced-chat-guid',
+      chatIdentifier: identifier,
+      chatId: chatId,
+    );
+    final crossZoneResolver = _Resolver()
+      ..put(
+        scope: messageScope,
+        generation: 9,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: messageHash,
+        canonicalGuid: 'advanced-message-guid',
+      );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () =>
+          CloudCanonicalActiveScope(scope: messageScope, generation: 9),
+      resolver: crossZoneResolver,
+      chatDependencyScope: CloudCanonicalActiveScope(
+        scope: chatScope,
+        generation: 3,
+      ),
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+
+    _seedCheckpoint(store, scope: chatScope, generation: 4);
+
+    expect(
+      () => adapter.applyEntity(
+        scope: messageScope,
+        generation: 9,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'advanced-message-guid',
+          chatIdentifier: identifier,
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) => failure.safeCode == 'canonical_dependency_scope_stale',
+        ),
+      ),
+    );
+    expect(store.box<Message>().count(), 0);
+  });
+
+  test('rejects mismatched cross-zone dependency namespaces', () {
+    final messageScope = CloudSyncScope(
+      accountFingerprint: testAccountFingerprintA,
+      container: 'container',
+      database: 'private',
+      zone: 'messageManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    CloudSyncScope dependencyScope({
+      String? accountFingerprint,
+      String? container,
+      String? database,
+      String zone = 'chatManateeZone',
+      CloudSyncStreamKind streamKind = CloudSyncStreamKind.messages,
+      int schemaVersion = 2,
+      CloudSyncPersistenceLane persistenceLane =
+          CloudSyncPersistenceLane.semantic,
+    }) => CloudSyncScope(
+      accountFingerprint: accountFingerprint ?? messageScope.accountFingerprint,
+      container: container ?? messageScope.container,
+      database: database ?? messageScope.database,
+      zone: zone,
+      streamKind: streamKind,
+      schemaVersion: schemaVersion,
+      persistenceLane: persistenceLane,
+    );
+    final mismatches = <CloudSyncScope>[
+      dependencyScope(zone: 'messageManateeZone'),
+      dependencyScope(accountFingerprint: testAccountFingerprintB),
+      dependencyScope(container: 'other-container'),
+      dependencyScope(database: 'shared'),
+      dependencyScope(streamKind: CloudSyncStreamKind.profiles),
+      dependencyScope(schemaVersion: 3),
+      dependencyScope(persistenceLane: CloudSyncPersistenceLane.shadow),
+    ];
+
+    for (final mismatchedScope in mismatches) {
+      final adapter = _newAdapter(
+        store: store,
+        activeScopeProvider: () =>
+            CloudCanonicalActiveScope(scope: messageScope, generation: 9),
+        resolver: _Resolver()
+          ..put(
+            scope: messageScope,
+            generation: 9,
+            kind: CloudEntityKind.message,
+            logicalEntityKeyHash: messageHash,
+            canonicalGuid: 'mismatched-scope-message-guid',
+          ),
+        chatDependencyScope: CloudCanonicalActiveScope(
+          scope: mismatchedScope,
+          generation: 9,
+        ),
+        semanticApplyEnabled: true,
+        allowMessageUpserts: true,
+      );
+
+      expect(
+        () => adapter.applyEntity(
+          scope: messageScope,
+          generation: 9,
+          payload: _messagePayload(
+            logicalEntityKeyHash: messageHash,
+            canonicalGuid: 'mismatched-scope-message-guid',
+            chatIdentifier: 'iMessage;-;mismatched-scope',
+          ),
+          snapshot: _snapshot(CloudEntityKind.message, messageHash),
+        ),
+        throwsA(
+          predicate<CloudSyncFailure>(
+            (failure) =>
+                failure.safeCode == 'canonical_dependency_scope_conflict',
+          ),
+        ),
+      );
+      expect(store.box<Message>().count(), 0);
+    }
+  });
+
+  test('rejects a same-scope dependency with a different generation', () {
+    final chatScope = CloudSyncScope(
+      accountFingerprint: testAccountFingerprintA,
+      container: 'container',
+      database: 'private',
+      zone: 'chatManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    final sameScopeResolver = _Resolver()
+      ..put(
+        scope: chatScope,
+        generation: 4,
+        kind: CloudEntityKind.chat,
+        logicalEntityKeyHash: chatHash,
+        canonicalGuid: 'same-scope-chat-guid',
+      );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () =>
+          CloudCanonicalActiveScope(scope: chatScope, generation: 4),
+      resolver: sameScopeResolver,
+      chatDependencyScope: CloudCanonicalActiveScope(
+        scope: chatScope,
+        generation: 5,
+      ),
+      semanticApplyEnabled: true,
+    );
+
+    expect(
+      () => adapter.entityExists(
+        scope: chatScope,
+        generation: 4,
+        kind: CloudEntityKind.chat,
+        logicalEntityKeyHash: chatHash,
+      ),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) =>
+              failure.safeCode == 'canonical_dependency_scope_conflict',
+        ),
+      ),
+    );
   });
 
   test('does not fall back to an unproven raw chat identifier', () {
@@ -2340,6 +2691,101 @@ void main() {
     expect(attachment.sourcePath, isNull);
   });
 
+  test('resolves an attachment owner through the message-zone scope', () {
+    final messageScope = CloudSyncScope(
+      accountFingerprint: testAccountFingerprintA,
+      container: 'container',
+      database: 'private',
+      zone: 'messageManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    final attachmentScope = CloudSyncScope(
+      accountFingerprint: testAccountFingerprintA,
+      container: 'container',
+      database: 'private',
+      zone: 'attachmentManateeZone',
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
+    const messageGeneration = 5;
+    const attachmentGeneration = 8;
+    _seedCheckpoint(store, scope: messageScope, generation: messageGeneration);
+    const ownerHash = 'cross-zone-attachment-owner-hash';
+    const attachmentHash = 'cross-zone-attachment-hash';
+    const ownerGuid = 'cross-zone-owner-guid';
+    const attachmentGuid = '${ownerGuid}_1';
+    final ownerId = store.box<Message>().put(
+      Message(guid: ownerGuid, dateCreated: testEpoch, isFromMe: false),
+    );
+    _seedExactOwnershipProof(
+      store,
+      scope: messageScope,
+      generation: messageGeneration,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: ownerHash,
+      canonicalGuid: ownerGuid,
+    );
+    final crossZoneResolver = _Resolver()
+      ..put(
+        scope: attachmentScope,
+        generation: attachmentGeneration,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: ownerHash,
+        canonicalGuid: ownerGuid,
+      )
+      ..put(
+        scope: attachmentScope,
+        generation: attachmentGeneration,
+        kind: CloudEntityKind.attachment,
+        logicalEntityKeyHash: attachmentHash,
+        canonicalGuid: attachmentGuid,
+      );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => CloudCanonicalActiveScope(
+        scope: attachmentScope,
+        generation: attachmentGeneration,
+      ),
+      resolver: crossZoneResolver,
+      messageDependencyScope: CloudCanonicalActiveScope(
+        scope: messageScope,
+        generation: messageGeneration,
+      ),
+      semanticApplyEnabled: true,
+      allowAttachmentMetadataUpserts: true,
+    );
+
+    expect(
+      adapter.entityExists(
+        scope: attachmentScope,
+        generation: attachmentGeneration,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: ownerHash,
+      ),
+      isTrue,
+    );
+    expect(
+      adapter.applyEntity(
+        scope: attachmentScope,
+        generation: attachmentGeneration,
+        payload: _attachmentPayload(
+          logicalEntityKeyHash: attachmentHash,
+          canonicalGuid: attachmentGuid,
+          ownerLogicalKeyHash: ownerHash,
+          ownerCanonicalGuid: ownerGuid,
+          ownerPart: 1,
+          protectedLocalReference: 'protected:cross-zone',
+        ),
+        snapshot: _snapshot(
+          CloudEntityKind.attachment,
+          attachmentHash,
+          parentLogicalKeyHash: ownerHash,
+        ),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+    expect(store.box<Attachment>().getAll().single.message.targetId, ownerId);
+  });
+
   test('creates a standalone attachment without inventing an owner', () {
     resolver.put(
       scope: scope,
@@ -2768,6 +3214,9 @@ ObjectBoxCanonicalSemanticEntityAdapter _newAdapter({
   required Store store,
   required CloudCanonicalActiveScope? Function() activeScopeProvider,
   required CloudCanonicalIdentityResolver resolver,
+  CloudCanonicalActiveScope? chatDependencyScope,
+  CloudCanonicalActiveScope? messageDependencyScope,
+  CloudSyncSemanticDiagnosticRecorder? diagnosticRecorder,
   bool semanticApplyEnabled = false,
   bool allowExistingChatPresentationUpdates = false,
   bool allowChatUpserts = false,
@@ -2779,6 +3228,9 @@ ObjectBoxCanonicalSemanticEntityAdapter _newAdapter({
   store: store,
   activeScopeProvider: activeScopeProvider,
   identityResolver: resolver,
+  chatDependencyScope: chatDependencyScope,
+  messageDependencyScope: messageDependencyScope,
+  diagnosticRecorder: diagnosticRecorder,
   semanticApplyEnabled: semanticApplyEnabled,
   allowExistingChatPresentationUpdates: allowExistingChatPresentationUpdates,
   allowChatUpserts: allowChatUpserts,
@@ -3078,6 +3530,41 @@ void _seedExactOwnershipProof(
             generation: generation,
             canonicalGuid: canonicalGuid,
           ),
+      updatedAtMs: testEpoch.millisecondsSinceEpoch,
+    ),
+  );
+}
+
+void _seedCheckpoint(
+  Store store, {
+  required CloudSyncScope scope,
+  required int generation,
+}) {
+  final box = store.box<CloudSyncCheckpointEntity>();
+  final key = _semanticScopeKey(scope);
+  final query =
+      box.query(CloudSyncCheckpointEntity_.checkpointKey.equals(key)).build()
+        ..limit = 1;
+  final existing = query.findFirst();
+  query.close();
+  if (existing != null) {
+    existing
+      ..generation = generation
+      ..updatedAtMs = testEpoch.millisecondsSinceEpoch;
+    box.put(existing);
+    return;
+  }
+  box.put(
+    CloudSyncCheckpointEntity(
+      checkpointKey: key,
+      accountFingerprint: scope.accountFingerprint,
+      container: scope.container,
+      database: scope.database,
+      zone: scope.zone,
+      streamKind: scope.streamKind.name,
+      schemaVersion: scope.schemaVersion,
+      persistenceLane: scope.persistenceLane.name,
+      generation: generation,
       updatedAtMs: testEpoch.millisecondsSinceEpoch,
     ),
   );

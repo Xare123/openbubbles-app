@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/in_memory_cloud_sync_store.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_canonical_semantic_entity_adapter.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart'
     as frb;
 import 'package:flutter_test/flutter_test.dart';
@@ -26,6 +28,62 @@ void main() {
   tearDown(() {
     temporaryDirectory.deleteSync(recursive: true);
   });
+
+  test(
+    'production semantic dependencies use exact zones and checkpoint generations',
+    () async {
+      final store = InMemoryCloudSyncStore();
+      final messageScope = CloudSyncScope(
+        accountFingerprint: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        container: 'com.apple.messages.cloud',
+        database: 'private',
+        zone: 'messageManateeZone',
+        streamKind: CloudSyncStreamKind.messages,
+        schemaVersion: 2,
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      final chatScope = CloudSyncScope(
+        accountFingerprint: messageScope.accountFingerprint,
+        container: messageScope.container,
+        database: messageScope.database,
+        zone: 'chatManateeZone',
+        streamKind: messageScope.streamKind,
+        schemaVersion: messageScope.schemaVersion,
+        persistenceLane: messageScope.persistenceLane,
+      );
+      await store.advanceOutboxGeneration(
+        chatScope,
+        now: DateTime.utc(2026, 1, 1),
+      );
+      final current = CloudCanonicalActiveScope(
+        scope: messageScope,
+        generation: 9,
+      );
+
+      final sameScope = await cloudSyncProductionDependencyActiveScope(
+        store: store,
+        current: current,
+        zone: 'messageManateeZone',
+      );
+      final chat = await cloudSyncProductionDependencyActiveScope(
+        store: store,
+        current: current,
+        zone: 'chatManateeZone',
+      );
+
+      expect(sameScope, same(current));
+      expect(chat.scope, chatScope);
+      expect(chat.generation, 2);
+      await expectLater(
+        cloudSyncProductionDependencyActiveScope(
+          store: store,
+          current: current,
+          zone: 'unexpectedZone',
+        ),
+        throwsArgumentError,
+      );
+    },
+  );
 
   test(
     'construction and capture expose no raw account input in Dart',

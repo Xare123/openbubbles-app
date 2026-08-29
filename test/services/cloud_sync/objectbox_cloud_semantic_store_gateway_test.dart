@@ -95,6 +95,76 @@ void main() {
     },
   );
 
+  test(
+    'real adapter atomically resolves an attachment parent across zones',
+    () async {
+      final fixture = _prepareCrossZoneAttachmentFixture(objectBox, now);
+
+      final result = await fixture.gateway
+          .writeTransaction<CloudInboxApplyResult>(
+            entry: fixture.entry,
+            leaseFence: fixture.leaseFence,
+            action: (transaction) {
+              transaction.applyEntity(
+                payload: fixture.payload,
+                snapshot: fixture.snapshot,
+              );
+              transaction.markChangeApplied(fixture.entry.change.changeId);
+              return const CloudInboxApplyResult.applied(
+                inboxStatusPersisted: true,
+              );
+            },
+          );
+
+      expect(result.inboxStatusPersisted, isTrue);
+      final attachment = objectBox.box<Attachment>().getAll().single;
+      expect(attachment.message.targetId, fixture.ownerMessageId);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 2);
+      expect(objectBox.box<CloudRecordMapEntity>().count(), 1);
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 1);
+      expect(
+        objectBox.box<CloudInboxChangeEntity>().getAll().single.status,
+        CloudInboxStatus.applied.index,
+      );
+    },
+  );
+
+  test(
+    'real adapter rolls back when a dependency generation advances',
+    () async {
+      final fixture = _prepareCrossZoneAttachmentFixture(objectBox, now);
+      final checkpoint =
+          objectBox.box<CloudSyncCheckpointEntity>().getAll().singleWhere(
+            (row) => row.checkpointKey == _scopeKey(fixture.messageScope),
+          )..generation = fixture.messageGeneration + 1;
+      objectBox.box<CloudSyncCheckpointEntity>().put(checkpoint);
+
+      await expectLater(
+        fixture.gateway.writeTransaction<void>(
+          entry: fixture.entry,
+          leaseFence: fixture.leaseFence,
+          action: (transaction) {
+            transaction.applyEntity(
+              payload: fixture.payload,
+              snapshot: fixture.snapshot,
+            );
+            transaction.markChangeApplied(fixture.entry.change.changeId);
+          },
+        ),
+        throwsA(_failureCode('canonical_dependency_scope_stale')),
+      );
+
+      expect(objectBox.box<Attachment>().count(), 0);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 1);
+      expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 0);
+      expect(
+        objectBox.box<CloudInboxChangeEntity>().getAll().single.status,
+        CloudInboxStatus.pending.index,
+      );
+    },
+  );
+
   test('promotes a pending page token with its final terminal row', () async {
     final entry = _entry(scope: scope);
     _seedDurableFence(
@@ -2030,6 +2100,202 @@ String _durableSyncControlFingerprint(Store store) {
         .toList(),
     'outboxCount': store.box<CloudOutboxOperationEntity>().count(),
   });
+}
+
+_CrossZoneAttachmentFixture _prepareCrossZoneAttachmentFixture(
+  Store store,
+  DateTime now,
+) {
+  final messageScope = _scope(zone: 'messageManateeZone');
+  final attachmentScope = _scope(zone: 'attachmentManateeZone');
+  const messageGeneration = 5;
+  const attachmentGeneration = 7;
+  final ownerLogicalKeyHash = _digestValue('P');
+  final attachmentLogicalKeyHash = _digestValue('L');
+  const ownerGuid = 'cross-zone-owner-guid';
+  const attachmentGuid = '${ownerGuid}_1';
+  final ownerMessageId = store.box<Message>().put(
+    Message(guid: ownerGuid, dateCreated: now, isFromMe: false),
+  );
+  store.box<CloudSyncCheckpointEntity>().put(
+    CloudSyncCheckpointEntity(
+      checkpointKey: _scopeKey(messageScope),
+      accountFingerprint: messageScope.accountFingerprint,
+      container: messageScope.container,
+      database: messageScope.database,
+      zone: messageScope.zone,
+      streamKind: messageScope.streamKind.name,
+      schemaVersion: messageScope.schemaVersion,
+      persistenceLane: messageScope.persistenceLane.name,
+      generation: messageGeneration,
+      updatedAtMs: now.millisecondsSinceEpoch,
+    ),
+  );
+  store.box<CloudSemanticSnapshotEntity>().put(
+    CloudSemanticSnapshotEntity(
+      snapshotKey:
+          'ownership-proof:$messageGeneration:message:$ownerLogicalKeyHash',
+      scopeGenerationKey: _scopeGenerationKey(messageScope, messageGeneration),
+      scopeKey: _scopeKey(messageScope),
+      accountFingerprint: messageScope.accountFingerprint,
+      container: messageScope.container,
+      database: messageScope.database,
+      zone: messageScope.zone,
+      streamKind: messageScope.streamKind.name,
+      schemaVersion: messageScope.schemaVersion,
+      generation: messageGeneration,
+      entityKind: CloudEntityKind.message.name,
+      logicalEntityKeyHash: ownerLogicalKeyHash,
+      canonicalGuidHash: CloudCanonicalIdentityDigest.forCanonicalGuid(
+        scope: messageScope,
+        generation: messageGeneration,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: ownerLogicalKeyHash,
+        canonicalGuid: ownerGuid,
+      ),
+      canonicalGuidLookupHash:
+          CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+            scope: messageScope,
+            generation: messageGeneration,
+            canonicalGuid: ownerGuid,
+          ),
+      updatedAtMs: now.millisecondsSinceEpoch,
+    ),
+  );
+  final resolver = _ExactCanonicalResolver()
+    ..put(
+      scope: attachmentScope,
+      generation: attachmentGeneration,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: ownerLogicalKeyHash,
+      canonicalGuid: ownerGuid,
+    )
+    ..put(
+      scope: attachmentScope,
+      generation: attachmentGeneration,
+      kind: CloudEntityKind.attachment,
+      logicalEntityKeyHash: attachmentLogicalKeyHash,
+      canonicalGuid: attachmentGuid,
+    );
+  final canonicalAdapter = ObjectBoxCanonicalSemanticEntityAdapter(
+    store: store,
+    activeScopeProvider: () => CloudCanonicalActiveScope(
+      scope: attachmentScope,
+      generation: attachmentGeneration,
+    ),
+    identityResolver: resolver,
+    messageDependencyScope: CloudCanonicalActiveScope(
+      scope: messageScope,
+      generation: messageGeneration,
+    ),
+    semanticApplyEnabled: true,
+    allowAttachmentMetadataUpserts: true,
+  );
+  final gateway = ObjectBoxCloudSemanticStoreGateway(
+    store: store,
+    canonicalAdapter: canonicalAdapter,
+    clock: () => now,
+  );
+  final entry = _entry(scope: attachmentScope);
+  const leaseFence = CloudCoordinatorLeaseFence(
+    ownerId: 'cross-zone-semantic-owner',
+    generation: 7,
+  );
+  _seedDurableFence(store, entry: entry, leaseFence: leaseFence, now: now);
+  final payload = CloudAttachmentEntityPayload(
+    logicalEntityKeyHash: attachmentLogicalKeyHash,
+    canonicalGuid: attachmentGuid,
+    ownerLogicalKeyHash: ownerLogicalKeyHash,
+    ownerCanonicalGuid: ownerGuid,
+    ownerPart: 1,
+    fileName: 'report.pdf',
+    mimeType: 'application/pdf',
+    protectedLocalReference: _protectedReference('A'),
+  );
+  final snapshot = CloudSemanticSnapshot(
+    kind: CloudEntityKind.attachment,
+    logicalEntityKeyHash: attachmentLogicalKeyHash,
+    parentLogicalKeyHash: ownerLogicalKeyHash,
+    immutableContentDigest: _digestValue('I'),
+    etagHash: entry.change.etagHash,
+    encryptedRawRecordReference: entry.change.encryptedPayloadReference,
+  );
+  return _CrossZoneAttachmentFixture(
+    gateway: gateway,
+    entry: entry,
+    leaseFence: leaseFence,
+    payload: payload,
+    snapshot: snapshot,
+    messageScope: messageScope,
+    messageGeneration: messageGeneration,
+    ownerMessageId: ownerMessageId,
+  );
+}
+
+final class _CrossZoneAttachmentFixture {
+  const _CrossZoneAttachmentFixture({
+    required this.gateway,
+    required this.entry,
+    required this.leaseFence,
+    required this.payload,
+    required this.snapshot,
+    required this.messageScope,
+    required this.messageGeneration,
+    required this.ownerMessageId,
+  });
+
+  final ObjectBoxCloudSemanticStoreGateway gateway;
+  final CloudInboxEntry entry;
+  final CloudCoordinatorLeaseFence leaseFence;
+  final CloudAttachmentEntityPayload payload;
+  final CloudSemanticSnapshot snapshot;
+  final CloudSyncScope messageScope;
+  final int messageGeneration;
+  final int ownerMessageId;
+}
+
+final class _ExactCanonicalResolver implements CloudCanonicalIdentityResolver {
+  final Map<String, String> _values = <String, String>{};
+  final Map<String, CloudCanonicalIdentityOwner> _owners =
+      <String, CloudCanonicalIdentityOwner>{};
+
+  void put({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudEntityKind kind,
+    required String logicalEntityKeyHash,
+    required String canonicalGuid,
+  }) {
+    _values[_key(scope, generation, kind, logicalEntityKeyHash)] =
+        canonicalGuid;
+    _owners['${scope.storageKey}:$generation:$canonicalGuid'] =
+        CloudCanonicalIdentityOwner(
+          kind: kind,
+          logicalEntityKeyHash: logicalEntityKeyHash,
+        );
+  }
+
+  @override
+  String? resolveCanonicalGuid({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudEntityKind kind,
+    required String logicalEntityKeyHash,
+  }) => _values[_key(scope, generation, kind, logicalEntityKeyHash)];
+
+  @override
+  CloudCanonicalIdentityOwner? resolveCanonicalIdentityOwner({
+    required CloudSyncScope scope,
+    required int generation,
+    required String canonicalGuid,
+  }) => _owners['${scope.storageKey}:$generation:$canonicalGuid'];
+
+  String _key(
+    CloudSyncScope scope,
+    int generation,
+    CloudEntityKind kind,
+    String logicalEntityKeyHash,
+  ) => '${scope.storageKey}:$generation:${kind.name}:$logicalEntityKeyHash';
 }
 
 final class _FixedDecoder implements CloudSemanticDecoder {

@@ -6,6 +6,8 @@ import 'package:crypto/crypto.dart';
 import 'cloud_inbox_applier.dart';
 import 'cloud_merge_policy.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_persistent_keys.dart';
+import 'cloud_sync_semantic_diagnostics.dart';
 import 'objectbox_cloud_semantic_store_gateway.dart';
 
 /// Immutable, content-free account and rebootstrap fence supplied by the
@@ -208,6 +210,9 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     required this.store,
     required this._activeScopeProvider,
     required this._identityResolver,
+    CloudCanonicalActiveScope? chatDependencyScope,
+    CloudCanonicalActiveScope? messageDependencyScope,
+    CloudSyncSemanticDiagnosticRecorder? diagnosticRecorder,
     this._semanticApplyEnabled = false,
     this._allowExistingChatPresentationUpdates = false,
     this._allowChatUpserts = false,
@@ -215,10 +220,18 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     this._allowMessageUpserts = false,
     this._allowReactionUpserts = false,
     this._allowAttachmentMetadataUpserts = false,
-  }) : _chats = store.box<Chat>(),
+  }) : // Public named parameters intentionally map to private immutable fields.
+       // ignore: prefer_initializing_formals
+       _chatDependencyScope = chatDependencyScope,
+       // ignore: prefer_initializing_formals
+       _messageDependencyScope = messageDependencyScope,
+       // ignore: prefer_initializing_formals
+       _diagnosticRecorder = diagnosticRecorder,
+       _chats = store.box<Chat>(),
        _handles = store.box<Handle>(),
        _messages = store.box<Message>(),
        _attachments = store.box<Attachment>(),
+       _checkpoints = store.box<CloudSyncCheckpointEntity>(),
        _snapshots = store.box<CloudSemanticSnapshotEntity>(),
        _chatAliases = store.box<CloudSemanticChatAliasEntity>();
 
@@ -226,6 +239,9 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
   final Store store;
   final CloudCanonicalActiveScope? Function() _activeScopeProvider;
   final CloudCanonicalIdentityResolver _identityResolver;
+  final CloudCanonicalActiveScope? _chatDependencyScope;
+  final CloudCanonicalActiveScope? _messageDependencyScope;
+  final CloudSyncSemanticDiagnosticRecorder? _diagnosticRecorder;
   final bool _semanticApplyEnabled;
   final bool _allowExistingChatPresentationUpdates;
   final bool _allowChatUpserts;
@@ -237,6 +253,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
   final Box<Handle> _handles;
   final Box<Message> _messages;
   final Box<Attachment> _attachments;
+  final Box<CloudSyncCheckpointEntity> _checkpoints;
   final Box<CloudSemanticSnapshotEntity> _snapshots;
   final Box<CloudSemanticChatAliasEntity> _chatAliases;
 
@@ -263,9 +280,14 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       logicalEntityKeyHash: logicalEntityKeyHash,
     );
     if (guid == null) return false;
+    final ownershipScope = _dependencyScopeFor(
+      kind: kind,
+      currentScope: scope,
+      currentGeneration: generation,
+    );
     _requireCanonicalIdentityOwnership(
-      scope: scope,
-      generation: generation,
+      scope: ownershipScope.scope,
+      generation: ownershipScope.generation,
       kind: kind,
       logicalEntityKeyHash: logicalEntityKeyHash,
       canonicalGuid: guid,
@@ -810,7 +832,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     final seen = <String>{};
     final serviceName = _serviceName(service);
     for (final raw in rawHandles) {
-      final normalized = _normalizeHandle(raw);
+      final normalized = _normalizeHandle(raw, onInvalid: _diagnosticRecorder);
       if (normalized == null) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.malformedRecord,
@@ -876,9 +898,14 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         safeCode: 'canonical_message_chat_alias_invalid',
       );
     }
+    final chatDependency = _dependencyScopeFor(
+      kind: CloudEntityKind.chat,
+      currentScope: scope,
+      currentGeneration: generation,
+    );
     final chat = _resolveChatByAlias(
-      scope: scope,
-      generation: generation,
+      scope: chatDependency.scope,
+      generation: chatDependency.generation,
       service: service,
       aliasKeyHash: payload.chatAliasKeyHash,
     );
@@ -1160,12 +1187,18 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
 
     Message? owner;
     if (hasOwner) {
+      final messageDependency = _dependencyScopeFor(
+        kind: CloudEntityKind.message,
+        currentScope: scope,
+        currentGeneration: generation,
+      );
       final ownerGuid = _requireResolvedGuid(
         scope: scope,
         generation: generation,
         kind: CloudEntityKind.message,
         logicalEntityKeyHash: payload.ownerLogicalKeyHash!,
         payloadCanonicalGuid: payload.ownerCanonicalGuid!,
+        durableOwnershipScope: messageDependency,
       );
       owner = _findMessage(ownerGuid);
       if (owner == null) {
@@ -1239,6 +1272,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     required CloudEntityKind kind,
     required String logicalEntityKeyHash,
     required String payloadCanonicalGuid,
+    CloudCanonicalActiveScope? durableOwnershipScope,
   }) {
     final resolved = _resolveCanonicalGuid(
       scope: scope,
@@ -1258,14 +1292,92 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         safeCode: 'canonical_identity_mismatch',
       );
     }
+    final ownershipScope =
+        durableOwnershipScope ??
+        CloudCanonicalActiveScope(scope: scope, generation: generation);
     _requireCanonicalIdentityOwnership(
-      scope: scope,
-      generation: generation,
+      scope: ownershipScope.scope,
+      generation: ownershipScope.generation,
       kind: kind,
       logicalEntityKeyHash: logicalEntityKeyHash,
       canonicalGuid: resolved,
     );
     return resolved;
+  }
+
+  CloudCanonicalActiveScope _dependencyScopeFor({
+    required CloudEntityKind kind,
+    required CloudSyncScope currentScope,
+    required int currentGeneration,
+  }) {
+    final configured = switch (kind) {
+      CloudEntityKind.chat => _chatDependencyScope,
+      CloudEntityKind.message => _messageDependencyScope,
+      _ => null,
+    };
+    if (configured == null) {
+      return CloudCanonicalActiveScope(
+        scope: currentScope,
+        generation: currentGeneration,
+      );
+    }
+    final dependency = configured.scope;
+    final expectedZone = switch (kind) {
+      CloudEntityKind.chat => 'chatManateeZone',
+      CloudEntityKind.message => 'messageManateeZone',
+      _ => currentScope.zone,
+    };
+    if (configured.generation <= 0 ||
+        dependency.zone != expectedZone ||
+        (dependency == currentScope &&
+            configured.generation != currentGeneration) ||
+        dependency.accountFingerprint != currentScope.accountFingerprint ||
+        dependency.container != currentScope.container ||
+        dependency.database != currentScope.database ||
+        dependency.streamKind != currentScope.streamKind ||
+        dependency.schemaVersion != currentScope.schemaVersion ||
+        dependency.persistenceLane != currentScope.persistenceLane) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_dependency_scope_conflict',
+      );
+    }
+    // Production calls this synchronously inside the gateway's ObjectBox write
+    // transaction. The checkpoint read and canonical mutation therefore share
+    // one serialization boundary with a competing account reset.
+    final checkpoint = _findCheckpoint(dependency);
+    if (checkpoint == null ||
+        checkpoint.generation != configured.generation ||
+        checkpoint.accountFingerprint != dependency.accountFingerprint ||
+        checkpoint.container != dependency.container ||
+        checkpoint.database != dependency.database ||
+        checkpoint.zone != dependency.zone ||
+        checkpoint.streamKind != dependency.streamKind.name ||
+        checkpoint.schemaVersion != dependency.schemaVersion ||
+        checkpoint.persistenceLane != dependency.persistenceLane.name) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_dependency_scope_stale',
+      );
+    }
+    return configured;
+  }
+
+  CloudSyncCheckpointEntity? _findCheckpoint(CloudSyncScope scope) {
+    final query =
+        _checkpoints
+            .query(
+              CloudSyncCheckpointEntity_.checkpointKey.equals(
+                cloudSyncPersistentScopeKey(scope),
+              ),
+            )
+            .build()
+          ..limit = 1;
+    try {
+      return query.findFirst();
+    } finally {
+      query.close();
+    }
   }
 
   void _requireCanonicalIdentityOwnership({
@@ -1867,25 +1979,50 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     return incoming;
   }
 
-  _NormalizedCanonicalHandle? _normalizeHandle(String raw) {
-    if (raw.isEmpty || raw != raw.trim() || raw.length > 512) return null;
+  _NormalizedCanonicalHandle? _normalizeHandle(
+    String raw, {
+    CloudSyncSemanticDiagnosticRecorder? onInvalid,
+  }) {
+    _NormalizedCanonicalHandle? reject(String safeCode) {
+      onInvalid?.call(safeCode);
+      return null;
+    }
+
+    if (raw.isEmpty) return reject('canonical_participant_shape_empty');
+    if (raw != raw.trim()) {
+      return reject('canonical_participant_shape_outer_whitespace');
+    }
+    if (raw.length > 512) {
+      return reject('canonical_participant_shape_too_long');
+    }
     String address;
     bool email;
-    if (raw.startsWith('mailto:')) {
+    final lower = raw.toLowerCase();
+    if (lower.startsWith('mailto:')) {
       address = raw.substring('mailto:'.length);
       email = true;
-    } else if (raw.startsWith('tel:')) {
+    } else if (lower.startsWith('tel:')) {
       address = raw.substring('tel:'.length);
       email = false;
     } else {
+      if (raw.contains(':')) {
+        return reject('canonical_participant_shape_unknown_scheme');
+      }
       address = raw;
       email = raw.contains('@');
     }
-    if (address.isEmpty || address != address.trim()) return null;
+    if (address.isEmpty) {
+      return reject('canonical_participant_shape_empty_address');
+    }
+    if (address != address.trim()) {
+      return reject('canonical_participant_shape_address_whitespace');
+    }
     if (email) {
-      if (!_emailPattern.hasMatch(address)) return null;
+      if (!_emailPattern.hasMatch(address)) {
+        return reject('canonical_participant_shape_email_invalid');
+      }
     } else if (!_telephonePattern.hasMatch(address)) {
-      return null;
+      return reject('canonical_participant_shape_telephone_invalid');
     }
     return _NormalizedCanonicalHandle(address: address, email: email);
   }

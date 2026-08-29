@@ -19,6 +19,7 @@ import 'cloud_sync_manual_semantic_pull_sampler.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_observability.dart';
+import 'cloud_sync_store.dart';
 import 'native_protected_cloud_sync_transport.dart';
 import 'objectbox_canonical_semantic_entity_adapter.dart';
 import 'objectbox_cloud_semantic_store_gateway.dart';
@@ -33,6 +34,37 @@ import 'objectbox_cloud_sync_store.dart';
 import 'cloud_sync_shadow_transport.dart';
 import 'rust_cloud_semantic_decoder.dart';
 import 'transient_cloud_canonical_identity_registry.dart';
+
+/// Resolves one production semantic dependency against the checkpoint for its
+/// exact Manatee zone while preserving every other namespace dimension.
+Future<CloudCanonicalActiveScope> cloudSyncProductionDependencyActiveScope({
+  required CloudSyncStore store,
+  required CloudCanonicalActiveScope current,
+  required String zone,
+}) async {
+  if (zone == current.scope.zone) return current;
+  if (zone != 'chatManateeZone' && zone != 'messageManateeZone') {
+    throw ArgumentError.value(
+      zone,
+      'zone',
+      'cloud_sync_semantic_dependency_zone_invalid',
+    );
+  }
+  final dependencyScope = CloudSyncScope(
+    accountFingerprint: current.scope.accountFingerprint,
+    container: current.scope.container,
+    database: current.scope.database,
+    zone: zone,
+    streamKind: current.scope.streamKind,
+    schemaVersion: current.scope.schemaVersion,
+    persistenceLane: current.scope.persistenceLane,
+  );
+  final checkpoint = await store.readCheckpoint(dependencyScope);
+  return CloudCanonicalActiveScope(
+    scope: dependencyScope,
+    generation: checkpoint.generation,
+  );
+}
 
 /// Redacted metadata returned by one native operation that reads the DSID from
 /// the supplied Rust Cloud Messages client and derives its per-install
@@ -469,6 +501,18 @@ final class CloudSyncProductionSemanticPullAdapter {
               ? activeScope
               : null,
           identityResolver: identityRegistry,
+          chatDependencyScope: await cloudSyncProductionDependencyActiveScope(
+            store: durableStore,
+            current: activeScope,
+            zone: 'chatManateeZone',
+          ),
+          messageDependencyScope:
+              await cloudSyncProductionDependencyActiveScope(
+                store: durableStore,
+                current: activeScope,
+                zone: 'messageManateeZone',
+              ),
+          diagnosticRecorder: diagnostics.record,
           semanticApplyEnabled: true,
           allowExistingChatPresentationUpdates: false,
           allowChatUpserts: true,
