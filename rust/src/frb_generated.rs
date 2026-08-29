@@ -3173,10 +3173,9 @@ fn wire__crate__api__api__cloud_sync_pause_password_cloudkit_writers_impl(
             move |context| async move {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>(
                     (move || async move {
-                        let output_ok = crate::api::api::cloud_sync_pause_password_cloudkit_writers(
-                            api_token,
-                        )
-                        .await?;
+                        let output_ok =
+                            crate::api::api::cloud_sync_pause_password_cloudkit_writers(api_token)
+                                .await?;
                         Ok(output_ok)
                     })()
                     .await,
