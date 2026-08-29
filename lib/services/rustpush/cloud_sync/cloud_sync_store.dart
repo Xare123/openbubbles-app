@@ -85,6 +85,31 @@ abstract interface class CloudSyncStore {
     required CloudCoordinatorLeaseFence leaseFence,
   });
 
+  /// Marks one protected inbox row as locally retained but unprojected. This
+  /// is a terminal local disposition only: it must preserve the protected raw
+  /// record and must not mutate canonical state or contact CloudKit.
+  Future<void> markInboxRetainedUnprojected(
+    CloudSyncScope scope, {
+    required int sequence,
+    required CloudFailureCategory? category,
+    required DateTime now,
+    required int maximumDeferredAttempts,
+    required Duration maximumDeferredAge,
+    required CloudCoordinatorLeaseFence leaseFence,
+  });
+
+  /// Reconciles legacy quarantine barriers created by builds that committed a
+  /// CloudKit token before persisting an explicit local terminal disposition.
+  /// Implementations must validate a complete, unambiguous current-generation
+  /// journal before changing any status and must retain every protected row.
+  Future<CloudInboxRetentionRecovery> recoverRetainedInboxBarriers(
+    CloudSyncScope scope, {
+    required DateTime now,
+    required int maximumDeferredAttempts,
+    required Duration maximumDeferredAge,
+    required CloudCoordinatorLeaseFence leaseFence,
+  });
+
   Future<void> markInboxRetryable(
     CloudSyncScope scope, {
     required int sequence,

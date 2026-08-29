@@ -1079,7 +1079,7 @@ final class CloudKitV2QuarantineRepairGateway {
               : 'quarantine_repair_sequence_gap_or_pruned_prefix',
         );
       }
-      if (row.status == CloudInboxStatus.applied.index) continue;
+      if (_isTerminalInboxStatus(row.status)) continue;
       if (row.status != CloudInboxStatus.quarantined.index) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.dependency,
@@ -1207,8 +1207,7 @@ final class CloudKitV2QuarantineRepairGateway {
     var next = checkpoint.appliedSequence + 1;
     while (next <= checkpoint.fetchedSequence) {
       final rows = _findInboxAtSequence(context, next);
-      if (rows.length != 1 ||
-          rows.single.status != CloudInboxStatus.applied.index) {
+      if (rows.length != 1 || !_isTerminalInboxStatus(rows.single.status)) {
         break;
       }
       next++;
@@ -1223,6 +1222,10 @@ final class CloudKitV2QuarantineRepairGateway {
 
     final pendingBatchId = checkpoint.pendingBatchId;
     if (pendingBatchId == null) return;
+    if (checkpoint.appliedSequence != checkpoint.fetchedSequence ||
+        !_isCompleteTerminalInboxJournalLocked(context, checkpoint)) {
+      return;
+    }
     final query = _inbox
         .query(
           CloudInboxChangeEntity_.scopeKey
@@ -1240,7 +1243,7 @@ final class CloudKitV2QuarantineRepairGateway {
       query.close();
     }
     if (rows.isEmpty ||
-        rows.any((row) => row.status != CloudInboxStatus.applied.index)) {
+        rows.any((row) => !_isTerminalInboxStatus(row.status))) {
       return;
     }
     if (checkpoint.pendingBatchId != pendingBatchId) return;
@@ -1251,6 +1254,47 @@ final class CloudKitV2QuarantineRepairGateway {
       ..updatedAtMs = nowMs;
     _store.box<CloudSyncCheckpointEntity>().put(checkpoint);
   }
+
+  bool _isCompleteTerminalInboxJournalLocked(
+    _RepairContext context,
+    CloudSyncCheckpointEntity checkpoint,
+  ) {
+    final query = _inbox
+        .query(CloudInboxChangeEntity_.scopeKey.equals(context.scopeKey))
+        .build();
+    final List<CloudInboxChangeEntity> rows;
+    try {
+      rows =
+          query
+              .find()
+              .where((row) => row.generation == context.generation)
+              .toList()
+            ..sort(
+              (left, right) =>
+                  left.fetchSequence.compareTo(right.fetchSequence),
+            );
+    } finally {
+      query.close();
+    }
+    if (rows.length != checkpoint.fetchedSequence) return false;
+    for (final (index, row) in rows.indexed) {
+      if (row.scopeKey != context.scopeKey ||
+          row.accountFingerprint != context.scope.accountFingerprint ||
+          row.zone != context.scope.zone ||
+          row.generation != context.generation) {
+        throw _failure('quarantine_repair_inbox_journal_scope_mismatch');
+      }
+      if (row.fetchSequence != index + 1 ||
+          !_isTerminalInboxStatus(row.status)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _isTerminalInboxStatus(int status) =>
+      status == CloudInboxStatus.applied.index ||
+      status == CloudInboxStatus.retainedUnprojected.index;
 
   CloudKitV2QuarantineRepairResult _revalidateExistingReceipt(
     _RepairContext context,

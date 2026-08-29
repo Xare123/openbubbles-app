@@ -177,6 +177,8 @@ final class CloudSyncSemanticPullReportFileWriter {
           zone.tombstoneQuarantined > maximumZoneRecords ||
           zone.tombstoneReadOnlyAcknowledged < 0 ||
           zone.tombstoneReadOnlyAcknowledged > maximumZoneRecords ||
+          zone.retainedUnprojected < 0 ||
+          zone.retainedUnprojected > maximumDiagnosticCount ||
           zone.semanticUnsupportedServiceQuarantined < 0 ||
           zone.semanticUnsupportedServiceQuarantined > maximumZoneRecords ||
           zone.semanticStageQuarantined < 0 ||

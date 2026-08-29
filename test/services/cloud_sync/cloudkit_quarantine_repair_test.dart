@@ -1061,6 +1061,46 @@ void main() {
   });
 
   test(
+    'a retained predecessor is terminal without becoming a repair target',
+    () async {
+      _moveSeededTargetToSequence2(store);
+      final predecessor = _entry(
+        scope,
+        sequence: 1,
+        changeId: _digest('retained-prior'),
+      );
+      _putInboxRow(
+        store,
+        scope,
+        predecessor,
+        now,
+        status: CloudInboxStatus.retainedUnprojected,
+      );
+      final before = store.box<CloudInboxChangeEntity>().getAll().singleWhere(
+        (row) => row.changeIdHash == predecessor.change.changeId,
+      );
+
+      final child = await gateway.repair(
+        request: request,
+        testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+      );
+
+      expect(child.disposition, CloudKitV2QuarantineRepairDisposition.repaired);
+      final retained = store.box<CloudInboxChangeEntity>().getAll().singleWhere(
+        (row) => row.changeIdHash == predecessor.change.changeId,
+      );
+      expect(retained.status, CloudInboxStatus.retainedUnprojected.index);
+      expect(retained.encryptedPayloadRef, before.encryptedPayloadRef);
+      expect(retained.encryptedServerRecordId, before.encryptedServerRecordId);
+      expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 1);
+      final checkpoint = store.box<CloudSyncCheckpointEntity>().getAll().single;
+      expect(checkpoint.appliedSequence, 2);
+      expect(checkpoint.fetchedTokenCiphertext, 'opaque-token-ciphertext');
+      expect(checkpoint.pendingBatchId, isNull);
+    },
+  );
+
+  test(
     'an applied predecessor does not depend on a stale repair receipt',
     () async {
       _moveSeededTargetToSequence2(store);

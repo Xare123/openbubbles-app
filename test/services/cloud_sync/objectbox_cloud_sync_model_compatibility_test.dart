@@ -1,9 +1,17 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('cloud inbox status codes preserve the durable 0 through 3 mapping', () {
+    expect(CloudInboxStatus.pending.index, 0);
+    expect(CloudInboxStatus.applied.index, 1);
+    expect(CloudInboxStatus.quarantined.index, 2);
+    expect(CloudInboxStatus.retainedUnprojected.index, 3);
+  });
+
   test(
     'Cloud Sync entities extend rather than renumber the canonical model',
     () {

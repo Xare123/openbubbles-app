@@ -514,7 +514,7 @@ void main() {
   );
 
   test(
-    'legacy advanced checkpoint with retained quarantine fails closed before fetch',
+    'legacy deterministic quarantine becomes retained before fetch',
     () async {
       await seedShadowJournal(
         CloudFetchBatch(
@@ -542,24 +542,36 @@ void main() {
       );
       await store.releaseCoordinatorLease(scope, leaseFence: fence);
 
-      transport.fetchHandler = (scope, token, generation, limit) async {
-        fail('transport must remain fenced for a retained quarantine');
+      transport.fetchHandler = (observedScope, token, generation, limit) async {
+        expect(observedScope, scope);
+        expect(token, 'legacy-advanced-token');
+        return CloudFetchBatch(
+          scope: scope,
+          changes: const [],
+          batchId: 'legacy-recovery-follow-up',
+          generation: generation,
+          nextToken: token,
+          hasMore: false,
+        );
       };
 
       final result = await engine().synchronize(
         trigger: CloudSyncTrigger.startup,
       );
 
-      expect(result.status, CloudSyncRunStatus.degraded);
-      expect(result.failureCategory, CloudFailureCategory.dependency);
-      expect(transport.fetchCallCount, 0);
+      expect(result.status, CloudSyncRunStatus.completed);
+      expect(result.failureCategory, isNull);
+      expect(result.counters.retainedUnprojected, 1);
+      expect(transport.fetchCallCount, 1);
+      expect(transport.pushCallCount, 0);
+      expect(await store.outboxEntries(scope), isEmpty);
       final checkpoint = await store.readCheckpoint(scope);
       expect(checkpoint.fetchedToken, 'legacy-advanced-token');
-      expect(checkpoint.hasUnmarkedPendingInbox, isTrue);
-      expect(checkpoint.lastAppliedSequence, 0);
+      expect(checkpoint.hasUnmarkedPendingInbox, isFalse);
+      expect(checkpoint.lastAppliedSequence, 1);
       expect(
         (await store.inboxEntries(scope)).single.status,
-        CloudInboxStatus.quarantined,
+        CloudInboxStatus.retainedUnprojected,
       );
     },
   );
@@ -754,7 +766,7 @@ void main() {
   );
 
   test(
-    'startup quarantine blocks later fetch and preserves phase aggregation',
+    'retained preflight permits fetch while conflict remains a barrier',
     () async {
       await seedGeneralJournal(
         CloudFetchBatch(
@@ -794,20 +806,21 @@ void main() {
         maximumInboxEntriesPerRun: 3,
       ).synchronize(trigger: CloudSyncTrigger.manual);
 
+      expect(result.counters.retainedUnprojected, 1);
       expect(result.counters.quarantined, 1);
-      expect(result.counters.preflightQuarantined, 1);
-      expect(result.counters.preflightInvalidChangeShape, 1);
+      expect(result.counters.preflightQuarantined, 0);
+      expect(result.counters.preflightInvalidChangeShape, 0);
       expect(result.counters.preflightUnsupportedRecordType, 0);
       expect(result.counters.preflightMalformedMetadata, 0);
       expect(result.counters.preflightOversizedRecord, 0);
       expect(result.counters.preflightUnknown, 0);
-      expect(result.counters.startupQuarantined, 1);
-      expect(result.counters.postFetchQuarantined, 0);
-      expect(result.counters.tombstoneQuarantined, 0);
+      expect(result.counters.startupQuarantined, 0);
+      expect(result.counters.postFetchQuarantined, 1);
+      expect(result.counters.tombstoneQuarantined, 1);
       expect(result.counters.semanticUnsupportedServiceQuarantined, 0);
       expect(result.counters.semanticStageQuarantined, 0);
-      expect(transport.fetchCallCount, 0);
-      expect(applier.appliedSequences, isEmpty);
+      expect(transport.fetchCallCount, 1);
+      expect(applier.appliedSequences, [2]);
       expect(
         result.counters.preflightQuarantined +
             result.counters.tombstoneQuarantined +
@@ -1184,7 +1197,7 @@ void main() {
   });
 
   test(
-    'generic quarantine blocks later rows and page-token promotion',
+    'deterministic malformed record is retained and later rows proceed',
     () async {
       transport.enqueueFetchBatch(
         CloudFetchBatch(
@@ -1204,17 +1217,18 @@ void main() {
         trigger: CloudSyncTrigger.manual,
       );
 
-      expect(result.counters.quarantined, 1);
-      expect(result.counters.semanticStageQuarantined, 1);
+      expect(result.counters.retainedUnprojected, 1);
+      expect(result.counters.quarantined, 0);
+      expect(result.counters.semanticStageQuarantined, 0);
       expect(result.counters.preflightQuarantined, 0);
       expect(result.counters.tombstoneQuarantined, 0);
-      expect(result.counters.applied, 0);
-      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 0);
-      expect((await store.readCheckpoint(scope)).fetchedToken, isNull);
-      expect(applier.appliedSequences, [1]);
+      expect(result.counters.applied, 1);
+      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 2);
+      expect((await store.readCheckpoint(scope)).fetchedToken, 'opaque-token');
+      expect(applier.appliedSequences, [1, 2]);
       final entries = await store.inboxEntries(scope);
-      expect(entries[0].status, CloudInboxStatus.quarantined);
-      expect(entries[1].status, CloudInboxStatus.pending);
+      expect(entries[0].status, CloudInboxStatus.retainedUnprojected);
+      expect(entries[1].status, CloudInboxStatus.applied);
     },
   );
 
@@ -1248,6 +1262,7 @@ void main() {
       expect(first.counters.semanticUnsupportedServiceQuarantined, 0);
       expect(first.counters.tombstoneQuarantined, 0);
       expect(first.counters.tombstoneReadOnlyAcknowledged, 1);
+      expect(first.counters.retainedUnprojected, 1);
       expect(first.counters.semanticStageQuarantined, 0);
       expect(first.counters.applied, 2);
       expect((await store.readCheckpoint(scope)).lastAppliedSequence, 3);
@@ -1257,7 +1272,7 @@ void main() {
       );
       expect((await store.inboxEntries(scope)).map((entry) => entry.status), [
         CloudInboxStatus.applied,
-        CloudInboxStatus.applied,
+        CloudInboxStatus.retainedUnprojected,
         CloudInboxStatus.applied,
       ]);
 
@@ -1375,7 +1390,7 @@ void main() {
   );
 
   test(
-    'preflight failure quarantines raw record without invoking decoder',
+    'preflight failure retains raw record without invoking decoder',
     () async {
       transport.enqueueFetchBatch(
         CloudFetchBatch(
@@ -1398,15 +1413,16 @@ void main() {
         trigger: CloudSyncTrigger.manual,
       );
 
-      expect(result.counters.quarantined, 1);
-      expect(result.counters.preflightQuarantined, 1);
-      expect(result.counters.preflightOversizedRecord, 1);
+      expect(result.counters.retainedUnprojected, 1);
+      expect(result.counters.quarantined, 0);
+      expect(result.counters.preflightQuarantined, 0);
+      expect(result.counters.preflightOversizedRecord, 0);
       expect(result.counters.preflightUnknown, 0);
       expect(result.counters.tombstoneQuarantined, 0);
       expect(result.counters.semanticStageQuarantined, 0);
       expect(applier.appliedSequences, isEmpty);
       final entries = await store.inboxEntries(scope);
-      expect(entries.single.status, CloudInboxStatus.quarantined);
+      expect(entries.single.status, CloudInboxStatus.retainedUnprojected);
       expect(entries.single.lastFailure, CloudFailureCategory.malformedRecord);
     },
   );
@@ -1440,7 +1456,7 @@ void main() {
   );
 
   test(
-    'deferred inbox entries quarantine only after age and attempt thresholds',
+    'deferred inbox entries are retained only after age and attempt thresholds',
     () async {
       transport.enqueueFetchBatch(
         CloudFetchBatch(
@@ -1475,9 +1491,10 @@ void main() {
       );
 
       expect(second.counters.deferred, 0);
-      expect(second.counters.quarantined, 1);
+      expect(second.counters.quarantined, 0);
+      expect(second.counters.retainedUnprojected, 1);
       entries = await store.inboxEntries(scope);
-      expect(entries.single.status, CloudInboxStatus.quarantined);
+      expect(entries.single.status, CloudInboxStatus.retainedUnprojected);
       expect(entries.single.attemptCount, 2);
       expect(entries.single.lastFailure, CloudFailureCategory.dependency);
     },
@@ -1519,7 +1536,7 @@ void main() {
   );
 
   test(
-    'persistent dependency failures dead-letter after attempt and age bounds',
+    'persistent dependency failures retain evidence after attempt and age bounds',
     () async {
       transport.enqueueFetchBatch(
         CloudFetchBatch(
@@ -1546,9 +1563,10 @@ void main() {
       );
 
       final stored = (await store.inboxEntries(scope)).single;
-      expect(second.counters.quarantined, 1);
+      expect(second.counters.quarantined, 0);
+      expect(second.counters.retainedUnprojected, 1);
       expect(second.counters.retried, 0);
-      expect(stored.status, CloudInboxStatus.quarantined);
+      expect(stored.status, CloudInboxStatus.retainedUnprojected);
       expect(stored.lastFailure, CloudFailureCategory.dependency);
     },
   );

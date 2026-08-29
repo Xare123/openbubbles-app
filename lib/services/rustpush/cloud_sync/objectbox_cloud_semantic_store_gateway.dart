@@ -1454,7 +1454,8 @@ final class _ObjectBoxCloudSemanticStoreTransaction
           'semantic_inbox_sequence_scope_mismatch',
         );
       }
-      if (row.status != CloudInboxStatus.applied.index) {
+      if (row.status != CloudInboxStatus.applied.index &&
+          row.status != CloudInboxStatus.retainedUnprojected.index) {
         break;
       }
       next++;
@@ -1477,6 +1478,11 @@ final class _ObjectBoxCloudSemanticStoreTransaction
   void _promotePendingFetchedTokenIfTerminal() {
     final pendingBatchId = _checkpointEntity.pendingBatchId;
     if (pendingBatchId == null) return;
+    if (_checkpointEntity.appliedSequence !=
+            _checkpointEntity.fetchedSequence ||
+        !_isCompleteTerminalInboxJournal()) {
+      return;
+    }
 
     final batchQuery =
         _inbox
@@ -1513,6 +1519,11 @@ final class _ObjectBoxCloudSemanticStoreTransaction
                     CloudInboxChangeEntity_.status.notEquals(
                       CloudInboxStatus.applied.index,
                     ),
+                  )
+                  .and(
+                    CloudInboxChangeEntity_.status.notEquals(
+                      CloudInboxStatus.retainedUnprojected.index,
+                    ),
                   ),
             )
             .build()
@@ -1529,6 +1540,44 @@ final class _ObjectBoxCloudSemanticStoreTransaction
       ..pendingBatchId = null
       ..updatedAtMs = _updatedAtMs;
     _checkpoints.put(_checkpointEntity);
+  }
+
+  bool _isCompleteTerminalInboxJournal() {
+    final query = _inbox
+        .query(CloudInboxChangeEntity_.scopeKey.equals(_context.scopeKey))
+        .build();
+    final List<CloudInboxChangeEntity> rows;
+    try {
+      rows =
+          query
+              .find()
+              .where((row) => row.generation == _context.entry.generation)
+              .toList()
+            ..sort(
+              (left, right) =>
+                  left.fetchSequence.compareTo(right.fetchSequence),
+            );
+    } finally {
+      query.close();
+    }
+    if (rows.length != _checkpointEntity.fetchedSequence) return false;
+    final scope = _context.entry.scope;
+    for (final (index, row) in rows.indexed) {
+      if (row.scopeKey != _context.scopeKey ||
+          row.accountFingerprint != scope.accountFingerprint ||
+          row.zone != scope.zone ||
+          row.generation != _context.entry.generation) {
+        throw ObjectBoxCloudSemanticStoreGateway._failure(
+          'semantic_inbox_journal_scope_mismatch',
+        );
+      }
+      if (row.fetchSequence != index + 1 ||
+          (row.status != CloudInboxStatus.applied.index &&
+              row.status != CloudInboxStatus.retainedUnprojected.index)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   CloudSemanticReplayEntity _newReplayEntity({

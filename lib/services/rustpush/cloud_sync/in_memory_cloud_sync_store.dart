@@ -248,6 +248,117 @@ class InMemoryCloudSyncStore
   }
 
   @override
+  Future<void> markInboxRetainedUnprojected(
+    CloudSyncScope scope, {
+    required int sequence,
+    required CloudFailureCategory? category,
+    required DateTime now,
+    required int maximumDeferredAttempts,
+    required Duration maximumDeferredAge,
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) {
+    return _lock.synchronized(() async {
+      _requireActiveCoordinatorLeaseLocked(scope, leaseFence, now);
+      final entry = _requireInboxEntry(scope, sequence);
+      if (entry.status == CloudInboxStatus.retainedUnprojected) {
+        _advanceContiguousAppliedPosition(scope);
+        return;
+      }
+      if (entry.status != CloudInboxStatus.pending &&
+          entry.status != CloudInboxStatus.quarantined) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'inbox_retention_transition_invalid',
+        );
+      }
+      if (entry.status == CloudInboxStatus.quarantined &&
+          entry.lastFailure != category) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'inbox_retention_category_mismatch',
+        );
+      }
+      if (!_mayRetainUnprojected(
+        entry,
+        category: category,
+        now: now,
+        maximumDeferredAttempts: maximumDeferredAttempts,
+        maximumDeferredAge: maximumDeferredAge,
+        includeCurrentAttempt: entry.status == CloudInboxStatus.pending,
+      )) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'inbox_retention_policy_rejected',
+        );
+      }
+      _inbox[scope.storageKey]![sequence] = entry.copyWith(
+        status: CloudInboxStatus.retainedUnprojected,
+        attemptCount: entry.status == CloudInboxStatus.pending
+            ? entry.attemptCount + 1
+            : entry.attemptCount,
+        lastFailure: category,
+        completedAt: now,
+        clearNextEligibleAt: true,
+      );
+      _advanceContiguousAppliedPosition(scope);
+    });
+  }
+
+  @override
+  Future<CloudInboxRetentionRecovery> recoverRetainedInboxBarriers(
+    CloudSyncScope scope, {
+    required DateTime now,
+    required int maximumDeferredAttempts,
+    required Duration maximumDeferredAge,
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) {
+    return _lock.synchronized(() async {
+      _requireActiveCoordinatorLeaseLocked(scope, leaseFence, now);
+      final checkpoint = _checkpoint(scope);
+      final rows =
+          (_inbox[scope.storageKey]?.values ?? const <CloudInboxEntry>[])
+              .where((entry) => entry.generation == checkpoint.generation)
+              .toList()
+            ..sort((left, right) => left.sequence.compareTo(right.sequence));
+      if (rows.length != checkpoint.fetchedSequence ||
+          rows.indexed.any((item) => item.$2.sequence != item.$1 + 1)) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'inbox_retention_journal_incomplete',
+        );
+      }
+
+      var retained = 0;
+      var tombstones = 0;
+      for (final entry in rows) {
+        if (entry.status != CloudInboxStatus.quarantined ||
+            !_mayRetainUnprojected(
+              entry,
+              category: entry.lastFailure,
+              now: now,
+              maximumDeferredAttempts: maximumDeferredAttempts,
+              maximumDeferredAge: maximumDeferredAge,
+              includeCurrentAttempt: false,
+            )) {
+          continue;
+        }
+        _inbox[scope.storageKey]![entry.sequence] = entry.copyWith(
+          status: CloudInboxStatus.retainedUnprojected,
+          completedAt: now,
+          clearNextEligibleAt: true,
+        );
+        retained++;
+        if (entry.change.isTombstone) tombstones++;
+      }
+      _advanceContiguousAppliedPosition(scope);
+      return CloudInboxRetentionRecovery(
+        retainedUnprojected: retained,
+        tombstoneReadOnlyAcknowledged: tombstones,
+      );
+    });
+  }
+
+  @override
   Future<void> markInboxRetryable(
     CloudSyncScope scope, {
     required int sequence,
@@ -1163,7 +1274,7 @@ class InMemoryCloudSyncStore
     return _inbox[scope.storageKey]?.values.any(
           (entry) =>
               entry.generation == checkpoint.generation &&
-              entry.status != CloudInboxStatus.applied,
+              !_isTerminalInboxStatus(entry.status),
         ) ??
         false;
   }
@@ -1183,7 +1294,7 @@ class InMemoryCloudSyncStore
     var checkpoint = _checkpoint(scope);
     final entries = _inbox[scope.storageKey];
     var next = checkpoint.lastAppliedSequence + 1;
-    while (_isAppliedInboxStatus(entries?[next]?.status)) {
+    while (_isTerminalInboxStatus(entries?[next]?.status)) {
       next++;
     }
     final appliedThrough = next - 1;
@@ -1193,6 +1304,21 @@ class InMemoryCloudSyncStore
     }
     final pendingBatchId = checkpoint.pendingBatchId;
     if (pendingBatchId == null) return;
+    if (checkpoint.lastAppliedSequence != checkpoint.fetchedSequence) return;
+    final generationEntries =
+        entries?.values
+            .where((entry) => entry.generation == checkpoint.generation)
+            .toList()
+          ?..sort((left, right) => left.sequence.compareTo(right.sequence));
+    if (generationEntries == null ||
+        generationEntries.length != checkpoint.fetchedSequence ||
+        generationEntries.indexed.any(
+          (item) =>
+              item.$2.sequence != item.$1 + 1 ||
+              !_isTerminalInboxStatus(item.$2.status),
+        )) {
+      return;
+    }
     final pendingEntries = entries?.values.where(
       (entry) =>
           entry.generation == checkpoint.generation &&
@@ -1200,7 +1326,7 @@ class InMemoryCloudSyncStore
     );
     if (pendingEntries == null ||
         pendingEntries.isEmpty ||
-        pendingEntries.any((entry) => !_isAppliedInboxStatus(entry.status))) {
+        pendingEntries.any((entry) => !_isTerminalInboxStatus(entry.status))) {
       return;
     }
     _checkpoints[scope.storageKey] = checkpoint.copyWith(
@@ -1211,8 +1337,33 @@ class InMemoryCloudSyncStore
     _pendingFetchedTokens.remove(scope.storageKey);
   }
 
-  bool _isAppliedInboxStatus(CloudInboxStatus? status) =>
-      status == CloudInboxStatus.applied;
+  bool _isTerminalInboxStatus(CloudInboxStatus? status) =>
+      status == CloudInboxStatus.applied ||
+      status == CloudInboxStatus.retainedUnprojected;
+
+  bool _mayRetainUnprojected(
+    CloudInboxEntry entry, {
+    required CloudFailureCategory? category,
+    required DateTime now,
+    required int maximumDeferredAttempts,
+    required Duration maximumDeferredAge,
+    required bool includeCurrentAttempt,
+  }) {
+    // A read-only tombstone reaches this method with no failure category.
+    // Never let the tombstone shape override a conflict/unknown classification
+    // recovered from an older build; those remain causal barriers.
+    if (entry.change.isTombstone && category == null) return true;
+    if (category == CloudFailureCategory.malformedRecord ||
+        category == CloudFailureCategory.unsupportedService) {
+      return true;
+    }
+    if (category != CloudFailureCategory.dependency) return false;
+    final attempts = entry.attemptCount + (includeCurrentAttempt ? 1 : 0);
+    final age = now.difference(entry.createdAt);
+    return attempts >= maximumDeferredAttempts &&
+        !age.isNegative &&
+        age >= maximumDeferredAge;
+  }
 
   int _recoverExpiredOutboxLeasesLocked(CloudSyncScope scope, DateTime now) {
     final entries = _outbox[scope.storageKey];

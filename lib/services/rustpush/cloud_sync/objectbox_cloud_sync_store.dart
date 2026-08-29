@@ -765,6 +765,136 @@ class ObjectBoxCloudSyncStore
   }
 
   @override
+  Future<void> markInboxRetainedUnprojected(
+    CloudSyncScope scope, {
+    required int sequence,
+    required CloudFailureCategory? category,
+    required DateTime now,
+    required int maximumDeferredAttempts,
+    required Duration maximumDeferredAge,
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) async {
+    _store.runInTransaction(TxMode.write, () {
+      final transactionNowMs = _nowMs();
+      _requireActiveCoordinatorLeaseLocked(
+        scope,
+        leaseFence,
+        nowMs: transactionNowMs,
+      );
+      final entity = _requireInboxLocked(scope, sequence);
+      final status = _inboxStatusFromInt(entity.status);
+      if (status == CloudInboxStatus.retainedUnprojected) {
+        _advanceContiguousAppliedLocked(scope, transactionNowMs);
+        return;
+      }
+      if (status != CloudInboxStatus.pending &&
+          status != CloudInboxStatus.quarantined) {
+        throw _storageFailure('inbox_retention_transition_invalid');
+      }
+      final entry = _inboxFromEntity(scope, entity);
+      if (status == CloudInboxStatus.quarantined &&
+          entry.lastFailure != category) {
+        throw _storageFailure('inbox_retention_category_mismatch');
+      }
+      if (!_mayRetainUnprojected(
+        entry,
+        category: category,
+        now: DateTime.fromMillisecondsSinceEpoch(transactionNowMs, isUtc: true),
+        maximumDeferredAttempts: maximumDeferredAttempts,
+        maximumDeferredAge: maximumDeferredAge,
+        includeCurrentAttempt: status == CloudInboxStatus.pending,
+      )) {
+        throw _storageFailure('inbox_retention_policy_rejected');
+      }
+      entity
+        ..status = _inboxStatusToInt(CloudInboxStatus.retainedUnprojected)
+        ..retryCount += status == CloudInboxStatus.pending ? 1 : 0
+        ..failureCategory = category?.name
+        ..nextEligibleAtMs = 0
+        ..completedAtMs = transactionNowMs
+        ..updatedAtMs = transactionNowMs;
+      _inbox.put(entity);
+      _advanceContiguousAppliedLocked(scope, transactionNowMs);
+    });
+  }
+
+  @override
+  Future<CloudInboxRetentionRecovery> recoverRetainedInboxBarriers(
+    CloudSyncScope scope, {
+    required DateTime now,
+    required int maximumDeferredAttempts,
+    required Duration maximumDeferredAge,
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) async {
+    return _store.runInTransaction(TxMode.write, () {
+      final transactionNowMs = _nowMs();
+      _requireActiveCoordinatorLeaseLocked(
+        scope,
+        leaseFence,
+        nowMs: transactionNowMs,
+      );
+      final checkpoint = _checkpointLocked(scope, nowMs: transactionNowMs);
+      final rows =
+          _findInboxForScopeLocked(
+              scope,
+            ).where((row) => row.generation == checkpoint.generation).toList()
+            ..sort(
+              (left, right) =>
+                  left.fetchSequence.compareTo(right.fetchSequence),
+            );
+      if (rows.length != checkpoint.fetchedSequence ||
+          rows.indexed.any((item) => item.$2.fetchSequence != item.$1 + 1)) {
+        throw _storageFailure('inbox_retention_journal_incomplete');
+      }
+      if (rows.any(
+        (row) =>
+            row.scopeKey != _scopeKey(scope) ||
+            row.accountFingerprint != scope.accountFingerprint ||
+            row.zone != scope.zone ||
+            row.generation != checkpoint.generation,
+      )) {
+        throw _storageFailure('inbox_retention_journal_scope_mismatch');
+      }
+
+      final effectiveNow = DateTime.fromMillisecondsSinceEpoch(
+        transactionNowMs,
+        isUtc: true,
+      );
+      final candidates = <CloudInboxChangeEntity>[];
+      var tombstones = 0;
+      for (final row in rows) {
+        final entry = _inboxFromEntity(scope, row);
+        if (entry.status != CloudInboxStatus.quarantined ||
+            !_mayRetainUnprojected(
+              entry,
+              category: entry.lastFailure,
+              now: effectiveNow,
+              maximumDeferredAttempts: maximumDeferredAttempts,
+              maximumDeferredAge: maximumDeferredAge,
+              includeCurrentAttempt: false,
+            )) {
+          continue;
+        }
+        candidates.add(row);
+        if (entry.change.isTombstone) tombstones++;
+      }
+      for (final row in candidates) {
+        row
+          ..status = _inboxStatusToInt(CloudInboxStatus.retainedUnprojected)
+          ..nextEligibleAtMs = 0
+          ..completedAtMs = transactionNowMs
+          ..updatedAtMs = transactionNowMs;
+        _inbox.put(row);
+      }
+      _advanceContiguousAppliedLocked(scope, transactionNowMs);
+      return CloudInboxRetentionRecovery(
+        retainedUnprojected: candidates.length,
+        tombstoneReadOnlyAcknowledged: tombstones,
+      );
+    });
+  }
+
+  @override
   Future<void> markInboxRetryable(
     CloudSyncScope scope, {
     required int sequence,
@@ -1889,7 +2019,9 @@ class ObjectBoxCloudSyncStore
     CloudSyncScope scope,
     CloudInboxChangeEntity entity,
   ) {
-    if (entity.scopeKey != _scopeKey(scope)) {
+    if (entity.scopeKey != _scopeKey(scope) ||
+        entity.accountFingerprint != scope.accountFingerprint ||
+        entity.zone != scope.zone) {
       throw _storageFailure('scope_collision');
     }
     if (!RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(entity.changeIdHash)) {
@@ -2151,6 +2283,10 @@ class ObjectBoxCloudSyncStore
     final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
     final pendingBatchId = checkpoint.pendingBatchId;
     if (pendingBatchId == null) return;
+    if (checkpoint.appliedSequence != checkpoint.fetchedSequence ||
+        !_isCompleteTerminalInboxJournalLocked(scope, checkpoint)) {
+      return;
+    }
 
     final batchQuery =
         _inbox
@@ -2187,6 +2323,11 @@ class ObjectBoxCloudSyncStore
                     CloudInboxChangeEntity_.status.notEquals(
                       _inboxStatusToInt(CloudInboxStatus.applied),
                     ),
+                  )
+                  .and(
+                    CloudInboxChangeEntity_.status.notEquals(
+                      _inboxStatusToInt(CloudInboxStatus.retainedUnprojected),
+                    ),
                   ),
             )
             .build()
@@ -2207,6 +2348,31 @@ class ObjectBoxCloudSyncStore
       ..pendingBatchId = null
       ..updatedAtMs = nowMs;
     _checkpoints.put(checkpoint);
+  }
+
+  bool _isCompleteTerminalInboxJournalLocked(
+    CloudSyncScope scope,
+    CloudSyncCheckpointEntity checkpoint,
+  ) {
+    final rows =
+        _findInboxForScopeLocked(
+            scope,
+          ).where((row) => row.generation == checkpoint.generation).toList()
+          ..sort(
+            (left, right) => left.fetchSequence.compareTo(right.fetchSequence),
+          );
+    if (rows.length != checkpoint.fetchedSequence) return false;
+    for (final (index, row) in rows.indexed) {
+      if (row.fetchSequence != index + 1 ||
+          row.scopeKey != _scopeKey(scope) ||
+          row.accountFingerprint != scope.accountFingerprint ||
+          row.zone != scope.zone ||
+          row.generation != checkpoint.generation ||
+          !_isAppliedInboxStatus(_inboxStatusFromInt(row.status))) {
+        return false;
+      }
+    }
+    return true;
   }
 
   bool _hasUnmarkedPendingInboxLocked(
@@ -2232,6 +2398,11 @@ class ObjectBoxCloudSyncStore
                     CloudInboxChangeEntity_.status.notEquals(
                       _inboxStatusToInt(CloudInboxStatus.applied),
                     ),
+                  )
+                  .and(
+                    CloudInboxChangeEntity_.status.notEquals(
+                      _inboxStatusToInt(CloudInboxStatus.retainedUnprojected),
+                    ),
                   ),
             )
             .build()
@@ -2244,7 +2415,32 @@ class ObjectBoxCloudSyncStore
   }
 
   bool _isAppliedInboxStatus(CloudInboxStatus status) =>
-      status == CloudInboxStatus.applied;
+      status == CloudInboxStatus.applied ||
+      status == CloudInboxStatus.retainedUnprojected;
+
+  bool _mayRetainUnprojected(
+    CloudInboxEntry entry, {
+    required CloudFailureCategory? category,
+    required DateTime now,
+    required int maximumDeferredAttempts,
+    required Duration maximumDeferredAge,
+    required bool includeCurrentAttempt,
+  }) {
+    // A read-only tombstone reaches this method with no failure category.
+    // Never let the tombstone shape override a conflict/unknown classification
+    // recovered from an older build; those remain causal barriers.
+    if (entry.change.isTombstone && category == null) return true;
+    if (category == CloudFailureCategory.malformedRecord ||
+        category == CloudFailureCategory.unsupportedService) {
+      return true;
+    }
+    if (category != CloudFailureCategory.dependency) return false;
+    final attempts = entry.attemptCount + (includeCurrentAttempt ? 1 : 0);
+    final age = now.difference(entry.createdAt);
+    return attempts >= maximumDeferredAttempts &&
+        !age.isNegative &&
+        age >= maximumDeferredAge;
+  }
 
   void _validateTransition(CloudOutboxTransition transition) {
     if (transition.type == CloudOutboxTransitionType.retryable &&
@@ -2625,12 +2821,14 @@ class ObjectBoxCloudSyncStore
     CloudInboxStatus.pending => 0,
     CloudInboxStatus.applied => 1,
     CloudInboxStatus.quarantined => 2,
+    CloudInboxStatus.retainedUnprojected => 3,
   };
 
   CloudInboxStatus _inboxStatusFromInt(int status) => switch (status) {
     0 => CloudInboxStatus.pending,
     1 => CloudInboxStatus.applied,
     2 => CloudInboxStatus.quarantined,
+    3 => CloudInboxStatus.retainedUnprojected,
     _ => throw _storageFailure('inbox_status_invalid'),
   };
 

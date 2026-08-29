@@ -296,13 +296,10 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     }
     if (result.deferredReason != null) {
       // Native deferred reasons describe deterministic record shapes that this
-      // build cannot project (stickers, scheduling, extension payloads, etc.).
-      // Retrying the same protected record cannot make those fields supported
-      // and would stall the contiguous replay prefix for days. Preserve the
-      // raw record in quarantine and allow later supported history to proceed.
-      throw const CloudSemanticDecodeFailure(
-        CloudFailureCategory.malformedRecord,
-      );
+      // build cannot yet project (stickers, scheduling, extension payloads,
+      // etc.). Keep them in the bounded dependency lane so a newer converter
+      // can recover them before the protected source is explicitly retained.
+      throw const CloudSemanticDecodeFailure(CloudFailureCategory.dependency);
     }
     if (result.quarantineReason != null) {
       throw CloudSemanticDecodeFailure(switch (result.quarantineReason!) {

@@ -400,6 +400,28 @@ class CloudSyncEngine {
       var semanticInboxPhaseStarted = false;
       var pullAttempted = false;
 
+      if (config.flags.semanticApply && !_isCancelled(cancellationToken)) {
+        await _renewCoordinatorLeaseOrThrow();
+        final recovered = await _store.recoverRetainedInboxBarriers(
+          scope,
+          now: _clock(),
+          maximumDeferredAttempts: config.maximumDeferredAttempts,
+          maximumDeferredAge: config.maximumDeferredAge,
+          leaseFence: _requireActiveLeaseFence(),
+        );
+        counters = counters.add(
+          retainedUnprojected: recovered.retainedUnprojected,
+          tombstoneReadOnlyAcknowledged:
+              recovered.tombstoneReadOnlyAcknowledged,
+        );
+        semanticInboxCounters = semanticInboxCounters.add(
+          retainedUnprojected: recovered.retainedUnprojected,
+          tombstoneReadOnlyAcknowledged:
+              recovered.tombstoneReadOnlyAcknowledged,
+        );
+        semanticInboxPhaseStarted = recovered.retainedUnprojected > 0;
+      }
+
       // A restart may leave semantic rows waiting in the durable inbox. Apply
       // the contiguous prefix before fetching so local state is repaired as
       // early as possible, while still allowing the fetch to bring in older
@@ -429,6 +451,7 @@ class CloudSyncEngine {
           tombstoneQuarantined: startupApply.counters.tombstoneQuarantined,
           tombstoneReadOnlyAcknowledged:
               startupApply.counters.tombstoneReadOnlyAcknowledged,
+          retainedUnprojected: startupApply.counters.retainedUnprojected,
           semanticUnsupportedServiceQuarantined:
               startupApply.counters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
@@ -453,6 +476,7 @@ class CloudSyncEngine {
           tombstoneQuarantined: startupApply.counters.tombstoneQuarantined,
           tombstoneReadOnlyAcknowledged:
               startupApply.counters.tombstoneReadOnlyAcknowledged,
+          retainedUnprojected: startupApply.counters.retainedUnprojected,
           semanticUnsupportedServiceQuarantined:
               startupApply.counters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
@@ -505,6 +529,7 @@ class CloudSyncEngine {
               pullResult.semanticCounters.tombstoneQuarantined,
           tombstoneReadOnlyAcknowledged:
               pullResult.semanticCounters.tombstoneReadOnlyAcknowledged,
+          retainedUnprojected: pullResult.semanticCounters.retainedUnprojected,
           semanticUnsupportedServiceQuarantined:
               pullResult.semanticCounters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
@@ -532,6 +557,7 @@ class CloudSyncEngine {
               pullResult.semanticCounters.tombstoneQuarantined,
           tombstoneReadOnlyAcknowledged:
               pullResult.semanticCounters.tombstoneReadOnlyAcknowledged,
+          retainedUnprojected: pullResult.semanticCounters.retainedUnprojected,
           semanticUnsupportedServiceQuarantined:
               pullResult.semanticCounters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
@@ -569,6 +595,7 @@ class CloudSyncEngine {
           tombstoneQuarantined: postFetchApply.counters.tombstoneQuarantined,
           tombstoneReadOnlyAcknowledged:
               postFetchApply.counters.tombstoneReadOnlyAcknowledged,
+          retainedUnprojected: postFetchApply.counters.retainedUnprojected,
           semanticUnsupportedServiceQuarantined:
               postFetchApply.counters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
@@ -593,6 +620,7 @@ class CloudSyncEngine {
           tombstoneQuarantined: postFetchApply.counters.tombstoneQuarantined,
           tombstoneReadOnlyAcknowledged:
               postFetchApply.counters.tombstoneReadOnlyAcknowledged,
+          retainedUnprojected: postFetchApply.counters.retainedUnprojected,
           semanticUnsupportedServiceQuarantined:
               postFetchApply.counters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined:
@@ -1024,6 +1052,7 @@ class CloudSyncEngine {
           tombstoneQuarantined: pageApply.counters.tombstoneQuarantined,
           tombstoneReadOnlyAcknowledged:
               pageApply.counters.tombstoneReadOnlyAcknowledged,
+          retainedUnprojected: pageApply.counters.retainedUnprojected,
           semanticUnsupportedServiceQuarantined:
               pageApply.counters.semanticUnsupportedServiceQuarantined,
           semanticStageQuarantined: pageApply.counters.semanticStageQuarantined,
@@ -1174,14 +1203,20 @@ class CloudSyncEngine {
             );
           }
           if (!result.inboxStatusPersisted) {
-            await _store.markInboxApplied(
+            await _store.markInboxRetainedUnprojected(
               scope,
               sequence: entry.sequence,
+              category: null,
               now: now,
+              maximumDeferredAttempts: config.maximumDeferredAttempts,
+              maximumDeferredAge: config.maximumDeferredAge,
               leaseFence: _requireActiveLeaseFence(),
             );
           }
-          counters = counters.add(tombstoneReadOnlyAcknowledged: 1);
+          counters = counters.add(
+            tombstoneReadOnlyAcknowledged: 1,
+            retainedUnprojected: 1,
+          );
           canApplyNextSequence = true;
           break;
         case CloudInboxApplyDisposition.deferred:
@@ -1193,21 +1228,20 @@ class CloudSyncEngine {
               (result.disposition == CloudInboxApplyDisposition.retryable &&
                   category == CloudFailureCategory.dependency);
           if (terminalBoundApplies &&
-              _shouldQuarantineDeferredInboxEntry(entry, now)) {
+              _shouldRetainDeferredInboxEntry(entry, now)) {
             if (!result.inboxStatusPersisted) {
-              await _store.quarantineInbox(
+              await _store.markInboxRetainedUnprojected(
                 scope,
                 sequence: entry.sequence,
                 category: category,
                 now: now,
+                maximumDeferredAttempts: config.maximumDeferredAttempts,
+                maximumDeferredAge: config.maximumDeferredAge,
                 leaseFence: _requireActiveLeaseFence(),
               );
             }
-            counters = _addQuarantinedCounter(
-              counters,
-              entry,
-              category: category,
-            );
+            counters = counters.add(retainedUnprojected: 1);
+            canApplyNextSequence = true;
             break;
           }
           final nextEligibleAt = _backoff.nextEligibleAt(
@@ -1234,11 +1268,31 @@ class CloudSyncEngine {
           );
           break;
         case CloudInboxApplyDisposition.quarantined:
+          final category =
+              result.failureCategory ?? CloudFailureCategory.unknown;
+          final retainUnprojected =
+              !result.inboxStatusPersisted &&
+              (category == CloudFailureCategory.malformedRecord ||
+                  category == CloudFailureCategory.unsupportedService);
+          if (retainUnprojected) {
+            await _store.markInboxRetainedUnprojected(
+              scope,
+              sequence: entry.sequence,
+              category: category,
+              now: now,
+              maximumDeferredAttempts: config.maximumDeferredAttempts,
+              maximumDeferredAge: config.maximumDeferredAge,
+              leaseFence: _requireActiveLeaseFence(),
+            );
+            counters = counters.add(retainedUnprojected: 1);
+            canApplyNextSequence = true;
+            break;
+          }
           if (!result.inboxStatusPersisted) {
             await _store.quarantineInbox(
               scope,
               sequence: entry.sequence,
-              category: result.failureCategory ?? CloudFailureCategory.unknown,
+              category: category,
               now: now,
               leaseFence: _requireActiveLeaseFence(),
             );
@@ -1246,12 +1300,13 @@ class CloudSyncEngine {
           counters = _addQuarantinedCounter(
             counters,
             entry,
-            category: result.failureCategory ?? CloudFailureCategory.unknown,
+            category: category,
           );
           break;
       }
       // A pending/deferred/retryable/quarantined predecessor remains the
-      // causal barrier.
+      // causal barrier. Applied and explicitly retained-unprojected rows are
+      // terminal and allow the independent next record to proceed.
       // Do not let a later journal row mutate canonical state in this run.
       if (!canApplyNextSequence) break;
     }
@@ -1300,10 +1355,7 @@ class CloudSyncEngine {
     );
   }
 
-  bool _shouldQuarantineDeferredInboxEntry(
-    CloudInboxEntry entry,
-    DateTime now,
-  ) {
+  bool _shouldRetainDeferredInboxEntry(CloudInboxEntry entry, DateTime now) {
     final age = now.difference(entry.createdAt);
     return entry.attemptCount + 1 >= config.maximumDeferredAttempts &&
         !age.isNegative &&

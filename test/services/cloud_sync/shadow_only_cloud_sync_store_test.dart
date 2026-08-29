@@ -92,6 +92,34 @@ void main() {
       throwsA(isA<CloudSyncShadowStoreTripwireException>()),
     );
     await expectLater(
+      store.markInboxRetainedUnprojected(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.malformedRecord,
+        now: now,
+        maximumDeferredAttempts: 1,
+        maximumDeferredAge: Duration.zero,
+        leaseFence: const CloudCoordinatorLeaseFence(
+          ownerId: 'blocked-owner',
+          generation: 1,
+        ),
+      ),
+      throwsA(isA<CloudSyncShadowStoreTripwireException>()),
+    );
+    await expectLater(
+      store.recoverRetainedInboxBarriers(
+        scope,
+        now: now,
+        maximumDeferredAttempts: 1,
+        maximumDeferredAge: Duration.zero,
+        leaseFence: const CloudCoordinatorLeaseFence(
+          ownerId: 'blocked-owner',
+          generation: 1,
+        ),
+      ),
+      throwsA(isA<CloudSyncShadowStoreTripwireException>()),
+    );
+    await expectLater(
       store.readRecordMap(scope, logicalEntityKeyHash: 'entity', generation: 1),
       throwsA(isA<CloudSyncShadowStoreTripwireException>()),
     );

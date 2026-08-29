@@ -188,6 +188,204 @@ void main() {
   );
 
   test(
+    'retained deterministic failure advances while conflict is rejected',
+    () async {
+      await _journal(
+        store,
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1), testChange(2)],
+          batchId: 'retained-page',
+          generation: 1,
+          nextToken: 'retained-token',
+          hasMore: false,
+        ),
+      );
+      final fence = (await store.tryAcquireCoordinatorLease(
+        scope,
+        ownerId: 'retained-owner',
+        now: testEpoch,
+        leaseDuration: const Duration(minutes: 5),
+      ))!;
+
+      await expectLater(
+        store.markInboxRetainedUnprojected(
+          scope,
+          sequence: 1,
+          category: CloudFailureCategory.conflict,
+          now: testEpoch,
+          maximumDeferredAttempts: 8,
+          maximumDeferredAge: const Duration(days: 3),
+          leaseFence: fence,
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (error) => error.safeCode,
+            'safeCode',
+            'inbox_retention_policy_rejected',
+          ),
+        ),
+      );
+      await store.markInboxRetainedUnprojected(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.malformedRecord,
+        now: testEpoch,
+        maximumDeferredAttempts: 8,
+        maximumDeferredAge: const Duration(days: 3),
+        leaseFence: fence,
+      );
+      await store.markInboxApplied(
+        scope,
+        sequence: 2,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+
+      final entries = await store.inboxEntries(scope);
+      expect(entries.first.status, CloudInboxStatus.retainedUnprojected);
+      expect(entries.last.status, CloudInboxStatus.applied);
+      final checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.lastAppliedSequence, 2);
+      expect(checkpoint.fetchedToken, 'retained-token');
+    },
+  );
+
+  test('recovery preserves a conflict tombstone as a barrier', () async {
+    await _journal(
+      store,
+      CloudFetchBatch(
+        scope: scope,
+        changes: [testChange(1, tombstone: true)],
+        batchId: 'conflict-tombstone-page',
+        generation: 1,
+        nextToken: 'conflict-tombstone-token',
+        hasMore: false,
+      ),
+    );
+    final fence = (await store.tryAcquireCoordinatorLease(
+      scope,
+      ownerId: 'conflict-tombstone-owner',
+      now: testEpoch,
+      leaseDuration: const Duration(days: 40),
+    ))!;
+    await store.quarantineInbox(
+      scope,
+      sequence: 1,
+      category: CloudFailureCategory.conflict,
+      now: testEpoch,
+      leaseFence: fence,
+    );
+
+    await expectLater(
+      store.markInboxRetainedUnprojected(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.malformedRecord,
+        now: testEpoch,
+        maximumDeferredAttempts: 1,
+        maximumDeferredAge: Duration.zero,
+        leaseFence: fence,
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (error) => error.safeCode,
+          'safeCode',
+          'inbox_retention_category_mismatch',
+        ),
+      ),
+    );
+
+    final recovered = await store.recoverRetainedInboxBarriers(
+      scope,
+      now: testEpoch.add(const Duration(days: 30)),
+      maximumDeferredAttempts: 1,
+      maximumDeferredAge: Duration.zero,
+      leaseFence: fence,
+    );
+
+    expect(recovered.retainedUnprojected, 0);
+    expect(
+      (await store.inboxEntries(scope)).single.status,
+      CloudInboxStatus.quarantined,
+    );
+    final checkpoint = await store.readCheckpoint(scope);
+    expect(checkpoint.lastAppliedSequence, 0);
+    expect(checkpoint.fetchedToken, isNull);
+  });
+
+  test('dependency retention requires both attempt and age bounds', () async {
+    await _journal(
+      store,
+      CloudFetchBatch(
+        scope: scope,
+        changes: [testChange(1), testChange(2), testChange(3)],
+        batchId: 'dependency-bounds-page',
+        generation: 1,
+        nextToken: 'dependency-bounds-token',
+        hasMore: false,
+      ),
+    );
+    final fence = (await store.tryAcquireCoordinatorLease(
+      scope,
+      ownerId: 'dependency-bounds-owner',
+      now: testEpoch,
+      leaseDuration: const Duration(days: 10),
+    ))!;
+
+    await expectLater(
+      store.markInboxRetainedUnprojected(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.dependency,
+        now: testEpoch.add(const Duration(days: 4)),
+        maximumDeferredAttempts: 2,
+        maximumDeferredAge: const Duration(days: 3),
+        leaseFence: fence,
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (error) => error.safeCode,
+          'safeCode',
+          'inbox_retention_policy_rejected',
+        ),
+      ),
+    );
+    await expectLater(
+      store.markInboxRetainedUnprojected(
+        scope,
+        sequence: 2,
+        category: CloudFailureCategory.dependency,
+        now: testEpoch.add(const Duration(days: 2)),
+        maximumDeferredAttempts: 1,
+        maximumDeferredAge: const Duration(days: 3),
+        leaseFence: fence,
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (error) => error.safeCode,
+          'safeCode',
+          'inbox_retention_policy_rejected',
+        ),
+      ),
+    );
+    await store.markInboxRetainedUnprojected(
+      scope,
+      sequence: 3,
+      category: CloudFailureCategory.dependency,
+      now: testEpoch.add(const Duration(days: 4)),
+      maximumDeferredAttempts: 1,
+      maximumDeferredAge: const Duration(days: 3),
+      leaseFence: fence,
+    );
+
+    final entries = await store.inboxEntries(scope);
+    expect(entries[0].status, CloudInboxStatus.pending);
+    expect(entries[1].status, CloudInboxStatus.pending);
+    expect(entries[2].status, CloudInboxStatus.retainedUnprojected);
+  });
+
+  test(
     'failed first record retains the old token until every row is applied',
     () async {
       await _journal(

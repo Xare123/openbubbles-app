@@ -241,6 +241,122 @@ void main() {
     },
   );
 
+  test(
+    'does not promote a current batch token across an earlier legacy barrier',
+    () async {
+      final entry = _entry(
+        scope: scope,
+        sequence: 2,
+        batchId: 'current-batch',
+        changeId: _digestValue('D'),
+        recordIdHash: _digestValue('T'),
+      );
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final current = inboxBox.getAll().single;
+      final earlier =
+          _copyInbox(
+              current,
+              changeKey: _scopedDigest(scope, 'change', _digestValue('B')),
+            )
+            ..changeIdHash = _digestValue('B')
+            ..serverRecordIdHash = _digestValue('U')
+            ..batchId = 'legacy-earlier-batch'
+            ..fetchSequence = 1
+            ..status = CloudInboxStatus.quarantined.index
+            ..failureCategory = CloudFailureCategory.conflict.name
+            ..completedAtMs = now.millisecondsSinceEpoch;
+      inboxBox.put(earlier);
+      final checkpointBox = objectBox.box<CloudSyncCheckpointEntity>();
+      final checkpoint = checkpointBox.getAll().single
+        ..fetchedTokenCiphertext = 'protected-old-token'
+        ..pendingFetchedTokenCiphertext = 'protected-next-token'
+        ..pendingBatchId = entry.batchId;
+      checkpointBox.put(checkpoint);
+
+      await gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: _applyAndMark(entry),
+      );
+
+      final retained = checkpointBox.getAll().single;
+      expect(retained.appliedSequence, 0);
+      expect(retained.fetchedTokenCiphertext, 'protected-old-token');
+      expect(retained.pendingFetchedTokenCiphertext, 'protected-next-token');
+      expect(retained.pendingBatchId, entry.batchId);
+      final rows = inboxBox.getAll()
+        ..sort(
+          (left, right) => left.fetchSequence.compareTo(right.fetchSequence),
+        );
+      expect(rows.first.status, CloudInboxStatus.quarantined.index);
+      expect(rows.last.status, CloudInboxStatus.applied.index);
+    },
+  );
+
+  test(
+    'promotes a current batch token across a retained predecessor',
+    () async {
+      final entry = _entry(
+        scope: scope,
+        sequence: 2,
+        batchId: 'current-batch',
+        changeId: _digestValue('D'),
+        recordIdHash: _digestValue('T'),
+      );
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final current = inboxBox.getAll().single;
+      final earlier =
+          _copyInbox(
+              current,
+              changeKey: _scopedDigest(scope, 'change', _digestValue('B')),
+            )
+            ..changeIdHash = _digestValue('B')
+            ..serverRecordIdHash = _digestValue('U')
+            ..batchId = 'legacy-earlier-batch'
+            ..fetchSequence = 1
+            ..status = CloudInboxStatus.retainedUnprojected.index
+            ..failureCategory = CloudFailureCategory.malformedRecord.name
+            ..completedAtMs = now.millisecondsSinceEpoch;
+      inboxBox.put(earlier);
+      final checkpointBox = objectBox.box<CloudSyncCheckpointEntity>();
+      final checkpoint = checkpointBox.getAll().single
+        ..fetchedTokenCiphertext = 'protected-old-token'
+        ..pendingFetchedTokenCiphertext = 'protected-next-token'
+        ..pendingBatchId = entry.batchId;
+      checkpointBox.put(checkpoint);
+
+      await gateway.writeTransaction<void>(
+        entry: entry,
+        leaseFence: leaseFence,
+        action: _applyAndMark(entry),
+      );
+
+      final promoted = checkpointBox.getAll().single;
+      expect(promoted.appliedSequence, 2);
+      expect(promoted.fetchedTokenCiphertext, 'protected-next-token');
+      expect(promoted.pendingFetchedTokenCiphertext, isNull);
+      expect(promoted.pendingBatchId, isNull);
+      final rows = inboxBox.getAll()
+        ..sort(
+          (left, right) => left.fetchSequence.compareTo(right.fetchSequence),
+        );
+      expect(rows.first.status, CloudInboxStatus.retainedUnprojected.index);
+      expect(rows.last.status, CloudInboxStatus.applied.index);
+    },
+  );
+
   test('rejects legacy transport grammar before opening a transaction', () async {
     final entry = _entry(
       scope: scope,
@@ -1732,6 +1848,9 @@ CloudSyncScope _scope({String? account, String zone = 'messageManateeZone'}) {
 
 CloudInboxEntry _entry({
   required CloudSyncScope scope,
+  int sequence = 1,
+  String batchId = 'batch-1',
+  int generation = 7,
   bool tombstone = false,
   String? payloadSha256,
   String? changeId,
@@ -1757,13 +1876,13 @@ CloudInboxEntry _entry({
   );
   return CloudInboxEntry(
     scope: scope,
-    sequence: 1,
+    sequence: sequence,
     change: change,
     status: CloudInboxStatus.pending,
     attemptCount: 0,
     createdAt: DateTime.utc(2026, 8, 1, 11),
-    batchId: 'batch-1',
-    generation: 7,
+    batchId: batchId,
+    generation: generation,
   );
 }
 

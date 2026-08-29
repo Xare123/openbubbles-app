@@ -26,6 +26,7 @@ void main() {
       postFetchQuarantined: 7,
       tombstoneQuarantined: 1,
       tombstoneReadOnlyAcknowledged: 8,
+      retainedUnprojected: 9,
       semanticUnsupportedServiceQuarantined: 2,
       semanticStageQuarantined: 2,
       confirmed: 5,
@@ -51,6 +52,7 @@ void main() {
     expect(combined.postFetchQuarantined, 14);
     expect(combined.tombstoneQuarantined, 2);
     expect(combined.tombstoneReadOnlyAcknowledged, 16);
+    expect(combined.retainedUnprojected, 18);
     expect(combined.semanticUnsupportedServiceQuarantined, 4);
     expect(combined.semanticStageQuarantined, 4);
     expect(combined.confirmed, 10);

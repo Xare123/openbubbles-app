@@ -148,6 +148,26 @@ final class ShadowOnlyCloudSyncStore
   }) => _blocked();
 
   @override
+  Future<void> markInboxRetainedUnprojected(
+    CloudSyncScope scope, {
+    required int sequence,
+    required CloudFailureCategory? category,
+    required DateTime now,
+    required int maximumDeferredAttempts,
+    required Duration maximumDeferredAge,
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) => _blocked();
+
+  @override
+  Future<CloudInboxRetentionRecovery> recoverRetainedInboxBarriers(
+    CloudSyncScope scope, {
+    required DateTime now,
+    required int maximumDeferredAttempts,
+    required Duration maximumDeferredAge,
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) => _blocked();
+
+  @override
   Future<void> markInboxRetryable(
     CloudSyncScope scope, {
     required int sequence,

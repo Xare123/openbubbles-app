@@ -437,6 +437,33 @@ void main() {
       expect(bindings.stream, stream);
     }
   });
+
+  test('rejects every remote-write capability before native bindings', () {
+    final operation = testOutboxOperation(scope, 1);
+    final actions = <Object? Function()>[
+      () => transport.pushOperations(scope, operations: [operation]),
+      () => transport.allocateServerRecordMapping(
+        scope,
+        logicalEntityKeyHash: operation.logicalEntityKeyHash,
+      ),
+      () => transport.reconcileUnknownOutcome(scope, operation: operation),
+      () => transport.reconcileServerRecordChanged(scope, operation: operation),
+    ];
+
+    for (final action in actions) {
+      expect(
+        action,
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'cloud_sync_shadow_read_only',
+          ),
+        ),
+      );
+    }
+    expect(bindings.fetchCalls, 0);
+  });
 }
 
 final class _FakeBindings implements RustCloudSyncTransportBindings {
@@ -444,6 +471,7 @@ final class _FakeBindings implements RustCloudSyncTransportBindings {
   String? stream;
   Uint8List? continuationToken;
   int? maximumChanges;
+  int fetchCalls = 0;
 
   @override
   Future<RustCloudSyncRawFetchResult> fetchRawPage({
@@ -452,6 +480,7 @@ final class _FakeBindings implements RustCloudSyncTransportBindings {
     required Uint8List? continuationToken,
     required int maximumChanges,
   }) async {
+    fetchCalls++;
     this.stream = stream;
     this.continuationToken = continuationToken;
     this.maximumChanges = maximumChanges;

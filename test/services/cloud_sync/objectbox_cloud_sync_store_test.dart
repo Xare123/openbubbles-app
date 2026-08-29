@@ -231,6 +231,199 @@ void main() {
   );
 
   test(
+    'legacy deterministic quarantine becomes terminal without losing evidence',
+    () async {
+      final scope = testScope(
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      await journalShadow(
+        batch(
+          scope,
+          batchId: 'legacy-retention-page',
+          token: 'legacy-retention-token',
+          changes: [testChange(1)],
+        ),
+        now: testEpoch,
+        budget: CloudShadowJournalBudget(),
+      );
+      final fence = coordinatorFences[scope.storageKey]!;
+      await store.quarantineInbox(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.malformedRecord,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+      final before = objectBox.box<CloudInboxChangeEntity>().getAll().single;
+      final preservedEvidence = <String, Object?>{
+        'changeKey': before.changeKey,
+        'changeIdHash': before.changeIdHash,
+        'scopeKey': before.scopeKey,
+        'accountFingerprint': before.accountFingerprint,
+        'zone': before.zone,
+        'serverRecordIdHash': before.serverRecordIdHash,
+        'etagHash': before.etagHash,
+        'changeType': before.changeType,
+        'encryptedServerRecordId': before.encryptedServerRecordId,
+        'protectedSystemFieldsRef': before.protectedSystemFieldsRef,
+        'encryptedPayloadRef': before.encryptedPayloadRef,
+        'payloadSha256': before.payloadSha256,
+        'batchId': before.batchId,
+        'generation': before.generation,
+        'fetchSequence': before.fetchSequence,
+        'isTombstone': before.isTombstone,
+        'preflightCategory': before.preflightCategory,
+        'preflightCode': before.preflightCode,
+        'retryCount': before.retryCount,
+        'nextEligibleAtMs': before.nextEligibleAtMs,
+        'serverModifiedAtMs': before.serverModifiedAtMs,
+        'createdAtMs': before.createdAtMs,
+      };
+
+      final recovered = await store.recoverRetainedInboxBarriers(
+        scope,
+        now: testEpoch,
+        maximumDeferredAttempts: 8,
+        maximumDeferredAge: const Duration(days: 3),
+        leaseFence: fence,
+      );
+
+      expect(recovered.retainedUnprojected, 1);
+      expect(recovered.tombstoneReadOnlyAcknowledged, 0);
+      var checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.lastAppliedSequence, 1);
+      expect(checkpoint.fetchedToken, 'legacy-retention-token');
+      expect(checkpoint.hasUnmarkedPendingInbox, isFalse);
+      var retained = objectBox.box<CloudInboxChangeEntity>().getAll().single;
+      expect(retained.status, CloudInboxStatus.retainedUnprojected.index);
+      expect(
+        retained.failureCategory,
+        CloudFailureCategory.malformedRecord.name,
+      );
+      expect(<String, Object?>{
+        'changeKey': retained.changeKey,
+        'changeIdHash': retained.changeIdHash,
+        'scopeKey': retained.scopeKey,
+        'accountFingerprint': retained.accountFingerprint,
+        'zone': retained.zone,
+        'serverRecordIdHash': retained.serverRecordIdHash,
+        'etagHash': retained.etagHash,
+        'changeType': retained.changeType,
+        'encryptedServerRecordId': retained.encryptedServerRecordId,
+        'protectedSystemFieldsRef': retained.protectedSystemFieldsRef,
+        'encryptedPayloadRef': retained.encryptedPayloadRef,
+        'payloadSha256': retained.payloadSha256,
+        'batchId': retained.batchId,
+        'generation': retained.generation,
+        'fetchSequence': retained.fetchSequence,
+        'isTombstone': retained.isTombstone,
+        'preflightCategory': retained.preflightCategory,
+        'preflightCode': retained.preflightCode,
+        'retryCount': retained.retryCount,
+        'nextEligibleAtMs': retained.nextEligibleAtMs,
+        'serverModifiedAtMs': retained.serverModifiedAtMs,
+        'createdAtMs': retained.createdAtMs,
+      }, preservedEvidence);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 0);
+      expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+
+      await reopen();
+      checkpoint = await store.readCheckpoint(scope);
+      retained = objectBox.box<CloudInboxChangeEntity>().getAll().single;
+      expect(checkpoint.lastAppliedSequence, 1);
+      expect(retained.status, CloudInboxStatus.retainedUnprojected.index);
+
+      currentTime = testEpoch.add(const Duration(days: 2));
+      final secondFence = (await store.tryAcquireCoordinatorLease(
+        scope,
+        ownerId: 'legacy-retention-reopen',
+        now: currentTime,
+        leaseDuration: const Duration(days: 1),
+      ))!;
+      final repeated = await store.recoverRetainedInboxBarriers(
+        scope,
+        now: currentTime,
+        maximumDeferredAttempts: 8,
+        maximumDeferredAge: const Duration(days: 3),
+        leaseFence: secondFence,
+      );
+      expect(repeated.retainedUnprojected, 0);
+    },
+  );
+
+  test('conflict and unknown tombstones remain causal barriers', () async {
+    const cases = [
+      (testAccountFingerprintA, CloudFailureCategory.conflict),
+      (testAccountFingerprintB, CloudFailureCategory.unknown),
+    ];
+    for (final (account, category) in cases) {
+      final scope = testScope(
+        account: account,
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      await journalShadow(
+        batch(
+          scope,
+          batchId: 'legacy-${category.name}-tombstone-page',
+          token: 'legacy-${category.name}-tombstone-token',
+          changes: [testChange(1, tombstone: true)],
+        ),
+        now: testEpoch,
+        budget: CloudShadowJournalBudget(),
+      );
+      final fence = coordinatorFences[scope.storageKey]!;
+      await store.quarantineInbox(
+        scope,
+        sequence: 1,
+        category: category,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+
+      await expectLater(
+        store.markInboxRetainedUnprojected(
+          scope,
+          sequence: 1,
+          category: CloudFailureCategory.malformedRecord,
+          now: testEpoch,
+          maximumDeferredAttempts: 1,
+          maximumDeferredAge: Duration.zero,
+          leaseFence: fence,
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (error) => error.safeCode,
+            'safeCode',
+            'inbox_retention_category_mismatch',
+          ),
+        ),
+      );
+
+      final recovered = await store.recoverRetainedInboxBarriers(
+        scope,
+        now: testEpoch,
+        maximumDeferredAttempts: 1,
+        maximumDeferredAge: const Duration(microseconds: 1),
+        leaseFence: fence,
+      );
+
+      expect(recovered.retainedUnprojected, 0, reason: category.name);
+      final checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.lastAppliedSequence, 0, reason: category.name);
+      expect(checkpoint.hasUnmarkedPendingInbox, isTrue, reason: category.name);
+      final row = objectBox.box<CloudInboxChangeEntity>().getAll().singleWhere(
+        (candidate) => candidate.accountFingerprint == scope.accountFingerprint,
+      );
+      expect(
+        row.status,
+        CloudInboxStatus.quarantined.index,
+        reason: category.name,
+      );
+    }
+  });
+
+  test(
     'legacy missing inbox sequence is an unmarked checkpoint barrier',
     () async {
       final scope = testScope(
@@ -265,6 +458,82 @@ void main() {
       expect(checkpoint.lastAppliedSequence, 0);
       expect(checkpoint.pendingBatchId, isNull);
       expect(checkpoint.hasUnmarkedPendingInbox, isTrue);
+    },
+  );
+
+  test(
+    'retention recovery fails atomically when the journal has a sequence gap',
+    () async {
+      final scope = testScope(
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      await journalShadow(
+        batch(
+          scope,
+          batchId: 'retention-gap-page',
+          token: 'retention-gap-token',
+          changes: [testChange(1), testChange(2)],
+        ),
+        now: testEpoch,
+        budget: CloudShadowJournalBudget(),
+      );
+      final fence = coordinatorFences[scope.storageKey]!;
+      await store.quarantineInbox(
+        scope,
+        sequence: 2,
+        category: CloudFailureCategory.malformedRecord,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+      final inbox = objectBox.box<CloudInboxChangeEntity>();
+      final rows = inbox.getAll()
+        ..sort(
+          (left, right) => left.fetchSequence.compareTo(right.fetchSequence),
+        );
+      expect(inbox.remove(rows.first.id), isTrue);
+      final before = inbox.get(rows.last.id)!;
+      final checkpointBefore = await store.readCheckpoint(scope);
+
+      await expectLater(
+        store.recoverRetainedInboxBarriers(
+          scope,
+          now: testEpoch,
+          maximumDeferredAttempts: 1,
+          maximumDeferredAge: Duration.zero,
+          leaseFence: fence,
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (error) => error.safeCode,
+            'safeCode',
+            'inbox_retention_journal_incomplete',
+          ),
+        ),
+      );
+
+      final after = inbox.get(before.id)!;
+      final checkpointAfter = await store.readCheckpoint(scope);
+      expect(after.status, CloudInboxStatus.quarantined.index);
+      expect(after.failureCategory, before.failureCategory);
+      expect(after.retryCount, before.retryCount);
+      expect(after.encryptedServerRecordId, before.encryptedServerRecordId);
+      expect(after.protectedSystemFieldsRef, before.protectedSystemFieldsRef);
+      expect(after.encryptedPayloadRef, before.encryptedPayloadRef);
+      expect(
+        checkpointAfter.lastAppliedSequence,
+        checkpointBefore.lastAppliedSequence,
+      );
+      expect(checkpointAfter.fetchedToken, checkpointBefore.fetchedToken);
+      expect(checkpointAfter.pendingBatchId, checkpointBefore.pendingBatchId);
+
+      await reopen();
+      final durable = objectBox.box<CloudInboxChangeEntity>().get(before.id)!;
+      expect(durable.status, CloudInboxStatus.quarantined.index);
+      expect(durable.encryptedPayloadRef, before.encryptedPayloadRef);
+      expect(
+        (await store.readCheckpoint(scope)).lastAppliedSequence,
+        checkpointBefore.lastAppliedSequence,
+      );
     },
   );
 
@@ -318,7 +587,7 @@ void main() {
   });
 
   test(
-    'read-only tombstone evidence survives reopen and obeys the applied prefix',
+    'retained tombstone survives reopen and promotes only a terminal page',
     () async {
       final scope = testScope(
         persistenceLane: CloudSyncPersistenceLane.semantic,
@@ -333,10 +602,13 @@ void main() {
       );
       final fence = coordinatorFences[scope.storageKey]!;
 
-      await store.markInboxApplied(
+      await store.markInboxRetainedUnprojected(
         scope,
         sequence: 1,
+        category: null,
         now: testEpoch,
+        maximumDeferredAttempts: 8,
+        maximumDeferredAge: const Duration(days: 3),
         leaseFence: fence,
       );
       final partial = await store.readCheckpoint(scope);
@@ -350,7 +622,7 @@ void main() {
           (left, right) => left.fetchSequence.compareTo(right.fetchSequence),
         );
       final tombstone = durableRows.first;
-      expect(tombstone.status, CloudInboxStatus.applied.index);
+      expect(tombstone.status, CloudInboxStatus.retainedUnprojected.index);
       expect(tombstone.isTombstone, isTrue);
       expect(tombstone.encryptedServerRecordId, 'protected:server-record-1');
       expect(tombstone.protectedSystemFieldsRef, 'protected:system-fields-1');
@@ -369,6 +641,128 @@ void main() {
       expect(completed.lastAppliedSequence, 2);
       expect(completed.fetchedToken, 'read-only-tombstone-token');
       expect(completed.pendingBatchId, isNull);
+    },
+  );
+
+  test(
+    'pending token cannot cross an earlier legacy quarantine barrier',
+    () async {
+      final scope = testScope(
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      await journal(
+        batch(
+          scope,
+          batchId: 'current-pending-page',
+          token: 'must-remain-pending',
+          changes: [testChange(1), testChange(2)],
+        ),
+      );
+      final inbox = objectBox.box<CloudInboxChangeEntity>();
+      final checkpointBox = objectBox.box<CloudSyncCheckpointEntity>();
+      final pendingTokenCiphertext = checkpointBox
+          .getAll()
+          .single
+          .pendingFetchedTokenCiphertext;
+      final rows = inbox.getAll()
+        ..sort(
+          (left, right) => left.fetchSequence.compareTo(right.fetchSequence),
+        );
+      inbox.put(
+        rows.first
+          ..batchId = 'legacy-earlier-page'
+          ..status = CloudInboxStatus.quarantined.index
+          ..failureCategory = CloudFailureCategory.conflict.name
+          ..completedAtMs = testEpoch.millisecondsSinceEpoch,
+      );
+
+      await store.markInboxApplied(
+        scope,
+        sequence: 2,
+        now: testEpoch,
+        leaseFence: coordinatorFences[scope.storageKey]!,
+      );
+
+      final checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.lastAppliedSequence, 0);
+      expect(checkpoint.fetchedToken, isNull);
+      expect(checkpoint.pendingBatchId, 'current-pending-page');
+      expect(
+        checkpointBox.getAll().single.pendingFetchedTokenCiphertext,
+        pendingTokenCiphertext,
+      );
+      expect(
+        inbox.get(rows.first.id)!.status,
+        CloudInboxStatus.quarantined.index,
+      );
+    },
+  );
+
+  test(
+    'retention recovery rejects mismatched account and zone metadata',
+    () async {
+      final scope = testScope(
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      await journal(
+        batch(
+          scope,
+          batchId: 'scope-mismatch-page',
+          token: 'scope-mismatch-token',
+          changes: [testChange(1)],
+        ),
+      );
+      final fence = coordinatorFences[scope.storageKey]!;
+      await store.quarantineInbox(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.malformedRecord,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+      final inbox = objectBox.box<CloudInboxChangeEntity>();
+      final rowId = inbox.getAll().single.id;
+
+      for (final corrupt in ['account', 'zone']) {
+        final row = inbox.get(rowId)!;
+        row
+          ..accountFingerprint = corrupt == 'account'
+              ? testAccountFingerprintB
+              : scope.accountFingerprint
+          ..zone = corrupt == 'zone' ? 'wrong-zone' : scope.zone;
+        inbox.put(row);
+
+        await expectLater(
+          store.recoverRetainedInboxBarriers(
+            scope,
+            now: testEpoch,
+            maximumDeferredAttempts: 1,
+            maximumDeferredAge: Duration.zero,
+            leaseFence: fence,
+          ),
+          throwsA(
+            isA<CloudSyncFailure>().having(
+              (error) => error.safeCode,
+              'safeCode',
+              'inbox_retention_journal_scope_mismatch',
+            ),
+          ),
+          reason: corrupt,
+        );
+        final unchanged = inbox.get(rowId)!;
+        expect(
+          unchanged.status,
+          CloudInboxStatus.quarantined.index,
+          reason: corrupt,
+        );
+        final checkpoint = await store.readCheckpoint(scope);
+        expect(checkpoint.lastAppliedSequence, 0, reason: corrupt);
+
+        unchanged
+          ..accountFingerprint = scope.accountFingerprint
+          ..zone = scope.zone;
+        inbox.put(unchanged);
+      }
     },
   );
 

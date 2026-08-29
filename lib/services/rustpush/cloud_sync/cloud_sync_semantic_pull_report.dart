@@ -23,6 +23,7 @@ final class CloudSyncSemanticPullZoneReport {
     required this.postFetchQuarantined,
     required this.tombstoneQuarantined,
     required this.tombstoneReadOnlyAcknowledged,
+    this.retainedUnprojected = 0,
     required this.semanticUnsupportedServiceQuarantined,
     required this.semanticStageQuarantined,
     required this.retried,
@@ -55,6 +56,7 @@ final class CloudSyncSemanticPullZoneReport {
   final int postFetchQuarantined;
   final int tombstoneQuarantined;
   final int tombstoneReadOnlyAcknowledged;
+  final int retainedUnprojected;
   final int semanticUnsupportedServiceQuarantined;
   final int semanticStageQuarantined;
   final int retried;
@@ -85,6 +87,7 @@ final class CloudSyncSemanticPullZoneReport {
     },
     'tombstoneQuarantined': tombstoneQuarantined,
     'tombstoneReadOnlyAcknowledged': tombstoneReadOnlyAcknowledged,
+    'retainedUnprojected': retainedUnprojected,
     'semanticUnsupportedServiceQuarantined':
         semanticUnsupportedServiceQuarantined,
     'semanticStageQuarantined': semanticStageQuarantined,
@@ -110,7 +113,7 @@ final class CloudSyncSemanticPullReport {
     required Iterable<CloudSyncSemanticPullZoneReport> zones,
   }) : zones = List.unmodifiable(zones);
 
-  static const schemaVersion = 3;
+  static const schemaVersion = 4;
   final DateTime timestampUtc;
   final String platform;
   final String architecture;
@@ -136,6 +139,7 @@ final class CloudSyncSemanticPullReport {
     'remoteDeletesEnabled': false,
     'tombstoneSemanticDeletesEnabled': false,
     'tombstoneReadOnlyAcknowledgementsEnabled': true,
+    'retainedUnprojectedEvidencePreserved': true,
     'pageLimit': pageLimit,
     'changeLimit': changeLimit,
     'outboxCountBefore': outboxCountBefore,

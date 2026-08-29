@@ -38,16 +38,16 @@ class CloudSyncCheckpointEntity {
   String? fetchedTokenCiphertext;
 
   /// Protected continuation token for the most recently journaled page.
-  /// This is promoted only after every row in [pendingBatchId] is applied.
+  /// Promoted only after the complete current-generation journal is terminal.
   String? pendingFetchedTokenCiphertext;
   String? pendingBatchId;
   int generation;
   String? lastBatchId;
   int fetchedSequence;
 
-  /// Highest contiguous applied inbox sequence. The historical field name is
-  /// retained for schema compatibility. Quarantined rows do not advance this
-  /// floor or the continuation token.
+  /// Highest contiguous terminal inbox sequence. The historical field name is
+  /// retained for schema compatibility. Applied and retained-unprojected rows
+  /// advance it; pending and quarantined rows do not.
   int appliedSequence;
   int lastSuccessfulAtMs;
   int lastAttemptAtMs;
@@ -131,7 +131,7 @@ class CloudInboxChangeEntity {
   @Index()
   int fetchSequence;
 
-  /// 0 pending, 1 applied, 2 quarantined.
+  /// 0 pending, 1 applied, 2 quarantined, 3 retained-unprojected.
   @Index()
   int status;
 

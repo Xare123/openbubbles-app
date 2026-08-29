@@ -199,7 +199,18 @@ bool _isOperationId(String value) =>
 
 enum CloudChangeType { save, delete }
 
-enum CloudInboxStatus { pending, applied, quarantined }
+/// Durable inbox states. Keep the order stable because ObjectBox persists the
+/// explicit integer mapping in its status column.
+enum CloudInboxStatus {
+  pending,
+  applied,
+  quarantined,
+
+  /// The protected source record is retained locally, but this client cannot
+  /// project it into the canonical message store. This is terminal for the
+  /// projection cursor and never authorizes a CloudKit or canonical delete.
+  retainedUnprojected,
+}
 
 /// Fixed, content-free reason assigned before semantic decoding. These values
 /// may be persisted and reported as counts; they must never contain server
@@ -519,8 +530,9 @@ class CloudSyncCheckpoint {
   final bool hasUnmarkedPendingInbox;
   final int fetchedSequence;
 
-  /// Highest contiguous safely acknowledged inbox sequence. Only rows
-  /// persisted as applied advance it; pending and quarantined rows block it.
+  /// Highest contiguous safely acknowledged inbox sequence. Rows persisted as
+  /// applied or retained-unprojected advance it; pending and quarantined rows
+  /// block it.
   final int lastAppliedSequence;
   final int mutationRevisionCounter;
   final int consecutivePullFailures;
@@ -571,6 +583,20 @@ class CloudSyncCheckpoint {
       lastFailure: clearLastFailure ? null : lastFailure ?? this.lastFailure,
     );
   }
+}
+
+/// Content-free result of reconciling old inbox rows whose CloudKit token was
+/// already committed before projection status became independently durable.
+class CloudInboxRetentionRecovery {
+  const CloudInboxRetentionRecovery({
+    this.retainedUnprojected = 0,
+    this.tombstoneReadOnlyAcknowledged = 0,
+  });
+
+  final int retainedUnprojected;
+
+  /// Subset of [retainedUnprojected] that are read-only tombstones.
+  final int tombstoneReadOnlyAcknowledged;
 }
 
 class CloudOutboxSubmissionIdentity {
@@ -1142,6 +1168,7 @@ class CloudSyncRunCounters {
     this.postFetchQuarantined = 0,
     this.tombstoneQuarantined = 0,
     this.tombstoneReadOnlyAcknowledged = 0,
+    this.retainedUnprojected = 0,
     this.semanticUnsupportedServiceQuarantined = 0,
     this.semanticStageQuarantined = 0,
     this.confirmed = 0,
@@ -1170,6 +1197,10 @@ class CloudSyncRunCounters {
   final int postFetchQuarantined;
   final int tombstoneQuarantined;
   final int tombstoneReadOnlyAcknowledged;
+
+  /// Protected records retained locally after deterministic projection
+  /// failure. Tombstone acknowledgements are included in this total.
+  final int retainedUnprojected;
   final int semanticUnsupportedServiceQuarantined;
   final int semanticStageQuarantined;
   final int confirmed;
@@ -1196,6 +1227,7 @@ class CloudSyncRunCounters {
     int postFetchQuarantined = 0,
     int tombstoneQuarantined = 0,
     int tombstoneReadOnlyAcknowledged = 0,
+    int retainedUnprojected = 0,
     int semanticUnsupportedServiceQuarantined = 0,
     int semanticStageQuarantined = 0,
     int confirmed = 0,
@@ -1224,6 +1256,7 @@ class CloudSyncRunCounters {
       tombstoneQuarantined: this.tombstoneQuarantined + tombstoneQuarantined,
       tombstoneReadOnlyAcknowledged:
           this.tombstoneReadOnlyAcknowledged + tombstoneReadOnlyAcknowledged,
+      retainedUnprojected: this.retainedUnprojected + retainedUnprojected,
       semanticUnsupportedServiceQuarantined:
           this.semanticUnsupportedServiceQuarantined +
           semanticUnsupportedServiceQuarantined,
@@ -1254,6 +1287,7 @@ class CloudSyncRunCounters {
     postFetchQuarantined: other.postFetchQuarantined,
     tombstoneQuarantined: other.tombstoneQuarantined,
     tombstoneReadOnlyAcknowledged: other.tombstoneReadOnlyAcknowledged,
+    retainedUnprojected: other.retainedUnprojected,
     semanticUnsupportedServiceQuarantined:
         other.semanticUnsupportedServiceQuarantined,
     semanticStageQuarantined: other.semanticStageQuarantined,

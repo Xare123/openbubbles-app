@@ -22,6 +22,7 @@ CloudSyncSemanticPullZoneReport _zone(
   int postFetchQuarantined = 1,
   int tombstoneQuarantined = 0,
   int tombstoneReadOnlyAcknowledged = 0,
+  int retainedUnprojected = 0,
   int semanticUnsupportedServiceQuarantined = 0,
   int semanticStageQuarantined = 1,
   int retried = 0,
@@ -46,6 +47,7 @@ CloudSyncSemanticPullZoneReport _zone(
   postFetchQuarantined: postFetchQuarantined,
   tombstoneQuarantined: tombstoneQuarantined,
   tombstoneReadOnlyAcknowledged: tombstoneReadOnlyAcknowledged,
+  retainedUnprojected: retainedUnprojected,
   semanticUnsupportedServiceQuarantined: semanticUnsupportedServiceQuarantined,
   semanticStageQuarantined: semanticStageQuarantined,
   retried: retried,
@@ -59,6 +61,7 @@ CloudSyncSemanticPullReport _report(
   int pageLimit = 4,
   int changeLimit = 50,
   int chatFetched = 1,
+  int chatRetainedUnprojected = 0,
   Map<String, int>? chatDiagnosticCounts,
 }) => CloudSyncSemanticPullReport(
   timestampUtc: timestamp,
@@ -73,6 +76,7 @@ CloudSyncSemanticPullReport _report(
     _zone(
       'chats',
       fetched: chatFetched,
+      retainedUnprojected: chatRetainedUnprojected,
       diagnosticCounts:
           chatDiagnosticCounts ??
           const {'canonical_chat_relation_unavailable': 1, 'native_ready': 1},
@@ -101,16 +105,18 @@ void main() {
       trustedStorageRoot: root.path,
     );
     final file = await writer.write(
-      _report(DateTime.utc(2026, 8, 29, 1, 2, 3)),
+      _report(DateTime.utc(2026, 8, 29, 1, 2, 3), chatRetainedUnprojected: 3),
     );
 
     expect(file.path, contains('obcs2-semantic-'));
     final json = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-    expect(json['schemaVersion'], 3);
+    expect(json['schemaVersion'], 4);
     expect(json['tombstoneSemanticDeletesEnabled'], isFalse);
     expect(json['tombstoneReadOnlyAcknowledgementsEnabled'], isTrue);
+    expect(json['retainedUnprojectedEvidencePreserved'], isTrue);
     expect(json, isNot(contains('tombstonesEnabled')));
     final zones = json['zones'] as List<dynamic>;
+    expect((zones.first as Map<String, dynamic>)['retainedUnprojected'], 3);
     expect(
       (zones.first as Map<String, dynamic>)['semanticDiagnostics'],
       <String, dynamic>{

@@ -241,6 +241,7 @@ final class CloudSyncManualSemanticPullSampler {
             tombstoneQuarantined: result.counters.tombstoneQuarantined,
             tombstoneReadOnlyAcknowledged:
                 result.counters.tombstoneReadOnlyAcknowledged,
+            retainedUnprojected: result.counters.retainedUnprojected,
             semanticUnsupportedServiceQuarantined:
                 result.counters.semanticUnsupportedServiceQuarantined,
             semanticStageQuarantined: result.counters.semanticStageQuarantined,

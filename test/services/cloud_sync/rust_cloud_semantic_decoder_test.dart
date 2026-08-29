@@ -248,7 +248,7 @@ void main() {
       );
       await _expectFailure(
         decoder().decode(entry),
-        CloudFailureCategory.malformedRecord,
+        CloudFailureCategory.dependency,
       );
     }
 
