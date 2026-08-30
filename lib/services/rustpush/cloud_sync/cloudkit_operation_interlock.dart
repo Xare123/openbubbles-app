@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:math';
+import 'dart:ui' show IsolateNameServer;
 
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as path;
 import 'package:universal_io/io.dart';
 
@@ -37,8 +40,9 @@ abstract interface class CloudKitOperationExclusion {
 ///
 /// Android may run the legacy CloudKit path in a second Dart isolate, while
 /// Windows may have more than one app process touching the same profile. A
-/// static mutex cannot cover either case, so every operation also holds an
-/// operating-system file lock in the existing private support directory.
+/// static mutex cannot cover either case, so every operation also holds a
+/// process-wide isolate reservation and an operating-system file lock in the
+/// existing private support directory.
 ///
 /// Re-entry is permitted only for the same operation kind. This lets the
 /// legacy sync call smaller legacy upload helpers without deadlocking, while
@@ -87,6 +91,8 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
   static final Set<String> _locallyReservedPaths = <String>{};
   static final Set<String> _poisonedPaths = <String>{};
   static final List<RandomAccessFile> _poisonedHandles = <RandomAccessFile>[];
+  static final List<_ProcessIsolateReservation> _poisonedIsolateReservations =
+      <_ProcessIsolateReservation>[];
 
   final String _privateStorageDirectory;
   final CloudSyncStore _fenceStore;
@@ -163,6 +169,13 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
     for (final handle in handles) {
       await _releaseQuietly(handle);
     }
+    final isolateReservations = List<_ProcessIsolateReservation>.of(
+      _poisonedIsolateReservations,
+    );
+    _poisonedIsolateReservations.clear();
+    for (final reservation in isolateReservations) {
+      reservation.release();
+    }
     _locallyReservedPaths.removeAll(_poisonedPaths);
     _poisonedPaths.clear();
   }
@@ -194,6 +207,7 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
     }
 
     RandomAccessFile? handle;
+    _ProcessIsolateReservation? isolateReservation;
     Timer? heartbeat;
     Future<void>? renewalInFlight;
     final ownerId = _newOwnerId();
@@ -201,6 +215,7 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
     _ActiveCloudKitOperation? active;
     var retainedUntilRestart = false;
     try {
+      isolateReservation = _ProcessIsolateReservation.acquire(lockPath);
       final fence = await _fenceStore.tryAcquireCoordinatorLease(
         _fenceScope,
         ownerId: ownerId,
@@ -251,6 +266,7 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
         action,
         zoneValues: <Object, Object>{_zoneLeaseKey: operation},
       );
+      isolateReservation.requireOwned();
       throwIfActiveFenceLost();
       return result;
     } finally {
@@ -276,6 +292,13 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
           // Lease expiry is the final recovery boundary after process death or
           // an unavailable local store. The operation itself has already
           // stopped before this best-effort release.
+        }
+      }
+      if (isolateReservation != null) {
+        if (active?.poisoned ?? false) {
+          _poisonedIsolateReservations.add(isolateReservation);
+        } else {
+          isolateReservation.release();
         }
       }
       if (!retainedUntilRestart) {
@@ -320,7 +343,15 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
         'The existing private storage directory is required',
       );
     }
-    return path.normalize(directory.path);
+    try {
+      return path.normalize(directory.resolveSymbolicLinksSync());
+    } on FileSystemException {
+      throw ArgumentError.value(
+        value,
+        'privateStorageDirectory',
+        'The storage directory must resolve to one canonical path',
+      );
+    }
   }
 
   static Future<void> _releaseQuietly(RandomAccessFile handle) async {
@@ -340,6 +371,46 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
       // The operation has already ended. Never mask its result with cleanup
       // noise; the operating system will reclaim the handle with the process.
     }
+  }
+}
+
+/// Same-process, cross-isolate reservation complementing the operating-system
+/// lock. POSIX advisory file locks can be process-scoped, so another Dart
+/// isolate may otherwise enter through a separately opened handle.
+final class _ProcessIsolateReservation {
+  _ProcessIsolateReservation._(this.name, this.port);
+
+  final String name;
+  final ReceivePort port;
+
+  static _ProcessIsolateReservation acquire(String lockPath) {
+    final name =
+        'openbubbles.cloudkit-operation.v1:${sha256.convert(utf8.encode(lockPath))}';
+    final port = ReceivePort();
+    if (!IsolateNameServer.registerPortWithName(port.sendPort, name)) {
+      port.close();
+      throw const CloudKitOperationInterlockException(
+        'cloudkit_interlock_busy',
+      );
+    }
+    return _ProcessIsolateReservation._(name, port);
+  }
+
+  bool get isOwned => IsolateNameServer.lookupPortByName(name) == port.sendPort;
+
+  void requireOwned() {
+    if (!isOwned) {
+      throw const CloudKitOperationInterlockException(
+        'cloudkit_interlock_reservation_lost',
+      );
+    }
+  }
+
+  void release() {
+    if (isOwned) {
+      IsolateNameServer.removePortNameMapping(name);
+    }
+    port.close();
   }
 }
 

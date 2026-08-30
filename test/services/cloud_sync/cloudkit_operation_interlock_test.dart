@@ -30,7 +30,7 @@ void main() {
   });
 
   test(
-    'poisoned operation retains the OS lock until process restart',
+    'poisoned operation retains cross-isolate exclusion until process restart',
     () async {
       await interlock.runExclusive(
         kind: CloudKitOperationKind.v2SemanticRead,
@@ -76,6 +76,27 @@ void main() {
       expect(isolateOutcome, 'cloudkit_interlock_busy');
     },
   );
+
+  test('active operation blocks another isolate until release', () async {
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    final first = interlock.runExclusive(
+      kind: CloudKitOperationKind.v2SemanticRead,
+      action: () async {
+        entered.complete();
+        await release.future;
+      },
+    );
+    await entered.future;
+
+    expect(
+      await _attemptIsolateOperation(temporaryDirectory.path),
+      'cloudkit_interlock_busy',
+    );
+    release.complete();
+    await first;
+    expect(await _attemptIsolateOperation(temporaryDirectory.path), 'entered');
+  });
 
   test('same-kind nested work reuses the active lease', () async {
     final result = await interlock.runExclusive(
@@ -231,6 +252,34 @@ void main() {
     );
   });
 
+  test(
+    'a rejected fence acquisition releases the isolate reservation',
+    () async {
+      final rejectingInterlock = CloudKitOperationInterlock(
+        privateStorageDirectory: temporaryDirectory.path,
+        fenceStore: _RejectingAcquisitionStore(),
+      );
+
+      await expectLater(
+        rejectingInterlock.runExclusive(
+          kind: CloudKitOperationKind.v2SemanticRead,
+          action: () async {},
+        ),
+        throwsA(
+          isA<CloudKitOperationInterlockException>().having(
+            (error) => error.safeCode,
+            'safeCode',
+            'cloudkit_interlock_busy',
+          ),
+        ),
+      );
+      expect(
+        await _attemptIsolateOperation(temporaryDirectory.path),
+        'entered',
+      );
+    },
+  );
+
   test('a lost database fence fails the operation closed', () async {
     final rejectingStore = _RejectingRenewalStore();
     final fencedInterlock = CloudKitOperationInterlock(
@@ -272,6 +321,23 @@ void main() {
   });
 }
 
+Future<String> _attemptIsolateOperation(String lockDirectory) =>
+    Isolate.run<String>(() async {
+      final isolateInterlock = CloudKitOperationInterlock(
+        privateStorageDirectory: lockDirectory,
+        fenceStore: InMemoryCloudSyncStore(),
+      );
+      try {
+        await isolateInterlock.runExclusive(
+          kind: CloudKitOperationKind.v2SemanticRead,
+          action: () async {},
+        );
+        return 'entered';
+      } on CloudKitOperationInterlockException catch (error) {
+        return error.safeCode;
+      }
+    });
+
 final class _RejectingRenewalStore extends InMemoryCloudSyncStore {
   @override
   Future<bool> renewCoordinatorLease(
@@ -280,4 +346,14 @@ final class _RejectingRenewalStore extends InMemoryCloudSyncStore {
     required DateTime now,
     required Duration leaseDuration,
   }) async => false;
+}
+
+final class _RejectingAcquisitionStore extends InMemoryCloudSyncStore {
+  @override
+  Future<CloudCoordinatorLeaseFence?> tryAcquireCoordinatorLease(
+    CloudSyncScope scope, {
+    required String ownerId,
+    required DateTime now,
+    required Duration leaseDuration,
+  }) async => null;
 }
