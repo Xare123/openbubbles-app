@@ -2474,9 +2474,15 @@ fn nested_attachment_string(
     nested_optional(presence, "cm", field, true, value)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CloudAttachmentUserInfoKind {
+    Inline,
+    Mmcs,
+}
+
 fn validate_attachment_user_info(
     user_info: &MMCSAttachmentMeta,
-) -> Result<(), CloudCanonicalQuarantineReason> {
+) -> Result<CloudAttachmentUserInfoKind, CloudCanonicalQuarantineReason> {
     fn non_empty(value: Option<&str>) -> bool {
         value.is_some_and(|value| !value.is_empty() && !value.chars().any(char::is_control))
     }
@@ -2508,7 +2514,7 @@ fn validate_attachment_user_info(
                 .as_deref()
                 .is_some_and(|value| value.parse::<u32>().is_ok()) =>
         {
-            Ok(())
+            Ok(CloudAttachmentUserInfoKind::Inline)
         }
         (false, true)
             if hex(user_info.mmcs_signature_hex.as_deref())
@@ -2518,7 +2524,7 @@ fn validate_attachment_user_info(
                 })
                 && hex(user_info.decryption_key.as_deref()) =>
         {
-            Ok(())
+            Ok(CloudAttachmentUserInfoKind::Mmcs)
         }
         _ => Err(CloudCanonicalQuarantineReason::MalformedRecord),
     }
@@ -2553,10 +2559,20 @@ pub(crate) fn convert_attachment(
         );
     }
     if let Some(user_info) = attachment.user_info.as_ref() {
-        if validate_attachment_user_info(user_info).is_err() {
-            return CloudCanonicalConversionOutcome::Quarantined(
-                CloudCanonicalQuarantineReason::MalformedRecord,
-            );
+        match validate_attachment_user_info(user_info) {
+            Ok(CloudAttachmentUserInfoKind::Mmcs) => {}
+            // The native materializer currently reopens the protected record
+            // and downloads its CloudKit/MMCS asset. It has no proven inline
+            // body path, so retain inline records until that separate path is
+            // implemented rather than projecting an unusable attachment.
+            Ok(CloudAttachmentUserInfoKind::Inline) => {
+                return CloudCanonicalConversionOutcome::Deferred(
+                    CloudCanonicalDeferredReason::UnsupportedMediaCredentials,
+                );
+            }
+            Err(reason) => {
+                return CloudCanonicalConversionOutcome::Quarantined(reason);
+            }
         }
     }
     if attachment.is_sticker {
@@ -3810,6 +3826,49 @@ mod tests {
             Some(CloudChatDiagnosticCode::LastAddressedHandleIgnoredUnproven)
         );
 
+        let mut authoritative_clear = chat_required_presence(false);
+        authoritative_clear
+            .fields
+            .insert("lah".to_owned(), CloudRawFieldPresence::PresentWithValue);
+        authoritative_clear
+            .mark_top_level_explicit_clear("lah")
+            .expect("fixture carries authoritative clear evidence");
+        let (authoritative_clear_outcome, diagnostic) = convert_chat_with_diagnostic(
+            &context(&hasher, "server-chat-lah-authoritative-clear", None),
+            &authoritative_clear,
+            &direct_chat(),
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = authoritative_clear_outcome else {
+            panic!("authoritative optional clear should convert");
+        };
+        let Some(CloudCanonicalPayload::Chat(payload)) = mutation.payload() else {
+            panic!("chat payload expected");
+        };
+        assert_eq!(
+            payload.last_addressed_handle_state(),
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::ExplicitClear
+        );
+        assert_eq!(diagnostic, None);
+
+        let mut missing_required_chat = direct_chat();
+        missing_required_chat.last_addressed_handle = "tel:+15555550100".to_owned();
+        let missing_required_presence = raw_presence(&["guid", "cid", "gid", "ogid", "svc", "stl"]);
+        let (missing_required_outcome, diagnostic) = convert_chat_with_diagnostic(
+            &context(&hasher, "server-chat-lah-missing-required", None),
+            &missing_required_presence,
+            &missing_required_chat,
+        );
+        assert_eq!(
+            missing_required_outcome,
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRequiredIdentity
+            )
+        );
+        assert_eq!(
+            diagnostic,
+            Some(CloudChatDiagnosticCode::MissingRequiredField)
+        );
+
         let mut present_nonempty_chat = direct_chat();
         present_nonempty_chat.last_addressed_handle = "tel:+15555550100".to_owned();
         let mut present_nonempty = chat_required_presence(false);
@@ -4457,7 +4516,7 @@ mod tests {
     }
 
     #[test]
-    fn valid_inline_metadata_converts_without_crossing_the_canonical_boundary() {
+    fn valid_inline_metadata_remains_deferred_without_a_native_inline_body_path() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let mut attachment = AttachmentMeta {
             guid: "standalone-inline-guid".to_owned(),
@@ -4469,14 +4528,16 @@ mod tests {
             message_part: Some("0".to_owned()),
             ..Default::default()
         });
-        assert!(matches!(
+        assert_eq!(
             convert_attachment(
                 &context(&hasher, "server-inline-attachment", None),
                 &attachment_presence(),
                 &attachment,
             ),
-            CloudCanonicalConversionOutcome::Ready(_)
-        ));
+            CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::UnsupportedMediaCredentials
+            )
+        );
     }
 
     #[test]
