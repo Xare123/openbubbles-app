@@ -11,6 +11,7 @@ on:
         options:
           - n2d-standard-16
           - n2d-standard-8
+          - t2d-standard-60
           - c4d-highcpu-16
       source_ref:
         description: Full 40-character source commit SHA to build and verify
@@ -53,7 +54,7 @@ env:
   GCP_RUNNER_ZONE: us-west1-b
   RUNNER_NAME: gce-${{ github.run_id }}-${{ github.run_attempt }}
   MACHINE_TYPE: ${{ inputs.machine_type || 'n2d-standard-16' }}
-  DISK_TYPE: ${{ startsWith(inputs.machine_type || 'n2d-standard-16', 'c4d-') && 'hyperdisk-balanced' || 'pd-balanced' }}
+  DISK_TYPE: ${{ startsWith(inputs.machine_type || 'n2d-standard-16', 'c4d-') && 'hyperdisk-balanced' || startsWith(inputs.machine_type || 'n2d-standard-16', 't2d-') && 'pd-ssd' || 'pd-balanced' }}
   BUILD_FLAVOR: ${{ inputs.flavor || 'beta' }}
   VALIDATION_MODE: ${{ inputs.validation_mode || 'full' }}
   SOURCE_REF: ${{ inputs.source_ref || github.sha }}
