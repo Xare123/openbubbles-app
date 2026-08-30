@@ -24,6 +24,15 @@ on:
         type: choice
         options:
           - beta
+      validation_mode:
+        description: Validation scope for this ephemeral source-only run
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - build-only
+          - bindings-only
 permissions:
   contents: read
 
@@ -45,6 +54,7 @@ env:
   MACHINE_TYPE: ${{ inputs.machine_type || 'n2d-standard-16' }}
   DISK_TYPE: ${{ startsWith(inputs.machine_type || 'n2d-standard-16', 'c4d-') && 'hyperdisk-balanced' || 'pd-balanced' }}
   BUILD_FLAVOR: ${{ inputs.flavor || 'beta' }}
+  VALIDATION_MODE: ${{ inputs.validation_mode || 'full' }}
   SOURCE_REF: ${{ inputs.source_ref || github.sha }}
 
 jobs:
@@ -82,6 +92,10 @@ jobs:
           done
           if (( ${#missing[@]} > 0 )); then
             printf 'Missing required GitHub variables/secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+          if [[ "$SOURCE_REF" =~ ^[0-9a-fA-F]{7,39}$ ]]; then
+            echo 'source_ref must be a branch, tag, or full 40-character commit SHA.' >&2
             exit 1
           fi
 
@@ -187,6 +201,7 @@ jobs:
         uses: amyu/setup-android@3fe49086b1abd7c9ef865120d5d4d486fe55ba98 # v5
 
       - name: Install pinned Android SDK components
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -218,6 +233,7 @@ jobs:
           done
 
       - name: Patch vendored CargoKit for Flutter 3.44.8
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -226,6 +242,7 @@ jobs:
           bash ./tooling/android/patch_pub_cache_cargokit.sh
 
       - name: Install pinned Gradle
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' }}
         shell: bash
         env:
           GRADLE_VERSION: 8.9
@@ -245,8 +262,156 @@ jobs:
           unzip -q "$archive" -d "$RUNNER_TEMP/gradle"
           echo "$RUNNER_TEMP/gradle/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH"
 
+      # Full mode is the production-readiness gate. The ObjectBox C archive is
+      # pinned to the same version and checksum as build.yml so the Dart suite
+      # exercises the real ObjectBox-backed Cloud Sync tests on the VM.
+      - name: Install pinned ObjectBox C library
+        if: ${{ env.VALIDATION_MODE == 'full' }}
+        shell: bash
+        env:
+          OBJECTBOX_VERSION: 5.3.2
+          OBJECTBOX_SHA256: 6dbb5450c36dd11ee9074f16ecc61e79b45ff43c2082934601f3166b39c8a613
+        run: |
+          set -euo pipefail
+          pinned="$(grep -oP '^\s{2}objectbox:\s*\K\d+\.\d+\.\d+' pubspec.yaml)"
+          if [[ "$pinned" != "$OBJECTBOX_VERSION" ]]; then
+            echo "pubspec pins objectbox $pinned but this step installs $OBJECTBOX_VERSION" >&2
+            exit 1
+          fi
+          archive="objectbox-linux-x64.tar.gz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/objectbox/objectbox-c/releases/download/v${OBJECTBOX_VERSION}/${archive}"
+          echo "${OBJECTBOX_SHA256}  ${archive}" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/objectbox"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/objectbox"
+          library="$(find "$RUNNER_TEMP/objectbox" -name libobjectbox.so -print -quit)"
+          if [[ -z "$library" ]]; then
+            echo "libobjectbox.so was not present in $archive" >&2
+            exit 1
+          fi
+          echo "LD_LIBRARY_PATH=$(dirname "$library")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+
+      - name: Ensure PowerShell is available for binding normalization
+        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v pwsh >/dev/null 2>&1; then
+            pwsh --version
+            exit 0
+          fi
+          sudo snap install powershell --classic
+          pwsh --version
+
+      - name: Install pinned Flutter Rust Bridge generator
+        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/flutter_rust_bridge_codegen.tgz"
+          url="https://github.com/fzyzcjy/flutter_rust_bridge/releases/download/v2.3.0/flutter_rust_bridge_codegen-x86_64-unknown-linux-gnu-v2.3.0.tgz"
+          curl --fail --location --silent --show-error "$url" --output "$archive"
+          echo "bb3a5e3d1f17a543e73f8dfff886e883928b95e3a9d19ca5268da40952d80cee  $archive" | sha256sum --check --strict
+          mkdir -p "${RUNNER_TEMP}/frb-codegen"
+          tar -xzf "$archive" -C "${RUNNER_TEMP}/frb-codegen"
+          echo "${RUNNER_TEMP}/frb-codegen" >> "$GITHUB_PATH"
+
+      - name: Regenerate committed bridge bindings
+        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' }}
+        shell: bash
+        run: flutter_rust_bridge_codegen generate --config-file flutter_rust_bridge.yaml
+
+      - name: Normalize generated SSE implementations
+        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' }}
+        shell: pwsh
+        run: |
+          ./tooling/frb/guard_generated_sse_impls.ps1 -Mode Deduplicate -ExpectedRemovalCount 6
+          ./tooling/frb/guard_generated_sse_impls.ps1 -Mode Verify
+
+      # The artifact is retained even if regeneration changes committed files.
+      # Drift is recorded here and rejected after the requested validation has
+      # produced its artifacts, so a failed reproducibility gate never hides
+      # the generated files needed to review the change.
+      - name: Check generated bridge bindings for drift
+        id: binding-drift
+        if: ${{ always() && (env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            lib/src/rust/api/api.dart
+            lib/src/rust/frb_generated.dart
+            lib/src/rust/frb_generated.io.dart
+            lib/src/rust/frb_generated.web.dart
+            rust/src/frb_generated.rs
+            rust/src/frb_generated.io.rs
+            rust/src/frb_generated.web.rs
+          )
+          if git diff --quiet -- "${files[@]}"; then
+            echo 'drift=false' >> "$GITHUB_OUTPUT"
+            echo 'Generated bridge bindings are reproducible.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'drift=true' >> "$GITHUB_OUTPUT"
+            echo 'Generated bridge binding drift detected.' >&2
+            git diff --stat -- "${files[@]}" >&2
+            git diff --name-only -- "${files[@]}" >&2
+            {
+              echo '### Generated bridge binding drift'
+              echo
+              echo 'Regeneration changed committed binding files. The files are uploaded for review; this run will fail its reproducibility gate.'
+              echo
+              git diff --stat -- "${files[@]}"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Check generated Rust bridge
+        if: ${{ env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only' }}
+        shell: bash
+        run: cargo check --manifest-path rust/Cargo.toml --lib --message-format short
+
+      # Generate bindings before compiling Dart or Rust tests. A source change
+      # that legitimately adds a bridge API must be tested against its newly
+      # generated surface, while the later drift gate still prevents silently
+      # accepting uncommitted generated files.
+      - name: Run the full Dart test suite
+        if: ${{ env.VALIDATION_MODE == 'full' }}
+        shell: bash
+        run: flutter test
+
+      - name: Run Rust library tests
+        if: ${{ env.VALIDATION_MODE == 'full' }}
+        shell: bash
+        run: cargo test --manifest-path rust/Cargo.toml --lib
+
+      - name: Run rustpush library tests with production feature set
+        if: ${{ env.VALIDATION_MODE == 'full' }}
+        shell: bash
+        run: cargo test --manifest-path rustpush/Cargo.toml --lib --features remote-anisette-v3
+
+      - name: Run Cloud Sync protector harness
+        if: ${{ env.VALIDATION_MODE == 'full' }}
+        shell: bash
+        run: cargo test --manifest-path rust/cloud_sync_protector_harness/Cargo.toml
+
+      - name: Upload regenerated bridge bindings
+        if: ${{ always() && (env.VALIDATION_MODE == 'full' || env.VALIDATION_MODE == 'bindings-only') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: GCE regenerated bridge bindings (${{ env.VALIDATION_MODE }})
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            lib/src/rust/api/api.dart
+            lib/src/rust/frb_generated.dart
+            lib/src/rust/frb_generated.io.dart
+            lib/src/rust/frb_generated.web.dart
+            rust/src/frb_generated.rs
+            rust/src/frb_generated.io.rs
+            rust/src/frb_generated.web.rs
+
       - name: Build benchmark APK
         id: build
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -270,6 +435,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify APK native libraries
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -298,11 +464,20 @@ jobs:
           done
 
       - name: Upload benchmark APK
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: GCE ${{ inputs.flavor || 'beta' }} Debug APK
           path: build/app/outputs/flutter-apk/app-${{ inputs.flavor || 'beta' }}-debug.apk
           if-no-files-found: error
+
+      - name: Fail on generated bridge drift
+        if: ${{ steps.binding-drift.outputs.drift == 'true' }}
+        shell: bash
+        run: |
+          echo 'Generated bridge bindings are not reproducible from the committed source.' >&2
+          echo 'Review the uploaded binding artifact and commit the intended generated output before relying on this gate.' >&2
+          exit 1
 
   delete-runner:
     name: Delete Google Cloud runner
