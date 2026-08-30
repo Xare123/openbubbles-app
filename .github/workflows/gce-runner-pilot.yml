@@ -203,6 +203,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git config --global --add safe.directory "$FLUTTER_ROOT"
           flutter pub get
           bash ./tooling/android/patch_pub_cache_cargokit.sh
 
