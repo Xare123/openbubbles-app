@@ -27,6 +27,9 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_inte
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_ownership.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_download_coordinator.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_production_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_outbound_canary.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
@@ -595,6 +598,34 @@ class RustPushBBUtils {
 }
 
 class RustPushBackend implements BackendService {
+  CloudAttachmentProductionAdapter? _cloudAttachmentProductionAdapter;
+  Object? _cloudAttachmentProductionStoreIdentity;
+  String? _cloudAttachmentProductionStorageDirectory;
+  String? _cloudAttachmentProductionDocumentsDirectory;
+
+  CloudAttachmentProductionAdapter _cloudAttachmentDownloader() {
+    final store = Database.store;
+    final documentsDirectory = fs.appDocDir.path;
+    final cached = _cloudAttachmentProductionAdapter;
+    if (cached != null &&
+        identical(_cloudAttachmentProductionStoreIdentity, store) &&
+        _cloudAttachmentProductionStorageDirectory == pushService.statePath &&
+        _cloudAttachmentProductionDocumentsDirectory == documentsDirectory) {
+      return cached;
+    }
+    final created = CloudAttachmentProductionAdapter.fromDatabase(
+      readActiveClient: () =>
+          pushService.state?.icloudServices?.cloudMessagesClient,
+      privateStorageDirectory: pushService.statePath,
+      applicationDocumentsDirectory: documentsDirectory,
+    );
+    _cloudAttachmentProductionAdapter = created;
+    _cloudAttachmentProductionStoreIdentity = store;
+    _cloudAttachmentProductionStorageDirectory = pushService.statePath;
+    _cloudAttachmentProductionDocumentsDirectory = documentsDirectory;
+    return created;
+  }
+
   Future<String> getDefaultHandle() async {
     var myHandles = await api.getHandles(state: pushService.state!.client);
     var setHandle = ss.settings.defaultHandle.value;
@@ -793,15 +824,80 @@ class RustPushBackend implements BackendService {
       {void Function(int p1, int p2)? onReceiveProgress,
       bool original = false,
       CancelToken? cancelToken}) async {
-    if (attachment.metadata!.containsKey("cloud")) {
+    final metadata = attachment.metadata ?? const <String, dynamic>{};
+    final canonicalGuid = attachment.guid;
+    final expectedBytes = attachment.totalBytes;
+    final downloadLane = cloudAttachmentDownloadLaneFor(metadata);
+
+    // Semantic V2 projections deliberately retain no raw CloudKit record ID.
+    // Probe their exact durable source locally before pausing writers or
+    // warming CloudKit auth. A V2-marked row never downgrades into a legacy or
+    // IDS transport, even when older metadata remains on the same row.
+    if (downloadLane == CloudAttachmentDownloadLane.cloudSyncV2) {
+      if (canonicalGuid == null || canonicalGuid.trim().isEmpty) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.dependency,
+          safeCode: 'cloud_attachment_source_unavailable',
+        );
+      }
+      if (expectedBytes == null) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.dependency,
+          safeCode: 'cloud_attachment_size_unavailable',
+        );
+      }
+      if (pushService.statePath.isEmpty) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.dependency,
+          safeCode: 'cloud_attachment_source_unavailable',
+        );
+      }
+      final result = await _cloudAttachmentDownloader().downloadIfAvailable(
+        canonicalGuid: canonicalGuid,
+        expectedBytes: expectedBytes,
+      );
+      if (result is CloudAttachmentDownloadMaterialized) {
+        final file = File(attachment.path);
+        if (!await file.exists()) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.localStorage,
+            safeCode: 'cloud_attachment_final_file_missing',
+          );
+        }
+        onReceiveProgress?.call(
+          result.body.verifiedBytes,
+          result.body.verifiedBytes,
+        );
+        return attachment.getFile();
+      }
+      if (result is CloudAttachmentDownloadUnavailable) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.dependency,
+          safeCode: 'cloud_attachment_source_unavailable',
+        );
+      }
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.malformedRecord,
+        safeCode: 'cloud_attachment_native_result_invalid',
+      );
+    }
+
+    if (downloadLane == CloudAttachmentDownloadLane.legacyCloudKit) {
       await api.downloadCloudAttachments(
           cloudMessagesClient:
               pushService.state!.icloudServices!.cloudMessagesClient!,
-          files: [(attachment.path, attachment.metadata!["cloud"])]);
+          files: [(attachment.path, metadata["cloud"])]);
       return attachment.getFile();
     }
-    var rustAttachment =
-        api.restoreAttachment(data: attachment.metadata!["rustpush"]);
+    if (downloadLane != CloudAttachmentDownloadLane.ids) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: expectedBytes == null
+            ? 'cloud_attachment_size_unavailable'
+            : 'cloud_attachment_source_unavailable',
+      );
+    }
+    var rustAttachment = api.restoreAttachment(data: metadata["rustpush"]);
     var stream = api.downloadAttachment(
         aps: pushService.state!.conn,
         attachment: rustAttachment,

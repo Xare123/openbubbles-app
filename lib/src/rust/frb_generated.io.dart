@@ -1505,6 +1505,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CloudProp dco_decode_box_autoadd_cloud_prop(dynamic raw);
 
   @protected
+  CloudSyncAttachmentMaterializationFailureCode
+  dco_decode_box_autoadd_cloud_sync_attachment_materialization_failure_code(
+    dynamic raw,
+  );
+
+  @protected
   CloudSyncOutboundFailureClass
   dco_decode_box_autoadd_cloud_sync_outbound_failure_class(dynamic raw);
 
@@ -1944,6 +1950,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CloudProp001 dco_decode_cloud_prop_001(dynamic raw);
+
+  @protected
+  CloudSyncAttachmentMaterializationFailureCode
+  dco_decode_cloud_sync_attachment_materialization_failure_code(dynamic raw);
+
+  @protected
+  CloudSyncAttachmentMaterializationResult
+  dco_decode_cloud_sync_attachment_materialization_result(dynamic raw);
 
   @protected
   CloudSyncNativeAuthMetadata dco_decode_cloud_sync_native_auth_metadata(
@@ -2856,6 +2870,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CloudProp? dco_decode_opt_box_autoadd_cloud_prop(dynamic raw);
+
+  @protected
+  CloudSyncAttachmentMaterializationFailureCode?
+  dco_decode_opt_box_autoadd_cloud_sync_attachment_materialization_failure_code(
+    dynamic raw,
+  );
 
   @protected
   CloudSyncOutboundFailureClass?
@@ -4935,6 +4955,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CloudProp sse_decode_box_autoadd_cloud_prop(SseDeserializer deserializer);
 
   @protected
+  CloudSyncAttachmentMaterializationFailureCode
+  sse_decode_box_autoadd_cloud_sync_attachment_materialization_failure_code(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncOutboundFailureClass
   sse_decode_box_autoadd_cloud_sync_outbound_failure_class(
     SseDeserializer deserializer,
@@ -5512,6 +5538,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CloudProp001 sse_decode_cloud_prop_001(SseDeserializer deserializer);
+
+  @protected
+  CloudSyncAttachmentMaterializationFailureCode
+  sse_decode_cloud_sync_attachment_materialization_failure_code(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncAttachmentMaterializationResult
+  sse_decode_cloud_sync_attachment_materialization_result(
+    SseDeserializer deserializer,
+  );
 
   @protected
   CloudSyncNativeAuthMetadata sse_decode_cloud_sync_native_auth_metadata(
@@ -6562,6 +6600,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CloudProp? sse_decode_opt_box_autoadd_cloud_prop(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncAttachmentMaterializationFailureCode?
+  sse_decode_opt_box_autoadd_cloud_sync_attachment_materialization_failure_code(
     SseDeserializer deserializer,
   );
 
@@ -9043,6 +9087,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void
+  sse_encode_box_autoadd_cloud_sync_attachment_materialization_failure_code(
+    CloudSyncAttachmentMaterializationFailureCode self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_outbound_failure_class(
     CloudSyncOutboundFailureClass self,
     SseSerializer serializer,
@@ -9741,6 +9792,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_cloud_prop_001(CloudProp001 self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_cloud_sync_attachment_materialization_failure_code(
+    CloudSyncAttachmentMaterializationFailureCode self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_attachment_materialization_result(
+    CloudSyncAttachmentMaterializationResult self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_cloud_sync_native_auth_metadata(
@@ -11000,6 +11063,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_cloud_prop(
     CloudProp? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void
+  sse_encode_opt_box_autoadd_cloud_sync_attachment_materialization_failure_code(
+    CloudSyncAttachmentMaterializationFailureCode? self,
     SseSerializer serializer,
   );
 

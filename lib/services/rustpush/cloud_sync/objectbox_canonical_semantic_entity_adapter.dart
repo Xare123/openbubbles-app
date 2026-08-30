@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'cloud_inbox_applier.dart';
 import 'cloud_merge_policy.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_attachment_provenance.dart';
 import 'cloud_sync_persistent_keys.dart';
 import 'cloud_sync_semantic_diagnostics.dart';
 import 'objectbox_cloud_semantic_store_gateway.dart';
@@ -1230,6 +1231,9 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       );
     }
     attachment ??= Attachment(guid: localGuid);
+    attachment.metadata ??= <String, dynamic>{};
+    attachment.metadata![cloudAttachmentV2MetadataKey] =
+        cloudAttachmentV2MetadataVersion;
     if (owner != null) attachment.message.target = owner;
     attachment.uti = _applyNullableStringField(
       state: payload.utiState,

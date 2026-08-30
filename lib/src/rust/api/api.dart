@@ -9,10 +9,10 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'api.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add`, `bin_deserialize_16`, `boolean`, `bounded_cloud_sync_read_authentication`, `classify_cloud_sync_reconcile_observation`, `cloud_sync_failure_category`, `cloud_sync_outbound_failure_result`, `cloud_sync_password_writer_pause_error`, `cloud_sync_password_writer_resume_error`, `cloud_sync_prepare_failure`, `cloud_sync_reconcile_failure`, `cloud_sync_retry_after_seconds`, `cloud_sync_transient_empty_result`, `cloud_sync_warm_read_authentication_inner`, `cloudkit_repair_content_digest`, `cloudkit_repair_message_content_digest`, `config`, `encrypt`, `finish`, `get_login_config`, `get_password`, `handle_2fa`, `handle_circle`, `handle_photostream`, `integer`, `is_cloud_sync_hex_digest`, `is_cloud_sync_keyed_hash`, `is_cloud_sync_lease_reference`, `is_cloud_sync_operation_id`, `is_cloud_sync_protected_reference`, `is_cloud_sync_protected_source_reference`, `is_valid_cloud_sync_reconcile_message_create_input`, `local_cloud_sync_protected_failure`, `map_cloud_sync_outbound_failure_class`, `map_cloud_sync_outbound_failure`, `map_cloud_sync_protected_category`, `map_cloud_sync_protected_change`, `map_cloud_sync_protected_failure`, `map_cloud_sync_protected_page`, `map_cloud_sync_protected_safe_code`, `map_cloud_sync_raw_page`, `map_cloud_sync_transient_attributed_body`, `map_cloud_sync_transient_chat_alias_kind`, `map_cloud_sync_transient_chat_style`, `map_cloud_sync_transient_deferred`, `map_cloud_sync_transient_entity_kind`, `map_cloud_sync_transient_failure`, `map_cloud_sync_transient_field_state`, `map_cloud_sync_transient_known_flags`, `map_cloud_sync_transient_message_edit`, `map_cloud_sync_transient_payload`, `map_cloud_sync_transient_quarantine`, `map_cloud_sync_transient_reaction_kind`, `map_cloud_sync_transient_service`, `map_cloud_sync_transient_snapshot`, `map_cloud_sync_transient_text_run`, `migrate`, `new`, `null`, `optional_boolean`, `optional_bytes`, `optional_integer`, `optional_string`, `plist_to_bin`, `plist_to_buf`, `plist_to_string`, `repair_digest_association`, `repair_digest_bodies`, `repair_digest_field_state`, `repair_digest_flags`, `repair_digest_reaction_type`, `reset_user`, `safe_code`, `shared_items`, `string`, `subscribe_streams`, `unmap_cloud_sync_transient_entity_kind`, `wrap_sink`
+// These functions are ignored because they are not marked as `pub`: `add`, `bin_deserialize_16`, `boolean`, `bounded_cloud_sync_read_authentication`, `classify_cloud_sync_reconcile_observation`, `cloud_sync_failure_category`, `cloud_sync_outbound_failure_result`, `cloud_sync_password_writer_pause_error`, `cloud_sync_password_writer_resume_error`, `cloud_sync_prepare_failure`, `cloud_sync_reconcile_failure`, `cloud_sync_retry_after_seconds`, `cloud_sync_transient_empty_result`, `cloud_sync_warm_read_authentication_inner`, `cloudkit_repair_content_digest`, `cloudkit_repair_message_content_digest`, `config`, `encrypt`, `finish`, `get_login_config`, `get_password`, `handle_2fa`, `handle_circle`, `handle_photostream`, `integer`, `is_cloud_sync_hex_digest`, `is_cloud_sync_keyed_hash`, `is_cloud_sync_lease_reference`, `is_cloud_sync_operation_id`, `is_cloud_sync_protected_reference`, `is_cloud_sync_protected_source_reference`, `is_valid_cloud_sync_reconcile_message_create_input`, `local_cloud_sync_protected_failure`, `map_cloud_sync_attachment_materialization_failure`, `map_cloud_sync_outbound_failure_class`, `map_cloud_sync_outbound_failure`, `map_cloud_sync_protected_category`, `map_cloud_sync_protected_change`, `map_cloud_sync_protected_failure`, `map_cloud_sync_protected_page`, `map_cloud_sync_protected_safe_code`, `map_cloud_sync_raw_page`, `map_cloud_sync_transient_attributed_body`, `map_cloud_sync_transient_chat_alias_kind`, `map_cloud_sync_transient_chat_style`, `map_cloud_sync_transient_deferred`, `map_cloud_sync_transient_entity_kind`, `map_cloud_sync_transient_failure`, `map_cloud_sync_transient_field_state`, `map_cloud_sync_transient_known_flags`, `map_cloud_sync_transient_message_edit`, `map_cloud_sync_transient_payload`, `map_cloud_sync_transient_quarantine`, `map_cloud_sync_transient_reaction_kind`, `map_cloud_sync_transient_service`, `map_cloud_sync_transient_snapshot`, `map_cloud_sync_transient_text_run`, `migrate`, `new`, `null`, `optional_boolean`, `optional_bytes`, `optional_integer`, `optional_string`, `plist_to_bin`, `plist_to_buf`, `plist_to_string`, `repair_digest_association`, `repair_digest_bodies`, `repair_digest_field_state`, `repair_digest_flags`, `repair_digest_reaction_type`, `reset_user`, `safe_code`, `shared_items`, `string`, `subscribe_streams`, `unmap_cloud_sync_transient_entity_kind`, `wrap_sink`
 // These functions are ignored because they have generic arguments: `bin_deserialize`, `bin_serialize`
 // These types are ignored because they are not used by any `pub` functions: `AnisetteState`, `CloudKitRepairDigestWriter`, `CloudSyncReadAuthWarmFailure`, `CloudSyncReconcileObservation`, `DaemonData`, `FLUTTER_RUST_BRIDGE_HANDLER`, `GSAConfig`, `NSArrayClass`, `NSArrayIconArray`, `NSArrayImageArray`, `ProvisionedAnisette`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `deref`, `deref`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `get_files`, `initialize`, `spawn`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `deref`, `deref`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `get_files`, `initialize`, `spawn`
 
 ChatProto decodeChatproto({required GZipWrapperChatProto wrapped}) =>
     RustLib.instance.api.crateApiApiDecodeChatproto(wrapped: wrapped);
@@ -368,6 +368,50 @@ Future<CloudSyncTransientDecodeResult> cloudSyncDecodeProtectedChange({
   protectedRawEnvelopeReference: protectedRawEnvelopeReference,
   tombstoneEntityKind: tombstoneEntityKind,
   tombstoneLogicalEntityKeyHash: tombstoneLogicalEntityKeyHash,
+);
+
+/// Downloads and atomically places one attachment body selected by an already
+/// journaled V2 attachment row. This is a read-only CloudKit/MMCS operation:
+/// it cannot save or delete records, enable legacy sync, or modify keychain
+/// state. Raw CloudKit record IDs, etags, PCS material, asset descriptors, and
+/// final filesystem paths remain entirely in Rust. The two app-private roots
+/// are supplied separately because Android does not guarantee that application
+/// support and application documents resolve to the same directory.
+Future<CloudSyncAttachmentMaterializationResult>
+cloudSyncMaterializeAttachmentBody({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required BigInt nativeWriterPauseToken,
+  required String storageDirectory,
+  required String applicationDocumentsDirectory,
+  required String expectedAccountFingerprint,
+  required String expectedProtectedStoreIdentity,
+  required BigInt generation,
+  required String expectedChangeId,
+  required String expectedRecordIdHash,
+  required String expectedEtagHash,
+  required String expectedPayloadSha256,
+  PlatformInt64? expectedServerModifiedAtMillis,
+  required String protectedRawEnvelopeReference,
+  required String logicalEntityKeyHash,
+  required String expectedCanonicalGuidSha256,
+  required BigInt expectedBytes,
+}) => RustLib.instance.api.crateApiApiCloudSyncMaterializeAttachmentBody(
+  cloudMessagesClient: cloudMessagesClient,
+  nativeWriterPauseToken: nativeWriterPauseToken,
+  storageDirectory: storageDirectory,
+  applicationDocumentsDirectory: applicationDocumentsDirectory,
+  expectedAccountFingerprint: expectedAccountFingerprint,
+  expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
+  generation: generation,
+  expectedChangeId: expectedChangeId,
+  expectedRecordIdHash: expectedRecordIdHash,
+  expectedEtagHash: expectedEtagHash,
+  expectedPayloadSha256: expectedPayloadSha256,
+  expectedServerModifiedAtMillis: expectedServerModifiedAtMillis,
+  protectedRawEnvelopeReference: protectedRawEnvelopeReference,
+  logicalEntityKeyHash: logicalEntityKeyHash,
+  expectedCanonicalGuidSha256: expectedCanonicalGuidSha256,
+  expectedBytes: expectedBytes,
 );
 
 IdsngmIdentity decodeIdentity({required List<int> identity}) =>
@@ -2695,6 +2739,53 @@ class CloudProp001 {
       other is CloudProp001 &&
           runtimeType == other.runtimeType &&
           syndicationType == other.syndicationType;
+}
+
+/// Content-free failure vocabulary for one native attachment-body fetch.
+///
+/// This never exposes paths, record identifiers, MMCS authorization, or asset
+/// metadata. The only successful value returned to Dart is the verified byte
+/// count after native atomic placement.
+enum CloudSyncAttachmentMaterializationFailureCode {
+  invalidRequest,
+  readAuthenticationScope,
+  activeAccountMismatch,
+  storeIdentityMismatch,
+  protectedReferenceMismatch,
+  sourceUnusable,
+  pcsUnavailable,
+  retryableUpstream,
+  localStorage,
+  sizeMismatch,
+  integrityMismatch,
+  decoderFailure,
+}
+
+/// Exactly one of `completed` and `failure` is populated. `verified_bytes`
+/// is meaningful only when `completed` is true.
+class CloudSyncAttachmentMaterializationResult {
+  final bool completed;
+  final BigInt verifiedBytes;
+  final CloudSyncAttachmentMaterializationFailureCode? failure;
+
+  const CloudSyncAttachmentMaterializationResult({
+    required this.completed,
+    required this.verifiedBytes,
+    this.failure,
+  });
+
+  @override
+  int get hashCode =>
+      completed.hashCode ^ verifiedBytes.hashCode ^ failure.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CloudSyncAttachmentMaterializationResult &&
+          runtimeType == other.runtimeType &&
+          completed == other.completed &&
+          verifiedBytes == other.verifiedBytes &&
+          failure == other.failure;
 }
 
 /// Redacted identity binding for one active Cloud Messages client.

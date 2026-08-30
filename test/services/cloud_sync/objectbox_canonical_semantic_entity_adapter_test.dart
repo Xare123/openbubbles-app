@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:bluebubbles/database/models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_merge_policy.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_diagnostics.dart';
@@ -2970,7 +2971,9 @@ void main() {
     expect(attachment.message.targetId, ownerId);
     expect(store.box<Message>().get(ownerId)!.hasAttachments, isTrue);
     expect(attachment.ckRecordId, isNull);
-    expect(attachment.metadata, isNull);
+    expect(attachment.metadata, <String, dynamic>{
+      cloudAttachmentV2MetadataKey: cloudAttachmentV2MetadataVersion,
+    });
     expect(attachment.bytes, isNull);
     expect(attachment.sourcePath, isNull);
   });
@@ -3110,7 +3113,9 @@ void main() {
     expect(attachment.message.targetId, 0);
     expect(store.box<Message>().count(), 0);
     expect(attachment.ckRecordId, isNull);
-    expect(attachment.metadata, isNull);
+    expect(attachment.metadata, <String, dynamic>{
+      cloudAttachmentV2MetadataKey: cloudAttachmentV2MetadataVersion,
+    });
   });
 
   test('rolls back owner and resolver identity mismatches', () {
