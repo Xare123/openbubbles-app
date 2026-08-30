@@ -716,8 +716,10 @@ void main() {
 
       const invalidShapes = {
         'not a valid participant': [
-          'canonical_participant_shape_telephone_invalid',
-          'canonical_participant_shape_telephone_invalid_alphabetic_ascii',
+          'canonical_participant_shape_embedded_whitespace',
+        ],
+        'opaque\u0001participant': [
+          'canonical_participant_shape_control_character',
         ],
         'urn:apple:opaque': ['canonical_participant_shape_unknown_scheme'],
         ' mailto:valid@example.com': [
@@ -832,7 +834,7 @@ void main() {
     },
   );
 
-  test('keeps valid telephone and email participant behavior unchanged', () {
+  test('preserves valid explicit and opaque bare participant identifiers', () {
     final diagnostics = <String>[];
     final adapter = _newAdapter(
       store: store,
@@ -853,6 +855,8 @@ void main() {
         participantHandles: const [
           'tel:+19492476163',
           'mailto:valid@example.com',
+          'j',
+          'opaque+AbC/123',
         ],
       ),
       snapshot: _snapshot(CloudEntityKind.chat, chatHash),
@@ -863,9 +867,58 @@ void main() {
       chat.handles
           .map((handle) => '${handle.address}/${handle.service}')
           .toSet(),
-      {'+19492476163/iMessage', 'valid@example.com/iMessage'},
+      {
+        '+19492476163/iMessage',
+        'valid@example.com/iMessage',
+        'j/iMessage',
+        'opaque+AbC/123/iMessage',
+      },
     );
+    expect(chat.chatIdentifier, 'iMessage;+;valid-participants');
     expect(diagnostics, isEmpty);
+  });
+
+  test('does not accept an opaque bare identifier as a message sender', () {
+    const chatIdentifier = 'iMessage;-;strict-sender-chat';
+    final chatId = store.box<Chat>().put(
+      Chat(guid: 'strict-sender-chat-guid', chatIdentifier: chatIdentifier),
+    );
+    _seedChatOwnershipAndAlias(
+      store,
+      scope: scope,
+      generation: generation,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: 'strict-sender-chat-guid',
+      chatIdentifier: chatIdentifier,
+      chatId: chatId,
+    );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+
+    expect(
+      () => adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: chatIdentifier,
+          senderHandle: 'j',
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) => failure.safeCode == 'canonical_message_sender_invalid',
+        ),
+      ),
+    );
+    expect(store.box<Message>().count(), 0);
   });
 
   test('creates and idempotently replays a message into its exact chat', () {
@@ -1349,7 +1402,7 @@ void main() {
     expect(store.box<CloudSemanticChatAliasEntity>().count(), 2);
   });
 
-  test('resolves a message chat through the chat-zone ownership scope', () {
+  test('retries a message after its cross-zone chat becomes available', () {
     final chatScope = CloudSyncScope(
       accountFingerprint: testAccountFingerprintA,
       container: 'container',
@@ -1368,18 +1421,6 @@ void main() {
     const messageGeneration = 11;
     _seedCheckpoint(store, scope: chatScope, generation: chatGeneration);
     const identifier = 'iMessage;-;cross-zone-chat';
-    final chatId = store.box<Chat>().put(
-      Chat(guid: 'cross-zone-chat-guid', chatIdentifier: identifier, style: 45),
-    );
-    _seedChatOwnershipAndAlias(
-      store,
-      scope: chatScope,
-      generation: chatGeneration,
-      logicalEntityKeyHash: chatHash,
-      canonicalGuid: 'cross-zone-chat-guid',
-      chatIdentifier: identifier,
-      chatId: chatId,
-    );
     final crossZoneResolver = _Resolver()
       ..put(
         scope: messageScope,
@@ -1402,21 +1443,58 @@ void main() {
       semanticApplyEnabled: true,
       allowMessageUpserts: true,
     );
+    final payload = _messagePayload(
+      logicalEntityKeyHash: messageHash,
+      canonicalGuid: 'cross-zone-message-guid',
+      chatIdentifier: identifier,
+      body: 'ordering-fixture',
+      senderHandle: 'mailto:sender@example.invalid',
+    );
+
+    expect(
+      () => adapter.applyEntity(
+        scope: messageScope,
+        generation: messageGeneration,
+        payload: payload,
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) => failure.safeCode == 'canonical_message_chat_unavailable',
+        ),
+      ),
+    );
+    expect(store.box<Message>().count(), 0);
+    expect(store.box<Handle>().count(), 0);
+
+    final chatId = store.box<Chat>().put(
+      Chat(guid: 'cross-zone-chat-guid', chatIdentifier: identifier, style: 45),
+    );
+    _seedChatOwnershipAndAlias(
+      store,
+      scope: chatScope,
+      generation: chatGeneration,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: 'cross-zone-chat-guid',
+      chatIdentifier: identifier,
+      chatId: chatId,
+    );
 
     expect(
       adapter.applyEntity(
         scope: messageScope,
         generation: messageGeneration,
-        payload: _messagePayload(
-          logicalEntityKeyHash: messageHash,
-          canonicalGuid: 'cross-zone-message-guid',
-          chatIdentifier: identifier,
-        ),
+        payload: payload,
         snapshot: _snapshot(CloudEntityKind.message, messageHash),
       ),
       CloudCanonicalSemanticMutationReceipt.committed,
     );
-    expect(store.box<Message>().getAll().single.chat.targetId, chatId);
+    final messages = store.box<Message>().getAll();
+    expect(messages, hasLength(1));
+    expect(messages.single.guid, 'cross-zone-message-guid');
+    expect(messages.single.chat.targetId, chatId);
+    expect(store.box<Handle>().count(), 1);
+    expect(store.box<CloudSemanticChatAliasEntity>().count(), 1);
   });
 
   test('does not accept a stale cross-zone chat ownership generation', () {

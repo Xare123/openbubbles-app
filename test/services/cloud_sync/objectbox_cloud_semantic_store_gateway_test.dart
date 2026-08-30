@@ -1835,7 +1835,7 @@ void main() {
   );
 
   test(
-    'retained reprojection commits local projection without moving cursor',
+    'retained message reprojection commits exactly once without moving cursor',
     () async {
       final entry = _entry(scope: scope);
       _seedDurableFence(
@@ -1915,6 +1915,30 @@ void main() {
         ),
         isEmpty,
       );
+
+      final replay = await reprocessor.reprojectRetainedUnprojected(
+        scope: scope,
+        generation: entry.generation,
+        leaseFence: leaseFence,
+        limit: 8,
+      );
+
+      expect(replay.examined, 0);
+      expect(replay.reprojected, 0);
+      expect(adapter.entityApplyCalls, 1);
+      expect(objectBox.box<CloudSyncRunEntity>().count(), 1);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 1);
+      expect(objectBox.box<CloudRecordMapEntity>().count(), 1);
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 1);
+      final checkpointAfterReplay = checkpointBox.getAll().single;
+      expect(
+        checkpointAfterReplay.fetchedTokenCiphertext,
+        'protected-current-token',
+      );
+      expect(checkpointAfterReplay.pendingFetchedTokenCiphertext, isNull);
+      expect(checkpointAfterReplay.pendingBatchId, isNull);
+      expect(checkpointAfterReplay.fetchedSequence, entry.sequence);
+      expect(checkpointAfterReplay.appliedSequence, entry.sequence);
     },
   );
 

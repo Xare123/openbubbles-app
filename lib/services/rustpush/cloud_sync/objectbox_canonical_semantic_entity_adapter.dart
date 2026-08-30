@@ -833,7 +833,13 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     final seen = <String>{};
     final serviceName = _serviceName(service);
     for (final raw in rawHandles) {
-      final normalized = _normalizeHandle(raw, onInvalid: _diagnosticRecorder);
+      // Apple's bare FZPersonID value is opaque. Only explicit tel/mailto
+      // values carry a grammar that can be validated as a phone or email.
+      final normalized = _normalizeHandle(
+        raw,
+        allowOpaqueBareParticipant: true,
+        onInvalid: _diagnosticRecorder,
+      );
       if (normalized == null) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.malformedRecord,
@@ -2154,6 +2160,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
 
   _NormalizedCanonicalHandle? _normalizeHandle(
     String raw, {
+    bool allowOpaqueBareParticipant = false,
     CloudSyncSemanticDiagnosticRecorder? onInvalid,
   }) {
     _NormalizedCanonicalHandle? reject(String safeCode) {
@@ -2170,6 +2177,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     }
     String address;
     bool email;
+    bool bare = false;
     final lower = raw.toLowerCase();
     if (lower.startsWith('mailto:')) {
       address = raw.substring('mailto:'.length);
@@ -2181,6 +2189,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       if (raw.contains(':')) {
         return reject('canonical_participant_shape_unknown_scheme');
       }
+      bare = true;
       address = raw;
       email = raw.contains('@');
     }
@@ -2195,6 +2204,15 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         return reject('canonical_participant_shape_email_invalid');
       }
     } else if (!_telephonePattern.hasMatch(address)) {
+      if (allowOpaqueBareParticipant && bare) {
+        if (_controlCharacterPattern.hasMatch(address)) {
+          return reject('canonical_participant_shape_control_character');
+        }
+        if (_whitespacePattern.hasMatch(address)) {
+          return reject('canonical_participant_shape_embedded_whitespace');
+        }
+        return _NormalizedCanonicalHandle(address: address, email: false);
+      }
       onInvalid?.call('canonical_participant_shape_telephone_invalid');
       onInvalid?.call(_telephoneInvalidDiagnosticKey(address));
       return null;
@@ -2378,6 +2396,10 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
   static final RegExp _telephonePattern = RegExp(r'^\+?[0-9]{3,20}$');
   static final RegExp _asciiLetterPattern = RegExp(r'[A-Za-z]');
   static final RegExp _percentEscapePattern = RegExp(r'%[0-9A-Fa-f]{2}');
+  static final RegExp _controlCharacterPattern = RegExp(
+    r'[\u0000-\u001F\u007F-\u009F]',
+  );
+  static final RegExp _whitespacePattern = RegExp(r'\s');
   static const Set<String> _reactionTypes = {
     'love',
     'like',
