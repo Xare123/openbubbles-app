@@ -6,12 +6,17 @@ on:
       machine_type:
         description: Google Compute Engine machine type
         required: true
-        default: c4d-highcpu-16
+        default: n2d-standard-16
         type: choice
         options:
-          - c4d-highcpu-16
-          - n2d-standard-8
           - n2d-standard-16
+          - n2d-standard-8
+          - c4d-highcpu-16
+      source_ref:
+        description: Trusted branch or commit to build
+        required: true
+        default: agent/cloudkit-v2-checkpoint-repair
+        type: string
       flavor:
         description: Non-production Android flavor to benchmark
         required: true
@@ -19,13 +24,6 @@ on:
         type: choice
         options:
           - beta
-          - canary
-  push:
-    branches:
-      - agent/gce-runner-pilot
-    paths:
-      - .github/workflows/gce-runner-pilot.yml
-
 permissions:
   contents: read
 
@@ -44,9 +42,10 @@ env:
   GCP_RUNNER_SUBNET: ${{ vars.GCP_RUNNER_SUBNET }}
   GCP_RUNNER_ZONE: us-west1-b
   RUNNER_NAME: gce-${{ github.run_id }}-${{ github.run_attempt }}
-  MACHINE_TYPE: ${{ inputs.machine_type || 'c4d-highcpu-16' }}
-  DISK_TYPE: ${{ startsWith(inputs.machine_type || 'c4d-highcpu-16', 'c4d-') && 'hyperdisk-balanced' || 'pd-balanced' }}
+  MACHINE_TYPE: ${{ inputs.machine_type || 'n2d-standard-16' }}
+  DISK_TYPE: ${{ startsWith(inputs.machine_type || 'n2d-standard-16', 'c4d-') && 'hyperdisk-balanced' || 'pd-balanced' }}
   BUILD_FLAVOR: ${{ inputs.flavor || 'beta' }}
+  SOURCE_REF: ${{ inputs.source_ref || github.sha }}
 
 jobs:
   create-runner:
@@ -166,6 +165,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.SOURCE_REF }}
           submodules: recursive
 
       - name: Set up Rust
@@ -185,6 +185,15 @@ jobs:
 
       - name: Set up Android SDK
         uses: amyu/setup-android@3fe49086b1abd7c9ef865120d5d4d486fe55ba98 # v5
+
+      - name: Install pinned Android SDK components
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager \
+            'platforms;android-36' \
+            'build-tools;36.0.0' \
+            'ndk;28.2.13676358' >/dev/null
 
       - name: Set up fake Fairplay keys
         shell: bash
@@ -216,6 +225,26 @@ jobs:
           flutter pub get
           bash ./tooling/android/patch_pub_cache_cargokit.sh
 
+      - name: Install pinned Gradle
+        shell: bash
+        env:
+          GRADLE_VERSION: 8.9
+          GRADLE_SHA256: d725d707bfabd4dfdc958c624003b3c80accc03f7037b5122c4b1d0ef15cecab
+        run: |
+          set -euo pipefail
+          pinned="$(sed -n 's|^distributionUrl=.*/gradle-\([0-9.]*\)-bin\.zip$|\1|p' \
+            android/gradle/wrapper/gradle-wrapper.properties)"
+          if [[ "$pinned" != "$GRADLE_VERSION" ]]; then
+            echo "wrapper pins Gradle $pinned but this step installs $GRADLE_VERSION" >&2
+            exit 1
+          fi
+          archive="gradle-${GRADLE_VERSION}-bin.zip"
+          curl -fsSL -o "$archive" \
+            "https://services.gradle.org/distributions/${archive}"
+          echo "${GRADLE_SHA256}  ${archive}" | sha256sum --check --strict
+          unzip -q "$archive" -d "$RUNNER_TEMP/gradle"
+          echo "$RUNNER_TEMP/gradle/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH"
+
       - name: Build benchmark APK
         id: build
         shell: bash
@@ -225,7 +254,10 @@ jobs:
           flutter build apk \
             --flavor "$BUILD_FLAVOR" \
             --debug \
-            --target-platform android-arm64
+            --target-platform android-arm64 \
+            --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true \
+            --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true \
+            --dart-define=OPENBUBBLES_BUILD_COMMIT="$(git rev-parse HEAD)"
           finished="$(date +%s)"
           elapsed="$((finished - started))"
           echo "seconds=$elapsed" >> "$GITHUB_OUTPUT"
@@ -242,6 +274,17 @@ jobs:
         run: |
           set -euo pipefail
           apk="build/app/outputs/flutter-apk/app-${BUILD_FLAVOR}-debug.apk"
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          aapt="$(find "$sdk_root/build-tools" -type f -name aapt -print | sort -V | tail -n 1)"
+          test -x "$aapt"
+          application_id="$(
+            "$aapt" dump badging "$apk" \
+              | sed -n "s/^package: name='\([^']*\)'.*/\1/p"
+          )"
+          if [[ "$application_id" != 'com.bluebubbles.messaging.beta' ]]; then
+            echo "Unexpected Beta application ID: $application_id" >&2
+            exit 1
+          fi
           for entry in \
             lib/arm64-v8a/libflutter.so \
             lib/arm64-v8a/librust_lib_bluebubbles.so \
