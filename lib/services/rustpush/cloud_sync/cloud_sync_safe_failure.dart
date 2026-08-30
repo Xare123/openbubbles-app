@@ -30,6 +30,7 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_native_auth_account_unavailable',
   'cloud_sync_native_auth_bridge_failed',
   'cloud_sync_native_auth_client_type_invalid',
+  'cloud_sync_native_auth_identity_mismatch',
   'cloud_sync_native_auth_metadata_invalid',
   'cloud_sync_native_auth_session_fingerprint_failed',
   'cloud_sync_native_auth_storage_invalid',

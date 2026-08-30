@@ -412,6 +412,7 @@ void main() {
       'cloud_sync_native_auth_keychain_container_failed',
       'cloud_sync_native_auth_security_container_failed',
       'cloud_sync_native_auth_cloudkit_token_failed',
+      'cloud_sync_native_auth_identity_mismatch',
     ]) {
       expect(cloudSyncNativeAuthBridgeSafeCode(frb.AnyhowException(tag)), tag);
     }

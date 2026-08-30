@@ -282,10 +282,10 @@ async fn cloud_sync_warm_read_authentication_inner(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
     read_authentication_permit: Option<&CloudKitReadAuthenticationPermit<'_>>,
 ) -> anyhow::Result<()> {
-    let account_before_warm = cloud_messages_client.native_account_identifier().await;
-    if account_before_warm.is_empty() {
-        return Err(anyhow!("cloud_sync_native_auth_account_unavailable"));
-    }
+    let account_before_warm = cloud_messages_client
+        .validated_native_account_identifier()
+        .await
+        .map_err(|_| anyhow!("cloud_sync_native_auth_identity_mismatch"))?;
     bounded_cloud_sync_read_authentication(CLOUD_SYNC_READ_AUTH_WARM_TIMEOUT, async {
         if let Some(permit) = read_authentication_permit {
             cloud_messages_client
@@ -327,10 +327,10 @@ async fn cloud_sync_warm_read_authentication_inner(
         Ok(())
     })
     .await?;
-    let account_after_warm = cloud_messages_client.native_account_identifier().await;
-    if account_after_warm.is_empty() {
-        return Err(anyhow!("cloud_sync_native_auth_account_unavailable"));
-    }
+    let account_after_warm = cloud_messages_client
+        .validated_native_account_identifier()
+        .await
+        .map_err(|_| anyhow!("cloud_sync_native_auth_identity_mismatch"))?;
     if account_after_warm != account_before_warm {
         return Err(anyhow!("cloud_sync_native_auth_account_changed"));
     }
@@ -341,10 +341,10 @@ pub async fn cloud_sync_capture_auth_snapshot(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
     storage_directory: String,
 ) -> anyhow::Result<CloudSyncNativeAuthMetadata> {
-    let raw_account_identifier = cloud_messages_client.native_account_identifier().await;
-    if raw_account_identifier.is_empty() {
-        return Err(anyhow!("cloud_sync_native_auth_account_unavailable"));
-    }
+    let raw_account_identifier = cloud_messages_client
+        .validated_native_account_identifier()
+        .await
+        .map_err(|_| anyhow!("cloud_sync_native_auth_identity_mismatch"))?;
     let account_fingerprint = crate::cloud_sync_protector::fingerprint_account(
         storage_directory.clone(),
         raw_account_identifier.clone(),

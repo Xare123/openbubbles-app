@@ -1125,12 +1125,15 @@ pub(crate) async fn cloud_sync_decode_transient_record(
             CloudTransientBridgeFailure::StoreIdentityMismatch,
         );
     }
-    let raw_account_identifier = cloud_messages_client.native_account_identifier().await;
-    if raw_account_identifier.is_empty() {
-        return CloudTransientDecodeOutcome::Failure(
-            CloudTransientBridgeFailure::ActiveAccountMismatch,
-        );
-    }
+    let raw_account_identifier =
+        match cloud_messages_client.validated_native_account_identifier().await {
+            Ok(value) => value,
+            Err(_) => {
+                return CloudTransientDecodeOutcome::Failure(
+                    CloudTransientBridgeFailure::ActiveAccountMismatch,
+                )
+            }
+        };
     let actual_account_fingerprint = match cloud_sync_protector::fingerprint_account(
         storage_directory.clone(),
         raw_account_identifier,
