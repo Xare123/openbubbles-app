@@ -130,6 +130,11 @@ jobs:
     needs: create-runner
     runs-on: ${{ needs.create-runner.outputs.label }}
     timeout-minutes: 60
+    # The Marketplace action starts the runner service without HOME. Several
+    # setup actions require it, and Rust otherwise falls back to /.cargo.
+    env:
+      HOME: /root
+      CARGO_HOME: /root/.cargo
     permissions:
       contents: read
     steps:
