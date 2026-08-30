@@ -586,6 +586,8 @@ fn typed_record<T: CloudKitRecord>(
 struct CloudMessageUnsupportedServiceDiagnostic {
     source: &'static str,
     service_class: &'static str,
+    top_level_service_class: &'static str,
+    msg_proto_4_service_class: &'static str,
     message_kind: &'static str,
 }
 
@@ -626,16 +628,16 @@ fn cloud_chat_style_class(chat: &CloudChat) -> &'static str {
 fn cloud_message_unsupported_service_diagnostic(
     message: &CloudMessage,
 ) -> CloudMessageUnsupportedServiceDiagnostic {
+    let top_level_service_class = cloud_service_class(Some(&message.service));
+    let msg_proto_4_service_class = cloud_service_class(
+        message
+            .msg_proto_4
+            .as_ref()
+            .and_then(|proto| proto.0.service.as_deref()),
+    );
     let source_and_class = if !matches!(message.service.as_str(), "iMessage" | "SMS") {
-        (
-            "top_level_svc",
-            cloud_service_class(Some(&message.service)),
-        )
-    } else if let Some(proto4) = message
-        .msg_proto_4
-        .as_ref()
-        .map(|proto| &proto.0)
-    {
+        ("top_level_svc", cloud_service_class(Some(&message.service)))
+    } else if let Some(proto4) = message.msg_proto_4.as_ref().map(|proto| &proto.0) {
         (
             "msgProto4_service",
             cloud_service_class(proto4.service.as_deref()),
@@ -647,6 +649,8 @@ fn cloud_message_unsupported_service_diagnostic(
     CloudMessageUnsupportedServiceDiagnostic {
         source: source_and_class.0,
         service_class: source_and_class.1,
+        top_level_service_class,
+        msg_proto_4_service_class,
         message_kind: cloud_message_kind(message),
     }
 }
@@ -1462,8 +1466,12 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
             ) {
                 let diagnostic = cloud_message_unsupported_service_diagnostic(&message);
                 warn!(
-                    "CloudKit V2 transient message unsupported_service source={} service_class={} message_kind={}",
-                    diagnostic.source, diagnostic.service_class, diagnostic.message_kind,
+                    "CloudKit V2 transient message unsupported_service source={} service_class={} top_level_service_class={} msg_proto_4_service_class={} message_kind={}",
+                    diagnostic.source,
+                    diagnostic.service_class,
+                    diagnostic.top_level_service_class,
+                    diagnostic.msg_proto_4_service_class,
+                    diagnostic.message_kind,
                 );
             }
             converted
@@ -2347,6 +2355,8 @@ mod tests {
             CloudMessageUnsupportedServiceDiagnostic {
                 source: "msgProto4_service",
                 service_class: "absent",
+                top_level_service_class: "imessage",
+                msg_proto_4_service_class: "absent",
                 message_kind: "normal",
             }
         );
@@ -2357,6 +2367,8 @@ mod tests {
             CloudMessageUnsupportedServiceDiagnostic {
                 source: "top_level_svc",
                 service_class: "rcs",
+                top_level_service_class: "rcs",
+                msg_proto_4_service_class: "absent",
                 message_kind: "normal",
             }
         );
@@ -2367,6 +2379,8 @@ mod tests {
             CloudMessageUnsupportedServiceDiagnostic {
                 source: "msgProto4_service",
                 service_class: "facetime",
+                top_level_service_class: "imessage",
+                msg_proto_4_service_class: "facetime",
                 message_kind: "normal",
             }
         );
@@ -2383,9 +2397,47 @@ mod tests {
             CloudMessageUnsupportedServiceDiagnostic {
                 source: "msgProto4_service",
                 service_class: "imessage",
+                top_level_service_class: "sms",
+                msg_proto_4_service_class: "imessage",
                 message_kind: "normal",
             }
         );
+    }
+
+    #[test]
+    fn unsupported_service_diagnostic_emits_both_service_levels_as_fixed_labels() {
+        let cases = [
+            ("iMessage", Some("RCS"), "imessage", "rcs"),
+            ("SMS", Some("RCS"), "sms", "rcs"),
+            ("RCS", None, "rcs", "absent"),
+            ("iMessage", None, "imessage", "absent"),
+            ("IMESSAGE", Some("rcs"), "imessage_case_variant", "other"),
+            ("carrier-extension", Some("carrier-extension"), "other", "other"),
+        ];
+
+        for (top_level, nested, expected_top_level, expected_nested) in cases {
+            let message = CloudMessage {
+                msg_proto_4: nested.map(|service| {
+                    GZipWrapper(MessageProto4 {
+                        service: Some(service.to_owned()),
+                        ..Default::default()
+                    })
+                }),
+                ..diagnostic_message(1, None, top_level)
+            };
+            let diagnostic = cloud_message_unsupported_service_diagnostic(&message);
+
+            assert_eq!(diagnostic.top_level_service_class, expected_top_level);
+            assert_eq!(diagnostic.msg_proto_4_service_class, expected_nested);
+            let rendered = format!(
+                "top_level_service_class={} msg_proto_4_service_class={}",
+                diagnostic.top_level_service_class, diagnostic.msg_proto_4_service_class,
+            );
+            assert!(!rendered.contains(top_level));
+            if let Some(nested) = nested {
+                assert!(!rendered.contains(nested));
+            }
+        }
     }
 
     #[test]
