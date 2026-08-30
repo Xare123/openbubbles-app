@@ -784,7 +784,6 @@ fn map_push_failure(error: &PushError) -> CloudTransientBridgeFailure {
                     | std::io::ErrorKind::NetworkDown
                     | std::io::ErrorKind::NetworkUnreachable
                     | std::io::ErrorKind::HostUnreachable
-                    | std::io::ErrorKind::NetworkReset
             ) =>
         {
             CloudTransientBridgeFailure::RetryableUpstream
