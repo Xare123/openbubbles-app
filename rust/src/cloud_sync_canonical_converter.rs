@@ -2245,8 +2245,14 @@ fn reject_unsupported_message_content(
     // does not yet decode Apple's embedded RichLink payload. Keep the bytes in
     // the protected source envelope, project only the base message, and leave
     // every other extension fail-closed.
-    let can_project_url_balloon_base = service == CloudCanonicalService::IMessage
-        && proto.balloon_bundle_id.as_deref() == Some(URL_BALLOON_PROVIDER);
+    let has_base_message_content = proto.text.as_deref().is_some_and(|value| !value.is_empty())
+        || proto
+            .attributed_body
+            .as_deref()
+            .is_some_and(|value| !value.is_empty());
+    let can_project_url_balloon_base = proto.balloon_bundle_id.as_deref()
+        == Some(URL_BALLOON_PROVIDER)
+        && (service == CloudCanonicalService::IMessage || has_base_message_content);
     if proto.payload_data.is_some() && !can_project_url_balloon_base {
         return Some(CloudCanonicalConversionOutcome::Deferred(
             CloudCanonicalDeferredReason::UnsupportedExtensionPayload,
@@ -2636,6 +2642,14 @@ pub(crate) fn convert_attachment(
     let total_bytes = if attachment.total_bytes < 0 {
         return CloudCanonicalConversionOutcome::Deferred(
             CloudCanonicalDeferredReason::UnsupportedNegativeAttachmentSize,
+        );
+    } else if attachment.total_bytes == 0 {
+        // The native MMCS materializer deliberately rejects zero-byte
+        // requests. Retain the protected source until that path is proven
+        // rather than projecting metadata for an attachment that this build
+        // can never materialize.
+        return CloudCanonicalConversionOutcome::Deferred(
+            CloudCanonicalDeferredReason::UnsupportedMediaCredentials,
         );
     } else {
         CloudCanonicalField::Value(attachment.total_bytes as u64)
@@ -3692,14 +3706,47 @@ mod tests {
     }
 
     #[test]
-    fn unknown_and_sms_extension_payloads_remain_deferred() {
+    fn sms_url_balloon_projects_independent_text_without_decoding_payload() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut message = normal_message(Some("https://example.com/sms-path"));
+        message.service = "SMS".to_owned();
+        message.msg_proto.0.balloon_bundle_id = Some(URL_BALLOON_PROVIDER.to_owned());
+        message.msg_proto.0.payload_data = Some(vec![0x01, 0x02, 0x03]);
+
+        let outcome = convert_message(
+            &context(&hasher, "server-sms-url-balloon", None),
+            &message_presence(),
+            &message,
+        );
+        let payload = message_payload(&outcome);
+        assert_eq!(
+            payload.text(),
+            &CloudCanonicalField::Value("https://example.com/sms-path".to_owned())
+        );
+        assert_eq!(
+            payload.balloon_bundle_id(),
+            &CloudCanonicalField::Value(URL_BALLOON_PROVIDER.to_owned())
+        );
+        assert_eq!(
+            payload.decoded_extension_payload(),
+            &CloudCanonicalField::Absent
+        );
+    }
+
+    #[test]
+    fn unknown_and_contentless_sms_extension_payloads_remain_deferred() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         for (service, balloon_bundle_id) in [
             ("iMessage", None),
             ("iMessage", Some("com.example.UnknownBalloon")),
             ("SMS", Some(URL_BALLOON_PROVIDER)),
         ] {
-            let mut message = normal_message(Some("base text"));
+            let base_text = if service == "SMS" {
+                None
+            } else {
+                Some("base text")
+            };
+            let mut message = normal_message(base_text);
             message.service = service.to_owned();
             message.msg_proto.0.balloon_bundle_id = balloon_bundle_id.map(str::to_owned);
             message.msg_proto.0.payload_data = Some(vec![0x01]);
@@ -4513,6 +4560,38 @@ mod tests {
             CloudCanonicalConversionOutcome::Ready(_)
         ));
         assert!(!format!("{outcome:?}").contains(secret));
+    }
+
+    #[test]
+    fn zero_byte_mmcs_attachment_remains_deferred_until_materializable() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut attachment = AttachmentMeta {
+            guid: "standalone-zero-byte-guid".to_owned(),
+            total_bytes: 0,
+            ..Default::default()
+        };
+        attachment.user_info = Some(MMCSAttachmentMeta {
+            mmcs_signature_hex: Some("aa".repeat(32)),
+            mmcs_owner: Some("owner".to_owned()),
+            mmcs_url: Some("https://cvws.icloud-content.com/object".to_owned()),
+            decryption_key: Some("bb".repeat(33)),
+            file_size: Some(rustpush::cloud_messages::NumOrString::Num(0)),
+            uti_type: Some("public.data".to_owned()),
+            mime_type: Some("application/octet-stream".to_owned()),
+            name: Some("empty.bin".to_owned()),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            convert_attachment(
+                &context(&hasher, "server-zero-byte-attachment", None),
+                &attachment_presence(),
+                &attachment,
+            ),
+            CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::UnsupportedMediaCredentials
+            )
+        );
     }
 
     #[test]
