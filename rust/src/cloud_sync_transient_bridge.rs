@@ -496,7 +496,11 @@ fn gzip_field_requires_preflight(
         .iter()
         .find(|candidate| field_name(candidate) == Some(field.name))
     else {
-        return Ok(false);
+        return if field.required {
+            Err(CloudTransientBridgeFailure::MalformedRecord)
+        } else {
+            Ok(false)
+        };
     };
     let Some(value) = candidate.value.as_ref() else {
         return Err(CloudTransientBridgeFailure::MalformedRecord);
@@ -807,7 +811,7 @@ fn preflight_chat_participant_list(
 ) -> Result<(), CloudTransientBridgeFailure> {
     preflight_chat_participant_list_with_decryptor(record, |ciphertext| {
         key.decrypt_data_checked(ciphertext, "ptcpts")
-            .map_err(|_| decoder_failure_at("participant_list_decrypt"))
+            .map_err(|error| map_push_failure_at(&error, "participant_list_decrypt"))
     })
 }
 
@@ -1132,7 +1136,7 @@ fn validate_upsert_record(
 ) -> Result<(), CloudTransientBridgeFailure> {
     if record_name(record) != envelope.record_name()
         || record_type(record) != envelope.record_type()
-        || envelope.record_type() != Some(expected_record_type(envelope.stream()))
+        || !record_type_matches_stream(envelope.stream(), envelope.record_type())
         || !valid_upsert_change_type(envelope.change_type())
     {
         return Err(CloudTransientBridgeFailure::MalformedRecord);
@@ -1146,6 +1150,10 @@ fn valid_upsert_change_type(change_type: Option<i32>) -> bool {
 
 fn valid_tombstone_change_type(change_type: Option<i32>) -> bool {
     matches!(change_type, None | Some(3))
+}
+
+fn record_type_matches_stream(stream: CloudNativeStream, record_type: Option<&str>) -> bool {
+    record_type == Some(expected_record_type(stream))
 }
 
 fn validate_tombstone_record(
@@ -1165,6 +1173,7 @@ fn validate_tombstone_record(
         .and_then(|record_type| record_type.name.as_deref());
     if name != envelope.record_name()
         || record_type != envelope.record_type()
+        || !record_type_matches_stream(envelope.stream(), record_type)
         || change.r#type != envelope.change_type()
         || change.record.is_some()
         || !valid_tombstone_change_type(envelope.change_type())
@@ -2498,6 +2507,29 @@ mod tests {
     }
 
     #[test]
+    fn missing_required_gzip_field_is_rejected() {
+        let record = Record::default();
+        let presence = CloudRawRecordPresence::extract(&record).unwrap();
+
+        assert_eq!(
+            gzip_field_requires_preflight(
+                &record,
+                &presence,
+                GzipFieldSpec::required("msgProto", "message_proto", decode_message_proto)
+            ),
+            Err(CloudTransientBridgeFailure::MalformedRecord)
+        );
+        assert_eq!(
+            gzip_field_requires_preflight(
+                &record,
+                &presence,
+                GzipFieldSpec::optional("msgProto2", "message_proto_2", decode_message_proto_2)
+            ),
+            Ok(false)
+        );
+    }
+
+    #[test]
     fn optional_empty_list_with_payload_remains_malformed() {
         use rustpush::cloudkit_proto::record::field::value::Type;
 
@@ -3160,5 +3192,30 @@ mod tests {
             CloudCanonicalEntityKind::GroupPhoto,
             CloudNativeStream::Chats
         ));
+    }
+
+    #[test]
+    fn cloudkit_record_types_are_stream_fenced_for_upserts_and_tombstones() {
+        assert!(record_type_matches_stream(
+            CloudNativeStream::Chats,
+            Some(CloudChat::record_type())
+        ));
+        assert!(record_type_matches_stream(
+            CloudNativeStream::Messages,
+            Some(CloudMessage::record_type())
+        ));
+        assert!(record_type_matches_stream(
+            CloudNativeStream::Attachments,
+            Some(CloudAttachment::record_type())
+        ));
+        assert!(!record_type_matches_stream(
+            CloudNativeStream::Messages,
+            Some(CloudChat::record_type())
+        ));
+        assert!(!record_type_matches_stream(
+            CloudNativeStream::Attachments,
+            Some(CloudMessage::record_type())
+        ));
+        assert!(!record_type_matches_stream(CloudNativeStream::Chats, None));
     }
 }
