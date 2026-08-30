@@ -159,7 +159,7 @@ fn preflight_record_wire_message(
                 read_wire_varint(input, &mut position)?;
             }
             1 => {
-                *position = (*position)
+                position = position
                     .checked_add(8)
                     .filter(|end| *end <= input.len())
                     .ok_or(CloudTransientBridgeFailure::MalformedRecord)?;
@@ -195,7 +195,7 @@ fn preflight_record_wire_message(
                 }
             }
             5 => {
-                *position = (*position)
+                position = position
                     .checked_add(4)
                     .filter(|end| *end <= input.len())
                     .ok_or(CloudTransientBridgeFailure::MalformedRecord)?;
