@@ -62,6 +62,158 @@ const MAX_DECOMPRESSED_RECORD_BYTES: usize = 32 * 1024 * 1024;
 const MAX_ENCRYPTED_VALUE_NESTING_DEPTH: usize = 64;
 const MAX_PARTICIPANT_COUNT: usize = 4 * 1024;
 const MAX_PARTICIPANT_PLAINTEXT_BYTES: usize = MAX_DECOMPRESSED_RECORD_BYTES;
+const MAX_PROTOBUF_FIELD_OCCURRENCES: usize = 64 * 1024;
+const MAX_PROTOBUF_REPEATED_VALUES: usize = 16 * 1024;
+
+#[derive(Clone, Copy)]
+enum CloudRecordWireMessage {
+    Record,
+    Field,
+    Value,
+    Package,
+    ShareInfo,
+}
+
+#[derive(Default)]
+struct CloudRecordWireBudget {
+    field_occurrences: usize,
+    repeated_values: usize,
+}
+
+fn read_wire_varint(
+    input: &[u8],
+    position: &mut usize,
+) -> Result<u64, CloudTransientBridgeFailure> {
+    let mut value = 0u64;
+    for index in 0..10 {
+        let byte = *input
+            .get(*position)
+            .ok_or(CloudTransientBridgeFailure::MalformedRecord)?;
+        *position += 1;
+        if index == 9 && byte > 1 {
+            return Err(CloudTransientBridgeFailure::MalformedRecord);
+        }
+        value |= u64::from(byte & 0x7f) << (index * 7);
+        if byte & 0x80 == 0 {
+            return Ok(value);
+        }
+    }
+    Err(CloudTransientBridgeFailure::MalformedRecord)
+}
+
+fn read_wire_bytes<'a>(
+    input: &'a [u8],
+    position: &mut usize,
+) -> Result<&'a [u8], CloudTransientBridgeFailure> {
+    let length = usize::try_from(read_wire_varint(input, position)?)
+        .map_err(|_| CloudTransientBridgeFailure::MalformedRecord)?;
+    let end = (*position)
+        .checked_add(length)
+        .filter(|end| *end <= input.len())
+        .ok_or(CloudTransientBridgeFailure::MalformedRecord)?;
+    let value = &input[*position..end];
+    *position = end;
+    Ok(value)
+}
+
+fn count_repeated_wire_value(
+    budget: &mut CloudRecordWireBudget,
+) -> Result<(), CloudTransientBridgeFailure> {
+    budget.repeated_values = budget
+        .repeated_values
+        .checked_add(1)
+        .ok_or(CloudTransientBridgeFailure::OversizedRecord)?;
+    if budget.repeated_values > MAX_PROTOBUF_REPEATED_VALUES {
+        return Err(CloudTransientBridgeFailure::OversizedRecord);
+    }
+    Ok(())
+}
+
+fn preflight_record_wire_message(
+    input: &[u8],
+    message: CloudRecordWireMessage,
+    depth: usize,
+    budget: &mut CloudRecordWireBudget,
+) -> Result<(), CloudTransientBridgeFailure> {
+    if depth > MAX_ENCRYPTED_VALUE_NESTING_DEPTH {
+        return Err(CloudTransientBridgeFailure::OversizedRecord);
+    }
+    let mut position = 0usize;
+    while position < input.len() {
+        budget.field_occurrences = budget
+            .field_occurrences
+            .checked_add(1)
+            .ok_or(CloudTransientBridgeFailure::OversizedRecord)?;
+        if budget.field_occurrences > MAX_PROTOBUF_FIELD_OCCURRENCES {
+            return Err(CloudTransientBridgeFailure::OversizedRecord);
+        }
+
+        let key = read_wire_varint(input, &mut position)?;
+        let field_number = key >> 3;
+        if field_number == 0 {
+            return Err(CloudTransientBridgeFailure::MalformedRecord);
+        }
+        let wire_type = (key & 0x07) as u8;
+        match wire_type {
+            0 => {
+                read_wire_varint(input, &mut position)?;
+            }
+            1 => {
+                *position = (*position)
+                    .checked_add(8)
+                    .filter(|end| *end <= input.len())
+                    .ok_or(CloudTransientBridgeFailure::MalformedRecord)?;
+            }
+            2 => {
+                let value = read_wire_bytes(input, &mut position)?;
+                let (nested, repeated) = match (message, field_number) {
+                    (CloudRecordWireMessage::Record, 7 | 12) => {
+                        (Some(CloudRecordWireMessage::Field), true)
+                    }
+                    (CloudRecordWireMessage::Record, 10) => (None, true),
+                    (CloudRecordWireMessage::Record, 16) => {
+                        (Some(CloudRecordWireMessage::ShareInfo), false)
+                    }
+                    (CloudRecordWireMessage::Field, 2) => {
+                        (Some(CloudRecordWireMessage::Value), false)
+                    }
+                    (CloudRecordWireMessage::Value, 11) => {
+                        (Some(CloudRecordWireMessage::Value), true)
+                    }
+                    (CloudRecordWireMessage::Value, 12) => {
+                        (Some(CloudRecordWireMessage::Package), false)
+                    }
+                    (CloudRecordWireMessage::Package, 2) => (None, true),
+                    (CloudRecordWireMessage::ShareInfo, 6 | 8 | 9) => (None, true),
+                    _ => (None, false),
+                };
+                if repeated {
+                    count_repeated_wire_value(budget)?;
+                }
+                if let Some(nested) = nested {
+                    preflight_record_wire_message(value, nested, depth + 1, budget)?;
+                }
+            }
+            5 => {
+                *position = (*position)
+                    .checked_add(4)
+                    .filter(|end| *end <= input.len())
+                    .ok_or(CloudTransientBridgeFailure::MalformedRecord)?;
+            }
+            _ => return Err(CloudTransientBridgeFailure::MalformedRecord),
+        }
+    }
+    Ok(())
+}
+
+fn preflight_record_wire_budget(input: &[u8]) -> Result<(), CloudTransientBridgeFailure> {
+    preflight_record_wire_message(
+        input,
+        CloudRecordWireMessage::Record,
+        0,
+        &mut CloudRecordWireBudget::default(),
+    )
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CloudTransientExpectedChangeKind {
@@ -356,6 +508,15 @@ fn encrypted_field_bytes(
 fn validate_encrypted_bytes_value(value: &Value) -> Result<(), CloudTransientBridgeFailure> {
     if value.r#type != Some(FieldValueType::EncryptedBytesType as i32)
         || value.is_encrypted == Some(false)
+        || value.signed_value.is_some()
+        || value.double_value.is_some()
+        || value.date_value.is_some()
+        || value.string_value.is_some()
+        || value.location_value.is_some()
+        || value.reference_value.is_some()
+        || value.asset_value.is_some()
+        || !value.list_values.is_empty()
+        || value.package_value.is_some()
     {
         return Err(CloudTransientBridgeFailure::MalformedRecord);
     }
@@ -533,17 +694,7 @@ fn gzip_field_requires_preflight(
         return Err(CloudTransientBridgeFailure::MalformedRecord);
     };
     if !field.required && presence.was_sent_as_empty_list(field.name) {
-        if value.bytes_value.is_some()
-            || value.signed_value.is_some()
-            || value.double_value.is_some()
-            || value.date_value.is_some()
-            || value.string_value.is_some()
-            || value.location_value.is_some()
-            || value.reference_value.is_some()
-            || value.asset_value.is_some()
-            || !value.list_values.is_empty()
-            || value.package_value.is_some()
-        {
+        if !empty_list_value_is_payload_free(value) {
             return Err(CloudTransientBridgeFailure::MalformedRecord);
         }
         return Ok(false);
@@ -587,7 +738,8 @@ fn normalize_optional_empty_gzip_field(
 }
 
 fn empty_list_value_is_payload_free(value: &Value) -> bool {
-    value.bytes_value.is_none()
+    value.is_encrypted != Some(true)
+        && value.bytes_value.is_none()
         && value.signed_value.is_none()
         && value.double_value.is_none()
         && value.date_value.is_none()
@@ -1600,6 +1752,9 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
         );
     }
 
+    if let Err(failure) = preflight_record_wire_budget(raw) {
+        return CloudTransientDecodeOutcome::Failure(failure);
+    }
     let mut record =
         match Record::decode(raw).map_err(|_| CloudTransientBridgeFailure::MalformedRecord) {
             Ok(value) => value,
@@ -2477,6 +2632,75 @@ mod tests {
         }
     }
 
+    fn append_test_wire_varint(target: &mut Vec<u8>, mut value: u64) {
+        loop {
+            let mut byte = (value & 0x7f) as u8;
+            value >>= 7;
+            if value != 0 {
+                byte |= 0x80;
+            }
+            target.push(byte);
+            if value == 0 {
+                return;
+            }
+        }
+    }
+
+    fn wrap_test_wire_message(field_number: u64, payload: &[u8]) -> Vec<u8> {
+        let mut encoded = Vec::with_capacity(payload.len() + 12);
+        append_test_wire_varint(&mut encoded, (field_number << 3) | 2);
+        append_test_wire_varint(&mut encoded, payload.len() as u64);
+        encoded.extend_from_slice(payload);
+        encoded
+    }
+
+    #[test]
+    fn protobuf_wire_budget_accepts_normal_record_and_rejects_truncation() {
+        let encoded = prost::Message::encode_to_vec(&Record::default());
+        assert_eq!(preflight_record_wire_budget(&encoded), Ok(()));
+        assert_eq!(
+            preflight_record_wire_budget(&[0x3a, 0x80]),
+            Err(CloudTransientBridgeFailure::MalformedRecord)
+        );
+    }
+
+    #[test]
+    fn protobuf_wire_budget_rejects_repeated_record_field_amplification() {
+        let mut encoded = Vec::with_capacity((MAX_PROTOBUF_REPEATED_VALUES + 1) * 2);
+        for _ in 0..=MAX_PROTOBUF_REPEATED_VALUES {
+            encoded.extend_from_slice(&[0x3a, 0x00]);
+        }
+        assert_eq!(
+            preflight_record_wire_budget(&encoded),
+            Err(CloudTransientBridgeFailure::OversizedRecord)
+        );
+    }
+
+    #[test]
+    fn protobuf_wire_budget_rejects_nested_value_amplification_and_depth() {
+        let mut list_payload = Vec::with_capacity((MAX_PROTOBUF_REPEATED_VALUES + 1) * 2);
+        for _ in 0..=MAX_PROTOBUF_REPEATED_VALUES {
+            list_payload.extend_from_slice(&[0x5a, 0x00]);
+        }
+        let field = wrap_test_wire_message(2, &list_payload);
+        let record = wrap_test_wire_message(7, &field);
+        assert_eq!(
+            preflight_record_wire_budget(&record),
+            Err(CloudTransientBridgeFailure::OversizedRecord)
+        );
+
+        let mut nested_value = Vec::new();
+        for _ in 0..=MAX_ENCRYPTED_VALUE_NESTING_DEPTH {
+            nested_value = wrap_test_wire_message(11, &nested_value);
+        }
+        let field = wrap_test_wire_message(2, &nested_value);
+        let record = wrap_test_wire_message(7, &field);
+        assert_eq!(
+            preflight_record_wire_budget(&record),
+            Err(CloudTransientBridgeFailure::OversizedRecord)
+        );
+    }
+
     #[test]
     fn encrypted_bytes_wire_shape_requires_type_and_compatible_marker() {
         use rustpush::cloudkit_proto::record::field::value::Type;
@@ -2492,7 +2716,10 @@ mod tests {
             is_encrypted: Some(true),
             ..valid.clone()
         };
-        assert_eq!(validate_encrypted_bytes_value(&explicitly_encrypted), Ok(()));
+        assert_eq!(
+            validate_encrypted_bytes_value(&explicitly_encrypted),
+            Ok(())
+        );
 
         let wrong_type = Value {
             r#type: Some(Type::BytesType as i32),
@@ -2500,6 +2727,15 @@ mod tests {
         };
         assert_eq!(
             validate_encrypted_bytes_value(&wrong_type),
+            Err(CloudTransientBridgeFailure::MalformedRecord)
+        );
+
+        let ambiguous_payload = Value {
+            string_value: Some("contradictory".to_owned()),
+            ..valid.clone()
+        };
+        assert_eq!(
+            validate_encrypted_bytes_value(&ambiguous_payload),
             Err(CloudTransientBridgeFailure::MalformedRecord)
         );
 
@@ -2532,7 +2768,11 @@ mod tests {
             Type::EncryptedBytesType as i32,
             Some(vec![1, 2, 3]),
         );
-        compatible.record_field[0].value.as_mut().unwrap().is_encrypted = Some(true);
+        compatible.record_field[0]
+            .value
+            .as_mut()
+            .unwrap()
+            .is_encrypted = Some(true);
         let presence = CloudRawRecordPresence::extract(&compatible).unwrap();
         assert_eq!(
             gzip_field_requires_preflight(
@@ -2543,7 +2783,11 @@ mod tests {
             Ok(true)
         );
 
-        compatible.record_field[0].value.as_mut().unwrap().is_encrypted = Some(false);
+        compatible.record_field[0]
+            .value
+            .as_mut()
+            .unwrap()
+            .is_encrypted = Some(false);
         let presence = CloudRawRecordPresence::extract(&compatible).unwrap();
         assert_eq!(
             gzip_field_requires_preflight(
@@ -2563,6 +2807,22 @@ mod tests {
                 GzipFieldSpec::optional("msgProto2", "message_proto_2", decode_message_proto_2),
             ),
             Ok(false)
+        );
+
+        let mut encrypted_empty_list = empty_list;
+        encrypted_empty_list.record_field[0]
+            .value
+            .as_mut()
+            .unwrap()
+            .is_encrypted = Some(true);
+        let presence = CloudRawRecordPresence::extract(&encrypted_empty_list).unwrap();
+        assert_eq!(
+            gzip_field_requires_preflight(
+                &encrypted_empty_list,
+                &presence,
+                GzipFieldSpec::optional("msgProto2", "message_proto_2", decode_message_proto_2),
+            ),
+            Err(CloudTransientBridgeFailure::MalformedRecord)
         );
     }
 
@@ -2879,23 +3139,11 @@ mod tests {
 
     #[test]
     fn malformed_participant_list_element_is_fail_closed() {
-        use rustpush::cloudkit_proto::record::field;
-
-        let record = Record {
-            record_field: vec![Field {
-                identifier: Some(field::Identifier {
-                    name: Some("ptcpts".to_owned()),
-                }),
-                value: Some(field::Value {
-                    list_values: vec![field::Value {
-                        bytes_value: Some(b"not-a-binary-plist".to_vec()),
-                        ..Default::default()
-                    }],
-                    ..Default::default()
-                }),
-            }],
+        let record = participant_list_record(Value {
+            r#type: Some(FieldValueType::EncryptedBytesListType as i32),
+            list_values: vec![participant_element(b"not-a-binary-plist".to_vec())],
             ..Default::default()
-        };
+        });
 
         assert_eq!(
             preflight_chat_participant_list_with_decryptor(&record, |value| Ok(value.to_vec())),
@@ -2980,7 +3228,9 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(
-            preflight_chat_participant_list_with_decryptor(&invalid_outer_marker, |_| Ok(Vec::new())),
+            preflight_chat_participant_list_with_decryptor(&invalid_outer_marker, |_| Ok(
+                Vec::new()
+            )),
             Err(CloudTransientBridgeFailure::DecoderFailure)
         );
 
@@ -2994,7 +3244,9 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(
-            preflight_chat_participant_list_with_decryptor(&invalid_element_type, |_| Ok(Vec::new())),
+            preflight_chat_participant_list_with_decryptor(&invalid_element_type, |_| Ok(
+                Vec::new()
+            )),
             Err(CloudTransientBridgeFailure::DecoderFailure)
         );
 
@@ -3007,7 +3259,9 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(
-            preflight_chat_participant_list_with_decryptor(&invalid_element_marker, |_| Ok(Vec::new())),
+            preflight_chat_participant_list_with_decryptor(&invalid_element_marker, |_| Ok(
+                Vec::new()
+            )),
             Err(CloudTransientBridgeFailure::DecoderFailure)
         );
     }

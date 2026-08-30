@@ -2644,6 +2644,9 @@ fn stable_missing_record_identity(
     change: &CloudMessageRecordPageChange,
     payload_digest: &CloudCanonicalDigest,
 ) -> String {
+    // A record with no server identifier has no stable occurrence discriminator.
+    // Exact duplicate malformed changes intentionally coalesce; any observable
+    // kind, type, change type, or payload difference produces a distinct hash.
     let kind_tag = match change.kind {
         CloudMessageRecordKind::EncryptedUpsert => 1,
         CloudMessageRecordKind::Tombstone => 2,
@@ -3956,19 +3959,20 @@ mod tests {
 
         fn protected_identity_by_payload(
             page: CloudNativeProtectedPage,
-        ) -> HashMap<String, (String, String)> {
-            page.changes
+        ) -> Vec<(String, String, String)> {
+            let mut identities = page
+                .changes
                 .into_iter()
                 .map(|change| {
                     (
                         change.payload_digest.value().to_owned(),
-                        (
-                            change.record_id_hash().to_owned(),
-                            change.change_id().to_owned(),
-                        ),
+                        change.record_id_hash().to_owned(),
+                        change.change_id().to_owned(),
                     )
                 })
-                .collect()
+                .collect::<Vec<_>>();
+            identities.sort();
+            identities
         }
 
         let scope = scope(CloudNativeStream::Messages);
@@ -3981,7 +3985,7 @@ mod tests {
             CloudMessageRecordPage {
                 changes: vec![missing, empty],
                 next_token: None,
-                status: 2,
+                status: 3,
             },
         );
         let (missing, empty) = malformed_changes();
@@ -3992,7 +3996,7 @@ mod tests {
             CloudMessageRecordPage {
                 changes: vec![empty, missing],
                 next_token: None,
-                status: 2,
+                status: 3,
             },
         );
         let CloudNativeProtectedFetchOutcome::Page(first) = first else {
