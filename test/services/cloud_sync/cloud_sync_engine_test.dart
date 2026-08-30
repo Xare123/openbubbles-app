@@ -47,6 +47,7 @@ void main() {
     Duration outboxLeaseDuration = const Duration(minutes: 2),
     bool allowManualPullBackoffOverride = false,
     DateTime? unknownInboxBarrierRecoveryCutoff,
+    bool retainKnownDependencyDeferralsForReadOnlySemanticCanary = false,
     MemoryCloudSyncObserver? observer,
     String coordinatorId = 'coordinator-a',
     CloudShadowJournalBudget? shadowJournalBudget,
@@ -84,6 +85,8 @@ void main() {
         outboxLeaseDuration: outboxLeaseDuration,
         allowManualPullBackoffOverride: allowManualPullBackoffOverride,
         unknownInboxBarrierRecoveryCutoff: unknownInboxBarrierRecoveryCutoff,
+        retainKnownDependencyDeferralsForReadOnlySemanticCanary:
+            retainKnownDependencyDeferralsForReadOnlySemanticCanary,
         shadowJournalBudget: shadowJournalBudget ?? CloudShadowJournalBudget(),
         flags: flags,
       ),
@@ -517,7 +520,12 @@ void main() {
         coordinatorId: 'coordinator-after-retry',
       ).synchronize(trigger: CloudSyncTrigger.startup);
 
-      expect(second.status, CloudSyncRunStatus.completed);
+      expect(
+        second.status,
+        CloudSyncRunStatus.completed,
+        reason:
+            'failure=${second.failureCategory} safeCode=${second.failureSafeCode}',
+      );
       expect(second.counters.applied, 2);
       expect(transport.observedFetchTokens, [null, 'token-retry-page-one']);
       expect(applier.appliedSequences, [1, 1, 2]);
@@ -552,6 +560,7 @@ void main() {
 
       expect(result.status, CloudSyncRunStatus.degraded);
       expect(result.failureCategory, CloudFailureCategory.dependency);
+      expect(result.failureSafeCode, 'checkpoint_pending_page_unresolved');
       expect(transport.fetchCallCount, 0);
       final checkpoint = await store.readCheckpoint(scope);
       expect(checkpoint.fetchedToken, 'legacy-advanced-token');
@@ -1841,6 +1850,175 @@ void main() {
   );
 
   test(
+    'ordinary semantic engine keeps a fresh dependency deferral pending',
+    () async {
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1)],
+          batchId: 'ordinary-dependency-page',
+          generation: 1,
+          nextToken: 'ordinary-dependency-token',
+          hasMore: true,
+        ),
+      );
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.deferred(
+        failureCategory: CloudFailureCategory.dependency,
+        safeCode: 'semantic_parent_missing',
+      );
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+        ),
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      final entry = (await store.inboxEntries(scope)).single;
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.failureCategory, CloudFailureCategory.dependency);
+      expect(result.failureSafeCode, 'semantic_parent_missing');
+      expect(result.counters.deferred, 1);
+      expect(result.counters.retainedUnprojected, 0);
+      expect(entry.status, CloudInboxStatus.pending);
+      expect(entry.attemptCount, 1);
+      expect(
+        (await store.readCheckpoint(scope)).pendingBatchId,
+        'ordinary-dependency-page',
+      );
+      expect(transport.observedFetchTokens, [null]);
+    },
+  );
+
+  test(
+    'guarded Canary retains a known dependency and later reprojects it',
+    () async {
+      var parentAvailable = false;
+      final retainedApplier = _RetainedProjectionEngineApplier(
+        onReproject: (reprojectScope, generation, leaseFence, limit) async {
+          final entries = await store.inboxEntries(reprojectScope);
+          final retained = entries.where(
+            (entry) => entry.status == CloudInboxStatus.retainedUnprojected,
+          );
+          if (!parentAvailable || retained.isEmpty) {
+            return CloudRetainedProjectionResult(
+              examined: retained.length,
+              reprojected: 0,
+              retained: retained.length,
+            );
+          }
+          return CloudRetainedProjectionResult(
+            examined: retained.length,
+            reprojected: retained.length,
+            retained: 0,
+          );
+        },
+      );
+      retainedApplier.handler = (entry) async {
+        if (entry.sequence == 1) {
+          return const CloudInboxApplyResult.deferred(
+            failureCategory: CloudFailureCategory.dependency,
+            safeCode: 'semantic_parent_missing',
+          );
+        }
+        parentAvailable = true;
+        return const CloudInboxApplyResult.applied();
+      };
+      transport.fetchHandler =
+          (requestedScope, previousToken, generation, limit) async {
+            switch (previousToken) {
+              case null:
+                return CloudFetchBatch(
+                  scope: requestedScope,
+                  changes: [testChange(1)],
+                  batchId: 'canary-dependency-page',
+                  generation: generation,
+                  nextToken: 'canary-parent-page',
+                  hasMore: true,
+                );
+              case 'canary-parent-page':
+                return CloudFetchBatch(
+                  scope: requestedScope,
+                  changes: [testChange(2)],
+                  batchId: 'canary-parent-page-two',
+                  generation: generation,
+                  nextToken: 'canary-complete-token',
+                  hasMore: false,
+                );
+              case 'canary-complete-token':
+                return CloudFetchBatch(
+                  scope: requestedScope,
+                  changes: const [],
+                  batchId: 'canary-reprojection-probe',
+                  generation: generation,
+                  nextToken: previousToken,
+                  hasMore: false,
+                );
+              default:
+                fail('unexpected continuation token: $previousToken');
+            }
+          };
+
+      final flags = const CloudSyncFeatureFlags(
+        readOnlyFetch: true,
+        semanticApply: true,
+      );
+      final first = await engine(
+        flags: flags,
+        inboxApplierOverride: retainedApplier,
+        retainKnownDependencyDeferralsForReadOnlySemanticCanary: true,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(
+        first.status,
+        CloudSyncRunStatus.completed,
+        reason:
+            'failure=${first.failureCategory} safeCode=${first.failureSafeCode}',
+      );
+      expect(first.counters.retainedUnprojected, 1);
+      expect(first.counters.quarantined, 0);
+      expect(first.counters.applied, 1);
+      expect(transport.observedFetchTokens, [null, 'canary-parent-page']);
+      expect(
+        (await store.readCheckpoint(scope)).fetchedToken,
+        'canary-complete-token',
+      );
+      expect((await store.readCheckpoint(scope)).pendingBatchId, isNull);
+      final retainedEntry = (await store.inboxEntries(
+        scope,
+      )).firstWhere((entry) => entry.sequence == 1);
+      expect(retainedEntry.status, CloudInboxStatus.retainedUnprojected);
+
+      final second = await engine(
+        flags: flags,
+        coordinatorId: 'canary-parent-now-available',
+        inboxApplierOverride: retainedApplier,
+        retainKnownDependencyDeferralsForReadOnlySemanticCanary: true,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(
+        second.status,
+        CloudSyncRunStatus.completed,
+        reason:
+            'failure=${second.failureCategory} safeCode=${second.failureSafeCode}',
+      );
+      expect(second.counters.applied, 1);
+      expect(retainedApplier.reprojectCalls, 2);
+      expect(transport.observedFetchTokens, [
+        null,
+        'canary-parent-page',
+        'canary-complete-token',
+      ]);
+      expect(
+        (await store.inboxEntries(
+          scope,
+        )).where((entry) => entry.status == CloudInboxStatus.quarantined),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
     'persistent dependency failures retain evidence after attempt and age bounds',
     () async {
       transport.enqueueFetchBatch(
@@ -1944,6 +2122,36 @@ void main() {
         flags: const CloudSyncFeatureFlags(saves: true),
       ),
       throwsArgumentError,
+    );
+  });
+
+  test('Canary dependency retention rejects non-semantic or write configs', () {
+    expect(
+      () => CloudSyncEngineConfig(
+        retainKnownDependencyDeferralsForReadOnlySemanticCanary: true,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => CloudSyncEngineConfig(
+        retainKnownDependencyDeferralsForReadOnlySemanticCanary: true,
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          saves: true,
+        ),
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => CloudSyncEngineConfig(
+        retainKnownDependencyDeferralsForReadOnlySemanticCanary: true,
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+        ),
+      ),
+      returnsNormally,
     );
   });
 

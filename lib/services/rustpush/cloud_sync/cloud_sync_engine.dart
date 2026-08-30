@@ -75,6 +75,7 @@ class CloudSyncEngineConfig {
     this.maximumUnknownAttempts = 3,
     this.allowManualPullBackoffOverride = false,
     this.unknownInboxBarrierRecoveryCutoff,
+    this.retainKnownDependencyDeferralsForReadOnlySemanticCanary = false,
     CloudShadowJournalBudget? shadowJournalBudget,
     this.flags = const CloudSyncFeatureFlags(),
   }) : shadowJournalBudget = shadowJournalBudget ?? CloudShadowJournalBudget() {
@@ -95,6 +96,12 @@ class CloudSyncEngineConfig {
   final int maximumUnknownAttempts;
   final bool allowManualPullBackoffOverride;
   final DateTime? unknownInboxBarrierRecoveryCutoff;
+
+  /// Lets the developer-only, read-only semantic Canary preserve a known
+  /// dependency-blocked source row without pinning its fetched page.
+  ///
+  /// This is deliberately unavailable to ordinary or write-capable syncs.
+  final bool retainKnownDependencyDeferralsForReadOnlySemanticCanary;
   final CloudShadowJournalBudget shadowJournalBudget;
   final CloudSyncFeatureFlags flags;
 
@@ -166,6 +173,17 @@ class CloudSyncEngineConfig {
           'cloud_sync_config_unknown_barrier_recovery_unsafe',
         );
       }
+    }
+    if (retainKnownDependencyDeferralsForReadOnlySemanticCanary &&
+        (!flags.readOnlyFetch ||
+            !flags.semanticApply ||
+            flags.saves ||
+            flags.deletions ||
+            flags.profiles ||
+            flags.notificationHints)) {
+      throw ArgumentError(
+        'cloud_sync_config_read_only_semantic_dependency_retention_unsafe',
+      );
     }
     shadowJournalBudget.validate();
   }
@@ -599,10 +617,15 @@ class CloudSyncEngine {
         if (pullResult.failureCategory != null) {
           degradedFailure = pullResult.failureCategory;
           degradedFailureSafeCode =
-              pullResult.failureSafeCode ??
-              (pullResult.failureCategory == previousFailure
-                  ? previousFailureSafeCode
-                  : null);
+              pullResult.failureSafeCode ==
+                      'checkpoint_pending_page_unresolved' &&
+                  pullResult.failureCategory == previousFailure &&
+                  previousFailureSafeCode != null
+              ? previousFailureSafeCode
+              : pullResult.failureSafeCode ??
+                    (pullResult.failureCategory == previousFailure
+                        ? previousFailureSafeCode
+                        : null);
         }
         shadowJournalBlockReason = pullResult.journalBlockReason;
         semanticInboxPhaseStarted =
@@ -931,6 +954,7 @@ class CloudSyncEngine {
         fetched: 0,
         succeeded: false,
         failureCategory: CloudFailureCategory.dependency,
+        failureSafeCode: 'checkpoint_pending_page_unresolved',
       );
     }
     if (shadowMode) {
@@ -1193,7 +1217,9 @@ class CloudSyncEngine {
       failureCategory: pageRemainsPending
           ? pageBlockingFailureCategory ?? CloudFailureCategory.dependency
           : null,
-      failureSafeCode: pageRemainsPending ? pageBlockingFailureSafeCode : null,
+      failureSafeCode: pageRemainsPending
+          ? pageBlockingFailureSafeCode ?? 'checkpoint_pending_page_unresolved'
+          : null,
       journalUsage: journalUsage,
       semanticCounters: semanticCounters,
       semanticProcessedEntries: semanticProcessedEntries,
@@ -1345,15 +1371,26 @@ class CloudSyncEngine {
               (result.disposition == CloudInboxApplyDisposition.retryable &&
                   category == CloudFailureCategory.dependency);
           if (terminalBoundApplies &&
-              _shouldRetainDeferredInboxEntry(entry, now)) {
+              _shouldRetainDeferredInboxEntry(entry, result, now)) {
+            final immediateCanaryRetention =
+                config
+                    .retainKnownDependencyDeferralsForReadOnlySemanticCanary &&
+                result.disposition == CloudInboxApplyDisposition.deferred &&
+                result.failureCategory == CloudFailureCategory.dependency &&
+                cloudSyncV2SafeFailureCodeForCandidate(result.safeCode) !=
+                    'cloud_sync_unknown_failure';
             if (!result.inboxStatusPersisted) {
               await _store.markInboxRetainedUnprojected(
                 scope,
                 sequence: entry.sequence,
                 category: category,
                 now: now,
-                maximumDeferredAttempts: config.maximumDeferredAttempts,
-                maximumDeferredAge: config.maximumDeferredAge,
+                maximumDeferredAttempts: immediateCanaryRetention
+                    ? 1
+                    : config.maximumDeferredAttempts,
+                maximumDeferredAge: immediateCanaryRetention
+                    ? Duration.zero
+                    : config.maximumDeferredAge,
                 leaseFence: _requireActiveLeaseFence(),
               );
             }
@@ -1488,7 +1525,18 @@ class CloudSyncEngine {
     CloudPreflightCode.unknown || null => 'preflight_unknown',
   };
 
-  bool _shouldRetainDeferredInboxEntry(CloudInboxEntry entry, DateTime now) {
+  bool _shouldRetainDeferredInboxEntry(
+    CloudInboxEntry entry,
+    CloudInboxApplyResult result,
+    DateTime now,
+  ) {
+    if (config.retainKnownDependencyDeferralsForReadOnlySemanticCanary &&
+        result.disposition == CloudInboxApplyDisposition.deferred &&
+        result.failureCategory == CloudFailureCategory.dependency &&
+        cloudSyncV2SafeFailureCodeForCandidate(result.safeCode) !=
+            'cloud_sync_unknown_failure') {
+      return true;
+    }
     final age = now.difference(entry.createdAt);
     return entry.attemptCount + 1 >= config.maximumDeferredAttempts &&
         !age.isNegative &&

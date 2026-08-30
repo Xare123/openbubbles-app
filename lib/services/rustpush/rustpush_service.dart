@@ -7381,46 +7381,52 @@ class RustPushService extends GetxService {
       throw StateError('cloud_sync_private_storage_unavailable');
     }
 
-    final protector = RustCloudSyncProtector(storageDirectory: statePath);
-    final preflight = CloudSyncProductionPreflightProbe(
-      platformSupported: () {
-        final abi = ffi.Abi.current();
-        return abi == ffi.Abi.androidArm64 ||
-            abi == ffi.Abi.windowsArm64 ||
-            abi == ffi.Abi.windowsX64;
-      },
-      uiIsolate: () => ls.isUiThread,
-      rustPushReady: () =>
-          state?.icloudServices?.cloudMessagesClient != null,
-      localState: ObjectBoxCloudSyncPreflightReader.fromDatabase().read,
-      privateStorageExists: () =>
-          statePath.isNotEmpty && Directory(statePath).existsSync(),
-      logoutActive: () =>
-          loggingOut || _cloudSyncV2SemanticPullQuiescing,
-      legacySyncEnabled: () => ss.settings.cloudSyncingEnabled.value,
-      legacySyncActive: () => isSyncing.value != null,
-      protectorSentinelValid:
-          CloudSyncProtectorHealthProbe(protector: protector).read,
-    );
-    final adapter = CloudSyncProductionSemanticPullAdapter(
-      readActiveClient: () =>
-          state?.icloudServices?.cloudMessagesClient,
-      readPreflight: preflight.read,
-      privateStorageDirectory: statePath,
-      platform: Platform.operatingSystem,
-      architecture: ffi.Abi.current().toString(),
-      buildCommit: _cloudSyncV2BuildIdentifier(),
-      observerFactory: _cloudSyncV2EvidenceObserverFactory(),
-    );
-    final report = await adapter.sampler.runConfirmed();
-    final reportFile = await CloudSyncSemanticPullReportFileWriter(
-      privateReportDirectory: join(statePath, 'cloud-sync-v2', 'reports'),
-      trustedStorageRoot: statePath,
-    ).write(report);
-    Logger.info(
-        "Cloud Sync V2 semantic canary report_file=${basename(reportFile.path)} "
-        "report=${jsonEncode(report.toJson())}");
-    return report;
+    final restoringBeforeSemanticPull = chats.restoring;
+    chats.restoring = true;
+    try {
+      final protector = RustCloudSyncProtector(storageDirectory: statePath);
+      final preflight = CloudSyncProductionPreflightProbe(
+        platformSupported: () {
+          final abi = ffi.Abi.current();
+          return abi == ffi.Abi.androidArm64 ||
+              abi == ffi.Abi.windowsArm64 ||
+              abi == ffi.Abi.windowsX64;
+        },
+        uiIsolate: () => ls.isUiThread,
+        rustPushReady: () =>
+            state?.icloudServices?.cloudMessagesClient != null,
+        localState: ObjectBoxCloudSyncPreflightReader.fromDatabase().read,
+        privateStorageExists: () =>
+            statePath.isNotEmpty && Directory(statePath).existsSync(),
+        logoutActive: () =>
+            loggingOut || _cloudSyncV2SemanticPullQuiescing,
+        legacySyncEnabled: () => ss.settings.cloudSyncingEnabled.value,
+        legacySyncActive: () => isSyncing.value != null,
+        protectorSentinelValid:
+            CloudSyncProtectorHealthProbe(protector: protector).read,
+      );
+      final adapter = CloudSyncProductionSemanticPullAdapter(
+        readActiveClient: () =>
+            state?.icloudServices?.cloudMessagesClient,
+        readPreflight: preflight.read,
+        privateStorageDirectory: statePath,
+        platform: Platform.operatingSystem,
+        architecture: ffi.Abi.current().toString(),
+        buildCommit: _cloudSyncV2BuildIdentifier(),
+        observerFactory: _cloudSyncV2EvidenceObserverFactory(),
+      );
+      final report = await adapter.sampler.runConfirmed();
+      final reportFile = await CloudSyncSemanticPullReportFileWriter(
+        privateReportDirectory: join(statePath, 'cloud-sync-v2', 'reports'),
+        trustedStorageRoot: statePath,
+      ).write(report);
+      Logger.info(
+          "Cloud Sync V2 semantic canary report_file=${basename(reportFile.path)} "
+          "report=${jsonEncode(report.toJson())}");
+      return report;
+    } finally {
+      chats.restoring = restoringBeforeSemanticPull;
+    }
   }
 
   bool get cloudSyncV2ManualOutboundAvailable {

@@ -162,9 +162,15 @@ class NotificationsService extends GetxService {
             ..order(Message_.id, flags: Order.descending))
           .watch(triggerImmediately: true);
       countSub = countQuery.listen((event) {
-        if (chats.restoring) return;
-        if (!ss.settings.finishedSetup.value) return;
         final newCount = event.count();
+        if (chats.restoring || !ss.settings.finishedSetup.value) {
+          // Keep the baseline current while bulk restore/import work is
+          // intentionally suppressing notifications. Otherwise the next
+          // unrelated database event would replay the entire restored delta
+          // as if it had just arrived live.
+          currentCount = newCount;
+          return;
+        }
         final activeChatFetching = cm.activeChat != null
             ? ms(cm.activeChat!.chat.guid).isFetching
             : false;

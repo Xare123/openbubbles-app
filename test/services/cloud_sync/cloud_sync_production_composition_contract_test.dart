@@ -166,6 +166,59 @@ void main() {
     expect(method, contains('cloud_sync_semantic_pull_active'));
   });
 
+  test('semantic projection suppresses historical message notifications', () {
+    final rustpushSource = File(
+      'lib/services/rustpush/rustpush_service.dart',
+    ).readAsStringSync();
+    final methodStart = rustpushSource.indexOf(
+      '_runCloudSyncV2ManualSemanticPull() async',
+    );
+    final methodEnd = rustpushSource.indexOf(
+      'bool get cloudSyncV2ManualOutboundAvailable',
+      methodStart,
+    );
+
+    expect(methodStart, greaterThanOrEqualTo(0));
+    expect(methodEnd, greaterThan(methodStart));
+    final method = rustpushSource.substring(methodStart, methodEnd);
+    final capture = method.indexOf(
+      'final restoringBeforeSemanticPull = chats.restoring;',
+    );
+    final suppress = method.indexOf('chats.restoring = true;', capture);
+    final run = method.indexOf('adapter.sampler.runConfirmed()', suppress);
+    final restore = method.indexOf(
+      'chats.restoring = restoringBeforeSemanticPull;',
+      run,
+    );
+    expect(capture, greaterThanOrEqualTo(0));
+    expect(suppress, greaterThan(capture));
+    expect(run, greaterThan(suppress));
+    expect(method, contains('finally'));
+    expect(restore, greaterThan(run));
+
+    final notificationSource = File(
+      'lib/services/backend/notifications/notifications_service.dart',
+    ).readAsStringSync();
+    final listenerStart = notificationSource.indexOf(
+      'countSub = countQuery.listen((event)',
+    );
+    final listenerEnd = notificationSource.indexOf(
+      'currentCount = newCount;',
+      notificationSource.indexOf('if (ls.isAlive', listenerStart),
+    );
+    expect(listenerStart, greaterThanOrEqualTo(0));
+    expect(listenerEnd, greaterThan(listenerStart));
+    final listener = notificationSource.substring(listenerStart, listenerEnd);
+    final count = listener.indexOf('final newCount = event.count();');
+    final guard = listener.indexOf('if (chats.restoring', count);
+    final baseline = listener.indexOf('currentCount = newCount;', guard);
+    final earlyReturn = listener.indexOf('return;', baseline);
+    expect(count, greaterThanOrEqualTo(0));
+    expect(guard, greaterThan(count));
+    expect(baseline, greaterThan(guard));
+    expect(earlyReturn, greaterThan(baseline));
+  });
+
   test('manual shadow UI is developer-gated and serializes confirmations', () {
     final source = File(
       'lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart',

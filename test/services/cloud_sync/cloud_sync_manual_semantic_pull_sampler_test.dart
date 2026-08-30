@@ -722,6 +722,104 @@ void main() {
   });
 
   test(
+    'Canary retains a known attachment dependency and fetches its parent page',
+    () async {
+      final stores = <String, InMemoryCloudSyncStore>{};
+      final attachmentTransport = FakeCloudSyncTransport();
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async =>
+            stores.putIfAbsent(scope.zone, InMemoryCloudSyncStore.new),
+        createRawTransport: (auth, scope) async {
+          if (scope.zone != 'attachmentManateeZone') {
+            final transport = FakeCloudSyncTransport();
+            transport.fetchHandler =
+                (requestedScope, token, generation, limit) async =>
+                    CloudFetchBatch(
+                      scope: requestedScope,
+                      changes: const [],
+                      batchId: 'empty-${requestedScope.zone}',
+                      generation: generation,
+                      nextToken: token,
+                      hasMore: false,
+                    );
+            return transport;
+          }
+          attachmentTransport.fetchHandler =
+              (requestedScope, token, generation, limit) async {
+                switch (token) {
+                  case null:
+                    return CloudFetchBatch(
+                      scope: requestedScope,
+                      changes: [_change('attachment-without-parent')],
+                      batchId: 'attachment-dependency-page',
+                      generation: generation,
+                      nextToken: 'attachment-parent-page',
+                      hasMore: true,
+                    );
+                  case 'attachment-parent-page':
+                    return CloudFetchBatch(
+                      scope: requestedScope,
+                      changes: [_change('attachment-parent')],
+                      batchId: 'attachment-parent-page-two',
+                      generation: generation,
+                      nextToken: 'attachment-complete-token',
+                      hasMore: false,
+                    );
+                  default:
+                    fail('unexpected attachment continuation token: $token');
+                }
+              };
+          return attachmentTransport;
+        },
+        createInboxApplier: (auth, scope, generation) async {
+          final applier = FakeCloudInboxApplier();
+          if (scope.zone == 'attachmentManateeZone') {
+            applier.handler = (entry) async => entry.sequence == 1
+                ? const CloudInboxApplyResult.deferred(
+                    failureCategory: CloudFailureCategory.dependency,
+                    safeCode: 'semantic_parent_missing',
+                  )
+                : const CloudInboxApplyResult.applied();
+          }
+          return applier;
+        },
+      );
+
+      final report = await sampler.runConfirmed();
+
+      final attachmentZone = report.zones.singleWhere(
+        (zone) => zone.zoneLabel == 'attachments',
+      );
+      expect(attachmentZone.status, CloudSyncRunStatus.completed);
+      expect(attachmentZone.retainedUnprojected, 1);
+      expect(attachmentZone.deferred, 0);
+      expect(attachmentZone.quarantined, 0);
+      expect(attachmentZone.applied, 1);
+      expect(attachmentTransport.observedFetchTokens, [
+        null,
+        'attachment-parent-page',
+      ]);
+      expect(report.remoteWriteTripwiresIntact, isTrue);
+      expect(
+        (await stores['attachmentManateeZone']!.inboxEntries(
+          CloudSyncScope(
+            accountFingerprint: _accountFingerprintA,
+            container: CloudSyncManualSemanticPullSampler.container,
+            database: CloudSyncManualSemanticPullSampler.database,
+            zone: 'attachmentManateeZone',
+            persistenceLane: CloudSyncPersistenceLane.semantic,
+          ),
+        )).where((entry) => entry.status == CloudInboxStatus.quarantined),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
     'repairs applied chat projection before transport and releases its lease',
     () async {
       final events = <String>[];
