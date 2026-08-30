@@ -139,5 +139,23 @@ void main() {
       ),
       isNull,
     );
+
+    final nextGeneration = CloudAttachmentMaterialization.metadata(
+      scope: scope,
+      generation: 4,
+      logicalEntityKeyHash: 'attachment-key-hash',
+      expectedBytes: 10,
+      expectedIntegrityTagHash: 'next-generation-integrity-tag',
+      updatedAt: now.add(const Duration(minutes: 1)),
+    );
+    expect(await store.create(nextGeneration), isTrue);
+    expect(
+      await store.read(
+        scope: scope,
+        generation: 4,
+        logicalEntityKeyHash: 'attachment-key-hash',
+      ),
+      isNotNull,
+    );
   });
 }

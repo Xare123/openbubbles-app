@@ -904,6 +904,36 @@ pub enum CloudSyncTransientFailureCode {
     DecoderFailure,
 }
 
+/// Content-free failure vocabulary for one native attachment-body fetch.
+///
+/// This never exposes paths, record identifiers, MMCS authorization, or asset
+/// metadata. The only successful value returned to Dart is the verified byte
+/// count after native atomic placement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CloudSyncAttachmentMaterializationFailureCode {
+    InvalidRequest,
+    ReadAuthenticationScope,
+    ActiveAccountMismatch,
+    StoreIdentityMismatch,
+    ProtectedReferenceMismatch,
+    SourceUnusable,
+    PcsUnavailable,
+    RetryableUpstream,
+    LocalStorage,
+    SizeMismatch,
+    IntegrityMismatch,
+    DecoderFailure,
+}
+
+/// Exactly one of `completed` and `failure` is populated. `verified_bytes`
+/// is meaningful only when `completed` is true.
+#[derive(Clone, Debug)]
+pub struct CloudSyncAttachmentMaterializationResult {
+    pub completed: bool,
+    pub verified_bytes: u64,
+    pub failure: Option<CloudSyncAttachmentMaterializationFailureCode>,
+}
+
 /// Content-free edit metadata used by the merge policy.
 #[derive(Clone)]
 pub struct CloudSyncTransientEditPart {
@@ -3530,6 +3560,113 @@ pub async fn cloud_sync_decode_protected_change(
             failure_result.failure_code = Some(map_cloud_sync_transient_failure(failure));
             failure_result
         }
+    }
+}
+
+fn map_cloud_sync_attachment_materialization_failure(
+    failure: crate::cloud_sync_attachment_materialization::CloudNativeAttachmentMaterializationFailure,
+) -> CloudSyncAttachmentMaterializationFailureCode {
+    use crate::cloud_sync_attachment_materialization::CloudNativeAttachmentMaterializationFailure as Native;
+    match failure {
+        Native::InvalidRequest => CloudSyncAttachmentMaterializationFailureCode::InvalidRequest,
+        Native::ReadAuthenticationScope => {
+            CloudSyncAttachmentMaterializationFailureCode::ReadAuthenticationScope
+        }
+        Native::ActiveAccountMismatch => {
+            CloudSyncAttachmentMaterializationFailureCode::ActiveAccountMismatch
+        }
+        Native::StoreIdentityMismatch => {
+            CloudSyncAttachmentMaterializationFailureCode::StoreIdentityMismatch
+        }
+        Native::ProtectedReferenceMismatch => {
+            CloudSyncAttachmentMaterializationFailureCode::ProtectedReferenceMismatch
+        }
+        Native::SourceUnusable => CloudSyncAttachmentMaterializationFailureCode::SourceUnusable,
+        Native::PcsUnavailable => CloudSyncAttachmentMaterializationFailureCode::PcsUnavailable,
+        Native::RetryableUpstream => {
+            CloudSyncAttachmentMaterializationFailureCode::RetryableUpstream
+        }
+        Native::LocalStorage => CloudSyncAttachmentMaterializationFailureCode::LocalStorage,
+        Native::SizeMismatch => CloudSyncAttachmentMaterializationFailureCode::SizeMismatch,
+        Native::IntegrityMismatch => {
+            CloudSyncAttachmentMaterializationFailureCode::IntegrityMismatch
+        }
+        Native::DecoderFailure => CloudSyncAttachmentMaterializationFailureCode::DecoderFailure,
+    }
+}
+
+/// Downloads and atomically places one attachment body selected by an already
+/// journaled V2 attachment row. This is a read-only CloudKit/MMCS operation:
+/// it cannot save or delete records, enable legacy sync, or modify keychain
+/// state. Raw CloudKit record IDs, etags, PCS material, asset descriptors, and
+/// final filesystem paths remain entirely in Rust. The two app-private roots
+/// are supplied separately because Android does not guarantee that application
+/// support and application documents resolve to the same directory.
+#[allow(clippy::too_many_arguments)]
+pub async fn cloud_sync_materialize_attachment_body(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    native_writer_pause_token: u64,
+    storage_directory: String,
+    application_documents_directory: String,
+    expected_account_fingerprint: String,
+    expected_protected_store_identity: String,
+    generation: u64,
+    expected_change_id: String,
+    expected_record_id_hash: String,
+    expected_etag_hash: String,
+    expected_payload_sha256: String,
+    expected_server_modified_at_millis: Option<i64>,
+    protected_raw_envelope_reference: String,
+    logical_entity_key_hash: String,
+    expected_canonical_guid_sha256: String,
+    expected_bytes: u64,
+) -> CloudSyncAttachmentMaterializationResult {
+    let request =
+        crate::cloud_sync_attachment_materialization::CloudNativeAttachmentMaterializationRequest {
+            storage_directory: PathBuf::from(storage_directory),
+            application_documents_directory: PathBuf::from(application_documents_directory),
+            expected_account_fingerprint,
+            expected_protected_store_identity,
+            generation,
+            expected_change_id,
+            expected_record_id_hash,
+            expected_etag_hash,
+            expected_payload_sha256,
+            expected_server_modified_at_millis,
+            protected_raw_envelope_reference,
+            logical_entity_key_hash,
+            expected_canonical_guid_sha256,
+            expected_bytes,
+        };
+    let permit = match acquire_cloudkit_read_authentication(native_writer_pause_token) {
+        Ok(permit) => permit,
+        Err(_) => {
+            return CloudSyncAttachmentMaterializationResult {
+                completed: false,
+                verified_bytes: 0,
+                failure: Some(
+                    CloudSyncAttachmentMaterializationFailureCode::ReadAuthenticationScope,
+                ),
+            }
+        }
+    };
+    match crate::cloud_sync_attachment_materialization::cloud_sync_materialize_attachment_body(
+        cloud_messages_client,
+        &permit,
+        request,
+    )
+    .await
+    {
+        Ok(verified_bytes) => CloudSyncAttachmentMaterializationResult {
+            completed: true,
+            verified_bytes,
+            failure: None,
+        },
+        Err(failure) => CloudSyncAttachmentMaterializationResult {
+            completed: false,
+            verified_bytes: 0,
+            failure: Some(map_cloud_sync_attachment_materialization_failure(failure)),
+        },
     }
 }
 

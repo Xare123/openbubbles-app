@@ -31,6 +31,20 @@ void main() {
         now: now,
       );
 
+  test('rejects generation zero before any durable state is created', () {
+    expect(
+      () => CloudAttachmentMaterialization.metadata(
+        scope: scope,
+        generation: 0,
+        logicalEntityKeyHash: 'attachment-key-hash',
+        expectedBytes: 10,
+        expectedIntegrityTagHash: 'integrity-tag-hash',
+        updatedAt: now,
+      ),
+      throwsA(isA<CloudAttachmentMaterializationFailure>()),
+    );
+  });
+
   test('advances only through verified placement and reference stages', () {
     final chunkOne = streaming().recordVerifiedBoundary(
       activeGeneration: 4,

@@ -345,7 +345,7 @@ class Attachment {
     String file;
     switch (Platform.operatingSystem) {
       case "windows":
-        file = "$directory/${"$transferName".replaceAll(RegExp(r'[<>:"/\|?*]'), "_")}";
+        file = "$directory/${"$transferName".replaceAll(RegExp(r'[<>:"/\\|?*]'), "_")}";
       case "linux":
       case "macos":
         file = "$directory/${"$transferName".replaceAll(RegExp(r'/'), "_")}";
@@ -353,7 +353,12 @@ class Attachment {
         file = "$directory/${"$transferName".replaceAll(RegExp(r'/'), "_")}";
     }
 
-    if (!canonicalize(file).startsWith(canonicalize(directory))) {
+    final canonicalBase = canonicalize(baseDirectory);
+    final canonicalDirectory = canonicalize(directory);
+    final canonicalFile = canonicalize(file);
+    if (canonicalDirectory == canonicalBase ||
+        !isWithin(canonicalBase, canonicalDirectory) ||
+        !isWithin(canonicalDirectory, canonicalFile)) {
       throw Exception("Path traversal detected, are we under attack??");
     }
 

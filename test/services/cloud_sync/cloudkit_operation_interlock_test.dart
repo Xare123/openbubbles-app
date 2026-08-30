@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:isolate';
 
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
@@ -23,9 +24,58 @@ void main() {
     );
   });
 
-  tearDown(() {
+  tearDown(() async {
+    await CloudKitOperationInterlock.debugResetPoisonedLocksForTesting();
     temporaryDirectory.deleteSync(recursive: true);
   });
+
+  test(
+    'poisoned operation retains the OS lock until process restart',
+    () async {
+      await interlock.runExclusive(
+        kind: CloudKitOperationKind.v2SemanticRead,
+        action: () async {
+          interlock.poisonUntilProcessRestart();
+        },
+      );
+
+      final secondInterlock = CloudKitOperationInterlock(
+        privateStorageDirectory: temporaryDirectory.path,
+        fenceStore: fenceStore,
+      );
+      await expectLater(
+        secondInterlock.runExclusive(
+          kind: CloudKitOperationKind.v2SemanticRead,
+          action: () async {},
+        ),
+        throwsA(
+          isA<CloudKitOperationInterlockException>().having(
+            (error) => error.safeCode,
+            'safeCode',
+            'cloudkit_interlock_busy',
+          ),
+        ),
+      );
+
+      final lockDirectory = temporaryDirectory.path;
+      final isolateOutcome = await Isolate.run<String>(() async {
+        final isolateInterlock = CloudKitOperationInterlock(
+          privateStorageDirectory: lockDirectory,
+          fenceStore: InMemoryCloudSyncStore(),
+        );
+        try {
+          await isolateInterlock.runExclusive(
+            kind: CloudKitOperationKind.v2SemanticRead,
+            action: () async {},
+          );
+          return 'entered';
+        } on CloudKitOperationInterlockException catch (error) {
+          return error.safeCode;
+        }
+      });
+      expect(isolateOutcome, 'cloudkit_interlock_busy');
+    },
+  );
 
   test('same-kind nested work reuses the active lease', () async {
     final result = await interlock.runExclusive(

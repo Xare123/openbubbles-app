@@ -5,6 +5,14 @@ import 'cloudkit_operation_interlock.dart';
 import 'cloudkit_writer_authority.dart';
 
 const _cloudSyncV2SafeFailureCodes = <String>{
+  'cloud_attachment_account_changed',
+  'cloud_attachment_integrity_mismatch',
+  'cloud_attachment_native_result_invalid',
+  'cloud_attachment_read_auth_scope_invalid',
+  'cloud_attachment_size_mismatch',
+  'cloud_attachment_source_conflict',
+  'cloud_attachment_source_invalid',
+  'cloud_attachment_state_contention',
   'account_changed',
   'account_unavailable',
   'cloud_sync_outbound_canary_active',

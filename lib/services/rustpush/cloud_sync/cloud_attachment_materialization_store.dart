@@ -48,6 +48,7 @@ final class ObjectBoxCloudAttachmentMaterializationStore
     return _store.runInTransaction(TxMode.read, () {
       final entity = _findLocked(
         scope: scope,
+        generation: generation,
         logicalEntityKeyHash: logicalEntityKeyHash,
       );
       if (entity == null || entity.generation != generation) return null;
@@ -60,6 +61,7 @@ final class ObjectBoxCloudAttachmentMaterializationStore
     return _store.runInTransaction(TxMode.write, () {
       if (_findLocked(
             scope: initial.scope,
+            generation: initial.generation,
             logicalEntityKeyHash: initial.logicalEntityKeyHash,
           ) !=
           null) {
@@ -84,6 +86,7 @@ final class ObjectBoxCloudAttachmentMaterializationStore
     return _store.runInTransaction(TxMode.write, () {
       final entity = _findLocked(
         scope: expected.scope,
+        generation: expected.generation,
         logicalEntityKeyHash: expected.logicalEntityKeyHash,
       );
       if (entity == null || !_matches(entity, expected)) return false;
@@ -101,12 +104,13 @@ final class ObjectBoxCloudAttachmentMaterializationStore
 
   CloudAttachmentMaterializationEntity? _findLocked({
     required CloudSyncScope scope,
+    required int generation,
     required String logicalEntityKeyHash,
   }) {
     final query = _box
         .query(
           CloudAttachmentMaterializationEntity_.transferKey.equals(
-            _transferKey(scope, logicalEntityKeyHash),
+            _transferKey(scope, generation, logicalEntityKeyHash),
           ),
         )
         .build();
@@ -154,7 +158,11 @@ final class ObjectBoxCloudAttachmentMaterializationStore
     CloudAttachmentMaterialization value,
   ) {
     return CloudAttachmentMaterializationEntity(
-      transferKey: _transferKey(value.scope, value.logicalEntityKeyHash),
+      transferKey: _transferKey(
+        value.scope,
+        value.generation,
+        value.logicalEntityKeyHash,
+      ),
       scopeKey: _scopeKey(value.scope),
       accountFingerprint: value.scope.accountFingerprint,
       zone: value.scope.zone,
@@ -214,11 +222,12 @@ final class ObjectBoxCloudAttachmentMaterializationStore
 
   String _transferKey(
     CloudSyncScope scope,
+    int generation,
     String logicalEntityKeyHash,
   ) => sha256
       .convert(
         utf8.encode(
-          'cloud-sync-attachment-transfer\u001f${scope.storageKey}\u001f$logicalEntityKeyHash',
+          'cloud-sync-attachment-transfer-v2\u001f${scope.storageKey}\u001f$generation\u001f$logicalEntityKeyHash',
         ),
       )
       .toString();

@@ -16,6 +16,9 @@ final class FakeCloudKitOperationExclusion
   bool get isActive => _activeDepth > 0;
 
   @override
+  void poisonUntilProcessRestart() {}
+
+  @override
   Future<T> runExclusive<T>({
     required CloudKitOperationKind kind,
     required CloudKitOperationBody<T> action,

@@ -453,8 +453,9 @@ class CloudSyncRunEntity {
 class CloudAttachmentMaterializationEntity {
   int id;
 
-  /// SHA-256 over the complete account scope and native-keyed logical entity
-  /// identity. It is an equality key, never an Apple record identifier.
+  /// SHA-256 over the complete account scope, checkpoint generation, and
+  /// native-keyed logical entity identity. It is an equality key, never an
+  /// Apple record identifier.
   @Index(type: IndexType.hash64)
   @Unique()
   String transferKey;

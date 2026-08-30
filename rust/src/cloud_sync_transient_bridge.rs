@@ -22,7 +22,8 @@ use rustpush::{
     cloud_messages::{
         CloudAttachment, CloudChat, CloudMessage, CloudMessagesClient, MESSAGES_SERVICE,
     },
-    cloudkit::pcs_keys_for_record,
+    cloudkit::{classify_cloudkit_failure, pcs_keys_for_record, CloudKitFailureClass},
+    cloudkit_operation_gate::CloudKitReadAuthenticationPermit,
     cloudkit_proto::{
         record::{field::Value, Field},
         retrieve_changes_response::RecordChange,
@@ -134,6 +135,7 @@ impl CloudTransientTombstoneMapping {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct CloudTransientDecodeRequest {
     storage_directory: PathBuf,
     expected_account_fingerprint: String,
@@ -762,11 +764,52 @@ fn map_push_failure(error: &PushError) -> CloudTransientBridgeFailure {
         PushError::IoError(error) if error.kind() == std::io::ErrorKind::InvalidData => {
             CloudTransientBridgeFailure::MalformedRecord
         }
-        PushError::RequestError(_)
-        | PushError::CloudKitHttpError { .. }
-        | PushError::CloudKitError(_)
-        | PushError::CloudKitProtocolError(_)
-        | PushError::CloudKitChangeTokenExpired
+        PushError::UnauthorizedAccountError => CloudTransientBridgeFailure::ActiveAccountMismatch,
+        PushError::RequestError(error) if error.is_timeout() || error.is_connect() => {
+            CloudTransientBridgeFailure::RetryableUpstream
+        }
+        PushError::RequestError(error)
+            if matches!(error.status().map(|status| status.as_u16()), Some(401 | 403)) =>
+        {
+            CloudTransientBridgeFailure::ActiveAccountMismatch
+        }
+        PushError::RequestError(error)
+            if matches!(
+                error.status().map(|status| status.as_u16()),
+                Some(408 | 429 | 500..=599)
+            ) =>
+        {
+            CloudTransientBridgeFailure::RetryableUpstream
+        }
+        PushError::RequestError(error) if error.status().is_some() => {
+            CloudTransientBridgeFailure::InvalidRequest
+        }
+        PushError::CloudKitHttpError { status, .. } if matches!(*status, 401 | 403) => {
+            CloudTransientBridgeFailure::ActiveAccountMismatch
+        }
+        PushError::CloudKitHttpError { status, .. }
+            if matches!(*status, 408 | 429 | 500..=599) =>
+        {
+            CloudTransientBridgeFailure::RetryableUpstream
+        }
+        PushError::CloudKitHttpError { status, .. } if (400..500).contains(status) => {
+            CloudTransientBridgeFailure::InvalidRequest
+        }
+        PushError::CloudKitError(result) => match classify_cloudkit_failure(result) {
+            CloudKitFailureClass::Throttled | CloudKitFailureClass::TransientServer => {
+                CloudTransientBridgeFailure::RetryableUpstream
+            }
+            CloudKitFailureClass::Authentication => {
+                CloudTransientBridgeFailure::ActiveAccountMismatch
+            }
+            CloudKitFailureClass::Conflict => CloudTransientBridgeFailure::ScopeMismatch,
+            CloudKitFailureClass::ResetRequired | CloudKitFailureClass::Permanent => {
+                CloudTransientBridgeFailure::InvalidRequest
+            }
+            CloudKitFailureClass::Unknown => CloudTransientBridgeFailure::DecoderFailure,
+        },
+        PushError::CloudKitChangeTokenExpired => CloudTransientBridgeFailure::InvalidRequest,
+        PushError::CloudKitProtocolError(_)
         | PushError::ResourceTimeout
         | PushError::ResourceGenTimeout
         | PushError::ResourceStalled
@@ -847,7 +890,7 @@ fn envelope_change_kind(envelope: &CloudNativeRawEnvelope) -> CloudTransientExpe
     }
 }
 
-fn bind_envelope(
+pub(crate) fn bind_envelope(
     request: &CloudTransientDecodeRequest,
     envelope: &CloudNativeRawEnvelope,
     hasher: &crate::cloud_sync_semantic_decoder::CloudSemanticIdentifierHasher,
@@ -1168,6 +1211,44 @@ pub(crate) async fn cloud_sync_decode_transient_record(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
     request: CloudTransientDecodeRequest,
 ) -> CloudTransientDecodeOutcome {
+    cloud_sync_decode_transient_record_with_pcs_access(
+        cloud_messages_client,
+        request,
+        CloudTransientPcsAccess::LookupOnly,
+        None,
+    )
+    .await
+}
+
+/// Decodes only with a Messages container and exact PCS zone configuration
+/// that are already present in memory. This path performs no CloudKit zone
+/// fetch, keychain synchronization, or local PCS-cache update.
+pub(crate) async fn cloud_sync_decode_transient_record_cached_only(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    read_authentication_permit: &CloudKitReadAuthenticationPermit<'_>,
+    request: CloudTransientDecodeRequest,
+) -> CloudTransientDecodeOutcome {
+    cloud_sync_decode_transient_record_with_pcs_access(
+        cloud_messages_client,
+        request,
+        CloudTransientPcsAccess::CachedOnly,
+        Some(read_authentication_permit),
+    )
+    .await
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CloudTransientPcsAccess {
+    LookupOnly,
+    CachedOnly,
+}
+
+async fn cloud_sync_decode_transient_record_with_pcs_access(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    request: CloudTransientDecodeRequest,
+    pcs_access: CloudTransientPcsAccess,
+    read_authentication_permit: Option<&CloudKitReadAuthenticationPermit<'_>>,
+) -> CloudTransientDecodeOutcome {
     let Some(storage_directory) = request.storage_directory.to_str().map(str::to_owned) else {
         return CloudTransientDecodeOutcome::Failure(CloudTransientBridgeFailure::InvalidRequest);
     };
@@ -1300,7 +1381,22 @@ pub(crate) async fn cloud_sync_decode_transient_record(
             )
         }
     };
-    let container = match cloud_messages_client.get_container_lookup_only().await {
+    let container_result = match pcs_access {
+        CloudTransientPcsAccess::LookupOnly => {
+            cloud_messages_client.get_container_lookup_only().await
+        }
+        CloudTransientPcsAccess::CachedOnly => {
+            let Some(permit) = read_authentication_permit else {
+                return CloudTransientDecodeOutcome::Failure(
+                    CloudTransientBridgeFailure::InvalidRequest,
+                );
+            };
+            cloud_messages_client
+                .get_cached_container_for_read_authentication(permit)
+                .await
+        }
+    };
+    let container = match container_result {
         Ok(value) => value,
         Err(error) => {
             return CloudTransientDecodeOutcome::Failure(map_push_failure_at(
@@ -1310,14 +1406,23 @@ pub(crate) async fn cloud_sync_decode_transient_record(
         }
     };
     let zone = container.private_zone(request.stream.zone().to_owned());
-    let zone_key = match container
-        .get_zone_encryption_config_lookup_only(
-            &zone,
-            &cloud_messages_client.keychain,
-            &MESSAGES_SERVICE,
-        )
-        .await
-    {
+    let zone_key_result = match pcs_access {
+        CloudTransientPcsAccess::LookupOnly => {
+            container
+                .get_zone_encryption_config_lookup_only(
+                    &zone,
+                    &cloud_messages_client.keychain,
+                    &MESSAGES_SERVICE,
+                )
+                .await
+        }
+        CloudTransientPcsAccess::CachedOnly => {
+            container
+                .get_cached_zone_encryption_config_exact(&zone)
+                .await
+        }
+    };
+    let zone_key = match zone_key_result {
         Ok(value) => value,
         Err(error) => {
             return CloudTransientDecodeOutcome::Failure(map_push_failure_at(
@@ -2543,6 +2648,59 @@ mod tests {
                 CloudTransientBridgeFailure::RetryableUpstream
             );
         }
+    }
+
+    #[test]
+    fn semantic_failure_mapping_preserves_cloudkit_failure_classes() {
+        use rustpush::cloudkit_proto::response_operation::result::error::{client, server};
+
+        let cloudkit_server = |code: server::Code| {
+            PushError::CloudKitError(rustpush::cloudkit_proto::response_operation::Result {
+                error: Some(rustpush::cloudkit_proto::response_operation::result::Error {
+                    server_error: Some(
+                        rustpush::cloudkit_proto::response_operation::result::error::Server {
+                            r#type: Some(code as i32),
+                        },
+                    ),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        };
+        let cloudkit_client = |code: client::Code| {
+            PushError::CloudKitError(rustpush::cloudkit_proto::response_operation::Result {
+                error: Some(rustpush::cloudkit_proto::response_operation::result::Error {
+                    client_error: Some(
+                        rustpush::cloudkit_proto::response_operation::result::error::Client {
+                            r#type: Some(code as i32),
+                        },
+                    ),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        };
+
+        assert_eq!(
+            map_push_failure(&cloudkit_server(server::Code::Overloaded)),
+            CloudTransientBridgeFailure::RetryableUpstream
+        );
+        assert_eq!(
+            map_push_failure(&cloudkit_client(client::Code::NeedsAuthentication)),
+            CloudTransientBridgeFailure::ActiveAccountMismatch
+        );
+        assert_eq!(
+            map_push_failure(&cloudkit_client(client::Code::StaleRecordUpdate)),
+            CloudTransientBridgeFailure::ScopeMismatch
+        );
+        assert_eq!(
+            map_push_failure(&cloudkit_server(server::Code::NotFound)),
+            CloudTransientBridgeFailure::InvalidRequest
+        );
+        assert_eq!(
+            map_push_failure(&PushError::CloudKitError(Default::default())),
+            CloudTransientBridgeFailure::DecoderFailure
+        );
     }
 
     #[test]

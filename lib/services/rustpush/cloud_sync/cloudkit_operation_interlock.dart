@@ -25,6 +25,12 @@ abstract interface class CloudKitOperationExclusion {
     required CloudKitOperationKind kind,
     required CloudKitOperationBody<T> action,
   });
+
+  /// Retains the process-wide exclusion lock until process restart.
+  ///
+  /// Call only from inside [runExclusive] after an in-process bridge leaves
+  /// native writer state uncertain.
+  void poisonUntilProcessRestart();
 }
 
 /// A process- and isolate-wide exclusion boundary for private CloudKit work.
@@ -79,6 +85,8 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
 
   static final Object _zoneLeaseKey = Object();
   static final Set<String> _locallyReservedPaths = <String>{};
+  static final Set<String> _poisonedPaths = <String>{};
+  static final List<RandomAccessFile> _poisonedHandles = <RandomAccessFile>[];
 
   final String _privateStorageDirectory;
   final CloudSyncStore _fenceStore;
@@ -130,6 +138,36 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
   }
 
   @override
+  void poisonUntilProcessRestart() {
+    final active = Zone.current[_zoneLeaseKey];
+    if (active is! _ActiveCloudKitOperation || active.lockPath != lockPath) {
+      throw const CloudKitOperationInterlockException(
+        'cloudkit_interlock_required',
+      );
+    }
+    active.poisoned = true;
+  }
+
+  /// Releases retained poison locks only in assertion-enabled test builds.
+  static Future<void> debugResetPoisonedLocksForTesting() async {
+    var reset = false;
+    assert(() {
+      reset = true;
+      return true;
+    }());
+    if (!reset) {
+      throw UnsupportedError('cloudkit_interlock_poison_reset_disabled');
+    }
+    final handles = List<RandomAccessFile>.of(_poisonedHandles);
+    _poisonedHandles.clear();
+    for (final handle in handles) {
+      await _releaseQuietly(handle);
+    }
+    _locallyReservedPaths.removeAll(_poisonedPaths);
+    _poisonedPaths.clear();
+  }
+
+  @override
   Future<T> runExclusive<T>({
     required CloudKitOperationKind kind,
     required CloudKitOperationBody<T> action,
@@ -160,6 +198,8 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
     Future<void>? renewalInFlight;
     final ownerId = _newOwnerId();
     CloudCoordinatorLeaseFence? databaseFence;
+    _ActiveCloudKitOperation? active;
+    var retainedUntilRestart = false;
     try {
       final fence = await _fenceStore.tryAcquireCoordinatorLease(
         _fenceScope,
@@ -192,10 +232,14 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
         );
       }
 
-      final active = _ActiveCloudKitOperation(lockPath: lockPath, kind: kind);
+      final operation = _ActiveCloudKitOperation(
+        lockPath: lockPath,
+        kind: kind,
+      );
+      active = operation;
       heartbeat = Timer.periodic(_heartbeatInterval, (_) {
-        if (renewalInFlight != null || active.fenceLost) return;
-        final renewal = _renewFence(fence, active);
+        if (renewalInFlight != null || operation.fenceLost) return;
+        final renewal = _renewFence(fence, operation);
         renewalInFlight = renewal;
         renewal.whenComplete(() {
           if (identical(renewalInFlight, renewal)) {
@@ -205,7 +249,7 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
       });
       final result = await runZoned(
         action,
-        zoneValues: <Object, Object>{_zoneLeaseKey: active},
+        zoneValues: <Object, Object>{_zoneLeaseKey: operation},
       );
       throwIfActiveFenceLost();
       return result;
@@ -213,7 +257,13 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
       heartbeat?.cancel();
       await renewalInFlight;
       if (handle != null) {
-        await _releaseQuietly(handle);
+        if (active?.poisoned ?? false) {
+          _poisonedHandles.add(handle);
+          _poisonedPaths.add(lockPath);
+          retainedUntilRestart = true;
+        } else {
+          await _releaseQuietly(handle);
+        }
       }
       final fence = databaseFence;
       if (fence != null) {
@@ -228,7 +278,9 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
           // stopped before this best-effort release.
         }
       }
-      _locallyReservedPaths.remove(lockPath);
+      if (!retainedUntilRestart) {
+        _locallyReservedPaths.remove(lockPath);
+      }
     }
   }
 
@@ -297,6 +349,7 @@ final class _ActiveCloudKitOperation {
   final String lockPath;
   final CloudKitOperationKind kind;
   bool fenceLost = false;
+  bool poisoned = false;
 }
 
 final class CloudKitOperationInterlockException implements Exception {

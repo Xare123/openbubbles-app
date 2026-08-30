@@ -178,6 +178,22 @@ void main() {
     }
   });
 
+  test('exposes every reviewed attachment materialization code', () {
+    const codes = <String>{
+      'cloud_attachment_account_changed',
+      'cloud_attachment_integrity_mismatch',
+      'cloud_attachment_native_result_invalid',
+      'cloud_attachment_read_auth_scope_invalid',
+      'cloud_attachment_size_mismatch',
+      'cloud_attachment_source_conflict',
+      'cloud_attachment_source_invalid',
+      'cloud_attachment_state_contention',
+    };
+    for (final code in codes) {
+      expect(cloudSyncV2SafeFailureCodeForCandidate(code), code);
+    }
+  });
+
   test('exposes reviewed protocol evidence codes', () {
     const codes = <String>{
       'cloud_sync_protocol_evidence_directory_unavailable',

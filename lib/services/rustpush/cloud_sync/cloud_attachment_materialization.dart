@@ -372,7 +372,7 @@ final class CloudAttachmentMaterialization {
   }
 
   void _validateBase() {
-    if (generation < 0 ||
+    if (generation <= 0 ||
         logicalEntityKeyHash.isEmpty ||
         expectedBytes < 0 ||
         expectedIntegrityTagHash.isEmpty) {
