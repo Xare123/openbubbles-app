@@ -199,7 +199,18 @@ jobs:
       # before the fix they were uploaded without one.
       - name: Run Android cold-start delivery tests
         working-directory: android
-        run: gradle --no-daemon :app:testAlphaDebugUnitTest :app:compileAlphaDebugKotlin
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if gradle --no-daemon :app:testAlphaDebugUnitTest :app:compileAlphaDebugKotlin; then
+              exit 0
+            fi
+            if [[ "$attempt" == "3" ]]; then
+              exit 1
+            fi
+            echo "Gradle test attempt ${attempt} failed; retrying after repository backoff"
+            sleep $((attempt * 30))
+          done
 
       - name: Build Alpha Profile APK
         env:
