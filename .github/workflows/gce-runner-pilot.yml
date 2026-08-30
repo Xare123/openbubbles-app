@@ -251,6 +251,7 @@ jobs:
       # Cargo validates incremental fingerprints after a source-only restore.
       # Keep the compatibility family aligned with the active sampler job.
       - name: Cache ARM64 debug CargoKit output
+        if: ${{ env.VALIDATION_MODE != 'rustpush-only' }}
         uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
         with:
           path: build/app/build/build
@@ -259,7 +260,7 @@ jobs:
             ${{ runner.os }}-cloudkit-canary-cargokit-v2-${{ hashFiles('pubspec.lock', 'rust/Cargo.toml', 'rust/Cargo.lock', 'rustpush/Cargo.toml', 'rustpush/Cargo.lock', 'android/**/*.gradle*', 'android/**/gradle.properties', 'rust_builder/cargokit/**', 'tooling/android/patch_pub_cache_cargokit.sh') }}-
 
       - name: Install pinned Android SDK components
-        if: ${{ env.VALIDATION_MODE != 'bindings-only' }}
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -292,7 +293,7 @@ jobs:
           done
 
       - name: Patch vendored CargoKit for Flutter 3.44.8
-        if: ${{ env.VALIDATION_MODE != 'bindings-only' }}
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -301,7 +302,7 @@ jobs:
           bash ./tooling/android/patch_pub_cache_cargokit.sh
 
       - name: Install pinned Gradle
-        if: ${{ env.VALIDATION_MODE != 'bindings-only' }}
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' }}
         shell: bash
         env:
           GRADLE_VERSION: 8.9
@@ -471,7 +472,7 @@ jobs:
 
       - name: Build benchmark APK
         id: build
-        if: ${{ env.VALIDATION_MODE != 'bindings-only' }}
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -501,7 +502,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify producer APK identity and native libraries
-        if: ${{ env.VALIDATION_MODE != 'bindings-only' }}
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -535,7 +536,7 @@ jobs:
 
       - name: Upload benchmark APK
         id: upload-apk
-        if: ${{ env.VALIDATION_MODE != 'bindings-only' }}
+        if: ${{ env.VALIDATION_MODE != 'bindings-only' && env.VALIDATION_MODE != 'rustpush-only' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: GCE producer ${{ inputs.flavor || 'beta' }} APK ${{ env.SOURCE_REF }}
