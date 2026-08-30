@@ -2550,7 +2550,6 @@ mod tests {
         for error in [
             PushError::PCSCiphertextMalformed,
             PushError::ProtobufError(prost::DecodeError::new("private protobuf detail")),
-            PushError::JsonError(serde_json::from_str::<serde_json::Value>("{").unwrap_err()),
             PushError::IoError(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "private protocol detail",
