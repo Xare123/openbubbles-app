@@ -2191,10 +2191,50 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         return reject('canonical_participant_shape_email_invalid');
       }
     } else if (!_telephonePattern.hasMatch(address)) {
-      return reject('canonical_participant_shape_telephone_invalid');
+      onInvalid?.call('canonical_participant_shape_telephone_invalid');
+      onInvalid?.call(_telephoneInvalidDiagnosticKey(address));
+      return null;
     }
     return _NormalizedCanonicalHandle(address: address, email: email);
   }
+
+  String _telephoneInvalidDiagnosticKey(String address) {
+    if (_percentEscapePattern.hasMatch(address)) {
+      return 'canonical_participant_shape_telephone_invalid_percent_escaped';
+    }
+    if (address.runes.any((rune) => rune > 0x7f)) {
+      return 'canonical_participant_shape_telephone_invalid_non_ascii';
+    }
+
+    final plusCount = address.runes.where((rune) => rune == 0x2b).length;
+    if (plusCount != 0 && (plusCount != 1 || !address.startsWith('+'))) {
+      return 'canonical_participant_shape_telephone_invalid_plus_position_count';
+    }
+    if (_asciiLetterPattern.hasMatch(address)) {
+      return 'canonical_participant_shape_telephone_invalid_alphabetic_ascii';
+    }
+
+    final units = address.codeUnits;
+    final hasDigit = units.any(_isAsciiDigit);
+    final hasFormatting = units.any(
+      (unit) => unit == 0x20 || _isAsciiPunctuation(unit),
+    );
+    if (hasDigit && hasFormatting) {
+      return 'canonical_participant_shape_telephone_invalid_formatted_punctuation';
+    }
+    if (units.isNotEmpty && units.every(_isAsciiPunctuation)) {
+      return 'canonical_participant_shape_telephone_invalid_punctuation_only';
+    }
+    return 'canonical_participant_shape_telephone_invalid_other';
+  }
+
+  static bool _isAsciiDigit(int unit) => unit >= 0x30 && unit <= 0x39;
+
+  static bool _isAsciiPunctuation(int unit) =>
+      (unit >= 0x21 && unit <= 0x2f) ||
+      (unit >= 0x3a && unit <= 0x40) ||
+      (unit >= 0x5b && unit <= 0x60) ||
+      (unit >= 0x7b && unit <= 0x7e);
 
   bool _matchesActiveScope(CloudSyncScope scope, int generation) {
     final active = _activeScopeProvider();
@@ -2332,6 +2372,8 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
 
   static final RegExp _emailPattern = RegExp(r'^[^@\s:]+@[^@\s:]+\.[^@\s:]+$');
   static final RegExp _telephonePattern = RegExp(r'^\+?[0-9]{3,20}$');
+  static final RegExp _asciiLetterPattern = RegExp(r'[A-Za-z]');
+  static final RegExp _percentEscapePattern = RegExp(r'%[0-9A-Fa-f]{2}');
   static const Set<String> _reactionTypes = {
     'love',
     'like',

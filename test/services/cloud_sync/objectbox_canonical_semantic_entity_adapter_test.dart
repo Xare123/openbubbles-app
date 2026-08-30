@@ -714,11 +714,14 @@ void main() {
       );
 
       const invalidShapes = {
-        'not a valid participant':
-            'canonical_participant_shape_telephone_invalid',
-        'urn:apple:opaque': 'canonical_participant_shape_unknown_scheme',
-        ' mailto:valid@example.com':
-            'canonical_participant_shape_outer_whitespace',
+        'not a valid participant': [
+          'canonical_participant_shape_telephone_invalid',
+          'canonical_participant_shape_telephone_invalid_alphabetic_ascii',
+        ],
+        'urn:apple:opaque': ['canonical_participant_shape_unknown_scheme'],
+        ' mailto:valid@example.com': [
+          'canonical_participant_shape_outer_whitespace',
+        ],
       };
       for (final invalidShape in invalidShapes.entries) {
         diagnostics.clear();
@@ -746,13 +749,123 @@ void main() {
             ),
           ),
         );
-        expect(diagnostics, [invalidShape.value]);
+        expect(diagnostics, invalidShape.value);
         expect(store.box<Chat>().count(), 0);
         expect(store.box<Handle>().count(), 0);
         expect(store.box<CloudSemanticChatAliasEntity>().count(), 0);
       }
     },
   );
+
+  test(
+    'classifies invalid telephone shapes without exposing candidate content',
+    () {
+      const invalidTelephoneShapes = {
+        'tel:(949) 247-6163':
+            'canonical_participant_shape_telephone_invalid_formatted_punctuation',
+        'tel:12abc':
+            'canonical_participant_shape_telephone_invalid_alphabetic_ascii',
+        'tel:%2B19492476163':
+            'canonical_participant_shape_telephone_invalid_percent_escaped',
+        'tel:+١٢٣٤': 'canonical_participant_shape_telephone_invalid_non_ascii',
+        'tel:12+34':
+            'canonical_participant_shape_telephone_invalid_plus_position_count',
+        'tel:--':
+            'canonical_participant_shape_telephone_invalid_punctuation_only',
+        'tel:12/34':
+            'canonical_participant_shape_telephone_invalid_formatted_punctuation',
+      };
+
+      final allowedDiagnosticKeys = RegExp(
+        r'^canonical_participant_shape_telephone_invalid(?:_'
+        r'(?:formatted_punctuation|alphabetic_ascii|percent_escaped|'
+        r'non_ascii|plus_position_count|punctuation_only|other))?$',
+      );
+      for (final invalidShape in invalidTelephoneShapes.entries) {
+        final diagnostics = <String>[];
+        final adapter = _newAdapter(
+          store: store,
+          activeScopeProvider: () => activeScope,
+          resolver: resolver,
+          diagnosticRecorder: diagnostics.add,
+          semanticApplyEnabled: true,
+          allowChatUpserts: true,
+        );
+
+        expect(
+          () => store.runInTransaction(TxMode.write, () {
+            adapter.applyEntity(
+              scope: scope,
+              generation: generation,
+              payload: _chatPayload(
+                logicalEntityKeyHash: chatHash,
+                canonicalGuid: 'chat-guid',
+                chatIdentifier: 'iMessage;+;invalid-telephone',
+                participantHandles: [invalidShape.key],
+              ),
+              snapshot: _snapshot(CloudEntityKind.chat, chatHash),
+            );
+          }),
+          throwsA(
+            predicate<CloudSyncFailure>(
+              (failure) =>
+                  failure.safeCode == 'canonical_chat_participant_invalid',
+            ),
+          ),
+        );
+
+        expect(
+          diagnostics,
+          containsAll([
+            'canonical_participant_shape_telephone_invalid',
+            invalidShape.value,
+          ]),
+        );
+        expect(diagnostics, everyElement(matches(allowedDiagnosticKeys)));
+        expect(diagnostics, everyElement(isNot(contains(RegExp(r'[0-9]')))));
+        expect(diagnostics, everyElement(isNot(contains(invalidShape.key))));
+        expect(store.box<Chat>().count(), 0);
+        expect(store.box<Handle>().count(), 0);
+        expect(store.box<CloudSemanticChatAliasEntity>().count(), 0);
+      }
+    },
+  );
+
+  test('keeps valid telephone and email participant behavior unchanged', () {
+    final diagnostics = <String>[];
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      diagnosticRecorder: diagnostics.add,
+      semanticApplyEnabled: true,
+      allowChatUpserts: true,
+    );
+
+    adapter.applyEntity(
+      scope: scope,
+      generation: generation,
+      payload: _chatPayload(
+        logicalEntityKeyHash: chatHash,
+        canonicalGuid: 'chat-guid',
+        chatIdentifier: 'iMessage;+;valid-participants',
+        participantHandles: const [
+          'tel:+19492476163',
+          'mailto:valid@example.com',
+        ],
+      ),
+      snapshot: _snapshot(CloudEntityKind.chat, chatHash),
+    );
+
+    final chat = store.box<Chat>().getAll().single;
+    expect(
+      chat.handles
+          .map((handle) => '${handle.address}/${handle.service}')
+          .toSet(),
+      {'+19492476163/iMessage', 'valid@example.com/iMessage'},
+    );
+    expect(diagnostics, isEmpty);
+  });
 
   test('creates and idempotently replays a message into its exact chat', () {
     const chatIdentifier = 'iMessage;-;message-chat';
@@ -940,11 +1053,7 @@ void main() {
     final repairChatHash = _testChatAliasHash('repair-chat-logical-key');
     const storedIdentifier = '+15555550100';
     final chatId = store.box<Chat>().put(
-      Chat(
-        guid: repairChatGuid,
-        chatIdentifier: storedIdentifier,
-        style: 45,
-      ),
+      Chat(guid: repairChatGuid, chatIdentifier: storedIdentifier, style: 45),
     );
     resolver.put(
       scope: scope,
