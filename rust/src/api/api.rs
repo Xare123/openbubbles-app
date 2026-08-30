@@ -1,6 +1,9 @@
 #[cfg(target_os = "windows")]
 use crate::windows_secret_storage::{open_windows_keystore, replace_file_without_backup};
 use anyhow::anyhow;
+use async_recursion::async_recursion;
+use base64::prelude::*;
+pub use broadcast::Receiver;
 use flutter_rust_bridge::{frb, DartFnFuture, IntoDart, JoinHandle};
 #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
 use keystore::software::SoftwareEncryptor;
@@ -11,33 +14,9 @@ use keystore::{
     KeystoreAccessRules, KeystoreDigest, KeystoreEncryptKey, KeystorePadding, RsaKey,
 };
 use log::{debug, error, info, warn};
+pub use mpsc::Sender;
 pub use plist::Value;
 use plist::{Data, Dictionary};
-#[cfg(any(target_os = "android", target_os = "windows"))]
-use rustpush::CloudKitReadAuthenticationRevoker;
-pub use rustpush::{default_provider, ArcAnisetteClient, DefaultAnisetteProvider, LoginClientInfo};
-use sha2::{Digest, Sha256};
-pub use std::time::SystemTime;
-use std::{
-    borrow::{Borrow, BorrowMut},
-    collections::HashSet,
-    fs::{self, File},
-    future::Future,
-    io::{Cursor, ErrorKind, Read, Write},
-    ops::Deref,
-    panic,
-    str::FromStr,
-    sync::{Arc, OnceLock, Weak},
-    time::Duration,
-    u64,
-};
-#[cfg(any(target_os = "android", target_os = "windows"))]
-use std::{collections::HashMap, fs::OpenOptions};
-
-use async_recursion::async_recursion;
-use base64::prelude::*;
-pub use broadcast::Receiver;
-pub use mpsc::Sender;
 use prost::Message as prostMessage;
 use rand::Rng;
 use rustpush::cloudkit_operation_gate::{
@@ -51,6 +30,8 @@ use rustpush::passwords::{
     pause_password_cloudkit_operations, resume_password_cloudkit_operations,
 };
 pub use rustpush::sharedstreams::{SharedAlbum, SyncStatus};
+#[cfg(any(target_os = "android", target_os = "windows"))]
+use rustpush::CloudKitReadAuthenticationRevoker;
 pub use rustpush::DebugMutex as Mutex;
 pub use rustpush::IdmsAuthListener;
 use rustpush::KeyCache;
@@ -84,9 +65,29 @@ use rustpush::{
     passwords::PasswordState,
     request_update_account, AnisetteProvider, DebugRwLock,
 };
+pub use rustpush::{default_provider, ArcAnisetteClient, DefaultAnisetteProvider, LoginClientInfo};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sha2::{Digest, Sha256};
+#[cfg(any(target_os = "android", target_os = "windows", test))]
+use std::collections::HashMap;
+#[cfg(any(target_os = "android", target_os = "windows"))]
+use std::fs::OpenOptions;
 use std::io::Seek;
 pub use std::path::PathBuf;
+pub use std::time::SystemTime;
+use std::{
+    borrow::{Borrow, BorrowMut},
+    collections::HashSet,
+    fs::{self, File},
+    future::Future,
+    io::{Cursor, ErrorKind, Read, Write},
+    ops::Deref,
+    panic,
+    str::FromStr,
+    sync::{Arc, OnceLock, Weak},
+    time::Duration,
+    u64,
+};
 use tokio::{
     runtime::Runtime,
     select,
@@ -3989,8 +3990,17 @@ fn plist_to_bin<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, plist::Error>
     Ok(buf)
 }
 
-fn migrate(path: String) -> bool {
-    let dir = PathBuf::from_str(&path).unwrap();
+fn persist_migrated_plist_state<T: serde::Serialize>(
+    directory: &std::path::Path,
+    file_name: &str,
+    value: &T,
+) -> anyhow::Result<()> {
+    let mut encoded = Vec::new();
+    plist::to_writer_xml(&mut encoded, value)?;
+    persist_login_state_file(directory, file_name, &encoded)
+}
+
+fn migrate(dir: &std::path::Path) -> bool {
     let hw_config_path = dir.join("hw_info.plist");
 
     if let Ok(mut item) = plist::from_file::<_, Dictionary>(&hw_config_path) {
@@ -4014,7 +4024,8 @@ fn migrate(path: String) -> bool {
                             )
                             .expect("failed to import RSA");
                             *private = Value::String(handle);
-                            plist::to_file_xml(&hw_config_path, &item).expect("failed to save!");
+                            persist_migrated_plist_state(dir, "hw_info.plist", &item)
+                                .expect("failed to save!");
                         }
                     }
                 }
@@ -4025,7 +4036,7 @@ fn migrate(path: String) -> bool {
                 let identity: IDSNGMIdentity =
                     plist::from_value(&value).expect("NGM Identity parse");
                 *value = Value::Data(identity.save("openbubbles").expect("Failed to save"));
-                plist::to_file_xml(&hw_config_path, &item).expect("failed to save!");
+                persist_migrated_plist_state(dir, "hw_info.plist", &item).expect("failed to save!");
             }
         }
     }
@@ -4077,7 +4088,7 @@ fn migrate(path: String) -> bool {
             }
         }
         if modified {
-            plist::to_file_xml(&id_path, &users).expect("failed to save!");
+            persist_migrated_plist_state(dir, "id.plist", &users).expect("failed to save!");
         }
     }
 
@@ -4165,28 +4176,38 @@ fn migrate(path: String) -> bool {
                 if let Some(Value::Dictionary(dict)) = users.get_mut("items") {
                     dict.clear();
                 }
-                plist::to_file_xml(&cloudkit_path, &users).expect("failed to save!");
-            }
-        }
-    }
-
-    let gsa_path = dir.join("gsa.plist");
-    if let Ok(mut account) = plist::from_file::<_, Dictionary>(&gsa_path) {
-        if let Some(Value::Data(password)) = account.remove("password") {
-            account.insert(
-                "encrypted_password".to_string(),
-                Value::Data(GSAConfig::encrypt(&password).expect("Undo").into()),
-            );
-            plist::to_file_xml(&gsa_path, &account).expect("failed to save!");
-
-            let findmy = dir.join("findmy.plist");
-            if let Ok(users) = plist::from_file::<_, FindMyState>(&findmy) {
-                std::fs::write(findmy, users.encode().expect("what")).unwrap();
+                persist_migrated_plist_state(dir, "keychain.plist", &users)
+                    .expect("failed to save!");
             }
         }
     }
 
     false
+}
+
+fn migrate_gsa_state_locked(directory: &std::path::Path) -> anyhow::Result<()> {
+    let gsa_path = directory.join("gsa.plist");
+    let Ok(mut account) = plist::from_file::<_, Dictionary>(&gsa_path) else {
+        return Ok(());
+    };
+    let Some(Value::Data(password)) = account.remove("password") else {
+        return Ok(());
+    };
+    account.insert(
+        "encrypted_password".to_string(),
+        Value::Data(GSAConfig::encrypt(&password)?.into()),
+    );
+
+    let findmy_path = directory.join("findmy.plist");
+    if let Ok(users) = plist::from_file::<_, FindMyState>(&findmy_path) {
+        let encoded = users.encode()?;
+        persist_login_state_file(&directory, "findmy.plist", &encoded)?;
+    }
+
+    let mut encoded = Vec::new();
+    plist::to_writer_xml(&mut encoded, &account)?;
+    persist_login_state_file(&directory, "gsa.plist", &encoded)?;
+    Ok(())
 }
 
 #[frb(sync)]
@@ -4392,7 +4413,18 @@ pub struct SharedICloudServices {
 impl SharedPushState {
     pub async fn restore(path: String) -> Option<(Self, APSWatcher)> {
         info!("restroing");
-        let dir = PathBuf::from_str(&path).unwrap();
+        let requested_dir = PathBuf::from_str(&path).unwrap();
+        #[cfg(any(target_os = "android", target_os = "windows"))]
+        let dir = match canonical_cloudkit_state_directory(&requested_dir) {
+            Ok(directory) => directory,
+            Err(error) => {
+                error!("CloudKit state directory could not be resolved: {error}");
+                return None;
+            }
+        };
+        #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+        let dir = requested_dir;
+        let path = dir.to_string_lossy().into_owned();
         let keystore = dir.join("keystore.plist");
 
         #[cfg(target_os = "windows")]
@@ -4425,18 +4457,49 @@ impl SharedPushState {
             encryptor: SoftwareEncryptor(*b"desktopisinsecureyoushouldn'tber"),
         });
 
-        if let Err(err) = panic::catch_unwind(|| {
-            migrate(path.clone());
-        }) {
-            if let Some(s) = err.downcast_ref::<&str>() {
-                info!("Panic message: {}", s);
-            } else if let Some(s) = err.downcast_ref::<String>() {
-                info!("Panic message: {}", s);
-            } else {
-                info!("Panic occurred, but message has unknown type");
+        {
+            #[cfg(any(target_os = "android", target_os = "windows"))]
+            let _migration_lifecycle_guard = {
+                let lifecycle_gate = match cloudkit_read_authentication_lifecycle_gate(&dir) {
+                    Ok(gate) => gate,
+                    Err(error) => {
+                        error!("CloudKit migration lifecycle gate failed: {error}");
+                        return None;
+                    }
+                };
+                lifecycle_gate.lock_owned().await
+            };
+            #[cfg(any(target_os = "android", target_os = "windows"))]
+            let _migration_state_write_guard = match cloudkit_state_file_write_guard() {
+                Ok(guard) => guard,
+                Err(error) => {
+                    error!("CloudKit migration state-file gate failed: {error}");
+                    return None;
+                }
+            };
+            #[cfg(any(target_os = "android", target_os = "windows"))]
+            if let Err(error) = cloudkit_login_advance_generation(&dir) {
+                error!("CloudKit migration generation advance failed: {error}");
+                return None;
             }
 
-            panic!("panicked")
+            if let Err(err) = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                migrate(&dir);
+            })) {
+                if let Some(s) = err.downcast_ref::<&str>() {
+                    info!("Panic message: {}", s);
+                } else if let Some(s) = err.downcast_ref::<String>() {
+                    info!("Panic message: {}", s);
+                } else {
+                    info!("Panic occurred, but message has unknown type");
+                }
+
+                panic!("panicked")
+            }
+            if let Err(error) = migrate_gsa_state_locked(&dir) {
+                error!("GSA migration failed: {error}");
+                return None;
+            }
         }
 
         let hardware = read_hardware(path.clone())?;
@@ -4557,7 +4620,16 @@ pub async fn restore_account(
     config: &JoinedOSConfig,
     conn: &APSConnection,
 ) -> Option<Arc<Mutex<AppleAccount<DefaultAnisetteProvider>>>> {
-    let dir = PathBuf::from_str(&path).unwrap();
+    let requested_directory = PathBuf::from_str(&path).ok()?;
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let dir = canonical_cloudkit_state_directory(&requested_directory).ok()?;
+    #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+    let dir = requested_directory;
+
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let lifecycle_gate = cloudkit_read_authentication_lifecycle_gate(&dir).ok()?;
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let _lifecycle_guard = lifecycle_gate.lock().await;
 
     let mut state = plist::from_file::<_, GSAConfig>(&dir.join("gsa.plist")).ok()?;
 
@@ -4565,18 +4637,22 @@ pub async fn restore_account(
         get_login_config(&dir, config, conn).await,
         anisette.clone(),
     )
-    .expect("aacbf?");
+    .ok()?;
 
     apple_account.username = Some(state.username.clone());
-    apple_account.hashed_password = state.get_password().ok();
+    apple_account.hashed_password = Some(state.get_password().ok()?);
 
     if state.postdata_done.is_none() {
         info!("Updating postdata");
-        let _ = apple_account
+        apple_account
             .update_postdata("Apple Device", None, &["icloud", "imessage", "facetime"])
-            .await;
+            .await
+            .ok()?;
         state.postdata_done = Some(true);
-        plist::to_file_xml(dir.join("gsa.plist"), &state).unwrap();
+        #[cfg(any(target_os = "android", target_os = "windows"))]
+        persist_gsa_config_atomically(&dir, &state).ok()?;
+        #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+        plist::to_file_xml(dir.join("gsa.plist"), &state).ok()?;
     }
 
     Some(Arc::new(Mutex::new(apple_account)))
@@ -4597,16 +4673,34 @@ pub async fn make_shared_streams(
     config: &JoinedOSConfig,
     token: &Arc<TokenProvider<DefaultAnisetteProvider>>,
 ) -> Option<SyncManager<DefaultAnisetteProvider, MyFilePackager>> {
-    let dir = PathBuf::from_str(&path).unwrap();
+    let requested_directory = PathBuf::from_str(&path).ok()?;
+    let (dir, runtime_generation) = runtime_state_writer_setup(&requested_directory);
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let runtime_generation = runtime_generation?;
+    #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+    let _ = runtime_generation;
 
     let stream_path = dir.join("sharedstreams.plist");
 
     let state = plist::from_file(&stream_path).ok()?;
 
+    let writer_directory = dir.clone();
     let client = SharedStreamClient::new(
         state,
         Box::new(move |update| {
-            plist::to_file_xml(&stream_path, update).unwrap();
+            #[cfg(any(target_os = "android", target_os = "windows"))]
+            let result = persist_runtime_plist_state(
+                &writer_directory,
+                "sharedstreams.plist",
+                update,
+                runtime_generation,
+            );
+            #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+            let result =
+                persist_runtime_plist_state(&writer_directory, "sharedstreams.plist", update);
+            if let Err(error) = result {
+                warn!("Shared Streams state update was not persisted: {error}");
+            }
         }),
         token.clone(),
         conn.clone(),
@@ -4633,61 +4727,18 @@ pub async fn make_cloudkit(
     config: &JoinedOSConfig,
     token_provider: &Arc<TokenProvider<DefaultAnisetteProvider>>,
 ) -> Option<Arc<CloudKitClient<DefaultAnisetteProvider>>> {
-    let dir = PathBuf::from_str(&path).unwrap();
+    let requested_directory = PathBuf::from_str(&path).unwrap();
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let dir = canonical_cloudkit_state_directory(&requested_directory).ok()?;
+    #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+    let dir = requested_directory;
 
     #[cfg(any(target_os = "android", target_os = "windows"))]
-    if let Ok(gsa) = plist::from_file::<_, GSAConfig>(dir.join("gsa.plist")) {
-        match load_cloudkit_read_authentication_cache(&dir, &gsa.username) {
-            Ok(Some((mme_auth_token, cloudkit_token, refreshed))) => {
-                let invalidation_directory = dir.clone();
-                let restored = token_provider
-                    .restore_cloudkit_read_authentication(
-                        mme_auth_token,
-                        cloudkit_token,
-                        refreshed,
-                        move || {
-                            if clear_cloudkit_read_authentication_cache(&invalidation_directory)
-                                .is_err()
-                            {
-                                warn!("CloudKit read-authentication cache invalidation failed");
-                            }
-                        },
-                    )
-                    .await;
-                match restored {
-                    Some(revoker) => {
-                        if register_cloudkit_read_authentication_revoker(
-                            dir.clone(),
-                            revoker.clone(),
-                        )
-                        .await
-                        .is_ok()
-                        {
-                            info!("Restored encrypted CloudKit read-authentication cache");
-                        } else {
-                            revoker.revoke().await;
-                            let _ = clear_cloudkit_read_authentication_cache(&dir);
-                            warn!("CloudKit read-authentication cache registration failed");
-                        }
-                    }
-                    None => {
-                        if clear_cloudkit_read_authentication_cache(&dir).is_err() {
-                            warn!("Stale CloudKit read-authentication cache could not be cleared");
-                        } else {
-                            warn!("Encrypted CloudKit read-authentication cache is stale");
-                        }
-                    }
-                }
-            }
-            Ok(None) => {}
-            Err(_) => {
-                if clear_cloudkit_read_authentication_cache(&dir).is_err() {
-                    warn!("Unreadable CloudKit read-authentication cache could not be cleared");
-                } else {
-                    warn!("Encrypted CloudKit read-authentication cache could not be opened");
-                }
-            }
-        }
+    if restore_persisted_cloudkit_read_authentication(&dir, token_provider)
+        .await
+        .is_err()
+    {
+        error!("CloudKit read-authentication lifecycle restore failed");
     }
 
     let cloudkit_path = dir.join("cloudkit.plist");
@@ -4716,10 +4767,12 @@ pub async fn make_passwords(
     client: &Arc<IMClient>,
     conn: &APSConnection,
 ) -> Arc<PasswordManager<DefaultAnisetteProvider>> {
-    let dir = PathBuf::from_str(&path).unwrap();
+    let requested_directory = PathBuf::from_str(&path).unwrap();
+    let (dir, runtime_generation) = runtime_state_writer_setup(&requested_directory);
 
-    let path = dir.join("passwords.plist");
-    let state: PasswordState = plist::from_file(&path).unwrap_or_default();
+    let passwords_path = dir.join("passwords.plist");
+    let state: PasswordState = plist::from_file(&passwords_path).unwrap_or_default();
+    let writer_directory = dir.clone();
 
     PasswordManager::new(
         keychain.clone(),
@@ -4728,7 +4781,21 @@ pub async fn make_passwords(
         conn.clone(),
         state,
         Box::new(move |item| {
-            plist::to_file_xml(&path, item).expect("Failed to serialize plist!");
+            #[cfg(any(target_os = "android", target_os = "windows"))]
+            let result = match runtime_generation {
+                Some(generation) => persist_runtime_plist_state(
+                    &writer_directory,
+                    "passwords.plist",
+                    item,
+                    generation,
+                ),
+                None => Err(anyhow!("Runtime state writer is unavailable")),
+            };
+            #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+            let result = persist_runtime_plist_state(&writer_directory, "passwords.plist", item);
+            if let Err(error) = result {
+                warn!("Passwords state update was not persisted: {error}");
+            }
         }),
         Box::new(|manager, wifi| {
             if !wifi {
@@ -4762,14 +4829,31 @@ pub async fn make_facetime(
     conn: &APSConnection,
     client: &Arc<IMClient>,
 ) -> Arc<FTClient> {
-    let dir = PathBuf::from_str(&path).unwrap();
+    let requested_directory = PathBuf::from_str(&path).unwrap();
+    let (dir, runtime_generation) = runtime_state_writer_setup(&requested_directory);
     let facetime_path = dir.join("facetime.plist");
     let state: FTState = plist::from_file(&facetime_path).unwrap_or_default();
+    let writer_directory = dir.clone();
     Arc::new(
         FTClient::new(
             state,
             Box::new(move |state| {
-                plist::to_file_xml(&facetime_path, state).expect("Failed to serialize plist!");
+                #[cfg(any(target_os = "android", target_os = "windows"))]
+                let result = match runtime_generation {
+                    Some(generation) => persist_runtime_plist_state(
+                        &writer_directory,
+                        "facetime.plist",
+                        state,
+                        generation,
+                    ),
+                    None => Err(anyhow!("Runtime state writer is unavailable")),
+                };
+                #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+                let result =
+                    persist_runtime_plist_state(&writer_directory, "facetime.plist", state);
+                if let Err(error) = result {
+                    warn!("FaceTime state update was not persisted: {error}");
+                }
             }),
             conn.clone(),
             client.identity.clone(),
@@ -4786,14 +4870,30 @@ pub async fn make_statuskit(
     config: &JoinedOSConfig,
     client: &Arc<IMClient>,
 ) -> Arc<StatusKitClient<DefaultAnisetteProvider>> {
-    let dir = PathBuf::from_str(&path).unwrap();
+    let requested_directory = PathBuf::from_str(&path).unwrap();
+    let (dir, runtime_generation) = runtime_state_writer_setup(&requested_directory);
 
-    let path = dir.join("statuskit.plist");
-    let state: StatusKitState = plist::from_file(&path).unwrap_or_default();
+    let statuskit_path = dir.join("statuskit.plist");
+    let state: StatusKitState = plist::from_file(&statuskit_path).unwrap_or_default();
+    let writer_directory = dir.clone();
     StatusKitClient::new(
         state,
         Box::new(move |state| {
-            plist::to_file_xml(&path, state).unwrap();
+            #[cfg(any(target_os = "android", target_os = "windows"))]
+            let result = match runtime_generation {
+                Some(generation) => persist_runtime_plist_state(
+                    &writer_directory,
+                    "statuskit.plist",
+                    state,
+                    generation,
+                ),
+                None => Err(anyhow!("Runtime state writer is unavailable")),
+            };
+            #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+            let result = persist_runtime_plist_state(&writer_directory, "statuskit.plist", state);
+            if let Err(error) = result {
+                warn!("StatusKit state update was not persisted: {error}");
+            }
         }),
         provider.clone(),
         conn.clone(),
@@ -4811,7 +4911,12 @@ pub fn make_keychain(
     config: &JoinedOSConfig,
     token_provider: &Arc<TokenProvider<DefaultAnisetteProvider>>,
 ) -> Option<Arc<KeychainClient<DefaultAnisetteProvider>>> {
-    let dir = PathBuf::from_str(&path).unwrap();
+    let requested_directory = PathBuf::from_str(&path).ok()?;
+    let (dir, runtime_generation) = runtime_state_writer_setup(&requested_directory);
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let runtime_generation = runtime_generation?;
+    #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+    let _ = runtime_generation;
     let cloudkit_path = dir.join("keychain.plist");
 
     if let Err(e) = plist::from_file::<_, KeychainClientState>(&cloudkit_path) {
@@ -4819,6 +4924,7 @@ pub fn make_keychain(
     }
 
     let state: KeychainClientState = plist::from_file(&cloudkit_path).ok()?;
+    let writer_directory = dir.clone();
 
     Some(Arc::new(KeychainClient {
         anisette: anisette.clone(),
@@ -4826,7 +4932,18 @@ pub fn make_keychain(
         state: DebugRwLock::new(state),
         config: config.config(),
         update_state: Box::new(move |update| {
-            plist::to_file_xml(&cloudkit_path, update).unwrap();
+            #[cfg(any(target_os = "android", target_os = "windows"))]
+            let result = persist_runtime_plist_state(
+                &writer_directory,
+                "keychain.plist",
+                update,
+                runtime_generation,
+            );
+            #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+            let result = persist_runtime_plist_state(&writer_directory, "keychain.plist", update);
+            if let Err(error) = result {
+                warn!("Keychain state update was not persisted: {error}");
+            }
         }),
         container: tokio::sync::Mutex::new(None),
         container_initialization: tokio::sync::Mutex::new(()),
@@ -4854,9 +4971,15 @@ pub async fn make_findmy(
     config: &JoinedOSConfig,
     client: &Arc<IMClient>,
 ) -> Option<Arc<FindMyClient<DefaultAnisetteProvider>>> {
-    let dir = PathBuf::from_str(&path).unwrap();
+    let requested_directory = PathBuf::from_str(&path).ok()?;
+    let (dir, runtime_generation) = runtime_state_writer_setup(&requested_directory);
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let runtime_generation = runtime_generation?;
+    #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+    let _ = runtime_generation;
     let id_path = dir.join("findmy.plist");
     let state = FindMyState::restore(&fs::read(&id_path).ok()?).ok()?;
+    let writer_directory = dir.clone();
 
     Some(Arc::new(
         FindMyClient::new(
@@ -4867,7 +4990,19 @@ pub async fn make_findmy(
             Arc::new(FindMyStateManager {
                 state: Mutex::new(state),
                 update: Box::new(move |state| {
-                    fs::write(&id_path, state).expect("Failed to serialize plist!");
+                    #[cfg(any(target_os = "android", target_os = "windows"))]
+                    let result = persist_runtime_state_file(
+                        &writer_directory,
+                        "findmy.plist",
+                        &state,
+                        runtime_generation,
+                    );
+                    #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+                    let result =
+                        persist_login_state_file(&writer_directory, "findmy.plist", &state);
+                    if let Err(error) = result {
+                        warn!("Find My state update was not persisted: {error}");
+                    }
                 }),
             }),
             token_provider.clone(),
@@ -6855,7 +6990,7 @@ impl GSAConfig {
 
 const CLOUDKIT_READ_AUTHENTICATION_CACHE_FILE: &str = "cloudkit_read_authentication.cache";
 const CLOUDKIT_READ_AUTHENTICATION_KEY_ALIAS: &str = "gsa:cloudkit-read-authentication";
-const CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION: u32 = 1;
+const CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION: u32 = 2;
 const CLOUDKIT_READ_AUTHENTICATION_MAX_BYTES: u64 = 64 * 1024;
 
 #[cfg(any(target_os = "android", target_os = "windows"))]
@@ -6864,6 +6999,183 @@ static CLOUDKIT_READ_AUTHENTICATION_STORAGE_LOCK: OnceLock<std::sync::Mutex<()>>
 static CLOUDKIT_READ_AUTHENTICATION_REVOCATIONS: OnceLock<
     std::sync::Mutex<HashMap<PathBuf, CloudKitReadAuthenticationRevoker>>,
 > = OnceLock::new();
+#[cfg(any(target_os = "android", target_os = "windows", test))]
+static CLOUDKIT_READ_AUTHENTICATION_LIFECYCLE_GATES: OnceLock<
+    std::sync::Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
+> = OnceLock::new();
+#[cfg(any(target_os = "android", target_os = "windows", test))]
+static CLOUDKIT_LOGIN_LIFECYCLES: OnceLock<
+    std::sync::Mutex<HashMap<PathBuf, CloudKitLoginLifecycle>>,
+> = OnceLock::new();
+#[cfg(any(target_os = "android", target_os = "windows"))]
+static CLOUDKIT_STATE_FILE_WRITE_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+
+#[cfg(any(target_os = "android", target_os = "windows", test))]
+#[derive(Default)]
+struct CloudKitLoginLifecycle {
+    generation: u64,
+    admissions: HashMap<usize, u64>,
+}
+
+#[cfg(any(target_os = "android", target_os = "windows", test))]
+fn canonical_cloudkit_state_directory(directory: &std::path::Path) -> anyhow::Result<PathBuf> {
+    fs::canonicalize(directory)
+        .map_err(|_| anyhow!("CloudKit read-authentication directory is unavailable"))
+}
+
+/// Returns the single lifecycle gate for an on-disk CloudKit state directory.
+/// Canonicalizing before lookup prevents equivalent path spellings from
+/// creating independent gates around the same credential files.
+#[cfg(any(target_os = "android", target_os = "windows", test))]
+fn cloudkit_read_authentication_lifecycle_gate(
+    directory: &std::path::Path,
+) -> anyhow::Result<Arc<tokio::sync::Mutex<()>>> {
+    let canonical_directory = canonical_cloudkit_state_directory(directory)?;
+    let mut gates = CLOUDKIT_READ_AUTHENTICATION_LIFECYCLE_GATES
+        .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| anyhow!("CloudKit read-authentication lifecycle lock was poisoned"))?;
+    Ok(gates
+        .entry(canonical_directory)
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone())
+}
+
+#[cfg(any(target_os = "android", target_os = "windows", test))]
+fn cloudkit_login_advance_generation(canonical_directory: &std::path::Path) -> anyhow::Result<u64> {
+    let mut lifecycles = CLOUDKIT_LOGIN_LIFECYCLES
+        .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| anyhow!("CloudKit login lifecycle lock was poisoned"))?;
+    let lifecycle = lifecycles
+        .entry(canonical_directory.to_owned())
+        .or_default();
+    lifecycle.generation = lifecycle
+        .generation
+        .checked_add(1)
+        .ok_or_else(|| anyhow!("CloudKit login generation was exhausted"))?;
+    lifecycle.admissions.clear();
+    Ok(lifecycle.generation)
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+fn cloudkit_login_current_generation(canonical_directory: &std::path::Path) -> anyhow::Result<u64> {
+    let mut lifecycles = CLOUDKIT_LOGIN_LIFECYCLES
+        .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| anyhow!("CloudKit login lifecycle lock was poisoned"))?;
+    Ok(lifecycles
+        .entry(canonical_directory.to_owned())
+        .or_default()
+        .generation)
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+fn cloudkit_login_generation_is_current(
+    canonical_directory: &std::path::Path,
+    expected_generation: u64,
+) -> anyhow::Result<bool> {
+    let lifecycles = CLOUDKIT_LOGIN_LIFECYCLES
+        .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| anyhow!("CloudKit login lifecycle lock was poisoned"))?;
+    Ok(lifecycles
+        .get(canonical_directory)
+        .is_some_and(|lifecycle| lifecycle.generation == expected_generation))
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+fn cloudkit_runtime_state_writer_context(
+    requested_directory: &std::path::Path,
+) -> anyhow::Result<(PathBuf, u64)> {
+    let canonical_directory = canonical_cloudkit_state_directory(requested_directory)?;
+    let generation = cloudkit_login_current_generation(&canonical_directory)?;
+    Ok((canonical_directory, generation))
+}
+
+fn runtime_state_writer_setup(requested_directory: &std::path::Path) -> (PathBuf, Option<u64>) {
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    {
+        match cloudkit_runtime_state_writer_context(requested_directory) {
+            Ok((directory, generation)) => (directory, Some(generation)),
+            Err(error) => {
+                warn!("Runtime state writer is disabled: {error}");
+                (requested_directory.to_owned(), None)
+            }
+        }
+    }
+    #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+    {
+        (requested_directory.to_owned(), None)
+    }
+}
+
+#[cfg(any(target_os = "android", target_os = "windows", test))]
+fn cloudkit_login_register_admission(
+    canonical_directory: &std::path::Path,
+    expected_generation: u64,
+    account_key: usize,
+) -> anyhow::Result<()> {
+    let mut lifecycles = CLOUDKIT_LOGIN_LIFECYCLES
+        .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| anyhow!("CloudKit login lifecycle lock was poisoned"))?;
+    let lifecycle = lifecycles
+        .entry(canonical_directory.to_owned())
+        .or_default();
+    if lifecycle.generation != expected_generation {
+        return Err(anyhow!("CloudKit login attempt was superseded"));
+    }
+    lifecycle
+        .admissions
+        .insert(account_key, expected_generation);
+    Ok(())
+}
+
+#[cfg(any(target_os = "android", target_os = "windows", test))]
+fn cloudkit_login_validate_admission(
+    canonical_directory: &std::path::Path,
+    account_key: usize,
+) -> anyhow::Result<u64> {
+    let lifecycles = CLOUDKIT_LOGIN_LIFECYCLES
+        .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| anyhow!("CloudKit login lifecycle lock was poisoned"))?;
+    let lifecycle = lifecycles
+        .get(canonical_directory)
+        .ok_or_else(|| anyhow!("CloudKit login admission is missing"))?;
+    let expected_generation = lifecycle
+        .admissions
+        .get(&account_key)
+        .copied()
+        .ok_or_else(|| anyhow!("CloudKit login admission is missing"))?;
+    if lifecycle.generation != expected_generation {
+        return Err(anyhow!("CloudKit login attempt was superseded"));
+    }
+    Ok(expected_generation)
+}
+
+#[cfg(any(target_os = "android", target_os = "windows", test))]
+fn cloudkit_login_consume_admission(
+    canonical_directory: &std::path::Path,
+    expected_generation: u64,
+    account_key: usize,
+) -> anyhow::Result<()> {
+    let mut lifecycles = CLOUDKIT_LOGIN_LIFECYCLES
+        .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| anyhow!("CloudKit login lifecycle lock was poisoned"))?;
+    let lifecycle = lifecycles
+        .get_mut(canonical_directory)
+        .ok_or_else(|| anyhow!("CloudKit login admission is missing"))?;
+    if lifecycle.generation != expected_generation
+        || lifecycle.admissions.get(&account_key) != Some(&expected_generation)
+    {
+        return Err(anyhow!("CloudKit login attempt was superseded"));
+    }
+    lifecycle.admissions.remove(&account_key);
+    Ok(())
+}
 
 #[cfg(any(target_os = "android", target_os = "windows"))]
 fn cloudkit_read_authentication_storage_guard() -> anyhow::Result<std::sync::MutexGuard<'static, ()>>
@@ -6875,16 +7187,31 @@ fn cloudkit_read_authentication_storage_guard() -> anyhow::Result<std::sync::Mut
 }
 
 #[cfg(any(target_os = "android", target_os = "windows"))]
+fn cloudkit_state_file_write_guard() -> anyhow::Result<std::sync::MutexGuard<'static, ()>> {
+    CLOUDKIT_STATE_FILE_WRITE_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .map_err(|_| anyhow!("CloudKit state-file write lock was poisoned"))
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
 async fn register_cloudkit_read_authentication_revoker(
     directory: PathBuf,
     revoker: CloudKitReadAuthenticationRevoker,
 ) -> anyhow::Result<()> {
+    let canonical_directory = canonical_cloudkit_state_directory(&directory)?;
     let previous = {
         let mut revocations = CLOUDKIT_READ_AUTHENTICATION_REVOCATIONS
             .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
             .lock()
             .map_err(|_| anyhow!("CloudKit read-authentication registry lock was poisoned"))?;
-        revocations.insert(directory, revoker)
+        if revocations
+            .get(&canonical_directory)
+            .is_some_and(|existing| existing.is_same_generation(&revoker))
+        {
+            return Ok(());
+        }
+        revocations.insert(canonical_directory, revoker)
     };
     if let Some(previous) = previous {
         previous.revoke().await;
@@ -6894,12 +7221,13 @@ async fn register_cloudkit_read_authentication_revoker(
 
 #[cfg(any(target_os = "android", target_os = "windows"))]
 async fn revoke_registered_cloudkit_read_authentication(directory: &PathBuf) -> anyhow::Result<()> {
+    let canonical_directory = canonical_cloudkit_state_directory(directory)?;
     let revoker = {
         let mut revocations = CLOUDKIT_READ_AUTHENTICATION_REVOCATIONS
             .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
             .lock()
             .map_err(|_| anyhow!("CloudKit read-authentication registry lock was poisoned"))?;
-        revocations.remove(directory)
+        revocations.remove(&canonical_directory)
     };
     if let Some(revoker) = revoker {
         revoker.revoke().await;
@@ -6907,9 +7235,106 @@ async fn revoke_registered_cloudkit_read_authentication(directory: &PathBuf) -> 
     Ok(())
 }
 
+#[cfg(any(target_os = "android", target_os = "windows"))]
+async fn restore_persisted_cloudkit_read_authentication(
+    directory: &PathBuf,
+    token_provider: &Arc<TokenProvider<DefaultAnisetteProvider>>,
+) -> anyhow::Result<()> {
+    let canonical_directory = canonical_cloudkit_state_directory(directory)?;
+    let lifecycle_gate = cloudkit_read_authentication_lifecycle_gate(&canonical_directory)?;
+    let _lifecycle_guard = lifecycle_gate.lock().await;
+    let gsa = match plist::from_file::<_, GSAConfig>(canonical_directory.join("gsa.plist")) {
+        Ok(gsa) => gsa,
+        Err(_) => return Ok(()),
+    };
+
+    match load_cloudkit_read_authentication_cache(&canonical_directory, &gsa.username) {
+        Ok(Some((mme_auth_token, cloudkit_token, refreshed, generation_id))) => {
+            let invalidation_directory = canonical_directory.clone();
+            let invalidation_generation_id = generation_id.clone();
+            let restored = token_provider
+                .restore_cloudkit_read_authentication(
+                    mme_auth_token,
+                    cloudkit_token,
+                    refreshed,
+                    move || {
+                        clear_cloudkit_read_authentication_cache_generation(
+                            &invalidation_directory,
+                            &invalidation_generation_id,
+                        )
+                        .map(|_| ())
+                        .map_err(|error| {
+                            PushError::IoError(std::io::Error::new(
+                                ErrorKind::Other,
+                                format!(
+                                    "CloudKit read-authentication cache invalidation failed: {error}"
+                                ),
+                            ))
+                        })
+                    },
+                )
+                .await;
+            match restored {
+                Some(revoker) => {
+                    if register_cloudkit_read_authentication_revoker(
+                        canonical_directory.clone(),
+                        revoker.clone(),
+                    )
+                    .await
+                    .is_err()
+                    {
+                        revoker.revoke().await;
+                        clear_cloudkit_read_authentication_cache(&canonical_directory).map_err(
+                            |_| anyhow!("CloudKit read-authentication registration cleanup failed"),
+                        )?;
+                        return Err(anyhow!(
+                            "CloudKit read-authentication revoker registration failed"
+                        ));
+                    }
+                    info!("Restored encrypted CloudKit read-authentication cache");
+                }
+                None => {
+                    clear_cloudkit_read_authentication_cache(&canonical_directory).map_err(
+                        |_| anyhow!("Stale CloudKit read-authentication cache cleanup failed"),
+                    )?;
+                    warn!("Encrypted CloudKit read-authentication cache is stale");
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(_) => {
+            clear_cloudkit_read_authentication_cache(&canonical_directory).map_err(|_| {
+                anyhow!("Unreadable CloudKit read-authentication cache cleanup failed")
+            })?;
+            warn!("Encrypted CloudKit read-authentication cache could not be opened");
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+async fn revoke_clear_and_reset_cloudkit_state(directory: &PathBuf) -> anyhow::Result<u64> {
+    let canonical_directory = canonical_cloudkit_state_directory(directory)?;
+    let lifecycle_gate = cloudkit_read_authentication_lifecycle_gate(&canonical_directory)?;
+    let _lifecycle_guard = lifecycle_gate.lock().await;
+    revoke_clear_and_reset_cloudkit_state_locked(&canonical_directory).await
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+async fn revoke_clear_and_reset_cloudkit_state_locked(
+    canonical_directory: &PathBuf,
+) -> anyhow::Result<u64> {
+    let generation = cloudkit_login_advance_generation(canonical_directory)?;
+    revoke_registered_cloudkit_read_authentication(canonical_directory).await?;
+    clear_cloudkit_read_authentication_cache(canonical_directory)?;
+    reset_user(canonical_directory)?;
+    Ok(generation)
+}
+
 #[derive(Serialize, Deserialize)]
 struct CachedCloudKitReadAuthentication {
     schema_version: u32,
+    generation_id: String,
     username: String,
     refreshed_at_millis: u64,
     mme_auth_token: String,
@@ -6917,11 +7342,16 @@ struct CachedCloudKitReadAuthentication {
 }
 
 impl CachedCloudKitReadAuthentication {
+    fn has_generation(&self, expected_generation_id: &str) -> bool {
+        !expected_generation_id.is_empty() && self.generation_id == expected_generation_id
+    }
+
     fn into_tokens_for_account(
         self,
         expected_username: &str,
-    ) -> Option<(String, String, SystemTime)> {
+    ) -> Option<(String, String, SystemTime, String)> {
         if self.schema_version != CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION
+            || self.generation_id.is_empty()
             || !self.username.eq_ignore_ascii_case(expected_username)
             || self.mme_auth_token.is_empty()
             || self.cloudkit_token.is_empty()
@@ -6930,14 +7360,34 @@ impl CachedCloudKitReadAuthentication {
         }
         let refreshed =
             SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(self.refreshed_at_millis))?;
-        Some((self.mme_auth_token, self.cloudkit_token, refreshed))
+        Some((
+            self.mme_auth_token,
+            self.cloudkit_token,
+            refreshed,
+            self.generation_id,
+        ))
     }
 }
 
-#[cfg(any(target_os = "android", target_os = "windows"))]
-fn cloudkit_read_authentication_key() -> Result<AesKeystoreKey, PushError> {
-    AesKeystoreKey::ensure(
+#[cfg(any(target_os = "android", target_os = "windows", test))]
+fn cloudkit_read_authentication_key_alias(canonical_directory: &std::path::Path) -> String {
+    let directory_identity = canonical_directory.as_os_str().to_string_lossy();
+    #[cfg(target_os = "windows")]
+    let directory_identity = directory_identity.to_lowercase();
+    let digest = Sha256::digest(directory_identity.as_bytes());
+    format!(
+        "{}:{}",
         CLOUDKIT_READ_AUTHENTICATION_KEY_ALIAS,
+        encode_hex(&digest[..16])
+    )
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+fn cloudkit_read_authentication_key(
+    canonical_directory: &std::path::Path,
+) -> Result<AesKeystoreKey, PushError> {
+    AesKeystoreKey::ensure(
+        &cloudkit_read_authentication_key_alias(canonical_directory),
         256,
         KeystoreAccessRules {
             block_modes: vec![EncryptMode::Gcm],
@@ -6949,48 +7399,34 @@ fn cloudkit_read_authentication_key() -> Result<AesKeystoreKey, PushError> {
 }
 
 #[cfg(any(target_os = "android", target_os = "windows"))]
-fn persist_cloudkit_read_authentication_cache(
-    directory: &PathBuf,
-    username: &str,
-    mme_auth_token: &str,
-    cloudkit_token: &str,
-    refreshed: SystemTime,
+fn persist_state_bytes_atomically(
+    canonical_directory: &std::path::Path,
+    file_name: &str,
+    temporary_label: &str,
+    serialized: &[u8],
 ) -> anyhow::Result<()> {
-    let _storage_guard = cloudkit_read_authentication_storage_guard()?;
-    let cached = CachedCloudKitReadAuthentication {
-        schema_version: CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION,
-        username: username.to_owned(),
-        refreshed_at_millis: systemtime_to_millis(refreshed),
-        mme_auth_token: mme_auth_token.to_owned(),
-        cloudkit_token: cloudkit_token.to_owned(),
-    };
-    let mut serialized = Vec::new();
-    plist::to_writer_binary(Cursor::new(&mut serialized), &cached)?;
-    let encrypted =
-        cloudkit_read_authentication_key()?.encrypt(&serialized, &mut EncryptMode::Gcm)?;
-
-    let destination = directory.join(CLOUDKIT_READ_AUTHENTICATION_CACHE_FILE);
-    let temporary = directory.join(format!(
-        ".cloudkit_read_authentication.{}.tmp",
-        Uuid::new_v4()
-    ));
+    let destination = canonical_directory.join(file_name);
+    let temporary =
+        canonical_directory.join(format!(".{}.{}.tmp", temporary_label, Uuid::new_v4()));
     let result = (|| -> anyhow::Result<()> {
         let mut file = OpenOptions::new()
             .create_new(true)
             .write(true)
             .open(&temporary)?;
-        file.write_all(&encrypted)?;
+        file.write_all(serialized)?;
         file.sync_all()?;
         drop(file);
 
-        install_cloudkit_read_authentication_cache(&temporary, &destination)?;
-        if fs::read(&destination)? != encrypted {
-            return Err(anyhow!(
-                "CloudKit read-authentication cache replacement verification failed"
-            ));
+        install_state_file_atomically(&temporary, &destination)?;
+        if fs::read(&destination)? != serialized {
+            return Err(anyhow!("State replacement verification failed"));
         }
+        OpenOptions::new()
+            .write(true)
+            .open(&destination)?
+            .sync_all()?;
         #[cfg(target_os = "android")]
-        File::open(directory)?.sync_all()?;
+        File::open(canonical_directory)?.sync_all()?;
         Ok(())
     })();
     if result.is_err() {
@@ -6999,8 +7435,111 @@ fn persist_cloudkit_read_authentication_cache(
     result
 }
 
+fn persist_login_state_file(
+    directory: &std::path::Path,
+    file_name: &str,
+    serialized: &[u8],
+) -> anyhow::Result<()> {
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    {
+        persist_state_bytes_atomically(directory, file_name, file_name, serialized)
+    }
+    #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+    {
+        let destination = directory.join(file_name);
+        fs::write(&destination, serialized)?;
+        File::open(destination)?.sync_all()?;
+        Ok(())
+    }
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+fn persist_runtime_state_file(
+    canonical_directory: &std::path::Path,
+    file_name: &str,
+    serialized: &[u8],
+    expected_generation: u64,
+) -> anyhow::Result<()> {
+    let _write_guard = cloudkit_state_file_write_guard()?;
+    if !cloudkit_login_generation_is_current(canonical_directory, expected_generation)? {
+        return Err(anyhow!("Runtime state writer was superseded"));
+    }
+    persist_state_bytes_atomically(canonical_directory, file_name, file_name, serialized)
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+fn persist_runtime_plist_state<T: serde::Serialize>(
+    canonical_directory: &std::path::Path,
+    file_name: &str,
+    value: &T,
+    expected_generation: u64,
+) -> anyhow::Result<()> {
+    let mut serialized = Vec::new();
+    plist::to_writer_xml(&mut serialized, value)?;
+    persist_runtime_state_file(
+        canonical_directory,
+        file_name,
+        &serialized,
+        expected_generation,
+    )
+}
+
+#[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+fn persist_runtime_plist_state<T: serde::Serialize>(
+    directory: &std::path::Path,
+    file_name: &str,
+    value: &T,
+) -> anyhow::Result<()> {
+    let mut serialized = Vec::new();
+    plist::to_writer_xml(&mut serialized, value)?;
+    persist_login_state_file(directory, file_name, &serialized)
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+fn persist_gsa_config_atomically(
+    canonical_directory: &std::path::Path,
+    config: &GSAConfig,
+) -> anyhow::Result<()> {
+    let mut serialized = Vec::new();
+    plist::to_writer_xml(&mut serialized, config)?;
+    persist_state_bytes_atomically(canonical_directory, "gsa.plist", "gsa", &serialized)
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+fn persist_cloudkit_read_authentication_cache(
+    directory: &PathBuf,
+    username: &str,
+    mme_auth_token: &str,
+    cloudkit_token: &str,
+    refreshed: SystemTime,
+) -> anyhow::Result<String> {
+    let canonical_directory = canonical_cloudkit_state_directory(directory)?;
+    let _storage_guard = cloudkit_read_authentication_storage_guard()?;
+    let generation_id = Uuid::new_v4().to_string();
+    let cached = CachedCloudKitReadAuthentication {
+        schema_version: CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION,
+        generation_id: generation_id.clone(),
+        username: username.to_owned(),
+        refreshed_at_millis: systemtime_to_millis(refreshed),
+        mme_auth_token: mme_auth_token.to_owned(),
+        cloudkit_token: cloudkit_token.to_owned(),
+    };
+    let mut serialized = Vec::new();
+    plist::to_writer_binary(Cursor::new(&mut serialized), &cached)?;
+    let encrypted = cloudkit_read_authentication_key(&canonical_directory)?
+        .encrypt(&serialized, &mut EncryptMode::Gcm)?;
+
+    persist_state_bytes_atomically(
+        &canonical_directory,
+        CLOUDKIT_READ_AUTHENTICATION_CACHE_FILE,
+        "cloudkit_read_authentication",
+        &encrypted,
+    )?;
+    Ok(generation_id)
+}
+
 #[cfg(target_os = "android")]
-fn install_cloudkit_read_authentication_cache(
+fn install_state_file_atomically(
     temporary: &std::path::Path,
     destination: &std::path::Path,
 ) -> anyhow::Result<()> {
@@ -7009,7 +7548,7 @@ fn install_cloudkit_read_authentication_cache(
 }
 
 #[cfg(target_os = "windows")]
-fn install_cloudkit_read_authentication_cache(
+fn install_state_file_atomically(
     temporary: &std::path::Path,
     destination: &std::path::Path,
 ) -> anyhow::Result<()> {
@@ -7025,8 +7564,22 @@ fn install_cloudkit_read_authentication_cache(
 fn load_cloudkit_read_authentication_cache(
     directory: &PathBuf,
     expected_username: &str,
-) -> anyhow::Result<Option<(String, String, SystemTime)>> {
+) -> anyhow::Result<Option<(String, String, SystemTime, String)>> {
+    let canonical_directory = canonical_cloudkit_state_directory(directory)?;
     let _storage_guard = cloudkit_read_authentication_storage_guard()?;
+    let Some(cached) = read_cloudkit_read_authentication_cache_locked(&canonical_directory)? else {
+        return Ok(None);
+    };
+    cached
+        .into_tokens_for_account(expected_username)
+        .map(Some)
+        .ok_or_else(|| anyhow!("CloudKit read-authentication cache identity is invalid"))
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+fn read_cloudkit_read_authentication_cache_locked(
+    directory: &std::path::Path,
+) -> anyhow::Result<Option<CachedCloudKitReadAuthentication>> {
     let path = directory.join(CLOUDKIT_READ_AUTHENTICATION_CACHE_FILE);
     let mut file = match File::open(path) {
         Ok(file) => file,
@@ -7046,18 +7599,40 @@ fn load_cloudkit_read_authentication_cache(
         return Err(anyhow!("CloudKit read-authentication cache is too large"));
     }
     let decrypted =
-        cloudkit_read_authentication_key()?.decrypt(&encrypted, &mut EncryptMode::Gcm)?;
+        cloudkit_read_authentication_key(directory)?.decrypt(&encrypted, &mut EncryptMode::Gcm)?;
     let cached: CachedCloudKitReadAuthentication = plist::from_bytes(&decrypted)?;
-    cached
-        .into_tokens_for_account(expected_username)
-        .map(Some)
-        .ok_or_else(|| anyhow!("CloudKit read-authentication cache identity is invalid"))
+    Ok(Some(cached))
 }
 
 #[cfg(any(target_os = "android", target_os = "windows"))]
 fn clear_cloudkit_read_authentication_cache(directory: &PathBuf) -> anyhow::Result<()> {
+    let canonical_directory = canonical_cloudkit_state_directory(directory)?;
     let _storage_guard = cloudkit_read_authentication_storage_guard()?;
-    let key_result = keystore().destroy_key(CLOUDKIT_READ_AUTHENTICATION_KEY_ALIAS);
+    clear_cloudkit_read_authentication_cache_locked(&canonical_directory)
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+fn clear_cloudkit_read_authentication_cache_generation(
+    directory: &std::path::Path,
+    expected_generation_id: &str,
+) -> anyhow::Result<bool> {
+    let canonical_directory = canonical_cloudkit_state_directory(directory)?;
+    let _storage_guard = cloudkit_read_authentication_storage_guard()?;
+    let Some(cached) = read_cloudkit_read_authentication_cache_locked(&canonical_directory)? else {
+        return Ok(false);
+    };
+    if !cached.has_generation(expected_generation_id) {
+        return Ok(false);
+    }
+    clear_cloudkit_read_authentication_cache_locked(&canonical_directory)?;
+    Ok(true)
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+fn clear_cloudkit_read_authentication_cache_locked(
+    directory: &std::path::Path,
+) -> anyhow::Result<()> {
+    let key_result = keystore().destroy_key(&cloudkit_read_authentication_key_alias(directory));
     let file_result = match fs::remove_file(directory.join(CLOUDKIT_READ_AUTHENTICATION_CACHE_FILE))
     {
         Ok(()) => Ok(()),
@@ -7071,12 +7646,25 @@ fn clear_cloudkit_read_authentication_cache(directory: &PathBuf) -> anyhow::Resu
 
 #[cfg(test)]
 mod cloudkit_read_authentication_cache_tests {
-    use super::{CachedCloudKitReadAuthentication, CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION};
-    use std::time::SystemTime;
+    use super::{
+        canonical_cloudkit_state_directory, cloudkit_login_advance_generation,
+        cloudkit_login_consume_admission, cloudkit_login_register_admission,
+        cloudkit_login_validate_admission, cloudkit_read_authentication_key_alias,
+        cloudkit_read_authentication_lifecycle_gate, reset_user, CachedCloudKitReadAuthentication,
+        CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION,
+    };
+    use std::{
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
+        time::{Duration, SystemTime},
+    };
 
     fn cache(username: &str, schema_version: u32) -> CachedCloudKitReadAuthentication {
         CachedCloudKitReadAuthentication {
             schema_version,
+            generation_id: "test-generation".to_owned(),
             username: username.to_owned(),
             refreshed_at_millis: 1_000,
             mme_auth_token: "test-mme-token".to_owned(),
@@ -7086,7 +7674,7 @@ mod cloudkit_read_authentication_cache_tests {
 
     #[test]
     fn read_authentication_payload_is_bound_to_the_same_account() {
-        let (mme_auth_token, cloudkit_token, refreshed) = cache(
+        let (mme_auth_token, cloudkit_token, refreshed, generation_id) = cache(
             "person@example.com",
             CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION,
         )
@@ -7095,6 +7683,7 @@ mod cloudkit_read_authentication_cache_tests {
 
         assert_eq!(mme_auth_token, "test-mme-token");
         assert_eq!(cloudkit_token, "test-cloudkit-token");
+        assert_eq!(generation_id, "test-generation");
         assert_eq!(
             refreshed.duration_since(SystemTime::UNIX_EPOCH).unwrap(),
             std::time::Duration::from_secs(1)
@@ -7118,6 +7707,45 @@ mod cloudkit_read_authentication_cache_tests {
     }
 
     #[test]
+    fn persisted_generation_compare_rejects_stale_invalidator() {
+        let cached = cache(
+            "person@example.com",
+            CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION,
+        );
+        assert!(cached.has_generation("test-generation"));
+        assert!(!cached.has_generation("older-generation"));
+        assert!(!cached.has_generation(""));
+    }
+
+    #[test]
+    fn cache_key_alias_is_scoped_to_canonical_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "openbubbles-cloudkit-key-alias-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let first = root.join("first");
+        let second = root.join("second");
+        std::fs::create_dir_all(&first).expect("create first cache directory");
+        std::fs::create_dir_all(&second).expect("create second cache directory");
+        let first = canonical_cloudkit_state_directory(&first).expect("canonical first directory");
+        let second =
+            canonical_cloudkit_state_directory(&second).expect("canonical second directory");
+        let first_alias = canonical_cloudkit_state_directory(&first.join("."))
+            .expect("canonical alias for first directory");
+
+        assert_eq!(
+            cloudkit_read_authentication_key_alias(&first),
+            cloudkit_read_authentication_key_alias(&first_alias)
+        );
+        assert_ne!(
+            cloudkit_read_authentication_key_alias(&first),
+            cloudkit_read_authentication_key_alias(&second)
+        );
+
+        std::fs::remove_dir_all(&root).expect("remove key alias test directories");
+    }
+
+    #[test]
     fn read_authentication_payload_rejects_missing_required_token() {
         let mut cached = cache(
             "person@example.com",
@@ -7132,10 +7760,119 @@ mod cloudkit_read_authentication_cache_tests {
             "person@example.com",
             CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION,
         );
+        cached.generation_id.clear();
+        assert!(cached
+            .into_tokens_for_account("person@example.com")
+            .is_none());
+
+        let mut cached = cache(
+            "person@example.com",
+            CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION,
+        );
         cached.cloudkit_token.clear();
         assert!(cached
             .into_tokens_for_account("person@example.com")
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn lifecycle_gate_serializes_restore_against_logout_for_canonical_path() {
+        let directory = std::env::temp_dir().join(format!(
+            "openbubbles-cloudkit-read-auth-lifecycle-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&directory).expect("create lifecycle test directory");
+
+        let restore_gate =
+            cloudkit_read_authentication_lifecycle_gate(&directory).expect("restore gate");
+        let logout_gate =
+            cloudkit_read_authentication_lifecycle_gate(&directory.join(".")).expect("logout gate");
+        assert!(Arc::ptr_eq(&restore_gate, &logout_gate));
+
+        let restore_guard = restore_gate.lock().await;
+        let logout_entered = Arc::new(AtomicBool::new(false));
+        let logout_entered_task = logout_entered.clone();
+        let (attempted_tx, attempted_rx) = tokio::sync::oneshot::channel();
+        let logout_task = tokio::spawn(async move {
+            let _ = attempted_tx.send(());
+            let _logout_guard = logout_gate.lock().await;
+            logout_entered_task.store(true, Ordering::SeqCst);
+        });
+
+        attempted_rx.await.expect("logout attempted lifecycle lock");
+        tokio::task::yield_now().await;
+        assert!(!logout_entered.load(Ordering::SeqCst));
+
+        drop(restore_guard);
+        tokio::time::timeout(Duration::from_secs(1), logout_task)
+            .await
+            .expect("logout acquired lifecycle lock")
+            .expect("logout task completed");
+        assert!(logout_entered.load(Ordering::SeqCst));
+
+        std::fs::remove_dir(&directory).expect("remove lifecycle test directory");
+    }
+
+    #[test]
+    fn generation_advance_invalidates_stale_login_admission() {
+        let directory = std::env::temp_dir().join(format!(
+            "openbubbles-cloudkit-login-generation-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&directory).expect("create login generation test directory");
+        let canonical_directory =
+            canonical_cloudkit_state_directory(&directory).expect("canonical directory");
+        let account_key = 41usize;
+
+        let initial_generation =
+            cloudkit_login_advance_generation(&canonical_directory).expect("initial generation");
+        cloudkit_login_register_admission(&canonical_directory, initial_generation, account_key)
+            .expect("register initial admission");
+        assert_eq!(
+            cloudkit_login_validate_admission(&canonical_directory, account_key)
+                .expect("initial admission is current"),
+            initial_generation
+        );
+
+        let replacement_generation =
+            cloudkit_login_advance_generation(&canonical_directory).expect("advance generation");
+        assert!(replacement_generation > initial_generation);
+        assert!(cloudkit_login_validate_admission(&canonical_directory, account_key).is_err());
+        assert!(cloudkit_login_register_admission(
+            &canonical_directory,
+            initial_generation,
+            account_key,
+        )
+        .is_err());
+
+        cloudkit_login_register_admission(
+            &canonical_directory,
+            replacement_generation,
+            account_key,
+        )
+        .expect("register replacement admission");
+        cloudkit_login_consume_admission(&canonical_directory, replacement_generation, account_key)
+            .expect("consume replacement admission");
+        assert!(cloudkit_login_validate_admission(&canonical_directory, account_key).is_err());
+
+        std::fs::remove_dir(&directory).expect("remove login generation test directory");
+    }
+
+    #[test]
+    fn reset_user_surfaces_deletion_failure_before_accepting_new_state() {
+        let directory = std::env::temp_dir().join(format!(
+            "openbubbles-cloudkit-reset-failure-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(directory.join("gsa.plist"))
+            .expect("create undeletable-as-file GSA path");
+        std::fs::write(directory.join("findmy.plist"), b"old-account-state")
+            .expect("write old account state");
+
+        assert!(reset_user(&directory).is_err());
+        assert!(directory.join("findmy.plist").is_file());
+
+        std::fs::remove_dir_all(&directory).expect("remove reset failure test directory");
     }
 }
 
@@ -7145,15 +7882,34 @@ pub async fn do_login(
     finish: Option<UpdateAccountFinish>,
     os_config: &JoinedOSConfig,
 ) -> anyhow::Result<IDSUser> {
-    let mut account = account.lock().await;
+    let requested_conf_dir = PathBuf::from_str(&path).unwrap();
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let conf_dir = canonical_cloudkit_state_directory(&requested_conf_dir)?;
+    #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+    let conf_dir = requested_conf_dir;
 
-    let conf_dir = PathBuf::from_str(&path).unwrap();
+    // The directory gate must be acquired before the account lock. Logout and
+    // account replacement take the same gate, advance the generation, and
+    // remove every outstanding admission before clearing persistent state.
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let canonical_conf_dir = conf_dir.clone();
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let lifecycle_gate = cloudkit_read_authentication_lifecycle_gate(&conf_dir)?;
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let _lifecycle_guard = lifecycle_gate.lock().await;
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let login_account_key = Arc::as_ptr(account) as usize;
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let expected_login_generation =
+        cloudkit_login_validate_admission(&canonical_conf_dir, login_account_key)?;
+
+    let mut account = account.lock().await;
 
     account
         .update_postdata("Apple Device", None, &["icloud", "imessage", "facetime"])
         .await?;
 
-    let Some(pet) = account.get_pet() else {
+    let Some(_pet) = account.get_pet() else {
         return Err(anyhow!("No pet!"));
     };
     let Some(spd) = &account.spd else {
@@ -7167,23 +7923,24 @@ pub async fn do_login(
         spd.contains_key("DsPrsId"),
         spd.contains_key("adsid")
     );
-    let acname = spd
+    let _acname = spd
         .get("acname")
         .ok_or(anyhow!("No acname!"))?
         .as_string()
-        .unwrap()
+        .ok_or_else(|| anyhow!("Invalid acname!"))?
         .to_string();
     let dsid = spd
         .get("DsPrsId")
         .ok_or(anyhow!("No dsid!"))?
         .as_unsigned_integer()
-        .unwrap()
+        .ok_or_else(|| anyhow!("Invalid dsid!"))?
         .to_string();
     let adsid = spd
         .get("adsid")
         .ok_or(anyhow!("No adsid!"))?
         .as_string()
-        .unwrap();
+        .ok_or_else(|| anyhow!("Invalid adsid!"))?
+        .to_owned();
 
     let delegates = if let Some(finish) = finish {
         finish
@@ -7203,103 +7960,122 @@ pub async fn do_login(
         .await?
     };
 
+    let ids = delegates
+        .ids
+        .ok_or_else(|| anyhow!("IDS delegate was missing"))?;
     let mobileme = delegates
         .mobileme
         .ok_or_else(|| anyhow!("MobileMe delegate was missing"))?;
-    let username = account.username.clone().unwrap();
-
-    plist::to_file_xml(
-        conf_dir.join("gsa.plist"),
-        &GSAConfig {
-            username: username.clone(),
-            encrypted_password: GSAConfig::encrypt(&account.hashed_password.clone().unwrap())?,
-            postdata_done: Some(true),
-        },
-    )
-    .unwrap();
-
-    let path = conf_dir.join("statuskit.plist");
-    std::fs::write(
-        &path,
-        plist_to_string(&StatusKitState {
-            my_key: None,
-            ..plist::from_file(&path).unwrap_or_default()
-        })
-        .unwrap(),
-    )
-    .unwrap();
+    let username = account
+        .username
+        .clone()
+        .ok_or_else(|| anyhow!("Apple Account username was missing"))?;
+    let hashed_password = account
+        .hashed_password
+        .clone()
+        .ok_or_else(|| anyhow!("Apple Account password digest was missing"))?;
+    let gsa = GSAConfig {
+        username: username.clone(),
+        encrypted_password: GSAConfig::encrypt(&hashed_password)?,
+        postdata_done: Some(true),
+    };
 
     let findmy = FindMyState::new(dsid.clone());
+    let shared_streams = SharedStreamsState::new(dsid.clone(), &mobileme);
+    let cloudkitstate = CloudKitState::new(dsid.clone())
+        .ok_or_else(|| anyhow!("CloudKit delegate tokens were missing"))?;
+    let keychain = KeychainClientState::new(dsid.clone(), adsid, &mobileme)
+        .ok_or_else(|| anyhow!("Keychain delegate tokens were missing"))?;
 
-    let id_path = conf_dir.join("findmy.plist");
-    if !id_path.exists() {
-        std::fs::write(id_path, findmy.encode()?).unwrap();
+    debug!("Spd finish parse");
+
+    // Remote authentication must succeed before the first local state write.
+    // gsa.plist is written last and acts as the local commit marker.
+    let user = authenticate_apple(ids, &*os_config.config()).await?;
+
+    let statuskit_path = conf_dir.join("statuskit.plist");
+    let statuskit = plist_to_string(&StatusKitState {
+        my_key: None,
+        ..plist::from_file(&statuskit_path).unwrap_or_default()
+    })?;
+    persist_login_state_file(&conf_dir, "statuskit.plist", statuskit.as_bytes())?;
+
+    let findmy_path = conf_dir.join("findmy.plist");
+    if !findmy_path.exists() {
+        let encoded = findmy.encode()?;
+        persist_login_state_file(&conf_dir, "findmy.plist", &encoded)?;
     }
 
-    let shared_streams = SharedStreamsState::new(dsid.clone(), &mobileme);
     if let Some(shared_streams) = shared_streams {
-        let id_path = conf_dir.join("sharedstreams.plist");
-        if !id_path.exists() {
-            std::fs::write(id_path, plist_to_string(&shared_streams).unwrap()).unwrap();
+        let shared_streams_path = conf_dir.join("sharedstreams.plist");
+        if !shared_streams_path.exists() {
+            let encoded = plist_to_string(&shared_streams)?;
+            persist_login_state_file(&conf_dir, "sharedstreams.plist", encoded.as_bytes())?;
         }
     } else {
         warn!("missing shared streams tokens!");
     }
 
-    let cloudkitstate = CloudKitState::new(dsid.clone());
-    if let Some(cloudkitstate) = cloudkitstate {
-        let id_path = conf_dir.join("cloudkit.plist");
-        if !id_path.exists() {
-            std::fs::write(id_path, plist_to_string(&cloudkitstate).unwrap()).unwrap();
-        }
-    } else {
-        warn!("missing cloudkit tokens!");
+    let cloudkit_path = conf_dir.join("cloudkit.plist");
+    if !cloudkit_path.exists() {
+        let encoded = plist_to_string(&cloudkitstate)?;
+        persist_login_state_file(&conf_dir, "cloudkit.plist", encoded.as_bytes())?;
     }
 
-    let keychain = KeychainClientState::new(dsid.clone(), adsid.to_string(), &mobileme);
-    if let Some(keychain) = keychain {
-        let id_path = conf_dir.join("keychain.plist");
-        if !id_path.exists() {
-            std::fs::write(id_path, plist_to_string(&keychain).unwrap()).unwrap();
-        }
-    } else {
-        warn!("missing keychain tokens!");
+    let keychain_path = conf_dir.join("keychain.plist");
+    if !keychain_path.exists() {
+        let encoded = plist_to_string(&keychain)?;
+        persist_login_state_file(&conf_dir, "keychain.plist", encoded.as_bytes())?;
     }
-
-    debug!("Spd finish parse");
-
-    let user = authenticate_apple(delegates.ids.unwrap(), &*os_config.config()).await?;
 
     #[cfg(any(target_os = "android", target_os = "windows"))]
-    match (
-        mobileme.tokens.get("mmeAuthToken"),
-        mobileme.tokens.get("cloudKitToken"),
-    ) {
-        (Some(mme_auth_token), Some(cloudkit_token)) => {
-            if persist_cloudkit_read_authentication_cache(
-                &conf_dir,
-                &username,
-                mme_auth_token,
-                cloudkit_token,
-                SystemTime::now(),
-            )
-            .is_err()
-            {
-                if clear_cloudkit_read_authentication_cache(&conf_dir).is_err() {
-                    warn!("CloudKit read-authentication persistence and cleanup both failed");
-                } else {
-                    warn!("CloudKit read-authentication cache could not be persisted");
-                }
+    {
+        let (mme_auth_token, cloudkit_token) = match (
+            mobileme.tokens.get("mmeAuthToken"),
+            mobileme.tokens.get("cloudKitToken"),
+        ) {
+            (Some(mme_auth_token), Some(cloudkit_token)) => (mme_auth_token, cloudkit_token),
+            _ => {
+                clear_cloudkit_read_authentication_cache(&conf_dir)?;
+                return Err(anyhow!("CloudKit read-authentication tokens were missing"));
             }
-        }
-        _ => {
-            if clear_cloudkit_read_authentication_cache(&conf_dir).is_err() {
-                warn!("Missing CloudKit read-authentication tokens could not be cleared");
-            } else {
-                warn!("CloudKit read-authentication tokens were missing after login");
-            }
+        };
+        if let Err(persist_error) = persist_cloudkit_read_authentication_cache(
+            &conf_dir,
+            &username,
+            mme_auth_token,
+            cloudkit_token,
+            SystemTime::now(),
+        ) {
+            return match clear_cloudkit_read_authentication_cache(&conf_dir) {
+                Ok(()) => Err(anyhow!(
+                    "CloudKit read-authentication cache could not be persisted: {persist_error}"
+                )),
+                Err(cleanup_error) => Err(anyhow!(
+                    "CloudKit read-authentication persistence failed ({persist_error}); cleanup failed ({cleanup_error})"
+                )),
+            };
         }
     }
+
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    if let Err(gsa_error) = persist_gsa_config_atomically(&conf_dir, &gsa) {
+        return match clear_cloudkit_read_authentication_cache(&conf_dir) {
+            Ok(()) => Err(anyhow!("GSA state could not be committed: {gsa_error}")),
+            Err(cleanup_error) => Err(anyhow!(
+                "GSA state commit failed ({gsa_error}); CloudKit cache cleanup failed ({cleanup_error})"
+            )),
+        };
+    }
+    #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+    plist::to_file_xml(conf_dir.join("gsa.plist"), &gsa)?;
+
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    cloudkit_login_consume_admission(
+        &canonical_conf_dir,
+        expected_login_generation,
+        login_account_key,
+    )?;
 
     Ok(user)
 }
@@ -7322,7 +8098,31 @@ pub async fn try_auth(
     Arc<Mutex<AppleAccount<DefaultAnisetteProvider>>>,
     LoginState,
 )> {
-    let conf_dir = PathBuf::from_str(&path).unwrap();
+    let requested_conf_dir = PathBuf::from_str(&path).unwrap();
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let conf_dir = canonical_cloudkit_state_directory(&requested_conf_dir)?;
+    #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+    let conf_dir = requested_conf_dir;
+
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let (canonical_conf_dir, expected_login_generation) = if creds.is_some() {
+        let canonical_conf_dir = conf_dir.clone();
+        let expected_login_generation = revoke_clear_and_reset_cloudkit_state(&conf_dir).await?;
+        (canonical_conf_dir, expected_login_generation)
+    } else {
+        let canonical_conf_dir = conf_dir.clone();
+        let lifecycle_gate = cloudkit_read_authentication_lifecycle_gate(&conf_dir)?;
+        let _lifecycle_guard = lifecycle_gate.lock().await;
+        let _state_write_guard = cloudkit_state_file_write_guard()?;
+        let expected_login_generation = cloudkit_login_advance_generation(&canonical_conf_dir)?;
+        (canonical_conf_dir, expected_login_generation)
+    };
+
+    #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+    if creds.is_some() {
+        reset_user(&conf_dir)?;
+    }
+
     info!("Here");
     let mut apple_account = AppleAccount::new_with_anisette(
         get_login_config(&conf_dir, conf, conn).await,
@@ -7330,15 +8130,6 @@ pub async fn try_auth(
     )?;
 
     let result = if let Some((username, password)) = creds {
-        #[cfg(any(target_os = "android", target_os = "windows"))]
-        if revoke_registered_cloudkit_read_authentication(&conf_dir)
-            .await
-            .is_err()
-        {
-            warn!("CloudKit read-authentication revocation failed during account replacement");
-        }
-        reset_user(&path);
-
         let mut password_hasher = sha2::Sha256::new();
         password_hasher.update(&password.as_bytes());
         let hashed_password = password_hasher.finalize();
@@ -7353,6 +8144,17 @@ pub async fn try_auth(
     info!("Here3");
 
     let account = Arc::new(Mutex::new(apple_account));
+
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    {
+        let lifecycle_gate = cloudkit_read_authentication_lifecycle_gate(&conf_dir)?;
+        let _lifecycle_guard = lifecycle_gate.lock().await;
+        cloudkit_login_register_admission(
+            &canonical_conf_dir,
+            expected_login_generation,
+            Arc::as_ptr(&account) as usize,
+        )?;
+    }
 
     info!("Here6");
     Ok((account, login_state))
@@ -8313,32 +9115,36 @@ pub fn cancel_poll(cancel: &mpsc::Sender<()>) {
     let _ = cancel.try_send(());
 }
 
-fn reset_user(path: &str) {
-    let dir = PathBuf::from_str(path).unwrap();
+fn remove_file_if_present(path: &std::path::Path) -> anyhow::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
 
+fn reset_user(directory: &std::path::Path) -> anyhow::Result<()> {
     #[cfg(any(target_os = "android", target_os = "windows"))]
-    if clear_cloudkit_read_authentication_cache(&dir).is_err() {
-        warn!("CloudKit read-authentication storage cleanup failed");
+    let _write_guard = cloudkit_state_file_write_guard()?;
+    for file_name in [
+        "gsa.plist",
+        "findmy.plist",
+        "facetime.plist",
+        "cloudkit.plist",
+        "keychain.plist",
+        "passwords.plist",
+        "sharedstreams.plist",
+    ] {
+        remove_file_if_present(&directory.join(file_name))?;
     }
 
-    let _ = std::fs::remove_file(dir.join("gsa.plist"));
-    let _ = std::fs::remove_file(dir.join("findmy.plist"));
-    let _ = std::fs::remove_file(dir.join("facetime.plist"));
-    let _ = std::fs::remove_file(dir.join("cloudkit.plist"));
-    let _ = std::fs::remove_file(dir.join("keychain.plist"));
-    let _ = std::fs::remove_file(dir.join("passwords.plist"));
-    let _ = std::fs::remove_file(dir.join("sharedstreams.plist"));
-
-    let path = dir.join("statuskit.plist");
-    std::fs::write(
-        &path,
-        plist_to_string(&StatusKitState {
-            my_key: None,
-            ..plist::from_file(&path).unwrap_or_default()
-        })
-        .unwrap(),
-    )
-    .unwrap();
+    let statuskit_path = directory.join("statuskit.plist");
+    let statuskit = plist_to_string(&StatusKitState {
+        my_key: None,
+        ..plist::from_file(&statuskit_path).unwrap_or_default()
+    })?;
+    persist_login_state_file(directory, "statuskit.plist", statuskit.as_bytes())?;
+    Ok(())
 }
 
 pub async fn reset_state(
@@ -8352,53 +9158,80 @@ pub async fn reset_state(
 ) -> anyhow::Result<()> {
     // tell any poll to stop
     let _ = cancel.try_send(());
-    let dir = PathBuf::from_str(&path).unwrap();
+    let requested_directory = PathBuf::from_str(&path).unwrap();
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let dir = canonical_cloudkit_state_directory(&requested_directory)?;
+    #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+    let dir = requested_directory;
+
+    // Keep logout serialized through the remote account logout and every local
+    // state mutation. A new login cannot enter after local clearing but before
+    // the old account's server session has been invalidated.
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    let _cloudkit_lifecycle_guard = if logout || reset_hw {
+        let lifecycle_gate = cloudkit_read_authentication_lifecycle_gate(&dir)?;
+        let lifecycle_guard = lifecycle_gate.lock_owned().await;
+        if logout {
+            revoke_clear_and_reset_cloudkit_state_locked(&dir).await?;
+        } else {
+            cloudkit_login_advance_generation(&dir)?;
+            revoke_registered_cloudkit_read_authentication(&dir).await?;
+            clear_cloudkit_read_authentication_cache(&dir)?;
+        }
+        Some(lifecycle_guard)
+    } else {
+        None
+    };
 
     info!("c");
     if logout {
-        #[cfg(any(target_os = "android", target_os = "windows"))]
-        if revoke_registered_cloudkit_read_authentication(&dir)
-            .await
-            .is_err()
-        {
-            warn!("CloudKit read-authentication revocation failed during logout");
-        }
-        if let Some(hardware) = read_hardware(path.clone()) {
+        #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+        reset_user(&dir)?;
+        if let Some(hardware) = read_hardware(dir.to_string_lossy().into_owned()) {
             // try deregistering from iMessage, but if it fails we don't really care
             if let Ok(identity) = IDSNGMIdentity::restore(hardware.identity.as_ref(), "openbubbles")
             {
-                let _ = register(
+                if let Err(error) = register(
                     &*config.config(),
                     &*aps.state.read().await,
                     &[],
                     &mut [],
                     &identity,
                 )
-                .await;
+                .await
+                {
+                    warn!("Best-effort iMessage deregistration failed: {error}");
+                }
             }
         }
         if let Some(account) = &account {
-            let _ = account.lock().await.logout_all("Apple Device").await;
+            if let Err(error) = account.lock().await.logout_all("Apple Device").await {
+                warn!("Best-effort remote Apple Account logout failed: {error}");
+            }
         }
-
-        reset_user(&path);
     }
-    let _ = std::fs::remove_file(dir.join("id.plist"));
-    if let Ok(mut cache) = plist::from_file::<_, Dictionary>(dir.join("id_cache.plist")) {
+    remove_file_if_present(&dir.join("id.plist"))?;
+    let id_cache_path = dir.join("id_cache.plist");
+    if id_cache_path.exists() {
+        let mut cache = plist::from_file::<_, Dictionary>(&id_cache_path)?;
         // keep replay counters which are nessesary if our identity doesn't change
         cache
             .get_mut("cache")
-            .expect("No cache?")
+            .ok_or_else(|| anyhow!("Identity cache dictionary was missing"))?
             .as_dictionary_mut()
-            .unwrap()
+            .ok_or_else(|| anyhow!("Identity cache entry was not a dictionary"))?
             .clear();
-        plist::to_file_xml(dir.join("id_cache.plist"), &cache)?;
+        let mut encoded = Vec::new();
+        plist::to_writer_xml(&mut encoded, &cache)?;
+        persist_login_state_file(&dir, "id_cache.plist", &encoded)?;
     }
 
     if reset_hw {
-        let _ = std::fs::remove_file(dir.join("hw_info.plist"));
-        let _ = std::fs::remove_file(dir.join("id_cache.plist")); // our identity is wiped so we can wipe our counters too
-        let _ = std::fs::remove_file(dir.join("statuskit.plist"));
+        #[cfg(any(target_os = "android", target_os = "windows"))]
+        let _state_write_guard = cloudkit_state_file_write_guard()?;
+        remove_file_if_present(&dir.join("hw_info.plist"))?;
+        remove_file_if_present(&dir.join("id_cache.plist"))?; // our identity is wiped so we can wipe our counters too
+        remove_file_if_present(&dir.join("statuskit.plist"))?;
     }
 
     Ok(())

@@ -15,23 +15,6 @@ use std::{
     sync::Arc,
 };
 
-use flate2::read::GzDecoder;
-use log::warn;
-use prost::Message as _;
-use rustpush::{
-    cloud_messages::{
-        CloudAttachment, CloudChat, CloudMessage, CloudMessagesClient, MESSAGES_SERVICE,
-    },
-    cloudkit::{classify_cloudkit_failure, pcs_keys_for_record, CloudKitFailureClass},
-    cloudkit_operation_gate::CloudKitReadAuthenticationPermit,
-    cloudkit_proto::{
-        record::{field::Value, Field},
-        retrieve_changes_response::RecordChange,
-        CloudKitEncryptor, CloudKitRecord, Record,
-    },
-    pcs::PCSEncryptor,
-    DefaultAnisetteProvider, PushError,
-};
 use crate::{
     cloud_sync_canonical_converter::{
         convert_attachment, convert_chat_with_diagnostic, convert_message, convert_tombstone,
@@ -50,6 +33,25 @@ use crate::{
     },
     cloud_sync_protector,
     cloud_sync_semantic_identity::CloudSemanticIdentifierHasher,
+};
+use flate2::read::GzDecoder;
+use log::warn;
+use prost::Message as _;
+use rustpush::{
+    cloud_messages::{
+        cloudmessagesp::{ChatProto, MessageProto, MessageProto2, MessageProto3, MessageProto4},
+        CloudAttachment, CloudChat, CloudMessage, CloudMessagesClient, CloudParticipant,
+        MESSAGES_SERVICE,
+    },
+    cloudkit::{classify_cloudkit_failure, pcs_keys_for_record, CloudKitFailureClass},
+    cloudkit_operation_gate::CloudKitReadAuthenticationPermit,
+    cloudkit_proto::{
+        record::{field::Value, Field},
+        retrieve_changes_response::RecordChange,
+        CloudKitEncryptor, CloudKitRecord, Record,
+    },
+    pcs::PCSEncryptor,
+    DefaultAnisetteProvider, PushError,
 };
 
 const MAX_DECOMPRESSED_FIELD_BYTES: usize = 16 * 1024 * 1024;
@@ -390,25 +392,90 @@ fn preflight_record_ciphertext_keys(
     Ok(())
 }
 
+/// V2 must not inherit the legacy encryptor's `unwrap_or_default` behavior.
+/// The derived record decoder catches panics and returns a typed error, so a
+/// content-free panic here converts every PCS failure into fail-closed
+/// `DecoderFailure` without exposing plaintext or ciphertext.
+struct StrictCloudKitV2Decryptor<'a> {
+    inner: &'a PCSEncryptor,
+}
+
+impl CloudKitEncryptor for StrictCloudKitV2Decryptor<'_> {
+    fn decrypt_data(&self, data: &[u8], field_name: &str) -> Vec<u8> {
+        self.inner
+            .decrypt_data_checked(data, field_name)
+            .unwrap_or_else(|_| panic!("CloudKit V2 PCS decryption failed"))
+    }
+
+    fn encrypt_data(&self, _: &[u8], _: &str) -> Vec<u8> {
+        panic!("CloudKit V2 semantic decoder attempted encryption")
+    }
+}
+
 #[derive(Clone, Copy)]
 struct GzipFieldSpec {
     name: &'static str,
     required: bool,
+    decoder_stage: &'static str,
+    decode: fn(&[u8]) -> Result<(), ()>,
 }
 
 impl GzipFieldSpec {
-    const fn required(name: &'static str) -> Self {
+    const fn required(
+        name: &'static str,
+        decoder_stage: &'static str,
+        decode: fn(&[u8]) -> Result<(), ()>,
+    ) -> Self {
         Self {
             name,
             required: true,
+            decoder_stage,
+            decode,
         }
     }
 
-    const fn optional(name: &'static str) -> Self {
+    const fn optional(
+        name: &'static str,
+        decoder_stage: &'static str,
+        decode: fn(&[u8]) -> Result<(), ()>,
+    ) -> Self {
         Self {
             name,
             required: false,
+            decoder_stage,
+            decode,
         }
+    }
+}
+
+fn decode_chat_proto(value: &[u8]) -> Result<(), ()> {
+    ChatProto::decode(value).map(|_| ()).map_err(|_| ())
+}
+
+fn decode_message_proto(value: &[u8]) -> Result<(), ()> {
+    MessageProto::decode(value).map(|_| ()).map_err(|_| ())
+}
+
+fn decode_message_proto_2(value: &[u8]) -> Result<(), ()> {
+    MessageProto2::decode(value).map(|_| ()).map_err(|_| ())
+}
+
+fn decode_message_proto_3(value: &[u8]) -> Result<(), ()> {
+    MessageProto3::decode(value).map(|_| ()).map_err(|_| ())
+}
+
+fn decode_message_proto_4(value: &[u8]) -> Result<(), ()> {
+    MessageProto4::decode(value).map(|_| ()).map_err(|_| ())
+}
+
+fn validate_nested_protobuf(
+    value: &[u8],
+    field: GzipFieldSpec,
+) -> Result<(), CloudTransientBridgeFailure> {
+    match catch_unwind(AssertUnwindSafe(|| (field.decode)(value))) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(())) => Err(decoder_failure_at(field.decoder_stage)),
+        Err(_) => Err(decoder_failure_at("nested_protobuf_panic")),
     }
 }
 
@@ -482,6 +549,51 @@ fn normalize_optional_empty_gzip_field(
         .record_field
         .retain(|candidate| field_name(candidate) != Some(field.name));
     true
+}
+
+fn empty_list_value_is_payload_free(value: &Value) -> bool {
+    value.bytes_value.is_none()
+        && value.signed_value.is_none()
+        && value.double_value.is_none()
+        && value.date_value.is_none()
+        && value.string_value.is_none()
+        && value.location_value.is_none()
+        && value.reference_value.is_none()
+        && value.asset_value.is_none()
+        && value.list_values.is_empty()
+        && value.package_value.is_none()
+}
+
+/// Removes only schema-known optional fields represented by Apple's
+/// payload-free `EMPTY_LIST` sentinel. Raw presence is captured before this
+/// normalization, so canonical conversion still distinguishes absence from an
+/// explicit empty sentinel.
+fn normalize_optional_empty_list_fields(
+    record: &mut Record,
+    presence: &CloudRawRecordPresence,
+    optional_fields: &[&str],
+) -> Result<(), CloudTransientBridgeFailure> {
+    for field in optional_fields {
+        if !presence.was_sent_as_empty_list(field) {
+            continue;
+        }
+        let candidate = record
+            .record_field
+            .iter()
+            .find(|candidate| field_name(candidate) == Some(field))
+            .ok_or(CloudTransientBridgeFailure::MalformedRecord)?;
+        let value = candidate
+            .value
+            .as_ref()
+            .ok_or(CloudTransientBridgeFailure::MalformedRecord)?;
+        if !empty_list_value_is_payload_free(value) {
+            return Err(CloudTransientBridgeFailure::MalformedRecord);
+        }
+        record
+            .record_field
+            .retain(|candidate| field_name(candidate) != Some(field));
+    }
+    Ok(())
 }
 
 fn non_gzip_header_stage(value: &[u8]) -> &'static str {
@@ -577,18 +689,126 @@ fn preflight_gzip_fields(
             );
             return Err(CloudTransientBridgeFailure::OversizedRecord);
         }
+        validate_nested_protobuf(&decompressed, *field)?;
     }
     Ok(())
 }
 
-fn typed_record<T: CloudKitRecord>(
+fn decode_cloud_chat_record<E: CloudKitEncryptor>(
+    record: &Record,
+    key: &E,
+) -> Result<CloudChat, CloudTransientBridgeFailure> {
+    match catch_unwind(AssertUnwindSafe(|| {
+        CloudChat::try_from_record_encrypted(&record.record_field, Some(key))
+    })) {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(_)) => Err(decoder_failure_at("typed_chat")),
+        Err(_) => Err(decoder_failure_at("typed_chat_panic")),
+    }
+}
+
+fn decode_cloud_message_record<E: CloudKitEncryptor>(
+    record: &Record,
+    key: &E,
+) -> Result<CloudMessage, CloudTransientBridgeFailure> {
+    match catch_unwind(AssertUnwindSafe(|| {
+        CloudMessage::try_from_record_encrypted(&record.record_field, Some(key))
+    })) {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(_)) => Err(decoder_failure_at("typed_message")),
+        Err(_) => Err(decoder_failure_at("typed_message_panic")),
+    }
+}
+
+fn decode_cloud_attachment_record<E: CloudKitEncryptor>(
+    record: &Record,
+    key: &E,
+) -> Result<CloudAttachment, CloudTransientBridgeFailure> {
+    match catch_unwind(AssertUnwindSafe(|| {
+        CloudAttachment::try_from_record_encrypted(&record.record_field, Some(key))
+    })) {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(_)) => Err(decoder_failure_at("typed_attachment")),
+        Err(_) => Err(decoder_failure_at("typed_attachment_panic")),
+    }
+}
+
+fn validate_participant_plaintext(value: &[u8]) -> Result<(), CloudTransientBridgeFailure> {
+    if value.len() > MAX_DECOMPRESSED_FIELD_BYTES {
+        return Err(CloudTransientBridgeFailure::OversizedRecord);
+    }
+    match catch_unwind(AssertUnwindSafe(|| {
+        plist::from_bytes::<CloudParticipant>(value)
+    })) {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(_)) => Err(decoder_failure_at("participant_list_element")),
+        Err(_) => Err(decoder_failure_at("participant_list_element_panic")),
+    }
+}
+
+/// The legacy vector implementation uses `filter_map`, which can silently
+/// remove a malformed participant. Validate every encrypted element before the
+/// legacy typed decoder sees the list, keeping the V2 transient path fail-closed.
+fn preflight_chat_participant_list_with_decryptor<F>(
+    record: &Record,
+    mut decrypt: F,
+) -> Result<(), CloudTransientBridgeFailure>
+where
+    F: FnMut(&[u8]) -> Result<Vec<u8>, CloudTransientBridgeFailure>,
+{
+    let Some(value) = record
+        .record_field
+        .iter()
+        .find(|field| field_name(field) == Some("ptcpts"))
+        .and_then(|field| field.value.as_ref())
+    else {
+        return Ok(());
+    };
+    if value.bytes_value.is_some()
+        || value.signed_value.is_some()
+        || value.double_value.is_some()
+        || value.date_value.is_some()
+        || value.string_value.is_some()
+        || value.location_value.is_some()
+        || value.reference_value.is_some()
+        || value.asset_value.is_some()
+        || value.package_value.is_some()
+    {
+        return Err(decoder_failure_at("participant_list_wire_shape"));
+    }
+    for element in &value.list_values {
+        if element.list_values.is_empty() && element.bytes_value.is_none() {
+            return Err(decoder_failure_at("participant_list_wire_shape"));
+        }
+        if !element.list_values.is_empty()
+            || element.signed_value.is_some()
+            || element.double_value.is_some()
+            || element.date_value.is_some()
+            || element.string_value.is_some()
+            || element.location_value.is_some()
+            || element.reference_value.is_some()
+            || element.asset_value.is_some()
+            || element.package_value.is_some()
+        {
+            return Err(decoder_failure_at("participant_list_wire_shape"));
+        }
+        let Some(ciphertext) = element.bytes_value.as_deref() else {
+            return Err(decoder_failure_at("participant_list_wire_shape"));
+        };
+        let plaintext = decrypt(ciphertext)?;
+        validate_participant_plaintext(&plaintext)?;
+    }
+    Ok(())
+}
+
+fn preflight_chat_participant_list(
     record: &Record,
     key: &PCSEncryptor,
-) -> Result<T, CloudTransientBridgeFailure> {
-    catch_unwind(AssertUnwindSafe(|| {
-        T::from_record_encrypted(&record.record_field, Some(key))
-    }))
-    .map_err(|_| decoder_failure_at("typed_record_decode_panic"))
+) -> Result<(), CloudTransientBridgeFailure> {
+    preflight_chat_participant_list_with_decryptor(record, |ciphertext| {
+        key.decrypt_data_checked(ciphertext, "ptcpts")
+            .map_err(|_| decoder_failure_at("participant_list_decrypt"))
+    })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -724,7 +944,10 @@ fn map_push_failure(error: &PushError) -> CloudTransientBridgeFailure {
             CloudTransientBridgeFailure::RetryableUpstream
         }
         PushError::RequestError(error)
-            if matches!(error.status().map(|status| status.as_u16()), Some(401 | 403)) =>
+            if matches!(
+                error.status().map(|status| status.as_u16()),
+                Some(401 | 403)
+            ) =>
         {
             CloudTransientBridgeFailure::ActiveAccountMismatch
         }
@@ -742,9 +965,7 @@ fn map_push_failure(error: &PushError) -> CloudTransientBridgeFailure {
         PushError::CloudKitHttpError { status, .. } if matches!(*status, 401 | 403) => {
             CloudTransientBridgeFailure::ActiveAccountMismatch
         }
-        PushError::CloudKitHttpError { status, .. }
-            if matches!(*status, 408 | 429 | 500..=599) =>
-        {
+        PushError::CloudKitHttpError { status, .. } if matches!(*status, 408 | 429 | 500..=599) => {
             CloudTransientBridgeFailure::RetryableUpstream
         }
         PushError::CloudKitHttpError { status, .. } if (400..500).contains(status) => {
@@ -1423,9 +1644,23 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                 &mut record,
                 &record_key,
                 &presence,
-                &[GzipFieldSpec::optional("proto001")],
+                &[GzipFieldSpec::optional(
+                    "proto001",
+                    "chat_proto",
+                    decode_chat_proto,
+                )],
             ) {
                 warn!("CloudKit V2 transient decoder stage=chat_gzip_preflight");
+                return CloudTransientDecodeOutcome::Failure(failure);
+            }
+            if let Err(failure) = normalize_optional_empty_list_fields(
+                &mut record,
+                &presence,
+                &["prop", "ptcpts", "name", "proto001", "gpid", "gp"],
+            ) {
+                return CloudTransientDecodeOutcome::Failure(failure);
+            }
+            if let Err(failure) = preflight_chat_participant_list(&record, &record_key) {
                 return CloudTransientDecodeOutcome::Failure(failure);
             }
             match encrypted_field_bytes(&record, &record_key, "prop") {
@@ -1445,7 +1680,8 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                 Ok(None) => {}
                 Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
             }
-            let chat = match typed_record::<CloudChat>(&record, &record_key) {
+            let strict_record_key = StrictCloudKitV2Decryptor { inner: &record_key };
+            let chat = match decode_cloud_chat_record(&record, &strict_record_key) {
                 Ok(value) => value,
                 Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
             };
@@ -1466,16 +1702,24 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                 &record_key,
                 &presence,
                 &[
-                    GzipFieldSpec::required("msgProto"),
-                    GzipFieldSpec::optional("msgProto2"),
-                    GzipFieldSpec::optional("msgProto3"),
-                    GzipFieldSpec::optional("msgProto4"),
+                    GzipFieldSpec::required("msgProto", "message_proto", decode_message_proto),
+                    GzipFieldSpec::optional("msgProto2", "message_proto_2", decode_message_proto_2),
+                    GzipFieldSpec::optional("msgProto3", "message_proto_3", decode_message_proto_3),
+                    GzipFieldSpec::optional("msgProto4", "message_proto_4", decode_message_proto_4),
                 ],
             ) {
                 warn!("CloudKit V2 transient decoder stage=message_gzip_preflight");
                 return CloudTransientDecodeOutcome::Failure(failure);
             }
-            let message = match typed_record::<CloudMessage>(&record, &record_key) {
+            if let Err(failure) = normalize_optional_empty_list_fields(
+                &mut record,
+                &presence,
+                &["msgProto2", "msgProto3", "msgProto4"],
+            ) {
+                return CloudTransientDecodeOutcome::Failure(failure);
+            }
+            let strict_record_key = StrictCloudKitV2Decryptor { inner: &record_key };
+            let message = match decode_cloud_message_record(&record, &strict_record_key) {
                 Ok(value) => value,
                 Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
             };
@@ -1519,7 +1763,8 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                     CloudCanonicalQuarantineReason::MalformedRecord,
                 );
             }
-            let attachment = match typed_record::<CloudAttachment>(&record, &record_key) {
+            let strict_record_key = StrictCloudKitV2Decryptor { inner: &record_key };
+            let attachment = match decode_cloud_attachment_record(&record, &strict_record_key) {
                 Ok(value) => value,
                 Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
             };
@@ -2192,7 +2437,7 @@ mod tests {
         );
         assert!(normalize_optional_empty_gzip_field(
             &mut optional,
-            GzipFieldSpec::optional("msgProto2"),
+            GzipFieldSpec::optional("msgProto2", "message_proto_2", decode_message_proto_2),
             &[],
         ));
         assert!(optional.record_field.is_empty());
@@ -2204,7 +2449,7 @@ mod tests {
         );
         assert!(!normalize_optional_empty_gzip_field(
             &mut required,
-            GzipFieldSpec::required("msgProto"),
+            GzipFieldSpec::required("msgProto", "message_proto", decode_message_proto),
             &[],
         ));
         assert_eq!(required.record_field.len(), 1);
@@ -2213,7 +2458,7 @@ mod tests {
             gzip_test_record("msgProto2", Type::EncryptedBytesType as i32, Some(vec![1]));
         assert!(!normalize_optional_empty_gzip_field(
             &mut non_empty,
-            GzipFieldSpec::optional("msgProto2"),
+            GzipFieldSpec::optional("msgProto2", "message_proto_2", decode_message_proto_2),
             &[1],
         ));
         assert_eq!(non_empty.record_field.len(), 1);
@@ -2235,11 +2480,19 @@ mod tests {
         let presence = CloudRawRecordPresence::extract(&record).unwrap();
 
         assert_eq!(
-            gzip_field_requires_preflight(&record, &presence, GzipFieldSpec::optional("msgProto")),
+            gzip_field_requires_preflight(
+                &record,
+                &presence,
+                GzipFieldSpec::optional("msgProto", "message_proto", decode_message_proto)
+            ),
             Ok(false)
         );
         assert_eq!(
-            gzip_field_requires_preflight(&record, &presence, GzipFieldSpec::required("msgProto")),
+            gzip_field_requires_preflight(
+                &record,
+                &presence,
+                GzipFieldSpec::required("msgProto", "message_proto", decode_message_proto)
+            ),
             Err(CloudTransientBridgeFailure::MalformedRecord)
         );
     }
@@ -2252,7 +2505,11 @@ mod tests {
         let presence = CloudRawRecordPresence::extract(&record).unwrap();
 
         assert_eq!(
-            gzip_field_requires_preflight(&record, &presence, GzipFieldSpec::optional("msgProto2"),),
+            gzip_field_requires_preflight(
+                &record,
+                &presence,
+                GzipFieldSpec::optional("msgProto2", "message_proto_2", decode_message_proto_2),
+            ),
             Err(CloudTransientBridgeFailure::MalformedRecord)
         );
     }
@@ -2265,7 +2522,11 @@ mod tests {
         let presence = CloudRawRecordPresence::extract(&record).unwrap();
 
         assert_eq!(
-            gzip_field_requires_preflight(&record, &presence, GzipFieldSpec::optional("msgProto2"),),
+            gzip_field_requires_preflight(
+                &record,
+                &presence,
+                GzipFieldSpec::optional("msgProto2", "message_proto_2", decode_message_proto_2),
+            ),
             Err(CloudTransientBridgeFailure::MalformedRecord)
         );
     }
@@ -2286,7 +2547,11 @@ mod tests {
         let presence = CloudRawRecordPresence::extract(&record).unwrap();
 
         assert_eq!(
-            gzip_field_requires_preflight(&record, &presence, GzipFieldSpec::optional("msgProto2"),),
+            gzip_field_requires_preflight(
+                &record,
+                &presence,
+                GzipFieldSpec::optional("msgProto2", "message_proto_2", decode_message_proto_2),
+            ),
             Err(CloudTransientBridgeFailure::MalformedRecord)
         );
     }
@@ -2303,8 +2568,31 @@ mod tests {
         let presence = CloudRawRecordPresence::extract(&record).unwrap();
 
         assert_eq!(
-            gzip_field_requires_preflight(&record, &presence, GzipFieldSpec::optional("msgProto2"),),
+            gzip_field_requires_preflight(
+                &record,
+                &presence,
+                GzipFieldSpec::optional("msgProto2", "message_proto_2", decode_message_proto_2),
+            ),
             Ok(true)
+        );
+    }
+
+    #[test]
+    fn optional_empty_list_normalization_is_schema_bound_and_payload_free() {
+        use rustpush::cloudkit_proto::record::field::value::Type;
+
+        let mut valid = gzip_test_record("name", Type::EmptyList as i32, None);
+        let valid_presence = CloudRawRecordPresence::extract(&valid).unwrap();
+        assert!(
+            normalize_optional_empty_list_fields(&mut valid, &valid_presence, &["name"]).is_ok()
+        );
+        assert!(valid.record_field.is_empty());
+
+        let mut malformed = gzip_test_record("name", Type::EmptyList as i32, Some(vec![1, 2, 3]));
+        let malformed_presence = CloudRawRecordPresence::extract(&malformed).unwrap();
+        assert_eq!(
+            normalize_optional_empty_list_fields(&mut malformed, &malformed_presence, &["name"]),
+            Err(CloudTransientBridgeFailure::MalformedRecord)
         );
     }
 
@@ -2323,6 +2611,130 @@ mod tests {
             bounded_gunzip(&compressed).unwrap_err(),
             CloudTransientBridgeFailure::OversizedRecord
         );
+    }
+
+    #[derive(Default)]
+    struct IdentityEncryptor;
+
+    impl CloudKitEncryptor for IdentityEncryptor {
+        fn encrypt_data(&self, data: &[u8], _: &str) -> Vec<u8> {
+            data.to_vec()
+        }
+
+        fn decrypt_data(&self, data: &[u8], _: &str) -> Vec<u8> {
+            data.to_vec()
+        }
+    }
+
+    #[test]
+    fn v2_nested_protobuf_decoder_rejects_malformed_bytes_without_defaulting() {
+        let spec = GzipFieldSpec::required("msgProto", "message_proto", decode_message_proto);
+
+        assert_eq!(
+            validate_nested_protobuf(&[0x80], spec),
+            Err(CloudTransientBridgeFailure::DecoderFailure)
+        );
+        assert!(validate_nested_protobuf(&MessageProto::default().encode_to_vec(), spec).is_ok());
+    }
+
+    #[test]
+    fn v2_nested_protobuf_decoder_covers_every_gzip_field() {
+        for spec in [
+            GzipFieldSpec::optional("proto001", "chat_proto", decode_chat_proto),
+            GzipFieldSpec::required("msgProto", "message_proto", decode_message_proto),
+            GzipFieldSpec::optional("msgProto2", "message_proto_2", decode_message_proto_2),
+            GzipFieldSpec::optional("msgProto3", "message_proto_3", decode_message_proto_3),
+            GzipFieldSpec::optional("msgProto4", "message_proto_4", decode_message_proto_4),
+        ] {
+            assert!(validate_nested_protobuf(&[], spec).is_ok());
+            assert_eq!(
+                validate_nested_protobuf(&[0x80], spec),
+                Err(CloudTransientBridgeFailure::DecoderFailure)
+            );
+        }
+    }
+
+    #[test]
+    fn v2_typed_message_decoder_returns_error_instead_of_legacy_default() {
+        use rustpush::cloudkit_proto::record::field::value::Type;
+
+        let record = gzip_test_record(
+            "msgProto",
+            Type::EncryptedBytesType as i32,
+            Some(vec![0x80]),
+        );
+
+        assert!(matches!(
+            decode_cloud_message_record(&record, &IdentityEncryptor),
+            Err(CloudTransientBridgeFailure::DecoderFailure)
+        ));
+    }
+
+    #[test]
+    fn strict_v2_decryptor_rejects_pcs_failure_without_defaulting() {
+        use rustpush::cloudkit_proto::record::field::value::Type;
+
+        let record = gzip_test_record("guid", Type::EncryptedBytesType as i32, Some(vec![1, 2, 3]));
+        let pcs = PCSEncryptor {
+            keys: Vec::new(),
+            record_id: Default::default(),
+        };
+        let strict = StrictCloudKitV2Decryptor { inner: &pcs };
+
+        assert_eq!(
+            decode_cloud_message_record(&record, &strict),
+            Err(CloudTransientBridgeFailure::DecoderFailure)
+        );
+    }
+
+    #[test]
+    fn malformed_participant_list_element_is_fail_closed() {
+        use rustpush::cloudkit_proto::record::field;
+
+        let record = Record {
+            record_field: vec![Field {
+                identifier: Some(field::Identifier {
+                    name: Some("ptcpts".to_owned()),
+                }),
+                value: Some(field::Value {
+                    list_values: vec![field::Value {
+                        bytes_value: Some(b"not-a-binary-plist".to_vec()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+            }],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            preflight_chat_participant_list_with_decryptor(&record, |value| Ok(value.to_vec())),
+            Err(CloudTransientBridgeFailure::DecoderFailure)
+        );
+    }
+
+    #[test]
+    fn malformed_nested_record_does_not_poison_independent_valid_siblings() {
+        let spec = GzipFieldSpec::required("msgProto", "message_proto", decode_message_proto);
+        let valid = MessageProto::default().encode_to_vec();
+
+        assert!(validate_nested_protobuf(&valid, spec).is_ok());
+        assert_eq!(
+            validate_nested_protobuf(&[0x80], spec),
+            Err(CloudTransientBridgeFailure::DecoderFailure)
+        );
+        assert!(validate_nested_protobuf(&valid, spec).is_ok());
+    }
+
+    #[test]
+    fn v2_decoder_diagnostics_redact_record_content_and_identifiers() {
+        let secret = "private-message-content-and-record-identifier";
+        let failure = validate_participant_plaintext(secret.as_bytes()).unwrap_err();
+        let rendered = format!("{failure:?}");
+
+        assert_eq!(failure, CloudTransientBridgeFailure::DecoderFailure);
+        assert!(!rendered.contains(secret));
+        assert!(!rendered.contains("participant"));
     }
 
     fn diagnostic_message(
@@ -2434,7 +2846,12 @@ mod tests {
             ("RCS", None, "rcs", "absent"),
             ("iMessage", None, "imessage", "absent"),
             ("IMESSAGE", Some("rcs"), "imessage_case_variant", "other"),
-            ("carrier-extension", Some("carrier-extension"), "other", "other"),
+            (
+                "carrier-extension",
+                Some("carrier-extension"),
+                "other",
+                "other",
+            ),
         ];
 
         for (top_level, nested, expected_top_level, expected_nested) in cases {
@@ -2471,10 +2888,7 @@ mod tests {
                 ..Default::default()
             };
             assert_eq!(cloud_chat_style_class(&chat), expected);
-            assert_eq!(
-                cloud_service_class(Some(&chat.service_name)),
-                "other"
-            );
+            assert_eq!(cloud_service_class(Some(&chat.service_name)), "other");
             let rendered = format!(
                 "service_class={} chat_style={}",
                 cloud_service_class(Some(&chat.service_name)),
@@ -2602,8 +3016,9 @@ mod tests {
     fn semantic_failure_mapping_preserves_cloudkit_failure_classes() {
         use rustpush::cloudkit_proto::response_operation::result::error::{client, server};
 
-        let cloudkit_server = |code: server::Code| {
-            PushError::CloudKitError(rustpush::cloudkit_proto::response_operation::Result {
+        let cloudkit_server =
+            |code: server::Code| {
+                PushError::CloudKitError(rustpush::cloudkit_proto::response_operation::Result {
                 error: Some(rustpush::cloudkit_proto::response_operation::result::Error {
                     server_error: Some(
                         rustpush::cloudkit_proto::response_operation::result::error::Server {
@@ -2614,9 +3029,10 @@ mod tests {
                 }),
                 ..Default::default()
             })
-        };
-        let cloudkit_client = |code: client::Code| {
-            PushError::CloudKitError(rustpush::cloudkit_proto::response_operation::Result {
+            };
+        let cloudkit_client =
+            |code: client::Code| {
+                PushError::CloudKitError(rustpush::cloudkit_proto::response_operation::Result {
                 error: Some(rustpush::cloudkit_proto::response_operation::result::Error {
                     client_error: Some(
                         rustpush::cloudkit_proto::response_operation::result::error::Client {
@@ -2627,7 +3043,7 @@ mod tests {
                 }),
                 ..Default::default()
             })
-        };
+            };
 
         assert_eq!(
             map_push_failure(&cloudkit_server(server::Code::Overloaded)),
