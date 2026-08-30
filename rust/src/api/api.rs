@@ -1,5 +1,5 @@
 #[cfg(target_os = "windows")]
-use crate::windows_secret_storage::open_windows_keystore;
+use crate::windows_secret_storage::{open_windows_keystore, replace_file_without_backup};
 use anyhow::anyhow;
 use flutter_rust_bridge::{frb, DartFnFuture, IntoDart, JoinHandle};
 #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
@@ -13,6 +13,8 @@ use keystore::{
 use log::{debug, error, info, warn};
 pub use plist::Value;
 use plist::{Data, Dictionary};
+#[cfg(any(target_os = "android", target_os = "windows"))]
+use rustpush::CloudKitReadAuthenticationRevoker;
 pub use rustpush::{default_provider, ArcAnisetteClient, DefaultAnisetteProvider, LoginClientInfo};
 use sha2::{Digest, Sha256};
 pub use std::time::SystemTime;
@@ -29,6 +31,8 @@ use std::{
     time::Duration,
     u64,
 };
+#[cfg(any(target_os = "android", target_os = "windows"))]
+use std::{collections::HashMap, fs::OpenOptions};
 
 use async_recursion::async_recursion;
 use base64::prelude::*;
@@ -318,12 +322,14 @@ async fn cloud_sync_warm_read_authentication_inner(
                 .await
                 .map_err(|_| CloudSyncReadAuthWarmFailure::SecurityContainer)?;
         }
-        cloud_messages_client
+        if !cloud_messages_client
             .client
             .token_provider
-            .get_mme_token_cached("cloudKitToken")
+            .cloudkit_read_authentication_is_warm()
             .await
-            .map_err(|_| CloudSyncReadAuthWarmFailure::CloudKitToken)?;
+        {
+            return Err(CloudSyncReadAuthWarmFailure::CloudKitToken);
+        }
         Ok(())
     })
     .await?;
@@ -4629,6 +4635,61 @@ pub async fn make_cloudkit(
 ) -> Option<Arc<CloudKitClient<DefaultAnisetteProvider>>> {
     let dir = PathBuf::from_str(&path).unwrap();
 
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    if let Ok(gsa) = plist::from_file::<_, GSAConfig>(dir.join("gsa.plist")) {
+        match load_cloudkit_read_authentication_cache(&dir, &gsa.username) {
+            Ok(Some((mme_auth_token, cloudkit_token, refreshed))) => {
+                let invalidation_directory = dir.clone();
+                let restored = token_provider
+                    .restore_cloudkit_read_authentication(
+                        mme_auth_token,
+                        cloudkit_token,
+                        refreshed,
+                        move || {
+                            if clear_cloudkit_read_authentication_cache(&invalidation_directory)
+                                .is_err()
+                            {
+                                warn!("CloudKit read-authentication cache invalidation failed");
+                            }
+                        },
+                    )
+                    .await;
+                match restored {
+                    Some(revoker) => {
+                        if register_cloudkit_read_authentication_revoker(
+                            dir.clone(),
+                            revoker.clone(),
+                        )
+                        .await
+                        .is_ok()
+                        {
+                            info!("Restored encrypted CloudKit read-authentication cache");
+                        } else {
+                            revoker.revoke().await;
+                            let _ = clear_cloudkit_read_authentication_cache(&dir);
+                            warn!("CloudKit read-authentication cache registration failed");
+                        }
+                    }
+                    None => {
+                        if clear_cloudkit_read_authentication_cache(&dir).is_err() {
+                            warn!("Stale CloudKit read-authentication cache could not be cleared");
+                        } else {
+                            warn!("Encrypted CloudKit read-authentication cache is stale");
+                        }
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(_) => {
+                if clear_cloudkit_read_authentication_cache(&dir).is_err() {
+                    warn!("Unreadable CloudKit read-authentication cache could not be cleared");
+                } else {
+                    warn!("Encrypted CloudKit read-authentication cache could not be opened");
+                }
+            }
+        }
+    }
+
     let cloudkit_path = dir.join("cloudkit.plist");
 
     let state = plist::from_file(&cloudkit_path).ok()?;
@@ -6792,6 +6853,292 @@ impl GSAConfig {
     }
 }
 
+const CLOUDKIT_READ_AUTHENTICATION_CACHE_FILE: &str = "cloudkit_read_authentication.cache";
+const CLOUDKIT_READ_AUTHENTICATION_KEY_ALIAS: &str = "gsa:cloudkit-read-authentication";
+const CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION: u32 = 1;
+const CLOUDKIT_READ_AUTHENTICATION_MAX_BYTES: u64 = 64 * 1024;
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+static CLOUDKIT_READ_AUTHENTICATION_STORAGE_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+#[cfg(any(target_os = "android", target_os = "windows"))]
+static CLOUDKIT_READ_AUTHENTICATION_REVOCATIONS: OnceLock<
+    std::sync::Mutex<HashMap<PathBuf, CloudKitReadAuthenticationRevoker>>,
+> = OnceLock::new();
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+fn cloudkit_read_authentication_storage_guard() -> anyhow::Result<std::sync::MutexGuard<'static, ()>>
+{
+    CLOUDKIT_READ_AUTHENTICATION_STORAGE_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .map_err(|_| anyhow!("CloudKit read-authentication storage lock was poisoned"))
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+async fn register_cloudkit_read_authentication_revoker(
+    directory: PathBuf,
+    revoker: CloudKitReadAuthenticationRevoker,
+) -> anyhow::Result<()> {
+    let previous = {
+        let mut revocations = CLOUDKIT_READ_AUTHENTICATION_REVOCATIONS
+            .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+            .lock()
+            .map_err(|_| anyhow!("CloudKit read-authentication registry lock was poisoned"))?;
+        revocations.insert(directory, revoker)
+    };
+    if let Some(previous) = previous {
+        previous.revoke().await;
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+async fn revoke_registered_cloudkit_read_authentication(directory: &PathBuf) -> anyhow::Result<()> {
+    let revoker = {
+        let mut revocations = CLOUDKIT_READ_AUTHENTICATION_REVOCATIONS
+            .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+            .lock()
+            .map_err(|_| anyhow!("CloudKit read-authentication registry lock was poisoned"))?;
+        revocations.remove(directory)
+    };
+    if let Some(revoker) = revoker {
+        revoker.revoke().await;
+    }
+    Ok(())
+}
+
+#[derive(Serialize, Deserialize)]
+struct CachedCloudKitReadAuthentication {
+    schema_version: u32,
+    username: String,
+    refreshed_at_millis: u64,
+    mme_auth_token: String,
+    cloudkit_token: String,
+}
+
+impl CachedCloudKitReadAuthentication {
+    fn into_tokens_for_account(
+        self,
+        expected_username: &str,
+    ) -> Option<(String, String, SystemTime)> {
+        if self.schema_version != CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION
+            || !self.username.eq_ignore_ascii_case(expected_username)
+            || self.mme_auth_token.is_empty()
+            || self.cloudkit_token.is_empty()
+        {
+            return None;
+        }
+        let refreshed =
+            SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(self.refreshed_at_millis))?;
+        Some((self.mme_auth_token, self.cloudkit_token, refreshed))
+    }
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+fn cloudkit_read_authentication_key() -> Result<AesKeystoreKey, PushError> {
+    AesKeystoreKey::ensure(
+        CLOUDKIT_READ_AUTHENTICATION_KEY_ALIAS,
+        256,
+        KeystoreAccessRules {
+            block_modes: vec![EncryptMode::Gcm],
+            can_encrypt: true,
+            can_decrypt: true,
+            ..Default::default()
+        },
+    )
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+fn persist_cloudkit_read_authentication_cache(
+    directory: &PathBuf,
+    username: &str,
+    mme_auth_token: &str,
+    cloudkit_token: &str,
+    refreshed: SystemTime,
+) -> anyhow::Result<()> {
+    let _storage_guard = cloudkit_read_authentication_storage_guard()?;
+    let cached = CachedCloudKitReadAuthentication {
+        schema_version: CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION,
+        username: username.to_owned(),
+        refreshed_at_millis: systemtime_to_millis(refreshed),
+        mme_auth_token: mme_auth_token.to_owned(),
+        cloudkit_token: cloudkit_token.to_owned(),
+    };
+    let mut serialized = Vec::new();
+    plist::to_writer_binary(Cursor::new(&mut serialized), &cached)?;
+    let encrypted =
+        cloudkit_read_authentication_key()?.encrypt(&serialized, &mut EncryptMode::Gcm)?;
+
+    let destination = directory.join(CLOUDKIT_READ_AUTHENTICATION_CACHE_FILE);
+    let temporary = directory.join(format!(
+        ".cloudkit_read_authentication.{}.tmp",
+        Uuid::new_v4()
+    ));
+    let result = (|| -> anyhow::Result<()> {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)?;
+        file.write_all(&encrypted)?;
+        file.sync_all()?;
+        drop(file);
+
+        install_cloudkit_read_authentication_cache(&temporary, &destination)?;
+        if fs::read(&destination)? != encrypted {
+            return Err(anyhow!(
+                "CloudKit read-authentication cache replacement verification failed"
+            ));
+        }
+        #[cfg(target_os = "android")]
+        File::open(directory)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+#[cfg(target_os = "android")]
+fn install_cloudkit_read_authentication_cache(
+    temporary: &std::path::Path,
+    destination: &std::path::Path,
+) -> anyhow::Result<()> {
+    fs::rename(temporary, destination)?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn install_cloudkit_read_authentication_cache(
+    temporary: &std::path::Path,
+    destination: &std::path::Path,
+) -> anyhow::Result<()> {
+    if destination.is_file() {
+        replace_file_without_backup(destination, temporary)?;
+    } else {
+        fs::rename(temporary, destination)?;
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+fn load_cloudkit_read_authentication_cache(
+    directory: &PathBuf,
+    expected_username: &str,
+) -> anyhow::Result<Option<(String, String, SystemTime)>> {
+    let _storage_guard = cloudkit_read_authentication_storage_guard()?;
+    let path = directory.join(CLOUDKIT_READ_AUTHENTICATION_CACHE_FILE);
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let length = file.metadata()?.len();
+    if length == 0 || length > CLOUDKIT_READ_AUTHENTICATION_MAX_BYTES {
+        return Err(anyhow!(
+            "CloudKit read-authentication cache size is invalid"
+        ));
+    }
+    let mut encrypted = Vec::with_capacity(length as usize);
+    file.take(CLOUDKIT_READ_AUTHENTICATION_MAX_BYTES + 1)
+        .read_to_end(&mut encrypted)?;
+    if encrypted.len() as u64 > CLOUDKIT_READ_AUTHENTICATION_MAX_BYTES {
+        return Err(anyhow!("CloudKit read-authentication cache is too large"));
+    }
+    let decrypted =
+        cloudkit_read_authentication_key()?.decrypt(&encrypted, &mut EncryptMode::Gcm)?;
+    let cached: CachedCloudKitReadAuthentication = plist::from_bytes(&decrypted)?;
+    cached
+        .into_tokens_for_account(expected_username)
+        .map(Some)
+        .ok_or_else(|| anyhow!("CloudKit read-authentication cache identity is invalid"))
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
+fn clear_cloudkit_read_authentication_cache(directory: &PathBuf) -> anyhow::Result<()> {
+    let _storage_guard = cloudkit_read_authentication_storage_guard()?;
+    let key_result = keystore().destroy_key(CLOUDKIT_READ_AUTHENTICATION_KEY_ALIAS);
+    let file_result = match fs::remove_file(directory.join(CLOUDKIT_READ_AUTHENTICATION_CACHE_FILE))
+    {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    };
+    key_result?;
+    file_result?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod cloudkit_read_authentication_cache_tests {
+    use super::{CachedCloudKitReadAuthentication, CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION};
+    use std::time::SystemTime;
+
+    fn cache(username: &str, schema_version: u32) -> CachedCloudKitReadAuthentication {
+        CachedCloudKitReadAuthentication {
+            schema_version,
+            username: username.to_owned(),
+            refreshed_at_millis: 1_000,
+            mme_auth_token: "test-mme-token".to_owned(),
+            cloudkit_token: "test-cloudkit-token".to_owned(),
+        }
+    }
+
+    #[test]
+    fn read_authentication_payload_is_bound_to_the_same_account() {
+        let (mme_auth_token, cloudkit_token, refreshed) = cache(
+            "person@example.com",
+            CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION,
+        )
+        .into_tokens_for_account("PERSON@example.com")
+        .expect("same account should restore");
+
+        assert_eq!(mme_auth_token, "test-mme-token");
+        assert_eq!(cloudkit_token, "test-cloudkit-token");
+        assert_eq!(
+            refreshed.duration_since(SystemTime::UNIX_EPOCH).unwrap(),
+            std::time::Duration::from_secs(1)
+        );
+    }
+
+    #[test]
+    fn read_authentication_payload_rejects_another_account_or_schema() {
+        assert!(cache(
+            "person@example.com",
+            CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION
+        )
+        .into_tokens_for_account("other@example.com")
+        .is_none());
+        assert!(cache(
+            "person@example.com",
+            CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION + 1
+        )
+        .into_tokens_for_account("person@example.com")
+        .is_none());
+    }
+
+    #[test]
+    fn read_authentication_payload_rejects_missing_required_token() {
+        let mut cached = cache(
+            "person@example.com",
+            CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION,
+        );
+        cached.mme_auth_token.clear();
+        assert!(cached
+            .into_tokens_for_account("person@example.com")
+            .is_none());
+
+        let mut cached = cache(
+            "person@example.com",
+            CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION,
+        );
+        cached.cloudkit_token.clear();
+        assert!(cached
+            .into_tokens_for_account("person@example.com")
+            .is_none());
+    }
+}
+
 pub async fn do_login(
     path: String,
     account: &Arc<Mutex<AppleAccount<DefaultAnisetteProvider>>>,
@@ -6856,10 +7203,15 @@ pub async fn do_login(
         .await?
     };
 
+    let mobileme = delegates
+        .mobileme
+        .ok_or_else(|| anyhow!("MobileMe delegate was missing"))?;
+    let username = account.username.clone().unwrap();
+
     plist::to_file_xml(
         conf_dir.join("gsa.plist"),
         &GSAConfig {
-            username: account.username.clone().unwrap(),
+            username: username.clone(),
             encrypted_password: GSAConfig::encrypt(&account.hashed_password.clone().unwrap())?,
             postdata_done: Some(true),
         },
@@ -6877,7 +7229,6 @@ pub async fn do_login(
     )
     .unwrap();
 
-    let mobileme = delegates.mobileme.unwrap();
     let findmy = FindMyState::new(dsid.clone());
 
     let id_path = conf_dir.join("findmy.plist");
@@ -6918,6 +7269,38 @@ pub async fn do_login(
     debug!("Spd finish parse");
 
     let user = authenticate_apple(delegates.ids.unwrap(), &*os_config.config()).await?;
+
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    match (
+        mobileme.tokens.get("mmeAuthToken"),
+        mobileme.tokens.get("cloudKitToken"),
+    ) {
+        (Some(mme_auth_token), Some(cloudkit_token)) => {
+            if persist_cloudkit_read_authentication_cache(
+                &conf_dir,
+                &username,
+                mme_auth_token,
+                cloudkit_token,
+                SystemTime::now(),
+            )
+            .is_err()
+            {
+                if clear_cloudkit_read_authentication_cache(&conf_dir).is_err() {
+                    warn!("CloudKit read-authentication persistence and cleanup both failed");
+                } else {
+                    warn!("CloudKit read-authentication cache could not be persisted");
+                }
+            }
+        }
+        _ => {
+            if clear_cloudkit_read_authentication_cache(&conf_dir).is_err() {
+                warn!("Missing CloudKit read-authentication tokens could not be cleared");
+            } else {
+                warn!("CloudKit read-authentication tokens were missing after login");
+            }
+        }
+    }
+
     Ok(user)
 }
 
@@ -6947,6 +7330,13 @@ pub async fn try_auth(
     )?;
 
     let result = if let Some((username, password)) = creds {
+        #[cfg(any(target_os = "android", target_os = "windows"))]
+        if revoke_registered_cloudkit_read_authentication(&conf_dir)
+            .await
+            .is_err()
+        {
+            warn!("CloudKit read-authentication revocation failed during account replacement");
+        }
         reset_user(&path);
 
         let mut password_hasher = sha2::Sha256::new();
@@ -7926,6 +8316,11 @@ pub fn cancel_poll(cancel: &mpsc::Sender<()>) {
 fn reset_user(path: &str) {
     let dir = PathBuf::from_str(path).unwrap();
 
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    if clear_cloudkit_read_authentication_cache(&dir).is_err() {
+        warn!("CloudKit read-authentication storage cleanup failed");
+    }
+
     let _ = std::fs::remove_file(dir.join("gsa.plist"));
     let _ = std::fs::remove_file(dir.join("findmy.plist"));
     let _ = std::fs::remove_file(dir.join("facetime.plist"));
@@ -7961,6 +8356,13 @@ pub async fn reset_state(
 
     info!("c");
     if logout {
+        #[cfg(any(target_os = "android", target_os = "windows"))]
+        if revoke_registered_cloudkit_read_authentication(&dir)
+            .await
+            .is_err()
+        {
+            warn!("CloudKit read-authentication revocation failed during logout");
+        }
         if let Some(hardware) = read_hardware(path.clone()) {
             // try deregistering from iMessage, but if it fails we don't really care
             if let Ok(identity) = IDSNGMIdentity::restore(hardware.identity.as_ref(), "openbubbles")

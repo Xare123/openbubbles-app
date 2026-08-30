@@ -681,7 +681,7 @@ fn replace_file(
     Ok(())
 }
 
-fn replace_file_without_backup(
+pub(crate) fn replace_file_without_backup(
     target: &Path,
     replacement: &Path,
 ) -> Result<(), WindowsSecretStorageError> {
