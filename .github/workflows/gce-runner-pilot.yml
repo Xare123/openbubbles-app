@@ -36,6 +36,7 @@ on:
           - full
           - build-only
           - bindings-only
+          - rustpush-only
 permissions:
   contents: read
 
@@ -218,6 +219,7 @@ jobs:
           components: rustfmt
 
       - name: Set up Flutter
+        if: ${{ env.VALIDATION_MODE != 'rustpush-only' }}
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
@@ -225,6 +227,7 @@ jobs:
           cache: true
 
       - name: Set up Java
+        if: ${{ env.VALIDATION_MODE != 'rustpush-only' }}
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           java-version: "21"
@@ -232,6 +235,7 @@ jobs:
           cache: gradle
 
       - name: Set up Android SDK
+        if: ${{ env.VALIDATION_MODE != 'rustpush-only' }}
         uses: amyu/setup-android@3fe49086b1abd7c9ef865120d5d4d486fe55ba98 # v5
 
       - name: Cache Cargo registries
@@ -265,6 +269,7 @@ jobs:
             'ndk;28.2.13676358' >/dev/null
 
       - name: Set up fake Fairplay keys
+        if: ${{ env.VALIDATION_MODE != 'rustpush-only' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -545,6 +550,11 @@ jobs:
           echo 'Review the uploaded binding artifact and commit the intended generated output before relying on this gate.' >&2
           exit 1
 
+      - name: Run rustpush-only validation
+        if: ${{ env.VALIDATION_MODE == 'rustpush-only' }}
+        shell: bash
+        run: cargo test --manifest-path rustpush/Cargo.toml --lib --features remote-anisette-v3 -- --test-threads=1
+
   finalize-canary:
     name: Sign and verify Canary on GitHub-hosted runner
     needs: benchmark-build
@@ -552,7 +562,8 @@ jobs:
       ${{
         needs.benchmark-build.result == 'success' &&
         (inputs.flavor || 'beta') == 'canary' &&
-        (inputs.validation_mode || 'full') != 'bindings-only'
+        (inputs.validation_mode || 'full') != 'bindings-only' &&
+        (inputs.validation_mode || 'full') != 'rustpush-only'
       }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
