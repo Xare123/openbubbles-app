@@ -143,8 +143,9 @@ jobs:
       # concurrency, and log-redaction tests as an independent gate. Match the
       # production bridge's non-macOS Anisette provider feature so icloud_auth
       # exposes the same provider types that the application compiles against.
+      # Several tests intentionally pause a process-global CloudKit gate.
       - name: Run rustpush tests
-        run: cargo test --manifest-path rustpush/Cargo.toml --lib --features remote-anisette-v3
+        run: cargo test --manifest-path rustpush/Cargo.toml --lib --features remote-anisette-v3 -- --test-threads=1
 
       # The protector harness is a separate crate and is deliberately
       # dependency-light so these security invariants can run on hosts where the
