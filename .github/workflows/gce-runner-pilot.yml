@@ -13,17 +13,18 @@ on:
           - n2d-standard-8
           - c4d-highcpu-16
       source_ref:
-        description: Trusted branch or commit to build
+        description: Full 40-character source commit SHA to build and verify
         required: true
-        default: agent/cloudkit-v2-checkpoint-repair
+        default: 69bce2aa22cd1505d3c404d09b5a035a653ffe9e
         type: string
       flavor:
-        description: Non-production Android flavor to benchmark
+        description: Non-production Android flavor to build
         required: true
         default: beta
         type: choice
         options:
           - beta
+          - canary
       validation_mode:
         description: Validation scope for this ephemeral source-only run
         required: true
@@ -39,7 +40,7 @@ permissions:
 # Do not cancel a running pilot. GitHub cancellation can interrupt cleanup;
 # the fixed VM lifetime below is the independent billing backstop.
 concurrency:
-  group: gce-runner-pilot-${{ github.ref }}
+  group: gce-runner-pilot
   cancel-in-progress: false
 
 env:
@@ -56,6 +57,7 @@ env:
   BUILD_FLAVOR: ${{ inputs.flavor || 'beta' }}
   VALIDATION_MODE: ${{ inputs.validation_mode || 'full' }}
   SOURCE_REF: ${{ inputs.source_ref || github.sha }}
+  TRUSTED_SOURCE_BRANCH: agent/cloudkit-v2-checkpoint-repair
 
 jobs:
   create-runner:
@@ -94,8 +96,23 @@ jobs:
             printf 'Missing required GitHub variables/secrets: %s\n' "${missing[*]}" >&2
             exit 1
           fi
-          if [[ "$SOURCE_REF" =~ ^[0-9a-fA-F]{7,39}$ ]]; then
-            echo 'source_ref must be a branch, tag, or full 40-character commit SHA.' >&2
+          if [[ ! "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'source_ref must be a lowercase full 40-character commit SHA.' >&2
+            exit 1
+          fi
+          trusted_sha="$(
+            git ls-remote \
+              "https://github.com/${GITHUB_REPOSITORY}.git" \
+              "refs/heads/${TRUSTED_SOURCE_BRANCH}" \
+              | awk 'NR == 1 { print $1 }'
+          )"
+          if [[ ! "$trusted_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Unable to resolve trusted branch: $TRUSTED_SOURCE_BRANCH" >&2
+            exit 1
+          fi
+          if [[ "$SOURCE_REF" != "$trusted_sha" ]]; then
+            echo "source_ref is not the current trusted branch head." >&2
+            echo "Expected $trusted_sha from $TRUSTED_SOURCE_BRANCH." >&2
             exit 1
           fi
 
@@ -182,6 +199,17 @@ jobs:
           ref: ${{ env.SOURCE_REF }}
           submodules: recursive
 
+      - name: Verify checked-out source SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          if [[ "$actual" != "$SOURCE_REF" ]]; then
+            echo "Checked out $actual, expected $SOURCE_REF" >&2
+            exit 1
+          fi
+          echo "Source SHA verified: $actual" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
 
@@ -190,15 +218,37 @@ jobs:
         with:
           channel: stable
           flutter-version: 3.44.8
+          cache: true
 
       - name: Set up Java
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           java-version: "21"
           distribution: temurin
+          cache: gradle
 
       - name: Set up Android SDK
         uses: amyu/setup-android@3fe49086b1abd7c9ef865120d5d4d486fe55ba98 # v5
+
+      - name: Cache Cargo registries
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cloudkit-canary-cargo-v1-${{ hashFiles('rust/Cargo.toml', 'rust/Cargo.lock', 'rustpush/Cargo.toml', 'rustpush/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cloudkit-canary-cargo-v1-
+
+      # Cargo validates incremental fingerprints after a source-only restore.
+      # Keep the compatibility family aligned with the active sampler job.
+      - name: Cache ARM64 debug CargoKit output
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: build/app/build/build
+          key: ${{ runner.os }}-cloudkit-canary-cargokit-v2-${{ hashFiles('pubspec.lock', 'rust/Cargo.toml', 'rust/Cargo.lock', 'rustpush/Cargo.toml', 'rustpush/Cargo.lock', 'android/**/*.gradle*', 'android/**/gradle.properties', 'rust_builder/cargokit/**', 'tooling/android/patch_pub_cache_cargokit.sh') }}-${{ hashFiles('rust/**/*.rs', 'rustpush/**/*.rs', 'rust/build.rs', 'rustpush/build.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-cloudkit-canary-cargokit-v2-${{ hashFiles('pubspec.lock', 'rust/Cargo.toml', 'rust/Cargo.lock', 'rustpush/Cargo.toml', 'rustpush/Cargo.lock', 'android/**/*.gradle*', 'android/**/gradle.properties', 'rust_builder/cargokit/**', 'tooling/android/patch_pub_cache_cargokit.sh') }}-
 
       - name: Install pinned Android SDK components
         if: ${{ env.VALIDATION_MODE != 'bindings-only' }}
@@ -416,13 +466,19 @@ jobs:
         run: |
           set -euo pipefail
           started="$(date +%s)"
-          flutter build apk \
-            --flavor "$BUILD_FLAVOR" \
-            --debug \
-            --target-platform android-arm64 \
-            --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true \
-            --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true \
+          build_args=(
+            build apk
+            --flavor "$BUILD_FLAVOR"
+            --debug
+            --target-platform android-arm64
+            --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SAMPLER=true
+            --dart-define=OPENBUBBLES_CLOUD_SYNC_V2_SEMANTIC_PULL=true
             --dart-define=OPENBUBBLES_BUILD_COMMIT="$(git rev-parse HEAD)"
+          )
+          if [[ "$BUILD_FLAVOR" == 'canary' ]]; then
+            build_args+=(--dart-define=OPENBUBBLES_CLOUD_SYNC_V2_EVIDENCE=true)
+          fi
+          flutter "${build_args[@]}"
           finished="$(date +%s)"
           elapsed="$((finished - started))"
           echo "seconds=$elapsed" >> "$GITHUB_OUTPUT"
@@ -434,7 +490,7 @@ jobs:
             echo "- Flutter build time: \`${elapsed}s\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Verify APK native libraries
+      - name: Verify producer APK identity and native libraries
         if: ${{ env.VALIDATION_MODE != 'bindings-only' }}
         shell: bash
         run: |
@@ -447,8 +503,12 @@ jobs:
             "$aapt" dump badging "$apk" \
               | sed -n "s/^package: name='\([^']*\)'.*/\1/p"
           )"
-          if [[ "$application_id" != 'com.bluebubbles.messaging.beta' ]]; then
-            echo "Unexpected Beta application ID: $application_id" >&2
+          expected_application_id='com.bluebubbles.messaging.beta'
+          if [[ "$BUILD_FLAVOR" == 'canary' ]]; then
+            expected_application_id='com.bluebubbles.messaging.cloudkitcanary'
+          fi
+          if [[ "$application_id" != "$expected_application_id" ]]; then
+            echo "Unexpected $BUILD_FLAVOR application ID: $application_id" >&2
             exit 1
           fi
           for entry in \
@@ -464,10 +524,11 @@ jobs:
           done
 
       - name: Upload benchmark APK
+        id: upload-apk
         if: ${{ env.VALIDATION_MODE != 'bindings-only' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: GCE ${{ inputs.flavor || 'beta' }} Debug APK
+          name: GCE producer ${{ inputs.flavor || 'beta' }} APK ${{ env.SOURCE_REF }}
           path: build/app/outputs/flutter-apk/app-${{ inputs.flavor || 'beta' }}-debug.apk
           if-no-files-found: error
 
@@ -478,6 +539,114 @@ jobs:
           echo 'Generated bridge bindings are not reproducible from the committed source.' >&2
           echo 'Review the uploaded binding artifact and commit the intended generated output before relying on this gate.' >&2
           exit 1
+
+  finalize-canary:
+    name: Sign and verify Canary on GitHub-hosted runner
+    needs: benchmark-build
+    if: >-
+      ${{
+        needs.benchmark-build.result == 'success' &&
+        (inputs.flavor || 'beta') == 'canary' &&
+        (inputs.validation_mode || 'full') != 'bindings-only'
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          java-version: "21"
+          distribution: temurin
+
+      - name: Set up Android SDK
+        uses: amyu/setup-android@3fe49086b1abd7c9ef865120d5d4d486fe55ba98 # v5
+
+      - name: Install pinned Android build tools
+        shell: bash
+        run: sdkmanager 'build-tools;36.0.0' >/dev/null
+
+      - name: Download GCE producer APK
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: GCE producer canary APK ${{ env.SOURCE_REF }}
+          path: producer
+
+      - name: Sign and verify Canary
+        env:
+          CANARY_KEYSTORE_BASE64: ${{ secrets.CANARY_KEYSTORE_BASE64 }}
+          CANARY_KEYSTORE_PASSWORD: ${{ secrets.CANARY_KEYSTORE_PASSWORD }}
+          CANARY_KEY_PASSWORD: ${{ secrets.CANARY_KEY_PASSWORD }}
+          CANARY_KEY_ALIAS: ${{ secrets.CANARY_KEY_ALIAS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk='producer/app-canary-debug.apk'
+          keystore="$RUNNER_TEMP/cloudkit-canary.p12"
+          signed_apk="$RUNNER_TEMP/app-canary-debug-signed.apk"
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          aapt="$(find "$sdk_root/build-tools" -type f -name aapt -print | sort -V | tail -n 1)"
+          apksigner="$(find "$sdk_root/build-tools" -type f -name apksigner -print | sort -V | tail -n 1)"
+
+          test -f "$apk"
+          test -x "$aapt"
+          test -x "$apksigner"
+          test -n "$CANARY_KEYSTORE_BASE64"
+          test -n "$CANARY_KEYSTORE_PASSWORD"
+          test -n "$CANARY_KEY_PASSWORD"
+          test -n "$CANARY_KEY_ALIAS"
+
+          application_id="$(
+            "$aapt" dump badging "$apk" \
+              | sed -n "s/^package: name='\([^']*\)'.*/\1/p"
+          )"
+          if [[ "$application_id" != 'com.bluebubbles.messaging.cloudkitcanary' ]]; then
+            echo "Unexpected producer application ID: $application_id" >&2
+            exit 1
+          fi
+          for entry in \
+            lib/arm64-v8a/libflutter.so \
+            lib/arm64-v8a/librust_lib_bluebubbles.so \
+            lib/arm64-v8a/libirondash_engine_context_native.so \
+            lib/arm64-v8a/libsuper_native_extensions.so; do
+            if ! unzip -l "$apk" | grep -q "$entry"; then
+              echo "Producer APK is missing $entry" >&2
+              exit 1
+            fi
+          done
+
+          printf '%s' "$CANARY_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          "$apksigner" sign \
+            --ks "$keystore" \
+            --ks-key-alias "$CANARY_KEY_ALIAS" \
+            --ks-pass env:CANARY_KEYSTORE_PASSWORD \
+            --key-pass env:CANARY_KEY_PASSWORD \
+            --out "$signed_apk" \
+            "$apk"
+          mv "$signed_apk" "$apk"
+
+          actual_fingerprint="$(
+            "$apksigner" verify --print-certs "$apk" \
+              | sed -n 's/^Signer #1 certificate SHA-256 digest: //p'
+          )"
+          expected_fingerprint='0ea17c1b67581ca79660d33db45af0a36b71ea36a4cbafec5293d3ae80570d79'
+          if [[ "$actual_fingerprint" != "$expected_fingerprint" ]]; then
+            echo "Unexpected Canary signing certificate: $actual_fingerprint" >&2
+            exit 1
+          fi
+          signature_report="$("$apksigner" verify --verbose "$apk")"
+          if ! grep -Eq '^Verified using v2 scheme.*: true$' <<< "$signature_report"; then
+            echo 'Canary APK is not signed with APK Signature Scheme v2' >&2
+            exit 1
+          fi
+
+      - name: Upload signed Canary APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: GCE CloudKit V2 Evidence Canary APK ${{ env.SOURCE_REF }}
+          path: producer/app-canary-debug.apk
+          if-no-files-found: error
 
   delete-runner:
     name: Delete Google Cloud runner
@@ -528,17 +697,29 @@ jobs:
               --quiet
           fi
 
-          runners_json="$(mktemp)"
-          curl --fail --silent --show-error --location \
-            -H 'Accept: application/vnd.github+json' \
-            -H "Authorization: Bearer $GCE_RUNNER_PAT" \
-            -H 'X-GitHub-Api-Version: 2022-11-28' \
-            "https://api.github.com/repos/$GH_REPOSITORY/actions/runners?per_page=100" \
-            -o "$runners_json"
+          list_matching_runner_ids() {
+            local page=1
+            local count response
+            while :; do
+              response="$(mktemp)"
+              curl --fail --silent --show-error --location \
+                -H 'Accept: application/vnd.github+json' \
+                -H "Authorization: Bearer $GCE_RUNNER_PAT" \
+                -H 'X-GitHub-Api-Version: 2022-11-28' \
+                "https://api.github.com/repos/$GH_REPOSITORY/actions/runners?per_page=100&page=$page" \
+                -o "$response"
+              jq -r --arg name "$RUNNER_NAME" \
+                '.runners[] | select(.name == $name) | .id' "$response"
+              count="$(jq -er '.runners | length' "$response")"
+              rm -f "$response"
+              if (( count < 100 )); then
+                break
+              fi
+              ((page += 1))
+            done
+          }
 
-          mapfile -t runner_ids < <(
-            jq -r --arg name "$RUNNER_NAME" '.runners[] | select(.name == $name) | .id' "$runners_json"
-          )
+          mapfile -t runner_ids < <(list_matching_runner_ids)
           for runner_id in "${runner_ids[@]}"; do
             curl --fail --silent --show-error --location \
               -X DELETE \
@@ -556,11 +737,18 @@ jobs:
             exit 1
           fi
 
-          curl --fail --silent --show-error --location \
-            -H 'Accept: application/vnd.github+json' \
-            -H "Authorization: Bearer $GCE_RUNNER_PAT" \
-            -H 'X-GitHub-Api-Version: 2022-11-28' \
-            "https://api.github.com/repos/$GH_REPOSITORY/actions/runners?per_page=100" \
-            | jq -e --arg name "$RUNNER_NAME" '[.runners[] | select(.name == $name)] | length == 0' >/dev/null
+          remaining=''
+          for attempt in 1 2 3 4 5 6; do
+            remaining="$(list_matching_runner_ids)"
+            if [[ -z "$remaining" ]]; then
+              break
+            fi
+            echo "Runner registration still visible; retrying verification (${attempt}/6)."
+            sleep 5
+          done
+          if [[ -n "$remaining" ]]; then
+            echo "Runner registration still exists after paginated cleanup: $RUNNER_NAME" >&2
+            exit 1
+          fi
 
           echo 'Runner VM and GitHub registration are absent.' >> "$GITHUB_STEP_SUMMARY"
