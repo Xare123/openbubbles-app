@@ -935,6 +935,181 @@ void main() {
     },
   );
 
+  test('repairs an exact canonical-guid message alias with durable proof', () {
+    const repairChatGuid = 'repair-chat-guid';
+    final repairChatHash = _testChatAliasHash('repair-chat-logical-key');
+    const storedIdentifier = '+15555550100';
+    final chatId = store.box<Chat>().put(
+      Chat(
+        guid: repairChatGuid,
+        chatIdentifier: storedIdentifier,
+        style: 45,
+      ),
+    );
+    resolver.put(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: repairChatHash,
+      canonicalGuid: repairChatGuid,
+    );
+    _seedChatOwnershipAndAlias(
+      store,
+      scope: scope,
+      generation: generation,
+      logicalEntityKeyHash: repairChatHash,
+      canonicalGuid: repairChatGuid,
+      chatIdentifier: storedIdentifier,
+      chatId: chatId,
+    );
+    final diagnostics = <String>[];
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      diagnosticRecorder: diagnostics.add,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+
+    expect(
+      adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: repairChatGuid,
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      CloudCanonicalSemanticMutationReceipt.committed,
+    );
+
+    expect(store.box<Message>().getAll().single.chat.targetId, chatId);
+    final repairedHash = _testChatAliasHash(repairChatGuid);
+    expect(
+      store.box<CloudSemanticChatAliasEntity>().getAll().where(
+        (row) => row.aliasKeyHash == repairedHash,
+      ),
+      hasLength(1),
+    );
+    expect(
+      diagnostics,
+      contains('canonical_message_chat_alias_repaired_exact_guid'),
+    );
+  });
+
+  test('does not repair an exact-guid alias without prior alias proof', () {
+    store.box<Chat>().put(
+      Chat(guid: 'chat-guid', chatIdentifier: '+15555550100', style: 45),
+    );
+    _seedExactOwnershipProof(
+      store,
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: 'chat-guid',
+    );
+    final diagnostics = <String>[];
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      diagnosticRecorder: diagnostics.add,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+
+    expect(
+      () => adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: 'chat-guid',
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) => failure.safeCode == 'canonical_message_chat_unavailable',
+        ),
+      ),
+    );
+    expect(store.box<Message>().count(), 0);
+    expect(
+      diagnostics,
+      contains('canonical_message_chat_alias_exact_guid_unproven'),
+    );
+  });
+
+  test('does not repair an exact-guid alias across services', () {
+    const smsChatGuid = 'sms-repair-chat-guid';
+    final smsChatHash = _testChatAliasHash('sms-repair-logical-key');
+    const storedIdentifier = '+15555550100';
+    final chatId = store.box<Chat>().put(
+      Chat(
+        guid: smsChatGuid,
+        chatIdentifier: storedIdentifier,
+        style: 45,
+        isRpSms: true,
+      ),
+    );
+    resolver.put(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.chat,
+      logicalEntityKeyHash: smsChatHash,
+      canonicalGuid: smsChatGuid,
+    );
+    _seedChatOwnershipAndAlias(
+      store,
+      scope: scope,
+      generation: generation,
+      logicalEntityKeyHash: smsChatHash,
+      canonicalGuid: smsChatGuid,
+      chatIdentifier: storedIdentifier,
+      chatId: chatId,
+      service: CloudSemanticService.sms,
+    );
+    final diagnostics = <String>[];
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      diagnosticRecorder: diagnostics.add,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+
+    expect(
+      () => adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: smsChatGuid,
+          service: CloudSemanticService.iMessage,
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) => failure.safeCode == 'canonical_message_chat_unavailable',
+        ),
+      ),
+    );
+    expect(store.box<Message>().count(), 0);
+    expect(
+      diagnostics,
+      contains('canonical_message_chat_alias_exact_guid_service_mismatch'),
+    );
+  });
+
   test('uses attributed-body text when Apple omits the plain body', () {
     const chatIdentifier = 'iMessage;-;attributed-only-chat';
     final chatId = store.box<Chat>().put(

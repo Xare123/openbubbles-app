@@ -1769,11 +1769,13 @@ pub(crate) fn convert_chat(
         }
     }
     // A message's `chatID` is not guaranteed to equal the chat record's
-    // `cid`. Historical group migrations can leave it pointing at `gid`,
-    // `ogid`, or a legacy group identifier. Hash every exact wire identity in
-    // the same service-identifier domain used by message records so the Dart
+    // `cid`. Direct messages normally use the chat `guid`, while historical
+    // group migrations can leave it pointing at `gid`, `ogid`, or a legacy
+    // group identifier. Hash every exact wire identity in the same
+    // service-identifier domain used by message records so the Dart
     // projection can join them without persisting or normalizing plaintext.
     for value in [
+        chat.guid.as_str(),
         chat.group_id.as_str(),
         chat.original_group_id.as_str(),
         chat.chat_identifier.as_str(),
@@ -2677,6 +2679,7 @@ mod tests {
             CloudCanonicalEntityKind::Chat
         );
         for wire_identity in [
+            "chat-guid-direct",
             "chat-direct",
             "chat-direct-original",
             "iMessage;-;+15555550100",

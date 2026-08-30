@@ -968,6 +968,7 @@ fn validate_canonical_identity_bindings(
                 }
             }
             for value in [
+                payload.guid(),
                 payload.group_id(),
                 payload.original_group_id(),
                 payload.chat_identifier(),
@@ -1679,6 +1680,7 @@ mod tests {
                 "original-group-id",
             ),
             (CloudCanonicalAliasKind::ChatServiceIdentifier, "group-id"),
+            (CloudCanonicalAliasKind::ChatServiceIdentifier, "chat-guid"),
             (
                 CloudCanonicalAliasKind::ChatServiceIdentifier,
                 "original-group-id",

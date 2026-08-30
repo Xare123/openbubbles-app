@@ -467,8 +467,12 @@ class CloudSyncEngine {
             semanticInboxPhaseStarted || reprojection.examined > 0;
         semanticInboxCounters = semanticInboxCounters.add(
           applied: reprojection.reprojected,
+          retainedUnprojected: reprojection.retained,
         );
-        counters = counters.add(applied: reprojection.reprojected);
+        counters = counters.add(
+          applied: reprojection.reprojected,
+          retainedUnprojected: reprojection.retained,
+        );
         remainingInboxEntries -= reprojection.examined;
         if (reprojection.hasRemaining) {
           degradedFailure = CloudFailureCategory.dependency;

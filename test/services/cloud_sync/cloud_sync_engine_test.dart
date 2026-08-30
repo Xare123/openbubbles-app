@@ -877,6 +877,7 @@ void main() {
       expect(result.failureCategory, CloudFailureCategory.dependency);
       expect(result.failureSafeCode, 'retained_projection_incomplete');
       expect(result.counters.applied, 1);
+      expect(result.counters.retainedUnprojected, 1);
       expect(retainedApplier.reprojectCalls, 1);
       expect(events, const ['retained', 'fetch']);
       expect(transport.fetchCallCount, 1);

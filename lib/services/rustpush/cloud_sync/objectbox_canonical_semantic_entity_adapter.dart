@@ -903,13 +903,23 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       currentScope: scope,
       currentGeneration: generation,
     );
-    final chat = _resolveChatByAlias(
+    var chat = _resolveChatByAlias(
       scope: chatDependency.scope,
       generation: chatDependency.generation,
       service: service,
       aliasKeyHash: payload.chatAliasKeyHash,
     );
+    chat ??= _repairMessageChatAliasFromExactGuid(
+      scope: chatDependency.scope,
+      generation: chatDependency.generation,
+      service: service,
+      chatIdentifier: payload.chatIdentifier,
+      aliasKeyHash: payload.chatAliasKeyHash,
+    );
     if (chat == null) {
+      _diagnosticRecorder?.call(
+        'canonical_message_chat_alias_missing_${Chat.cloudIdentityReferenceShape(payload.chatIdentifier)}',
+      );
       throw CloudSyncFailure(
         category: CloudFailureCategory.dependency,
         safeCode: 'canonical_message_chat_unavailable',
@@ -1731,6 +1741,165 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         updatedAtMs: updatedAtMs,
       ),
     );
+  }
+
+  /// Repairs the one exact alias omitted by older converters: a message's
+  /// `chatID` can equal the canonical chat GUID while the stored alias set only
+  /// covered `cid`, `gid`, and `ogid`.
+  ///
+  /// This is not a raw-identifier fallback. The candidate must be the exact
+  /// canonical GUID of a same-service chat, and an existing scoped alias plus
+  /// its durable identity snapshot must prove ownership before a new alias is
+  /// written.
+  Chat? _repairMessageChatAliasFromExactGuid({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudSemanticService service,
+    required String chatIdentifier,
+    required String aliasKeyHash,
+  }) {
+    final chat = _findChat(chatIdentifier);
+    final chatId = chat?.id;
+    if (chat == null || chatId == null || chatId <= 0) return null;
+    if (chat.isRpSms != (service == CloudSemanticService.sms)) {
+      _diagnosticRecorder?.call(
+        'canonical_message_chat_alias_exact_guid_service_mismatch',
+      );
+      return null;
+    }
+
+    final proof = _findProvenServiceAliasForChat(
+      scope: scope,
+      generation: generation,
+      service: service,
+      chat: chat,
+    );
+    if (proof == null) {
+      _diagnosticRecorder?.call(
+        'canonical_message_chat_alias_exact_guid_unproven',
+      );
+      return null;
+    }
+
+    _putChatAlias(
+      scope: scope,
+      generation: generation,
+      service: service,
+      alias: CloudSemanticChatAlias(
+        kind: CloudSemanticChatAliasKind.serviceIdentifier,
+        keyHash: aliasKeyHash,
+      ),
+      logicalEntityKeyHash: proof.chatLogicalEntityKeyHash,
+      canonicalGuidHash: proof.canonicalGuidHash,
+      canonicalGuidLookupHash: proof.canonicalGuidLookupHash,
+      chatId: chatId,
+      updatedAtMs: DateTime.now().toUtc().millisecondsSinceEpoch,
+    );
+    _diagnosticRecorder?.call(
+      'canonical_message_chat_alias_repaired_exact_guid',
+    );
+    return _resolveChatByAlias(
+      scope: scope,
+      generation: generation,
+      service: service,
+      aliasKeyHash: aliasKeyHash,
+    );
+  }
+
+  CloudSemanticChatAliasEntity? _findProvenServiceAliasForChat({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudSemanticService service,
+    required Chat chat,
+  }) {
+    final chatId = chat.id;
+    if (chatId == null || chatId <= 0) return null;
+    const kind = CloudSemanticChatAliasKind.serviceIdentifier;
+    final query = _chatAliases
+        .query(
+          CloudSemanticChatAliasEntity_.scopeGenerationKey
+              .equals(_scopeGenerationKey(scope, generation))
+              .and(CloudSemanticChatAliasEntity_.chatId.equals(chatId))
+              .and(CloudSemanticChatAliasEntity_.service.equals(service.name))
+              .and(CloudSemanticChatAliasEntity_.aliasKind.equals(kind.name)),
+        )
+        .build();
+    late final List<CloudSemanticChatAliasEntity> candidates;
+    try {
+      candidates = query.find();
+    } finally {
+      query.close();
+    }
+    if (candidates.isEmpty) return null;
+
+    CloudSemanticChatAliasEntity? proof;
+    for (final candidate in candidates) {
+      if (!_chatAliasMatchesScope(candidate, scope, generation) ||
+          candidate.service != service.name ||
+          candidate.aliasKind != kind.name ||
+          candidate.chatId != chatId ||
+          !_externalDigestPattern.hasMatch(candidate.aliasKeyHash) ||
+          !_externalDigestPattern.hasMatch(
+            candidate.chatLogicalEntityKeyHash,
+          ) ||
+          !CloudCanonicalIdentityDigest.isValid(candidate.canonicalGuidHash) ||
+          !CloudCanonicalIdentityDigest.isValid(
+            candidate.canonicalGuidLookupHash,
+          )) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.dependency,
+          safeCode: 'canonical_message_chat_alias_unproven',
+        );
+      }
+      final expectedBindingKey = _chatAliasBindingKey(
+        scope: scope,
+        generation: generation,
+        service: service,
+        kind: kind,
+        aliasKeyHash: candidate.aliasKeyHash,
+      );
+      final expectedGuidHash = CloudCanonicalIdentityDigest.forCanonicalGuid(
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.chat,
+        logicalEntityKeyHash: candidate.chatLogicalEntityKeyHash,
+        canonicalGuid: chat.guid,
+      );
+      final expectedLookupHash =
+          CloudCanonicalIdentityDigest.forCanonicalGuidLookup(
+            scope: scope,
+            generation: generation,
+            canonicalGuid: chat.guid,
+          );
+      if (candidate.bindingKey != expectedBindingKey ||
+          candidate.canonicalGuidHash != expectedGuidHash ||
+          candidate.canonicalGuidLookupHash != expectedLookupHash) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.dependency,
+          safeCode: 'canonical_message_chat_alias_unproven',
+        );
+      }
+      _requireCanonicalIdentityOwnership(
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.chat,
+        logicalEntityKeyHash: candidate.chatLogicalEntityKeyHash,
+        canonicalGuid: chat.guid,
+      );
+      if (proof != null &&
+          (proof.chatLogicalEntityKeyHash !=
+                  candidate.chatLogicalEntityKeyHash ||
+              proof.canonicalGuidHash != candidate.canonicalGuidHash ||
+              proof.canonicalGuidLookupHash !=
+                  candidate.canonicalGuidLookupHash)) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'canonical_chat_alias_conflict',
+        );
+      }
+      proof ??= candidate;
+    }
+    return proof;
   }
 
   Chat? _resolveChatByAlias({
