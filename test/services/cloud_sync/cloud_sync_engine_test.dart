@@ -891,6 +891,84 @@ void main() {
   );
 
   test(
+    'semantic inbox yields after every durable terminal entry without changing order',
+    () async {
+      await seedGeneralJournal(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1), testChange(2), testChange(3)],
+          batchId: 'yield-test-batch',
+          generation: 1,
+          nextToken: null,
+          hasMore: false,
+        ),
+        now: clock.value,
+      );
+      final observedAtEventTurns = <int>[];
+      applier.handler = (entry) async {
+        if (entry.sequence < 3) {
+          Timer.run(
+            () => observedAtEventTurns.add(applier.appliedSequences.length),
+          );
+        }
+        return const CloudInboxApplyResult.applied();
+      };
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: false,
+          semanticApply: true,
+          saves: false,
+        ),
+        maximumInboxEntriesPerRun: 3,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(result.status, CloudSyncRunStatus.completed);
+      expect(applier.appliedSequences, [1, 2, 3]);
+      expect(observedAtEventTurns, [1, 2]);
+      final checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.lastAppliedSequence, 3);
+      expect(checkpoint.pendingBatchId, isNull);
+    },
+  );
+
+  test('semantic inbox yields after a durable blocking failure', () async {
+    await seedGeneralJournal(
+      CloudFetchBatch(
+        scope: scope,
+        changes: [testChange(1), testChange(2)],
+        batchId: 'blocking-yield-test-batch',
+        generation: 1,
+        nextToken: null,
+        hasMore: false,
+      ),
+      now: clock.value,
+    );
+    var eventTurnObserved = false;
+    applier.handler = (_) async {
+      Timer.run(() => eventTurnObserved = true);
+      return const CloudInboxApplyResult.retryable(
+        failureCategory: CloudFailureCategory.network,
+        safeCode: 'test_blocking_retry',
+      );
+    };
+
+    await engine(
+      flags: const CloudSyncFeatureFlags(
+        readOnlyFetch: false,
+        semanticApply: true,
+        saves: false,
+      ),
+      maximumInboxEntriesPerRun: 2,
+    ).synchronize(trigger: CloudSyncTrigger.manual);
+
+    expect(eventTurnObserved, isTrue);
+    expect(applier.appliedSequences, [1]);
+    expect((await store.readCheckpoint(scope)).lastAppliedSequence, 0);
+  });
+
+  test(
     'normal semantic startup reprojects retained rows before inbox and fetch',
     () async {
       final events = <String>[];
@@ -2006,7 +2084,7 @@ void main() {
             }
           };
 
-      final flags = const CloudSyncFeatureFlags(
+      const flags = CloudSyncFeatureFlags(
         readOnlyFetch: true,
         semanticApply: true,
       );

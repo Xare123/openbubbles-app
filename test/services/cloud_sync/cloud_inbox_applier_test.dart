@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
@@ -405,6 +406,176 @@ void main() {
     expect(store.retainedTransactionCount, 0);
     expect(store.transaction.appliedChanges, isEmpty);
   });
+
+  test(
+    'retained projection yields on a continue path before the next candidate',
+    () async {
+      final failed = retainedEntry(1);
+      final successful = retainedEntry(2);
+      decodeUpsert(successful, message(key: 'later-retained-message'));
+      store.retainedEntries.addAll([failed, successful]);
+      decoder.failures[failed.change.changeId] =
+          const CloudSemanticDecodeFailure(
+            CloudFailureCategory.malformedRecord,
+          );
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        identityRegistrar: _IdentityRegistrar(),
+      );
+      var observedDecodeCalls = -1;
+      Timer.run(() => observedDecodeCalls = decoder.decodeCalls);
+
+      final result = await applier.reprojectRetainedUnprojected(
+        scope: scope,
+        generation: 3,
+        leaseFence: _testLeaseFence,
+        limit: 2,
+      );
+
+      expect(observedDecodeCalls, 1);
+      expect(result.examined, 2);
+      expect(result.reprojected, 1);
+      expect(result.retained, 1);
+      expect(
+        store.retainedEntries[0].status,
+        CloudInboxStatus.retainedUnprojected,
+      );
+      expect(store.retainedEntries[1].status, CloudInboxStatus.applied);
+    },
+  );
+
+  test(
+    'applied projection repair yields on a continue path before the next candidate',
+    () async {
+      final failed = entry(1).copyWith(status: CloudInboxStatus.applied);
+      final successful = entry(2).copyWith(status: CloudInboxStatus.applied);
+      decodeUpsert(
+        successful,
+        CloudSemanticSnapshot(
+          kind: CloudEntityKind.chat,
+          logicalEntityKeyHash: 'later-applied-chat',
+        ),
+      );
+      store.appliedEntries.addAll([failed, successful]);
+      decoder.failures[failed.change.changeId] =
+          const CloudSemanticDecodeFailure(
+            CloudFailureCategory.malformedRecord,
+          );
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        identityRegistrar: _IdentityRegistrar(),
+      );
+      var observedDecodeCalls = -1;
+      Timer.run(() => observedDecodeCalls = decoder.decodeCalls);
+
+      final repaired = await applier.repairAppliedProjections(
+        scope: scope,
+        generation: 3,
+        leaseFence: _testLeaseFence,
+        limit: 2,
+      );
+
+      expect(observedDecodeCalls, 1);
+      expect(repaired, 1);
+      expect(store.appliedRepairCount, 1);
+    },
+  );
+
+  test(
+    'retained projection yields only after transaction and identity lease release',
+    () async {
+      final first = retainedEntry(1);
+      final second = retainedEntry(2);
+      decodeUpsert(first, message(key: 'first-retained-yield-message'));
+      decodeUpsert(second, message(key: 'second-retained-yield-message'));
+      store.retainedEntries.addAll([first, second]);
+      final registrar = _IdentityRegistrar();
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        identityRegistrar: registrar,
+      );
+      var observedDecodeCalls = -1;
+      var observedReleaseCalls = -1;
+      var observedLeaseActive = true;
+      var observedTransactionActive = true;
+      Timer.run(() {
+        observedDecodeCalls = decoder.decodeCalls;
+        observedReleaseCalls = registrar.releaseCalls;
+        observedLeaseActive = registrar.leaseActive;
+        observedTransactionActive = store.retainedTransactionActive;
+      });
+
+      final result = await applier.reprojectRetainedUnprojected(
+        scope: scope,
+        generation: 3,
+        leaseFence: _testLeaseFence,
+        limit: 2,
+      );
+
+      expect(observedDecodeCalls, 1);
+      expect(observedReleaseCalls, 1);
+      expect(observedLeaseActive, isFalse);
+      expect(observedTransactionActive, isFalse);
+      expect(result.reprojected, 2);
+      expect(registrar.releaseCalls, 2);
+    },
+  );
+
+  test(
+    'applied repair yields only after operation and identity lease release',
+    () async {
+      final first = entry(1).copyWith(status: CloudInboxStatus.applied);
+      final second = entry(2).copyWith(status: CloudInboxStatus.applied);
+      decodeUpsert(
+        first,
+        CloudSemanticSnapshot(
+          kind: CloudEntityKind.chat,
+          logicalEntityKeyHash: 'first-applied-yield-chat',
+        ),
+      );
+      decodeUpsert(
+        second,
+        CloudSemanticSnapshot(
+          kind: CloudEntityKind.chat,
+          logicalEntityKeyHash: 'second-applied-yield-chat',
+        ),
+      );
+      store.appliedEntries.addAll([first, second]);
+      final registrar = _IdentityRegistrar();
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        identityRegistrar: registrar,
+      );
+      var observedDecodeCalls = -1;
+      var observedReleaseCalls = -1;
+      var observedLeaseActive = true;
+      var observedRepairActive = true;
+      Timer.run(() {
+        observedDecodeCalls = decoder.decodeCalls;
+        observedReleaseCalls = registrar.releaseCalls;
+        observedLeaseActive = registrar.leaseActive;
+        observedRepairActive = store.appliedRepairActive;
+      });
+
+      final repaired = await applier.repairAppliedProjections(
+        scope: scope,
+        generation: 3,
+        leaseFence: _testLeaseFence,
+        limit: 2,
+      );
+
+      expect(observedDecodeCalls, 1);
+      expect(observedReleaseCalls, 1);
+      expect(observedLeaseActive, isFalse);
+      expect(observedRepairActive, isFalse);
+      expect(repaired, 2);
+      expect(registrar.releaseCalls, 2);
+    },
+  );
 
   test(
     'retained authorization failure aborts without rotating the row',
@@ -1145,30 +1316,53 @@ class _Decoder implements CloudSemanticDecoder {
 
 class _IdentityRegistrar implements CloudTransientCanonicalIdentityRegistrar {
   int bindCalls = 0;
+  int releaseCalls = 0;
+  bool leaseActive = false;
 
   @override
   CloudTransientCanonicalIdentityLease bind(CloudDecodedMutation mutation) {
+    if (leaseActive) throw StateError('test_identity_lease_already_active');
     bindCalls++;
-    return _IdentityLease();
+    leaseActive = true;
+    return _IdentityLease(() {
+      leaseActive = false;
+      releaseCalls++;
+    });
   }
 }
 
 class _IdentityLease implements CloudTransientCanonicalIdentityLease {
+  _IdentityLease(this._onRelease);
+
+  final void Function() _onRelease;
+  bool _released = false;
+
   @override
-  void release() {}
+  void release() {
+    if (_released) return;
+    _released = true;
+    _onRelease();
+  }
 }
 
 class _MemorySemanticStore
-    implements CloudSemanticStoreGateway, CloudRetainedProjectionStoreGateway {
+    implements
+        CloudSemanticStoreGateway,
+        CloudRetainedProjectionStoreGateway,
+        CloudAppliedProjectionRepairStoreGateway {
   _MemorySemanticStore({required CloudSyncScope scope, required int generation})
     : transaction = _MemoryTransaction(scope, generation);
 
   final _MemoryTransaction transaction;
   final retainedEntries = <CloudInboxEntry>[];
+  final appliedEntries = <CloudInboxEntry>[];
   CloudSyncFailure? failure;
   int transactionCount = 0;
   int retainedTransactionCount = 0;
   int retainedFailureRecordCount = 0;
+  int appliedRepairCount = 0;
+  bool retainedTransactionActive = false;
+  bool appliedRepairActive = false;
 
   @override
   Future<T> writeTransaction<T>({
@@ -1231,34 +1425,63 @@ class _MemorySemanticStore
   }
 
   @override
+  Future<List<CloudInboxEntry>> readAppliedProjectionRepairCandidates({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int limit,
+  }) async => appliedEntries.take(limit).toList();
+
+  @override
+  Future<void> repairAppliedProjection({
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required CloudSemanticEntityPayload payload,
+    required CloudSemanticSnapshot snapshot,
+  }) async {
+    appliedRepairActive = true;
+    try {
+      appliedRepairCount++;
+    } finally {
+      appliedRepairActive = false;
+    }
+  }
+
+  @override
   Future<T> writeRetainedProjectionTransaction<T>({
     required CloudInboxEntry entry,
     required CloudCoordinatorLeaseFence leaseFence,
     required T Function(CloudSemanticStoreTransaction transaction) action,
   }) async {
     retainedTransactionCount++;
-    final index = retainedEntries.indexWhere(
-      (candidate) => candidate.change.changeId == entry.change.changeId,
-    );
-    if (index < 0 ||
-        retainedEntries[index].status != CloudInboxStatus.retainedUnprojected) {
-      throw CloudSyncFailure(
-        category: CloudFailureCategory.conflict,
-        safeCode: 'retained_projection_row_changed',
+    retainedTransactionActive = true;
+    try {
+      final index = retainedEntries.indexWhere(
+        (candidate) => candidate.change.changeId == entry.change.changeId,
       );
-    }
-    final result = action(transaction);
-    if (!transaction.appliedChanges.contains(entry.change.changeId)) {
-      throw CloudSyncFailure(
-        category: CloudFailureCategory.conflict,
-        safeCode: 'retained_projection_replay_missing',
+      if (index < 0 ||
+          retainedEntries[index].status !=
+              CloudInboxStatus.retainedUnprojected) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'retained_projection_row_changed',
+        );
+      }
+      final result = action(transaction);
+      if (!transaction.appliedChanges.contains(entry.change.changeId)) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'retained_projection_replay_missing',
+        );
+      }
+      retainedEntries[index] = retainedEntries[index].copyWith(
+        status: CloudInboxStatus.applied,
+        completedAt: entry.createdAt,
       );
+      return result;
+    } finally {
+      retainedTransactionActive = false;
     }
-    retainedEntries[index] = retainedEntries[index].copyWith(
-      status: CloudInboxStatus.applied,
-      completedAt: entry.createdAt,
-    );
-    return result;
   }
 }
 

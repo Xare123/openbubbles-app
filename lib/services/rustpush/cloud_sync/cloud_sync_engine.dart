@@ -1467,8 +1467,12 @@ class CloudSyncEngine {
         blockingFailureCategory =
             result.failureCategory ?? CloudFailureCategory.unknown;
         blockingFailureSafeCode = result.safeCode;
-        break;
       }
+      // ObjectBox commits and canonical projection are intentionally
+      // synchronous. Yield only after the row's terminal or retry state is
+      // durable so replay cannot starve Flutter's input and frame queues.
+      await Future<void>.delayed(Duration.zero);
+      if (!canApplyNextSequence) break;
     }
     if (emitEvent) {
       _emit(

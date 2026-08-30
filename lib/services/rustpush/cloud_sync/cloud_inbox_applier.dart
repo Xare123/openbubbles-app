@@ -950,6 +950,7 @@ class TransactionalCloudInboxApplier
           entry: entry,
           leaseFence: leaseFence,
         );
+        await Future<void>.delayed(Duration.zero);
         continue;
       } catch (_) {
         _recordDiagnostic('retained_projection_decoder_unknown');
@@ -957,6 +958,7 @@ class TransactionalCloudInboxApplier
           entry: entry,
           leaseFence: leaseFence,
         );
+        await Future<void>.delayed(Duration.zero);
         continue;
       }
 
@@ -976,6 +978,7 @@ class TransactionalCloudInboxApplier
           entry: entry,
           leaseFence: leaseFence,
         );
+        await Future<void>.delayed(Duration.zero);
         continue;
       }
 
@@ -1041,6 +1044,10 @@ class TransactionalCloudInboxApplier
       } finally {
         identityLease?.release();
       }
+      // Never place this fairness yield inside a canonical transaction or
+      // while an identity lease is held. Yield between candidates so retained
+      // replay remains ordered without monopolizing Flutter's UI isolate.
+      await Future<void>.delayed(Duration.zero);
     }
     final retained = candidates.length - reprojected;
     var hasRemaining = retained > 0;
@@ -1111,9 +1118,11 @@ class TransactionalCloudInboxApplier
             safeCode: failure.safeCode ?? 'projection_repair_decode_retryable',
           );
         }
+        await Future<void>.delayed(Duration.zero);
         continue;
       } catch (_) {
         _recordDiagnostic('projection_repair_decoder_unknown');
+        await Future<void>.delayed(Duration.zero);
         continue;
       }
 
@@ -1128,6 +1137,7 @@ class TransactionalCloudInboxApplier
           snapshot.kind != CloudEntityKind.chat ||
           snapshot.logicalEntityKeyHash != payload.logicalEntityKeyHash) {
         _recordDiagnostic('projection_repair_decoded_shape_invalid');
+        await Future<void>.delayed(Duration.zero);
         continue;
       }
 
@@ -1152,6 +1162,9 @@ class TransactionalCloudInboxApplier
       } finally {
         identityLease?.release();
       }
+      // The repaired row is fully committed and its transient identity lease
+      // is released before yielding to Flutter's event loop.
+      await Future<void>.delayed(Duration.zero);
     }
     return repaired;
   }

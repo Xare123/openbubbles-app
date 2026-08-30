@@ -339,6 +339,7 @@ final class ObjectBoxCloudSemanticStoreGateway
 
   static const int _maximumEditParts = 1024;
   static const int _maximumEditPartsBytes = 256 * 1024;
+  static const int _projectionCandidateQueryPageSize = 64;
   static const int _nullDateSentinel = -9223372036854775808;
   static final RegExp _safeCodePattern = RegExp(r'^[a-z0-9][a-z0-9_-]{0,95}$');
   static final RegExp _base64UrlDigestPattern = RegExp(r'^[A-Za-z0-9_-]{43}$');
@@ -534,6 +535,9 @@ final class ObjectBoxCloudSemanticStoreGateway
                 ..order(CloudInboxChangeEntity_.fetchSequence))
               .build();
       try {
+        // Apply the caller's bound in native ObjectBox before materializing
+        // rows on Flutter's isolate.
+        query.limit = limit;
         final candidates = <CloudInboxEntry>[];
         for (final row in query.find()) {
           final entry = _retainedEntryFromEntity(scope, row);
@@ -570,56 +574,83 @@ final class ObjectBoxCloudSemanticStoreGateway
       return const <CloudInboxEntry>[];
     }
 
-    return _store.runInTransaction(TxMode.read, () {
-      final scopeKey =
-          'scope2:${_SemanticTransactionContext._digest(scope.storageKey)}';
-      final query =
-          (_inbox.query(
-                CloudInboxChangeEntity_.scopeKey
-                    .equals(scopeKey)
-                    .and(CloudInboxChangeEntity_.generation.equals(generation))
-                    .and(
-                      CloudInboxChangeEntity_.status.equals(
-                        CloudInboxStatus.applied.index,
-                      ),
-                    )
-                    .and(CloudInboxChangeEntity_.isTombstone.equals(false)),
-              )..order(
-                CloudInboxChangeEntity_.fetchSequence,
-                flags: Order.descending,
-              ))
-              .build();
-      try {
-        final candidates = <CloudInboxEntry>[];
-        final seenLogicalKeys = <String>{};
-        for (final row in query.find()) {
-          final entry = _appliedEntryFromEntity(scope, row);
-          final context = _SemanticTransactionContext.prepare(
-            entry: entry,
-            leaseFence: leaseFence,
-          );
-          ObjectBoxCloudSemanticFence.validateLocked(
-            store: _store,
-            entry: entry,
-            leaseFence: leaseFence,
-            nowMs: _clock().toUtc().millisecondsSinceEpoch,
-            expectedInboxStatus: CloudInboxStatus.applied,
-            canonicalAdapter: _canonicalAdapter,
-          );
-          final logicalEntityKeyHash = _currentAppliedLogicalKey(context, row);
-          if (logicalEntityKeyHash == null ||
-              !seenLogicalKeys.add(logicalEntityKeyHash) ||
-              _hasServiceIdentifierAlias(context, logicalEntityKeyHash)) {
-            continue;
+    final scopeKey =
+        'scope2:${_SemanticTransactionContext._digest(scope.storageKey)}';
+    final candidates = <CloudInboxEntry>[];
+    final seenLogicalKeys = <String>{};
+    var offset = 0;
+    while (candidates.length < limit) {
+      final page = _store.runInTransaction(TxMode.read, () {
+        final query =
+            (_inbox.query(
+                  CloudInboxChangeEntity_.scopeKey
+                      .equals(scopeKey)
+                      .and(
+                        CloudInboxChangeEntity_.generation.equals(generation),
+                      )
+                      .and(
+                        CloudInboxChangeEntity_.status.equals(
+                          CloudInboxStatus.applied.index,
+                        ),
+                      )
+                      .and(CloudInboxChangeEntity_.isTombstone.equals(false)),
+                )..order(
+                  CloudInboxChangeEntity_.fetchSequence,
+                  flags: Order.descending,
+                ))
+                .build();
+        try {
+          query
+            ..offset = offset
+            ..limit = _projectionCandidateQueryPageSize;
+          final rows = query.find();
+          final pageCandidates = <CloudInboxEntry>[];
+          for (final row in rows) {
+            final entry = _appliedEntryFromEntity(scope, row);
+            final context = _SemanticTransactionContext.prepare(
+              entry: entry,
+              leaseFence: leaseFence,
+            );
+            ObjectBoxCloudSemanticFence.validateLocked(
+              store: _store,
+              entry: entry,
+              leaseFence: leaseFence,
+              nowMs: _clock().toUtc().millisecondsSinceEpoch,
+              expectedInboxStatus: CloudInboxStatus.applied,
+              canonicalAdapter: _canonicalAdapter,
+            );
+            final logicalEntityKeyHash = _currentAppliedLogicalKey(
+              context,
+              row,
+            );
+            if (logicalEntityKeyHash == null ||
+                !seenLogicalKeys.add(logicalEntityKeyHash) ||
+                _hasServiceIdentifierAlias(context, logicalEntityKeyHash)) {
+              continue;
+            }
+            pageCandidates.add(entry);
+            if (candidates.length + pageCandidates.length == limit) break;
           }
-          candidates.add(entry);
-          if (candidates.length == limit) break;
+          return (
+            rowsRead: rows.length,
+            candidates: List<CloudInboxEntry>.unmodifiable(pageCandidates),
+          );
+        } finally {
+          query.close();
         }
-        return List<CloudInboxEntry>.unmodifiable(candidates);
-      } finally {
-        query.close();
+      });
+      candidates.addAll(page.candidates);
+      offset += page.rowsRead;
+      if (candidates.length == limit ||
+          page.rowsRead < _projectionCandidateQueryPageSize) {
+        break;
       }
-    });
+      // Keep each native query and fence-validation window bounded. The active
+      // operation interlock and coordinator lease prevent a competing V2
+      // projector from changing this ordered scope between pages.
+      await Future<void>.delayed(Duration.zero);
+    }
+    return List<CloudInboxEntry>.unmodifiable(candidates);
   }
 
   @override

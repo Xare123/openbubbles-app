@@ -1,0 +1,241 @@
+---
+type: architecture
+title: OpenBubbles Critical-Path Impact Map
+description: Operational dependency map for live messaging, startup, CloudKit, outbound sends, and account transitions.
+resource: openbubbles-app
+tags: [openbubbles, architecture, messaging, cloudkit, regression-prevention]
+timestamp: 2026-08-30
+---
+
+# OpenBubbles critical-path impact map
+
+## Purpose
+
+This is a change-impact map, not a complete source inventory. It identifies
+shared gates where a local change can stop or corrupt more than one feature.
+Use it before changing startup, native state, message persistence, CloudKit,
+or account-reset code.
+
+## Non-negotiable invariants
+
+| Boundary | Invariant |
+| --- | --- |
+| Incoming APN | A native pointer is acknowledged only after durable local projection succeeds. |
+| Receive readiness | Optional iCloud, CloudKit, contact, relay, and analytics work never blocks live message receipt. |
+| Incoming retry | A failure is visible and leaves the pointer retryable; duplicate delivery is idempotent. |
+| Outbound send | Every terminal path leaves exactly one recoverable local message with deterministic send state. |
+| Legacy CloudKit | A failed page does not advance its token or issue destructive duplicate cleanup. |
+| V2 semantic pull | Checkpoints represent a contiguous durable terminal prefix; retained-unprojected rows remain replayable. |
+| Account transition | Old-account work is quiescent before state is replaced or disposed. |
+| Canary | Semantic pull performs no remote content write, delete, subscription, or PCS creation. |
+
+## Change-impact matrix
+
+Use this table before editing a shared hotspot. A marked product path must be
+treated as in scope even when the requested feature belongs to only one column.
+
+| Shared hotspot | Live receive | Outbound send | Legacy CloudKit | V2 CloudKit | Account reset | Minimum required gate |
+| --- | :---: | :---: | :---: | :---: | :---: | --- |
+| `RustPushService.initFuture` and native-state bootstrap | X | X | X | X | X | Startup-readiness contract plus Android cold-start delivery tests |
+| `RustPushService.state` ownership and disposal | X | X | X | X | X | State-replacement-before-ack test plus account-transition quiescence tests |
+| `Database.waitForInit()` and ObjectBox lifecycle | X | X | X | X | X | Receive-readiness test plus persistence and model-compatibility tests |
+| Android engine and headless APN handoff | X |  |  |  | X | Pending APN queue tests plus Android cold-start delivery tests |
+| Incoming queue, `handleMsg`, and `Message.save()` | X | X | X | X |  | Duplicate delivery and exactly-once projection tests |
+| CloudKit operation interlock and writer ownership |  |  | X | X | X | Interlock, writer-authority, and mutation-surface tests |
+| Account and cached identity selection | X | X | X | X | X | Exact-account binding tests plus mismatch fail-closed tests |
+| Canonical conversion and associated-parent parsing | X | X | X | X |  | Rust converter tests plus Dart association and reaction tests |
+| Page journal, inbox applier, and checkpoint store |  |  | X | X | X | Crash-boundary replay and contiguous-prefix checkpoint tests |
+| Semantic replay, projection repair, and ObjectBox candidate queries | X | X |  | X | X | Bounded native queries, cooperative-yield tests, and device ANR validation |
+| Attachment materialization and file ownership | X | X | X | X | X | Attachment store tests plus account-reset cleanup tests |
+
+The matrix is intentionally small. A generated graph of every import would
+mostly describe compilation dependencies, while these entries describe
+runtime ordering, durable ownership, and acknowledgement dependencies where
+data loss and cross-feature regressions occur.
+
+## 1. Live incoming message
+
+```text
+APNService.receievedMsg
+  -> main engine, bounded engine queue, or headless DartWorker
+  -> MethodChannelService "APNMsg"
+  -> RustPushService.recievedMsgPointer
+       -> native pointer decode
+       -> waitForRustPushReceiveReadiness
+            -> native state bootstrap
+            -> ObjectBox initialization
+            -> bounded wait
+       -> handleMsg
+            -> reflection and incoming queue
+            -> ActionHandler.handleNewMessage
+            -> Chat.addMessage / ObjectBox
+       -> verify account state did not change
+       -> completeMsg native acknowledgement
+```
+
+Primary code:
+
+- `android/app/src/main/kotlin/com/bluebubbles/messaging/services/rustpush/APNService.kt`
+- `android/app/src/main/kotlin/com/bluebubbles/messaging/services/backend_ui_interop/DartWorker.kt`
+- `lib/services/backend/java_dart_interop/method_channel_service.dart`
+- `lib/services/rustpush/rustpush_receive_readiness.dart`
+- `lib/services/rustpush/rustpush_service.dart`
+- `lib/services/backend/action_handler.dart`
+
+Impact rule: any new `await` before `handleMsg` or `completeMsg` must be
+bounded, receive-critical, and covered by a failure test. The August 29, 2026
+Alpha regression violated this rule by putting optional password and clique
+maintenance inside `initFuture`; native retries then expired and dropped the
+unacknowledged pointers.
+
+## 2. Startup and native state
+
+```text
+APNService.launchAgent
+  -> initNative
+  -> nativeReady / APNService.ready
+  -> get-native-handle
+  -> RustPushService.onInit
+       -> restore SharedPushState
+       -> initFuture completes
+       -> live receive can proceed
+       -> optional iCloud maintenance starts separately
+       -> contacts, relay health, and UI follow
+```
+
+Shared gates:
+
+- `APNService.ready`, `started`, and `pushState`
+- `MainActivity.engine` and `engine_ready`
+- `RustPushService.state` and `initFuture`
+- `Database.waitForInit()`
+
+Impact rule: `initFuture` is a receive-critical barrier. Do not add CloudKit,
+password sync, clique probes, contact refresh, FaceTime prefetch, analytics,
+or other optional network work to it.
+
+## 3. Outbound message
+
+```text
+UI or notification reply
+  -> OutgoingQueue
+  -> ActionHandler.sendMessage
+       -> persist temporary local state
+       -> RustPushService.sendMessage / sendMsg
+       -> native send and retry
+       -> replace or finalize ObjectBox row
+       -> deterministic failure state and notification
+```
+
+Shared state includes `RustPushService.state`, `sendingServiceId`, native
+resource readiness, the outgoing queue, and ObjectBox. A change to retry or
+timeout behavior therefore requires persistence tests, not only transport
+tests.
+
+## 4. Legacy CloudKit
+
+```text
+doCloudKitSync
+  -> background isolate or desktop coordinator
+  -> writer ownership and operation interlock
+  -> chat, attachment, and message page loops
+  -> validate every page
+  -> project locally
+  -> advance token only after the page is valid
+```
+
+Restore-only mode may project local data, but it must not delete local rows
+from tombstones or issue remote duplicate deletion. A single failed item must
+hold the page checkpoint.
+
+## 5. V2 semantic pull
+
+```text
+manual confirmed pull
+  -> production preflight
+  -> operation interlock and native-writer pause
+  -> cached account identity validation
+  -> bounded ObjectBox projection-repair candidate pages
+  -> bounded protected fetch by zone
+  -> journal page
+  -> synchronous per-entry ObjectBox transaction
+  -> cooperative event-loop yield after the durable terminal state
+  -> apply contiguous durable inbox prefix
+  -> checkpoint
+  -> revalidate identity and remote-write tripwire
+  -> resume native writer
+```
+
+Shared gates include writer ownership, operation interlock, coordinator and
+page leases, account-bound storage, and semantic-pull quiescence. Crash tests
+must cover fetch-before-journal, journal-before-apply, and
+apply-before-checkpoint boundaries.
+
+The August 30, 2026 Canary exposed a second boundary: ordered semantic replay
+can remain correct while starving Flutter's UI isolate. Android recorded a
+5,003 ms input-dispatch ANR while the pull processed retained records. Candidate
+queries must apply native ObjectBox limits before `find()`, and replay or repair
+loops must yield between completed rows. Never insert a cooperative fairness
+yield inside an ObjectBox transaction, while a transient identity lease is held,
+or before inbox status, canonical projection, replay metadata, and checkpoint
+state are atomically durable.
+
+## 6. Account reset
+
+```text
+markFailedToLogin / reset
+  -> block new V2 and outbound work
+  -> wait for in-flight operations
+  -> clear active state
+  -> reset and dispose native clients
+  -> resume owners for the next account
+```
+
+Impact rule: timeout is not proof of quiescence. If an operation cannot reach
+a terminal state, preserve the native state and fail visibly rather than
+reporting a clean reset.
+
+## Required tests before changing a shared gate
+
+1. Live APN projection completes before acknowledgement.
+2. Readiness failure is bounded, logged, and remains retryable.
+3. Optional startup maintenance cannot delay receive readiness.
+4. Duplicate APN delivery projects exactly once.
+5. Outbound success, timeout, retry, and failure each preserve one local row.
+6. Legacy page failure holds the token and performs no destructive cleanup.
+7. V2 crash boundaries replay without skipping or duplicating projection.
+8. Account mismatch or reset prevents old-account mutation and acknowledgement.
+9. Long V2 replay and projection repair permit event-loop progress without
+   changing candidate order, transaction atomicity, or checkpoint advancement.
+
+## CI routing policy
+
+The map should eventually select the smallest safe gate set for each change,
+while an always-running classifier reports the decision as one stable required
+check. Keep the existing full workflows as a safety net until the routing has
+matched real failures across several pull requests.
+
+| Changed surface | Required focused gates |
+| --- | --- |
+| Startup, native state, method channel, or APN handoff | Receive-readiness tests, queue tests, Android unit and Kotlin compile gates, and cold-start delivery tests |
+| ObjectBox model or database lifecycle | Model compatibility, persistence, inbox-applier, and attachment-store tests |
+| Cloud Sync Dart implementation | Full Cloud Sync Dart suite, ObjectBox persistence subset, cooperative-yield/query-bound tests, device ANR replay, and web parity |
+| Rust bridge, rustpush gitlink, generated bindings, or CargoKit | Binding reproducibility, Rust tests, rustpush tests, protector harness, and an APK packaging check |
+| FaceTime-only implementation | Dart FaceTime tests, Android FaceTime tests, and WebRTC diagnostic replay |
+| Windows-only implementation | Windows x64 gates and ARM64 architecture/native-library verification |
+| Documentation only | Frontmatter and link validation only |
+| Dependencies, workflows, packaging, or ambiguous shared configuration | Full validation and artifact builds |
+
+An artifact job must depend on its relevant test jobs. A Beta or Canary APK is
+not valid evidence merely because it compiled while a boundary test failed.
+
+## Change review checklist
+
+Before merging a change in one of these paths:
+
+- Identify every caller and shared state object in this map.
+- Classify each new wait as receive-critical or optional.
+- Put a timeout and safe retry behavior on every external wait.
+- State the durable mutation that occurs before and after the wait.
+- Add a contract test at the boundary, not only a unit test of the parser or API.
+- Verify Alpha live receive, Canary semantic pull, and account reset separately.

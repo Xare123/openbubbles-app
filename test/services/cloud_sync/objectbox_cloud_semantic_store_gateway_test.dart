@@ -40,6 +40,128 @@ void main() {
   });
 
   test(
+    'applied repair candidates page past 64 aliased rows to a later eligible row',
+    () async {
+      final chatScope = _scope(zone: 'chatManateeZone');
+      final identityRegistry = TransientCloudCanonicalIdentityRegistry();
+      final activeScope = CloudCanonicalActiveScope(
+        scope: chatScope,
+        generation: leaseFence.generation,
+      );
+      final realAdapter = ObjectBoxCanonicalSemanticEntityAdapter(
+        store: objectBox,
+        activeScopeProvider: () => activeScope,
+        identityResolver: identityRegistry,
+        semanticApplyEnabled: true,
+        allowChatUpserts: true,
+      );
+      final currentGateway = ObjectBoxCloudSemanticStoreGateway(
+        store: objectBox,
+        canonicalAdapter: realAdapter,
+        clock: () => now,
+      );
+
+      for (var index = 1; index <= 65; index++) {
+        final logicalKey = _indexedDigest('logical-$index');
+        final changeId = _indexedDigest('change-$index');
+        final recordId = _indexedDigest('record-$index');
+        final entry = _entry(
+          scope: chatScope,
+          sequence: index,
+          changeId: changeId,
+          recordIdHash: recordId,
+          etagHash: _indexedDigest('etag-$index'),
+          payloadSha256: _sha256('payload-$index'),
+          encryptedServerRecordId: _indexedProtectedReference('server-$index'),
+          protectedSystemFieldsReference: _indexedProtectedReference(
+            'fields-$index',
+          ),
+          encryptedPayloadReference: _indexedProtectedReference(
+            'payload-$index',
+          ),
+        );
+        if (index == 1) {
+          _seedDurableFence(
+            objectBox,
+            entry: entry,
+            leaseFence: leaseFence,
+            now: now,
+            checkpointGeneration: entry.generation,
+          );
+        } else {
+          objectBox.runInTransaction(TxMode.write, () {
+            final checkpointBox = objectBox.box<CloudSyncCheckpointEntity>();
+            final checkpoint = checkpointBox.getAll().single
+              ..lastBatchId = entry.batchId
+              ..fetchedSequence = entry.sequence
+              ..updatedAtMs = now.millisecondsSinceEpoch;
+            checkpointBox.put(checkpoint);
+            _putPendingInboxEntry(objectBox, entry: entry, now: now);
+          });
+        }
+        final payload = _chatPayload(
+          includeServiceIdentifierAlias: true,
+          logicalEntityKeyHash: logicalKey,
+          canonicalGuid: 'chat-$index',
+          chatIdentifier: 'iMessage;-;chat-$index',
+          aliasKeyHash: _indexedDigest('alias-$index'),
+        );
+        final snapshot = _chatSnapshot(
+          logicalEntityKeyHash: logicalKey,
+          encryptedRawRecordReference: entry.change.encryptedPayloadReference!,
+          etagHash: entry.change.etagHash!,
+        );
+        final identityLease = identityRegistry.bind(
+          CloudDecodedMutation.upsert(
+            scope: chatScope,
+            generation: entry.generation,
+            changeId: entry.change.changeId,
+            snapshot: snapshot,
+            payload: payload,
+          ),
+        );
+        try {
+          await currentGateway.writeTransaction<void>(
+            entry: entry,
+            leaseFence: leaseFence,
+            action: (transaction) {
+              transaction.applyEntity(payload: payload, snapshot: snapshot);
+              transaction.markChangeApplied(entry.change.changeId);
+            },
+          );
+        } finally {
+          identityLease.release();
+        }
+      }
+      final eligibleLogicalKey = _indexedDigest('logical-1');
+      final aliasBox = objectBox.box<CloudSemanticChatAliasEntity>();
+      final eligibleAlias = aliasBox.getAll().singleWhere(
+        (alias) => alias.chatLogicalEntityKeyHash == eligibleLogicalKey,
+      );
+      aliasBox.remove(eligibleAlias.id);
+
+      final candidates = await currentGateway
+          .readAppliedProjectionRepairCandidates(
+            scope: chatScope,
+            generation: leaseFence.generation,
+            leaseFence: leaseFence,
+            limit: 1,
+          );
+
+      expect(candidates, hasLength(1));
+      expect(candidates.single.sequence, 1);
+      expect(candidates.single.change.changeId, _indexedDigest('change-1'));
+      expect(objectBox.box<CloudSemanticChatAliasEntity>().count(), 64);
+      final checkpoint = objectBox
+          .box<CloudSyncCheckpointEntity>()
+          .getAll()
+          .single;
+      expect(checkpoint.appliedSequence, 65);
+      expect(checkpoint.fetchedSequence, 65);
+    },
+  );
+
+  test(
     'atomically commits canonical, snapshot, map, replay, and inbox',
     () async {
       final entry = _entry(scope: scope);
@@ -2314,30 +2436,46 @@ CloudMessageEntityPayload _payload() {
   );
 }
 
-CloudSemanticSnapshot _chatSnapshot() {
+CloudSemanticSnapshot _chatSnapshot({
+  String logicalEntityKeyHash = 'L',
+  String etagHash = 'E',
+  String encryptedRawRecordReference = 'W',
+}) {
   return CloudSemanticSnapshot(
     kind: CloudEntityKind.chat,
-    logicalEntityKeyHash: _digestValue('L'),
-    etagHash: _digestValue('E'),
-    encryptedRawRecordReference: _protectedReference('W'),
+    logicalEntityKeyHash: logicalEntityKeyHash == 'L'
+        ? _digestValue(logicalEntityKeyHash)
+        : logicalEntityKeyHash,
+    etagHash: etagHash == 'E' ? _digestValue(etagHash) : etagHash,
+    encryptedRawRecordReference: encryptedRawRecordReference == 'W'
+        ? _protectedReference(encryptedRawRecordReference)
+        : encryptedRawRecordReference,
   );
 }
 
 CloudChatEntityPayload _chatPayload({
   required bool includeServiceIdentifierAlias,
   Iterable<String> participantHandles = const [],
+  String logicalEntityKeyHash = 'L',
+  String canonicalGuid = 'chat-guid',
+  String chatIdentifier = 'iMessage;-;chat',
+  String aliasKeyHash = 'H',
 }) {
   return CloudChatEntityPayload(
-    logicalEntityKeyHash: _digestValue('L'),
-    canonicalGuid: 'chat-guid',
-    chatIdentifier: 'iMessage;-;chat',
+    logicalEntityKeyHash: logicalEntityKeyHash == 'L'
+        ? _digestValue(logicalEntityKeyHash)
+        : logicalEntityKeyHash,
+    canonicalGuid: canonicalGuid,
+    chatIdentifier: chatIdentifier,
     displayName: 'Cloud chat',
     participantHandles: participantHandles,
     aliases: includeServiceIdentifierAlias
         ? [
             CloudSemanticChatAlias(
               kind: CloudSemanticChatAliasKind.serviceIdentifier,
-              keyHash: _digestValue('H'),
+              keyHash: aliasKeyHash == 'H'
+                  ? _digestValue(aliasKeyHash)
+                  : aliasKeyHash,
             ),
           ]
         : const [],
@@ -2399,31 +2537,40 @@ void _seedDurableFence(
             .millisecondsSinceEpoch,
       ),
     );
-    final change = entry.change;
-    store.box<CloudInboxChangeEntity>().put(
-      CloudInboxChangeEntity(
-        changeKey: _scopedDigest(scope, 'change', change.changeId),
-        changeIdHash: change.changeId,
-        scopeKey: scopeKey,
-        accountFingerprint: scope.accountFingerprint,
-        zone: scope.zone,
-        serverRecordIdHash: change.recordIdHash,
-        etagHash: change.etagHash,
-        changeType: change.type.name,
-        encryptedServerRecordId: change.encryptedServerRecordId,
-        protectedSystemFieldsRef: change.protectedSystemFieldsReference,
-        encryptedPayloadRef: change.encryptedPayloadReference,
-        payloadSha256: change.payloadSha256,
-        batchId: entry.batchId,
-        generation: entry.generation,
-        fetchSequence: entry.sequence,
-        status: CloudInboxStatus.pending.index,
-        isTombstone: change.isTombstone,
-        createdAtMs: entry.createdAt.millisecondsSinceEpoch,
-        updatedAtMs: now.millisecondsSinceEpoch,
-      ),
-    );
+    _putPendingInboxEntry(store, entry: entry, now: now);
   });
+}
+
+void _putPendingInboxEntry(
+  Store store, {
+  required CloudInboxEntry entry,
+  required DateTime now,
+}) {
+  final scope = entry.scope;
+  final change = entry.change;
+  store.box<CloudInboxChangeEntity>().put(
+    CloudInboxChangeEntity(
+      changeKey: _scopedDigest(scope, 'change', change.changeId),
+      changeIdHash: change.changeId,
+      scopeKey: _scopeKey(scope),
+      accountFingerprint: scope.accountFingerprint,
+      zone: scope.zone,
+      serverRecordIdHash: change.recordIdHash,
+      etagHash: change.etagHash,
+      changeType: change.type.name,
+      encryptedServerRecordId: change.encryptedServerRecordId,
+      protectedSystemFieldsRef: change.protectedSystemFieldsReference,
+      encryptedPayloadRef: change.encryptedPayloadReference,
+      payloadSha256: change.payloadSha256,
+      batchId: entry.batchId,
+      generation: entry.generation,
+      fetchSequence: entry.sequence,
+      status: CloudInboxStatus.pending.index,
+      isTombstone: change.isTombstone,
+      createdAtMs: entry.createdAt.millisecondsSinceEpoch,
+      updatedAtMs: now.millisecondsSinceEpoch,
+    ),
+  );
 }
 
 CloudInboxChangeEntity _copyInbox(
@@ -2491,6 +2638,13 @@ String _scopedDigest(CloudSyncScope scope, String purpose, String value) =>
 String _sha256(String value) => sha256.convert(utf8.encode(value)).toString();
 
 String _digestValue(String character) => List.filled(43, character).join();
+
+String _indexedDigest(String value) => base64UrlEncode(
+  sha256.convert(utf8.encode(value)).bytes,
+).replaceAll('=', '');
+
+String _indexedProtectedReference(String value) =>
+    'obcs2.ref.${_indexedDigest(value)}';
 
 String _protectedReference(String character) =>
     'obcs2.ref.${_digestValue(character)}';
