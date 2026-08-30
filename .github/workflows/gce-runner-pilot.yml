@@ -436,7 +436,8 @@ jobs:
       - name: Run rustpush library tests with production feature set
         if: ${{ env.VALIDATION_MODE == 'full' }}
         shell: bash
-        run: cargo test --manifest-path rustpush/Cargo.toml --lib --features remote-anisette-v3
+        # Several tests intentionally pause a process-global CloudKit gate.
+        run: cargo test --manifest-path rustpush/Cargo.toml --lib --features remote-anisette-v3 -- --test-threads=1
 
       - name: Run Cloud Sync protector harness
         if: ${{ env.VALIDATION_MODE == 'full' }}
