@@ -888,10 +888,12 @@ absence is the deletion signal, in
 **Action:** Keep the transport, protected bridge, and semantic boundary on the
 same validated matrix. Preserve the optional raw type for redacted diagnostics.
 Retain fixtures for create, update, delete, `None` with either valid body shape,
-and contradictory record/type shapes. A checkpoint may advance only after each
-change is projected or explicitly acknowledged as an applied read-only
-tombstone. Generic quarantine remains durable evidence and a checkpoint/fetch
-barrier until reviewed recovery changes its disposition.
+and contradictory record/type shapes. The exact-applied floor may advance only
+after each change is projected. The independent fetch token may advance after
+the complete journal is durably terminal, including reviewed
+`retainedUnprojected` rows that remain eligible for projection repair. Generic
+quarantine remains durable evidence and a fetch barrier until reviewed recovery
+changes its disposition.
 
 ### Fact: PCS failures are wider than malformed record data
 

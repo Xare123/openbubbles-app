@@ -737,9 +737,9 @@ class ObjectBoxCloudSyncStore
     final scopeKey = _scopeKey(scope);
     final nowMs = now.millisecondsSinceEpoch;
     final checkpoint = _findCheckpointByKeyLocked(scopeKey);
-    if (checkpoint != null) _validateCheckpointScope(checkpoint, scope);
-    final nextSequence = (checkpoint?.appliedSequence ?? 0) + 1;
-    final entity = _findInboxBySequenceLocked(scope, nextSequence);
+    if (checkpoint == null) return const <CloudInboxEntry>[];
+    _validateCheckpointScope(checkpoint, scope);
+    final entity = _findFirstNonterminalInboxLocked(scope, checkpoint);
     if (entity == null ||
         _inboxStatusFromInt(entity.status) != CloudInboxStatus.pending ||
         entity.nextEligibleAtMs > nowMs) {
@@ -802,7 +802,7 @@ class ObjectBoxCloudSyncStore
       final entity = _requireInboxLocked(scope, sequence);
       final status = _inboxStatusFromInt(entity.status);
       if (status == CloudInboxStatus.retainedUnprojected) {
-        _advanceContiguousAppliedLocked(scope, transactionNowMs);
+        _promotePendingFetchedTokenIfTerminalLocked(scope, transactionNowMs);
         return;
       }
       if (status != CloudInboxStatus.pending &&
@@ -832,7 +832,7 @@ class ObjectBoxCloudSyncStore
         ..completedAtMs = transactionNowMs
         ..updatedAtMs = transactionNowMs;
       _inbox.put(entity);
-      _advanceContiguousAppliedLocked(scope, transactionNowMs);
+      _promotePendingFetchedTokenIfTerminalLocked(scope, transactionNowMs);
     });
   }
 
@@ -878,14 +878,16 @@ class ObjectBoxCloudSyncStore
         throw _storageFailure('inbox_retention_checkpoint_invalid');
       }
       final previousAppliedSequence = checkpoint.appliedSequence;
-      var terminalPrefix = 0;
+      var exactAppliedPrefix = 0;
       for (final row in rows) {
-        if (!_isAppliedInboxStatus(_inboxStatusFromInt(row.status))) break;
-        terminalPrefix = row.fetchSequence;
+        if (!_isExactlyAppliedInboxStatus(_inboxStatusFromInt(row.status))) {
+          break;
+        }
+        exactAppliedPrefix = row.fetchSequence;
       }
       final legacyAppliedFloorInflated =
           checkpoint.pendingBatchId == null &&
-          checkpoint.appliedSequence > terminalPrefix;
+          checkpoint.appliedSequence > exactAppliedPrefix;
       final replayedSequences =
           allowLegacyReadOnlyTombstoneAcknowledgement &&
               legacyAppliedFloorInflated
@@ -945,7 +947,7 @@ class ObjectBoxCloudSyncStore
           );
       CloudInboxChangeEntity? firstUnresolved;
       for (final row in rows) {
-        if (!_isAppliedInboxStatus(_inboxStatusFromInt(row.status))) {
+        if (!_isExactlyAppliedInboxStatus(_inboxStatusFromInt(row.status))) {
           firstUnresolved = row;
           break;
         }
@@ -2413,7 +2415,7 @@ class ObjectBoxCloudSyncStore
     while (true) {
       final entity = _findInboxBySequenceLocked(scope, next);
       if (entity == null ||
-          !_isAppliedInboxStatus(_inboxStatusFromInt(entity.status))) {
+          !_isExactlyAppliedInboxStatus(_inboxStatusFromInt(entity.status))) {
         break;
       }
       next++;
@@ -2436,7 +2438,9 @@ class ObjectBoxCloudSyncStore
   }) {
     var appliedThrough = 0;
     for (final row in rows) {
-      if (!_isAppliedInboxStatus(_inboxStatusFromInt(row.status))) break;
+      if (!_isExactlyAppliedInboxStatus(_inboxStatusFromInt(row.status))) {
+        break;
+      }
       appliedThrough = row.fetchSequence;
     }
     if (checkpoint.appliedSequence != appliedThrough) {
@@ -2456,8 +2460,7 @@ class ObjectBoxCloudSyncStore
     final checkpoint = _checkpointLocked(scope, nowMs: nowMs);
     final pendingBatchId = checkpoint.pendingBatchId;
     if (pendingBatchId == null) return;
-    if (checkpoint.appliedSequence != checkpoint.fetchedSequence ||
-        !_isCompleteTerminalInboxJournalLocked(scope, checkpoint)) {
+    if (!_isCompleteTerminalInboxJournalLocked(scope, checkpoint)) {
       return;
     }
 
@@ -2541,7 +2544,7 @@ class ObjectBoxCloudSyncStore
           row.accountFingerprint != scope.accountFingerprint ||
           row.zone != scope.zone ||
           row.generation != checkpoint.generation ||
-          !_isAppliedInboxStatus(_inboxStatusFromInt(row.status))) {
+          !_isTerminalInboxStatus(_inboxStatusFromInt(row.status))) {
         return false;
       }
     }
@@ -2638,41 +2641,17 @@ class ObjectBoxCloudSyncStore
     CloudSyncCheckpointEntity checkpoint,
   ) {
     if (checkpoint.pendingBatchId != null) return false;
-    // A missing sequence has no row for the query below to discover. Treat
-    // every unmarked fetched/applied gap as unsafe legacy state and require an
-    // explicit recovery path instead of advancing a continuation token.
-    if (checkpoint.fetchedSequence > checkpoint.appliedSequence) return true;
-    final query =
-        _inbox
-            .query(
-              CloudInboxChangeEntity_.scopeKey
-                  .equals(_scopeKey(scope))
-                  .and(
-                    CloudInboxChangeEntity_.generation.equals(
-                      checkpoint.generation,
-                    ),
-                  )
-                  .and(
-                    CloudInboxChangeEntity_.status.notEquals(
-                      _inboxStatusToInt(CloudInboxStatus.applied),
-                    ),
-                  )
-                  .and(
-                    CloudInboxChangeEntity_.status.notEquals(
-                      _inboxStatusToInt(CloudInboxStatus.retainedUnprojected),
-                    ),
-                  ),
-            )
-            .build()
-          ..limit = 1;
-    try {
-      return query.findFirst() != null;
-    } finally {
-      query.close();
-    }
+    // fetchedSequence may legitimately exceed the exact-applied floor when a
+    // protected row is retained for later projection repair. Only an
+    // incomplete, missing, or nonterminal journal is unsafe without a pending
+    // batch marker.
+    return !_isCompleteTerminalInboxJournalLocked(scope, checkpoint);
   }
 
-  bool _isAppliedInboxStatus(CloudInboxStatus status) =>
+  bool _isExactlyAppliedInboxStatus(CloudInboxStatus status) =>
+      status == CloudInboxStatus.applied;
+
+  bool _isTerminalInboxStatus(CloudInboxStatus status) =>
       status == CloudInboxStatus.applied ||
       status == CloudInboxStatus.retainedUnprojected;
 
@@ -2811,6 +2790,68 @@ class ObjectBoxCloudSyncStore
     } finally {
       query.close();
     }
+  }
+
+  CloudInboxChangeEntity? _findFirstNonterminalInboxLocked(
+    CloudSyncScope scope,
+    CloudSyncCheckpointEntity checkpoint,
+  ) {
+    final scopeKey = _scopeKey(scope);
+    final builder = _inbox.query(
+      CloudInboxChangeEntity_.scopeKey
+          .equals(scopeKey)
+          .and(CloudInboxChangeEntity_.generation.equals(checkpoint.generation))
+          .and(
+            CloudInboxChangeEntity_.status.notEquals(
+              _inboxStatusToInt(CloudInboxStatus.applied),
+            ),
+          )
+          .and(
+            CloudInboxChangeEntity_.status.notEquals(
+              _inboxStatusToInt(CloudInboxStatus.retainedUnprojected),
+            ),
+          ),
+    )..order(CloudInboxChangeEntity_.fetchSequence);
+    final query = builder.build()..limit = 1;
+    final CloudInboxChangeEntity? entity;
+    try {
+      entity = query.findFirst();
+    } finally {
+      query.close();
+    }
+    if (entity == null) return null;
+    if (entity.fetchSequence <= 0 ||
+        entity.fetchSequence > checkpoint.fetchedSequence) {
+      throw _storageFailure('inbox_nonterminal_sequence_invalid');
+    }
+
+    // Page admission writes a complete contiguous journal atomically. Keep a
+    // defensive count here so a legacy missing sequence cannot be skipped just
+    // because a later pending row is otherwise eligible.
+    final predecessorQuery = _inbox
+        .query(
+          CloudInboxChangeEntity_.scopeKey
+              .equals(scopeKey)
+              .and(
+                CloudInboxChangeEntity_.generation.equals(
+                  checkpoint.generation,
+                ),
+              )
+              .and(
+                CloudInboxChangeEntity_.fetchSequence.lessThan(
+                  entity.fetchSequence,
+                ),
+              ),
+        )
+        .build();
+    try {
+      if (predecessorQuery.count() != entity.fetchSequence - 1) {
+        throw _storageFailure('inbox_journal_sequence_gap');
+      }
+    } finally {
+      predecessorQuery.close();
+    }
+    return entity;
   }
 
   CloudInboxChangeEntity? _findInboxBySequenceLocked(

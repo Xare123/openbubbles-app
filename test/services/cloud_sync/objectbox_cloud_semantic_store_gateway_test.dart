@@ -344,7 +344,7 @@ void main() {
       );
 
       final promoted = checkpointBox.getAll().single;
-      expect(promoted.appliedSequence, 2);
+      expect(promoted.appliedSequence, 0);
       expect(promoted.fetchedTokenCiphertext, 'protected-next-token');
       expect(promoted.pendingFetchedTokenCiphertext, isNull);
       expect(promoted.pendingBatchId, isNull);
@@ -1835,7 +1835,7 @@ void main() {
   );
 
   test(
-    'retained message reprojection commits exactly once without moving cursor',
+    'retained message reprojection commits exactly once and advances exact floor',
     () async {
       final entry = _entry(scope: scope);
       _seedDurableFence(
@@ -1857,7 +1857,7 @@ void main() {
         ..fetchedTokenCiphertext = 'protected-current-token'
         ..pendingFetchedTokenCiphertext = null
         ..pendingBatchId = null
-        ..appliedSequence = entry.sequence;
+        ..appliedSequence = 0;
       checkpointBox.put(checkpoint);
 
       final identityRegistry = TransientCloudCanonicalIdentityRegistry();
@@ -1943,6 +1943,85 @@ void main() {
   );
 
   test(
+    'retained repair advances through exact-applied rows and stops at next retained gap',
+    () async {
+      final firstEntry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: firstEntry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final first = inboxBox.getAll().single
+        ..status = CloudInboxStatus.retainedUnprojected.index
+        ..failureCategory = CloudFailureCategory.dependency.name
+        ..nextEligibleAtMs = 0
+        ..completedAtMs = now.millisecondsSinceEpoch;
+      final second =
+          _copyInbox(
+              first,
+              changeKey: _scopedDigest(scope, 'change', _digestValue('D')),
+            )
+            ..changeIdHash = _digestValue('D')
+            ..serverRecordIdHash = _digestValue('T')
+            ..fetchSequence = 2
+            ..status = CloudInboxStatus.applied.index
+            ..failureCategory = null;
+      final third =
+          _copyInbox(
+              first,
+              changeKey: _scopedDigest(scope, 'change', _digestValue('G')),
+            )
+            ..changeIdHash = _digestValue('G')
+            ..serverRecordIdHash = _digestValue('U')
+            ..fetchSequence = 3
+            ..status = CloudInboxStatus.applied.index
+            ..failureCategory = null;
+      final fourth =
+          _copyInbox(
+              first,
+              changeKey: _scopedDigest(scope, 'change', _digestValue('J')),
+            )
+            ..changeIdHash = _digestValue('J')
+            ..serverRecordIdHash = _digestValue('V')
+            ..fetchSequence = 4;
+      inboxBox.putMany([first, second, third, fourth]);
+      final checkpointBox = objectBox.box<CloudSyncCheckpointEntity>();
+      final checkpoint = checkpointBox.getAll().single
+        ..fetchedTokenCiphertext = 'protected-current-token'
+        ..fetchedSequence = 4
+        ..appliedSequence = 0;
+      checkpointBox.put(checkpoint);
+
+      final candidate = (await gateway.readRetainedProjectionCandidates(
+        scope: scope,
+        generation: firstEntry.generation,
+        leaseFence: leaseFence,
+        limit: 1,
+      )).single;
+      await gateway.writeRetainedProjectionTransaction<void>(
+        entry: candidate,
+        leaseFence: leaseFence,
+        action: _applyAndMark(candidate),
+      );
+
+      final repairedCheckpoint = checkpointBox.getAll().single;
+      expect(repairedCheckpoint.appliedSequence, 3);
+      final rows = inboxBox.getAll()
+        ..sort(
+          (left, right) => left.fetchSequence.compareTo(right.fetchSequence),
+        );
+      expect(rows.map((row) => row.status), [
+        CloudInboxStatus.applied.index,
+        CloudInboxStatus.applied.index,
+        CloudInboxStatus.applied.index,
+        CloudInboxStatus.retainedUnprojected.index,
+      ]);
+    },
+  );
+
+  test(
     'retained reprojection rolls back canonical state and records fair retry',
     () async {
       final entry = _entry(scope: scope);
@@ -1963,7 +2042,7 @@ void main() {
       final checkpointBox = objectBox.box<CloudSyncCheckpointEntity>();
       final checkpoint = checkpointBox.getAll().single
         ..fetchedTokenCiphertext = 'protected-current-token'
-        ..appliedSequence = entry.sequence;
+        ..appliedSequence = 0;
       checkpointBox.put(checkpoint);
       final checkpointBefore = jsonEncode(
         checkpointBox
@@ -2087,7 +2166,7 @@ void main() {
       final checkpointBox = objectBox.box<CloudSyncCheckpointEntity>();
       final checkpoint = checkpointBox.getAll().single
         ..fetchedSequence = 3
-        ..appliedSequence = 3;
+        ..appliedSequence = 0;
       checkpointBox.put(checkpoint);
 
       final firstWindow = await gateway.readRetainedProjectionCandidates(

@@ -629,6 +629,53 @@ void main() {
     expect(transport.fetchCallCount, 1);
   });
 
+  test(
+    'terminal retained row permits later projection and the next fetched page',
+    () async {
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1), testChange(2)],
+          batchId: 'retained-first-page',
+          generation: 1,
+          nextToken: 'after-retained-token',
+          hasMore: true,
+        ),
+      );
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(3)],
+          batchId: 'after-retained-page',
+          generation: 1,
+          nextToken: 'after-retained-final-token',
+          hasMore: false,
+        ),
+      );
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.quarantined(
+        failureCategory: CloudFailureCategory.malformedRecord,
+      );
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+        ),
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.completed);
+      expect(result.counters.retainedUnprojected, 1);
+      expect(result.counters.applied, 2);
+      expect(transport.observedFetchTokens, [null, 'after-retained-token']);
+      expect(applier.appliedSequences, [1, 2, 3]);
+      final checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.fetchedToken, 'after-retained-final-token');
+      expect(checkpoint.pendingBatchId, isNull);
+      expect(checkpoint.lastAppliedSequence, 0);
+      expect(checkpoint.hasUnmarkedPendingInbox, isFalse);
+    },
+  );
+
   const preflightSafeCodeCases = <CloudPreflightCode, String>{
     CloudPreflightCode.unsupportedRecordType:
         'preflight_unsupported_record_type',
@@ -728,7 +775,7 @@ void main() {
       final checkpoint = await store.readCheckpoint(scope);
       expect(checkpoint.fetchedToken, 'legacy-advanced-token');
       expect(checkpoint.hasUnmarkedPendingInbox, isFalse);
-      expect(checkpoint.lastAppliedSequence, 1);
+      expect(checkpoint.lastAppliedSequence, 0);
       expect(
         (await store.inboxEntries(scope)).single.status,
         CloudInboxStatus.retainedUnprojected,
@@ -1537,7 +1584,7 @@ void main() {
       expect(result.counters.preflightQuarantined, 0);
       expect(result.counters.tombstoneQuarantined, 0);
       expect(result.counters.applied, 1);
-      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 2);
+      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 0);
       expect((await store.readCheckpoint(scope)).fetchedToken, 'opaque-token');
       expect(applier.appliedSequences, [1, 2]);
       final entries = await store.inboxEntries(scope);
@@ -1547,7 +1594,7 @@ void main() {
   );
 
   test(
-    'read-only tombstone acknowledgement advances mixed history idempotently',
+    'read-only tombstone acknowledgement retains an exact mixed-history floor',
     () async {
       transport.enqueueFetchBatch(
         CloudFetchBatch(
@@ -1579,7 +1626,7 @@ void main() {
       expect(first.counters.retainedUnprojected, 1);
       expect(first.counters.semanticStageQuarantined, 0);
       expect(first.counters.applied, 2);
-      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 3);
+      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 1);
       expect(
         (await store.readCheckpoint(scope)).fetchedToken,
         'mixed-terminal-token',
@@ -1601,7 +1648,7 @@ void main() {
       expect(second.counters.tombstoneReadOnlyAcknowledged, 0);
       expect(second.counters.semanticStageQuarantined, 0);
       expect(applier.appliedSequences.length, appliedCallCount);
-      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 3);
+      expect((await store.readCheckpoint(scope)).lastAppliedSequence, 1);
     },
   );
 

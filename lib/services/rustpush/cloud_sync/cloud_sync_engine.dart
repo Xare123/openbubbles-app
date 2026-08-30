@@ -1194,8 +1194,9 @@ class CloudSyncEngine {
           pageBlockingFailureSafeCode = pageApply.failureSafeCode;
         }
         checkpoint = await _store.readCheckpoint(scope);
-        // Any non-applied predecessor keeps the committed token at the prior
-        // page. Do not fetch another page until every row is applied.
+        // Only a pending or otherwise nonterminal predecessor keeps the
+        // committed token at the prior page. Retained-unprojected rows remain
+        // repairable projection barriers but may release fetch progress.
         if (checkpoint.pendingBatchId != null ||
             semanticProcessedEntries >= maximumInboxEntries) {
           break;

@@ -22,8 +22,10 @@ abstract interface class CloudSyncStore {
 
   /// Atomically inserts unseen inbox changes and allocates their monotonically
   /// increasing sequence numbers. For a non-empty semantic page, the new
-  /// continuation token is held as pending until all rows in that page are
-  /// safely acknowledged as applied; quarantined rows remain barriers.
+  /// continuation token is held as pending until the complete journal is
+  /// durably terminal. Retained-unprojected rows are terminal for fetch
+  /// progress but do not advance the exact-applied projection floor;
+  /// quarantined rows remain barriers.
   ///
   /// A crash must commit the journal and its pending-token state together.
   Future<int> journalFetchedBatch(

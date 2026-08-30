@@ -306,6 +306,11 @@ void main() {
             maximumDeferredAge: const Duration(days: 3),
             leaseFence: fence,
           );
+          final retainedCheckpoint = await store.readCheckpoint(sibling);
+          expect(retainedCheckpoint.fetchedToken, 'unsafe-token-retained');
+          expect(retainedCheckpoint.lastAppliedSequence, 1);
+          expect(retainedCheckpoint.pendingBatchId, isNull);
+          expect(retainedCheckpoint.hasUnmarkedPendingInbox, isFalse);
         }
 
         final primary = messagesCloudScope(
@@ -588,7 +593,7 @@ void main() {
     },
   );
 
-  test('observed 600-row legacy floor cannot lease outbound work', () async {
+  test('legacy 600-row exact-floor migration preserves evidence', () async {
     final scope = testScope(persistenceLane: CloudSyncPersistenceLane.semantic);
     final admission = await journalShadow(
       batch(
@@ -729,18 +734,21 @@ void main() {
     expect(recovered.retainedUnprojected, 73);
     expect(recovered.tombstoneReadOnlyAcknowledged, 73);
     expect(recovered.previousAppliedSequence, 600);
-    expect(recovered.recomputedAppliedSequence, 600);
+    expect(recovered.recomputedAppliedSequence, 55);
     expect(recovered.legacyFloorInflated, isTrue);
-    expect(recovered.recoveryComplete, isTrue);
-    expect(recovered.firstUnresolvedSequence, isNull);
-    expect(recovered.firstUnresolvedStatus, isNull);
-    expect(recovered.firstUnresolvedCategory, isNull);
+    expect(recovered.recoveryComplete, isFalse);
+    expect(recovered.firstUnresolvedSequence, 56);
+    expect(
+      recovered.firstUnresolvedStatus,
+      CloudInboxStatus.retainedUnprojected,
+    );
+    expect(recovered.firstUnresolvedCategory, CloudFailureCategory.conflict);
 
     final repairedCheckpoint = await store.readCheckpoint(scope);
     expect(repairedCheckpoint.generation, generationBefore);
     expect(repairedCheckpoint.fetchedToken, 'legacy-observed-advanced-token');
     expect(repairedCheckpoint.fetchedSequence, 600);
-    expect(repairedCheckpoint.lastAppliedSequence, 600);
+    expect(repairedCheckpoint.lastAppliedSequence, 55);
     expect(repairedCheckpoint.pendingBatchId, isNull);
     expect(repairedCheckpoint.hasUnmarkedPendingInbox, isFalse);
     final repairedRows = inboxBox.getAll();
@@ -795,13 +803,18 @@ void main() {
     expect(repeated.retainedUnprojected, 0);
     expect(repeated.tombstoneReadOnlyAcknowledged, 0);
     expect(repeated.legacyFloorInflated, isFalse);
-    expect(repeated.recomputedAppliedSequence, 600);
-    expect(repeated.recoveryComplete, isTrue);
+    expect(repeated.recomputedAppliedSequence, 55);
+    expect(repeated.recoveryComplete, isFalse);
+    expect(repeated.firstUnresolvedSequence, 56);
+    expect(
+      repeated.firstUnresolvedStatus,
+      CloudInboxStatus.retainedUnprojected,
+    );
 
     await reopen();
     final durableCheckpoint = await store.readCheckpoint(scope);
     expect(durableCheckpoint.fetchedToken, 'legacy-observed-advanced-token');
-    expect(durableCheckpoint.lastAppliedSequence, 600);
+    expect(durableCheckpoint.lastAppliedSequence, 55);
     expect(durableCheckpoint.hasUnmarkedPendingInbox, isFalse);
   });
 
@@ -1020,7 +1033,7 @@ void main() {
       expect(recovered.retainedUnprojected, 1);
       expect(recovered.tombstoneReadOnlyAcknowledged, 0);
       var checkpoint = await store.readCheckpoint(scope);
-      expect(checkpoint.lastAppliedSequence, 1);
+      expect(checkpoint.lastAppliedSequence, 0);
       expect(checkpoint.fetchedToken, 'legacy-retention-token');
       expect(checkpoint.hasUnmarkedPendingInbox, isFalse);
       var retained = objectBox.box<CloudInboxChangeEntity>().getAll().single;
@@ -1060,7 +1073,7 @@ void main() {
       await reopen();
       checkpoint = await store.readCheckpoint(scope);
       retained = objectBox.box<CloudInboxChangeEntity>().getAll().single;
-      expect(checkpoint.lastAppliedSequence, 1);
+      expect(checkpoint.lastAppliedSequence, 0);
       expect(retained.status, CloudInboxStatus.retainedUnprojected.index);
 
       currentTime = testEpoch.add(const Duration(days: 2));
@@ -1341,7 +1354,7 @@ void main() {
         leaseFence: fence,
       );
       final partial = await store.readCheckpoint(scope);
-      expect(partial.lastAppliedSequence, 1);
+      expect(partial.lastAppliedSequence, 0);
       expect(partial.fetchedToken, isNull);
       expect(partial.pendingBatchId, 'read-only-tombstone-page');
 
@@ -1360,6 +1373,13 @@ void main() {
       expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 0);
       expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
 
+      final eligibleAfterRetained = await store.readEligibleInbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+      );
+      expect(eligibleAfterRetained.map((entry) => entry.sequence), [2]);
+
       await store.markInboxApplied(
         scope,
         sequence: 2,
@@ -1367,9 +1387,10 @@ void main() {
         leaseFence: fence,
       );
       final completed = await store.readCheckpoint(scope);
-      expect(completed.lastAppliedSequence, 2);
+      expect(completed.lastAppliedSequence, 0);
       expect(completed.fetchedToken, 'read-only-tombstone-token');
       expect(completed.pendingBatchId, isNull);
+      expect(completed.hasUnmarkedPendingInbox, isFalse);
     },
   );
 

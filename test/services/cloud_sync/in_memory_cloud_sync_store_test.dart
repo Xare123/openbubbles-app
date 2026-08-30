@@ -188,7 +188,7 @@ void main() {
   );
 
   test(
-    'retained deterministic failure advances while conflict is rejected',
+    'retained deterministic failure releases the terminal token without advancing the exact floor',
     () async {
       await _journal(
         store,
@@ -235,6 +235,12 @@ void main() {
         maximumDeferredAge: const Duration(days: 3),
         leaseFence: fence,
       );
+      final eligibleAfterRetained = await store.readEligibleInbox(
+        scope,
+        now: testEpoch,
+        limit: 1,
+      );
+      expect(eligibleAfterRetained.map((entry) => entry.sequence), [2]);
       await store.markInboxApplied(
         scope,
         sequence: 2,
@@ -246,8 +252,78 @@ void main() {
       expect(entries.first.status, CloudInboxStatus.retainedUnprojected);
       expect(entries.last.status, CloudInboxStatus.applied);
       final checkpoint = await store.readCheckpoint(scope);
-      expect(checkpoint.lastAppliedSequence, 2);
+      expect(checkpoint.lastAppliedSequence, 0);
       expect(checkpoint.fetchedToken, 'retained-token');
+      expect(checkpoint.pendingBatchId, isNull);
+      expect(checkpoint.hasUnmarkedPendingInbox, isFalse);
+      expect(
+        await store.readEligibleInbox(scope, now: testEpoch, limit: 1),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'retained terminal rows remain projection-unresolved during recovery',
+    () async {
+      await _journal(
+        store,
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1), testChange(2)],
+          batchId: 'retained-recovery-page',
+          generation: 1,
+          nextToken: 'retained-recovery-token',
+          hasMore: false,
+        ),
+      );
+      final fence = (await store.tryAcquireCoordinatorLease(
+        scope,
+        ownerId: 'retained-recovery-owner',
+        now: testEpoch,
+        leaseDuration: const Duration(minutes: 5),
+      ))!;
+      await store.markInboxRetainedUnprojected(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.malformedRecord,
+        now: testEpoch,
+        maximumDeferredAttempts: 8,
+        maximumDeferredAge: const Duration(days: 3),
+        leaseFence: fence,
+      );
+      await store.markInboxApplied(
+        scope,
+        sequence: 2,
+        now: testEpoch,
+        leaseFence: fence,
+      );
+
+      final recovered = await store.recoverRetainedInboxBarriers(
+        scope,
+        now: testEpoch,
+        maximumDeferredAttempts: 8,
+        maximumDeferredAge: const Duration(days: 3),
+        leaseFence: fence,
+      );
+
+      expect(recovered.previousAppliedSequence, 0);
+      expect(recovered.recomputedAppliedSequence, 0);
+      expect(recovered.legacyFloorInflated, isFalse);
+      expect(recovered.firstUnresolvedSequence, 1);
+      expect(
+        recovered.firstUnresolvedStatus,
+        CloudInboxStatus.retainedUnprojected,
+      );
+      expect(
+        recovered.firstUnresolvedCategory,
+        CloudFailureCategory.malformedRecord,
+      );
+      expect(recovered.recoveryComplete, isFalse);
+      final checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.fetchedToken, 'retained-recovery-token');
+      expect(checkpoint.lastAppliedSequence, 0);
+      expect(checkpoint.hasUnmarkedPendingInbox, isFalse);
     },
   );
 

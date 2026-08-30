@@ -381,7 +381,7 @@ final class ObjectBoxCloudSemanticStoreGateway
     entry: entry,
     leaseFence: leaseFence,
     expectedInboxStatus: CloudInboxStatus.retainedUnprojected,
-    advanceCheckpointOnTerminal: false,
+    advanceCheckpointOnTerminal: true,
     action: action,
   );
 
@@ -1625,7 +1625,13 @@ final class _ObjectBoxCloudSemanticStoreTransaction
   }
 
   void _advanceContiguousApplied() {
-    var next = _checkpointEntity.appliedSequence + 1;
+    // Retained projection repair is also the migration path for checkpoints
+    // written by builds that counted retained rows as applied. Recompute from
+    // the beginning for that uncommon path; normal pending-row projection
+    // keeps the existing O(delta) advancement.
+    var next = _initialInboxStatus == CloudInboxStatus.retainedUnprojected
+        ? 1
+        : _checkpointEntity.appliedSequence + 1;
     while (next <= _checkpointEntity.fetchedSequence) {
       final query =
           _inbox
@@ -1657,8 +1663,7 @@ final class _ObjectBoxCloudSemanticStoreTransaction
           'semantic_inbox_sequence_scope_mismatch',
         );
       }
-      if (row.status != CloudInboxStatus.applied.index &&
-          row.status != CloudInboxStatus.retainedUnprojected.index) {
+      if (row.status != CloudInboxStatus.applied.index) {
         break;
       }
       next++;
@@ -1681,9 +1686,7 @@ final class _ObjectBoxCloudSemanticStoreTransaction
   void _promotePendingFetchedTokenIfTerminal() {
     final pendingBatchId = _checkpointEntity.pendingBatchId;
     if (pendingBatchId == null) return;
-    if (_checkpointEntity.appliedSequence !=
-            _checkpointEntity.fetchedSequence ||
-        !_isCompleteTerminalInboxJournal()) {
+    if (!_isCompleteTerminalInboxJournal()) {
       return;
     }
 

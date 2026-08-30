@@ -100,23 +100,25 @@ Nothing here needs a device or an Apple account.
    it. This is a question for the first live fetch, but the transport must be
    able to *record* the distinction before that run, or the run cannot answer it.
 
-4. ~~**Decide what unblocks a stalled applied floor.**~~ **Done: acknowledge
-   disabled tombstones read-only, while keeping failed records as barriers.**
-   `tombstoneReadOnlyAcknowledged` is persisted as an applied inbox row without
-   decoding, deleting, or opening a semantic transaction. Generic
-   `quarantined` rows remain nonterminal: they do not advance
-   `_advanceContiguousApplied`, do not promote a pending token, and block later
-   inbox rows and transport fetches.
+4. ~~**Decide what unblocks a stalled applied floor.**~~ **Done: use separate
+   exact-applied and terminal-fetch watermarks.**
+   `tombstoneReadOnlyAcknowledged` and other reviewed terminal failures are
+   persisted as `retainedUnprojected` without decoding or deleting canonical
+   data. They do not advance the exact-applied floor, but they do permit later
+   independent inbox rows to run and permit the pending fetch token to promote
+   once the complete journal is durably terminal. Generic `quarantined` rows
+   remain nonterminal and block both later inbox processing and token promotion.
 
    The consequence chain is intentional. A malformed or otherwise failed row
    preserves its protected source reference, failure category, and replay
-   evidence, but prevents the engine from silently skipping it. Recovery must
-   explicitly review and change that durable disposition; no automatic
-   checkpoint advance is allowed.
+   evidence. Only an explicit retention disposition can make it terminal for
+   fetch progress, and retained projection repair remains responsible for
+   converting it to exact-applied state.
 
-   An unmarked `fetchedSequence > appliedSequence` gap also fails closed, even
-   when the missing sequence has no inbox row to query. A duplicate-only page
-   cannot use that corrupt or legacy state to promote a newer token.
+   A `fetchedSequence > appliedSequence` difference is expected when every gap
+   row is durably retained. A missing sequence or any pending/quarantined row
+   without a pending batch marker still fails closed, so a duplicate-only page
+   cannot use corrupt or legacy state to promote a newer token.
 
 Additional safety closures in this stage:
 

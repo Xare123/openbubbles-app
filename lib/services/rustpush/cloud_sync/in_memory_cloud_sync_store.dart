@@ -216,11 +216,10 @@ class InMemoryCloudSyncStore
   }) {
     _requirePositiveLimit(limit);
     return _lock.synchronized(() async {
-      // Only the first non-terminal sequence after the contiguous floor is
-      // eligible. Returning later rows here would let a caller mutate local
-      // state out of order if the predecessor is deferred or retryable.
-      final nextSequence = _checkpoint(scope).lastAppliedSequence + 1;
-      final entry = _inbox[scope.storageKey]?[nextSequence];
+      // Retained rows are terminal for fetch progress but deliberately do not
+      // advance the exact-applied projection floor. Select the first remaining
+      // nonterminal row rather than deriving eligibility from that floor.
+      final entry = _findFirstNonterminalInbox(scope, _checkpoint(scope));
       if (entry == null ||
           entry.status != CloudInboxStatus.pending ||
           (entry.nextEligibleAt != null &&
@@ -275,7 +274,7 @@ class InMemoryCloudSyncStore
       _requireActiveCoordinatorLeaseLocked(scope, leaseFence, now);
       final entry = _requireInboxEntry(scope, sequence);
       if (entry.status == CloudInboxStatus.retainedUnprojected) {
-        _advanceContiguousAppliedPosition(scope);
+        _promotePendingFetchedTokenIfTerminal(scope, _checkpoint(scope));
         return;
       }
       if (entry.status != CloudInboxStatus.pending &&
@@ -314,7 +313,7 @@ class InMemoryCloudSyncStore
         completedAt: now,
         clearNextEligibleAt: true,
       );
-      _advanceContiguousAppliedPosition(scope);
+      _promotePendingFetchedTokenIfTerminal(scope, _checkpoint(scope));
     });
   }
 
@@ -350,14 +349,14 @@ class InMemoryCloudSyncStore
         );
       }
       final previousAppliedSequence = checkpoint.lastAppliedSequence;
-      var terminalPrefix = 0;
+      var exactAppliedPrefix = 0;
       for (final entry in rows) {
-        if (!_isTerminalInboxStatus(entry.status)) break;
-        terminalPrefix = entry.sequence;
+        if (!_isExactlyAppliedInboxStatus(entry.status)) break;
+        exactAppliedPrefix = entry.sequence;
       }
       final legacyAppliedFloorInflated =
           checkpoint.pendingBatchId == null &&
-          checkpoint.lastAppliedSequence > terminalPrefix;
+          checkpoint.lastAppliedSequence > exactAppliedPrefix;
 
       var retained = 0;
       var tombstones = 0;
@@ -401,7 +400,7 @@ class InMemoryCloudSyncStore
             ..sort((left, right) => left.sequence.compareTo(right.sequence));
       CloudInboxEntry? firstUnresolved;
       for (final entry in reconciledRows) {
-        if (!_isTerminalInboxStatus(entry.status)) {
+        if (!_isExactlyAppliedInboxStatus(entry.status)) {
           firstUnresolved = entry;
           break;
         }
@@ -1339,18 +1338,49 @@ class InMemoryCloudSyncStore
     CloudSyncCheckpoint checkpoint,
   ) {
     if (checkpoint.pendingBatchId != null) return false;
-    // Without a pending-page marker, any fetched/applied sequence gap is a
-    // legacy or corrupt checkpoint. The missing row may not be queryable, so
-    // looking only for a non-applied row is insufficient.
-    if (checkpoint.fetchedSequence > checkpoint.lastAppliedSequence) {
-      return true;
+    // fetchedSequence may legitimately exceed the exact-applied floor when a
+    // protected row is retained for later projection repair. Only an
+    // incomplete, missing, or nonterminal journal is unsafe without a pending
+    // batch marker.
+    return !_isCompleteTerminalInboxJournal(scope, checkpoint);
+  }
+
+  CloudInboxEntry? _findFirstNonterminalInbox(
+    CloudSyncScope scope,
+    CloudSyncCheckpoint checkpoint,
+  ) {
+    final entries = _inbox[scope.storageKey];
+    final candidates =
+        entries?.values
+            .where(
+              (entry) =>
+                  entry.generation == checkpoint.generation &&
+                  !_isTerminalInboxStatus(entry.status),
+            )
+            .toList()
+          ?..sort((left, right) => left.sequence.compareTo(right.sequence));
+    if (candidates == null || candidates.isEmpty) return null;
+    final entry = candidates.first;
+    if (entry.sequence <= 0 || entry.sequence > checkpoint.fetchedSequence) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.localStorage,
+        safeCode: 'inbox_nonterminal_sequence_invalid',
+      );
     }
-    return _inbox[scope.storageKey]?.values.any(
-          (entry) =>
-              entry.generation == checkpoint.generation &&
-              !_isTerminalInboxStatus(entry.status),
-        ) ??
-        false;
+    final predecessorCount = entries!.values
+        .where(
+          (candidate) =>
+              candidate.generation == checkpoint.generation &&
+              candidate.sequence < entry.sequence,
+        )
+        .length;
+    if (predecessorCount != entry.sequence - 1) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.localStorage,
+        safeCode: 'inbox_journal_sequence_gap',
+      );
+    }
+    return entry;
   }
 
   CloudInboxEntry _requireInboxEntry(CloudSyncScope scope, int sequence) {
@@ -1368,7 +1398,7 @@ class InMemoryCloudSyncStore
     var checkpoint = _checkpoint(scope);
     final entries = _inbox[scope.storageKey];
     var next = checkpoint.lastAppliedSequence + 1;
-    while (_isTerminalInboxStatus(entries?[next]?.status)) {
+    while (_isExactlyAppliedInboxStatus(entries?[next]?.status)) {
       next++;
     }
     final appliedThrough = next - 1;
@@ -1383,7 +1413,7 @@ class InMemoryCloudSyncStore
     var checkpoint = _checkpoint(scope);
     final entries = _inbox[scope.storageKey];
     var next = 1;
-    while (_isTerminalInboxStatus(entries?[next]?.status)) {
+    while (_isExactlyAppliedInboxStatus(entries?[next]?.status)) {
       next++;
     }
     final appliedThrough = next - 1;
@@ -1402,21 +1432,7 @@ class InMemoryCloudSyncStore
     final entries = _inbox[scope.storageKey];
     final pendingBatchId = checkpoint.pendingBatchId;
     if (pendingBatchId == null) return;
-    if (checkpoint.lastAppliedSequence != checkpoint.fetchedSequence) return;
-    final generationEntries =
-        entries?.values
-            .where((entry) => entry.generation == checkpoint.generation)
-            .toList()
-          ?..sort((left, right) => left.sequence.compareTo(right.sequence));
-    if (generationEntries == null ||
-        generationEntries.length != checkpoint.fetchedSequence ||
-        generationEntries.indexed.any(
-          (item) =>
-              item.$2.sequence != item.$1 + 1 ||
-              !_isTerminalInboxStatus(item.$2.status),
-        )) {
-      return;
-    }
+    if (!_isCompleteTerminalInboxJournal(scope, checkpoint)) return;
     final pendingEntries = entries?.values.where(
       (entry) =>
           entry.generation == checkpoint.generation &&
@@ -1434,6 +1450,28 @@ class InMemoryCloudSyncStore
     );
     _pendingFetchedTokens.remove(scope.storageKey);
   }
+
+  bool _isCompleteTerminalInboxJournal(
+    CloudSyncScope scope,
+    CloudSyncCheckpoint checkpoint,
+  ) {
+    final entries =
+        _inbox[scope.storageKey]?.values
+            .where((entry) => entry.generation == checkpoint.generation)
+            .toList()
+          ?..sort((left, right) => left.sequence.compareTo(right.sequence));
+    if (entries == null || entries.length != checkpoint.fetchedSequence) {
+      return checkpoint.fetchedSequence == 0 && entries == null;
+    }
+    return !entries.indexed.any(
+      (item) =>
+          item.$2.sequence != item.$1 + 1 ||
+          !_isTerminalInboxStatus(item.$2.status),
+    );
+  }
+
+  bool _isExactlyAppliedInboxStatus(CloudInboxStatus? status) =>
+      status == CloudInboxStatus.applied;
 
   bool _isTerminalInboxStatus(CloudInboxStatus? status) =>
       status == CloudInboxStatus.applied ||

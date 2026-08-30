@@ -207,8 +207,9 @@ enum CloudInboxStatus {
   quarantined,
 
   /// The protected source record is retained locally, but this client cannot
-  /// project it into the canonical message store. This is terminal for the
-  /// projection cursor and never authorizes a CloudKit or canonical delete.
+  /// project it into the canonical message store. This is terminal for fetch
+  /// token progress, remains repairable, does not advance the exact-applied
+  /// projection floor, and never authorizes a CloudKit or canonical delete.
   retainedUnprojected,
 }
 
@@ -530,9 +531,10 @@ class CloudSyncCheckpoint {
   final bool hasUnmarkedPendingInbox;
   final int fetchedSequence;
 
-  /// Highest contiguous safely acknowledged inbox sequence. Rows persisted as
-  /// applied or retained-unprojected advance it; pending and quarantined rows
-  /// block it.
+  /// Highest contiguous exactly-applied inbox sequence. Retained-unprojected,
+  /// pending, and quarantined rows block this projection floor. The protected
+  /// fetch token can independently advance once the complete journal is
+  /// durably terminal.
   final int lastAppliedSequence;
   final int mutationRevisionCounter;
   final int consecutivePullFailures;
@@ -615,10 +617,10 @@ class CloudInboxRetentionRecovery {
   /// Persisted projection floor before journal reconciliation.
   final int previousAppliedSequence;
 
-  /// Largest contiguous terminal prefix proven from sequence one.
+  /// Largest contiguous exactly-applied prefix proven from sequence one.
   final int recomputedAppliedSequence;
 
-  /// Whether the persisted floor crossed a non-terminal journal row.
+  /// Whether the persisted floor crossed a row that was not exactly applied.
   final bool legacyFloorInflated;
 
   /// First row that still blocks projection, if any.
@@ -626,7 +628,7 @@ class CloudInboxRetentionRecovery {
   final CloudInboxStatus? firstUnresolvedStatus;
   final CloudFailureCategory? firstUnresolvedCategory;
 
-  /// True only when every fetched row has a durable terminal disposition.
+  /// True only when every fetched row is exactly applied.
   final bool recoveryComplete;
 }
 
