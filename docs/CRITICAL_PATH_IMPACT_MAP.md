@@ -141,7 +141,7 @@ OpenBubbles send
   -> IDS/APNs delivery
   -> local reflection and ObjectBox persistence
   -> optional reflection to another registered Apple device
-       -> possible Apple-device Messages in iCloud archival
+       -> native Mac/iPhone Messages persistence and possible cloud archival
        -> not an OpenBubbles durability guarantee
 
 separate CloudKit archival path
@@ -155,8 +155,10 @@ local reflected row, or another online OpenBubbles client. The restore-only
 Canary intentionally blocks CloudKit saves. Before enabling V2 outbound writes,
 test whether the iPhone relay reliably archives a uniquely identified live
 send and whether that record later appears through the read-only semantic pull.
-Treat relay archival as an optimization only if repeated offline, delayed, and
-reconnect cases prove it; otherwise retain an audited explicit CloudKit writer.
+The regular Windows client's Mac mini backing proves only the Mac-owned native
+path; it is not evidence for the Pixel's iPhone-relay path. Treat relay archival
+as an optimization only if repeated offline, delayed, and reconnect cases prove
+it; otherwise retain an audited explicit CloudKit writer.
 
 ## 4. Legacy CloudKit
 
