@@ -57,6 +57,7 @@ const MAX_MESSAGE_EDITS: usize = 65_536;
 const MAX_RETRACTED_PARTS: usize = 65_536;
 const MAX_CANONICAL_TIMESTAMP_MILLIS: i64 = 253_402_300_799_999;
 const APPLE_EPOCH_OFFSET_MILLIS: i64 = 978_307_200_000;
+const URL_BALLOON_PROVIDER: &str = "com.apple.messages.URLBalloonProvider";
 
 const TYPED_STREAM_TAG_START: u8 = 0x84;
 const TYPED_STREAM_TAG_EMPTY: u8 = 0x85;
@@ -2030,7 +2031,13 @@ fn reject_unsupported_message_content(
     proto_4: Option<&MessageProto4>,
     service: CloudCanonicalService,
 ) -> Option<CloudCanonicalConversionOutcome> {
-    if proto.payload_data.is_some() {
+    // A URL balloon's ordinary text is independently usable even though V2
+    // does not yet decode Apple's embedded RichLink payload. Keep the bytes in
+    // the protected source envelope, project only the base message, and leave
+    // every other extension fail-closed.
+    let can_project_url_balloon_base = service == CloudCanonicalService::IMessage
+        && proto.balloon_bundle_id.as_deref() == Some(URL_BALLOON_PROVIDER);
+    if proto.payload_data.is_some() && !can_project_url_balloon_base {
         return Some(CloudCanonicalConversionOutcome::Deferred(
             CloudCanonicalDeferredReason::UnsupportedExtensionPayload,
         ));
@@ -3214,6 +3221,60 @@ mod tests {
                 .value(),
             "obcs2.fixture.protected"
         );
+    }
+
+    #[test]
+    fn url_balloon_projects_base_message_without_decoding_protected_payload() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut message = normal_message(Some("https://example.com/path"));
+        message.msg_proto.0.balloon_bundle_id = Some(URL_BALLOON_PROVIDER.to_owned());
+        message.msg_proto.0.payload_data = Some(vec![0x01, 0x02, 0x03]);
+
+        let outcome = convert_message(
+            &context(&hasher, "server-url-balloon", None),
+            &message_presence(),
+            &message,
+        );
+        let payload = message_payload(&outcome);
+        assert_eq!(
+            payload.text(),
+            &CloudCanonicalField::Value("https://example.com/path".to_owned())
+        );
+        assert_eq!(
+            payload.balloon_bundle_id(),
+            &CloudCanonicalField::Value(URL_BALLOON_PROVIDER.to_owned())
+        );
+        assert_eq!(
+            payload.decoded_extension_payload(),
+            &CloudCanonicalField::Absent
+        );
+    }
+
+    #[test]
+    fn unknown_and_sms_extension_payloads_remain_deferred() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        for (service, balloon_bundle_id) in [
+            ("iMessage", None),
+            ("iMessage", Some("com.example.UnknownBalloon")),
+            ("SMS", Some(URL_BALLOON_PROVIDER)),
+        ] {
+            let mut message = normal_message(Some("base text"));
+            message.service = service.to_owned();
+            message.msg_proto.0.balloon_bundle_id = balloon_bundle_id.map(str::to_owned);
+            message.msg_proto.0.payload_data = Some(vec![0x01]);
+
+            assert_eq!(
+                convert_message(
+                    &context(&hasher, "server-unsupported-extension", None),
+                    &message_presence(),
+                    &message,
+                ),
+                CloudCanonicalConversionOutcome::Deferred(
+                    CloudCanonicalDeferredReason::UnsupportedExtensionPayload
+                ),
+                "service={service} balloon_bundle_id={balloon_bundle_id:?}"
+            );
+        }
     }
 
     #[test]
