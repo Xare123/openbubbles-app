@@ -270,7 +270,6 @@ jobs:
             'ndk;28.2.13676358' >/dev/null
 
       - name: Set up fake Fairplay keys
-        if: ${{ env.VALIDATION_MODE != 'rustpush-only' }}
         shell: bash
         run: |
           set -euo pipefail
