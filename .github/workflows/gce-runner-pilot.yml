@@ -6,9 +6,10 @@ on:
       machine_type:
         description: Google Compute Engine machine type
         required: true
-        default: n2d-standard-16
+        default: c4d-highcpu-16
         type: choice
         options:
+          - c4d-highcpu-16
           - n2d-standard-8
           - n2d-standard-16
       flavor:
@@ -43,7 +44,8 @@ env:
   GCP_RUNNER_SUBNET: ${{ vars.GCP_RUNNER_SUBNET }}
   GCP_RUNNER_ZONE: us-west1-b
   RUNNER_NAME: gce-${{ github.run_id }}-${{ github.run_attempt }}
-  MACHINE_TYPE: ${{ inputs.machine_type || 'n2d-standard-16' }}
+  MACHINE_TYPE: ${{ inputs.machine_type || 'c4d-highcpu-16' }}
+  DISK_TYPE: ${{ startsWith(inputs.machine_type || 'c4d-highcpu-16', 'c4d-') && 'hyperdisk-balanced' || 'pd-balanced' }}
   BUILD_FLAVOR: ${{ inputs.flavor || 'beta' }}
 
 jobs:
@@ -104,7 +106,7 @@ jobs:
           zone: ${{ env.GCP_RUNNER_ZONE }}
           machine_type: ${{ env.MACHINE_TYPE }}
           disk_size: "100"
-          disk_type: pd-balanced
+          disk_type: ${{ env.DISK_TYPE }}
           image_family: ubuntu-2404-lts-amd64
           image_project: ubuntu-os-cloud
           max_run_duration: 75m
@@ -122,6 +124,7 @@ jobs:
             echo "- Name: \`${RUNNER_NAME}\`"
             echo "- Zone: \`${{ steps.create.outputs.zone }}\`"
             echo "- Machine: \`${MACHINE_TYPE}\`"
+            echo "- Disk: \`${DISK_TYPE}\`"
             echo '- Maximum VM lifetime: `75m`'
           } >> "$GITHUB_STEP_SUMMARY"
 
