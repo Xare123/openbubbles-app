@@ -927,7 +927,7 @@ pub enum CloudSyncAttachmentMaterializationFailureCode {
 
 /// Exactly one of `completed` and `failure` is populated. `verified_bytes`
 /// is meaningful only when `completed` is true.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CloudSyncAttachmentMaterializationResult {
     pub completed: bool,
     pub verified_bytes: u64,
