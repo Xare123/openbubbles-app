@@ -46,6 +46,7 @@ void main() {
     Duration coordinatorLeaseDuration = const Duration(minutes: 5),
     Duration outboxLeaseDuration = const Duration(minutes: 2),
     bool allowManualPullBackoffOverride = false,
+    DateTime? unknownInboxBarrierRecoveryCutoff,
     MemoryCloudSyncObserver? observer,
     String coordinatorId = 'coordinator-a',
     CloudShadowJournalBudget? shadowJournalBudget,
@@ -82,6 +83,7 @@ void main() {
         coordinatorLeaseDuration: coordinatorLeaseDuration,
         outboxLeaseDuration: outboxLeaseDuration,
         allowManualPullBackoffOverride: allowManualPullBackoffOverride,
+        unknownInboxBarrierRecoveryCutoff: unknownInboxBarrierRecoveryCutoff,
         shadowJournalBudget: shadowJournalBudget ?? CloudShadowJournalBudget(),
         flags: flags,
       ),
@@ -1946,6 +1948,70 @@ void main() {
   });
 
   test(
+    'manual semantic run invokes fenced unknown barrier recovery before apply',
+    () async {
+      final recoveryStore = _UnknownBarrierRecoveryTrackingStore();
+      store = recoveryStore;
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          batchId: 'post-recovery-empty-page',
+          generation: 1,
+          changes: const [],
+          nextToken: 'post-recovery-token',
+          hasMore: false,
+        ),
+      );
+      final cutoff = testEpoch.subtract(const Duration(seconds: 1));
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          saves: false,
+        ),
+        unknownInboxBarrierRecoveryCutoff: cutoff,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.completed);
+      expect(recoveryStore.calls, 1);
+      expect(recoveryStore.scope, scope);
+      expect(recoveryStore.now, testEpoch);
+      expect(recoveryStore.cutoff, cutoff);
+      expect(recoveryStore.leaseFence, isNotNull);
+    },
+  );
+
+  test('unknown barrier recovery rejects non-semantic or write configs', () {
+    final cutoff = DateTime.utc(2026, 8, 29);
+    expect(
+      () => CloudSyncEngineConfig(unknownInboxBarrierRecoveryCutoff: cutoff),
+      throwsArgumentError,
+    );
+    expect(
+      () => CloudSyncEngineConfig(
+        unknownInboxBarrierRecoveryCutoff: cutoff,
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          saves: true,
+        ),
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => CloudSyncEngineConfig(
+        unknownInboxBarrierRecoveryCutoff: DateTime(2026, 8, 29),
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+        ),
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test(
     'bounds a stalled read-only fetch and persists network backoff',
     () async {
       final fetchStarted = Completer<void>();
@@ -3224,6 +3290,30 @@ void main() {
       expect(transport.pushCallCount, 0);
     },
   );
+}
+
+final class _UnknownBarrierRecoveryTrackingStore extends InMemoryCloudSyncStore
+    implements CloudUnknownInboxBarrierRecoveryStore {
+  int calls = 0;
+  CloudSyncScope? scope;
+  DateTime? now;
+  DateTime? cutoff;
+  CloudCoordinatorLeaseFence? leaseFence;
+
+  @override
+  Future<bool> requeueUnknownInboxBarrier(
+    CloudSyncScope scope, {
+    required DateTime now,
+    required DateTime quarantinedBefore,
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) async {
+    calls++;
+    this.scope = scope;
+    this.now = now;
+    cutoff = quarantinedBefore;
+    this.leaseFence = leaseFence;
+    return true;
+  }
 }
 
 class _RecoveryTrackingStore extends InMemoryCloudSyncStore {

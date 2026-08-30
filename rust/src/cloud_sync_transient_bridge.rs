@@ -750,21 +750,77 @@ fn map_push_failure(error: &PushError) -> CloudTransientBridgeFailure {
         | PushError::NotInClique
         | PushError::ShareKeyNotFound(_)
         | PushError::MasterKeyNotFound
-        | PushError::DecryptionKeyNotFound(_) => CloudTransientBridgeFailure::PcsUnavailable,
+        | PushError::DecryptionKeyNotFound(_)
+        | PushError::CloudKeyNotFound { .. }
+        | PushError::NoRoutingKey => CloudTransientBridgeFailure::PcsUnavailable,
         PushError::CloudKitWarmAuthenticationRequired => {
             CloudTransientBridgeFailure::WarmAuthenticationRequired
         }
-        PushError::PCSCiphertextMalformed => CloudTransientBridgeFailure::MalformedRecord,
+        PushError::PCSCiphertextMalformed
+        | PushError::ProtobufError(_)
+        | PushError::JsonError(_) => CloudTransientBridgeFailure::MalformedRecord,
+        PushError::IoError(error) if error.kind() == std::io::ErrorKind::InvalidData => {
+            CloudTransientBridgeFailure::MalformedRecord
+        }
         PushError::RequestError(_)
         | PushError::CloudKitHttpError { .. }
         | PushError::CloudKitError(_)
+        | PushError::CloudKitProtocolError(_)
         | PushError::CloudKitChangeTokenExpired
         | PushError::ResourceTimeout
         | PushError::ResourceGenTimeout
+        | PushError::ResourceStalled
+        | PushError::NotConnected
         | PushError::TooManyRequests => CloudTransientBridgeFailure::RetryableUpstream,
-        PushError::DoNotRetry(inner) => map_push_failure(inner),
+        PushError::IoError(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::TimedOut
+                    | std::io::ErrorKind::Interrupted
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::NotConnected
+                    | std::io::ErrorKind::NetworkDown
+                    | std::io::ErrorKind::NetworkUnreachable
+                    | std::io::ErrorKind::HostUnreachable
+                    | std::io::ErrorKind::NetworkReset
+            ) =>
+        {
+            CloudTransientBridgeFailure::RetryableUpstream
+        }
+        // The resource wrapper is authoritative about retryability. Its inner
+        // error explains why generation failed, but must not override the
+        // producer's explicit backoff decision.
+        PushError::ResourceFailure(failure) if failure.retry_wait.is_some() => {
+            CloudTransientBridgeFailure::RetryableUpstream
+        }
+        // A missing retry wait is rustpush's permanent-resource marker. It is
+        // the production wrapper around DoNotRetry and must remain terminal.
+        PushError::ResourceFailure(_) => CloudTransientBridgeFailure::InvalidRequest,
+        // There is no exported generic terminal category. InvalidRequest is
+        // deliberately mapped by Dart into the terminal malformed-record lane,
+        // preserving this native no-retry boundary without exposing details.
+        PushError::DoNotRetry(_) => CloudTransientBridgeFailure::InvalidRequest,
         PushError::BatchError(inner) => map_push_failure(inner),
         _ => CloudTransientBridgeFailure::DecoderFailure,
+    }
+}
+
+fn safe_failure_class(failure: CloudTransientBridgeFailure) -> &'static str {
+    match failure {
+        CloudTransientBridgeFailure::PcsUnavailable => "pcs_unavailable",
+        CloudTransientBridgeFailure::RetryableUpstream => "retryable_upstream",
+        CloudTransientBridgeFailure::MalformedRecord => "malformed_record",
+        CloudTransientBridgeFailure::WarmAuthenticationRequired => "warm_authentication_required",
+        CloudTransientBridgeFailure::InvalidRequest => "invalid_request",
+        CloudTransientBridgeFailure::ActiveAccountMismatch => "active_account_mismatch",
+        CloudTransientBridgeFailure::ScopeMismatch => "scope_mismatch",
+        CloudTransientBridgeFailure::GenerationMismatch => "generation_mismatch",
+        CloudTransientBridgeFailure::StoreIdentityMismatch => "store_identity_mismatch",
+        CloudTransientBridgeFailure::ProtectedReferenceMismatch => "protected_reference_mismatch",
+        CloudTransientBridgeFailure::OversizedRecord => "oversized_record",
+        CloudTransientBridgeFailure::DecoderFailure => "decoder_failure",
     }
 }
 
@@ -773,6 +829,10 @@ fn map_push_failure_at(error: &PushError, stage: &'static str) -> CloudTransient
     if failure == CloudTransientBridgeFailure::DecoderFailure {
         decoder_failure_at(stage)
     } else {
+        warn!(
+            "CloudKit V2 transient failure class={} stage={stage}",
+            safe_failure_class(failure)
+        );
         failure
     }
 }
@@ -1126,15 +1186,17 @@ pub(crate) async fn cloud_sync_decode_transient_record(
             CloudTransientBridgeFailure::StoreIdentityMismatch,
         );
     }
-    let raw_account_identifier =
-        match cloud_messages_client.validated_native_account_identifier().await {
-            Ok(value) => value,
-            Err(_) => {
-                return CloudTransientDecodeOutcome::Failure(
-                    CloudTransientBridgeFailure::ActiveAccountMismatch,
-                )
-            }
-        };
+    let raw_account_identifier = match cloud_messages_client
+        .validated_native_account_identifier()
+        .await
+    {
+        Ok(value) => value,
+        Err(_) => {
+            return CloudTransientDecodeOutcome::Failure(
+                CloudTransientBridgeFailure::ActiveAccountMismatch,
+            )
+        }
+    };
     let actual_account_fingerprint = match cloud_sync_protector::fingerprint_account(
         storage_directory.clone(),
         raw_account_identifier,
@@ -1432,6 +1494,7 @@ mod tests {
         cloudmessagesp::{MessageProto, MessageProto4},
         GZipWrapper,
     };
+    use rustpush::CloudKitProtocolError;
 
     fn digest(character: char) -> String {
         character.to_string().repeat(43)
@@ -2434,6 +2497,120 @@ mod tests {
         ] {
             assert!(!rendered.contains(sentinel));
         }
+    }
+
+    #[test]
+    fn semantic_failure_mapping_classifies_zone_pcs_failures_without_exposing_details() {
+        for error in [
+            PushError::CloudKeyNotFound {
+                zone: "private-zone".to_owned(),
+                class: "private-class".to_owned(),
+            },
+            PushError::NoRoutingKey,
+            PushError::PCSRecordKeyMissing,
+        ] {
+            assert_eq!(
+                map_push_failure_at(&error, "zone_encryption_config"),
+                CloudTransientBridgeFailure::PcsUnavailable
+            );
+        }
+        assert_eq!(
+            safe_failure_class(CloudTransientBridgeFailure::PcsUnavailable),
+            "pcs_unavailable"
+        );
+    }
+
+    #[test]
+    fn semantic_failure_mapping_classifies_transport_failures_as_retryable() {
+        for kind in [
+            std::io::ErrorKind::TimedOut,
+            std::io::ErrorKind::ConnectionReset,
+            std::io::ErrorKind::NetworkUnreachable,
+        ] {
+            let error = PushError::IoError(std::io::Error::new(kind, "private transport detail"));
+            assert_eq!(
+                map_push_failure_at(&error, "zone_encryption_config"),
+                CloudTransientBridgeFailure::RetryableUpstream
+            );
+        }
+        for error in [
+            PushError::ResourceTimeout,
+            PushError::ResourceGenTimeout,
+            PushError::ResourceStalled,
+            PushError::NotConnected,
+        ] {
+            assert_eq!(
+                map_push_failure_at(&error, "zone_encryption_config"),
+                CloudTransientBridgeFailure::RetryableUpstream
+            );
+        }
+    }
+
+    #[test]
+    fn semantic_failure_mapping_classifies_protocol_failures_as_malformed() {
+        for error in [
+            PushError::PCSCiphertextMalformed,
+            PushError::ProtobufError(prost::DecodeError::new("private protobuf detail")),
+            PushError::JsonError(serde_json::from_str::<serde_json::Value>("{").unwrap_err()),
+            PushError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "private protocol detail",
+            )),
+        ] {
+            assert_eq!(
+                map_push_failure_at(&error, "zone_encryption_config"),
+                CloudTransientBridgeFailure::MalformedRecord
+            );
+        }
+        assert_eq!(
+            safe_failure_class(CloudTransientBridgeFailure::MalformedRecord),
+            "malformed_record"
+        );
+    }
+
+    #[test]
+    fn semantic_failure_mapping_retries_nonprogressing_cloudkit_pages() {
+        assert_eq!(
+            map_push_failure_at(
+                &PushError::CloudKitProtocolError(
+                    CloudKitProtocolError::ContinuationTokenNoProgress,
+                ),
+                "zone_encryption_config",
+            ),
+            CloudTransientBridgeFailure::RetryableUpstream
+        );
+    }
+
+    #[test]
+    fn semantic_failure_mapping_preserves_explicit_no_retry_boundary() {
+        assert_eq!(
+            map_push_failure(&PushError::DoNotRetry(
+                Box::new(PushError::ResourceTimeout,)
+            )),
+            CloudTransientBridgeFailure::InvalidRequest
+        );
+    }
+
+    #[test]
+    fn semantic_failure_mapping_honors_explicit_resource_retry_hint() {
+        assert_eq!(
+            map_push_failure(&PushError::ResourceFailure(rustpush::ResourceFailure {
+                retry_wait: Some(5),
+                error: Arc::new(PushError::PCSCiphertextMalformed),
+            })),
+            CloudTransientBridgeFailure::RetryableUpstream
+        );
+    }
+
+    #[test]
+    fn semantic_failure_mapping_preserves_permanent_resource_wrapper() {
+        assert_eq!(
+            map_push_failure(&PushError::ResourceFailure(rustpush::ResourceFailure {
+                retry_wait: None,
+                error: Arc::new(PushError::DoNotRetry(Box::new(PushError::ResourceTimeout,))),
+            })),
+            CloudTransientBridgeFailure::InvalidRequest
+        );
     }
 
     #[test]

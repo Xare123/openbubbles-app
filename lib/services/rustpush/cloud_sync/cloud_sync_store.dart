@@ -285,6 +285,21 @@ abstract interface class CloudSyncStore {
   Future<void> recordRun(CloudSyncRunRecord run);
 }
 
+/// Narrow, local-only migration surface for retrying an unknown semantic
+/// quarantine created by an older decoder build.
+///
+/// Implementations may reopen only the first unresolved current-generation
+/// save row, must require the active coordinator fence, and must not alter a
+/// checkpoint, protected reference, payload digest, or remote CloudKit state.
+abstract interface class CloudUnknownInboxBarrierRecoveryStore {
+  Future<bool> requeueUnknownInboxBarrier(
+    CloudSyncScope scope, {
+    required DateTime now,
+    required DateTime quarantinedBefore,
+    required CloudCoordinatorLeaseFence leaseFence,
+  });
+}
+
 /// Optional outbox capability used by the reconciliation worker.
 ///
 /// The read-only shadow wrapper deliberately does not expose this mutation

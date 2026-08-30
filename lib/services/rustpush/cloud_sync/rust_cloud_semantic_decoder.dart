@@ -197,10 +197,23 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     );
     _recordDiagnostic('native_$nativeDisposition');
 
-    final currentAuth = await _readAuthSnapshot();
+    // A native failure contains no decoded semantic payload. Preserve that
+    // typed outcome before refreshing authentication so a transient auth
+    // read cannot replace the real PCS/upstream failure with an untyped
+    // exception. Ready, deferred, and quarantined semantic outcomes still
+    // remain behind the post-decode identity fence below.
+    final preAuthFailure = _failureBeforeAuthRefresh(entry, result);
+    CloudSyncNativeAuthSnapshot? currentAuth;
+    try {
+      currentAuth = await _readAuthSnapshot();
+    } catch (_) {
+      if (preAuthFailure != null) throw preAuthFailure;
+      rethrow;
+    }
     if (!auth.sameIdentity(currentAuth)) {
       throw const CloudSemanticDecodeFailure(CloudFailureCategory.conflict);
     }
+    if (preAuthFailure != null) throw preAuthFailure;
     final decoded = _mapResult(entry, result, tombstoneIdentity);
     _recordDiagnostic('decoder_ready');
     return decoded;
@@ -266,6 +279,34 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       }
     }
     return value;
+  }
+
+  CloudSemanticDecodeFailure? _failureBeforeAuthRefresh(
+    CloudInboxEntry entry,
+    frb_api.CloudSyncTransientDecodeResult result,
+  ) {
+    final hasReadyField =
+        result.changeId != null ||
+        result.entityKind != null ||
+        result.mutationKind != null ||
+        result.snapshot != null ||
+        result.payload != null ||
+        result.tombstone != null;
+    final dispositionCount =
+        (hasReadyField ? 1 : 0) +
+        (result.deferredReason == null ? 0 : 1) +
+        (result.quarantineReason == null ? 0 : 1) +
+        (result.failureCode == null ? 0 : 1);
+    if (dispositionCount != 1 ||
+        result.generation != BigInt.from(entry.generation) ||
+        result.protectedSourceReference !=
+            entry.change.encryptedPayloadReference) {
+      return const CloudSemanticDecodeFailure(CloudFailureCategory.conflict);
+    }
+    final failure = result.failureCode;
+    return failure == null
+        ? null
+        : CloudSemanticDecodeFailure(_failureCategory(failure));
   }
 
   CloudDecodedMutation _mapResult(

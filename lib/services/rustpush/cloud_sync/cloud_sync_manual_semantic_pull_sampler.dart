@@ -345,6 +345,7 @@ final class CloudSyncManualSemanticPullSampler {
     maximumOutboxBatchesPerRun: 1,
     fetchOperationTimeout: _fetchTimeout,
     allowManualPullBackoffOverride: true,
+    unknownInboxBarrierRecoveryCutoff: DateTime.utc(2026, 8, 30, 4),
     shadowJournalBudget: _journalBudget,
     flags: const CloudSyncFeatureFlags(
       readOnlyFetch: true,

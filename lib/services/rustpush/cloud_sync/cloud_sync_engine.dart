@@ -74,6 +74,7 @@ class CloudSyncEngineConfig {
     this.maximumDeferredAge = const Duration(days: 3),
     this.maximumUnknownAttempts = 3,
     this.allowManualPullBackoffOverride = false,
+    this.unknownInboxBarrierRecoveryCutoff,
     CloudShadowJournalBudget? shadowJournalBudget,
     this.flags = const CloudSyncFeatureFlags(),
   }) : shadowJournalBudget = shadowJournalBudget ?? CloudShadowJournalBudget() {
@@ -93,6 +94,7 @@ class CloudSyncEngineConfig {
   final Duration maximumDeferredAge;
   final int maximumUnknownAttempts;
   final bool allowManualPullBackoffOverride;
+  final DateTime? unknownInboxBarrierRecoveryCutoff;
   final CloudShadowJournalBudget shadowJournalBudget;
   final CloudSyncFeatureFlags flags;
 
@@ -151,6 +153,19 @@ class CloudSyncEngineConfig {
             flags.profiles ||
             flags.notificationHints)) {
       throw ArgumentError('cloud_sync_config_manual_backoff_override_unsafe');
+    }
+    if (unknownInboxBarrierRecoveryCutoff case final cutoff?) {
+      if (!cutoff.isUtc ||
+          !flags.readOnlyFetch ||
+          !flags.semanticApply ||
+          flags.saves ||
+          flags.deletions ||
+          flags.profiles ||
+          flags.notificationHints) {
+        throw ArgumentError(
+          'cloud_sync_config_unknown_barrier_recovery_unsafe',
+        );
+      }
     }
     shadowJournalBudget.validate();
   }
@@ -406,6 +421,21 @@ class CloudSyncEngine {
       var semanticInboxCounters = const CloudSyncRunCounters();
       var semanticInboxPhaseStarted = false;
       var pullAttempted = false;
+
+      final unknownBarrierCutoff = config.unknownInboxBarrierRecoveryCutoff;
+      if (config.flags.semanticApply &&
+          unknownBarrierCutoff != null &&
+          !_isCancelled(cancellationToken)) {
+        if (_store case CloudUnknownInboxBarrierRecoveryStore recoveryStore) {
+          await _renewCoordinatorLeaseOrThrow();
+          await recoveryStore.requeueUnknownInboxBarrier(
+            scope,
+            now: _clock(),
+            quarantinedBefore: unknownBarrierCutoff,
+            leaseFence: _requireActiveLeaseFence(),
+          );
+        }
+      }
 
       if (config.flags.semanticApply && !_isCancelled(cancellationToken)) {
         await _renewCoordinatorLeaseOrThrow();

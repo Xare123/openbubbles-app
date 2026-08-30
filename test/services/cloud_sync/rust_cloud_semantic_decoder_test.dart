@@ -26,8 +26,9 @@ void main() {
   RustCloudSemanticDecoder decoder({
     CloudTombstoneIdentityResolver? tombstoneResolver,
     CloudSyncSemanticDiagnosticRecorder? diagnosticRecorder,
+    CloudSyncNativeAuthSnapshotReader? readAuthSnapshot,
   }) => RustCloudSemanticDecoder(
-    readAuthSnapshot: () async => currentAuth,
+    readAuthSnapshot: readAuthSnapshot ?? (() async => currentAuth),
     storageDirectory: r'C:\private\cloud-sync',
     bindings: bindings,
     tombstoneIdentityResolver: tombstoneResolver,
@@ -266,6 +267,43 @@ void main() {
       );
     }
     expect(CloudFailureCategory.unsupportedService.isRetryable, isFalse);
+  });
+
+  test('preserves native failure when the auth refresh would throw', () async {
+    final entry = _entry();
+    bindings.result = frb.CloudSyncTransientDecodeResult(
+      protectedSourceReference: _sourceReference,
+      generation: BigInt.from(entry.generation),
+      failureCode: frb.CloudSyncTransientFailureCode.decoderFailure,
+    );
+    var authReads = 0;
+
+    await _expectFailure(
+      decoder(
+        readAuthSnapshot: () async {
+          authReads++;
+          if (authReads == 1) return auth;
+          throw StateError('injected_auth_refresh_failure');
+        },
+      ).decode(entry),
+      CloudFailureCategory.unknown,
+    );
+    expect(authReads, 2);
+  });
+
+  test('account replacement outranks a native failure disposition', () async {
+    final entry = _entry();
+    bindings.result = frb.CloudSyncTransientDecodeResult(
+      protectedSourceReference: _sourceReference,
+      generation: BigInt.from(entry.generation),
+      failureCode: frb.CloudSyncTransientFailureCode.decoderFailure,
+    );
+    bindings.afterDecode = () => currentAuth = _auth(Object());
+
+    await _expectFailure(
+      decoder().decode(entry),
+      CloudFailureCategory.conflict,
+    );
   });
 
   test(

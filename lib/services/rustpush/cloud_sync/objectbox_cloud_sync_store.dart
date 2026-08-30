@@ -19,6 +19,7 @@ import 'cloud_sync_store.dart';
 class ObjectBoxCloudSyncStore
     implements
         CloudSyncStore,
+        CloudUnknownInboxBarrierRecoveryStore,
         CloudSyncUnknownOutcomeLeasingStore,
         CloudSyncOutboxPresenceStore,
         CloudProtectedPageLeaseAdoptionStore,
@@ -964,6 +965,76 @@ class ObjectBoxCloudSyncStore
             : _failureOrNull(firstUnresolved.failureCategory),
         recoveryComplete: firstUnresolved == null,
       );
+    });
+  }
+
+  @override
+  Future<bool> requeueUnknownInboxBarrier(
+    CloudSyncScope scope, {
+    required DateTime now,
+    required DateTime quarantinedBefore,
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) async {
+    final requestedNowMs = now.toUtc().millisecondsSinceEpoch;
+    final cutoffMs = quarantinedBefore.toUtc().millisecondsSinceEpoch;
+    if (!quarantinedBefore.isUtc ||
+        cutoffMs <= 0 ||
+        requestedNowMs <= cutoffMs) {
+      throw _storageFailure('unknown_barrier_recovery_window_invalid');
+    }
+    return _store.runInTransaction(TxMode.write, () {
+      final transactionNowMs = _nowMs();
+      if (transactionNowMs <= cutoffMs) {
+        throw _storageFailure('unknown_barrier_recovery_clock_invalid');
+      }
+      _requireActiveCoordinatorLeaseLocked(
+        scope,
+        leaseFence,
+        nowMs: transactionNowMs,
+      );
+      final checkpoint = _checkpointLocked(scope, nowMs: transactionNowMs);
+      if (checkpoint.appliedSequence > checkpoint.fetchedSequence) {
+        throw _storageFailure('unknown_barrier_recovery_checkpoint_invalid');
+      }
+      final pendingBatchId = checkpoint.pendingBatchId;
+      if (pendingBatchId == null ||
+          checkpoint.pendingFetchedTokenCiphertext == null) {
+        return false;
+      }
+      final row = _findInboxBySequenceLocked(
+        scope,
+        checkpoint.appliedSequence + 1,
+      );
+      if (row == null ||
+          row.generation != checkpoint.generation ||
+          row.batchId != pendingBatchId ||
+          _inboxStatusFromInt(row.status) != CloudInboxStatus.quarantined ||
+          row.failureCategory != CloudFailureCategory.unknown.name ||
+          row.preflightCategory != null ||
+          row.preflightCode != null ||
+          row.isTombstone ||
+          row.changeType != CloudChangeType.save.name ||
+          row.encryptedPayloadRef == null ||
+          row.payloadSha256 == null ||
+          row.retryCount < 3 ||
+          row.nextEligibleAtMs != 0 ||
+          row.completedAtMs <= 0 ||
+          row.completedAtMs != row.updatedAtMs ||
+          row.completedAtMs > cutoffMs) {
+        return false;
+      }
+
+      // Preserve the protected source and historical retry count. If this
+      // build still cannot decode the row, the existing bound immediately
+      // returns it to quarantine and updatedAt moves it beyond this one-time
+      // migration window.
+      row
+        ..status = _inboxStatusToInt(CloudInboxStatus.pending)
+        ..nextEligibleAtMs = 0
+        ..completedAtMs = 0
+        ..updatedAtMs = transactionNowMs;
+      _inbox.put(row);
+      return true;
     });
   }
 

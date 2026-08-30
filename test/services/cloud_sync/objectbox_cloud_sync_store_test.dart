@@ -1907,6 +1907,196 @@ void main() {
     );
   });
 
+  test(
+    'requeues one old unknown save barrier without moving its checkpoint',
+    () async {
+      final scope = testScope(
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      await journal(
+        batch(
+          scope,
+          batchId: 'legacy-unknown-page',
+          token: 'blocked-token',
+          changes: [testChange(1), testChange(2)],
+        ),
+      );
+      final fence = coordinatorFences[scope.storageKey]!;
+      currentTime = testEpoch.add(const Duration(minutes: 10));
+      await store.markInboxRetryable(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.network,
+        now: currentTime,
+        nextEligibleAt: currentTime.add(const Duration(minutes: 1)),
+        leaseFence: fence,
+      );
+      currentTime = testEpoch.add(const Duration(minutes: 20));
+      await store.markInboxRetryable(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.unknown,
+        now: currentTime,
+        nextEligibleAt: currentTime.add(const Duration(minutes: 1)),
+        leaseFence: fence,
+      );
+      currentTime = testEpoch.add(const Duration(minutes: 30));
+      await store.quarantineInbox(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.unknown,
+        now: currentTime,
+        leaseFence: fence,
+      );
+
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final beforeRow = inboxBox.getAll().singleWhere(
+        (row) => row.fetchSequence == 1,
+      );
+      final beforeCheckpoint = await store.readCheckpoint(scope);
+      final protectedReference = beforeRow.encryptedPayloadRef;
+      final payloadDigest = beforeRow.payloadSha256;
+      final retryCount = beforeRow.retryCount;
+      final cutoff = testEpoch.add(const Duration(hours: 1));
+      currentTime = testEpoch.add(const Duration(hours: 2));
+
+      final checkpointBox = objectBox.box<CloudSyncCheckpointEntity>();
+      final persistedCheckpoint = checkpointBox.getAll().single;
+      final pendingTokenCiphertext =
+          persistedCheckpoint.pendingFetchedTokenCiphertext;
+      expect(pendingTokenCiphertext, isNotNull);
+      persistedCheckpoint.pendingFetchedTokenCiphertext = null;
+      checkpointBox.put(persistedCheckpoint);
+      expect(
+        await store.requeueUnknownInboxBarrier(
+          scope,
+          now: currentTime,
+          quarantinedBefore: cutoff,
+          leaseFence: fence,
+        ),
+        isFalse,
+      );
+      expect(
+        inboxBox.get(beforeRow.id)!.status,
+        CloudInboxStatus.quarantined.index,
+      );
+      persistedCheckpoint.pendingFetchedTokenCiphertext =
+          pendingTokenCiphertext;
+      checkpointBox.put(persistedCheckpoint);
+
+      expect(
+        await store.requeueUnknownInboxBarrier(
+          scope,
+          now: currentTime,
+          quarantinedBefore: cutoff,
+          leaseFence: fence,
+        ),
+        isTrue,
+      );
+
+      final row = inboxBox.getAll().singleWhere(
+        (value) => value.fetchSequence == 1,
+      );
+      expect(row.status, CloudInboxStatus.pending.index);
+      expect(row.retryCount, retryCount);
+      expect(row.failureCategory, CloudFailureCategory.unknown.name);
+      expect(row.nextEligibleAtMs, 0);
+      expect(row.completedAtMs, 0);
+      expect(row.updatedAtMs, currentTime.millisecondsSinceEpoch);
+      expect(row.encryptedPayloadRef, protectedReference);
+      expect(row.payloadSha256, payloadDigest);
+      expect(
+        (await store.readEligibleInbox(
+          scope,
+          now: currentTime,
+          limit: 1,
+        )).single.sequence,
+        1,
+      );
+
+      final afterCheckpoint = await store.readCheckpoint(scope);
+      expect(afterCheckpoint.fetchedToken, beforeCheckpoint.fetchedToken);
+      expect(afterCheckpoint.pendingBatchId, beforeCheckpoint.pendingBatchId);
+      expect(afterCheckpoint.fetchedSequence, beforeCheckpoint.fetchedSequence);
+      expect(
+        afterCheckpoint.lastAppliedSequence,
+        beforeCheckpoint.lastAppliedSequence,
+      );
+      expect(
+        await store.requeueUnknownInboxBarrier(
+          scope,
+          now: currentTime,
+          quarantinedBefore: cutoff,
+          leaseFence: fence,
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'unknown barrier recovery rejects tombstones and preflight rows',
+    () async {
+      for (final candidate in <({String account, CloudFetchedChange change})>[
+        (
+          account: testAccountFingerprintA,
+          change: testChange(1, tombstone: true),
+        ),
+        (
+          account: testAccountFingerprintB,
+          change: testChange(
+            2,
+            preflightFailure: CloudFailureCategory.malformedRecord,
+            preflightCode: CloudPreflightCode.invalidChangeShape,
+          ),
+        ),
+      ]) {
+        final scope = testScope(
+          account: candidate.account,
+          persistenceLane: CloudSyncPersistenceLane.semantic,
+        );
+        await journal(
+          batch(
+            scope,
+            batchId: 'excluded-${candidate.account}',
+            changes: [candidate.change],
+          ),
+        );
+        final fence = coordinatorFences[scope.storageKey]!;
+        currentTime = testEpoch.add(const Duration(minutes: 30));
+        await store.quarantineInbox(
+          scope,
+          sequence: 1,
+          category: CloudFailureCategory.unknown,
+          now: currentTime,
+          leaseFence: fence,
+        );
+        final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+        final row = inboxBox.getAll().singleWhere(
+          (value) =>
+              value.accountFingerprint == candidate.account &&
+              value.fetchSequence == 1,
+        )..retryCount = 3;
+        inboxBox.put(row);
+        currentTime = testEpoch.add(const Duration(hours: 2));
+
+        expect(
+          await store.requeueUnknownInboxBarrier(
+            scope,
+            now: currentTime,
+            quarantinedBefore: testEpoch.add(const Duration(hours: 1)),
+            leaseFence: fence,
+          ),
+          isFalse,
+        );
+        expect(
+          inboxBox.get(row.id)!.status,
+          CloudInboxStatus.quarantined.index,
+        );
+      }
+    },
+  );
+
   test('duplicate inbox sequence lookup fails closed', () async {
     final scope = testScope();
     await journal(batch(scope, changes: [testChange(1)]));
