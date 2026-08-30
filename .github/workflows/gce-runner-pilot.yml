@@ -1,0 +1,333 @@
+name: GCE runner pilot
+
+on:
+  workflow_dispatch:
+    inputs:
+      machine_type:
+        description: Google Compute Engine machine type
+        required: true
+        default: n2d-standard-16
+        type: choice
+        options:
+          - n2d-standard-8
+          - n2d-standard-16
+      flavor:
+        description: Non-production Android flavor to benchmark
+        required: true
+        default: beta
+        type: choice
+        options:
+          - beta
+          - canary
+  push:
+    branches:
+      - agent/gce-runner-pilot
+    paths:
+      - .github/workflows/gce-runner-pilot.yml
+
+permissions:
+  contents: read
+
+# Do not cancel a running pilot. GitHub cancellation can interrupt cleanup;
+# the fixed VM lifetime below is the independent billing backstop.
+concurrency:
+  group: gce-runner-pilot-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+  GCP_WIF_SERVICE_ACCOUNT: ${{ vars.GCP_WIF_SERVICE_ACCOUNT }}
+  GCP_RUNNER_SERVICE_ACCOUNT: ${{ vars.GCP_RUNNER_SERVICE_ACCOUNT }}
+  GCP_RUNNER_NETWORK: ${{ vars.GCP_RUNNER_NETWORK }}
+  GCP_RUNNER_SUBNET: ${{ vars.GCP_RUNNER_SUBNET }}
+  GCP_RUNNER_ZONE: us-west1-b
+  RUNNER_NAME: gce-${{ github.run_id }}-${{ github.run_attempt }}
+  MACHINE_TYPE: ${{ inputs.machine_type || 'n2d-standard-16' }}
+  BUILD_FLAVOR: ${{ inputs.flavor || 'beta' }}
+
+jobs:
+  create-runner:
+    name: Create ephemeral Google Cloud runner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      label: ${{ steps.create.outputs.label }}
+      zone: ${{ steps.create.outputs.zone }}
+    steps:
+      - name: Validate configuration
+        shell: bash
+        env:
+          GCE_RUNNER_PAT: ${{ secrets.GCE_RUNNER_PAT }}
+        run: |
+          set -euo pipefail
+          required=(
+            GCP_PROJECT_ID
+            GCP_WIF_PROVIDER
+            GCP_WIF_SERVICE_ACCOUNT
+            GCP_RUNNER_SERVICE_ACCOUNT
+            GCP_RUNNER_NETWORK
+            GCP_RUNNER_SUBNET
+            GCE_RUNNER_PAT
+          )
+          missing=()
+          for key in "${required[@]}"; do
+            if [[ -z "${!key:-}" ]]; then
+              missing+=("$key")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing required GitHub variables/secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+
+      - name: Create runner
+        id: create
+        uses: Cyclenerd/gce-github-runner@8e525f1156c9afac023a943187c844c8e03fe6a7 # v1.1.0
+        with:
+          mode: create
+          github_token: ${{ secrets.GCE_RUNNER_PAT }}
+          project: ${{ env.GCP_PROJECT_ID }}
+          name: ${{ env.RUNNER_NAME }}
+          zone: ${{ env.GCP_RUNNER_ZONE }}
+          machine_type: ${{ env.MACHINE_TYPE }}
+          disk_size: "100"
+          disk_type: pd-balanced
+          image_family: ubuntu-2404-lts-amd64
+          image_project: ubuntu-os-cloud
+          max_run_duration: 75m
+          network: ${{ env.GCP_RUNNER_NETWORK }}
+          subnet: ${{ env.GCP_RUNNER_SUBNET }}
+          service_account: ${{ env.GCP_RUNNER_SERVICE_ACCOUNT }}
+          scopes: cloud-platform
+
+      - name: Record runner configuration
+        shell: bash
+        run: |
+          {
+            echo '### Ephemeral runner'
+            echo
+            echo "- Name: \`${RUNNER_NAME}\`"
+            echo "- Zone: \`${{ steps.create.outputs.zone }}\`"
+            echo "- Machine: \`${MACHINE_TYPE}\`"
+            echo '- Maximum VM lifetime: `75m`'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  benchmark-build:
+    name: Build ${{ inputs.flavor || 'beta' }} APK on GCE
+    needs: create-runner
+    runs-on: ${{ needs.create-runner.outputs.label }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Report runner hardware
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -a
+          lscpu
+          free -h
+          df -h
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.44.8
+
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          java-version: "21"
+          distribution: temurin
+
+      - name: Set up Android SDK
+        uses: amyu/setup-android@3fe49086b1abd7c9ef865120d5d4d486fe55ba98 # v5
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler unzip
+
+      - name: Set up fake Fairplay keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p rustpush/certs/fairplay
+          cert_names=(
+            4056631661436364584235346952193
+            4056631661436364584235346952194
+            4056631661436364584235346952195
+            4056631661436364584235346952196
+            4056631661436364584235346952197
+            4056631661436364584235346952198
+            4056631661436364584235346952199
+            4056631661436364584235346952200
+            4056631661436364584235346952201
+            4056631661436364584235346952208
+          )
+          for name in "${cert_names[@]}"; do
+            cp rustpush/certs/legacy-fairplay/fairplay.pem "rustpush/certs/fairplay/$name.pem"
+            cp rustpush/certs/legacy-fairplay/fairplay.crt "rustpush/certs/fairplay/$name.crt"
+          done
+
+      - name: Patch vendored CargoKit for Flutter 3.44.8
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter pub get
+          bash ./tooling/android/patch_pub_cache_cargokit.sh
+
+      - name: Build benchmark APK
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          started="$(date +%s)"
+          flutter build apk \
+            --flavor "$BUILD_FLAVOR" \
+            --debug \
+            --target-platform android-arm64
+          finished="$(date +%s)"
+          elapsed="$((finished - started))"
+          echo "seconds=$elapsed" >> "$GITHUB_OUTPUT"
+          {
+            echo '### Build benchmark'
+            echo
+            echo "- Flavor: \`${BUILD_FLAVOR}\`"
+            echo "- Machine: \`${MACHINE_TYPE}\`"
+            echo "- Flutter build time: \`${elapsed}s\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify APK native libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="build/app/outputs/flutter-apk/app-${BUILD_FLAVOR}-debug.apk"
+          for entry in \
+            lib/arm64-v8a/libflutter.so \
+            lib/arm64-v8a/librust_lib_bluebubbles.so \
+            lib/arm64-v8a/libirondash_engine_context_native.so \
+            lib/arm64-v8a/libsuper_native_extensions.so; do
+            if ! unzip -l "$apk" | grep -q "$entry"; then
+              echo "$apk is missing $entry" >&2
+              unzip -l "$apk" | grep 'lib/' >&2 || true
+              exit 1
+            fi
+          done
+
+      - name: Upload benchmark APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: GCE ${{ inputs.flavor || 'beta' }} Debug APK
+          path: build/app/outputs/flutter-apk/app-${{ inputs.flavor || 'beta' }}-debug.apk
+          if-no-files-found: error
+
+  delete-runner:
+    name: Delete Google Cloud runner
+    needs:
+      - create-runner
+      - benchmark-build
+    if: ${{ always() && needs.create-runner.result != 'skipped' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+
+      - name: Delete runner through Marketplace action
+        continue-on-error: true
+        uses: Cyclenerd/gce-github-runner@8e525f1156c9afac023a943187c844c8e03fe6a7 # v1.1.0
+        with:
+          mode: delete
+          github_token: ${{ secrets.GCE_RUNNER_PAT }}
+          project: ${{ env.GCP_PROJECT_ID }}
+          name: ${{ env.RUNNER_NAME }}
+          zone: ${{ env.GCP_RUNNER_ZONE }}
+
+      - name: Idempotent cleanup and verification
+        shell: bash
+        env:
+          GCE_RUNNER_PAT: ${{ secrets.GCE_RUNNER_PAT }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if gcloud compute instances describe "$RUNNER_NAME" \
+            --project "$GCP_PROJECT_ID" \
+            --zone "$GCP_RUNNER_ZONE" \
+            --format='value(name)' >/dev/null 2>&1; then
+            gcloud compute instances delete "$RUNNER_NAME" \
+              --project "$GCP_PROJECT_ID" \
+              --zone "$GCP_RUNNER_ZONE" \
+              --quiet
+          fi
+
+          runners_json="$(mktemp)"
+          curl --fail --silent --show-error --location \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer $GCE_RUNNER_PAT" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/$GH_REPOSITORY/actions/runners?per_page=100" \
+            -o "$runners_json"
+
+          mapfile -t runner_ids < <(
+            jq -r --arg name "$RUNNER_NAME" '.runners[] | select(.name == $name) | .id' "$runners_json"
+          )
+          for runner_id in "${runner_ids[@]}"; do
+            curl --fail --silent --show-error --location \
+              -X DELETE \
+              -H 'Accept: application/vnd.github+json' \
+              -H "Authorization: Bearer $GCE_RUNNER_PAT" \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/$GH_REPOSITORY/actions/runners/$runner_id"
+          done
+
+          if gcloud compute instances describe "$RUNNER_NAME" \
+            --project "$GCP_PROJECT_ID" \
+            --zone "$GCP_RUNNER_ZONE" \
+            --format='value(name)' >/dev/null 2>&1; then
+            echo "Runner VM still exists: $RUNNER_NAME" >&2
+            exit 1
+          fi
+
+          curl --fail --silent --show-error --location \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer $GCE_RUNNER_PAT" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/$GH_REPOSITORY/actions/runners?per_page=100" \
+            | jq -e --arg name "$RUNNER_NAME" '[.runners[] | select(.name == $name)] | length == 0' >/dev/null
+
+          echo 'Runner VM and GitHub registration are absent.' >> "$GITHUB_STEP_SUMMARY"
