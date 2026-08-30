@@ -722,6 +722,10 @@ void main() {
           'canonical_participant_shape_control_character',
         ],
         'urn:apple:opaque': ['canonical_participant_shape_unknown_scheme'],
+        'urn:biz:not-a-uuid': ['canonical_participant_shape_unknown_scheme'],
+        'URN:BIZ:123e4567-e89b-12d3-a456-426614174000': [
+          'canonical_participant_shape_unknown_scheme',
+        ],
         ' mailto:valid@example.com': [
           'canonical_participant_shape_outer_whitespace',
         ],
@@ -857,6 +861,7 @@ void main() {
           'mailto:valid@example.com',
           'j',
           'opaque+AbC/123',
+          'urn:biz:123e4567-e89b-12d3-a456-426614174000',
         ],
       ),
       snapshot: _snapshot(CloudEntityKind.chat, chatHash),
@@ -872,6 +877,7 @@ void main() {
         'valid@example.com/iMessage',
         'j/iMessage',
         'opaque+AbC/123/iMessage',
+        'urn:biz:123e4567-e89b-12d3-a456-426614174000/iMessage',
       },
     );
     expect(chat.chatIdentifier, 'iMessage;+;valid-participants');
@@ -909,6 +915,52 @@ void main() {
           canonicalGuid: 'message-guid',
           chatIdentifier: chatIdentifier,
           senderHandle: 'j',
+        ),
+        snapshot: _snapshot(CloudEntityKind.message, messageHash),
+      ),
+      throwsA(
+        predicate<CloudSyncFailure>(
+          (failure) => failure.safeCode == 'canonical_message_sender_invalid',
+        ),
+      ),
+    );
+    expect(store.box<Message>().count(), 0);
+  });
+
+  test('does not accept a business URN as a message sender', () {
+    const chatIdentifier = 'iMessage;-;strict-business-sender-chat';
+    final chatId = store.box<Chat>().put(
+      Chat(
+        guid: 'strict-business-sender-chat-guid',
+        chatIdentifier: chatIdentifier,
+      ),
+    );
+    _seedChatOwnershipAndAlias(
+      store,
+      scope: scope,
+      generation: generation,
+      logicalEntityKeyHash: chatHash,
+      canonicalGuid: 'strict-business-sender-chat-guid',
+      chatIdentifier: chatIdentifier,
+      chatId: chatId,
+    );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowMessageUpserts: true,
+    );
+
+    expect(
+      () => adapter.applyEntity(
+        scope: scope,
+        generation: generation,
+        payload: _messagePayload(
+          logicalEntityKeyHash: messageHash,
+          canonicalGuid: 'message-guid',
+          chatIdentifier: chatIdentifier,
+          senderHandle: 'urn:biz:123e4567-e89b-12d3-a456-426614174000',
         ),
         snapshot: _snapshot(CloudEntityKind.message, messageHash),
       ),

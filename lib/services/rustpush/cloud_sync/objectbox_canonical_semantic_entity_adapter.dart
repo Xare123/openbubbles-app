@@ -833,11 +833,12 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     final seen = <String>{};
     final serviceName = _serviceName(service);
     for (final raw in rawHandles) {
-      // Apple's bare FZPersonID value is opaque. Only explicit tel/mailto
-      // values carry a grammar that can be validated as a phone or email.
+      // Apple's FZPersonID may be a bare opaque value or the exact
+      // urn:biz:<UUID> form already handled by the shipping chat UI. Only
+      // explicit tel/mailto values carry a phone or email grammar.
       final normalized = _normalizeHandle(
         raw,
-        allowOpaqueBareParticipant: true,
+        allowOpaqueParticipant: true,
         onInvalid: _diagnosticRecorder,
       );
       if (normalized == null) {
@@ -2160,7 +2161,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
 
   _NormalizedCanonicalHandle? _normalizeHandle(
     String raw, {
-    bool allowOpaqueBareParticipant = false,
+    bool allowOpaqueParticipant = false,
     CloudSyncSemanticDiagnosticRecorder? onInvalid,
   }) {
     _NormalizedCanonicalHandle? reject(String safeCode) {
@@ -2177,7 +2178,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     }
     String address;
     bool email;
-    bool bare = false;
+    bool opaqueParticipant = false;
     final lower = raw.toLowerCase();
     if (lower.startsWith('mailto:')) {
       address = raw.substring('mailto:'.length);
@@ -2185,13 +2186,17 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     } else if (lower.startsWith('tel:')) {
       address = raw.substring('tel:'.length);
       email = false;
+    } else if (allowOpaqueParticipant && _businessUrnPattern.hasMatch(raw)) {
+      address = raw;
+      email = false;
+      opaqueParticipant = true;
     } else {
       if (raw.contains(':')) {
         return reject('canonical_participant_shape_unknown_scheme');
       }
-      bare = true;
       address = raw;
       email = raw.contains('@');
+      opaqueParticipant = !email;
     }
     if (address.isEmpty) {
       return reject('canonical_participant_shape_empty_address');
@@ -2204,7 +2209,7 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
         return reject('canonical_participant_shape_email_invalid');
       }
     } else if (!_telephonePattern.hasMatch(address)) {
-      if (allowOpaqueBareParticipant && bare) {
+      if (allowOpaqueParticipant && opaqueParticipant) {
         if (_controlCharacterPattern.hasMatch(address)) {
           return reject('canonical_participant_shape_control_character');
         }
@@ -2394,6 +2399,10 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
 
   static final RegExp _emailPattern = RegExp(r'^[^@\s:]+@[^@\s:]+\.[^@\s:]+$');
   static final RegExp _telephonePattern = RegExp(r'^\+?[0-9]{3,20}$');
+  static final RegExp _businessUrnPattern = RegExp(
+    r'^urn:biz:[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-'
+    r'[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$',
+  );
   static final RegExp _asciiLetterPattern = RegExp(r'[A-Za-z]');
   static final RegExp _percentEscapePattern = RegExp(r'%[0-9A-Fa-f]{2}');
   static final RegExp _controlCharacterPattern = RegExp(

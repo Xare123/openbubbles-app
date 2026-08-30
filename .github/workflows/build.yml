@@ -285,12 +285,35 @@ jobs:
         with:
           channel: stable
           flutter-version: 3.44.8
+          cache: true
 
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
+          cache: gradle
+
+      - name: Cache Cargo registries
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cloudkit-canary-cargo-v1-${{ hashFiles('rust/Cargo.toml', 'rust/Cargo.lock', 'rustpush/Cargo.toml', 'rustpush/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cloudkit-canary-cargo-v1-
+
+      # Cargo validates incremental fingerprints after a source-only restore.
+      # Restrict the prefix to the exact dependency and build-configuration
+      # family so output never crosses lockfile, CargoKit, or Gradle changes.
+      - name: Cache ARM64 debug CargoKit output
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: build/app/build/build
+          key: ${{ runner.os }}-cloudkit-canary-cargokit-v2-${{ hashFiles('pubspec.lock', 'rust/Cargo.toml', 'rust/Cargo.lock', 'rustpush/Cargo.toml', 'rustpush/Cargo.lock', 'android/**/*.gradle*', 'android/**/gradle.properties', 'rust_builder/cargokit/**', 'tooling/android/patch_pub_cache_cargokit.sh') }}-${{ hashFiles('rust/**/*.rs', 'rustpush/**/*.rs', 'rust/build.rs', 'rustpush/build.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-cloudkit-canary-cargokit-v2-${{ hashFiles('pubspec.lock', 'rust/Cargo.toml', 'rust/Cargo.lock', 'rustpush/Cargo.toml', 'rustpush/Cargo.lock', 'android/**/*.gradle*', 'android/**/gradle.properties', 'rust_builder/cargokit/**', 'tooling/android/patch_pub_cache_cargokit.sh') }}-
 
       - name: Setup Android SDK
         uses: amyu/setup-android@v5
