@@ -24,6 +24,7 @@ or account-reset code.
 | Receive readiness | Optional iCloud, CloudKit, contact, relay, and analytics work never blocks live message receipt. |
 | Incoming retry | A failure is visible and leaves the pointer retryable; duplicate delivery is idempotent. |
 | Outbound send | Every terminal path leaves exactly one recoverable local message with deterministic send state. |
+| Live delivery vs cloud archive | A successful IDS/APNs send or local reflection does not prove that a Messages in iCloud record exists. |
 | Legacy CloudKit | A failed page does not advance its token or issue destructive duplicate cleanup. |
 | V2 semantic pull | Checkpoints represent a contiguous durable terminal prefix; retained-unprojected rows remain replayable. |
 | Account transition | Old-account work is quiescent before state is replaced or disposed. |
@@ -133,6 +134,30 @@ resource readiness, the outgoing queue, and ObjectBox. A change to retry or
 timeout behavior therefore requires persistence tests, not only transport
 tests.
 
+### Live send and Messages in iCloud are separate paths
+
+```text
+OpenBubbles send
+  -> IDS/APNs delivery
+  -> local reflection and ObjectBox persistence
+  -> optional reflection to another registered Apple device
+       -> possible Apple-device Messages in iCloud archival
+       -> not an OpenBubbles durability guarantee
+
+separate CloudKit archival path
+  -> explicit legacy or V2 CloudKit save
+  -> remote record confirmation
+  -> later semantic pull observes the record
+```
+
+Impact rule: do not infer CloudKit persistence from successful delivery, a
+local reflected row, or another online OpenBubbles client. The restore-only
+Canary intentionally blocks CloudKit saves. Before enabling V2 outbound writes,
+test whether the iPhone relay reliably archives a uniquely identified live
+send and whether that record later appears through the read-only semantic pull.
+Treat relay archival as an optimization only if repeated offline, delayed, and
+reconnect cases prove it; otherwise retain an audited explicit CloudKit writer.
+
 ## 4. Legacy CloudKit
 
 ```text
@@ -188,12 +213,15 @@ raw CloudKit record and raw field-presence evidence
   -> typed CloudChat
   -> required chat identity and service validation
        -> optional `lah` disagreement: discard only `lah`, retain chat identity
-       -> unsupported RCS service: retain on a separate fail-closed branch
+       -> RCS service: retain and count, but do not project or relabel as SMS
        -> alias conflict: retain; never guess which conversation owns the alias
   -> canonical chat plus exact service-identifier aliases
   -> message `chatID` alias lookup and exact-GUID repair
   -> canonical message and associated-parent aliases
-  -> attachment parent lookup and materialization
+  -> attachment parent lookup
+       -> validated MMCS metadata plus protected `lqa`: project, then materialize natively
+       -> inline metadata: retain until a native inline-body path exists
+       -> malformed or mixed metadata: quarantine; never guess
 ```
 
 Impact rule: chat conversion is an upstream identity gate. Rejecting a chat
@@ -204,6 +232,14 @@ not erase that chain when raw presence and the defaulted typed string disagree.
 Only that unproven field is dropped; a malformed wire field still quarantines,
 required identity remains strict, RCS remains unsupported rather than being
 relabeled as SMS, and alias ownership conflicts remain fail-closed.
+
+RCS is an explicit product-scope boundary for this release because the Android
+messaging client remains authoritative for RCS. Its records stay durable and
+diagnosable so support can be added later without refetching or data loss.
+MMCS credentials and URLs remain inside the protected Rust envelope; canonical
+payloads carry no credential material. Credential isolation alone is not proof
+that an inline body can be downloaded, so inline and MMCS attachments must not
+share an admission branch.
 
 ### Canary device-validation chain
 
