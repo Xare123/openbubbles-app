@@ -40,7 +40,7 @@ use crate::{
 
 const FETCH_DEADLINE: Duration = Duration::from_secs(40);
 const MAX_CHANGES_PER_PAGE: usize = 200;
-const MAX_RAW_RECORD_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_RAW_RECORD_BYTES: usize = 8 * 1024 * 1024;
 const MAX_RAW_PAGE_BYTES: usize = 24 * 1024 * 1024;
 const MAX_CONTINUATION_TOKEN_BYTES: usize = 64 * 1024;
 const MAX_METADATA_BYTES: usize = 16 * 1024;

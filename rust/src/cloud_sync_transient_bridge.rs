@@ -46,6 +46,7 @@ use crate::{
     cloud_sync_native_fetch::{
         cloud_sync_unprotect_raw_envelope, CloudNativeFailureCategory, CloudNativeProtectionScope,
         CloudNativeRawEnvelope, CloudNativeRawEnvelopeKind, CloudNativeSafeCode, CloudNativeStream,
+        MAX_RAW_RECORD_BYTES,
     },
     cloud_sync_protector,
     cloud_sync_semantic_identity::CloudSemanticIdentifierHasher,
@@ -308,6 +309,14 @@ fn record_name(record: &Record) -> Option<&str> {
 
 fn record_type(record: &Record) -> Option<&str> {
     record.r#type.as_ref()?.name.as_deref()
+}
+
+fn missing_raw_failure(raw_length: u64) -> CloudTransientBridgeFailure {
+    if raw_length > MAX_RAW_RECORD_BYTES as u64 {
+        CloudTransientBridgeFailure::OversizedRecord
+    } else {
+        CloudTransientBridgeFailure::MalformedRecord
+    }
 }
 
 fn encrypted_field_bytes(
@@ -1290,7 +1299,7 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
         );
     }
     let Some(raw) = envelope.raw() else {
-        return CloudTransientDecodeOutcome::Failure(CloudTransientBridgeFailure::OversizedRecord);
+        return CloudTransientDecodeOutcome::Failure(missing_raw_failure(envelope.raw_length()));
     };
     let (context, scope_fingerprint, zone_fingerprint) =
         match conversion_context(&request, &envelope, &hasher, &scope) {
@@ -2492,6 +2501,18 @@ mod tests {
             assert!(!format!("{diagnostic:?}").contains("RCS"));
             assert!(!format!("{diagnostic:?}").contains("private"));
         }
+    }
+
+    #[test]
+    fn missing_raw_body_distinguishes_bounded_malformed_from_oversized() {
+        assert_eq!(
+            missing_raw_failure(MAX_RAW_RECORD_BYTES as u64),
+            CloudTransientBridgeFailure::MalformedRecord
+        );
+        assert_eq!(
+            missing_raw_failure(MAX_RAW_RECORD_BYTES as u64 + 1),
+            CloudTransientBridgeFailure::OversizedRecord
+        );
     }
 
     #[test]
