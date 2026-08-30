@@ -540,6 +540,22 @@ impl fmt::Display for CloudRawPresenceFailure {
     }
 }
 
+impl CloudRawPresenceFailure {
+    /// Stable, content-free label for canary diagnostics.
+    pub(crate) fn diagnostic_code(self) -> &'static str {
+        match self {
+            Self::TooManyFields => "too_many_fields",
+            Self::MalformedFieldIdentifier => "malformed_field_identifier",
+            Self::DuplicateFieldIdentifier => "duplicate_field_identifier",
+            Self::FieldNotPresent => "field_not_present",
+            Self::NestedPayloadTooLarge => "nested_payload_too_large",
+            Self::MalformedNestedPlist => "malformed_nested_plist",
+            Self::NestedPlistIsNotDictionary => "nested_plist_not_dictionary",
+            Self::ExplicitClearWithoutPresence => "explicit_clear_without_presence",
+        }
+    }
+}
+
 impl std::error::Error for CloudRawPresenceFailure {}
 
 /// Content-free presence evidence. Values and decrypted plist payloads are
@@ -788,6 +804,57 @@ pub(crate) enum CloudCanonicalConversionOutcome {
     Ready(Box<CloudCanonicalMutation>),
     Deferred(CloudCanonicalDeferredReason),
     Quarantined(CloudCanonicalQuarantineReason),
+}
+
+/// Exact converter branch reached by a retained chat. Every variant is a
+/// closed, content-free label; no record value or identifier can enter logs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CloudChatDiagnosticCode {
+    MissingRequiredField,
+    UnsupportedService,
+    UnsupportedChatStyle,
+    EmptyRequiredIdentity,
+    GroupPhotoMissingStableGuid,
+    DirectChatGroupPhotoAsset,
+    GroupPhotoPresentWithoutValue,
+    GroupPhotoPresenceMismatch,
+    DisplayNameField,
+    LastAddressedHandleField,
+    GroupVersionField,
+    LastSeenMessageField,
+    GroupPhotoGuidField,
+    DirectChatGroupPhotoGuid,
+    EmptyLegacyGroupIdentifier,
+    LogicalIdentityHash,
+    AliasHash,
+    CanonicalPayload,
+    CanonicalBuild,
+}
+
+impl CloudChatDiagnosticCode {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::MissingRequiredField => "missing_required_field",
+            Self::UnsupportedService => "unsupported_service",
+            Self::UnsupportedChatStyle => "unsupported_chat_style",
+            Self::EmptyRequiredIdentity => "empty_required_identity",
+            Self::GroupPhotoMissingStableGuid => "group_photo_missing_stable_guid",
+            Self::DirectChatGroupPhotoAsset => "direct_chat_group_photo_asset",
+            Self::GroupPhotoPresentWithoutValue => "group_photo_present_without_value",
+            Self::GroupPhotoPresenceMismatch => "group_photo_presence_mismatch",
+            Self::DisplayNameField => "display_name_field",
+            Self::LastAddressedHandleField => "last_addressed_handle_field",
+            Self::GroupVersionField => "group_version_field",
+            Self::LastSeenMessageField => "last_seen_message_field",
+            Self::GroupPhotoGuidField => "group_photo_guid_field",
+            Self::DirectChatGroupPhotoGuid => "direct_chat_group_photo_guid",
+            Self::EmptyLegacyGroupIdentifier => "empty_legacy_group_identifier",
+            Self::LogicalIdentityHash => "logical_identity_hash",
+            Self::AliasHash => "alias_hash",
+            Self::CanonicalPayload => "canonical_payload",
+            Self::CanonicalBuild => "canonical_build",
+        }
+    }
 }
 
 impl Debug for CloudCanonicalConversionOutcome {
@@ -1625,18 +1692,58 @@ pub(crate) fn convert_chat(
     presence: &CloudRawRecordPresence,
     chat: &CloudChat,
 ) -> CloudCanonicalConversionOutcome {
+    let mut diagnostic = None;
+    convert_chat_internal(context, presence, chat, &mut diagnostic)
+}
+
+pub(crate) fn convert_chat_with_diagnostic(
+    context: &CloudCanonicalConversionContext<'_>,
+    presence: &CloudRawRecordPresence,
+    chat: &CloudChat,
+) -> (
+    CloudCanonicalConversionOutcome,
+    Option<CloudChatDiagnosticCode>,
+) {
+    let mut diagnostic = None;
+    let outcome = convert_chat_internal(context, presence, chat, &mut diagnostic);
+    (outcome, diagnostic)
+}
+
+fn chat_diagnostic(
+    diagnostic: &mut Option<CloudChatDiagnosticCode>,
+    code: CloudChatDiagnosticCode,
+    outcome: CloudCanonicalConversionOutcome,
+) -> CloudCanonicalConversionOutcome {
+    *diagnostic = Some(code);
+    outcome
+}
+
+fn convert_chat_internal(
+    context: &CloudCanonicalConversionContext<'_>,
+    presence: &CloudRawRecordPresence,
+    chat: &CloudChat,
+    diagnostic: &mut Option<CloudChatDiagnosticCode>,
+) -> CloudCanonicalConversionOutcome {
     if let Err(reason) = require_present(
         presence,
         &["guid", "cid", "gid", "ogid", "svc", "stl", "ptcpts"],
     ) {
-        return CloudCanonicalConversionOutcome::Quarantined(reason);
+        return chat_diagnostic(
+            diagnostic,
+            CloudChatDiagnosticCode::MissingRequiredField,
+            CloudCanonicalConversionOutcome::Quarantined(reason),
+        );
     }
     let service = match chat.service_name.as_str() {
         "iMessage" => CloudCanonicalService::IMessage,
         "SMS" => CloudCanonicalService::Sms,
         _ => {
-            return CloudCanonicalConversionOutcome::Quarantined(
-                CloudCanonicalQuarantineReason::UnsupportedService,
+            return chat_diagnostic(
+                diagnostic,
+                CloudChatDiagnosticCode::UnsupportedService,
+                CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::UnsupportedService,
+                ),
             )
         }
     };
@@ -1644,8 +1751,12 @@ pub(crate) fn convert_chat(
         45 => CloudCanonicalChatStyle::Direct,
         43 => CloudCanonicalChatStyle::Group,
         _ => {
-            return CloudCanonicalConversionOutcome::Quarantined(
-                CloudCanonicalQuarantineReason::UnsupportedChatStyle,
+            return chat_diagnostic(
+                diagnostic,
+                CloudChatDiagnosticCode::UnsupportedChatStyle,
+                CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::UnsupportedChatStyle,
+                ),
             )
         }
     };
@@ -1658,8 +1769,12 @@ pub(crate) fn convert_chat(
     .iter()
     .any(|value| value.is_empty())
     {
-        return CloudCanonicalConversionOutcome::Quarantined(
-            CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
+        return chat_diagnostic(
+            diagnostic,
+            CloudChatDiagnosticCode::EmptyRequiredIdentity,
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
+            ),
         );
     }
     match (presence.field("gp"), chat.group_photo.is_some()) {
@@ -1675,32 +1790,61 @@ pub(crate) fn convert_chat(
             // Only its independently supplied stable GUID is projected.
         }
         (CloudRawFieldPresence::PresentWithValue, true) => {
-            return CloudCanonicalConversionOutcome::Deferred(
-                CloudCanonicalDeferredReason::UnsupportedGroupPhoto,
-            )
+            let code = if style == CloudCanonicalChatStyle::Direct {
+                CloudChatDiagnosticCode::DirectChatGroupPhotoAsset
+            } else {
+                CloudChatDiagnosticCode::GroupPhotoMissingStableGuid
+            };
+            return chat_diagnostic(
+                diagnostic,
+                code,
+                CloudCanonicalConversionOutcome::Deferred(
+                    CloudCanonicalDeferredReason::UnsupportedGroupPhoto,
+                ),
+            );
         }
         (CloudRawFieldPresence::PresentWithValue, false)
             if presence.is_top_level_explicit_clear("gp") => {}
         (CloudRawFieldPresence::PresentWithoutValue, _) => {
-            return CloudCanonicalConversionOutcome::Quarantined(
-                CloudCanonicalQuarantineReason::MalformedRecord,
+            return chat_diagnostic(
+                diagnostic,
+                CloudChatDiagnosticCode::GroupPhotoPresentWithoutValue,
+                CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::MalformedRecord,
+                ),
             )
         }
         _ => {
-            return CloudCanonicalConversionOutcome::Quarantined(
-                CloudCanonicalQuarantineReason::FieldPresenceMismatch,
+            return chat_diagnostic(
+                diagnostic,
+                CloudChatDiagnosticCode::GroupPhotoPresenceMismatch,
+                CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::FieldPresenceMismatch,
+                ),
             )
         }
     }
 
     let display_name = match top_optional_string(presence, "name", &chat.display_name) {
         Ok(value) => value,
-        Err(reason) => return CloudCanonicalConversionOutcome::Quarantined(reason),
+        Err(reason) => {
+            return chat_diagnostic(
+                diagnostic,
+                CloudChatDiagnosticCode::DisplayNameField,
+                CloudCanonicalConversionOutcome::Quarantined(reason),
+            )
+        }
     };
     let last_addressed_handle =
         match top_default_string(presence, "lah", &chat.last_addressed_handle) {
             Ok(value) => value,
-            Err(reason) => return CloudCanonicalConversionOutcome::Quarantined(reason),
+            Err(reason) => {
+                return chat_diagnostic(
+                    diagnostic,
+                    CloudChatDiagnosticCode::LastAddressedHandleField,
+                    CloudCanonicalConversionOutcome::Quarantined(reason),
+                )
+            }
         };
     let typed_properties_present = chat.properties.is_some();
     let properties = chat.properties.as_ref();
@@ -1712,7 +1856,13 @@ pub(crate) fn convert_chat(
         &properties.and_then(|value| value.pv),
     ) {
         Ok(value) => value,
-        Err(outcome) => return outcome,
+        Err(outcome) => {
+            return chat_diagnostic(
+                diagnostic,
+                CloudChatDiagnosticCode::GroupVersionField,
+                outcome,
+            )
+        }
     };
     let last_seen_message_guid = match nested_optional(
         presence,
@@ -1722,17 +1872,33 @@ pub(crate) fn convert_chat(
         &properties.and_then(|value| value.last_seen_message_guid.clone()),
     ) {
         Ok(value) => value,
-        Err(outcome) => return outcome,
+        Err(outcome) => {
+            return chat_diagnostic(
+                diagnostic,
+                CloudChatDiagnosticCode::LastSeenMessageField,
+                outcome,
+            )
+        }
     };
     let group_photo_guid = match top_optional_string(presence, "gpid", &chat.group_photo_guid) {
         Ok(value) => value,
-        Err(reason) => return CloudCanonicalConversionOutcome::Quarantined(reason),
+        Err(reason) => {
+            return chat_diagnostic(
+                diagnostic,
+                CloudChatDiagnosticCode::GroupPhotoGuidField,
+                CloudCanonicalConversionOutcome::Quarantined(reason),
+            )
+        }
     };
     if style == CloudCanonicalChatStyle::Direct
         && !matches!(group_photo_guid, CloudCanonicalField::Absent)
     {
-        return CloudCanonicalConversionOutcome::Quarantined(
-            CloudCanonicalQuarantineReason::MalformedRecord,
+        return chat_diagnostic(
+            diagnostic,
+            CloudChatDiagnosticCode::DirectChatGroupPhotoGuid,
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRecord,
+            ),
         );
     }
 
@@ -1741,7 +1907,13 @@ pub(crate) fn convert_chat(
         .canonical_entity_key_hash(CloudCanonicalEntityKind::Chat, &chat.guid)
     {
         Ok(value) => value,
-        Err(error) => return validation_quarantine(error),
+        Err(error) => {
+            return chat_diagnostic(
+                diagnostic,
+                CloudChatDiagnosticCode::LogicalIdentityHash,
+                validation_quarantine(error),
+            )
+        }
     };
     let mut aliases = Vec::new();
     let mut alias_keys = HashSet::new();
@@ -1766,7 +1938,11 @@ pub(crate) fn convert_chat(
         ),
     ] {
         if let Err(error) = add_alias(kind, value) {
-            return validation_quarantine(error);
+            return chat_diagnostic(
+                diagnostic,
+                CloudChatDiagnosticCode::AliasHash,
+                validation_quarantine(error),
+            );
         }
     }
     // A message's `chatID` is not guaranteed to equal the chat record's
@@ -1782,14 +1958,22 @@ pub(crate) fn convert_chat(
         chat.chat_identifier.as_str(),
     ] {
         if let Err(error) = add_alias(CloudCanonicalAliasKind::ChatServiceIdentifier, value) {
-            return validation_quarantine(error);
+            return chat_diagnostic(
+                diagnostic,
+                CloudChatDiagnosticCode::AliasHash,
+                validation_quarantine(error),
+            );
         }
     }
     if let Some(properties) = properties {
         for legacy in &properties.legacy_group_identifiers {
             if legacy.is_empty() {
-                return CloudCanonicalConversionOutcome::Quarantined(
-                    CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
+                return chat_diagnostic(
+                    diagnostic,
+                    CloudChatDiagnosticCode::EmptyLegacyGroupIdentifier,
+                    CloudCanonicalConversionOutcome::Quarantined(
+                        CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
+                    ),
                 );
             }
             for kind in [
@@ -1797,7 +1981,11 @@ pub(crate) fn convert_chat(
                 CloudCanonicalAliasKind::ChatServiceIdentifier,
             ] {
                 if let Err(error) = add_alias(kind, legacy) {
-                    return validation_quarantine(error);
+                    return chat_diagnostic(
+                        diagnostic,
+                        CloudChatDiagnosticCode::AliasHash,
+                        validation_quarantine(error),
+                    );
                 }
             }
         }
@@ -1825,9 +2013,15 @@ pub(crate) fn convert_chat(
         group_photo_guid,
     ) {
         Ok(value) => value,
-        Err(error) => return validation_quarantine(error),
+        Err(error) => {
+            return chat_diagnostic(
+                diagnostic,
+                CloudChatDiagnosticCode::CanonicalPayload,
+                validation_quarantine(error),
+            )
+        }
     };
-    build_upsert(
+    let outcome = build_upsert(
         context,
         CloudCanonicalEntityKind::Chat,
         logical_hash,
@@ -1840,7 +2034,12 @@ pub(crate) fn convert_chat(
         None,
         vec![],
         group_version_snapshot,
-    )
+    );
+    if matches!(&outcome, CloudCanonicalConversionOutcome::Ready(_)) {
+        outcome
+    } else {
+        chat_diagnostic(diagnostic, CloudChatDiagnosticCode::CanonicalBuild, outcome)
+    }
 }
 
 fn apple_nanos_to_unix_millis(value: u64) -> Option<i64> {
@@ -2671,6 +2870,159 @@ mod tests {
     }
 
     #[test]
+    fn canary_diagnostic_codes_are_closed_and_content_free() {
+        let chat_codes = [
+            (
+                CloudChatDiagnosticCode::MissingRequiredField,
+                "missing_required_field",
+            ),
+            (
+                CloudChatDiagnosticCode::UnsupportedService,
+                "unsupported_service",
+            ),
+            (
+                CloudChatDiagnosticCode::UnsupportedChatStyle,
+                "unsupported_chat_style",
+            ),
+            (
+                CloudChatDiagnosticCode::EmptyRequiredIdentity,
+                "empty_required_identity",
+            ),
+            (
+                CloudChatDiagnosticCode::GroupPhotoMissingStableGuid,
+                "group_photo_missing_stable_guid",
+            ),
+            (
+                CloudChatDiagnosticCode::DirectChatGroupPhotoAsset,
+                "direct_chat_group_photo_asset",
+            ),
+            (
+                CloudChatDiagnosticCode::GroupPhotoPresentWithoutValue,
+                "group_photo_present_without_value",
+            ),
+            (
+                CloudChatDiagnosticCode::GroupPhotoPresenceMismatch,
+                "group_photo_presence_mismatch",
+            ),
+            (
+                CloudChatDiagnosticCode::DisplayNameField,
+                "display_name_field",
+            ),
+            (
+                CloudChatDiagnosticCode::LastAddressedHandleField,
+                "last_addressed_handle_field",
+            ),
+            (
+                CloudChatDiagnosticCode::GroupVersionField,
+                "group_version_field",
+            ),
+            (
+                CloudChatDiagnosticCode::LastSeenMessageField,
+                "last_seen_message_field",
+            ),
+            (
+                CloudChatDiagnosticCode::GroupPhotoGuidField,
+                "group_photo_guid_field",
+            ),
+            (
+                CloudChatDiagnosticCode::DirectChatGroupPhotoGuid,
+                "direct_chat_group_photo_guid",
+            ),
+            (
+                CloudChatDiagnosticCode::EmptyLegacyGroupIdentifier,
+                "empty_legacy_group_identifier",
+            ),
+            (
+                CloudChatDiagnosticCode::LogicalIdentityHash,
+                "logical_identity_hash",
+            ),
+            (CloudChatDiagnosticCode::AliasHash, "alias_hash"),
+            (
+                CloudChatDiagnosticCode::CanonicalPayload,
+                "canonical_payload",
+            ),
+            (CloudChatDiagnosticCode::CanonicalBuild, "canonical_build"),
+        ];
+        for (code, expected) in chat_codes {
+            assert_eq!(code.as_str(), expected);
+            assert!(expected
+                .chars()
+                .all(|value| value.is_ascii_lowercase() || value == '_'));
+        }
+
+        let raw_codes = [
+            (CloudRawPresenceFailure::TooManyFields, "too_many_fields"),
+            (
+                CloudRawPresenceFailure::MalformedFieldIdentifier,
+                "malformed_field_identifier",
+            ),
+            (
+                CloudRawPresenceFailure::DuplicateFieldIdentifier,
+                "duplicate_field_identifier",
+            ),
+            (
+                CloudRawPresenceFailure::FieldNotPresent,
+                "field_not_present",
+            ),
+            (
+                CloudRawPresenceFailure::NestedPayloadTooLarge,
+                "nested_payload_too_large",
+            ),
+            (
+                CloudRawPresenceFailure::MalformedNestedPlist,
+                "malformed_nested_plist",
+            ),
+            (
+                CloudRawPresenceFailure::NestedPlistIsNotDictionary,
+                "nested_plist_not_dictionary",
+            ),
+            (
+                CloudRawPresenceFailure::ExplicitClearWithoutPresence,
+                "explicit_clear_without_presence",
+            ),
+        ];
+        for (failure, expected) in raw_codes {
+            assert_eq!(failure.diagnostic_code(), expected);
+        }
+    }
+
+    #[test]
+    fn chat_diagnostics_preserve_conversion_outcomes() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let ready_chat = direct_chat();
+        let ready_presence = chat_required_presence(false);
+        let ready_context = context(&hasher, "server-chat-diagnostic-ready", None);
+        let expected = convert_chat(&ready_context, &ready_presence, &ready_chat);
+        let (instrumented, diagnostic) =
+            convert_chat_with_diagnostic(&ready_context, &ready_presence, &ready_chat);
+        assert_eq!(instrumented, expected);
+        assert_eq!(diagnostic, None);
+
+        let mut unsupported_chat = direct_chat();
+        unsupported_chat.service_name = "RCS".to_owned();
+        let unsupported_context = context(&hasher, "server-chat-diagnostic-service", None);
+        let expected = convert_chat(&unsupported_context, &ready_presence, &unsupported_chat);
+        let (instrumented, diagnostic) =
+            convert_chat_with_diagnostic(&unsupported_context, &ready_presence, &unsupported_chat);
+        assert_eq!(instrumented, expected);
+        assert_eq!(
+            diagnostic,
+            Some(CloudChatDiagnosticCode::UnsupportedService)
+        );
+
+        let missing_presence = raw_presence(&["guid", "cid", "gid", "ogid", "stl", "ptcpts"]);
+        let missing_context = context(&hasher, "server-chat-diagnostic-required", None);
+        let expected = convert_chat(&missing_context, &missing_presence, &ready_chat);
+        let (instrumented, diagnostic) =
+            convert_chat_with_diagnostic(&missing_context, &missing_presence, &ready_chat);
+        assert_eq!(instrumented, expected);
+        assert_eq!(
+            diagnostic,
+            Some(CloudChatDiagnosticCode::MissingRequiredField)
+        );
+    }
+
+    #[test]
     fn direct_chat_fixture_converts_without_default_inference() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let outcome = convert_chat(
@@ -2740,7 +3092,7 @@ mod tests {
     #[test]
     fn nested_presence_is_deferred_instead_of_guessed() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
-        let outcome = convert_chat(
+        let (outcome, diagnostic) = convert_chat_with_diagnostic(
             &context(&hasher, "server-chat-group", None),
             &chat_required_presence(true),
             &group_chat(),
@@ -2751,6 +3103,7 @@ mod tests {
                 CloudCanonicalDeferredReason::NestedPresenceUnavailable
             )
         );
+        assert_eq!(diagnostic, Some(CloudChatDiagnosticCode::GroupVersionField));
     }
 
     #[test]
@@ -3179,15 +3532,20 @@ mod tests {
         );
 
         chat.group_photo_guid = None;
+        let (outcome, diagnostic) = convert_chat_with_diagnostic(
+            &context(&hasher, "server-chat-unbound-group-photo", None),
+            &raw_presence(&["guid", "cid", "gid", "ogid", "svc", "stl", "ptcpts", "gp"]),
+            &chat,
+        );
         assert_eq!(
-            convert_chat(
-                &context(&hasher, "server-chat-unbound-group-photo", None),
-                &raw_presence(&["guid", "cid", "gid", "ogid", "svc", "stl", "ptcpts", "gp",]),
-                &chat,
-            ),
+            outcome,
             CloudCanonicalConversionOutcome::Deferred(
                 CloudCanonicalDeferredReason::UnsupportedGroupPhoto
             )
+        );
+        assert_eq!(
+            diagnostic,
+            Some(CloudChatDiagnosticCode::GroupPhotoMissingStableGuid)
         );
     }
 
@@ -3284,7 +3642,7 @@ mod tests {
         presence
             .fields
             .insert("name".to_owned(), CloudRawFieldPresence::PresentWithValue);
-        let unsafe_guess = convert_chat(
+        let (unsafe_guess, diagnostic) = convert_chat_with_diagnostic(
             &context(&hasher, "server-chat-clear-unproven", None),
             &presence,
             &direct_chat(),
@@ -3295,6 +3653,7 @@ mod tests {
                 CloudCanonicalQuarantineReason::FieldPresenceMismatch
             )
         );
+        assert_eq!(diagnostic, Some(CloudChatDiagnosticCode::DisplayNameField));
 
         presence
             .mark_top_level_explicit_clear("name")

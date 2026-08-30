@@ -34,7 +34,7 @@ use rustpush::{
 };
 use crate::{
     cloud_sync_canonical_converter::{
-        convert_attachment, convert_chat, convert_message, convert_tombstone,
+        convert_attachment, convert_chat_with_diagnostic, convert_message, convert_tombstone,
         CloudCanonicalConversionContext, CloudCanonicalConversionOutcome,
         CloudCanonicalQuarantineReason, CloudRawRecordPresence,
     },
@@ -1277,6 +1277,14 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
         CloudNativeRawEnvelopeKind::UnsupportedRecordType
             | CloudNativeRawEnvelopeKind::MalformedMetadata
     ) {
+        if request.stream == CloudNativeStream::Chats {
+            let code = match envelope.kind() {
+                CloudNativeRawEnvelopeKind::UnsupportedRecordType => "unsupported_record_type",
+                CloudNativeRawEnvelopeKind::MalformedMetadata => "malformed_metadata",
+                _ => unreachable!("matched chat envelope kind"),
+            };
+            warn!("CloudKit V2 transient chat diagnostic stage=envelope code={code}");
+        }
         return CloudTransientDecodeOutcome::Quarantined(
             CloudCanonicalQuarantineReason::MalformedRecord,
         );
@@ -1321,10 +1329,16 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
     }
     let mut presence = match CloudRawRecordPresence::extract(&record) {
         Ok(value) => value,
-        Err(_) => {
+        Err(reason) => {
+            if request.stream == CloudNativeStream::Chats {
+                warn!(
+                    "CloudKit V2 transient chat diagnostic stage=raw_presence code={}",
+                    reason.diagnostic_code(),
+                );
+            }
             return CloudTransientDecodeOutcome::Quarantined(
                 CloudCanonicalQuarantineReason::MalformedRecord,
-            )
+            );
         }
     };
     let container_result = match pcs_access {
@@ -1407,10 +1421,13 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
             }
             match encrypted_field_bytes(&record, &record_key, "prop") {
                 Ok(Some(decrypted)) => {
-                    if presence
-                        .capture_decrypted_plist_dictionary("prop", &decrypted)
-                        .is_err()
+                    if let Err(reason) =
+                        presence.capture_decrypted_plist_dictionary("prop", &decrypted)
                     {
+                        warn!(
+                            "CloudKit V2 transient chat diagnostic stage=prop_presence code={}",
+                            reason.diagnostic_code(),
+                        );
                         return CloudTransientDecodeOutcome::Quarantined(
                             CloudCanonicalQuarantineReason::MalformedRecord,
                         );
@@ -1423,15 +1440,11 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                 Ok(value) => value,
                 Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
             };
-            let converted = convert_chat(&context, &presence, &chat);
-            if matches!(
-                &converted,
-                CloudCanonicalConversionOutcome::Quarantined(
-                    CloudCanonicalQuarantineReason::UnsupportedService
-                )
-            ) {
+            let (converted, diagnostic) = convert_chat_with_diagnostic(&context, &presence, &chat);
+            if let Some(code) = diagnostic {
                 warn!(
-                    "CloudKit V2 transient chat unsupported_service service_class={} chat_style={}",
+                    "CloudKit V2 transient chat diagnostic stage=conversion code={} outcome={converted:?} service_class={} chat_style={}",
+                    code.as_str(),
                     cloud_service_class(Some(&chat.service_name)),
                     cloud_chat_style_class(&chat),
                 );
