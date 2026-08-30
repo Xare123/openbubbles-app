@@ -7384,7 +7384,7 @@ fn cloudkit_read_authentication_key_alias(canonical_directory: &std::path::Path)
 fn cloudkit_read_authentication_key(
     canonical_directory: &std::path::Path,
 ) -> Result<AesKeystoreKey, PushError> {
-    AesKeystoreKey::ensure(
+    Ok(AesKeystoreKey::ensure(
         &cloudkit_read_authentication_key_alias(canonical_directory),
         256,
         KeystoreAccessRules {
@@ -7393,7 +7393,7 @@ fn cloudkit_read_authentication_key(
             can_decrypt: true,
             ..Default::default()
         },
-    )
+    )?)
 }
 
 #[cfg(any(target_os = "android", target_os = "windows"))]
