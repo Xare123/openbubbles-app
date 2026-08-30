@@ -22,6 +22,7 @@ import 'package:bluebubbles/services/services.dart';
 import 'package:bluebubbles/services/rustpush/apple_network_health.dart';
 import 'package:bluebubbles/services/rustpush/apple_network_route_policy.dart';
 import 'package:bluebubbles/services/rustpush/cloud_message_upload_state.dart';
+import 'package:bluebubbles/services/rustpush/rustpush_receive_readiness.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_authority.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_writer_mutation_guard.dart';
@@ -6681,28 +6682,39 @@ class RustPushService extends GetxService {
     final eventId = _diagnosticHash(pointer);
     final retryCount = int.tryParse(retry) ?? 3;
     final receiveStopwatch = Stopwatch()..start();
-    var message = await api.ptrToDart(ptr: pointer);
-    if (message == null) {
-      Logger.info(
-          "rustpush_receive pointer_missing id=$eventId retry=$retryCount");
-      return;
-    }
-    final initStopwatch = Stopwatch()..start();
-    Logger.info(
-        "rustpush_receive aps_init_wait_start id=$eventId retry=$retryCount");
-    await initFuture;
-    Logger.info(
-        "rustpush_receive aps_init_wait_complete id=$eventId retry=$retryCount duration_ms=${_durationMs(initStopwatch)} total_ms=${_durationMs(receiveStopwatch)}");
     try {
+      var message = await api.ptrToDart(ptr: pointer);
+      if (message == null) {
+        Logger.info(
+            "rustpush_receive pointer_missing id=$eventId retry=$retryCount");
+        return;
+      }
+      final readinessStopwatch = Stopwatch()..start();
+      Logger.info(
+          "rustpush_receive readiness_wait_start id=$eventId retry=$retryCount");
+      final initializedState =
+          await waitForRustPushReceiveReadiness<api.SharedPushState>(
+        nativeStateReady: initFuture,
+        databaseReady: Database.waitForInit(),
+        currentState: () => state,
+      );
+      Logger.info(
+          "rustpush_receive readiness_wait_complete id=$eventId retry=$retryCount duration_ms=${_durationMs(readinessStopwatch)} total_ms=${_durationMs(receiveStopwatch)}");
       final handlingStopwatch = Stopwatch()..start();
       Logger.info(
           "rustpush_receive handle_start id=$eventId retry=$retryCount");
       await handleMsg(message);
+      if (!identical(state, initializedState)) {
+        throw StateError("RustPush receive state changed while handling");
+      }
       Logger.info(
           "rustpush_receive handle_complete id=$eventId retry=$retryCount duration_ms=${_durationMs(handlingStopwatch)} total_ms=${_durationMs(receiveStopwatch)}");
       await markAsHandledAfter(pointer, eventId: eventId, retry: retryCount);
     } catch (e, s) {
-      Logger.error("Handle failed", error: e, trace: s);
+      Logger.error(
+          "RustPush receive failed id=$eventId retry=$retryCount",
+          error: e,
+          trace: s);
       // Leave the pointer pending so the native bounded retry loop can try
       // again. A failed handler must never be acknowledged as delivered.
       rethrow;
@@ -6741,7 +6753,9 @@ class RustPushService extends GetxService {
     // used to get GetX to get up off it's ass
   }
 
-  late Future initFuture;
+  // Receive-critical startup barrier. Keep optional account maintenance,
+  // CloudKit work, contact refresh, and other network probes outside it.
+  late Future<void> initFuture;
 
   Future<bool> setupZenMode(bool val) async {
     if (val) {
@@ -7011,6 +7025,77 @@ class RustPushService extends GetxService {
   BillingClientManager client = BillingClientManager();
   bool cachedInClique = false;
 
+  static const Duration _initialICloudMaintenanceTimeout =
+      Duration(seconds: 30);
+
+  void _startRecurringICloudMaintenance() {
+    Timer.periodic(const Duration(days: 1), (timer) async {
+      final currentState = state;
+      if (currentState == null) {
+        return;
+      }
+      try {
+        final passwords = currentState.icloudServices?.passwords;
+        if (passwords != null) {
+          await api
+              .syncPasswords(passwords: passwords, conn: currentState.conn)
+              .timeout(_initialICloudMaintenanceTimeout);
+        }
+        if (!ss.settings.cloudSyncingEnabled.value ||
+            !identical(state, currentState)) {
+          return;
+        }
+        Logger.info("Doing scheduled CloudKit sync");
+        await pushService.doCloudKitSync();
+      } catch (e, stackTrace) {
+        Logger.warn("Scheduled CloudKit maintenance failed",
+            error: e, trace: stackTrace);
+      }
+    });
+  }
+
+  Future<void> _runInitialICloudMaintenance(
+      api.SharedPushState initializedState) async {
+    final passwords = initializedState.icloudServices?.passwords;
+    if (passwords != null) {
+      try {
+        await api
+            .syncPasswords(passwords: passwords, conn: initializedState.conn)
+            .timeout(_initialICloudMaintenanceTimeout);
+      } catch (e, stackTrace) {
+        Logger.warn("Initial iCloud Passwords sync failed",
+            error: e, trace: stackTrace);
+      }
+    }
+
+    if (!identical(state, initializedState)) {
+      return;
+    }
+    final keychain = initializedState.icloudServices?.keychain;
+    if (keychain != null) {
+      try {
+        cachedInClique = await api
+            .isInClique(keychain: keychain)
+            .timeout(_initialICloudMaintenanceTimeout);
+      } catch (e, stackTrace) {
+        cachedInClique = false;
+        Logger.warn("Unable to read initial iCloud clique state",
+            error: e, trace: stackTrace);
+      }
+    }
+
+    if (!identical(state, initializedState) ||
+        !ss.settings.cloudSyncingEnabled.value) {
+      return;
+    }
+    Logger.info("Doing cloudkit sync!");
+    try {
+      await pushService.doCloudKitSync();
+    } catch (e, stackTrace) {
+      Logger.warn("Initial CloudKit sync failed", error: e, trace: stackTrace);
+    }
+  }
+
   @override
   Future<void> onInit() async {
     super.onInit();
@@ -7075,64 +7160,20 @@ class RustPushService extends GetxService {
               error: e, trace: s);
         }
       }
-      Timer.periodic(const Duration(days: 1), (timer) => validateSubState());
-      validateSubState();
-      if (ls.isUiThread) {
-        Timer.periodic(const Duration(days: 1), (timer) async {
-          final currentState = state;
-          if (currentState == null) {
-            return;
-          }
-          try {
-            final passwords = currentState.icloudServices?.passwords;
-            if (passwords != null) {
-              await api.syncPasswords(
-                  passwords: passwords, conn: currentState.conn);
-            }
-            if (!ss.settings.cloudSyncingEnabled.value) {
-              return;
-            }
-            Logger.info("Doing scheduled CloudKit sync");
-            await pushService.doCloudKitSync();
-          } catch (e, stackTrace) {
-            Logger.warn("Scheduled CloudKit maintenance failed",
-                error: e, trace: stackTrace);
-          }
-        });
-        if (state != null) {
-          var passwords = state!.icloudServices?.passwords;
-          if (passwords != null) {
-            try {
-              await api.syncPasswords(passwords: passwords, conn: state!.conn);
-            } catch (e, stackTrace) {
-              Logger.warn("Initial iCloud Passwords sync failed",
-                  error: e, trace: stackTrace);
-            }
-          }
-          if (ss.settings.cloudSyncingEnabled.value) {
-            Logger.info("Doing cloudkit sync!");
-            pushService.doCloudKitSync().catchError((error, stackTrace) {
-              Logger.warn("Initial CloudKit sync failed",
-                  error: error, trace: stackTrace);
-            });
-          }
-        }
-        var keychain = pushService.state?.icloudServices?.keychain;
-        if (keychain != null) {
-          try {
-            cachedInClique = await api.isInClique(keychain: keychain);
-          } catch (e, stackTrace) {
-            cachedInClique = false;
-            Logger.warn("Unable to read initial iCloud clique state",
-                error: e, trace: stackTrace);
-          }
-        }
-      }
     })();
     initSyncState();
     initAppLinks();
     initMixPanel();
     await initFuture;
+    Timer.periodic(const Duration(days: 1), (timer) => validateSubState());
+    validateSubState();
+    if (ls.isUiThread) {
+      _startRecurringICloudMaintenance();
+      final initializedState = state;
+      if (initializedState != null) {
+        unawaited(_runInitialICloudMaintenance(initializedState));
+      }
+    }
     if (state != null) {
       try {
         _applyAppleNetworkStatus(
