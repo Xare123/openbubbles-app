@@ -46,6 +46,7 @@ treated as in scope even when the requested feature belongs to only one column.
 | Canonical conversion and associated-parent parsing | X | X | X | X |  | Rust converter tests plus Dart association and reaction tests |
 | Page journal, inbox applier, and checkpoint store |  |  | X | X | X | Crash-boundary replay and contiguous-prefix checkpoint tests |
 | Semantic replay, projection repair, and ObjectBox candidate queries | X | X |  | X | X | Bounded native queries, cooperative-yield tests, and device ANR validation |
+| Canary artifact identity, VM trigger, and report export |  |  |  | X |  | Exact-source CI plus separate signer verification, followed by APK package, trigger hash, unique report, and full redacted-schema validation |
 | Attachment materialization and file ownership | X | X | X | X | X | Attachment store tests plus account-reset cleanup tests |
 
 The matrix is intentionally small. A generated graph of every import would
@@ -180,6 +181,42 @@ yield inside an ObjectBox transaction, while a transient identity lease is held,
 or before inbox status, canonical projection, replay metadata, and checkpoint
 state are atomically durable.
 
+### Canary device-validation chain
+
+```text
+exact source commit on GCE
+  -> full Dart, Rust, rustpush, protector, and bridge-drift gates
+  -> Canary APK build and native-library verification
+  -> GitHub-hosted signing
+  -> local artifact verification: APK hash, signer, and application ID
+  -> exact Canary package only
+  -> adb install -r and unchanged firstInstallTime
+  -> one post-launch process and post-launch VM-service URI
+  -> no-rebind local port forward
+  -> integrity-pinned VM trigger
+  -> exactly one newly emitted report
+  -> report timestamp bound to this invocation
+  -> exact source commit and complete content-free schema
+  -> remote-write flags false and outbox 0 -> 0
+```
+
+Impact rule: never make the probe's package target generic. APK identity and
+trigger integrity must fail before installation or invocation. Do not select
+the first report from a set difference; require exactly one report and bind its
+timestamp to the current run. The semantic report is the diagnostic source for
+this gate, so the probe must not copy full application logs. An in-place pull is
+expected to change Canary's local projection state; preservation means no
+uninstall, no clear-data operation, an unchanged `firstInstallTime`, and no
+remote mutation, not byte-for-byte database equality.
+
+Artifact-signature verification is a separate host step and is not delegated
+to the device probe. Subscription creation and PCS creation are not encoded in
+the current device report, so their absence remains an exact-source static
+review and CI contract gate. The report independently proves that automatic
+triggers, saves, deletes, semantic tombstone deletes, and outbox work remained
+disabled at runtime. Do not claim that the report alone covers mutation
+surfaces it does not encode; add direct counters before promoting that claim.
+
 ## 6. Account reset
 
 ```text
@@ -207,6 +244,9 @@ reporting a clean reset.
 8. Account mismatch or reset prevents old-account mutation and acknowledgement.
 9. Long V2 replay and projection repair permit event-loop progress without
    changing candidate order, transaction atomicity, or checkpoint advancement.
+10. Canary device probes prove APK and trigger identity, select one report from
+    the current invocation, validate its entire redacted schema, and never
+    accept another package name.
 
 ## CI routing policy
 
