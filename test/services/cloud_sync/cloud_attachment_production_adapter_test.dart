@@ -331,6 +331,8 @@ void main() {
       expect(
         cloudAttachmentDownloadLaneFor(<String, dynamic>{
           cloudAttachmentV2MetadataKey: true,
+          'cloud': 'legacy-source',
+          'rustpush': 'ids-source',
         }),
         CloudAttachmentDownloadLane.unavailable,
       );
@@ -340,6 +342,58 @@ void main() {
       );
     },
   );
+
+  test('V2 download queue and failure cleanup preserve native ownership', () {
+    final v2 = <String, dynamic>{
+      cloudAttachmentV2MetadataKey: cloudAttachmentV2MetadataVersion,
+    };
+    final legacy = <String, dynamic>{'cloud': 'legacy-source'};
+
+    expect(
+      canStartCloudAttachmentDownload(
+        candidateLane: cloudAttachmentDownloadLaneFor(v2),
+        cloudSyncV2DownloadActive: true,
+      ),
+      isFalse,
+    );
+    expect(
+      canStartCloudAttachmentDownload(
+        candidateLane: cloudAttachmentDownloadLaneFor(legacy),
+        cloudSyncV2DownloadActive: true,
+      ),
+      isTrue,
+    );
+    expect(
+      canStartCloudAttachmentDownload(
+        candidateLane: cloudAttachmentDownloadLaneFor(v2),
+        cloudSyncV2DownloadActive: false,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldDeleteFailedAttachmentTarget(cloudAttachmentDownloadLaneFor(v2)),
+      isFalse,
+    );
+    expect(
+      shouldDeleteFailedAttachmentTarget(
+        cloudAttachmentDownloadLaneFor(legacy),
+      ),
+      isTrue,
+    );
+    expect(
+      shouldDeleteFailedAttachmentTarget(
+        cloudAttachmentDownloadLaneFor(<String, dynamic>{
+          cloudAttachmentV2MetadataKey: true,
+          'cloud': 'legacy-source',
+        }),
+      ),
+      isFalse,
+    );
+    expect(
+      shouldDeleteFailedAttachmentTarget(cloudAttachmentDownloadLaneFor(null)),
+      isFalse,
+    );
+  });
 }
 
 CloudAttachmentSource _unexpectedResolver({

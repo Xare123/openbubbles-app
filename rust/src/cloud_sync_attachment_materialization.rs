@@ -420,6 +420,7 @@ fn validate_request(
     request: &CloudNativeAttachmentMaterializationRequest,
 ) -> Result<(), CloudNativeAttachmentMaterializationFailure> {
     if request.generation == 0
+        || request.expected_bytes == 0
         || request.expected_bytes > MAX_ATTACHMENT_BYTES
         || CloudCanonicalHash::new(request.logical_entity_key_hash.clone()).is_err()
         || !is_lower_hex_sha256(&request.expected_canonical_guid_sha256)
@@ -668,6 +669,42 @@ fn remove_completed_cache_pair(
         body.parent()
             .ok_or(CloudNativeAttachmentMaterializationFailure::LocalStorage)?,
     )
+}
+
+fn reuse_or_recover_cached_body(
+    body: &Path,
+    manifest: &Path,
+    source_version_hash: &str,
+    expected_bytes: u64,
+    application_documents_directory: &Path,
+    canonical_guid: &str,
+    transfer_name: &str,
+) -> Result<Option<u64>, CloudNativeAttachmentMaterializationFailure> {
+    match verify_cached_body(body, manifest, source_version_hash, expected_bytes) {
+        Ok(Some(bytes)) => {
+            let placement = ensure_app_attachment_file(
+                application_documents_directory,
+                canonical_guid,
+                transfer_name,
+                body,
+                expected_bytes,
+            );
+            let cleanup = remove_completed_cache_pair(body, manifest);
+            placement?;
+            cleanup?;
+            Ok(Some(bytes))
+        }
+        Ok(None) => Ok(None),
+        Err(CloudNativeAttachmentMaterializationFailure::IntegrityMismatch) => {
+            // This helper is called only while both native attachment-cache
+            // locks are held. These paths are derived inside the confined
+            // native cache root; the app attachment destination is deliberately
+            // not accepted by the cleanup operation.
+            remove_completed_cache_pair(body, manifest)?;
+            Ok(None)
+        }
+        Err(failure) => Err(failure),
+    }
 }
 
 fn cleanup_stale_partials(root: &Path) {
@@ -1038,22 +1075,15 @@ async fn cloud_sync_materialize_attachment_body_inner(
     );
     let final_path = root.join(format!("{cache_stem}.body"));
     let final_manifest_path = root.join(format!("{cache_stem}.manifest"));
-    if let Some(bytes) = verify_cached_body(
+    if let Some(bytes) = reuse_or_recover_cached_body(
         &final_path,
         &final_manifest_path,
         &source_version_hash,
         request.expected_bytes,
+        &application_documents_directory,
+        &canonical_guid,
+        &transfer_name,
     )? {
-        let placement = ensure_app_attachment_file(
-            &application_documents_directory,
-            &canonical_guid,
-            &transfer_name,
-            &final_path,
-            request.expected_bytes,
-        );
-        let cleanup = remove_completed_cache_pair(&final_path, &final_manifest_path);
-        placement?;
-        cleanup?;
         return Ok(bytes);
     }
 
@@ -1180,6 +1210,31 @@ mod tests {
         assert_eq!(
             map_download_failure(&PushError::CloudKitError(Default::default())),
             CloudNativeAttachmentMaterializationFailure::DecoderFailure
+        );
+    }
+
+    #[test]
+    fn request_validation_rejects_zero_byte_attachments() {
+        let request = CloudNativeAttachmentMaterializationRequest {
+            storage_directory: PathBuf::from("private-storage"),
+            application_documents_directory: PathBuf::from("app-documents"),
+            expected_account_fingerprint: "A".repeat(43),
+            expected_protected_store_identity: "B".repeat(43),
+            generation: 1,
+            expected_change_id: "C".repeat(43),
+            expected_record_id_hash: "D".repeat(43),
+            expected_etag_hash: "E".repeat(43),
+            expected_payload_sha256: "f".repeat(64),
+            expected_server_modified_at_millis: None,
+            protected_raw_envelope_reference: format!("obcs2.ref.{}", "G".repeat(43)),
+            logical_entity_key_hash: "H".repeat(43),
+            expected_canonical_guid_sha256: "a".repeat(64),
+            expected_bytes: 0,
+        };
+
+        assert_eq!(
+            validate_request(&request),
+            Err(CloudNativeAttachmentMaterializationFailure::InvalidRequest)
         );
     }
 
@@ -1320,6 +1375,111 @@ mod tests {
             verify_cached_body(&body, &manifest, "source-version", 4),
             Err(CloudNativeAttachmentMaterializationFailure::IntegrityMismatch)
         );
+    }
+
+    #[test]
+    fn production_cache_entry_recovers_corruption_and_accepts_a_fresh_bounded_download() {
+        let directory = tempdir().unwrap();
+        let body = directory.path().join("final.body");
+        let manifest = directory.path().join("final.manifest");
+        let temporary = directory.path().join("incoming.body.partial");
+        let temporary_manifest = directory.path().join("incoming.manifest.partial");
+        let documents = directory.path().join("app_flutter");
+        fs::create_dir(&documents).unwrap();
+        fs::write(&body, [9_u8, 8, 7, 6]).unwrap();
+        fs::write(
+            &manifest,
+            cache_manifest(
+                "source-version",
+                &sha256_hex_reader([1_u8, 2, 3, 4].as_slice()).unwrap(),
+                4,
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            reuse_or_recover_cached_body(
+                &body,
+                &manifest,
+                "source-version",
+                4,
+                &documents,
+                "attachment-guid",
+                "photo.jpg",
+            ),
+            Ok(None)
+        );
+        assert!(!body.exists());
+        assert!(!manifest.exists());
+
+        let temporary_file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .unwrap();
+        let mut writer = SharedFileWriter::new(temporary_file, 4);
+        writer.write_all(&[1_u8, 2, 3, 4]).unwrap();
+        writer.sync_all().unwrap();
+        drop(writer);
+        assert_eq!(
+            verify_or_place_temp(
+                &temporary,
+                &temporary_manifest,
+                &body,
+                &manifest,
+                "source-version",
+                4,
+            ),
+            Ok(4)
+        );
+        ensure_app_attachment_file(
+            &documents,
+            "attachment-guid",
+            "photo.jpg",
+            &body,
+            4,
+        )
+        .unwrap();
+        remove_completed_cache_pair(&body, &manifest).unwrap();
+
+        let app_file = documents
+            .join("attachments")
+            .join("attachment-guid")
+            .join("photo.jpg");
+        assert_eq!(fs::read(app_file).unwrap(), vec![1, 2, 3, 4]);
+        assert!(!body.exists());
+        assert!(!manifest.exists());
+    }
+
+    #[test]
+    fn production_cache_recovery_preserves_an_existing_app_final_target() {
+        let directory = tempdir().unwrap();
+        let body = directory.path().join("final.body");
+        let manifest = directory.path().join("final.manifest");
+        let documents = directory.path().join("app_flutter");
+        let app_directory = documents.join("attachments").join("attachment-guid");
+        let app_file = app_directory.join("photo.jpg");
+        fs::create_dir_all(&app_directory).unwrap();
+        fs::write(&app_file, [5_u8, 5, 5, 5]).unwrap();
+        fs::write(&body, [9_u8, 8, 7, 6]).unwrap();
+        fs::write(&manifest, b"corrupt-manifest").unwrap();
+
+        assert_eq!(
+            reuse_or_recover_cached_body(
+                &body,
+                &manifest,
+                "source-version",
+                4,
+                &documents,
+                "attachment-guid",
+                "photo.jpg",
+            ),
+            Ok(None)
+        );
+
+        assert!(!body.exists());
+        assert!(!manifest.exists());
+        assert_eq!(fs::read(app_file).unwrap(), vec![5, 5, 5, 5]);
     }
 
     #[test]

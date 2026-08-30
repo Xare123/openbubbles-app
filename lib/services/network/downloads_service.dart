@@ -1,5 +1,6 @@
 import 'package:bluebubbles/services/network/backend_service.dart';
 import 'package:bluebubbles/services/network/download_file_utils.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
 import 'package:bluebubbles/database/models.dart';
@@ -67,16 +68,29 @@ class AttachmentDownloadService extends GetxService {
   }
 
   void _fetchNext() {
-    if (_downloaders.values.flattened.where((e) => e.isFetching).length < maxDownloads) {
+    final active = _downloaders.values.flattened
+        .where((downloader) => downloader.isFetching)
+        .toList(growable: false);
+    if (active.length < maxDownloads) {
+      final cloudSyncV2DownloadActive = active.any(
+        (downloader) =>
+            downloader.downloadLane == CloudAttachmentDownloadLane.cloudSyncV2,
+      );
+      bool canStart(AttachmentDownloadController downloader) =>
+          !downloader.isFetching &&
+          canStartCloudAttachmentDownload(
+            candidateLane: downloader.downloadLane,
+            cloudSyncV2DownloadActive: cloudSyncV2DownloadActive,
+          );
       AttachmentDownloadController? activeChatDownloader;
       // first check if we have an active chat that needs downloads, if so prioritize that chat
       if (cm.activeChat != null && _downloaders.containsKey(cm.activeChat!.chat.guid)) {
-        activeChatDownloader = _downloaders[cm.activeChat!.chat.guid]!.firstWhereOrNull((e) => !e.isFetching);
+        activeChatDownloader = _downloaders[cm.activeChat!.chat.guid]!.firstWhereOrNull(canStart);
         activeChatDownloader?.fetchAttachment();
       }
       // otherwise just grab a random attachment that needs fetching
       if (activeChatDownloader == null) {
-        _downloaders.values.flattened.firstWhereOrNull((e) => !e.isFetching)?.fetchAttachment();
+        _downloaders.values.flattened.firstWhereOrNull(canStart)?.fetchAttachment();
       }
     }
   }
@@ -84,6 +98,7 @@ class AttachmentDownloadService extends GetxService {
 
 class AttachmentDownloadController extends GetxController {
   final Attachment attachment;
+  final CloudAttachmentDownloadLane downloadLane;
   final List<Function(PlatformFile)> completeFuncs = [];
   final List<Function> errorFuncs = [];
   final RxnNum progress = RxnNum();
@@ -98,7 +113,7 @@ class AttachmentDownloadController extends GetxController {
     Function(PlatformFile)? onComplete,
     Function? onError,
     this.prioritized = false,
-  }) {
+  }) : downloadLane = cloudAttachmentDownloadLaneFor(attachment.metadata) {
     if (onComplete != null) completeFuncs.add(onComplete);
     if (onError != null) errorFuncs.add(onError);
   }
@@ -131,18 +146,22 @@ class AttachmentDownloadController extends GetxController {
       }
     } catch (e, stack) {
       Logger.error("Attachment fetch error", error: e, trace: stack);
-      if (!kIsWeb) {
-        File file = File(attachment.path);
-        if (await file.exists()) {
-          await file.delete();
+      try {
+        if (!kIsWeb &&
+            shouldDeleteFailedAttachmentTarget(downloadLane)) {
+          File file = File(attachment.path);
+          if (await file.exists()) {
+            await file.delete();
+          }
         }
-      }
-      for (Function f in errorFuncs) {
-        f.call();
-      }
+        for (Function f in errorFuncs) {
+          f.call();
+        }
 
-      error.value = true;
-      attachmentDownloader._removeFromQueue(this);
+        error.value = true;
+      } finally {
+        attachmentDownloader._removeFromQueue(this);
+      }
       return;
     }
     Logger.info("Finished fetching attachment");

@@ -402,7 +402,7 @@ final class CloudAttachmentDownloadCoordinator {
     required int expectedBytes,
   }) {
     if (canonicalGuid.trim().isEmpty ||
-        expectedBytes < 0 ||
+        expectedBytes <= 0 ||
         expectedBytes > maximumExpectedBytes) {
       throw _sourceInvalidFailure();
     }

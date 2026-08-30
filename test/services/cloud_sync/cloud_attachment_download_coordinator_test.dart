@@ -263,6 +263,17 @@ void main() {
       throwsA(isA<CloudSyncFailure>()),
     );
     expect(requestFixture.events, isEmpty);
+
+    final emptyFixture = _Fixture();
+    final emptyCoordinator = emptyFixture.build();
+    await expectLater(
+      emptyCoordinator.download(
+        canonicalGuid: 'attachment-guid',
+        expectedBytes: 0,
+      ),
+      throwsA(isA<CloudSyncFailure>()),
+    );
+    expect(emptyFixture.events, isEmpty);
   });
 
   test('an uncertain pause latches the coordinator until restart', () async {

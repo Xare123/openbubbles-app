@@ -22,8 +22,10 @@ enum CloudAttachmentDownloadLane {
 CloudAttachmentDownloadLane cloudAttachmentDownloadLaneFor(
   Map<String, dynamic>? metadata,
 ) {
-  if (hasCloudAttachmentV2Provenance(metadata)) {
-    return CloudAttachmentDownloadLane.cloudSyncV2;
+  if (metadata?.containsKey(cloudAttachmentV2MetadataKey) ?? false) {
+    return hasCloudAttachmentV2Provenance(metadata)
+        ? CloudAttachmentDownloadLane.cloudSyncV2
+        : CloudAttachmentDownloadLane.unavailable;
   }
   if (metadata?.containsKey('cloud') ?? false) {
     return CloudAttachmentDownloadLane.legacyCloudKit;
@@ -32,4 +34,22 @@ CloudAttachmentDownloadLane cloudAttachmentDownloadLaneFor(
     return CloudAttachmentDownloadLane.ids;
   }
   return CloudAttachmentDownloadLane.unavailable;
+}
+
+/// V2 downloads share one native writer pause and must enter that critical
+/// section serially. Other transports retain the app's normal concurrency.
+bool canStartCloudAttachmentDownload({
+  required CloudAttachmentDownloadLane candidateLane,
+  required bool cloudSyncV2DownloadActive,
+}) {
+  return !cloudSyncV2DownloadActive ||
+      candidateLane != CloudAttachmentDownloadLane.cloudSyncV2;
+}
+
+/// The V2 native materializer never streams into or overwrites the final app
+/// path. A failure therefore never proves that the caller owns that path.
+/// Legacy and IDS transports retain their existing partial-file cleanup.
+bool shouldDeleteFailedAttachmentTarget(CloudAttachmentDownloadLane lane) {
+  return lane == CloudAttachmentDownloadLane.legacyCloudKit ||
+      lane == CloudAttachmentDownloadLane.ids;
 }
