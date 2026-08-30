@@ -18,7 +18,8 @@ use plist::Value as PlistValue;
 use rustpush::{
     cloud_messages::{
         cloudmessagesp::{MessageProto, MessageProto2, MessageProto4},
-        AttachmentMeta, CloudChat, CloudMessage, MessageFlags, MessageSummaryInfo,
+        AttachmentMeta, CloudChat, CloudMessage, MMCSAttachmentMeta, MessageFlags,
+        MessageSummaryInfo,
     },
     cloudkit_proto::{record::field::value::Type as CloudKitFieldType, Record},
 };
@@ -2473,6 +2474,56 @@ fn nested_attachment_string(
     nested_optional(presence, "cm", field, true, value)
 }
 
+fn validate_attachment_user_info(
+    user_info: &MMCSAttachmentMeta,
+) -> Result<(), CloudCanonicalQuarantineReason> {
+    fn non_empty(value: Option<&str>) -> bool {
+        value.is_some_and(|value| !value.is_empty() && !value.chars().any(char::is_control))
+    }
+
+    fn hex(value: Option<&str>) -> bool {
+        value.is_some_and(|value| {
+            !value.is_empty()
+                && value.len() % 2 == 0
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f' | b'A'..=b'F'))
+        })
+    }
+
+    let has_inline_metadata =
+        user_info.inline_attachment.is_some() || user_info.message_part.is_some();
+    let has_mmcs_metadata = user_info.mmcs_signature_hex.is_some()
+        || user_info.mmcs_owner.is_some()
+        || user_info.mmcs_url.is_some()
+        || user_info.decryption_key.is_some();
+
+    match (has_inline_metadata, has_mmcs_metadata) {
+        (true, false)
+            if matches!(
+                user_info.inline_attachment.as_deref(),
+                Some("ia-0" | "ia-1")
+            ) && user_info
+                .message_part
+                .as_deref()
+                .is_some_and(|value| value.parse::<u32>().is_ok()) =>
+        {
+            Ok(())
+        }
+        (false, true)
+            if hex(user_info.mmcs_signature_hex.as_deref())
+                && non_empty(user_info.mmcs_owner.as_deref())
+                && user_info.mmcs_url.as_deref().is_some_and(|value| {
+                    value.starts_with("https://") && non_empty(Some(value))
+                })
+                && hex(user_info.decryption_key.as_deref()) =>
+        {
+            Ok(())
+        }
+        _ => Err(CloudCanonicalQuarantineReason::MalformedRecord),
+    }
+}
+
 pub(crate) fn convert_attachment(
     context: &CloudCanonicalConversionContext<'_>,
     presence: &CloudRawRecordPresence,
@@ -2501,10 +2552,12 @@ pub(crate) fn convert_attachment(
             CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
         );
     }
-    if attachment.user_info.is_some() {
-        return CloudCanonicalConversionOutcome::Deferred(
-            CloudCanonicalDeferredReason::UnsupportedMediaCredentials,
-        );
+    if let Some(user_info) = attachment.user_info.as_ref() {
+        if validate_attachment_user_info(user_info).is_err() {
+            return CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRecord,
+            );
+        }
     }
     if attachment.is_sticker {
         return CloudCanonicalConversionOutcome::Deferred(
@@ -4344,7 +4397,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_edits_are_quarantined_and_media_credentials_are_deferred() {
+    fn malformed_edits_are_quarantined() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let mut message = normal_message(Some("hello"));
         message.msg_proto.0.message_summary_info = Some(vec![1, 2, 3]);
@@ -4369,22 +4422,119 @@ mod tests {
                 CloudCanonicalQuarantineReason::OversizedContent
             )
         );
+    }
+
+    #[test]
+    fn valid_mmcs_metadata_converts_without_leaking_native_credentials() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let secret = "credential-secret";
         let mut attachment = AttachmentMeta {
             guid: "standalone-attachment-guid".to_owned(),
             total_bytes: 42,
             ..Default::default()
         };
-        attachment.user_info = Some(Default::default());
-        assert_eq!(
+        attachment.user_info = Some(MMCSAttachmentMeta {
+            mmcs_signature_hex: Some("aa".repeat(32)),
+            mmcs_owner: Some(format!("owner-{secret}")),
+            mmcs_url: Some(format!("https://cvws.icloud-content.com/{secret}")),
+            decryption_key: Some("bb".repeat(33)),
+            file_size: Some(rustpush::cloud_messages::NumOrString::Num(42)),
+            uti_type: Some("public.data".to_owned()),
+            mime_type: Some("application/octet-stream".to_owned()),
+            name: Some("file.bin".to_owned()),
+            ..Default::default()
+        });
+        let outcome = convert_attachment(
+            &context(&hasher, "server-attachment", None),
+            &attachment_presence(),
+            &attachment,
+        );
+        assert!(matches!(
+            &outcome,
+            CloudCanonicalConversionOutcome::Ready(_)
+        ));
+        assert!(!format!("{outcome:?}").contains(secret));
+    }
+
+    #[test]
+    fn valid_inline_metadata_converts_without_crossing_the_canonical_boundary() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut attachment = AttachmentMeta {
+            guid: "standalone-inline-guid".to_owned(),
+            total_bytes: 42,
+            ..Default::default()
+        };
+        attachment.user_info = Some(MMCSAttachmentMeta {
+            inline_attachment: Some("ia-0".to_owned()),
+            message_part: Some("0".to_owned()),
+            ..Default::default()
+        });
+        assert!(matches!(
             convert_attachment(
-                &context(&hasher, "server-attachment", None),
+                &context(&hasher, "server-inline-attachment", None),
                 &attachment_presence(),
                 &attachment,
             ),
-            CloudCanonicalConversionOutcome::Deferred(
-                CloudCanonicalDeferredReason::UnsupportedMediaCredentials
-            )
-        );
+            CloudCanonicalConversionOutcome::Ready(_)
+        ));
+    }
+
+    #[test]
+    fn incomplete_or_mixed_media_metadata_is_quarantined() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let base = AttachmentMeta {
+            guid: "standalone-attachment-guid".to_owned(),
+            total_bytes: 42,
+            ..Default::default()
+        };
+        let cases = [
+            MMCSAttachmentMeta::default(),
+            MMCSAttachmentMeta {
+                mmcs_signature_hex: Some("aa".repeat(32)),
+                mmcs_owner: Some("owner".to_owned()),
+                mmcs_url: Some("https://cvws.icloud-content.com/object".to_owned()),
+                ..Default::default()
+            },
+            MMCSAttachmentMeta {
+                inline_attachment: Some("ia-0".to_owned()),
+                message_part: Some("0".to_owned()),
+                mmcs_signature_hex: Some("aa".repeat(32)),
+                ..Default::default()
+            },
+            MMCSAttachmentMeta {
+                inline_attachment: Some("ia-2".to_owned()),
+                message_part: Some("0".to_owned()),
+                ..Default::default()
+            },
+            MMCSAttachmentMeta {
+                mmcs_signature_hex: Some("not-hex".to_owned()),
+                mmcs_owner: Some("owner".to_owned()),
+                mmcs_url: Some("https://cvws.icloud-content.com/object".to_owned()),
+                decryption_key: Some("bb".repeat(33)),
+                ..Default::default()
+            },
+            MMCSAttachmentMeta {
+                mmcs_signature_hex: Some("aa".repeat(32)),
+                mmcs_owner: Some("owner".to_owned()),
+                mmcs_url: Some("http://cvws.icloud-content.com/object".to_owned()),
+                decryption_key: Some("bb".repeat(33)),
+                ..Default::default()
+            },
+        ];
+        for user_info in cases {
+            let mut attachment = base.clone();
+            attachment.user_info = Some(user_info);
+            assert_eq!(
+                convert_attachment(
+                    &context(&hasher, "server-attachment-malformed-ui", None),
+                    &attachment_presence(),
+                    &attachment,
+                ),
+                CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::MalformedRecord
+                )
+            );
+        }
     }
 
     #[test]
