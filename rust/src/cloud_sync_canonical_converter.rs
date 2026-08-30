@@ -820,6 +820,7 @@ pub(crate) enum CloudChatDiagnosticCode {
     GroupPhotoPresenceMismatch,
     DisplayNameField,
     LastAddressedHandleField,
+    LastAddressedHandleIgnoredUnproven,
     GroupVersionField,
     LastSeenMessageField,
     GroupPhotoGuidField,
@@ -844,6 +845,7 @@ impl CloudChatDiagnosticCode {
             Self::GroupPhotoPresenceMismatch => "group_photo_presence_mismatch",
             Self::DisplayNameField => "display_name_field",
             Self::LastAddressedHandleField => "last_addressed_handle_field",
+            Self::LastAddressedHandleIgnoredUnproven => "last_addressed_handle_ignored_unproven",
             Self::GroupVersionField => "group_version_field",
             Self::LastSeenMessageField => "last_seen_message_field",
             Self::GroupPhotoGuidField => "group_photo_guid_field",
@@ -1838,6 +1840,14 @@ fn convert_chat_internal(
     let last_addressed_handle =
         match top_default_string(presence, "lah", &chat.last_addressed_handle) {
             Ok(value) => value,
+            // `lah` is optional routing metadata, not chat identity. The wire
+            // decoder supplies a default string, so a raw/typed disagreement
+            // cannot prove a value or a clear. Preserve the chat and its
+            // aliases while discarding only this unproven field.
+            Err(CloudCanonicalQuarantineReason::FieldPresenceMismatch) => {
+                *diagnostic = Some(CloudChatDiagnosticCode::LastAddressedHandleIgnoredUnproven);
+                CloudCanonicalField::Absent
+            }
             Err(reason) => {
                 return chat_diagnostic(
                     diagnostic,
@@ -2913,6 +2923,10 @@ mod tests {
                 "last_addressed_handle_field",
             ),
             (
+                CloudChatDiagnosticCode::LastAddressedHandleIgnoredUnproven,
+                "last_addressed_handle_ignored_unproven",
+            ),
+            (
                 CloudChatDiagnosticCode::GroupVersionField,
                 "group_version_field",
             ),
@@ -3672,6 +3686,118 @@ mod tests {
         assert_eq!(
             payload.display_name_state(),
             crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::ExplicitClear
+        );
+    }
+
+    #[test]
+    fn chat_last_addressed_handle_mismatch_is_ignored_without_losing_identity() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+
+        let absent_empty = convert_chat_with_diagnostic(
+            &context(&hasher, "server-chat-lah-absent-empty", None),
+            &chat_required_presence(false),
+            &direct_chat(),
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = absent_empty.0 else {
+            panic!("absent optional metadata should convert");
+        };
+        let Some(CloudCanonicalPayload::Chat(payload)) = mutation.payload() else {
+            panic!("chat payload expected");
+        };
+        assert_eq!(
+            payload.last_addressed_handle_state(),
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::Absent
+        );
+        assert_eq!(absent_empty.1, None);
+
+        let mut absent_nonempty_chat = direct_chat();
+        absent_nonempty_chat.last_addressed_handle = "tel:+15555550100".to_owned();
+        let (absent_nonempty, diagnostic) = convert_chat_with_diagnostic(
+            &context(&hasher, "server-chat-lah-absent-nonempty", None),
+            &chat_required_presence(false),
+            &absent_nonempty_chat,
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = absent_nonempty else {
+            panic!("unproven optional metadata must not discard chat identity");
+        };
+        let Some(CloudCanonicalPayload::Chat(payload)) = mutation.payload() else {
+            panic!("chat payload expected");
+        };
+        assert_eq!(
+            payload.last_addressed_handle_state(),
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::Absent
+        );
+        assert!(!mutation.envelope().aliases().is_empty());
+        assert_eq!(
+            diagnostic,
+            Some(CloudChatDiagnosticCode::LastAddressedHandleIgnoredUnproven)
+        );
+
+        let mut present_empty = chat_required_presence(false);
+        present_empty
+            .fields
+            .insert("lah".to_owned(), CloudRawFieldPresence::PresentWithValue);
+        let (present_empty_outcome, diagnostic) = convert_chat_with_diagnostic(
+            &context(&hasher, "server-chat-lah-present-empty", None),
+            &present_empty,
+            &direct_chat(),
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = present_empty_outcome else {
+            panic!("unproven empty optional metadata must not discard chat identity");
+        };
+        let Some(CloudCanonicalPayload::Chat(payload)) = mutation.payload() else {
+            panic!("chat payload expected");
+        };
+        assert_eq!(
+            payload.last_addressed_handle_state(),
+            crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::Absent
+        );
+        assert_eq!(
+            diagnostic,
+            Some(CloudChatDiagnosticCode::LastAddressedHandleIgnoredUnproven)
+        );
+
+        let mut present_nonempty_chat = direct_chat();
+        present_nonempty_chat.last_addressed_handle = "tel:+15555550100".to_owned();
+        let mut present_nonempty = chat_required_presence(false);
+        present_nonempty
+            .fields
+            .insert("lah".to_owned(), CloudRawFieldPresence::PresentWithValue);
+        let (present_nonempty_outcome, diagnostic) = convert_chat_with_diagnostic(
+            &context(&hasher, "server-chat-lah-present-nonempty", None),
+            &present_nonempty,
+            &present_nonempty_chat,
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = present_nonempty_outcome else {
+            panic!("proven optional metadata should convert");
+        };
+        let Some(CloudCanonicalPayload::Chat(payload)) = mutation.payload() else {
+            panic!("chat payload expected");
+        };
+        assert!(matches!(
+            payload.last_addressed_handle(),
+            CloudCanonicalField::Value(value) if value == "tel:+15555550100"
+        ));
+        assert_eq!(diagnostic, None);
+
+        let mut present_without_value = chat_required_presence(false);
+        present_without_value
+            .fields
+            .insert("lah".to_owned(), CloudRawFieldPresence::PresentWithoutValue);
+        let (malformed, diagnostic) = convert_chat_with_diagnostic(
+            &context(&hasher, "server-chat-lah-malformed", None),
+            &present_without_value,
+            &direct_chat(),
+        );
+        assert_eq!(
+            malformed,
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRecord
+            )
+        );
+        assert_eq!(
+            diagnostic,
+            Some(CloudChatDiagnosticCode::LastAddressedHandleField)
         );
     }
 

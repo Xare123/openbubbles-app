@@ -181,6 +181,30 @@ yield inside an ObjectBox transaction, while a transient identity lease is held,
 or before inbox status, canonical projection, replay metadata, and checkpoint
 state are atomically durable.
 
+### V2 chat-to-attachment dependency chain
+
+```text
+raw CloudKit record and raw field-presence evidence
+  -> typed CloudChat
+  -> required chat identity and service validation
+       -> optional `lah` disagreement: discard only `lah`, retain chat identity
+       -> unsupported RCS service: retain on a separate fail-closed branch
+       -> alias conflict: retain; never guess which conversation owns the alias
+  -> canonical chat plus exact service-identifier aliases
+  -> message `chatID` alias lookup and exact-GUID repair
+  -> canonical message and associated-parent aliases
+  -> attachment parent lookup and materialization
+```
+
+Impact rule: chat conversion is an upstream identity gate. Rejecting a chat
+before its aliases are emitted can make otherwise valid messages report
+`chat_unavailable`, then make their attachments report `parent_missing`.
+Optional `last_addressed_handle` (`lah`) metadata is not chat identity and must
+not erase that chain when raw presence and the defaulted typed string disagree.
+Only that unproven field is dropped; a malformed wire field still quarantines,
+required identity remains strict, RCS remains unsupported rather than being
+relabeled as SMS, and alias ownership conflicts remain fail-closed.
+
 ### Canary device-validation chain
 
 ```text
