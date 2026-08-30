@@ -2639,6 +2639,33 @@ struct PreparedChange {
     raw_plaintext_index: usize,
 }
 
+fn stable_missing_record_identity(
+    stream: CloudNativeStream,
+    change: &CloudMessageRecordPageChange,
+    payload_digest: &CloudCanonicalDigest,
+) -> String {
+    let kind_tag = match change.kind {
+        CloudMessageRecordKind::EncryptedUpsert => 1,
+        CloudMessageRecordKind::Tombstone => 2,
+        CloudMessageRecordKind::UnsupportedRecordType => 3,
+        CloudMessageRecordKind::MalformedMetadata => 4,
+    };
+    let record_type = change.record_type.as_deref().unwrap_or("");
+    let change_type = change
+        .change_type
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_owned());
+    format!(
+        "missing\u{0}{}\u{0}{}\u{0}{}:{}\u{0}{}\u{0}{}",
+        stream.tag(),
+        kind_tag,
+        record_type.len(),
+        record_type,
+        change_type,
+        payload_digest.value(),
+    )
+}
+
 fn protect_native_page(
     store: &dyn CloudNativeProtectedStore,
     hasher: &CloudSemanticIdentifierHasher,
@@ -2717,13 +2744,17 @@ fn protect_native_page(
 
     let mut plaintexts = Vec::with_capacity(page.changes.len() * 2 + 1);
     let mut prepared = Vec::with_capacity(page.changes.len());
-    for (index, change) in page.changes.iter().enumerate() {
+    for change in &page.changes {
         let (raw, raw_shape_valid) = raw_bytes(change);
         let oversized = raw.len() > MAX_RAW_RECORD_BYTES;
         let preflight = preflight_code(change, raw_shape_valid, oversized);
         let payload_digest = sha256_digest(raw);
-        let record_identity = change.record_name.as_deref();
-        let fallback_identity = format!("missing\u{0}{}\u{0}{}", payload_digest.value(), index);
+        let record_identity = change
+            .record_name
+            .as_deref()
+            .filter(|value| !value.is_empty());
+        let fallback_identity =
+            stable_missing_record_identity(request.stream, change, &payload_digest);
         let record_id_hash = match hasher
             .canonical_server_record_id_hash(record_identity.unwrap_or(&fallback_identity))
         {
@@ -3911,6 +3942,74 @@ mod tests {
                     .any(|window| window == b"RAW-RECORD-NAME")
             })
         }));
+    }
+
+    #[test]
+    fn missing_record_identity_is_stable_when_server_page_order_changes() {
+        fn malformed_changes() -> (CloudMessageRecordPageChange, CloudMessageRecordPageChange) {
+            let mut missing = change("ignored-missing", b"malformed-missing".to_vec());
+            missing.record_name = None;
+            let mut empty = change("ignored-empty", b"malformed-empty".to_vec());
+            empty.record_name = Some(String::new());
+            (missing, empty)
+        }
+
+        fn protected_identity_by_payload(
+            page: CloudNativeProtectedPage,
+        ) -> HashMap<String, (String, String)> {
+            page.changes
+                .into_iter()
+                .map(|change| {
+                    (
+                        change.payload_digest.value().to_owned(),
+                        (
+                            change.record_id_hash().to_owned(),
+                            change.change_id().to_owned(),
+                        ),
+                    )
+                })
+                .collect()
+        }
+
+        let scope = scope(CloudNativeStream::Messages);
+        let (missing, empty) = malformed_changes();
+
+        let first = protect_native_page(
+            &MemoryProtectedStore::default(),
+            &hasher(),
+            &request(&scope, None),
+            CloudMessageRecordPage {
+                changes: vec![missing, empty],
+                next_token: None,
+                status: 2,
+            },
+        );
+        let (missing, empty) = malformed_changes();
+        let second = protect_native_page(
+            &MemoryProtectedStore::default(),
+            &hasher(),
+            &request(&scope, None),
+            CloudMessageRecordPage {
+                changes: vec![empty, missing],
+                next_token: None,
+                status: 2,
+            },
+        );
+        let CloudNativeProtectedFetchOutcome::Page(first) = first else {
+            panic!("expected first protected page");
+        };
+        let CloudNativeProtectedFetchOutcome::Page(second) = second else {
+            panic!("expected reordered protected page");
+        };
+
+        assert!(first.changes.iter().all(|change| {
+            change.kind() == CloudNativeChangeKind::Quarantined
+                && change.preflight_code() == Some(CloudNativePreflightCode::MalformedMetadata)
+        }));
+        assert_eq!(
+            protected_identity_by_payload(first),
+            protected_identity_by_payload(second)
+        );
     }
 
     #[test]

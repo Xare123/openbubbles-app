@@ -68,8 +68,6 @@ use rustpush::{
 pub use rustpush::{default_provider, ArcAnisetteClient, DefaultAnisetteProvider, LoginClientInfo};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
-#[cfg(any(target_os = "android", target_os = "windows", test))]
-use std::collections::HashMap;
 #[cfg(any(target_os = "android", target_os = "windows"))]
 use std::fs::OpenOptions;
 use std::io::Seek;
