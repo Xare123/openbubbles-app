@@ -11,6 +11,7 @@ on:
         options:
           - n2d-standard-16
           - n2d-standard-8
+          - t2d-standard-32
           - t2d-standard-60
           - c4d-highcpu-16
       source_ref:
