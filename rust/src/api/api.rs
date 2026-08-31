@@ -19,6 +19,8 @@ pub use plist::Value;
 use plist::{Data, Dictionary};
 use prost::Message as prostMessage;
 use rand::Rng;
+#[cfg(any(target_os = "android", target_os = "windows"))]
+use rustpush::cloudkit_operation_gate::try_acquire_cloudkit_operation;
 use rustpush::cloudkit_operation_gate::{
     acquire_cloudkit_read_authentication, with_cloudkit_writer_operation,
     CloudKitReadAuthenticationPermit,
@@ -230,6 +232,9 @@ enum CloudSyncReadAuthWarmFailure {
     KeychainContainer,
     SecurityContainer,
     CloudKitToken,
+    CredentialsUnavailable,
+    CredentialsRejected,
+    Transport,
 }
 
 impl CloudSyncReadAuthWarmFailure {
@@ -240,8 +245,45 @@ impl CloudSyncReadAuthWarmFailure {
             Self::KeychainContainer => "cloud_sync_native_auth_keychain_container_failed",
             Self::SecurityContainer => "cloud_sync_native_auth_security_container_failed",
             Self::CloudKitToken => "cloud_sync_native_auth_cloudkit_token_failed",
+            Self::CredentialsUnavailable => "cloud_sync_native_auth_credentials_unavailable",
+            Self::CredentialsRejected => "cloud_sync_native_auth_credentials_rejected",
+            Self::Transport => "cloud_sync_native_auth_transport_failed",
         }
     }
+}
+
+fn classify_cloud_sync_read_authentication_failure(
+    error: PushError,
+    fallback: CloudSyncReadAuthWarmFailure,
+) -> CloudSyncReadAuthWarmFailure {
+    match error {
+        PushError::CloudKitWarmAuthenticationRequired | PushError::TokenMissing => {
+            CloudSyncReadAuthWarmFailure::CredentialsUnavailable
+        }
+        PushError::UnauthorizedAccountError
+        | PushError::MobileMeError(_, _)
+        | PushError::DelegateLoginFailed(_, _, _)
+        | PushError::AuthError(_) => CloudSyncReadAuthWarmFailure::CredentialsRejected,
+        PushError::RequestError(_) => CloudSyncReadAuthWarmFailure::Transport,
+        _ => fallback,
+    }
+}
+
+fn cloud_sync_read_authentication_refresh_error(error: PushError) -> anyhow::Error {
+    let safe_code = match error {
+        PushError::CloudKitWarmAuthenticationRequired | PushError::TokenMissing => {
+            "cloud_sync_native_auth_refresh_session_missing"
+        }
+        PushError::UnauthorizedAccountError
+        | PushError::MobileMeError(_, _)
+        | PushError::DelegateLoginFailed(_, _, _)
+        | PushError::AuthError(_) => "cloud_sync_native_auth_refresh_credentials_rejected",
+        PushError::RequestError(_) | PushError::AnisetteError(_) => {
+            "cloud_sync_native_auth_refresh_transport_failed"
+        }
+        _ => "cloud_sync_native_auth_refresh_failed",
+    };
+    anyhow!(safe_code)
 }
 
 async fn bounded_cloud_sync_read_authentication<F, T>(
@@ -294,32 +336,62 @@ async fn cloud_sync_warm_read_authentication_inner(
             cloud_messages_client
                 .get_container_for_read_authentication(permit)
                 .await
-                .map_err(|_| CloudSyncReadAuthWarmFailure::MessagesContainer)?;
+                .map_err(|error| {
+                    classify_cloud_sync_read_authentication_failure(
+                        error,
+                        CloudSyncReadAuthWarmFailure::MessagesContainer,
+                    )
+                })?;
             cloud_messages_client
                 .keychain
                 .get_container_for_read_authentication(permit)
                 .await
-                .map_err(|_| CloudSyncReadAuthWarmFailure::KeychainContainer)?;
+                .map_err(|error| {
+                    classify_cloud_sync_read_authentication_failure(
+                        error,
+                        CloudSyncReadAuthWarmFailure::KeychainContainer,
+                    )
+                })?;
             cloud_messages_client
                 .keychain
                 .get_security_container_for_read_authentication(permit)
                 .await
-                .map_err(|_| CloudSyncReadAuthWarmFailure::SecurityContainer)?;
+                .map_err(|error| {
+                    classify_cloud_sync_read_authentication_failure(
+                        error,
+                        CloudSyncReadAuthWarmFailure::SecurityContainer,
+                    )
+                })?;
         } else {
             cloud_messages_client
                 .get_container()
                 .await
-                .map_err(|_| CloudSyncReadAuthWarmFailure::MessagesContainer)?;
+                .map_err(|error| {
+                    classify_cloud_sync_read_authentication_failure(
+                        error,
+                        CloudSyncReadAuthWarmFailure::MessagesContainer,
+                    )
+                })?;
             cloud_messages_client
                 .keychain
                 .get_container()
                 .await
-                .map_err(|_| CloudSyncReadAuthWarmFailure::KeychainContainer)?;
+                .map_err(|error| {
+                    classify_cloud_sync_read_authentication_failure(
+                        error,
+                        CloudSyncReadAuthWarmFailure::KeychainContainer,
+                    )
+                })?;
             cloud_messages_client
                 .keychain
                 .get_security_container()
                 .await
-                .map_err(|_| CloudSyncReadAuthWarmFailure::SecurityContainer)?;
+                .map_err(|error| {
+                    classify_cloud_sync_read_authentication_failure(
+                        error,
+                        CloudSyncReadAuthWarmFailure::SecurityContainer,
+                    )
+                })?;
         }
         if !cloud_messages_client
             .client
@@ -505,6 +577,42 @@ mod cloud_sync_read_authentication_tests {
         assert_eq!(
             failure.to_string(),
             "cloud_sync_native_auth_cloudkit_token_failed"
+        );
+    }
+
+    #[test]
+    fn read_authentication_failures_preserve_only_retry_relevant_safe_classes() {
+        assert_eq!(
+            classify_cloud_sync_read_authentication_failure(
+                PushError::CloudKitWarmAuthenticationRequired,
+                CloudSyncReadAuthWarmFailure::MessagesContainer,
+            )
+            .safe_code(),
+            "cloud_sync_native_auth_credentials_unavailable"
+        );
+        assert_eq!(
+            classify_cloud_sync_read_authentication_failure(
+                PushError::UnauthorizedAccountError,
+                CloudSyncReadAuthWarmFailure::MessagesContainer,
+            )
+            .safe_code(),
+            "cloud_sync_native_auth_credentials_rejected"
+        );
+        assert_eq!(
+            classify_cloud_sync_read_authentication_failure(
+                PushError::IoError(std::io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    "sensitive detail",
+                )),
+                CloudSyncReadAuthWarmFailure::MessagesContainer,
+            )
+            .safe_code(),
+            "cloud_sync_native_auth_messages_container_failed"
+        );
+        assert_eq!(
+            cloud_sync_read_authentication_refresh_error(PushError::UnauthorizedAccountError)
+                .to_string(),
+            "cloud_sync_native_auth_refresh_credentials_rejected"
         );
     }
 
@@ -7234,6 +7342,54 @@ async fn revoke_registered_cloudkit_read_authentication(directory: &PathBuf) -> 
 }
 
 #[cfg(any(target_os = "android", target_os = "windows"))]
+async fn install_cloudkit_read_authentication_generation(
+    canonical_directory: &PathBuf,
+    token_provider: &Arc<TokenProvider<DefaultAnisetteProvider>>,
+    mme_auth_token: String,
+    cloudkit_token: String,
+    refreshed: SystemTime,
+    generation_id: String,
+) -> anyhow::Result<bool> {
+    let invalidation_directory = canonical_directory.clone();
+    let invalidation_generation_id = generation_id.clone();
+    let restored = token_provider
+        .restore_cloudkit_read_authentication(
+            mme_auth_token,
+            cloudkit_token,
+            refreshed,
+            move || {
+                clear_cloudkit_read_authentication_cache_generation(
+                    &invalidation_directory,
+                    &invalidation_generation_id,
+                )
+                .map(|_| ())
+                .map_err(|error| {
+                    PushError::IoError(std::io::Error::new(
+                        ErrorKind::Other,
+                        format!("CloudKit read-authentication cache invalidation failed: {error}"),
+                    ))
+                })
+            },
+        )
+        .await;
+    let Some(revoker) = restored else {
+        return Ok(false);
+    };
+    if register_cloudkit_read_authentication_revoker(canonical_directory.clone(), revoker.clone())
+        .await
+        .is_err()
+    {
+        revoker.revoke().await;
+        clear_cloudkit_read_authentication_cache_generation(canonical_directory, &generation_id)
+            .map_err(|_| anyhow!("CloudKit read-authentication registration cleanup failed"))?;
+        return Err(anyhow!(
+            "CloudKit read-authentication revoker registration failed"
+        ));
+    }
+    Ok(true)
+}
+
+#[cfg(any(target_os = "android", target_os = "windows"))]
 async fn restore_persisted_cloudkit_read_authentication(
     directory: &PathBuf,
     token_provider: &Arc<TokenProvider<DefaultAnisetteProvider>>,
@@ -7248,50 +7404,20 @@ async fn restore_persisted_cloudkit_read_authentication(
 
     match load_cloudkit_read_authentication_cache(&canonical_directory, &gsa.username) {
         Ok(Some((mme_auth_token, cloudkit_token, refreshed, generation_id))) => {
-            let invalidation_directory = canonical_directory.clone();
-            let invalidation_generation_id = generation_id.clone();
-            let restored = token_provider
-                .restore_cloudkit_read_authentication(
-                    mme_auth_token,
-                    cloudkit_token,
-                    refreshed,
-                    move || {
-                        clear_cloudkit_read_authentication_cache_generation(
-                            &invalidation_directory,
-                            &invalidation_generation_id,
-                        )
-                        .map(|_| ())
-                        .map_err(|error| {
-                            PushError::IoError(std::io::Error::new(
-                                ErrorKind::Other,
-                                format!(
-                                    "CloudKit read-authentication cache invalidation failed: {error}"
-                                ),
-                            ))
-                        })
-                    },
-                )
-                .await;
-            match restored {
-                Some(revoker) => {
-                    if register_cloudkit_read_authentication_revoker(
-                        canonical_directory.clone(),
-                        revoker.clone(),
-                    )
-                    .await
-                    .is_err()
-                    {
-                        revoker.revoke().await;
-                        clear_cloudkit_read_authentication_cache(&canonical_directory).map_err(
-                            |_| anyhow!("CloudKit read-authentication registration cleanup failed"),
-                        )?;
-                        return Err(anyhow!(
-                            "CloudKit read-authentication revoker registration failed"
-                        ));
-                    }
+            match install_cloudkit_read_authentication_generation(
+                &canonical_directory,
+                token_provider,
+                mme_auth_token,
+                cloudkit_token,
+                refreshed,
+                generation_id,
+            )
+            .await?
+            {
+                true => {
                     info!("Restored encrypted CloudKit read-authentication cache");
                 }
-                None => {
+                false => {
                     clear_cloudkit_read_authentication_cache(&canonical_directory).map_err(
                         |_| anyhow!("Stale CloudKit read-authentication cache cleanup failed"),
                     )?;
@@ -7308,6 +7434,123 @@ async fn restore_persisted_cloudkit_read_authentication(
         }
     }
     Ok(())
+}
+
+/// Ensures that the isolated semantic-read credential generation is current.
+///
+/// A warm generation is reused without network I/O. A missing, stale, or
+/// remotely invalidated generation is replenished with one bounded MobileMe
+/// authentication refresh, encrypted at rest, and installed under the account
+/// lifecycle gate. This function never opens a CloudKit container and cannot
+/// issue record, zone, subscription, save, or delete operations.
+pub async fn cloud_sync_ensure_read_authentication(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
+) -> anyhow::Result<()> {
+    if cloud_messages_client
+        .client
+        .token_provider
+        .cloudkit_read_authentication_is_warm()
+        .await
+    {
+        return Ok(());
+    }
+
+    #[cfg(any(target_os = "android", target_os = "windows"))]
+    {
+        let canonical_directory =
+            canonical_cloudkit_state_directory(&PathBuf::from(storage_directory))?;
+        let operation_permit = try_acquire_cloudkit_operation()
+            .map_err(|_| anyhow!("cloud_sync_native_auth_refresh_writer_busy"))?;
+        let lifecycle_gate = cloudkit_read_authentication_lifecycle_gate(&canonical_directory)?;
+        let _lifecycle_guard = lifecycle_gate.lock().await;
+        if cloud_messages_client
+            .client
+            .token_provider
+            .cloudkit_read_authentication_is_warm()
+            .await
+        {
+            return Ok(());
+        }
+
+        let account_before = cloud_messages_client
+            .validated_native_account_identifier()
+            .await
+            .map_err(|_| anyhow!("cloud_sync_native_auth_identity_mismatch"))?;
+
+        let gsa = plist::from_file::<_, GSAConfig>(canonical_directory.join("gsa.plist"))
+            .map_err(|_| anyhow!("cloud_sync_native_auth_refresh_session_missing"))?;
+        let active_username = cloud_messages_client
+            .client
+            .token_provider
+            .get_gsa_email()
+            .await
+            .ok_or_else(|| anyhow!("cloud_sync_native_auth_refresh_session_missing"))?;
+        if !active_username.eq_ignore_ascii_case(&gsa.username) {
+            return Err(anyhow!("cloud_sync_native_auth_account_changed"));
+        }
+
+        let (mme_auth_token, cloudkit_token, refreshed) = match tokio::time::timeout(
+            CLOUD_SYNC_READ_AUTH_WARM_TIMEOUT,
+            cloud_messages_client
+                .client
+                .token_provider
+                .refresh_cloudkit_read_authentication_material(),
+        )
+        .await
+        {
+            Ok(Ok(material)) => material,
+            Ok(Err(error)) => return Err(cloud_sync_read_authentication_refresh_error(error)),
+            Err(_) => return Err(anyhow!("cloud_sync_native_auth_refresh_timeout")),
+        };
+        let account_after_refresh = cloud_messages_client
+            .validated_native_account_identifier()
+            .await
+            .map_err(|_| anyhow!("cloud_sync_native_auth_identity_mismatch"))?;
+        if account_after_refresh != account_before {
+            return Err(anyhow!("cloud_sync_native_auth_account_changed"));
+        }
+
+        let generation_id = persist_cloudkit_read_authentication_cache(
+            &canonical_directory,
+            &gsa.username,
+            &mme_auth_token,
+            &cloudkit_token,
+            refreshed,
+        )
+        .map_err(|_| anyhow!("cloud_sync_native_auth_refresh_state_failed"))?;
+        let installed = install_cloudkit_read_authentication_generation(
+            &canonical_directory,
+            &cloud_messages_client.client.token_provider,
+            mme_auth_token,
+            cloudkit_token,
+            refreshed,
+            generation_id,
+        )
+        .await
+        .map_err(|_| anyhow!("cloud_sync_native_auth_refresh_state_failed"))?;
+        if !installed {
+            clear_cloudkit_read_authentication_cache(&canonical_directory)
+                .map_err(|_| anyhow!("cloud_sync_native_auth_refresh_state_failed"))?;
+            return Err(anyhow!("cloud_sync_native_auth_refresh_failed"));
+        }
+        if !cloud_messages_client
+            .client
+            .token_provider
+            .cloudkit_read_authentication_is_warm()
+            .await
+        {
+            return Err(anyhow!("cloud_sync_native_auth_refresh_failed"));
+        }
+        drop(operation_permit);
+        return Ok(());
+    }
+
+    #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
+    {
+        let _ = storage_directory;
+        Err(anyhow!("cloud_sync_native_auth_refresh_unsupported"))
+    }
 }
 
 #[cfg(any(target_os = "android", target_os = "windows"))]

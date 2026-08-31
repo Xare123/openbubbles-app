@@ -92,6 +92,7 @@ CloudSyncManualSemanticPullSampler _sampler({
   required Directory privateStorageDirectory,
   required CloudSyncShadowPreflightReader readPreflight,
   required CloudSyncNativeAuthSnapshotReader readAuthSnapshot,
+  CloudSyncEnsuredAuthSnapshotReader? ensureAuthSnapshot,
   CloudSyncPausedPreparedAuthSnapshotReader? prepareAuthSnapshot,
   required CloudSyncSemanticStoreFactory createStore,
   required CloudSyncSemanticRawTransportFactory createRawTransport,
@@ -103,6 +104,7 @@ CloudSyncManualSemanticPullSampler _sampler({
   CloudSyncObserverFactory? observerFactory,
 }) => CloudSyncManualSemanticPullSampler(
   readPreflight: readPreflight,
+  ensureAuthSnapshot: ensureAuthSnapshot ?? () async => _auth(),
   prepareAuthSnapshot:
       prepareAuthSnapshot ?? (pauseToken) => readAuthSnapshot(),
   readAuthSnapshot: readAuthSnapshot,
@@ -140,6 +142,10 @@ void main() {
       privateStorageDirectory: privateStorageDirectory,
       operationFenceStore: InMemoryCloudSyncStore(),
       nativeWriterPause: nativeWriterPause,
+      ensureAuthSnapshot: () async {
+        events.add('ensure-auth');
+        return _auth();
+      },
       readPreflight: () async {
         events.add('preflight');
         return _readyState();
@@ -172,8 +178,9 @@ void main() {
 
     await sampler.runConfirmed();
 
-    expect(events.first, 'pause-native-writers');
-    expect(events[1], 'preflight');
+    expect(events.first, 'ensure-auth');
+    expect(events[1], 'pause-native-writers');
+    expect(events[2], 'preflight');
     expect(events, contains('prepare-auth'));
     expect(events.last, 'resume-native-writers');
     expect(nativeWriterPause.pauseCalls, 1);
@@ -283,6 +290,229 @@ void main() {
     await expectLater(sampler.runConfirmed(), throwsStateError);
     expect(nativeWriterPause.pauseCalls, 1);
     expect(nativeWriterPause.resumeCalls, 1);
+    expect(sampler.isActive, isFalse);
+  });
+
+  for (final safeCode in <String>[
+    'cloud_sync_native_auth_credentials_unavailable',
+    'cloud_sync_native_auth_credentials_rejected',
+  ]) {
+    test('retries one complete paused read after $safeCode', () async {
+      var ensureCalls = 0;
+      var prepareCalls = 0;
+      final nativeWriterPause = _RecordingNativeWriterPause();
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        nativeWriterPause: nativeWriterPause,
+        ensureAuthSnapshot: () async {
+          ensureCalls++;
+          return _auth();
+        },
+        readPreflight: () async => _readyState(),
+        prepareAuthSnapshot: (pauseToken) async {
+          prepareCalls++;
+          if (prepareCalls == 1) throw StateError(safeCode);
+          return _auth();
+        },
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async => InMemoryCloudSyncStore(),
+        createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+        createInboxApplier: (auth, scope, generation) async =>
+            FakeCloudInboxApplier(),
+      );
+
+      await sampler.runConfirmed();
+
+      expect(ensureCalls, 2);
+      expect(prepareCalls, 2);
+      expect(nativeWriterPause.pauseCalls, 2);
+      expect(nativeWriterPause.resumeCalls, 2);
+      expect(sampler.isActive, isFalse);
+    });
+
+    test(
+      'retries when authentication ensure itself throws $safeCode',
+      () async {
+        var ensureCalls = 0;
+        final nativeWriterPause = _RecordingNativeWriterPause();
+        final sampler = _sampler(
+          privateStorageDirectory: privateStorageDirectory,
+          operationFenceStore: InMemoryCloudSyncStore(),
+          nativeWriterPause: nativeWriterPause,
+          ensureAuthSnapshot: () async {
+            ensureCalls++;
+            if (ensureCalls == 1) throw StateError(safeCode);
+            return _auth();
+          },
+          readPreflight: () async => _readyState(),
+          readAuthSnapshot: () async => _auth(),
+          createStore: (scope) async => InMemoryCloudSyncStore(),
+          createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+          createInboxApplier: (auth, scope, generation) async =>
+              FakeCloudInboxApplier(),
+        );
+
+        await sampler.runConfirmed();
+
+        expect(ensureCalls, 2);
+        expect(nativeWriterPause.pauseCalls, 1);
+        expect(nativeWriterPause.resumeCalls, 1);
+        expect(sampler.isActive, isFalse);
+      },
+    );
+  }
+
+  test('account replacement between ensure and pause fails closed', () async {
+    final nativeWriterPause = _RecordingNativeWriterPause();
+    final sampler = _sampler(
+      privateStorageDirectory: privateStorageDirectory,
+      operationFenceStore: InMemoryCloudSyncStore(),
+      nativeWriterPause: nativeWriterPause,
+      ensureAuthSnapshot: () async => _auth(client: _nativeClientA),
+      readPreflight: () async => _readyState(),
+      prepareAuthSnapshot: (pauseToken) async => _auth(
+        session: 'session-b',
+        fingerprint: _accountFingerprintB,
+        client: _nativeClientB,
+      ),
+      readAuthSnapshot: () async => _auth(client: _nativeClientB),
+      createStore: (scope) async => InMemoryCloudSyncStore(),
+      createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+      createInboxApplier: (auth, scope, generation) async =>
+          FakeCloudInboxApplier(),
+    );
+
+    await expectLater(
+      sampler.runConfirmed(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'account_changed',
+        ),
+      ),
+    );
+    expect(nativeWriterPause.pauseCalls, 1);
+    expect(nativeWriterPause.resumeCalls, 1);
+    expect(sampler.isActive, isFalse);
+  });
+
+  test('authentication ensure failure never pauses native writers', () async {
+    var preflightCalls = 0;
+    final nativeWriterPause = _RecordingNativeWriterPause();
+    final sampler = _sampler(
+      privateStorageDirectory: privateStorageDirectory,
+      operationFenceStore: InMemoryCloudSyncStore(),
+      nativeWriterPause: nativeWriterPause,
+      ensureAuthSnapshot: () async =>
+          throw StateError('cloud_sync_native_auth_refresh_session_missing'),
+      readPreflight: () async {
+        preflightCalls++;
+        return _readyState();
+      },
+      readAuthSnapshot: () async => _auth(),
+      createStore: (scope) async => InMemoryCloudSyncStore(),
+      createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+      createInboxApplier: (auth, scope, generation) async =>
+          FakeCloudInboxApplier(),
+    );
+
+    await expectLater(
+      sampler.runConfirmed(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'cloud_sync_native_auth_refresh_session_missing',
+        ),
+      ),
+    );
+    expect(preflightCalls, 0);
+    expect(nativeWriterPause.pauseCalls, 0);
+    expect(nativeWriterPause.resumeCalls, 0);
+    expect(sampler.isActive, isFalse);
+  });
+
+  test('does not retry an unrelated native authentication failure', () async {
+    var ensureCalls = 0;
+    var prepareCalls = 0;
+    final nativeWriterPause = _RecordingNativeWriterPause();
+    final sampler = _sampler(
+      privateStorageDirectory: privateStorageDirectory,
+      operationFenceStore: InMemoryCloudSyncStore(),
+      nativeWriterPause: nativeWriterPause,
+      ensureAuthSnapshot: () async {
+        ensureCalls++;
+        return _auth();
+      },
+      readPreflight: () async => _readyState(),
+      prepareAuthSnapshot: (pauseToken) async {
+        prepareCalls++;
+        throw StateError('cloud_sync_native_auth_messages_container_failed');
+      },
+      readAuthSnapshot: () async => _auth(),
+      createStore: (scope) async => InMemoryCloudSyncStore(),
+      createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+      createInboxApplier: (auth, scope, generation) async =>
+          FakeCloudInboxApplier(),
+    );
+
+    await expectLater(
+      sampler.runConfirmed(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'cloud_sync_native_auth_messages_container_failed',
+        ),
+      ),
+    );
+    expect(ensureCalls, 1);
+    expect(prepareCalls, 1);
+    expect(nativeWriterPause.pauseCalls, 1);
+    expect(nativeWriterPause.resumeCalls, 1);
+    expect(sampler.isActive, isFalse);
+  });
+
+  test('credentials rejection is retried at most once', () async {
+    var ensureCalls = 0;
+    var prepareCalls = 0;
+    final nativeWriterPause = _RecordingNativeWriterPause();
+    final sampler = _sampler(
+      privateStorageDirectory: privateStorageDirectory,
+      operationFenceStore: InMemoryCloudSyncStore(),
+      nativeWriterPause: nativeWriterPause,
+      ensureAuthSnapshot: () async {
+        ensureCalls++;
+        return _auth();
+      },
+      readPreflight: () async => _readyState(),
+      prepareAuthSnapshot: (pauseToken) async {
+        prepareCalls++;
+        throw StateError('cloud_sync_native_auth_credentials_rejected');
+      },
+      readAuthSnapshot: () async => _auth(),
+      createStore: (scope) async => InMemoryCloudSyncStore(),
+      createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+      createInboxApplier: (auth, scope, generation) async =>
+          FakeCloudInboxApplier(),
+    );
+
+    await expectLater(
+      sampler.runConfirmed(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'cloud_sync_native_auth_credentials_rejected',
+        ),
+      ),
+    );
+    expect(ensureCalls, 2);
+    expect(prepareCalls, 2);
+    expect(nativeWriterPause.pauseCalls, 2);
+    expect(nativeWriterPause.resumeCalls, 2);
     expect(sampler.isActive, isFalse);
   });
 

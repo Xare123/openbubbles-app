@@ -82,6 +82,11 @@ final class CloudSyncNativeAuthMetadata {
 }
 
 abstract interface class CloudSyncNativeAuthBinding {
+  Future<void> ensureReadAuthentication({
+    required Object cloudMessagesClient,
+    required String privateStorageDirectory,
+  });
+
   Future<void> warmReadAuthentication({required Object cloudMessagesClient});
 
   Future<void> warmReadAuthenticationUnderWriterPause({
@@ -106,6 +111,32 @@ final class FrbCloudSyncNativeAuthBinding
     : _apiOverride = api;
 
   final frb_generated.RustLibApi? _apiOverride;
+
+  @override
+  Future<void> ensureReadAuthentication({
+    required Object cloudMessagesClient,
+    required String privateStorageDirectory,
+  }) async {
+    if (cloudMessagesClient
+        is! frb_lib.ArcCloudMessagesClientDefaultAnisetteProvider) {
+      throw StateError('cloud_sync_native_auth_client_type_invalid');
+    }
+    if (privateStorageDirectory.isEmpty) {
+      throw StateError('cloud_sync_native_auth_store_identity_failed');
+    }
+    // ignore: invalid_use_of_internal_member
+    final api = _apiOverride ?? frb_generated.RustLib.instance.api;
+    try {
+      await api.crateApiApiCloudSyncEnsureReadAuthentication(
+        cloudMessagesClient: cloudMessagesClient,
+        storageDirectory: privateStorageDirectory,
+      );
+    } catch (error) {
+      final safeCode = cloudSyncNativeAuthBridgeSafeCode(error);
+      Logger.warn('Cloud Sync V2 read authentication failed code=$safeCode');
+      throw StateError(safeCode);
+    }
+  }
 
   @override
   Future<void> warmReadAuthentication({
@@ -215,6 +246,17 @@ String cloudSyncNativeAuthBridgeSafeCode(Object error) {
     'cloud_sync_native_auth_keychain_container_failed',
     'cloud_sync_native_auth_security_container_failed',
     'cloud_sync_native_auth_cloudkit_token_failed',
+    'cloud_sync_native_auth_credentials_unavailable',
+    'cloud_sync_native_auth_credentials_rejected',
+    'cloud_sync_native_auth_transport_failed',
+    'cloud_sync_native_auth_refresh_session_missing',
+    'cloud_sync_native_auth_refresh_credentials_rejected',
+    'cloud_sync_native_auth_refresh_transport_failed',
+    'cloud_sync_native_auth_refresh_state_failed',
+    'cloud_sync_native_auth_refresh_timeout',
+    'cloud_sync_native_auth_refresh_failed',
+    'cloud_sync_native_auth_refresh_unsupported',
+    'cloud_sync_native_auth_refresh_writer_busy',
     'cloud_sync_native_auth_identity_mismatch',
     'cloud_sync_native_auth_account_fingerprint_failed',
     'cloud_sync_native_auth_session_fingerprint_failed',
@@ -476,6 +518,7 @@ final class CloudSyncProductionSemanticPullAdapter {
     );
     sampler = CloudSyncManualSemanticPullSampler(
       readPreflight: readPreflight,
+      ensureAuthSnapshot: authProvider.ensureReadAuthenticationUnderInterlock,
       prepareAuthSnapshot:
           authProvider.prepareReadAuthenticationUnderNativeWriterPause,
       readAuthSnapshot: authProvider.capture,
@@ -744,6 +787,27 @@ final class CloudSyncProductionAuthSnapshotProvider {
     if (before == null) return null;
     await _nativeAuthBinding.warmReadAuthentication(
       cloudMessagesClient: before.cloudMessagesClient,
+    );
+    if (!identical(before.cloudMessagesClient, _readActiveClient())) {
+      return null;
+    }
+    final after = await capture();
+    return before.sameIdentity(after) ? after : null;
+  }
+
+  /// Replenishes only a missing or invalidated semantic-read credential before
+  /// native CloudKit writers are paused. A warm credential returns without
+  /// network I/O; a cold one performs one bounded authentication refresh.
+  Future<CloudSyncNativeAuthSnapshot?>
+  ensureReadAuthenticationUnderInterlock() async {
+    CloudKitOperationInterlock.requireActive(
+      CloudKitOperationKind.v2SemanticRead,
+    );
+    final before = await capture();
+    if (before == null) return null;
+    await _nativeAuthBinding.ensureReadAuthentication(
+      cloudMessagesClient: before.cloudMessagesClient,
+      privateStorageDirectory: privateStorageDirectory,
     );
     if (!identical(before.cloudMessagesClient, _readActiveClient())) {
       return null;

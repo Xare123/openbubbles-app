@@ -156,6 +156,98 @@ void main() {
   );
 
   test(
+    'semantic read authentication ensure is explicit and revalidates identity',
+    () async {
+      final client = Object();
+      final binding = _FakeNativeAuthBinding();
+      final provider = CloudSyncProductionAuthSnapshotProvider(
+        readActiveClient: () => client,
+        nativeAuthBinding: binding,
+        privateStorageDirectory: 'private-storage',
+      );
+
+      final snapshot = await interlock.runExclusive(
+        kind: CloudKitOperationKind.v2SemanticRead,
+        action: provider.ensureReadAuthenticationUnderInterlock,
+      );
+
+      expect(snapshot, isNotNull);
+      expect(binding.ensureCalls, 1);
+      expect(binding.calls, 2);
+      expect(binding.ensuredClients.single, same(client));
+      expect(binding.ensureStorageDirectories, <String>['private-storage']);
+    },
+  );
+
+  test(
+    'client replacement during semantic read authentication ensure fails closed',
+    () async {
+      final first = Object();
+      final second = Object();
+      var active = first;
+      final ensureBlocker = Completer<void>();
+      final ensureStarted = Completer<void>();
+      final binding = _FakeNativeAuthBinding(
+        ensureBlocker: ensureBlocker,
+        ensureStarted: ensureStarted,
+      );
+      final provider = CloudSyncProductionAuthSnapshotProvider(
+        readActiveClient: () => active,
+        nativeAuthBinding: binding,
+        privateStorageDirectory: 'private-storage',
+      );
+
+      final pending = interlock.runExclusive(
+        kind: CloudKitOperationKind.v2SemanticRead,
+        action: provider.ensureReadAuthenticationUnderInterlock,
+      );
+      await ensureStarted.future;
+      active = second;
+      ensureBlocker.complete();
+
+      expect(await pending, isNull);
+      expect(binding.ensureCalls, 1);
+      expect(binding.calls, 1);
+    },
+  );
+
+  test(
+    'metadata replacement during semantic read authentication ensure fails closed',
+    () async {
+      final client = Object();
+      final binding = _FakeNativeAuthBinding(
+        captureResults: <CloudSyncNativeAuthMetadata>[
+          const CloudSyncNativeAuthMetadata(
+            nativeSessionId: _nativeSession,
+            accountFingerprint: _accountFingerprint,
+            protectedStoreIdentity:
+                'obcs2.store.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+          ),
+          CloudSyncNativeAuthMetadata(
+            nativeSessionId: _digest('M'),
+            accountFingerprint: _digest('G'),
+            protectedStoreIdentity: "obcs2.store.${_digest('B')}",
+          ),
+        ],
+      );
+      final provider = CloudSyncProductionAuthSnapshotProvider(
+        readActiveClient: () => client,
+        nativeAuthBinding: binding,
+        privateStorageDirectory: 'private-storage',
+      );
+
+      final snapshot = await interlock.runExclusive(
+        kind: CloudKitOperationKind.v2SemanticRead,
+        action: provider.ensureReadAuthenticationUnderInterlock,
+      );
+
+      expect(snapshot, isNull);
+      expect(binding.ensureCalls, 1);
+      expect(binding.calls, 2);
+    },
+  );
+
+  test(
     'client replacement during read authentication warm fails closed',
     () async {
       final first = Object();
@@ -412,6 +504,17 @@ void main() {
       'cloud_sync_native_auth_keychain_container_failed',
       'cloud_sync_native_auth_security_container_failed',
       'cloud_sync_native_auth_cloudkit_token_failed',
+      'cloud_sync_native_auth_credentials_unavailable',
+      'cloud_sync_native_auth_credentials_rejected',
+      'cloud_sync_native_auth_transport_failed',
+      'cloud_sync_native_auth_refresh_session_missing',
+      'cloud_sync_native_auth_refresh_credentials_rejected',
+      'cloud_sync_native_auth_refresh_transport_failed',
+      'cloud_sync_native_auth_refresh_state_failed',
+      'cloud_sync_native_auth_refresh_timeout',
+      'cloud_sync_native_auth_refresh_failed',
+      'cloud_sync_native_auth_refresh_unsupported',
+      'cloud_sync_native_auth_refresh_writer_busy',
       'cloud_sync_native_auth_identity_mismatch',
     ]) {
       expect(cloudSyncNativeAuthBridgeSafeCode(frb.AnyhowException(tag)), tag);
@@ -620,18 +723,46 @@ void main() {
 }
 
 final class _FakeNativeAuthBinding implements CloudSyncNativeAuthBinding {
-  _FakeNativeAuthBinding({this.blocker, this.warmBlocker, this.warmStarted});
+  _FakeNativeAuthBinding({
+    this.blocker,
+    this.warmBlocker,
+    this.warmStarted,
+    this.ensureBlocker,
+    this.ensureStarted,
+    List<CloudSyncNativeAuthMetadata>? captureResults,
+  }) : captureResults = captureResults ?? const <CloudSyncNativeAuthMetadata>[];
 
   final Completer<void>? blocker;
   final Completer<void>? warmBlocker;
   final Completer<void>? warmStarted;
+  final Completer<void>? ensureBlocker;
+  final Completer<void>? ensureStarted;
+  final List<CloudSyncNativeAuthMetadata> captureResults;
   int calls = 0;
   int warmCalls = 0;
   int pausedWarmCalls = 0;
+  int ensureCalls = 0;
   final List<Object> clients = [];
   final List<Object> warmedClients = [];
   final List<Object> pausedWarmedClients = [];
+  final List<Object> ensuredClients = [];
+  final List<String> ensureStorageDirectories = [];
   final List<BigInt> pauseTokens = [];
+
+  @override
+  Future<void> ensureReadAuthentication({
+    required Object cloudMessagesClient,
+    required String privateStorageDirectory,
+  }) async {
+    ensureCalls++;
+    ensuredClients.add(cloudMessagesClient);
+    ensureStorageDirectories.add(privateStorageDirectory);
+    final started = ensureStarted;
+    if (started != null && !started.isCompleted) {
+      started.complete();
+    }
+    await ensureBlocker?.future;
+  }
 
   @override
   Future<void> warmReadAuthentication({
@@ -669,6 +800,12 @@ final class _FakeNativeAuthBinding implements CloudSyncNativeAuthBinding {
     calls++;
     clients.add(cloudMessagesClient);
     await blocker?.future;
+    if (captureResults.isNotEmpty) {
+      final index = calls <= captureResults.length
+          ? calls - 1
+          : captureResults.length - 1;
+      return captureResults[index];
+    }
     return const CloudSyncNativeAuthMetadata(
       nativeSessionId: _nativeSession,
       accountFingerprint: _accountFingerprint,

@@ -232,6 +232,12 @@ final class _FakeAuthBinding implements CloudSyncNativeAuthBinding {
   CloudSyncNativeAuthMetadata Function(int call)? metadataForCall;
 
   @override
+  Future<void> ensureReadAuthentication({
+    required Object cloudMessagesClient,
+    required String privateStorageDirectory,
+  }) async {}
+
+  @override
   Future<void> warmReadAuthentication({
     required Object cloudMessagesClient,
   }) async {

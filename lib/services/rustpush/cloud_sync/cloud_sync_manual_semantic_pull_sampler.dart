@@ -28,6 +28,8 @@ typedef CloudSyncSemanticDiagnosticSnapshotReader =
     Map<String, int> Function(CloudSyncScope scope);
 typedef CloudSyncPausedPreparedAuthSnapshotReader =
     Future<CloudSyncNativeAuthSnapshot?> Function(Object pauseToken);
+typedef CloudSyncEnsuredAuthSnapshotReader =
+    Future<CloudSyncNativeAuthSnapshot?> Function();
 
 /// Native exclusion for every CloudKit-capable writer workflow.
 ///
@@ -55,6 +57,7 @@ final class CloudSyncNativeWriterPauseUncertain implements Exception {
 final class CloudSyncManualSemanticPullSampler {
   CloudSyncManualSemanticPullSampler({
     required this._readPreflight,
+    required this._ensureAuthSnapshot,
     required this._prepareAuthSnapshot,
     required this._readAuthSnapshot,
     required this._createStore,
@@ -102,6 +105,7 @@ final class CloudSyncManualSemanticPullSampler {
   );
 
   final CloudSyncShadowPreflightReader _readPreflight;
+  final CloudSyncEnsuredAuthSnapshotReader _ensureAuthSnapshot;
   final CloudSyncPausedPreparedAuthSnapshotReader _prepareAuthSnapshot;
   final CloudSyncNativeAuthSnapshotReader _readAuthSnapshot;
   final CloudSyncSemanticStoreFactory _createStore;
@@ -126,42 +130,72 @@ final class CloudSyncManualSemanticPullSampler {
     if (!_enabled) throw StateError('cloud_sync_semantic_pull_disabled');
     if (_active) throw StateError('cloud_sync_semantic_pull_active');
     _active = true;
-    var pauseEstablishedOrUncertain = false;
-    var resumeConfirmed = false;
+    var pauseMayRemainActive = false;
     try {
       return await _operationInterlock.runExclusive(
         kind: CloudKitOperationKind.v2SemanticRead,
         action: () async {
-          late final Object pauseToken;
-          try {
-            pauseToken = await _nativeWriterPause.pause();
-            pauseEstablishedOrUncertain = true;
-          } on CloudSyncNativeWriterPauseUncertain {
-            pauseEstablishedOrUncertain = true;
-            rethrow;
+          for (
+            var authenticationAttempt = 0;
+            authenticationAttempt < 2;
+            authenticationAttempt++
+          ) {
+            try {
+              final ensuredAuth = await _ensureAuthSnapshot();
+              if (ensuredAuth == null) throw StateError('account_unavailable');
+              late final Object pauseToken;
+              try {
+                pauseToken = await _nativeWriterPause.pause();
+                pauseMayRemainActive = true;
+              } on CloudSyncNativeWriterPauseUncertain {
+                pauseMayRemainActive = true;
+                rethrow;
+              }
+              try {
+                return await _runConfirmedUnderInterlock(
+                  pauseToken,
+                  ensuredAuth,
+                );
+              } finally {
+                await _nativeWriterPause.resume(pauseToken);
+                pauseMayRemainActive = false;
+              }
+            } catch (error) {
+              if (authenticationAttempt == 0 &&
+                  _isRefreshableReadAuthenticationFailure(error)) {
+                continue;
+              }
+              rethrow;
+            }
           }
-          try {
-            return await _runConfirmedUnderInterlock(pauseToken);
-          } finally {
-            await _nativeWriterPause.resume(pauseToken);
-            resumeConfirmed = true;
-          }
+          throw StateError('cloud_sync_native_auth_refresh_failed');
         },
       );
     } finally {
-      if (!pauseEstablishedOrUncertain || resumeConfirmed) {
+      if (!pauseMayRemainActive) {
         _active = false;
       }
     }
   }
 
+  static bool _isRefreshableReadAuthenticationFailure(Object error) {
+    if (error is! StateError) return false;
+    final code = error.message.toString();
+    return code == 'cloud_sync_native_auth_credentials_unavailable' ||
+        code == 'cloud_sync_native_auth_credentials_rejected';
+  }
+
   Future<CloudSyncSemanticPullReport> _runConfirmedUnderInterlock(
     Object pauseToken,
+    CloudSyncNativeAuthSnapshot ensuredAuth,
   ) async {
     final before = await _readPreflight();
     _validatePreflight(before);
     final auth = await _prepareAuthSnapshot(pauseToken);
     if (auth == null) throw StateError('account_unavailable');
+    if (!ensuredAuth.sameIdentity(auth)) {
+      throw StateError('account_changed');
+    }
 
     final reports = <CloudSyncSemanticPullZoneReport>[];
     for (final zone in zones) {
