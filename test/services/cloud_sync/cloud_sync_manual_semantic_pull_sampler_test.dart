@@ -168,7 +168,9 @@ void main() {
       },
       readAuthSnapshot: () async => _auth(),
       createStore: (scope) async => InMemoryCloudSyncStore(),
-      createRawTransport: (auth, scope) async {
+      createRawTransport: (auth, scope, pauseToken) async {
+        expect(pauseToken, same(nativeWriterPause.token));
+        events.add('transport-pause-token');
         final transport = FakeCloudSyncTransport();
         transport.fetchHandler = (scope, token, generation, limit) async {
           events.add('fetch-${scope.zone}');
@@ -197,6 +199,7 @@ void main() {
     expect(events[1], 'pause-native-writers');
     expect(events[2], 'preflight');
     expect(events, contains('prepare-auth'));
+    expect(events, contains('transport-pause-token'));
     expect(events, contains('inbox-pause-token'));
     expect(events.last, 'resume-native-writers');
     expect(nativeWriterPause.pauseCalls, 1);
@@ -218,7 +221,7 @@ void main() {
       },
       readAuthSnapshot: () async => _auth(),
       createStore: (scope) async => InMemoryCloudSyncStore(),
-      createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+      createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
       createInboxApplier: (auth, scope, generation) async =>
           FakeCloudInboxApplier(),
     );
@@ -252,7 +255,7 @@ void main() {
         readPreflight: () async => _readyState(),
         readAuthSnapshot: () async => _auth(),
         createStore: (scope) async => InMemoryCloudSyncStore(),
-        createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+        createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
         createInboxApplier: (auth, scope, generation) async =>
             FakeCloudInboxApplier(),
       );
@@ -278,7 +281,7 @@ void main() {
       readPreflight: () async => throw StateError('preflight-failed'),
       readAuthSnapshot: () async => _auth(),
       createStore: (scope) async => InMemoryCloudSyncStore(),
-      createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+      createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
       createInboxApplier: (auth, scope, generation) async =>
           FakeCloudInboxApplier(),
     );
@@ -298,7 +301,7 @@ void main() {
       readPreflight: () async => throw StateError('preflight-failed'),
       readAuthSnapshot: () async => _auth(),
       createStore: (scope) async => InMemoryCloudSyncStore(),
-      createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+      createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
       createInboxApplier: (auth, scope, generation) async =>
           FakeCloudInboxApplier(),
     );
@@ -333,7 +336,7 @@ void main() {
         },
         readAuthSnapshot: () async => _auth(),
         createStore: (scope) async => InMemoryCloudSyncStore(),
-        createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+        createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
         createInboxApplier: (auth, scope, generation) async =>
             FakeCloudInboxApplier(),
       );
@@ -364,7 +367,7 @@ void main() {
           readPreflight: () async => _readyState(),
           readAuthSnapshot: () async => _auth(),
           createStore: (scope) async => InMemoryCloudSyncStore(),
-          createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+          createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
           createInboxApplier: (auth, scope, generation) async =>
               FakeCloudInboxApplier(),
         );
@@ -394,7 +397,7 @@ void main() {
       ),
       readAuthSnapshot: () async => _auth(client: _nativeClientB),
       createStore: (scope) async => InMemoryCloudSyncStore(),
-      createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+      createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
       createInboxApplier: (auth, scope, generation) async =>
           FakeCloudInboxApplier(),
     );
@@ -429,7 +432,7 @@ void main() {
       },
       readAuthSnapshot: () async => _auth(),
       createStore: (scope) async => InMemoryCloudSyncStore(),
-      createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+      createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
       createInboxApplier: (auth, scope, generation) async =>
           FakeCloudInboxApplier(),
     );
@@ -469,7 +472,7 @@ void main() {
       },
       readAuthSnapshot: () async => _auth(),
       createStore: (scope) async => InMemoryCloudSyncStore(),
-      createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+      createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
       createInboxApplier: (auth, scope, generation) async =>
           FakeCloudInboxApplier(),
     );
@@ -510,7 +513,7 @@ void main() {
       },
       readAuthSnapshot: () async => _auth(),
       createStore: (scope) async => InMemoryCloudSyncStore(),
-      createRawTransport: (auth, scope) async => FakeCloudSyncTransport(),
+      createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
       createInboxApplier: (auth, scope, generation) async =>
           FakeCloudInboxApplier(),
     );
@@ -555,7 +558,7 @@ void main() {
           readPreflight: () async => _readyState(),
           readAuthSnapshot: () async => _auth(),
           createStore: (scope) async => InMemoryCloudSyncStore(),
-          createRawTransport: (auth, scope) async {
+          createRawTransport: (auth, scope, pauseToken) async {
             final transport = FakeCloudSyncTransport();
             transport.fetchHandler = (scope, token, generation, limit) async {
               if (scope.zone == 'chatManateeZone') {
@@ -645,7 +648,7 @@ void main() {
           return _auth();
         },
         createStore: (scope) async => InMemoryCloudSyncStore(),
-        createRawTransport: (snapshot, scope) async => FakeCloudSyncTransport(),
+        createRawTransport: (snapshot, scope, pauseToken) async => FakeCloudSyncTransport(),
         createInboxApplier: (auth, scope, generation) async =>
             FakeCloudInboxApplier(),
       );
@@ -726,7 +729,7 @@ void main() {
           storeCalls++;
           throw StateError('disabled sampler created store');
         },
-        createRawTransport: (auth, scope) async {
+        createRawTransport: (auth, scope, pauseToken) async {
           transportCalls++;
           throw StateError('disabled sampler created transport');
         },
@@ -776,7 +779,7 @@ void main() {
           stores[scope.zone] = store;
           return store;
         },
-        createRawTransport: (auth, scope) async {
+        createRawTransport: (auth, scope, pauseToken) async {
           final transport = FakeCloudSyncTransport();
           transport.fetchHandler = (scope, token, generation, limit) async =>
               CloudFetchBatch(
@@ -922,7 +925,7 @@ void main() {
         final store = InMemoryCloudSyncStore();
         return store;
       },
-      createRawTransport: (auth, scope) async {
+      createRawTransport: (auth, scope, pauseToken) async {
         final transport = FakeCloudSyncTransport();
         transport.fetchHandler = (requestedScope, token, generation, limit) {
           final page = transport.fetchCallCount;
@@ -979,7 +982,7 @@ void main() {
         readAuthSnapshot: () async => _auth(),
         createStore: (scope) async =>
             stores.putIfAbsent(scope.zone, InMemoryCloudSyncStore.new),
-        createRawTransport: (auth, scope) async {
+        createRawTransport: (auth, scope, pauseToken) async {
           if (scope.zone != 'attachmentManateeZone') {
             final transport = FakeCloudSyncTransport();
             transport.fetchHandler =
@@ -1081,7 +1084,7 @@ void main() {
           stores[scope.zone] = store;
           return store;
         },
-        createRawTransport: (auth, scope) async {
+        createRawTransport: (auth, scope, pauseToken) async {
           events.add('transport:${scope.zone}');
           return FakeCloudSyncTransport();
         },
@@ -1155,7 +1158,7 @@ void main() {
           stores[scope.zone] = store;
           return store;
         },
-        createRawTransport: (auth, scope) async {
+        createRawTransport: (auth, scope, pauseToken) async {
           events.add('transport:${scope.zone}');
           final transport = FakeCloudSyncTransport();
           transport.fetchHandler =
@@ -1253,7 +1256,7 @@ void main() {
           if (scope.zone == 'chatManateeZone') chatStore = store;
           return store;
         },
-        createRawTransport: (auth, scope) async {
+        createRawTransport: (auth, scope, pauseToken) async {
           events.add('transport:${scope.zone}');
           final transport = FakeCloudSyncTransport();
           transports[scope.zone] = transport;
@@ -1313,7 +1316,7 @@ void main() {
         readPreflight: () async => _readyState(),
         readAuthSnapshot: () async => _auth(),
         createStore: (scope) async => InMemoryCloudSyncStore(),
-        createRawTransport: (auth, scope) async {
+        createRawTransport: (auth, scope, pauseToken) async {
           final transport = FakeCloudSyncTransport();
           transport.pushHandler = (scope, operations) async =>
               CloudPushBatchResult(
@@ -1385,7 +1388,7 @@ void main() {
           stores[scope.zone] = store;
           return store;
         },
-        createRawTransport: (auth, scope) async {
+        createRawTransport: (auth, scope, pauseToken) async {
           final transport = FakeCloudSyncTransport();
           transport.fetchHandler = (scope, token, generation, limit) async {
             current = _auth(
@@ -1464,7 +1467,7 @@ void main() {
           stores[scope.zone] = store;
           return store;
         },
-        createRawTransport: (auth, scope) async {
+        createRawTransport: (auth, scope, pauseToken) async {
           if (transportIndex++ == 0) {
             return _JoinableTransport(
               fetchHandler: (scope, token, generation, limit) {

@@ -17,6 +17,7 @@ typedef CloudSyncSemanticRawTransportFactory =
     Future<CloudSyncTransport> Function(
       CloudSyncNativeAuthSnapshot authSnapshot,
       CloudSyncScope scope,
+      Object nativeWriterPauseToken,
     );
 typedef CloudSyncSemanticInboxApplierFactory =
     Future<CloudInboxApplier> Function(
@@ -233,7 +234,7 @@ final class CloudSyncManualSemanticPullSampler {
         inboxApplier: inboxApplier,
         leaseDuration: config.coordinatorLeaseDuration,
       );
-      final rawTransport = await _createRawTransport(auth, scope);
+      final rawTransport = await _createRawTransport(auth, scope, pauseToken);
       try {
         final guardedTransport = AccountBoundShadowTransport(
           delegate: rawTransport,

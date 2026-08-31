@@ -24,6 +24,7 @@ use rustpush::{
         CloudMessageRecordKind, CloudMessageRecordPage, CloudMessageRecordPageChange,
         CloudMessageRecordSystemFields, CloudMessagesClient,
     },
+    cloudkit_operation_gate::CloudKitReadAuthenticationPermit,
     cloudkit::{classify_cloudkit_failure, CloudKitFailureClass},
     CloudKitProtocolError, DefaultAnisetteProvider, PushError,
 };
@@ -3144,6 +3145,7 @@ fn map_fetch_failure(error: &PushError) -> CloudNativeFetchFailure {
 
 async fn cloud_sync_fetch_protected_page_with_store(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    read_authentication_permit: Option<&CloudKitReadAuthenticationPermit<'_>>,
     hasher: &CloudSemanticIdentifierHasher,
     store: &dyn CloudNativeProtectedStore,
     request: &CloudNativeFetchRequest<'_>,
@@ -3167,28 +3169,91 @@ async fn cloud_sync_fetch_protected_page_with_store(
     };
 
     let fetch = async {
-        match request.stream {
-            CloudNativeStream::Chats => {
+        match (request.stream, read_authentication_permit) {
+            (CloudNativeStream::Chats, Some(permit)) => {
+                cloud_messages_client
+                    .sync_chats_page_for_read_authentication(
+                        permit,
+                        continuation_token,
+                        Some(request.maximum_changes),
+                    )
+                    .await
+            }
+            (CloudNativeStream::Messages, Some(permit)) => {
+                cloud_messages_client
+                    .sync_messages_page_for_read_authentication(
+                        permit,
+                        continuation_token,
+                        Some(request.maximum_changes),
+                    )
+                    .await
+            }
+            (CloudNativeStream::Attachments, Some(permit)) => {
+                cloud_messages_client
+                    .sync_attachments_page_for_read_authentication(
+                        permit,
+                        continuation_token,
+                        Some(request.maximum_changes),
+                    )
+                    .await
+            }
+            (CloudNativeStream::MessageUpdate, Some(permit)) => {
+                cloud_messages_client
+                    .sync_message_update_page_for_read_authentication(
+                        permit,
+                        continuation_token,
+                        Some(request.maximum_changes),
+                    )
+                    .await
+            }
+            (CloudNativeStream::RecoverableMessageDelete, Some(permit)) => {
+                cloud_messages_client
+                    .sync_recoverable_message_delete_page_for_read_authentication(
+                        permit,
+                        continuation_token,
+                        Some(request.maximum_changes),
+                    )
+                    .await
+            }
+            (CloudNativeStream::ScheduledMessage, Some(permit)) => {
+                cloud_messages_client
+                    .sync_scheduled_message_page_for_read_authentication(
+                        permit,
+                        continuation_token,
+                        Some(request.maximum_changes),
+                    )
+                    .await
+            }
+            (CloudNativeStream::Chat1, Some(permit)) => {
+                cloud_messages_client
+                    .sync_chat1_page_for_read_authentication(
+                        permit,
+                        continuation_token,
+                        Some(request.maximum_changes),
+                    )
+                    .await
+            }
+            (CloudNativeStream::Chats, None) => {
                 cloud_messages_client
                     .sync_chats_page(continuation_token, Some(request.maximum_changes))
                     .await
             }
-            CloudNativeStream::Messages => {
+            (CloudNativeStream::Messages, None) => {
                 cloud_messages_client
                     .sync_messages_page(continuation_token, Some(request.maximum_changes))
                     .await
             }
-            CloudNativeStream::Attachments => {
+            (CloudNativeStream::Attachments, None) => {
                 cloud_messages_client
                     .sync_attachments_page(continuation_token, Some(request.maximum_changes))
                     .await
             }
-            CloudNativeStream::MessageUpdate => {
+            (CloudNativeStream::MessageUpdate, None) => {
                 cloud_messages_client
                     .sync_message_update_page(continuation_token, Some(request.maximum_changes))
                     .await
             }
-            CloudNativeStream::RecoverableMessageDelete => {
+            (CloudNativeStream::RecoverableMessageDelete, None) => {
                 cloud_messages_client
                     .sync_recoverable_message_delete_page(
                         continuation_token,
@@ -3196,12 +3261,12 @@ async fn cloud_sync_fetch_protected_page_with_store(
                     )
                     .await
             }
-            CloudNativeStream::ScheduledMessage => {
+            (CloudNativeStream::ScheduledMessage, None) => {
                 cloud_messages_client
                     .sync_scheduled_message_page(continuation_token, Some(request.maximum_changes))
                     .await
             }
-            CloudNativeStream::Chat1 => {
+            (CloudNativeStream::Chat1, None) => {
                 cloud_messages_client
                     .sync_chat1_page(continuation_token, Some(request.maximum_changes))
                     .await
@@ -3251,12 +3316,20 @@ fn decode_previous_checkpoint(
 
 pub(crate) async fn cloud_sync_fetch_protected_page(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    read_authentication_permit: Option<&CloudKitReadAuthenticationPermit<'_>>,
     storage_directory: PathBuf,
     hasher: &CloudSemanticIdentifierHasher,
     request: &CloudNativeFetchRequest<'_>,
 ) -> CloudNativeProtectedFetchOutcome {
     let store = PlatformCloudNativeProtectedStore::new(storage_directory);
-    cloud_sync_fetch_protected_page_with_store(cloud_messages_client, hasher, &store, request).await
+    cloud_sync_fetch_protected_page_with_store(
+        cloud_messages_client,
+        read_authentication_permit,
+        hasher,
+        &store,
+        request,
+    )
+    .await
 }
 
 /// Unprotects and validates exactly one raw-record capability for the transient

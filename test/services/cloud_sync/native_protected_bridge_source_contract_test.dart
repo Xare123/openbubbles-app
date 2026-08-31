@@ -75,6 +75,79 @@ void main() {
       );
       expect(adapter, contains('NativeProtectedCloudSyncBindings?'));
       expect(adapter, isNot(contains('RustCloudSyncTransport(')));
+
+      final shadowStart = adapter.indexOf(
+        'final class CloudSyncProductionSamplerAdapter',
+      );
+      final semanticStart = adapter.indexOf(
+        'final class CloudSyncProductionSemanticPullAdapter',
+      );
+      final outboundStart = adapter.indexOf(
+        'final class CloudSyncProductionOneTextOutboundAdapter',
+      );
+      expect(shadowStart, greaterThanOrEqualTo(0));
+      expect(semanticStart, greaterThan(shadowStart));
+      expect(outboundStart, greaterThan(semanticStart));
+      final shadowComposition = adapter.substring(shadowStart, semanticStart);
+      final semanticComposition = adapter.substring(semanticStart, outboundStart);
+      expect(
+        shadowComposition,
+        isNot(contains('nativeWriterPauseToken: pauseToken')),
+        reason: 'the non-projecting shadow diagnostic remains explicitly unbound',
+      );
+      expect(
+        semanticComposition,
+        contains('createRawTransport: (snapshot, scope, pauseToken)'),
+      );
+      expect(
+        semanticComposition,
+        contains('nativeWriterPauseToken: pauseToken'),
+        reason:
+            'semantic protected fetch must carry the exact active writer-pause capability',
+      );
     },
   );
+
+  test('native semantic fetch acquires and forwards read-authentication permit', () {
+    final api = File('rust/src/api/api.rs').readAsStringSync();
+    final shadowFetchStart = api.indexOf(
+      'pub async fn cloud_sync_fetch_protected_page',
+    );
+    final semanticFetchStart = api.indexOf(
+      'pub async fn cloud_sync_fetch_protected_page_under_writer_pause',
+      shadowFetchStart,
+    );
+    final innerFetchStart = api.indexOf(
+      'async fn cloud_sync_fetch_protected_page_inner',
+      semanticFetchStart,
+    );
+    expect(shadowFetchStart, greaterThanOrEqualTo(0));
+    expect(semanticFetchStart, greaterThan(shadowFetchStart));
+    expect(innerFetchStart, greaterThan(semanticFetchStart));
+    final shadowFetch = api.substring(shadowFetchStart, semanticFetchStart);
+    final semanticFetch = api.substring(semanticFetchStart, innerFetchStart);
+    expect(shadowFetch, isNot(contains('native_writer_pause_token')));
+    expect(shadowFetch, isNot(contains('acquire_cloudkit_read_authentication')));
+    expect(semanticFetch, contains('native_writer_pause_token: u64'));
+    expect(
+      semanticFetch,
+      contains(
+        'acquire_cloudkit_read_authentication(native_writer_pause_token)',
+      ),
+    );
+    expect(semanticFetch, contains('Some(&permit)'));
+
+    final native = File(
+      'rust/src/cloud_sync_native_fetch.rs',
+    ).readAsStringSync();
+    expect(
+      native,
+      contains('.sync_messages_page_for_read_authentication('),
+    );
+    expect(
+      native,
+      contains('.sync_attachments_page_for_read_authentication('),
+    );
+    expect(native, contains('.sync_chats_page_for_read_authentication('));
+  });
 }

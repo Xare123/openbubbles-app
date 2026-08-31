@@ -65,6 +65,9 @@ void main() {
 
       expect(bindings.maximumChanges, 200);
       expect(bindings.expectedAccountFingerprint, _hash('A'));
+      expect(bindings.nativeWriterPauseToken, isNull);
+      expect(bindings.unboundFetchCalls, 1);
+      expect(bindings.boundFetchCalls, 0);
       expect(bindings.previousCheckpointReference, _reference('O'));
       expect(batch.batchId, _hash('B'));
       expect(batch.nextToken, _reference('N'));
@@ -83,6 +86,42 @@ void main() {
       expect(change.preflightFailure, isNull);
     },
   );
+
+  test('forwards the exact native writer-pause capability to protected fetch', () async {
+    bindings.fetchResult = _validEmptyFetchResult();
+    final pauseToken = BigInt.from(77);
+    final boundTransport = NativeProtectedCloudSyncTransport(
+      cloudMessagesClient: Object(),
+      storageDirectory: 'private-storage',
+      protectedStoreIdentity: _storeIdentity,
+      nativeWriterPauseToken: pauseToken,
+      bindings: bindings,
+    );
+
+    await boundTransport.fetchChanges(
+      scope,
+      previousToken: null,
+      generation: 1,
+      limit: 1,
+    );
+
+    expect(bindings.nativeWriterPauseToken, same(pauseToken));
+    expect(bindings.boundFetchCalls, 1);
+    expect(bindings.unboundFetchCalls, 0);
+  });
+
+  test('rejects an invalid native writer-pause capability before fetch', () {
+    expect(
+      () => NativeProtectedCloudSyncTransport(
+        cloudMessagesClient: Object(),
+        storageDirectory: 'private-storage',
+        protectedStoreIdentity: _storeIdentity,
+        nativeWriterPauseToken: BigInt.zero,
+        bindings: bindings,
+      ),
+      throwsArgumentError,
+    );
+  });
 
   test(
     'accepts the expanded protected-zone allowlist without remapping',
@@ -1215,6 +1254,7 @@ final class _FakeBindings
         failure: frb_api.CloudSyncOutboundSafeCode.invalidRequest,
       );
   String? expectedAccountFingerprint;
+  BigInt? nativeWriterPauseToken;
   String? stream;
   String? previousCheckpointReference;
   int? maximumChanges;
@@ -1225,6 +1265,8 @@ final class _FakeBindings
   List<String>? retainedReferences;
   List<String>? garbageCollectionLiveReferences;
   int commitCalls = 0;
+  int unboundFetchCalls = 0;
+  int boundFetchCalls = 0;
   int recoveryCalls = 0;
   int garbageCollectionCalls = 0;
   int consumeCalls = 0;
@@ -1255,7 +1297,30 @@ final class _FakeBindings
     required int maximumChanges,
   }) async {
     await _before('fetch');
+    unboundFetchCalls++;
     this.expectedAccountFingerprint = expectedAccountFingerprint;
+    nativeWriterPauseToken = null;
+    this.stream = stream;
+    this.previousCheckpointReference = previousCheckpointReference;
+    this.maximumChanges = maximumChanges;
+    return fetchResult;
+  }
+
+  @override
+  Future<NativeProtectedFetchResult> fetchProtectedPageUnderWriterPause({
+    required Object cloudMessagesClient,
+    required BigInt nativeWriterPauseToken,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String stream,
+    required int generation,
+    required String? previousCheckpointReference,
+    required int maximumChanges,
+  }) async {
+    await _before('fetch');
+    boundFetchCalls++;
+    this.expectedAccountFingerprint = expectedAccountFingerprint;
+    this.nativeWriterPauseToken = nativeWriterPauseToken;
     this.stream = stream;
     this.previousCheckpointReference = previousCheckpointReference;
     this.maximumChanges = maximumChanges;

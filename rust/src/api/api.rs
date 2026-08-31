@@ -766,6 +766,7 @@ pub enum CloudSyncProtectedSafeCode {
     PcsUnavailable,
     MalformedResponse,
     ContinuationNoProgress,
+    ReadAuthenticationScope,
     NativeAuthUnavailable,
     Unknown,
 }
@@ -2162,11 +2163,76 @@ fn map_cloud_sync_protected_page(
     }
 }
 
-/// Fetches and protects one bounded CloudKit page without allowing raw record
-/// material, Apple identifiers, etags, continuation tokens, or paths to cross
-/// Flutter Rust Bridge.
+/// Fetches and protects one bounded CloudKit page for the separately compile-
+/// gated, non-projecting shadow diagnostic. Semantic projection must use
+/// `cloud_sync_fetch_protected_page_under_writer_pause` instead.
+#[allow(clippy::too_many_arguments)]
 pub async fn cloud_sync_fetch_protected_page(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    stream: String,
+    generation: u64,
+    previous_checkpoint_reference: Option<String>,
+    maximum_changes: u32,
+) -> CloudSyncProtectedFetchResult {
+    cloud_sync_fetch_protected_page_inner(
+        cloud_messages_client,
+        None,
+        storage_directory,
+        expected_account_fingerprint,
+        stream,
+        generation,
+        previous_checkpoint_reference,
+        maximum_changes,
+    )
+    .await
+}
+
+/// Fetches and protects one bounded semantic CloudKit page while holding a
+/// non-cloneable read-authentication permit for the exact active native writer
+/// pause. Missing, stale, or foreign pause tokens fail before authentication or
+/// network work. No general-container fallback is available on this path.
+#[allow(clippy::too_many_arguments)]
+pub async fn cloud_sync_fetch_protected_page_under_writer_pause(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    native_writer_pause_token: u64,
+    storage_directory: String,
+    expected_account_fingerprint: String,
+    stream: String,
+    generation: u64,
+    previous_checkpoint_reference: Option<String>,
+    maximum_changes: u32,
+) -> CloudSyncProtectedFetchResult {
+    let permit = match acquire_cloudkit_read_authentication(native_writer_pause_token) {
+        Ok(permit) => permit,
+        Err(_) => {
+            return CloudSyncProtectedFetchResult {
+                page: None,
+                failure: Some(local_cloud_sync_protected_failure(
+                    CloudSyncProtectedFailureCategory::Authorization,
+                    CloudSyncProtectedSafeCode::ReadAuthenticationScope,
+                )),
+            }
+        }
+    };
+    cloud_sync_fetch_protected_page_inner(
+        cloud_messages_client,
+        Some(&permit),
+        storage_directory,
+        expected_account_fingerprint,
+        stream,
+        generation,
+        previous_checkpoint_reference,
+        maximum_changes,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn cloud_sync_fetch_protected_page_inner(
+    cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    read_authentication_permit: Option<&CloudKitReadAuthenticationPermit<'_>>,
     storage_directory: String,
     expected_account_fingerprint: String,
     stream: String,
@@ -2248,6 +2314,7 @@ pub async fn cloud_sync_fetch_protected_page(
     );
     match crate::cloud_sync_native_fetch::cloud_sync_fetch_protected_page(
         cloud_messages_client,
+        read_authentication_permit,
         PathBuf::from(storage_directory),
         &hasher,
         &request,
@@ -3536,11 +3603,12 @@ fn is_cloud_sync_protected_source_reference(value: &str) -> bool {
 
 /// Reads, unprotects, decrypts, and canonically converts one D0 protected
 /// change. No raw Apple/CloudKit identifier, credential, key, or record body
-/// crosses FRB. This entry point is intentionally not wired into production
-/// composition. `expected_payload_length` is optional for legacy D0 rows that
-/// retained the exact SHA-256 but not the redundant byte count; the protected
-/// capability, digest, change ID, record hash, etag hash, and server timestamp
-/// fences remain mandatory.
+/// crosses FRB. Production composition admits this entry point only through
+/// the explicit read-only semantic Canary while the exact native writer-pause
+/// permit remains active. `expected_payload_length` is optional for legacy D0
+/// rows that retained the exact SHA-256 but not the redundant byte count; the
+/// protected capability, digest, change ID, record hash, etag hash, and server
+/// timestamp fences remain mandatory.
 #[allow(clippy::too_many_arguments)]
 pub async fn cloud_sync_decode_protected_change(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,

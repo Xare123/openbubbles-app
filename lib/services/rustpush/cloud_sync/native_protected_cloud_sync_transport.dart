@@ -279,6 +279,17 @@ abstract interface class NativeProtectedCloudSyncBindings {
     required int maximumChanges,
   });
 
+  Future<NativeProtectedFetchResult> fetchProtectedPageUnderWriterPause({
+    required Object cloudMessagesClient,
+    required BigInt nativeWriterPauseToken,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String stream,
+    required int generation,
+    required String? previousCheckpointReference,
+    required int maximumChanges,
+  });
+
   Future<NativeProtectedLeaseResult> commitProtectedPageLease({
     required String storageDirectory,
     required String leaseReference,
@@ -383,11 +394,13 @@ final class NativeProtectedCloudSyncTransport
     required this._cloudMessagesClient,
     required String storageDirectory,
     required String protectedStoreIdentity,
+    BigInt? nativeWriterPauseToken,
     NativeProtectedCloudSyncBindings? bindings,
     this._refreshAuthentication,
     this._refreshPcsAccess,
   }) : _storageDirectory = storageDirectory,
        _protectedStoreIdentity = protectedStoreIdentity,
+       _nativeWriterPauseToken = nativeWriterPauseToken,
        _bindings = bindings ?? FrbNativeProtectedCloudSyncBindings() {
     if (storageDirectory.isEmpty) {
       throw ArgumentError.value(storageDirectory, 'storageDirectory');
@@ -395,11 +408,17 @@ final class NativeProtectedCloudSyncTransport
     if (!_nativeStoreIdentityPattern.hasMatch(protectedStoreIdentity)) {
       throw ArgumentError('protected_store_identity_invalid');
     }
+    if (nativeWriterPauseToken != null &&
+        (nativeWriterPauseToken <= BigInt.zero ||
+            nativeWriterPauseToken.bitLength > 64)) {
+      throw ArgumentError('native_writer_pause_token_invalid');
+    }
   }
 
   final Object _cloudMessagesClient;
   final String _storageDirectory;
   final String _protectedStoreIdentity;
+  final BigInt? _nativeWriterPauseToken;
   final NativeProtectedCloudSyncBindings _bindings;
   final Future<bool> Function(CloudSyncScope scope)? _refreshAuthentication;
   final Future<bool> Function(CloudSyncScope scope)? _refreshPcsAccess;
@@ -801,8 +820,21 @@ final class NativeProtectedCloudSyncTransport
       throw _malformed('invalid_fetch_limit');
     }
     final maximumChanges = limit.clamp(1, _maximumChangesPerPage);
-    final result = await _runProtectedStoreOperation(
-      () => _bindings.fetchProtectedPage(
+    final result = await _runProtectedStoreOperation(() {
+      final pauseToken = _nativeWriterPauseToken;
+      if (pauseToken != null) {
+        return _bindings.fetchProtectedPageUnderWriterPause(
+          cloudMessagesClient: _cloudMessagesClient,
+          nativeWriterPauseToken: pauseToken,
+          storageDirectory: _storageDirectory,
+          expectedAccountFingerprint: scope.accountFingerprint,
+          stream: stream,
+          generation: generation,
+          previousCheckpointReference: previousToken,
+          maximumChanges: maximumChanges,
+        );
+      }
+      return _bindings.fetchProtectedPage(
         cloudMessagesClient: _cloudMessagesClient,
         storageDirectory: _storageDirectory,
         expectedAccountFingerprint: scope.accountFingerprint,
@@ -810,8 +842,8 @@ final class NativeProtectedCloudSyncTransport
         generation: generation,
         previousCheckpointReference: previousToken,
         maximumChanges: maximumChanges,
-      ),
-    );
+      );
+    });
     final page = result.page;
     final failure = result.failure;
     if ((page == null) == (failure == null)) {
@@ -1487,6 +1519,34 @@ final class FrbNativeProtectedCloudSyncBindings
   }
 
   @override
+  Future<NativeProtectedFetchResult> fetchProtectedPageUnderWriterPause({
+    required Object cloudMessagesClient,
+    required BigInt nativeWriterPauseToken,
+    required String storageDirectory,
+    required String expectedAccountFingerprint,
+    required String stream,
+    required int generation,
+    required String? previousCheckpointReference,
+    required int maximumChanges,
+  }) async {
+    final result = await _api
+        .crateApiApiCloudSyncFetchProtectedPageUnderWriterPause(
+          cloudMessagesClient: _requireCloudMessagesClient(cloudMessagesClient),
+          nativeWriterPauseToken: nativeWriterPauseToken,
+          storageDirectory: storageDirectory,
+          expectedAccountFingerprint: expectedAccountFingerprint,
+          stream: stream,
+          generation: BigInt.from(generation),
+          previousCheckpointReference: previousCheckpointReference,
+          maximumChanges: maximumChanges,
+        );
+    return NativeProtectedFetchResult(
+      page: result.page == null ? null : _pageFromFrb(result.page!),
+      failure: result.failure == null ? null : _failureFromFrb(result.failure!),
+    );
+  }
+
+  @override
   Future<NativeProtectedLeaseResult> commitProtectedPageLease({
     required String storageDirectory,
     required String leaseReference,
@@ -1738,6 +1798,8 @@ final class FrbNativeProtectedCloudSyncBindings
       'malformed_response',
     frb_api.CloudSyncProtectedSafeCode.continuationNoProgress =>
       'continuation_no_progress',
+    frb_api.CloudSyncProtectedSafeCode.readAuthenticationScope =>
+      'read_authentication_scope',
     frb_api.CloudSyncProtectedSafeCode.nativeAuthUnavailable =>
       'native_auth_unavailable',
     frb_api.CloudSyncProtectedSafeCode.unknown => 'unknown',

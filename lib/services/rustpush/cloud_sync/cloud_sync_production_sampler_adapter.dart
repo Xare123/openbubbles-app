@@ -524,13 +524,20 @@ final class CloudSyncProductionSemanticPullAdapter {
           authProvider.prepareReadAuthenticationUnderNativeWriterPause,
       readAuthSnapshot: authProvider.capture,
       createStore: (scope) async => durableStore,
-      createRawTransport: (snapshot, scope) async =>
-          NativeProtectedCloudSyncTransport(
-            cloudMessagesClient: snapshot.cloudMessagesClient,
-            storageDirectory: privateStorageDirectory,
-            protectedStoreIdentity: snapshot.protectedStoreIdentity,
-            bindings: transportBindings,
-          ),
+      createRawTransport: (snapshot, scope, pauseToken) async {
+        if (pauseToken is! BigInt ||
+            pauseToken <= BigInt.zero ||
+            pauseToken.bitLength > 64) {
+          throw StateError('cloud_sync_native_auth_writer_pause_scope_failed');
+        }
+        return NativeProtectedCloudSyncTransport(
+          cloudMessagesClient: snapshot.cloudMessagesClient,
+          storageDirectory: privateStorageDirectory,
+          protectedStoreIdentity: snapshot.protectedStoreIdentity,
+          nativeWriterPauseToken: pauseToken,
+          bindings: transportBindings,
+        );
+      },
       createInboxApplier: (snapshot, scope, generation, pauseToken) async {
         if (pauseToken is! BigInt ||
             pauseToken <= BigInt.zero ||
