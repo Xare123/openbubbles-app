@@ -8173,8 +8173,9 @@ mod cloudkit_read_authentication_cache_tests {
         canonical_cloudkit_state_directory, cloudkit_login_advance_generation,
         cloudkit_login_consume_admission, cloudkit_login_register_admission,
         cloudkit_login_validate_admission, cloudkit_read_authentication_key_alias,
-        cloudkit_read_authentication_lifecycle_gate, reset_user, CachedCloudKitReadAuthentication,
-        CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION,
+        cloudkit_read_authentication_lifecycle_gate, reset_user,
+        two_factor_fresh_login_is_authenticated, two_factor_verification_authorizes_fresh_login,
+        CachedCloudKitReadAuthentication, LoginState, CLOUDKIT_READ_AUTHENTICATION_SCHEMA_VERSION,
     };
     use std::{
         sync::{

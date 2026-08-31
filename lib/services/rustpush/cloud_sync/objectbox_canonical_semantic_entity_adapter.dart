@@ -13,6 +13,8 @@ import 'objectbox_cloud_semantic_store_gateway.dart';
 
 typedef _ProvenChatOwner = ({Chat chat, String logicalEntityKeyHash});
 
+enum _MessageChatRouteKind { direct, group, bare }
+
 /// Immutable, content-free account and rebootstrap fence supplied by the
 /// synchronous Cloud Sync composition layer.
 ///
@@ -1783,6 +1785,41 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
           'legacy_group_identifier',
       };
 
+  static _MessageChatRouteKind _messageChatRouteKind(
+    String chatIdentifier,
+    CloudSemanticService service,
+  ) {
+    final firstSeparator = chatIdentifier.indexOf(';');
+    if (firstSeparator == -1) {
+      // A bare MessageEncryptedV3.chatID may be either a direct cid or the
+      // current CloudChat.gid. Proven ownership and chat style must resolve
+      // that ambiguity; syntax alone cannot.
+      return _MessageChatRouteKind.bare;
+    }
+    final secondSeparator = chatIdentifier.indexOf(';', firstSeparator + 1);
+    if (firstSeparator <= 0 ||
+        chatIdentifier.substring(0, firstSeparator) != _serviceName(service) ||
+        secondSeparator <= firstSeparator + 1 ||
+        secondSeparator + 1 >= chatIdentifier.length ||
+        chatIdentifier.indexOf(';', secondSeparator + 1) != -1) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.malformedRecord,
+        safeCode: 'canonical_message_chat_route_invalid',
+      );
+    }
+    return switch (chatIdentifier.substring(
+      firstSeparator + 1,
+      secondSeparator,
+    )) {
+      '-' => _MessageChatRouteKind.direct,
+      '+' => _MessageChatRouteKind.group,
+      _ => throw CloudSyncFailure(
+        category: CloudFailureCategory.malformedRecord,
+        safeCode: 'canonical_message_chat_route_invalid',
+      ),
+    };
+  }
+
   Chat _resolveMessageChat({
     required CloudSyncScope scope,
     required int generation,
@@ -1837,11 +1874,17 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       exactOwners,
     );
 
+    final routeKind = _messageChatRouteKind(payload.chatIdentifier, service);
+    _diagnosticRecorder?.call(switch (routeKind) {
+      _MessageChatRouteKind.direct => 'canonical_message_chat_route_direct',
+      _MessageChatRouteKind.group => 'canonical_message_chat_route_group',
+      _MessageChatRouteKind.bare => 'canonical_message_chat_route_bare',
+    });
     final serviceCandidate = payload.chatIdAliasCandidates.singleWhere(
       (candidate) =>
           candidate.kind == CloudSemanticChatAliasKind.serviceIdentifier,
     );
-    final strongServiceOwners = _resolveChatOwnersByAlias(
+    final serviceOwners = _resolveChatOwnersByAlias(
       scope: scope,
       generation: generation,
       service: service,
@@ -1850,37 +1893,111 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     );
     _recordChatOwnerCardinality(
       'canonical_message_chat_candidate_service_identifier',
-      strongServiceOwners,
+      serviceOwners,
     );
+    final groupCandidate = payload.chatIdAliasCandidates.singleWhere(
+      (candidate) => candidate.kind == CloudSemanticChatAliasKind.groupId,
+    );
+    final groupOwners = _resolveChatOwnersByAlias(
+      scope: scope,
+      generation: generation,
+      service: service,
+      kind: CloudSemanticChatAliasKind.groupId,
+      aliasKeyHash: groupCandidate.keyHash,
+    );
+    _recordChatOwnerCardinality(
+      'canonical_message_chat_candidate_group_id',
+      groupOwners,
+    );
+    if (groupOwners.length > 1 ||
+        groupOwners.values.any((owner) => owner.chat.style != 43)) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_message_chat_conflict',
+      );
+    }
 
-    if (exactOwners.isNotEmpty) {
-      if (strongServiceOwners.isNotEmpty) {
-        final exactEntry = exactOwners.entries.single;
-        final serviceEntry = strongServiceOwners.entries.single;
-        if (exactEntry.key != serviceEntry.key ||
-            exactEntry.value.logicalEntityKeyHash !=
-                serviceEntry.value.logicalEntityKeyHash) {
+    final candidateOwners = <int, _ProvenChatOwner>{};
+    for (final owners in [exactOwners, serviceOwners, groupOwners]) {
+      for (final entry in owners.entries) {
+        final existing = candidateOwners[entry.key];
+        if (existing != null &&
+            existing.logicalEntityKeyHash != entry.value.logicalEntityKeyHash) {
           throw CloudSyncFailure(
             category: CloudFailureCategory.conflict,
             safeCode: 'canonical_message_chat_conflict',
           );
         }
+        candidateOwners[entry.key] = entry.value;
       }
-      _diagnosticRecorder?.call('canonical_message_chat_reference_exact_guid');
-      return exactOwners.values.single.chat;
+    }
+    if (candidateOwners.length > 1) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'canonical_message_chat_conflict',
+      );
     }
 
-    if (strongServiceOwners.length == 1) {
+    if (exactOwners.isNotEmpty) {
+      final exactChat = exactOwners.values.single.chat;
+      final exactStyleMatchesRoute = switch (routeKind) {
+        _MessageChatRouteKind.direct => exactChat.style == 45,
+        _MessageChatRouteKind.group => exactChat.style == 43,
+        _MessageChatRouteKind.bare =>
+          exactChat.style == 45 || exactChat.style == 43,
+      };
+      if (!exactStyleMatchesRoute) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'canonical_message_chat_conflict',
+        );
+      }
+      _diagnosticRecorder?.call('canonical_message_chat_reference_exact_guid');
+      return exactChat;
+    }
+
+    final routeOwner = switch (routeKind) {
+      _MessageChatRouteKind.direct => serviceOwners.values.firstOrNull,
+      _MessageChatRouteKind.group => groupOwners.values.firstOrNull,
+      _MessageChatRouteKind.bare =>
+        serviceOwners.values
+                .where((owner) => owner.chat.style == 45)
+                .firstOrNull ??
+            groupOwners.values.firstOrNull,
+    };
+    if (routeOwner != null) {
+      final routeChat = routeOwner.chat;
+      final routeStyleMatches = switch (routeKind) {
+        _MessageChatRouteKind.direct => routeChat.style == 45,
+        _MessageChatRouteKind.group => routeChat.style == 43,
+        _MessageChatRouteKind.bare =>
+          routeChat.style == 45 || routeChat.style == 43,
+      };
+      if (!routeStyleMatches) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.conflict,
+          safeCode: 'canonical_message_chat_conflict',
+        );
+      }
       _diagnosticRecorder?.call(
-        'canonical_message_chat_reference_strong_service',
+        routeChat.style == 45
+            ? 'canonical_message_chat_reference_strong_service'
+            : 'canonical_message_chat_reference_current_group_id',
       );
-      return strongServiceOwners.values.single.chat;
+      return routeChat;
+    }
+
+    if (candidateOwners.isNotEmpty) {
+      _diagnosticRecorder?.call(
+        'canonical_message_chat_reference_wrong_route_evidence_only',
+      );
     }
 
     final weakOwners = <int, _ProvenChatOwner>{};
     for (final candidate in payload.chatIdAliasCandidates.where(
       (candidate) =>
-          candidate.kind != CloudSemanticChatAliasKind.serviceIdentifier,
+          candidate.kind != CloudSemanticChatAliasKind.serviceIdentifier &&
+          candidate.kind != CloudSemanticChatAliasKind.groupId,
     )) {
       final candidateOwners = _resolveChatOwnersByAlias(
         scope: scope,

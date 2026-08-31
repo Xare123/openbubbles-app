@@ -205,7 +205,7 @@ show fetched, retained, and projected counts separately.
 | Network or server failure | Preserve prior token, record bounded backoff, honor server retry-after, and retry later. | Implemented. |
 | Throttling | Honor bounded retry-after and do not spin or clear state. | Implemented. |
 | Missing chat/message dependency | In the developer-only read-only Canary, a recognized dependency code may immediately become `retainedUnprojected`; ordinary sync requires the bounded attempt-and-age policy. Keep protected evidence and retry ordered projection after the parent or parser repair exists. | Implemented and compile-time/configuration gated away from write-capable sync. |
-| Shared typed chat lineage alias | Preserve each canonical chat GUID owner. `serviceIdentifier` remains an owner-independent strong one-to-one binding. Each fully proven `groupId`, `originalGroupId`, or legacy alias is stored as an owner-specific claim, so shared lineage never overwrites or merges chats. An exact `chatID == Chat.guid` match with current ownership proof is decisive; otherwise only the strong `serviceIdentifier` binding may select a chat. A disagreement between those two strong paths is a conflict. Group lineage and `msgProto4.groupId` remain content-free diagnostics and can neither select nor veto an owner. | `strong2`/`claim2` is test-proven. A signed Windows ARM64 replay proved 109 exact GUID owners and projected all 109 after removing the invalid corroborator veto. The stricter weak-evidence fallback is unit-proven and awaits a signed replay. Legacy `alias1` rows remain preserved but non-authoritative. |
+| Typed message-to-chat route | Preserve each canonical chat GUID owner. Exact canonical ownership is considered first and must agree with every present route-specific proof. When exact ownership is absent, an authenticated-service direct composite `chatID` (`<service>;-;<cid>`) may fall back only to the one-to-one `serviceIdentifier` owner; an authenticated-service group composite (`<service>;+;<gid>`) may fall back only to one validated current `groupId` owner whose projected chat has group style 43. A bare `chatID` is ambiguous and must be adjudicated by exact ownership plus chat style, a unique style-45 service owner, or a unique style-43 current-group owner. Disagreement, duplicate current-group owners, a foreign or structurally invalid composite, or a direct-style current-group owner is a conflict or malformed record. `originalGroupId`, legacy aliases, and `msgProto4.groupId` remain diagnostic-only and can neither select nor veto an owner. | `strong2`/`claim2` storage plus route-kind selection is unit-proven, including bare and composite direct/group variants, collisions, cross-route disagreement, malformed composites, foreign service prefixes, and all weak proofs agreeing. Signed Windows ARM64 replays proved 186 exact GUID owners across two bounded pages; the latest pre-route replay retained four unresolved records safely. A signed route-kind replay remains pending. Legacy `alias1` rows remain preserved but non-authoritative. |
 | Malformed or unsupported record | Persist a fixed content-free reason. Retain or quarantine according to whether a future parser can safely repair it; never guess identity or deletion. | Implemented, but every new reason needs an explicit repairability classification. |
 | Tombstone in read-only Canary | Retain as unprojected evidence. Do not delete a local message and do not issue a remote delete. | Implemented and write-gated. |
 | Process death after fetch | Recover/rollback the native page lease, replay the durable journal, and keep the previous token until the journal is terminal. | Implemented and crash-tested. |
@@ -397,6 +397,26 @@ exact GUID ownership or the one-to-one strong `serviceIdentifier` binding may
 select a chat, disagreement is a conflict, and group lineage plus
 `msgProto4.groupId` are diagnostic-only. Unit tests cover exact precedence,
 strong fallback, strong-path disagreement, and weak-only failure; a signed
-replay of this stricter boundary remains pending. Remote saves, remote deletes,
-automatic triggers, and tombstone semantic deletes remained disabled, and the
-outbox stayed `0 -> 0` throughout the last signed replay.
+replay of this stricter boundary completed after a 41.7-second incremental
+build. Of 81
+decoder-ready records in the next bounded message page, 77 had exact current
+ownership and were projected. Four lacked exact or strong-service ownership
+and remained retained; one of those had a unique weak group/lineage claim that
+the resolver deliberately refused to promote. Nine attachment records then
+reprojected after their message parents became available. Remote saves, remote
+deletes, automatic triggers, and tombstone semantic deletes remained disabled,
+and the outbox stayed `0 -> 0` throughout.
+
+The next resolver revision promotes only the protocol-defined current route:
+exact ownership is considered first, authenticated-service direct composites
+fall back to `serviceIdentifier`, and group composites fall back to the current
+`groupId`. Bare identifiers remain explicitly
+ambiguous until exact ownership and chat style, a unique style-45 service
+owner, or a unique style-43 current-group owner resolves them. It still
+resolves exact, service, and current-group ownership independently and fails
+closed if they disagree, if a current group ID has multiple owners, if it
+points to a direct-style chat, or if a composite carries a foreign service
+prefix. `originalGroupId`, legacy aliases, and `msgProto4.groupId` remain
+unable to select a chat even when all three agree. Seventy-four focused adapter
+tests and the 1,016-test Cloud Sync suite pass; a signed replay of this revision
+is the next live gate.
