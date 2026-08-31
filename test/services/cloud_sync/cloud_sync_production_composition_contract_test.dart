@@ -283,21 +283,38 @@ void main() {
       semantic,
       contains('tombstones are retained as read-only acknowledgements'),
     );
-    expect(semantic, contains('CloudSyncRunStatus.completed'));
-    expect(semantic, contains('expectedZones'));
-    expect(semantic, contains('reportedZones.containsAll(expectedZones)'));
-    expect(semantic, contains('report.zones.length == expectedZones.length'));
-    expect(semantic, contains('final canaryPassed'));
-    expect(semantic, contains('deferred == 0'));
-    expect(semantic, contains('quarantined == 0'));
-    expect(semantic, contains('unsupportedServiceQuarantined == 0'));
-    expect(semantic, contains('tombstoneQuarantined == 0'));
-    expect(semantic, contains('tombstoneReadOnlyAcknowledged'));
-    expect(semantic, contains('tombstone failures'));
-    expect(semantic, contains('retried == 0'));
-    expect(semantic, isNot(contains('CloudSyncRunStatus.skipped')));
-    expect(semantic, contains('remoteWriteTripwiresIntact'));
-    expect(semantic, contains('Incomplete records/zone'));
+    expect(semantic, contains('cloudSyncV2SemanticCanaryPresentation(report)'));
+    final presentationStart = source.indexOf(
+      'CloudSyncV2SemanticCanaryPresentation cloudSyncV2SemanticCanaryPresentation(',
+    );
+    final presentationEnd = source.indexOf(
+      'class TroubleshootPanel',
+      presentationStart,
+    );
+    expect(presentationStart, greaterThanOrEqualTo(0));
+    expect(presentationEnd, greaterThan(presentationStart));
+    final presentation = source.substring(presentationStart, presentationEnd);
+    expect(presentation, contains('CloudSyncRunStatus.completed'));
+    expect(presentation, contains('expectedZones'));
+    expect(presentation, contains('reportedZones.containsAll(expectedZones)'));
+    expect(
+      presentation,
+      contains('report.zones.length == expectedZones.length'),
+    );
+    expect(presentation, contains('existingCompletionGatesPassed'));
+    expect(presentation, contains('deferred == 0'));
+    expect(presentation, contains('quarantined == 0'));
+    expect(presentation, contains('unsupportedServiceQuarantined == 0'));
+    expect(presentation, contains('tombstoneQuarantined == 0'));
+    expect(presentation, contains('tombstoneReadOnlyAcknowledged'));
+    expect(presentation, contains('tombstone failures'));
+    expect(presentation, contains('retried == 0'));
+    expect(presentation, isNot(contains('CloudSyncRunStatus.skipped')));
+    expect(presentation, contains('remoteWriteTripwiresIntact'));
+    expect(presentation, contains('retainedUnprojected == 0'));
+    expect(presentation, contains('retained-unprojected'));
+    expect(presentation, contains('Cloud Sync V2 Partial'));
+    expect(presentation, contains('Incomplete records/zone'));
     expect(semantic, contains('cloudSyncV2SafeFailureCode(error)'));
     expect(semantic, isNot(contains('catch (_)')));
     expect(

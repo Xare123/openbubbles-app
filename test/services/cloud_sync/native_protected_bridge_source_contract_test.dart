@@ -83,7 +83,7 @@ void main() {
         'final class CloudSyncProductionSemanticPullAdapter',
       );
       final outboundStart = adapter.indexOf(
-        'final class CloudSyncProductionOneTextOutboundAdapter',
+        'final class CloudSyncProductionOutboundCanaryAdapter',
       );
       expect(shadowStart, greaterThanOrEqualTo(0));
       expect(semanticStart, greaterThan(shadowStart));

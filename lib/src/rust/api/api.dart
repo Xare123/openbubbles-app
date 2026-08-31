@@ -9,7 +9,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'api.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add`, `bin_deserialize_16`, `boolean`, `bounded_cloud_sync_read_authentication`, `classify_cloud_sync_read_authentication_failure`, `classify_cloud_sync_reconcile_observation`, `cloud_sync_failure_category`, `cloud_sync_outbound_failure_result`, `cloud_sync_password_writer_pause_error`, `cloud_sync_password_writer_resume_error`, `cloud_sync_prepare_failure`, `cloud_sync_read_authentication_refresh_error`, `cloud_sync_reconcile_failure`, `cloud_sync_retry_after_seconds`, `cloud_sync_transient_empty_result`, `cloud_sync_warm_read_authentication_inner`, `cloudkit_repair_content_digest`, `cloudkit_repair_message_content_digest`, `config`, `encrypt`, `finish`, `get_login_config`, `get_password`, `handle_2fa`, `handle_circle`, `handle_photostream`, `has_generation`, `integer`, `into_tokens_for_account`, `is_cloud_sync_hex_digest`, `is_cloud_sync_keyed_hash`, `is_cloud_sync_lease_reference`, `is_cloud_sync_operation_id`, `is_cloud_sync_protected_reference`, `is_cloud_sync_protected_source_reference`, `is_valid_cloud_sync_reconcile_message_create_input`, `local_cloud_sync_protected_failure`, `map_cloud_sync_attachment_materialization_failure`, `map_cloud_sync_outbound_failure_class`, `map_cloud_sync_outbound_failure`, `map_cloud_sync_protected_category`, `map_cloud_sync_protected_change`, `map_cloud_sync_protected_failure`, `map_cloud_sync_protected_page`, `map_cloud_sync_protected_safe_code`, `map_cloud_sync_raw_page`, `map_cloud_sync_transient_attributed_body`, `map_cloud_sync_transient_chat_alias_kind`, `map_cloud_sync_transient_chat_style`, `map_cloud_sync_transient_deferred`, `map_cloud_sync_transient_entity_kind`, `map_cloud_sync_transient_failure`, `map_cloud_sync_transient_field_state`, `map_cloud_sync_transient_known_flags`, `map_cloud_sync_transient_message_edit`, `map_cloud_sync_transient_payload`, `map_cloud_sync_transient_quarantine`, `map_cloud_sync_transient_reaction_kind`, `map_cloud_sync_transient_service`, `map_cloud_sync_transient_snapshot`, `map_cloud_sync_transient_text_run`, `migrate_gsa_state_locked`, `migrate`, `new`, `null`, `optional_boolean`, `optional_bytes`, `optional_integer`, `optional_string`, `persist_login_state_file`, `persist_migrated_plist_state`, `persist_runtime_plist_state`, `plist_to_bin`, `plist_to_buf`, `plist_to_string`, `remove_file_if_present`, `repair_digest_association`, `repair_digest_bodies`, `repair_digest_field_state`, `repair_digest_flags`, `repair_digest_reaction_type`, `reset_user`, `runtime_state_writer_setup`, `safe_code`, `shared_items`, `string`, `subscribe_streams`, `unmap_cloud_sync_transient_entity_kind`, `wrap_sink`
+// These functions are ignored because they are not marked as `pub`: `add`, `bin_deserialize_16`, `boolean`, `bounded_cloud_sync_read_authentication`, `classify_cloud_sync_read_authentication_failure`, `classify_cloud_sync_reconcile_observation`, `cloud_sync_failure_category`, `cloud_sync_fetch_protected_page_inner`, `cloud_sync_outbound_failure_result`, `cloud_sync_password_writer_pause_error`, `cloud_sync_password_writer_resume_error`, `cloud_sync_prepare_failure`, `cloud_sync_read_authentication_refresh_error`, `cloud_sync_reconcile_failure`, `cloud_sync_retry_after_seconds`, `cloud_sync_transient_empty_result`, `cloud_sync_warm_read_authentication_inner`, `cloudkit_repair_content_digest`, `cloudkit_repair_message_content_digest`, `config`, `encrypt`, `finish`, `get_login_config`, `get_password`, `handle_2fa`, `handle_circle`, `handle_photostream`, `has_generation`, `integer`, `into_tokens_for_account`, `is_cloud_sync_hex_digest`, `is_cloud_sync_keyed_hash`, `is_cloud_sync_lease_reference`, `is_cloud_sync_operation_id`, `is_cloud_sync_protected_reference`, `is_cloud_sync_protected_source_reference`, `is_valid_cloud_sync_reconcile_message_create_input`, `local_cloud_sync_protected_failure`, `map_cloud_sync_attachment_materialization_failure`, `map_cloud_sync_outbound_failure_class`, `map_cloud_sync_outbound_failure`, `map_cloud_sync_protected_category`, `map_cloud_sync_protected_change`, `map_cloud_sync_protected_failure`, `map_cloud_sync_protected_page`, `map_cloud_sync_protected_safe_code`, `map_cloud_sync_raw_page`, `map_cloud_sync_transient_attributed_body`, `map_cloud_sync_transient_chat_alias_kind`, `map_cloud_sync_transient_chat_style`, `map_cloud_sync_transient_deferred`, `map_cloud_sync_transient_entity_kind`, `map_cloud_sync_transient_failure`, `map_cloud_sync_transient_field_state`, `map_cloud_sync_transient_known_flags`, `map_cloud_sync_transient_message_edit`, `map_cloud_sync_transient_payload`, `map_cloud_sync_transient_quarantine`, `map_cloud_sync_transient_reaction_kind`, `map_cloud_sync_transient_service`, `map_cloud_sync_transient_snapshot`, `map_cloud_sync_transient_text_run`, `migrate_gsa_state_locked`, `migrate`, `new`, `null`, `optional_boolean`, `optional_bytes`, `optional_integer`, `optional_string`, `persist_login_state_file`, `persist_migrated_plist_state`, `persist_runtime_plist_state`, `plist_to_bin`, `plist_to_buf`, `plist_to_string`, `remove_file_if_present`, `repair_digest_association`, `repair_digest_bodies`, `repair_digest_field_state`, `repair_digest_flags`, `repair_digest_reaction_type`, `reset_user`, `runtime_state_writer_setup`, `safe_code`, `shared_items`, `string`, `subscribe_streams`, `unmap_cloud_sync_transient_entity_kind`, `wrap_sink`
 // These functions are ignored because they have generic arguments: `bin_deserialize`, `bin_serialize`
 // These types are ignored because they are not used by any `pub` functions: `AnisetteState`, `CachedCloudKitReadAuthentication`, `CloudKitRepairDigestWriter`, `CloudSyncReadAuthWarmFailure`, `CloudSyncReconcileObservation`, `DaemonData`, `FLUTTER_RUST_BRIDGE_HANDLER`, `GSAConfig`, `NSArrayClass`, `NSArrayIconArray`, `NSArrayImageArray`, `ProvisionedAnisette`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `deref`, `deref`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `get_files`, `initialize`, `spawn`
@@ -240,9 +240,9 @@ Future<CloudSyncOutboundReconcileResult> cloudSyncReconcileMessageCreate({
   input: input,
 );
 
-/// Fetches and protects one bounded CloudKit page without allowing raw record
-/// material, Apple identifiers, etags, continuation tokens, or paths to cross
-/// Flutter Rust Bridge.
+/// Fetches and protects one bounded CloudKit page for the separately compile-
+/// gated, non-projecting shadow diagnostic. Semantic projection must use
+/// `cloud_sync_fetch_protected_page_under_writer_pause` instead.
 Future<CloudSyncProtectedFetchResult> cloudSyncFetchProtectedPage({
   required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
   required String storageDirectory,
@@ -260,6 +260,32 @@ Future<CloudSyncProtectedFetchResult> cloudSyncFetchProtectedPage({
   previousCheckpointReference: previousCheckpointReference,
   maximumChanges: maximumChanges,
 );
+
+/// Fetches and protects one bounded semantic CloudKit page while holding a
+/// non-cloneable read-authentication permit for the exact active native writer
+/// pause. Missing, stale, or foreign pause tokens fail before authentication or
+/// network work. No general-container fallback is available on this path.
+Future<CloudSyncProtectedFetchResult>
+cloudSyncFetchProtectedPageUnderWriterPause({
+  required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required BigInt nativeWriterPauseToken,
+  required String storageDirectory,
+  required String expectedAccountFingerprint,
+  required String stream,
+  required BigInt generation,
+  String? previousCheckpointReference,
+  required int maximumChanges,
+}) =>
+    RustLib.instance.api.crateApiApiCloudSyncFetchProtectedPageUnderWriterPause(
+      cloudMessagesClient: cloudMessagesClient,
+      nativeWriterPauseToken: nativeWriterPauseToken,
+      storageDirectory: storageDirectory,
+      expectedAccountFingerprint: expectedAccountFingerprint,
+      stream: stream,
+      generation: generation,
+      previousCheckpointReference: previousCheckpointReference,
+      maximumChanges: maximumChanges,
+    );
 
 CloudSyncProtectedLeaseResult cloudSyncCommitProtectedPageLease({
   required String storageDirectory,
@@ -319,13 +345,15 @@ CloudSyncProtectedGarbageCollectionResult cloudSyncCollectProtectedGarbage({
 
 /// Reads, unprotects, decrypts, and canonically converts one D0 protected
 /// change. No raw Apple/CloudKit identifier, credential, key, or record body
-/// crosses FRB. This entry point is intentionally not wired into production
-/// composition. `expected_payload_length` is optional for legacy D0 rows that
-/// retained the exact SHA-256 but not the redundant byte count; the protected
-/// capability, digest, change ID, record hash, etag hash, and server timestamp
-/// fences remain mandatory.
+/// crosses FRB. Production composition admits this entry point only through
+/// the explicit read-only semantic Canary while the exact native writer-pause
+/// permit remains active. `expected_payload_length` is optional for legacy D0
+/// rows that retained the exact SHA-256 but not the redundant byte count; the
+/// protected capability, digest, change ID, record hash, etag hash, and server
+/// timestamp fences remain mandatory.
 Future<CloudSyncTransientDecodeResult> cloudSyncDecodeProtectedChange({
   required ArcCloudMessagesClientDefaultAnisetteProvider cloudMessagesClient,
+  required BigInt nativeWriterPauseToken,
   required String storageDirectory,
   required String expectedAccountFingerprint,
   required String expectedProtectedStoreIdentity,
@@ -348,6 +376,7 @@ Future<CloudSyncTransientDecodeResult> cloudSyncDecodeProtectedChange({
   String? tombstoneLogicalEntityKeyHash,
 }) => RustLib.instance.api.crateApiApiCloudSyncDecodeProtectedChange(
   cloudMessagesClient: cloudMessagesClient,
+  nativeWriterPauseToken: nativeWriterPauseToken,
   storageDirectory: storageDirectory,
   expectedAccountFingerprint: expectedAccountFingerprint,
   expectedProtectedStoreIdentity: expectedProtectedStoreIdentity,
@@ -3442,6 +3471,7 @@ enum CloudSyncProtectedSafeCode {
   pcsUnavailable,
   malformedResponse,
   continuationNoProgress,
+  readAuthenticationScope,
   nativeAuthUnavailable,
   unknown,
 }
@@ -3975,6 +4005,7 @@ enum CloudSyncTransientEntityKind {
 
 enum CloudSyncTransientFailureCode {
   invalidRequest,
+  readAuthenticationScope,
   activeAccountMismatch,
   warmAuthenticationRequired,
   scopeMismatch,

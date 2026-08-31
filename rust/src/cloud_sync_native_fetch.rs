@@ -2679,6 +2679,20 @@ fn protect_native_page(
     if let Err(failure) = request.scope.validate_for_stream(request.stream) {
         return CloudNativeProtectedFetchOutcome::Failure(failure);
     }
+    if read_authentication_permit.is_some()
+        && !matches!(
+            request.stream,
+            CloudNativeStream::Chats
+                | CloudNativeStream::Messages
+                | CloudNativeStream::Attachments
+        )
+    {
+        return CloudNativeProtectedFetchOutcome::Failure(CloudNativeFetchFailure::new(
+            CloudNativeFailureCategory::MalformedRecord,
+            CloudNativeSafeCode::InvalidScope,
+            None,
+        ));
+    }
     let maximum_changes = request.maximum_changes as usize;
     if maximum_changes == 0 || maximum_changes > MAX_CHANGES_PER_PAGE {
         return CloudNativeProtectedFetchOutcome::Failure(CloudNativeFetchFailure::new(
@@ -3197,42 +3211,13 @@ async fn cloud_sync_fetch_protected_page_with_store(
                     )
                     .await
             }
-            (CloudNativeStream::MessageUpdate, Some(permit)) => {
-                cloud_messages_client
-                    .sync_message_update_page_for_read_authentication(
-                        permit,
-                        continuation_token,
-                        Some(request.maximum_changes),
-                    )
-                    .await
-            }
-            (CloudNativeStream::RecoverableMessageDelete, Some(permit)) => {
-                cloud_messages_client
-                    .sync_recoverable_message_delete_page_for_read_authentication(
-                        permit,
-                        continuation_token,
-                        Some(request.maximum_changes),
-                    )
-                    .await
-            }
-            (CloudNativeStream::ScheduledMessage, Some(permit)) => {
-                cloud_messages_client
-                    .sync_scheduled_message_page_for_read_authentication(
-                        permit,
-                        continuation_token,
-                        Some(request.maximum_changes),
-                    )
-                    .await
-            }
-            (CloudNativeStream::Chat1, Some(permit)) => {
-                cloud_messages_client
-                    .sync_chat1_page_for_read_authentication(
-                        permit,
-                        continuation_token,
-                        Some(request.maximum_changes),
-                    )
-                    .await
-            }
+            (
+                CloudNativeStream::MessageUpdate
+                | CloudNativeStream::RecoverableMessageDelete
+                | CloudNativeStream::ScheduledMessage
+                | CloudNativeStream::Chat1,
+                Some(_),
+            ) => unreachable!("permit-bound semantic stream was rejected before fetch"),
             (CloudNativeStream::Chats, None) => {
                 cloud_messages_client
                     .sync_chats_page(continuation_token, Some(request.maximum_changes))

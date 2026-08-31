@@ -7,6 +7,7 @@ import 'package:bluebubbles/services/backend/sync/chat_sync_manager.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_dev_gate.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report.dart';
 import 'package:bluebubbles/services/rustpush/rustpush_service.dart';
 import 'package:bluebubbles/utils/logger/logger.dart';
 import 'package:bluebubbles/helpers/helpers.dart';
@@ -26,6 +27,104 @@ import 'package:bluebubbles/src/rust/api/api.dart' as api;
 
 
 
+
+enum CloudSyncV2SemanticCanaryOutcome { complete, partial, stoppedSafely }
+
+@immutable
+final class CloudSyncV2SemanticCanaryPresentation {
+  const CloudSyncV2SemanticCanaryPresentation({
+    required this.outcome,
+    required this.title,
+    required this.message,
+  });
+
+  final CloudSyncV2SemanticCanaryOutcome outcome;
+  final String title;
+  final String message;
+}
+
+CloudSyncV2SemanticCanaryPresentation cloudSyncV2SemanticCanaryPresentation(
+  CloudSyncSemanticPullReport report,
+) {
+  final fetched = report.zones.fold<int>(
+    0,
+    (total, zone) => total + zone.fetched,
+  );
+  final applied = report.zones.fold<int>(
+    0,
+    (total, zone) => total + zone.applied,
+  );
+  final retainedUnprojected = report.zones.fold<int>(
+    0,
+    (total, zone) => total + zone.retainedUnprojected,
+  );
+  final deferred = report.zones.fold<int>(
+    0,
+    (total, zone) => total + zone.deferred,
+  );
+  final quarantined = report.zones.fold<int>(
+    0,
+    (total, zone) => total + zone.quarantined,
+  );
+  final unsupportedServiceQuarantined = report.zones.fold<int>(
+    0,
+    (total, zone) => total + zone.semanticUnsupportedServiceQuarantined,
+  );
+  final tombstoneQuarantined = report.zones.fold<int>(
+    0,
+    (total, zone) => total + zone.tombstoneQuarantined,
+  );
+  final tombstoneReadOnlyAcknowledged = report.zones.fold<int>(
+    0,
+    (total, zone) => total + zone.tombstoneReadOnlyAcknowledged,
+  );
+  final retried = report.zones.fold<int>(
+    0,
+    (total, zone) => total + zone.retried,
+  );
+  const expectedZones = <String>{"chats", "messages", "attachments"};
+  final reportedZones = report.zones.map((zone) => zone.zoneLabel).toSet();
+  final existingCompletionGatesPassed =
+      report.zones.length == expectedZones.length &&
+      reportedZones.length == expectedZones.length &&
+      reportedZones.containsAll(expectedZones) &&
+      report.zones.every(
+        (zone) => zone.status == CloudSyncRunStatus.completed,
+      ) &&
+      deferred == 0 &&
+      quarantined == 0 &&
+      unsupportedServiceQuarantined == 0 &&
+      tombstoneQuarantined == 0 &&
+      retried == 0 &&
+      report.remoteWriteTripwiresIntact;
+  final totals =
+      "Fetched $fetched, applied $applied, retained-unprojected $retainedUnprojected, read-only tombstones acknowledged $tombstoneReadOnlyAcknowledged, deferred $deferred, quarantined $quarantined (unsupported service $unsupportedServiceQuarantined, tombstone failures $tombstoneQuarantined), retried $retried.";
+
+  if (existingCompletionGatesPassed && retainedUnprojected == 0) {
+    return CloudSyncV2SemanticCanaryPresentation(
+      outcome: CloudSyncV2SemanticCanaryOutcome.complete,
+      title: "Cloud Sync V2 Complete",
+      message: "$totals No CloudKit uploads or deletes occurred.",
+    );
+  }
+  if (existingCompletionGatesPassed) {
+    final retainedLabel = retainedUnprojected == 1
+        ? "record remains retained and has not"
+        : "records remain retained and have not";
+    return CloudSyncV2SemanticCanaryPresentation(
+      outcome: CloudSyncV2SemanticCanaryOutcome.partial,
+      title: "Cloud Sync V2 Partial",
+      message:
+          "$totals The read completed, but $retainedUnprojected $retainedLabel been projected into local messages. No CloudKit uploads or deletes occurred.",
+    );
+  }
+  return CloudSyncV2SemanticCanaryPresentation(
+    outcome: CloudSyncV2SemanticCanaryOutcome.stoppedSafely,
+    title: "Cloud Sync V2 Stopped Safely",
+    message:
+        "$totals Incomplete records/zone or a write tripwire was detected. No further work was allowed.",
+  );
+}
 
 class TroubleshootPanel extends StatefulWidget {
   @override
@@ -483,80 +582,12 @@ class _TroubleshootPanelState extends OptimizedState<TroubleshootPanel> {
                             cloudSyncV2Running.value = true;
                             try {
                               final report = await pushService.runCloudSyncV2ManualSemanticPullConfirmed();
-                              final fetched = report.zones.fold<int>(
-                                0,
-                                (total, zone) => total + zone.fetched,
+                              final presentation =
+                                  cloudSyncV2SemanticCanaryPresentation(report);
+                              showSnackbar(
+                                presentation.title,
+                                presentation.message,
                               );
-                              final applied = report.zones.fold<int>(
-                                0,
-                                (total, zone) => total + zone.applied,
-                              );
-                              final deferred = report.zones.fold<int>(
-                                0,
-                                (total, zone) => total + zone.deferred,
-                              );
-                              final quarantined = report.zones.fold<int>(
-                                0,
-                                (total, zone) => total + zone.quarantined,
-                              );
-                              final unsupportedServiceQuarantined =
-                                  report.zones.fold<int>(
-                                0,
-                                (total, zone) =>
-                                    total +
-                                    zone.semanticUnsupportedServiceQuarantined,
-                              );
-                              final tombstoneQuarantined =
-                                  report.zones.fold<int>(
-                                0,
-                                (total, zone) =>
-                                    total + zone.tombstoneQuarantined,
-                              );
-                              final tombstoneReadOnlyAcknowledged =
-                                  report.zones.fold<int>(
-                                0,
-                                (total, zone) =>
-                                    total +
-                                    zone.tombstoneReadOnlyAcknowledged,
-                              );
-                              final retried = report.zones.fold<int>(
-                                0,
-                                (total, zone) => total + zone.retried,
-                              );
-                              const expectedZones = <String>{
-                                "chats",
-                                "messages",
-                                "attachments",
-                              };
-                              final reportedZones = report.zones
-                                  .map((zone) => zone.zoneLabel)
-                                  .toSet();
-                              final canaryPassed =
-                                  report.zones.length == expectedZones.length &&
-                                  reportedZones.length == expectedZones.length &&
-                                  reportedZones.containsAll(expectedZones) &&
-                                  report.zones.every((zone) =>
-                                      zone.status ==
-                                      CloudSyncRunStatus.completed) &&
-                                  deferred == 0 &&
-                                  quarantined == 0 &&
-                                  unsupportedServiceQuarantined == 0 &&
-                                  tombstoneQuarantined == 0 &&
-                                  retried == 0 &&
-                                  report.remoteWriteTripwiresIntact;
-                              final totals =
-                                  "Fetched $fetched, applied $applied, read-only tombstones acknowledged $tombstoneReadOnlyAcknowledged, deferred $deferred, quarantined $quarantined (unsupported service $unsupportedServiceQuarantined, tombstone failures $tombstoneQuarantined), retried $retried.";
-                              if (canaryPassed) {
-                                showSnackbar(
-                                  "Cloud Sync V2 Complete",
-                                  "$totals No CloudKit uploads or deletes occurred.",
-                                );
-                              } else {
-                                showSnackbar(
-                                  "Cloud Sync V2 Stopped Safely",
-                                  "$totals Incomplete records/zone or a write tripwire was detected. No further work was allowed.",
-                                );
-                              }
                             } catch (error) {
                               final safeCode = cloudSyncV2SafeFailureCode(error);
                               Logger.warn(

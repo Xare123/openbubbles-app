@@ -22,6 +22,11 @@ const int _maximumLiveProtectedReferences = 131072;
 const int _maximumGarbageCollectionResultsPerPass = 64;
 const int _maximumProtectedStoreOperationsPerIdentity = 64;
 const int _maximumRetryAfterSeconds = 7 * 24 * 60 * 60;
+const Set<String> _semanticProtectedStreams = {
+  'chats',
+  'messages',
+  'attachments',
+};
 
 final RegExp _nativeDigestPattern = RegExp(r'^[A-Za-z0-9_-]{43}$');
 final RegExp _contentDigestPattern = RegExp(r'^[0-9a-f]{64}$');
@@ -809,6 +814,13 @@ final class NativeProtectedCloudSyncTransport
     required int limit,
   }) async {
     final stream = _validateScopeAndStream(scope);
+    if (_nativeWriterPauseToken != null &&
+        !_semanticProtectedStreams.contains(stream)) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.cancelled,
+        safeCode: 'unsupported_semantic_cloud_zone',
+      );
+    }
     if (generation <= 0) {
       throw _malformed('invalid_generation');
     }

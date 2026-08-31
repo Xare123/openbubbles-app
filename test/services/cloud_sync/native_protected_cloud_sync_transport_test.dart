@@ -123,6 +123,48 @@ void main() {
     );
   });
 
+  test('writer-pause-bound fetch rejects every non-semantic zone', () async {
+    final boundTransport = NativeProtectedCloudSyncTransport(
+      cloudMessagesClient: Object(),
+      storageDirectory: 'private-storage',
+      protectedStoreIdentity: _storeIdentity,
+      nativeWriterPauseToken: BigInt.one,
+      bindings: bindings,
+    );
+    for (final zone in const <String>[
+      'messageUpdateZone',
+      'recoverableMessageDeleteZone',
+      'scheduledMessageZone',
+      'chat1ManateeZone',
+    ]) {
+      await expectLater(
+        boundTransport.fetchChanges(
+          CloudSyncScope(
+            accountFingerprint: _hash('A'),
+            container: 'com.apple.messages.cloud',
+            database: 'private',
+            zone: zone,
+            streamKind: CloudSyncStreamKind.messages,
+            schemaVersion: 2,
+          ),
+          previousToken: null,
+          generation: 1,
+          limit: 1,
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'unsupported_semantic_cloud_zone',
+          ),
+        ),
+        reason: zone,
+      );
+    }
+    expect(bindings.boundFetchCalls, 0);
+    expect(bindings.unboundFetchCalls, 0);
+  });
+
   test(
     'accepts the expanded protected-zone allowlist without remapping',
     () async {

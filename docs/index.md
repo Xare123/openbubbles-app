@@ -12,6 +12,12 @@ timestamp: 2026-07-31
 - [Development](DEVELOPMENT.md): local development and build guidance.
 - [Diagnostics](DIAGNOSTICS.md): bounded, redacted runtime logging.
 - [Verification](VERIFICATION.md): delivery, routing, and performance gates.
+- [Critical-path impact map](CRITICAL_PATH_IMPACT_MAP.md): shared readiness,
+  persistence, acknowledgement, checkpoint, and account-transition boundaries
+  that can produce cross-feature regressions.
+- [Cloud Sync V2 connection treemap](CLOUD_SYNC_V2_CONNECTION_TREEMAP.md):
+  source-linked authentication, protected fetch, PCS decode, durable journal,
+  projection, recovery, and no-fallback state machine.
 - [Memory management](MEMORY_MANAGEMENT.md): bounded media and conversation
   resource ownership.
 - [Cloud Sync V2](CLOUD_SYNC_V2.md): guarded Pixel Android and Windows

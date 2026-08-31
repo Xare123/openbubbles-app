@@ -9,6 +9,10 @@ timestamp: 2026-08-30
 
 # OpenBubbles critical-path impact map
 
+For the complete Messages in iCloud authentication, protected-fetch, PCS,
+journal, projection, and recovery chain, see
+[Cloud Sync V2 connection treemap](CLOUD_SYNC_V2_CONNECTION_TREEMAP.md).
+
 ## Purpose
 
 This is a change-impact map, not a complete source inventory. It identifies
