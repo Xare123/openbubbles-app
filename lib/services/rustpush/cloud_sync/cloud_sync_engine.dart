@@ -84,6 +84,7 @@ class CloudSyncEngineConfig {
     this.maximumBatchSize = 256,
     this.maximumFetchPagesPerRun = 8,
     this.maximumInboxEntriesPerRun = 512,
+    this.minimumInboxEntriesReservedForFetch = 0,
     this.maximumOutboxBatchesPerRun = 8,
     this.fetchOperationTimeout = const Duration(seconds: 45),
     this.writeOperationTimeout = const Duration(seconds: 45),
@@ -105,6 +106,13 @@ class CloudSyncEngineConfig {
   final int maximumBatchSize;
   final int maximumFetchPagesPerRun;
   final int maximumInboxEntriesPerRun;
+
+  /// Capacity retained for one fresh semantic fetch after replaying durable
+  /// retained projections. A nonzero reserve must hold at least one complete
+  /// transport batch so a fetched page can still be made locally terminal.
+  /// Existing pending inbox entries may consume it because their predecessor
+  /// must finish before another page can be fetched safely.
+  final int minimumInboxEntriesReservedForFetch;
   final int maximumOutboxBatchesPerRun;
   final Duration fetchOperationTimeout;
   final Duration writeOperationTimeout;
@@ -138,6 +146,12 @@ class CloudSyncEngineConfig {
     if (maximumInboxEntriesPerRun <= 0 ||
         maximumInboxEntriesPerRun > maximumAllowedInboxEntriesPerRun) {
       throw ArgumentError('cloud_sync_config_inbox_entries_invalid');
+    }
+    if (minimumInboxEntriesReservedForFetch < 0 ||
+        minimumInboxEntriesReservedForFetch > maximumInboxEntriesPerRun ||
+        (minimumInboxEntriesReservedForFetch > 0 &&
+            minimumInboxEntriesReservedForFetch < maximumBatchSize)) {
+      throw ArgumentError('cloud_sync_config_fetch_inbox_reserve_invalid');
     }
     if (maximumOutboxBatchesPerRun <= 0 ||
         maximumOutboxBatchesPerRun > maximumAllowedOutboxBatchesPerRun) {
@@ -524,7 +538,16 @@ class CloudSyncEngine {
       // source rows under this run's coordinator fence before any new fetch.
       // The capability is optional so generic and shadow appliers retain their
       // existing behavior.
+      final retainedProjectionFetchReserve =
+          config.flags.readOnlyFetch && config.flags.semanticApply
+          ? config.minimumInboxEntriesReservedForFetch
+          : 0;
+      final retainedProjectionLimit = max(
+        0,
+        remainingInboxEntries - retainedProjectionFetchReserve,
+      );
       if (config.flags.semanticApply &&
+          retainedProjectionLimit > 0 &&
           remainingInboxEntries > 0 &&
           !_isCancelled(cancellationToken) &&
           _inboxApplier is CloudRetainedProjectionReprocessor) {
@@ -535,7 +558,7 @@ class CloudSyncEngine {
           scope: scope,
           generation: checkpoint.generation,
           leaseFence: _requireActiveLeaseFence(),
-          limit: remainingInboxEntries,
+          limit: retainedProjectionLimit,
         );
         if (reprojection.examined < 0 ||
             reprojection.reprojected < 0 ||
@@ -543,7 +566,7 @@ class CloudSyncEngine {
             reprojection.examined !=
                 reprojection.reprojected + reprojection.retained ||
             (reprojection.retained > 0 && !reprojection.hasRemaining) ||
-            reprojection.examined > remainingInboxEntries) {
+            reprojection.examined > retainedProjectionLimit) {
           throw CloudSyncFailure(
             category: CloudFailureCategory.localStorage,
             safeCode: 'retained_projection_result_invalid',

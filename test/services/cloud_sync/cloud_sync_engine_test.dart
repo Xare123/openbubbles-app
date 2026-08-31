@@ -38,6 +38,7 @@ void main() {
     int batchSize = 256,
     int maximumFetchPagesPerRun = 8,
     int maximumInboxEntriesPerRun = 512,
+    int minimumInboxEntriesReservedForFetch = 0,
     int maximumOutboxBatches = 8,
     Duration fetchOperationTimeout = const Duration(seconds: 45),
     Duration writeOperationTimeout = const Duration(seconds: 45),
@@ -76,6 +77,8 @@ void main() {
         maximumBatchSize: batchSize,
         maximumFetchPagesPerRun: maximumFetchPagesPerRun,
         maximumInboxEntriesPerRun: maximumInboxEntriesPerRun,
+        minimumInboxEntriesReservedForFetch:
+            minimumInboxEntriesReservedForFetch,
         maximumOutboxBatchesPerRun: maximumOutboxBatches,
         fetchOperationTimeout: fetchOperationTimeout,
         writeOperationTimeout: writeOperationTimeout,
@@ -948,7 +951,9 @@ void main() {
       };
 
       final result = await engine(
+        batchSize: 1,
         maximumInboxEntriesPerRun: 1,
+        minimumInboxEntriesReservedForFetch: 1,
       ).synchronize(trigger: CloudSyncTrigger.startup);
 
       expect(result.status, CloudSyncRunStatus.degraded);
@@ -1128,6 +1133,54 @@ void main() {
       expect(retainedApplier.reprojectCalls, 1);
       expect(events, const ['retained', 'fetch']);
       expect(transport.fetchCallCount, 1);
+    },
+  );
+
+  test(
+    'retained reprojection preserves one complete page for remote progress',
+    () async {
+      var observedReprojectionLimit = 0;
+      final retainedApplier = _RetainedProjectionEngineApplier(
+        onReproject: (_, _, _, limit) async {
+          observedReprojectionLimit = limit;
+          return CloudRetainedProjectionResult(
+            examined: limit,
+            reprojected: 0,
+            retained: limit,
+            hasRemaining: true,
+          );
+        },
+      );
+      transport.fetchHandler =
+          (requestedScope, previousToken, generation, limit) async {
+            expect(limit, 1);
+            return CloudFetchBatch(
+              scope: requestedScope,
+              changes: const [],
+              batchId: 'terminal-after-retained-window',
+              generation: generation,
+              nextToken: previousToken,
+              hasMore: false,
+            );
+          };
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          saves: false,
+        ),
+        batchSize: 1,
+        maximumInboxEntriesPerRun: 4,
+        minimumInboxEntriesReservedForFetch: 1,
+        inboxApplierOverride: retainedApplier,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(observedReprojectionLimit, 3);
+      expect(transport.fetchCallCount, 1);
+      expect(result.observedEmptyTerminalRead, isTrue);
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.failureSafeCode, 'retained_projection_incomplete');
     },
   );
 
@@ -2657,6 +2710,33 @@ void main() {
         flags: const CloudSyncFeatureFlags(saves: true),
       ),
       throwsArgumentError,
+    );
+  });
+
+  test('fresh fetch reserve holds at least one complete transport page', () {
+    expect(
+      () => CloudSyncEngineConfig(
+        maximumBatchSize: 2,
+        maximumInboxEntriesPerRun: 4,
+        minimumInboxEntriesReservedForFetch: 1,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => CloudSyncEngineConfig(
+        maximumBatchSize: 2,
+        maximumInboxEntriesPerRun: 4,
+        minimumInboxEntriesReservedForFetch: 5,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => CloudSyncEngineConfig(
+        maximumBatchSize: 2,
+        maximumInboxEntriesPerRun: 4,
+        minimumInboxEntriesReservedForFetch: 2,
+      ),
+      returnsNormally,
     );
   });
 

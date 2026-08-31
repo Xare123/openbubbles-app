@@ -1458,6 +1458,7 @@ void main() {
                   expect(
                     limit,
                     CloudSyncManualSemanticPullSampler.pageLimit *
+                            CloudSyncManualSemanticPullSampler.changeLimit -
                         CloudSyncManualSemanticPullSampler.changeLimit,
                   );
                 },

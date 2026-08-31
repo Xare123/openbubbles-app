@@ -439,6 +439,7 @@ final class CloudSyncManualSemanticPullSampler {
     maximumBatchSize: changeLimit,
     maximumFetchPagesPerRun: pageLimit,
     maximumInboxEntriesPerRun: pageLimit * changeLimit,
+    minimumInboxEntriesReservedForFetch: changeLimit,
     maximumOutboxBatchesPerRun: 1,
     fetchOperationTimeout: _fetchTimeout,
     allowManualPullBackoffOverride: true,
