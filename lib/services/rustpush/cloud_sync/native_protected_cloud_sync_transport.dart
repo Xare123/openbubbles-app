@@ -814,12 +814,27 @@ final class NativeProtectedCloudSyncTransport
     required int limit,
   }) async {
     final stream = _validateScopeAndStream(scope);
-    if (_nativeWriterPauseToken != null &&
-        !_semanticProtectedStreams.contains(stream)) {
-      throw CloudSyncFailure(
-        category: CloudFailureCategory.cancelled,
-        safeCode: 'unsupported_semantic_cloud_zone',
-      );
+    final pauseToken = _nativeWriterPauseToken;
+    if (pauseToken == null) {
+      if (scope.persistenceLane != CloudSyncPersistenceLane.shadow) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.cancelled,
+          safeCode: 'cloud_sync_native_writer_pause_capability_required',
+        );
+      }
+    } else {
+      if (scope.persistenceLane != CloudSyncPersistenceLane.semantic) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.cancelled,
+          safeCode: 'unsupported_semantic_persistence_lane',
+        );
+      }
+      if (!_semanticProtectedStreams.contains(stream)) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.cancelled,
+          safeCode: 'unsupported_semantic_cloud_zone',
+        );
+      }
     }
     if (generation <= 0) {
       throw _malformed('invalid_generation');
@@ -833,7 +848,6 @@ final class NativeProtectedCloudSyncTransport
     }
     final maximumChanges = limit.clamp(1, _maximumChangesPerPage);
     final result = await _runProtectedStoreOperation(() {
-      final pauseToken = _nativeWriterPauseToken;
       if (pauseToken != null) {
         return _bindings.fetchProtectedPageUnderWriterPause(
           cloudMessagesClient: _cloudMessagesClient,

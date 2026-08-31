@@ -134,6 +134,8 @@ void main() {
       'retained_projection_authorization_changed',
       'messages_cloud_tombstone_projection_unavailable',
       'semantic_parent_missing',
+      'unsupported_semantic_cloud_zone',
+      'unsupported_semantic_persistence_lane',
     };
     for (final code in codes) {
       expect(cloudSyncV2SafeFailureCodeForCandidate(code), code);
@@ -189,6 +191,7 @@ void main() {
       'cloud_sync_native_auth_warm_failed',
       'cloud_sync_native_auth_warm_timeout',
       'cloud_sync_native_auth_writer_pause_scope_failed',
+      'cloud_sync_native_writer_pause_capability_required',
     };
     for (final code in codes) {
       expect(cloudSyncV2SafeFailureCode(StateError(code)), code);

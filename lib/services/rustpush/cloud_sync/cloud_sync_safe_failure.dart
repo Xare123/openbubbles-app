@@ -64,6 +64,7 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_native_auth_writer_pause_scope_failed',
   'cloud_sync_native_writer_pause_already_active',
   'cloud_sync_native_writer_pause_bridge_failed',
+  'cloud_sync_native_writer_pause_capability_required',
   'cloud_sync_native_writer_pause_failed',
   'cloud_sync_native_writer_pause_timeout',
   'cloud_sync_native_writer_pause_token_invalid',
@@ -213,6 +214,8 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'semantic_parent_missing',
   'storage_unavailable',
   'unsupported_cloud_zone',
+  'unsupported_semantic_cloud_zone',
+  'unsupported_semantic_persistence_lane',
   'unsupported_platform',
   'unknown',
 };

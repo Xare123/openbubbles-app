@@ -187,6 +187,7 @@ manual confirmed pull
   -> production preflight
   -> operation interlock and native-writer pause
   -> cached account identity validation
+  -> semantic-lane transport requires exact pause capability
   -> bounded ObjectBox projection-repair candidate pages
   -> bounded protected fetch by zone
   -> journal page
@@ -194,6 +195,7 @@ manual confirmed pull
   -> cooperative event-loop yield after the durable terminal state
   -> apply contiguous durable inbox prefix
   -> checkpoint
+  -> measure durable retained-unprojected backlog
   -> revalidate identity and remote-write tripwire
   -> resume native writer
 ```
@@ -202,6 +204,12 @@ Shared gates include writer ownership, operation interlock, coordinator and
 page leases, account-bound storage, and semantic-pull quiescence. Crash tests
 must cover fetch-before-journal, journal-before-apply, and
 apply-before-checkpoint boundaries.
+
+The unbound protected fetch is a shadow-only diagnostic capability, not a
+fallback. Semantic persistence must fail before bridge or network admission
+when the exact native-writer pause token is absent. Completion is likewise a
+durable-state claim: a zero run-local retention delta cannot override an older
+current-generation `retainedUnprojected` row.
 
 The August 30, 2026 Canary exposed a second boundary: ordered semantic replay
 can remain correct while starving Flutter's UI isolate. Android recorded a

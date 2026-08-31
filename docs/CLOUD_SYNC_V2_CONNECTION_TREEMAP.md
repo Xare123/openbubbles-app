@@ -56,8 +56,9 @@ flowchart TD
   C2 --> C3[Pause native CloudKit writers]
   C3 --> C4[Warm exact Messages, Keychain, and Security containers]
   C4 --> C5[Warm exact chat, message, and attachment PCS zones]
+  C5 --> C6[Require semantic lane plus exact pause capability at transport boundary]
 
-  C5 --> D[Replicated-log ingestion]
+  C6 --> D[Replicated-log ingestion]
   D --> D1[Read generation-bound checkpoint]
   D1 --> D2[Fetch bounded zone-change page under same permit]
   D2 --> D3[Protect raw envelopes and next token]
@@ -72,7 +73,8 @@ flowchart TD
   E4 --> E5[Project chat aliases before messages]
   E5 --> E6[Project messages before reactions and attachments]
   E6 --> E7[Persist applied, retained, retryable, or quarantined state]
-  E7 --> E8[Promote token only for a complete terminal journal]
+  E7 --> E7A[Measure the durable retained backlog after repair attempts]
+  E7A --> E8[Promote token only for a complete terminal journal]
 
   E8 --> F[Exit and recovery]
   F --> F1[Revalidate account and client]
@@ -90,6 +92,31 @@ flowchart TD
 The important cut is between `D4` and `E`: remote progress first becomes a
 durable local journal. Projection may then retry without refetching or losing
 the exact remote evidence.
+
+### Candidate qualification feedback loop
+
+```mermaid
+flowchart LR
+  S[Freeze candidate SHA] --> A[Independent architecture and safety audit]
+  A --> C[Bindings drift check and native compile]
+  C --> T[Focused and full automated tests]
+  T --> B[Signed Canary build]
+  B --> L[One live in-place Canary pull]
+  L --> Q[Canary-qualified candidate]
+
+  A -. invariant failure .-> X[Invalidate candidate SHA]
+  C -. compile failure .-> X
+  T -. behavioral failure .-> X
+  B -. package or signing failure .-> X
+  L -. runtime or safety failure .-> X
+  X --> M[Record root cause and affected boundary in this map]
+  M --> F[Apply the smallest fail-closed boundary repair]
+  F --> S
+```
+
+A passing downstream job never erases an upstream audit failure. Any source
+change creates a new candidate SHA and restarts qualification. Failed GCE runs
+are allowed to execute their cleanup path, but their APKs are never installed.
 
 ### Two progress clocks
 
@@ -116,9 +143,9 @@ show fetched, retained, and projected counts separately.
 | Manual admission | [`troubleshoot_panel.dart`](../lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart#L436), [`rustpush_service.dart`](../lib/services/rustpush/rustpush_service.dart#L7448) | User-confirmed Canary entry only; no automatic semantic pull. | `LIVE-PROVEN` |
 | Process and database exclusion | [`CloudKitOperationInterlock.runExclusive`](../lib/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart#L91), [`CloudSyncManualSemanticPullSampler.runConfirmed`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart#L135) | One CloudKit owner, durable fence, bounded heartbeat, and writer resume in `finally`. | `TEST-PROVEN`; exercised live |
 | Account-bound read authentication | [`CloudSyncProductionAuthSnapshotProvider`](../lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart#L775), [`cloud_sync_ensure_read_authentication`](../rust/src/api/api.rs#L7520) | Restore or refresh only the active client's revocable read credential; reject a raced session replacement. | `TEST-PROVEN`; persisted restore exercised live |
-| Writer-pause capability | [`prepareReadAuthenticationUnderNativeWriterPause`](../lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart#L826), [`cloud_sync_warm_read_authentication_under_writer_pause`](../rust/src/api/api.rs#L319) | Exact positive 64-bit token, active interlock, and same client/account before and after warmup. | `TEST-PROVEN` |
+| Writer-pause capability | [`prepareReadAuthenticationUnderNativeWriterPause`](../lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart#L826), [`NativeProtectedCloudSyncTransport.fetchChanges`](../lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart#L810), [`cloud_sync_warm_read_authentication_under_writer_pause`](../rust/src/api/api.rs#L319) | Exact positive 64-bit token, active interlock, and same client/account before and after warmup. An unbound fetch is legal only for the non-projecting shadow lane; a bound fetch is legal only for the semantic lane. | `REPAIRED; RE-AUDIT, CI, AND LIVE PROOF PENDING` |
 | Exact PCS-zone warmup | [`warm_semantic_read_zone_encryption_configs`](../rustpush/src/imessage/cloud_messages.rs#L2201), [`get_cached_zone_encryption_config_exact`](../rustpush/src/icloud/cloudkit.rs#L3579) | Lookup only `chatManateeZone`, `messageManateeZone`, and `attachmentManateeZone` on the read-auth container. Never create a zone or use the general container. | `REPAIRED; LIVE PROOF PENDING` |
-| Capability-bound protected fetch | [`cloud_sync_fetch_protected_page_under_writer_pause`](../rust/src/api/api.rs#L2190), [`sync_records_page_for_read_authentication`](../rustpush/src/imessage/cloud_messages.rs#L2388), [`CloudSyncEngine._pullChangesWhileStoreExclusive`](../lib/services/rustpush/cloud_sync/cloud_sync_engine.dart#L898) | Semantic fetch must acquire the exact active writer-pause capability, use only the permit-validated cached read-auth container, and hold it through the remote page read. Previous token and generation remain opaque; page, record, byte, and time limits remain enforced. The separate unbound entry point is restricted to the compile-gated, non-projecting shadow diagnostic. | `REPAIRED; GENERATED BINDINGS AND LIVE PROOF PENDING` |
+| Capability-bound protected fetch | [`cloud_sync_fetch_protected_page_under_writer_pause`](../rust/src/api/api.rs#L2190), [`sync_records_page_for_read_authentication`](../rustpush/src/imessage/cloud_messages.rs#L2388), [`CloudSyncEngine._pullChangesWhileStoreExclusive`](../lib/services/rustpush/cloud_sync/cloud_sync_engine.dart#L898) | Semantic fetch must acquire the exact active writer-pause capability, use only the permit-validated cached read-auth container, and hold it through the remote page read. Previous token and generation remain opaque; page, record, byte, and time limits remain enforced. The separate unbound entry point is restricted at composition and transport boundaries to the compile-gated, non-projecting shadow diagnostic. | `REPAIRED; RE-AUDIT, CI, AND LIVE PROOF PENDING` |
 | Page adoption and crash recovery | [`CloudProtectedPageLeaseLifecycle`](../lib/services/rustpush/cloud_sync/cloud_protected_page_lease_lifecycle.dart#L11), [`journalFetchedBatch`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart#L104) | Protect page before Dart exposure; atomically journal before committing the native page lease. | `TEST-PROVEN`; live reports show admitted pages |
 | Same-capability protected decode | [`RustCloudSemanticDecoder`](../lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart#L577), [`cloud_sync_decode_protected_change`](../rust/src/api/api.rs#L3545), [`cloud_sync_decode_transient_record_cached_only`](../rust/src/cloud_sync_transient_bridge.rs#L1605) | Decode uses the same writer-pause permit and exact cached read-auth container/PCS key as fetch preparation. | `REPAIRED; LIVE PROOF PENDING` |
 | Canonical conversion | [`cloud_sync_canonical_converter.rs`](../rust/src/cloud_sync_canonical_converter.rs), [`parse_associated_parent`](../rust/src/cloud_sync_canonical_dto.rs#L2023) | Preserve wire presence, reject malformed identity, and do not invent clear/delete semantics. | `TEST-PROVEN`; representative records decoded live |
@@ -268,7 +295,9 @@ enabling writes.
 
 1. Generated bridge bindings expose the separate writer-pause-bound protected
    fetch and include the writer-pause token on protected decode, with no
-   unrelated drift.
+   unrelated drift. Dart also rejects a semantic-lane fetch before the bridge
+   when the exact writer-pause capability is absent, and rejects a bound fetch
+   for every non-semantic persistence lane.
 2. Focused Dart, Rust, rustpush, protector, and source-contract tests pass.
 3. A cold-start integration test executes this exact chain in one process:
    `restore/refresh auth -> pause writers -> warm three PCS zones -> fetch ->
@@ -285,8 +314,10 @@ enabling writes.
 8. A second pull is idempotent: no duplicate canonical rows, no skipped page,
    and no repeated projection except explicitly retained repair work.
 9. Reports distinguish remote-ingestion completeness from exact-projection
-   completeness. Production readiness requires retained rows to be zero or to
-   have an explicitly reviewed, non-destructive repair policy.
+   completeness. Their retained count is the durable current backlog after
+   repair attempts, not the number newly retained during this invocation.
+   Production readiness requires that backlog to be zero or to have an
+   explicitly reviewed, non-destructive repair policy.
 10. The fixed-cutoff legacy unknown-row migration is removed after affected
     Canary databases have been retried, or remains covered by a source-contract
     test proving it cannot touch a newer row, tombstone, preflight failure,
@@ -297,11 +328,12 @@ enabling writes.
 Do not broaden scope to FaceTime, Find My, Windows ARM, SMS/RCS, or outbound
 CloudKit while this sequence is active:
 
-1. review and apply only the generated bridge files required by the repaired
-   fetch/decode capability handoff;
-2. run focused tests and one cold-start GCE chain test;
-3. build and sign one Canary;
-4. install in place and capture one live semantic-pull report;
+1. close the transport fallback and durable-retained-report audit findings;
+2. freeze one candidate SHA, independently re-audit the complete chain, and
+   run focused tests plus one full GCE chain test;
+3. build and sign one Canary from that same SHA;
+4. install in place and capture one live semantic-pull report whose retained
+   count matches durable state across a second idempotent pull;
 5. if live proof succeeds, design the token-expiry reset coordinator as a
    separate reviewed change;
 6. only then widen attachment materialization and automatic scheduling.

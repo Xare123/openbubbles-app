@@ -25,6 +25,7 @@ void main() {
       zone: 'messageManateeZone',
       streamKind: CloudSyncStreamKind.messages,
       schemaVersion: 2,
+      persistenceLane: CloudSyncPersistenceLane.shadow,
     );
   });
 
@@ -99,7 +100,7 @@ void main() {
     );
 
     await boundTransport.fetchChanges(
-      scope,
+      _semanticScope(),
       previousToken: null,
       generation: 1,
       limit: 1,
@@ -146,6 +147,7 @@ void main() {
             zone: zone,
             streamKind: CloudSyncStreamKind.messages,
             schemaVersion: 2,
+            persistenceLane: CloudSyncPersistenceLane.semantic,
           ),
           previousToken: null,
           generation: 1,
@@ -161,6 +163,57 @@ void main() {
         reason: zone,
       );
     }
+    expect(bindings.boundFetchCalls, 0);
+    expect(bindings.unboundFetchCalls, 0);
+  });
+
+  test('semantic fetch requires a native writer-pause capability', () async {
+    bindings.fetchResult = _validEmptyFetchResult();
+
+    await expectLater(
+      transport.fetchChanges(
+        _semanticScope(),
+        previousToken: null,
+        generation: 1,
+        limit: 1,
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode,
+          'safeCode',
+          'cloud_sync_native_writer_pause_capability_required',
+        ),
+      ),
+    );
+    expect(bindings.boundFetchCalls, 0);
+    expect(bindings.unboundFetchCalls, 0);
+  });
+
+  test('writer-pause capability cannot authorize a shadow fetch', () async {
+    bindings.fetchResult = _validEmptyFetchResult();
+    final boundTransport = NativeProtectedCloudSyncTransport(
+      cloudMessagesClient: Object(),
+      storageDirectory: 'private-storage',
+      protectedStoreIdentity: _storeIdentity,
+      nativeWriterPauseToken: BigInt.one,
+      bindings: bindings,
+    );
+
+    await expectLater(
+      boundTransport.fetchChanges(
+        scope,
+        previousToken: null,
+        generation: 1,
+        limit: 1,
+      ),
+      throwsA(
+        isA<CloudSyncFailure>().having(
+          (failure) => failure.safeCode,
+          'safeCode',
+          'unsupported_semantic_persistence_lane',
+        ),
+      ),
+    );
     expect(bindings.boundFetchCalls, 0);
     expect(bindings.unboundFetchCalls, 0);
   });
@@ -188,6 +241,7 @@ void main() {
             zone: zone,
             streamKind: CloudSyncStreamKind.messages,
             schemaVersion: 2,
+            persistenceLane: CloudSyncPersistenceLane.shadow,
           ),
           previousToken: null,
           generation: 1,
@@ -1239,6 +1293,17 @@ String _sha(String character) => _repeat(character, 64);
 String _reference(String character) => 'obcs2.ref.${_hash(character)}';
 String _lease(String character) => 'obcs2.lease.${_repeat(character, 32)}';
 final String _storeIdentity = 'obcs2.store.${_hash('S')}';
+
+CloudSyncScope _semanticScope({String zone = 'messageManateeZone'}) =>
+    CloudSyncScope(
+      accountFingerprint: _hash('A'),
+      container: 'com.apple.messages.cloud',
+      database: 'private',
+      zone: zone,
+      streamKind: CloudSyncStreamKind.messages,
+      schemaVersion: 2,
+      persistenceLane: CloudSyncPersistenceLane.semantic,
+    );
 
 NativeProtectedFetchResult _validEmptyFetchResult() =>
     NativeProtectedFetchResult(

@@ -108,6 +108,29 @@ void main() {
     },
   );
 
+  test('semantic transport cannot fall back to an unbound fetch', () {
+    final transport = File(
+      'lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart',
+    ).readAsStringSync();
+    expect(
+      transport,
+      contains(
+        'scope.persistenceLane != CloudSyncPersistenceLane.shadow',
+      ),
+    );
+    expect(
+      transport,
+      contains('cloud_sync_native_writer_pause_capability_required'),
+    );
+    expect(
+      transport,
+      contains(
+        'scope.persistenceLane != CloudSyncPersistenceLane.semantic',
+      ),
+    );
+    expect(transport, contains('unsupported_semantic_persistence_lane'));
+  });
+
   test('native semantic fetch acquires and forwards read-authentication permit', () {
     final api = File('rust/src/api/api.rs').readAsStringSync();
     final shadowFetchStart = api.indexOf(
