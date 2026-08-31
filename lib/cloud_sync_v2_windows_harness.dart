@@ -79,6 +79,36 @@ enum CloudSyncV2WindowsHarnessOperation {
   }
 }
 
+enum CloudSyncV2WindowsReadAuthAction {
+  activate,
+  requestSmsTwoFactor,
+  resumePendingSmsTwoFactor,
+  reject,
+}
+
+CloudSyncV2WindowsReadAuthAction cloudSyncV2WindowsHarnessReadAuthAction(
+  api.LoginState state,
+) {
+  if (state is api.LoginState_LoggedIn) {
+    return CloudSyncV2WindowsReadAuthAction.activate;
+  }
+  if (state is api.LoginState_NeedsSMS2FA ||
+      state is api.LoginState_NeedsDevice2FA) {
+    return CloudSyncV2WindowsReadAuthAction.requestSmsTwoFactor;
+  }
+  if (state is api.LoginState_NeedsSMS2FAVerification) {
+    return CloudSyncV2WindowsReadAuthAction.resumePendingSmsTwoFactor;
+  }
+  return CloudSyncV2WindowsReadAuthAction.reject;
+}
+
+bool cloudSyncV2WindowsHarnessShouldStartFreshReadAuthentication({
+  required String safeCode,
+  required bool alreadyAttempted,
+}) =>
+    safeCode == 'cloud_sync_native_auth_refresh_session_missing' &&
+    !alreadyAttempted;
+
 final class CloudSyncV2WindowsHarnessLaunch {
   const CloudSyncV2WindowsHarnessLaunch({
     required this.operation,
@@ -290,6 +320,7 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
   final List<Object> _sessionHandles = <Object>[];
   final TextEditingController _twoFactorController = TextEditingController();
   Object? _activeClient;
+  rustlib.ApsConnection? _connection;
   rustlib.ArcAnisetteClientDefaultAnisetteProvider? _anisette;
   rustlib.ArcMutexAppleAccountDefaultAnisetteProvider? _account;
   api.JoinedOsConfig? _osConfig;
@@ -303,6 +334,7 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
   String _runtimeStage = 'initializing';
   bool _needsTwoFactor = false;
   bool _busy = true;
+  bool _freshReadAuthenticationAttempted = false;
   _CloudSyncV2WindowsHarnessResumeOperation? _resumeAfterTwoFactor;
 
   Future<void> _setRuntimeStage(
@@ -353,6 +385,7 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
           throw StateError('cloud_sync_windows_dev_aps_setup_failed');
         }
         final connection = pushSetup.$1;
+        _connection = connection;
         await _setRuntimeStage('anisette-setup');
         final anisette = await api.makeAnisette(
           path: fs.appDocDir.path,
@@ -370,87 +403,21 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         if (account == null) {
           throw StateError('cloud_sync_windows_dev_gsa_restore_failed');
         }
-        _account = account;
-        final tokenProvider = api.makeTokenProvider(
-          account: account,
-          config: config,
-        );
-        await _setRuntimeStage('cloudkit-restore');
-        final cloudkit = await api.makeCloudkit(
-          path: fs.appDocDir.path,
-          anisette: anisette,
-          config: config,
-          tokenProvider: tokenProvider,
-        );
-        if (cloudkit == null) {
-          throw StateError('cloud_sync_windows_dev_cloudkit_restore_failed');
-        }
-        await _setRuntimeStage('pcs-keychain');
-        final keychain = api.makeKeychain(
-          path: fs.appDocDir.path,
-          cloudkit: cloudkit,
-          anisette: anisette,
-          config: config,
-          tokenProvider: tokenProvider,
-        );
-        if (keychain == null) {
-          throw StateError('cloud_sync_windows_dev_keychain_restore_failed');
-        }
-        final cloudMessagesClient = api.makeCloudMessagesClient(
-          cloudkit: cloudkit,
-          keychain: keychain,
-        );
         _sessionHandles.addAll(<Object>[
           hardware,
           identity,
           config,
           connection,
           anisette,
-          account,
-          tokenProvider,
-          cloudkit,
-          keychain,
-          cloudMessagesClient,
         ]);
-        _activeClient = cloudMessagesClient;
+        await _activateCloudKitClient(
+          account: account,
+          anisette: anisette,
+          config: config,
+        );
       }
 
-      final protector = RustCloudSyncProtector(
-        storageDirectory: fs.appDocDir.path,
-      );
-      final preflight = CloudSyncProductionPreflightProbe(
-        platformSupported: () => Platform.isWindows,
-        uiIsolate: () => true,
-        rustPushReady: () => _activeClient != null,
-        localState: ObjectBoxCloudSyncPreflightReader.fromDatabase().read,
-        privateStorageExists: fs.appDocDir.existsSync,
-        logoutActive: () => false,
-        legacySyncEnabled: () => false,
-        legacySyncActive: () => false,
-        protectorSentinelValid: CloudSyncProtectorHealthProbe(
-          protector: protector,
-        ).read,
-      );
-      _adapter = CloudSyncProductionSemanticPullAdapter(
-        readActiveClient: () => _activeClient,
-        readPreflight: preflight.read,
-        privateStorageDirectory: fs.appDocDir.path,
-        platform: Platform.operatingSystem,
-        architecture: ffi.Abi.current().toString(),
-        buildCommit: _buildIdentifier(),
-      );
-      _reportWriter = CloudSyncSemanticPullReportFileWriter(
-        privateReportDirectory: path.join(
-          fs.appDocDir.path,
-          'cloud-sync-v2',
-          'reports',
-        ),
-        trustedStorageRoot: fs.appDocDir.path,
-      );
-      _drainController = CloudSyncSemanticDrainController.production(
-        sampler: _adapter!.sampler,
-        reportWriter: _reportWriter!,
-      );
+      await _rebuildSemanticRuntime();
       if (!mounted) return;
       setState(() {
         _busy = false;
@@ -460,16 +427,161 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       _resumeAfterTwoFactor = null;
       await _runRequestedLaunchOperation();
     } catch (error) {
-      if (cloudSyncV2SafeFailureCode(error) ==
-          'cloud_sync_native_auth_refresh_session_missing') {
-        try {
-          if (await _prepareSmsTwoFactor()) return;
-        } catch (_) {
-          _showFailure(StateError('cloud_sync_windows_dev_2fa_request_failed'));
-          return;
-        }
-      }
+      if (await _handleMissingReadAuthentication(error)) return;
       _showFailure(error);
+    }
+  }
+
+  Future<void> _activateCloudKitClient({
+    required rustlib.ArcMutexAppleAccountDefaultAnisetteProvider account,
+    required rustlib.ArcAnisetteClientDefaultAnisetteProvider anisette,
+    required api.JoinedOsConfig config,
+  }) async {
+    final tokenProvider = api.makeTokenProvider(
+      account: account,
+      config: config,
+    );
+    await _setRuntimeStage('cloudkit-restore');
+    final cloudkit = await api.makeCloudkit(
+      path: fs.appDocDir.path,
+      anisette: anisette,
+      config: config,
+      tokenProvider: tokenProvider,
+    );
+    if (cloudkit == null) {
+      throw StateError('cloud_sync_windows_dev_cloudkit_restore_failed');
+    }
+    await _setRuntimeStage('pcs-keychain');
+    final keychain = api.makeKeychain(
+      path: fs.appDocDir.path,
+      cloudkit: cloudkit,
+      anisette: anisette,
+      config: config,
+      tokenProvider: tokenProvider,
+    );
+    if (keychain == null) {
+      throw StateError('cloud_sync_windows_dev_keychain_restore_failed');
+    }
+    final cloudMessagesClient = api.makeCloudMessagesClient(
+      cloudkit: cloudkit,
+      keychain: keychain,
+    );
+    _sessionHandles.addAll(<Object>[
+      account,
+      tokenProvider,
+      cloudkit,
+      keychain,
+      cloudMessagesClient,
+    ]);
+    _account = account;
+    _activeClient = cloudMessagesClient;
+  }
+
+  Future<void> _rebuildSemanticRuntime() async {
+    final previousController = _drainController;
+    _drainController = null;
+    if (previousController != null) {
+      await previousController.dispose();
+    }
+    final protector = RustCloudSyncProtector(
+      storageDirectory: fs.appDocDir.path,
+    );
+    final preflight = CloudSyncProductionPreflightProbe(
+      platformSupported: () => Platform.isWindows,
+      uiIsolate: () => true,
+      rustPushReady: () => _activeClient != null,
+      localState: ObjectBoxCloudSyncPreflightReader.fromDatabase().read,
+      privateStorageExists: fs.appDocDir.existsSync,
+      logoutActive: () => false,
+      legacySyncEnabled: () => false,
+      legacySyncActive: () => false,
+      protectorSentinelValid: CloudSyncProtectorHealthProbe(
+        protector: protector,
+      ).read,
+    );
+    final adapter = CloudSyncProductionSemanticPullAdapter(
+      readActiveClient: () => _activeClient,
+      readPreflight: preflight.read,
+      privateStorageDirectory: fs.appDocDir.path,
+      platform: Platform.operatingSystem,
+      architecture: ffi.Abi.current().toString(),
+      buildCommit: _buildIdentifier(),
+    );
+    final reportWriter = CloudSyncSemanticPullReportFileWriter(
+      privateReportDirectory: path.join(
+        fs.appDocDir.path,
+        'cloud-sync-v2',
+        'reports',
+      ),
+      trustedStorageRoot: fs.appDocDir.path,
+    );
+    _adapter = adapter;
+    _reportWriter = reportWriter;
+    _drainController = CloudSyncSemanticDrainController.production(
+      sampler: adapter.sampler,
+      reportWriter: reportWriter,
+    );
+  }
+
+  Future<bool> _handleMissingReadAuthentication(Object error) async {
+    final safeCode = cloudSyncV2SafeFailureCode(error);
+    if (!cloudSyncV2WindowsHarnessShouldStartFreshReadAuthentication(
+      safeCode: safeCode,
+      alreadyAttempted: _freshReadAuthenticationAttempted,
+    )) {
+      return false;
+    }
+    _freshReadAuthenticationAttempted = true;
+    try {
+      await _beginFreshReadAuthentication();
+    } catch (recoveryError) {
+      _showFailure(recoveryError);
+    }
+    return true;
+  }
+
+  Future<void> _beginFreshReadAuthentication() async {
+    final connection = _connection;
+    final anisette = _anisette;
+    final config = _osConfig;
+    if (connection == null || anisette == null || config == null) {
+      throw StateError('cloud_sync_windows_dev_auth_session_missing');
+    }
+
+    await _setRuntimeStage('read-auth-login', state: 'running');
+    final result = await api.tryAuth(
+      path: fs.appDocDir.path,
+      conf: config,
+      conn: connection,
+      anisette: anisette,
+    );
+    final account = result.$1;
+    final loginState = result.$2;
+    switch (cloudSyncV2WindowsHarnessReadAuthAction(loginState)) {
+      case CloudSyncV2WindowsReadAuthAction.activate:
+        await _activateCloudKitClient(
+          account: account,
+          anisette: anisette,
+          config: config,
+        );
+        await _rebuildSemanticRuntime();
+        await _resumeAfterAuthenticatedReadSession();
+      case CloudSyncV2WindowsReadAuthAction.requestSmsTwoFactor:
+        _account = account;
+        _sessionHandles.add(account);
+        if (!await _prepareSmsTwoFactor()) {
+          throw StateError('cloud_sync_windows_dev_2fa_phone_unavailable');
+        }
+      case CloudSyncV2WindowsReadAuthAction.resumePendingSmsTwoFactor:
+        _account = account;
+        _sessionHandles.add(account);
+        _smsVerificationBody =
+            (loginState as api.LoginState_NeedsSMS2FAVerification).field0;
+        await _showSmsCodeEntry(
+          'Apple is waiting for the SMS verification code.',
+        );
+      case CloudSyncV2WindowsReadAuthAction.reject:
+        throw StateError('cloud_sync_windows_dev_auth_state_unsupported');
     }
   }
 
@@ -581,6 +693,12 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       if (result.$1 is! api.LoginState_LoggedIn) {
         throw StateError('cloud_sync_windows_dev_2fa_verification_failed');
       }
+      await _activateCloudKitClient(
+        account: account,
+        anisette: anisette,
+        config: config,
+      );
+      await _rebuildSemanticRuntime();
       _twoFactorController.clear();
       if (!mounted) return;
       setState(() {
@@ -590,18 +708,7 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         _status = 'SMS verification succeeded. Resuming the pull...';
       });
       await _setRuntimeStage('sms-2fa-verified', state: 'running');
-      final resumeOperation = _resumeAfterTwoFactor;
-      _resumeAfterTwoFactor = null;
-      switch (resumeOperation) {
-        case _CloudSyncV2WindowsHarnessResumeOperation.initialize:
-          await _initialize();
-        case _CloudSyncV2WindowsHarnessResumeOperation.semanticPull:
-          await _runSemanticPull();
-        case _CloudSyncV2WindowsHarnessResumeOperation.semanticDrain:
-          await _runSemanticDrain();
-        case null:
-          await _initialize();
-      }
+      await _resumeAfterAuthenticatedReadSession();
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -615,6 +722,28 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         stage: 'sms-2fa-verify',
         safeCode: 'cloud_sync_windows_dev_2fa_verification_failed',
       );
+    }
+  }
+
+  Future<void> _resumeAfterAuthenticatedReadSession() async {
+    if (!mounted) return;
+    final resumeOperation = _resumeAfterTwoFactor;
+    _resumeAfterTwoFactor = null;
+    setState(() {
+      _busy = false;
+      _needsTwoFactor = false;
+      _smsPhoneOptions = const [];
+    });
+    await _setRuntimeStage('cloudkit-client-ready', state: 'ready');
+    switch (resumeOperation) {
+      case _CloudSyncV2WindowsHarnessResumeOperation.initialize:
+        await _runRequestedLaunchOperation();
+      case _CloudSyncV2WindowsHarnessResumeOperation.semanticPull:
+        await _runSemanticPull();
+      case _CloudSyncV2WindowsHarnessResumeOperation.semanticDrain:
+        await _runSemanticDrain();
+      case null:
+        await _runRequestedLaunchOperation();
     }
   }
 
@@ -661,15 +790,7 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       );
       _resumeAfterTwoFactor = null;
     } catch (error) {
-      if (cloudSyncV2SafeFailureCode(error) ==
-          'cloud_sync_native_auth_refresh_session_missing') {
-        try {
-          if (await _prepareSmsTwoFactor()) return;
-        } catch (_) {
-          _showFailure(StateError('cloud_sync_windows_dev_2fa_request_failed'));
-          return;
-        }
-      }
+      if (await _handleMissingReadAuthentication(error)) return;
       _showFailure(error);
     }
   }
@@ -717,15 +838,7 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       );
       _resumeAfterTwoFactor = null;
     } catch (error) {
-      if (cloudSyncV2SafeFailureCode(error) ==
-          'cloud_sync_native_auth_refresh_session_missing') {
-        try {
-          if (await _prepareSmsTwoFactor()) return;
-        } catch (_) {
-          _showFailure(StateError('cloud_sync_windows_dev_2fa_request_failed'));
-          return;
-        }
-      }
+      if (await _handleMissingReadAuthentication(error)) return;
       _showFailure(error);
     }
   }

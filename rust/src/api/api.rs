@@ -8712,6 +8712,16 @@ pub async fn try_auth(
         )?;
     }
 
+    #[cfg(target_os = "windows")]
+    if is_cloud_sync_windows_dev_profile(&path) && matches!(&login_state, LoginState::LoggedIn) {
+        if account.lock().await.get_pet().is_none() {
+            return Err(anyhow!(
+                "Windows read authentication login did not produce a PET"
+            ));
+        }
+        cloud_sync_windows_consume_login_admission(&path, &account).await?;
+    }
+
     info!("Here6");
     Ok((account, login_state))
 }
@@ -9566,6 +9576,33 @@ fn is_cloud_sync_windows_dev_profile(_path: &str) -> bool {
     false
 }
 
+#[cfg(target_os = "windows")]
+async fn cloud_sync_windows_consume_login_admission(
+    path: &str,
+    account: &Arc<Mutex<AppleAccount<DefaultAnisetteProvider>>>,
+) -> anyhow::Result<()> {
+    let canonical_directory =
+        canonical_cloudkit_state_directory(&PathBuf::from(path))?;
+    let lifecycle_gate = cloudkit_read_authentication_lifecycle_gate(&canonical_directory)?;
+    let _lifecycle_guard = lifecycle_gate.lock().await;
+    let account_key = Arc::as_ptr(account) as usize;
+    let expected_generation =
+        cloudkit_login_validate_admission(&canonical_directory, account_key)?;
+    cloudkit_login_consume_admission(
+        &canonical_directory,
+        expected_generation,
+        account_key,
+    )
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn cloud_sync_windows_consume_login_admission(
+    _path: &str,
+    _account: &Arc<Mutex<AppleAccount<DefaultAnisetteProvider>>>,
+) -> anyhow::Result<()> {
+    Ok(())
+}
+
 pub async fn verify_2fa(
     path: String,
     client: &mut CircleClientSession<DefaultAnisetteProvider>,
@@ -9658,7 +9695,9 @@ pub async fn verify_2fa(
     }
 
     let mut user = None;
-    if !is_cloud_sync_windows_dev_profile(&path) {
+    if is_cloud_sync_windows_dev_profile(&path) {
+        cloud_sync_windows_consume_login_admission(&path, account).await?;
+    } else {
         let identity = do_login(path, &account, None, os_config).await?;
         user = Some(identity);
     }
@@ -9721,7 +9760,9 @@ pub async fn verify_2fa_sms(
 
     let mut user = None;
     drop(account);
-    if !is_cloud_sync_windows_dev_profile(&path) {
+    if is_cloud_sync_windows_dev_profile(&path) {
+        cloud_sync_windows_consume_login_admission(&path, account_mut).await?;
+    } else {
         let identity = do_login(path, &account_mut, None, config).await?;
         user = Some(identity);
     }

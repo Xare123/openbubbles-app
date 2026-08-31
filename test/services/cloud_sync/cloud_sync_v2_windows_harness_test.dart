@@ -1,4 +1,5 @@
 import 'package:bluebubbles/cloud_sync_v2_windows_harness.dart';
+import 'package:bluebubbles/src/rust/api/api.dart' as api;
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -86,6 +87,60 @@ void main() {
       expect(
         projectionPartial.stage,
         'semantic-drain-remote-complete-projection-partial',
+      );
+    },
+  );
+
+  test('cold read authentication starts one fresh login only', () {
+    expect(
+      cloudSyncV2WindowsHarnessShouldStartFreshReadAuthentication(
+        safeCode: 'cloud_sync_native_auth_refresh_session_missing',
+        alreadyAttempted: false,
+      ),
+      isTrue,
+    );
+    expect(
+      cloudSyncV2WindowsHarnessShouldStartFreshReadAuthentication(
+        safeCode: 'cloud_sync_native_auth_refresh_session_missing',
+        alreadyAttempted: true,
+      ),
+      isFalse,
+    );
+    expect(
+      cloudSyncV2WindowsHarnessShouldStartFreshReadAuthentication(
+        safeCode: 'cloud_sync_native_auth_refresh_transport_failed',
+        alreadyAttempted: false,
+      ),
+      isFalse,
+    );
+  });
+
+  test(
+    'fresh login state selects only an explicit authenticated or 2FA lane',
+    () {
+      expect(
+        cloudSyncV2WindowsHarnessReadAuthAction(
+          const api.LoginState.loggedIn(),
+        ),
+        CloudSyncV2WindowsReadAuthAction.activate,
+      );
+      expect(
+        cloudSyncV2WindowsHarnessReadAuthAction(
+          const api.LoginState.needsSms2Fa(),
+        ),
+        CloudSyncV2WindowsReadAuthAction.requestSmsTwoFactor,
+      );
+      expect(
+        cloudSyncV2WindowsHarnessReadAuthAction(
+          const api.LoginState.needsDevice2Fa(),
+        ),
+        CloudSyncV2WindowsReadAuthAction.requestSmsTwoFactor,
+      );
+      expect(
+        cloudSyncV2WindowsHarnessReadAuthAction(
+          const api.LoginState.needsLogin(),
+        ),
+        CloudSyncV2WindowsReadAuthAction.reject,
       );
     },
   );
