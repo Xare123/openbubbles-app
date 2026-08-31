@@ -2679,20 +2679,6 @@ fn protect_native_page(
     if let Err(failure) = request.scope.validate_for_stream(request.stream) {
         return CloudNativeProtectedFetchOutcome::Failure(failure);
     }
-    if read_authentication_permit.is_some()
-        && !matches!(
-            request.stream,
-            CloudNativeStream::Chats
-                | CloudNativeStream::Messages
-                | CloudNativeStream::Attachments
-        )
-    {
-        return CloudNativeProtectedFetchOutcome::Failure(CloudNativeFetchFailure::new(
-            CloudNativeFailureCategory::MalformedRecord,
-            CloudNativeSafeCode::InvalidScope,
-            None,
-        ));
-    }
     let maximum_changes = request.maximum_changes as usize;
     if maximum_changes == 0 || maximum_changes > MAX_CHANGES_PER_PAGE {
         return CloudNativeProtectedFetchOutcome::Failure(CloudNativeFetchFailure::new(
@@ -3176,6 +3162,20 @@ async fn cloud_sync_fetch_protected_page_with_store(
     }
     if let Err(failure) = request.scope.validate_for_stream(request.stream) {
         return CloudNativeProtectedFetchOutcome::Failure(failure);
+    }
+    if read_authentication_permit.is_some()
+        && !matches!(
+            request.stream,
+            CloudNativeStream::Chats
+                | CloudNativeStream::Messages
+                | CloudNativeStream::Attachments
+        )
+    {
+        return CloudNativeProtectedFetchOutcome::Failure(CloudNativeFetchFailure::new(
+            CloudNativeFailureCategory::MalformedRecord,
+            CloudNativeSafeCode::InvalidScope,
+            None,
+        ));
     }
     let continuation_token = match decode_previous_checkpoint(store, request) {
         Ok(value) => value,
