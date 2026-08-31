@@ -128,10 +128,14 @@ flowchart LR
   K -- No --> H[Host or GCE Rust, Dart, and ObjectBox tests]
   H --> R[Protection, decode, projection, checkpoint, and report proof]
   K -- Yes --> W[Private-profile Windows V2 development process]
-  W --> P[Repeat bounded writer-paused pages in guarded no-build mode]
-  P --> E{All three zones fetched zero?}
-  E -- No --> P
-  E -- Yes --> Z[Current server head reached; redacted report only]
+  W --> P[Run up to 16 bounded writer-paused passes in one process]
+  P --> R1[Persist each schema-v5 content-free report before deciding]
+  R1 --> S1{Exact zones and every safety gate pass?}
+  S1 -- No --> S2[Stop safely; preserve report and durable checkpoints]
+  S1 -- Yes --> E{All zones prove a terminal empty server read?}
+  E -- No; cap remains --> P
+  E -- No; cap reached --> S3[Exit resumable at the durable checkpoint]
+  E -- Yes --> Z[Current server head reached; projection reported separately]
   N[Dart code changed] --> D[Windows hot reload]
   D --> W
   V[Rust or bridge code changed] --> B[Incremental Windows DLL rebuild and restart]
@@ -158,19 +162,28 @@ GCE must never become a live CloudKit client because that would require
 exporting the Windows profile's credentials, identity, and PCS state. Android
 Canary remains the final release proof, not the everyday edit/retry loop.
 
-Initial catch-up is not one unbounded fetch. The Windows wrapper
-[`run_cloud_sync_v2_dev_catch_up.ps1`](../tooling/windows/run_cloud_sync_v2_dev_catch_up.ps1)
-repeats the existing four-page, 50-change-per-page semantic run, validates a
-fresh schema-v4 content-free report and every no-write/outbox tripwire after
-each invocation, and stops only after two consecutive all-zone zero-fetch
-runs, with no projection work and an unchanged retained backlog on the second.
-This distinction matters because an empty remote page can still repair retained
-rows. Each invocation commits its opaque fetched token
-durably, so interruption or the 50-run safety ceiling leaves a resumable state
-instead of an in-memory all-history transaction. Contract tests cover valid
-aggregation, a remote-write flag, a nonzero outbox, and a missing zone. Live
-qualification remains pending until the current bridge diagnostic rebuild is
-complete.
+Initial catch-up is not one unbounded fetch and cannot be inferred from the
+number of newly inserted journal rows. A nonempty duplicate CloudKit page may
+insert zero rows, so `fetched == 0` is not proof that the server is empty. The
+engine now emits `observedEmptyTerminalRead` only after it durably journals a
+terminal page and every server page observed in that run contained zero
+changes. The schema-v5 report carries that evidence independently for the exact
+chat, message, and attachment zones.
+
+[`run_cloud_sync_v2_dev.ps1`](../tooling/windows/run_cloud_sync_v2_dev.ps1)
+launches `-Drain` once. The in-process controller repeats the existing
+four-page, 50-change-per-page semantic operation, persists every content-free
+report before inspecting it, and stops immediately on any status, quarantine,
+retry, zone-shape, or outbox inconsistency. It declares remote catch-up only
+when all three zones prove an empty terminal read. A 16-pass ceiling bounds one
+session to 3,200 observed changes per zone and exits as explicitly resumable,
+not complete. ObjectBox checkpoints remain the only cursor state. Local
+projection completeness is reported separately because a terminal remote head
+may still contain retained evidence awaiting a safe parser or dependency
+repair. Focused engine, sampler, report, and controller tests cover duplicate
+nonempty pages, terminal evidence, persistence ordering, unsafe-report abort,
+overlap, disposal, and the resumable ceiling. Signed Windows live qualification
+remains pending.
 
 ### Two progress clocks
 
@@ -388,10 +401,11 @@ CloudKit while this sequence is active:
    release scope;
 2. reproject attachment metadata after each newly proven parent message and
    keep bodies requiring unimplemented media credentials explicitly retained;
-3. use the guarded Windows catch-up wrapper to continue bounded pages until all
-   three zones return zero fetched changes, while checking replay/idempotency
-   and unchanged no-write tripwires after every durable page group; rebuild
-   Windows only when the mapped Dart/Rust boundary changes;
+3. use the single-process guarded Windows `-Drain` mode until all three zones
+   prove a durably journaled empty terminal read, while persisting and checking
+   replay/idempotency and unchanged no-write tripwires after every pass; a
+   16-pass exit is resumable rather than complete, and Windows rebuilds only
+   when the mapped Dart/Rust boundary changes;
 4. freeze one candidate SHA and qualify an in-place Android Canary;
 5. design token-expiry reset and attachment-body materialization as separate
    reviewed changes after text/history projection is stable.

@@ -251,6 +251,7 @@ void main() {
     expect(writerExclusion.observedKinds, [CloudKitOperationKind.v2ReadWrite]);
     expect(result.counters.fetched, 2);
     expect(result.counters.applied, 2);
+    expect(result.observedEmptyTerminalRead, isFalse);
     expect(applier.appliedLeaseFences, hasLength(2));
     expect(
       applier.appliedLeaseFences.every(
@@ -265,6 +266,112 @@ void main() {
     expect(store.runs.single.architectureName, 'generic');
     expect(store.runs.single.modeName, 'durable-saves/completed');
   });
+
+  test('a full nonterminal page is not terminal-empty', () async {
+    transport.fetchHandler =
+        (requestedScope, previousToken, generation, limit) async {
+          expect(limit, 1);
+          if (previousToken == null) {
+            return CloudFetchBatch(
+              scope: requestedScope,
+              changes: [testChange(101)],
+              batchId: 'full-nonterminal-page',
+              generation: generation,
+              nextToken: 'after-full-page',
+              hasMore: true,
+            );
+          }
+          expect(previousToken, 'after-full-page');
+          return CloudFetchBatch(
+            scope: requestedScope,
+            changes: const [],
+            batchId: 'terminal-empty-page',
+            generation: generation,
+            nextToken: 'terminal-empty-token',
+            hasMore: false,
+          );
+        };
+
+    final result = await engine(
+      batchSize: 1,
+      maximumFetchPagesPerRun: 2,
+    ).synchronize(trigger: CloudSyncTrigger.manual);
+
+    expect(result.status, CloudSyncRunStatus.completed);
+    expect(result.counters.fetched, 1);
+    expect(result.observedEmptyTerminalRead, isFalse);
+    expect(transport.observedFetchTokens, [null, 'after-full-page']);
+  });
+
+  test(
+    'a duplicate nonempty page with no new journal rows is not terminal-empty',
+    () async {
+      transport.fetchHandler =
+          (requestedScope, previousToken, generation, limit) async {
+            if (previousToken == null) {
+              return CloudFetchBatch(
+                scope: requestedScope,
+                changes: [testChange(102)],
+                batchId: 'original-page',
+                generation: generation,
+                nextToken: 'after-original-page',
+                hasMore: false,
+              );
+            }
+            expect(previousToken, 'after-original-page');
+            return CloudFetchBatch(
+              scope: requestedScope,
+              changes: [testChange(102)],
+              batchId: 'duplicate-page',
+              generation: generation,
+              nextToken: 'after-duplicate-page',
+              hasMore: false,
+            );
+          };
+
+      final first = await engine().synchronize(
+        trigger: CloudSyncTrigger.manual,
+      );
+      final second = await engine().synchronize(
+        trigger: CloudSyncTrigger.manual,
+      );
+
+      expect(first.counters.fetched, 1);
+      expect(first.observedEmptyTerminalRead, isFalse);
+      expect(second.status, CloudSyncRunStatus.completed);
+      expect(second.counters.fetched, 0);
+      expect(second.counters.applied, 0);
+      expect(second.observedEmptyTerminalRead, isFalse);
+      expect(
+        (await store.readCheckpoint(scope)).fetchedToken,
+        'after-duplicate-page',
+      );
+    },
+  );
+
+  test(
+    'a successful terminal empty read sets terminal-empty evidence',
+    () async {
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: const [],
+          batchId: 'terminal-empty-only-page',
+          generation: 1,
+          nextToken: 'terminal-empty-only-token',
+          hasMore: false,
+        ),
+      );
+
+      final result = await engine().synchronize(
+        trigger: CloudSyncTrigger.manual,
+      );
+
+      expect(result.status, CloudSyncRunStatus.completed);
+      expect(result.counters.fetched, 0);
+      expect(result.observedEmptyTerminalRead, isTrue);
+    },
+  );
 
   test(
     'holds the write exclusion through prepared remote submission consumption',

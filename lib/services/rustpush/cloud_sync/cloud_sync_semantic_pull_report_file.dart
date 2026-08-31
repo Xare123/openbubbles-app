@@ -185,6 +185,7 @@ final class CloudSyncSemanticPullReportFileWriter {
           zone.semanticStageQuarantined > maximumZoneRecords ||
           zone.retried < 0 ||
           zone.retried > maximumZoneRecords ||
+          (zone.observedEmptyTerminalRead && zone.fetched != 0) ||
           zone.elapsedMilliseconds < 0 ||
           zone.elapsedMilliseconds > 10 * 60 * 1000 ||
           // Diagnostic events are not record counters. A single fetched chat

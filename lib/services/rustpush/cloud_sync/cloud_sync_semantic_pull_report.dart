@@ -28,6 +28,7 @@ final class CloudSyncSemanticPullZoneReport {
     required this.semanticStageQuarantined,
     required this.retried,
     required this.elapsedMilliseconds,
+    this.observedEmptyTerminalRead = false,
     Map<String, int> diagnosticCounts = const <String, int>{},
     this.failureCategory,
     String? failureSafeCode,
@@ -64,6 +65,7 @@ final class CloudSyncSemanticPullZoneReport {
   final int semanticStageQuarantined;
   final int retried;
   final int elapsedMilliseconds;
+  final bool observedEmptyTerminalRead;
   final Map<String, int> diagnosticCounts;
   final CloudFailureCategory? failureCategory;
   final String? failureSafeCode;
@@ -96,6 +98,7 @@ final class CloudSyncSemanticPullZoneReport {
     'semanticStageQuarantined': semanticStageQuarantined,
     'retried': retried,
     'elapsedMilliseconds': elapsedMilliseconds,
+    'observedEmptyTerminalRead': observedEmptyTerminalRead,
     'semanticDiagnostics': diagnosticCounts,
     'failureCategory': failureCategory?.name,
     'failureSafeCode': failureSafeCode,
@@ -116,7 +119,12 @@ final class CloudSyncSemanticPullReport {
     required Iterable<CloudSyncSemanticPullZoneReport> zones,
   }) : zones = List.unmodifiable(zones);
 
-  static const schemaVersion = 4;
+  static const schemaVersion = 5;
+  static const expectedZoneLabels = <String>{
+    'attachments',
+    'chats',
+    'messages',
+  };
   final DateTime timestampUtc;
   final String platform;
   final String architecture;
@@ -129,6 +137,62 @@ final class CloudSyncSemanticPullReport {
 
   bool get remoteWriteTripwiresIntact =>
       outboxCountBefore == 0 && outboxCountAfter == 0;
+
+  bool get hasExactThreeZoneStructure {
+    final labels = zones.map((zone) => zone.zoneLabel).toSet();
+    return zones.length == expectedZoneLabels.length &&
+        labels.length == expectedZoneLabels.length &&
+        labels.containsAll(expectedZoneLabels);
+  }
+
+  /// True only when every zone completed a durable terminal CloudKit read that
+  /// contained no server changes. The fetched counter alone is insufficient:
+  /// duplicate nonempty pages can insert zero new journal rows.
+  bool get allZonesObservedEmptyTerminalRead =>
+      hasExactThreeZoneStructure &&
+      zones.every(
+        (zone) => zone.fetched == 0 && zone.observedEmptyTerminalRead,
+      );
+
+  /// The drain may continue only through a clean read or the one explicitly
+  /// non-destructive degraded state: retained rows awaiting local projection.
+  bool get safeToContinueDrain {
+    if (!remoteWriteTripwiresIntact || !hasExactThreeZoneStructure) {
+      return false;
+    }
+    for (final zone in zones) {
+      final acceptedStatus =
+          (zone.status == CloudSyncRunStatus.completed &&
+              zone.failureCategory == null &&
+              zone.failureSafeCode == null) ||
+          (zone.status == CloudSyncRunStatus.degraded &&
+              zone.failureCategory == CloudFailureCategory.dependency &&
+              zone.failureSafeCode == 'retained_projection_incomplete');
+      if (!acceptedStatus ||
+          zone.skipReason != null ||
+          zone.deferred != 0 ||
+          zone.quarantined != 0 ||
+          zone.preflightQuarantined != 0 ||
+          zone.preflightUnsupportedRecordType != 0 ||
+          zone.preflightMalformedMetadata != 0 ||
+          zone.preflightOversizedRecord != 0 ||
+          zone.preflightInvalidChangeShape != 0 ||
+          zone.preflightUnknown != 0 ||
+          zone.startupQuarantined != 0 ||
+          zone.postFetchQuarantined != 0 ||
+          zone.tombstoneQuarantined != 0 ||
+          zone.semanticUnsupportedServiceQuarantined != 0 ||
+          zone.semanticStageQuarantined != 0 ||
+          zone.retried != 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool get projectionComplete =>
+      hasExactThreeZoneStructure &&
+      zones.every((zone) => zone.retainedUnprojected == 0);
 
   Map<String, Object?> toJson() => {
     'schemaVersion': schemaVersion,

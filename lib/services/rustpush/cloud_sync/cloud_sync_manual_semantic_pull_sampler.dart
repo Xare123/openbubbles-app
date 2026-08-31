@@ -293,6 +293,7 @@ final class CloudSyncManualSemanticPullSampler {
             elapsedMilliseconds: result.finishedAt
                 .difference(result.startedAt)
                 .inMilliseconds,
+            observedEmptyTerminalRead: result.observedEmptyTerminalRead,
             diagnosticCounts:
                 _readDiagnosticCounts?.call(scope) ?? const <String, int>{},
             failureCategory: result.failureCategory,

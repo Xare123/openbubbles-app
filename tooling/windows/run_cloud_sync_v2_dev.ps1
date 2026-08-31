@@ -16,12 +16,19 @@ param(
     ),
     [switch] $SkipBuild,
     [switch] $RunOnce,
+    [switch] $Drain,
     [ValidateRange(30, 3600)]
-    [int] $RunOnceTimeoutSeconds = 600
+    [int] $RunOnceTimeoutSeconds = 600,
+    [ValidateRange(60, 7200)]
+    [int] $DrainTimeoutSeconds = 3600
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+if ($RunOnce -and $Drain) {
+    throw "Choose either -RunOnce or -Drain, not both."
+}
 
 function Get-Sha256Hex {
     param([Parameter(Mandatory)][string] $Value)
@@ -257,7 +264,7 @@ function Stop-ExactLaunchedHarness {
     Wait-Process -Id $Process.Id -Timeout 5 -ErrorAction SilentlyContinue
 }
 
-function Wait-RunOnceHarness {
+function Wait-HarnessOperation {
     param(
         [Parameter(Mandatory)][System.Diagnostics.Process] $Process,
         [Parameter(Mandatory)][string] $ExpectedExecutable,
@@ -501,6 +508,9 @@ try {
     if ($RunOnce) {
         $startParameters.ArgumentList = @("run-once")
     }
+    elseif ($Drain) {
+        $startParameters.ArgumentList = @("drain")
+    }
     $statusPath = Join-Path $profile "cloud-sync-v2\windows-harness-status.json"
     $statusBaselineWriteUtc = [datetime]::MinValue
     if (Test-Path -LiteralPath $statusPath -PathType Leaf) {
@@ -521,14 +531,20 @@ try {
         throw "The Windows Cloud Sync V2 harness exited during startup."
     }
     Write-Host "Cloud Sync V2 Windows harness started (PID $($process.Id))."
-    if ($RunOnce) {
-        Wait-RunOnceHarness `
+    if ($RunOnce -or $Drain) {
+        $operationTimeoutSeconds = if ($Drain) {
+            $DrainTimeoutSeconds
+        }
+        else {
+            $RunOnceTimeoutSeconds
+        }
+        Wait-HarnessOperation `
             -Process $process `
             -ExpectedExecutable $runner `
             -StatusPath $statusPath `
             -LaunchStartedUtc $launchStartedUtc `
             -BaselineWriteUtc $statusBaselineWriteUtc `
-            -TimeoutSeconds $RunOnceTimeoutSeconds
+            -TimeoutSeconds $operationTimeoutSeconds
     }
 }
 finally {

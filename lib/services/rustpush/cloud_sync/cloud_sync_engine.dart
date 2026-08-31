@@ -224,6 +224,7 @@ class CloudSyncRunResult {
     this.failureCategory,
     this.failureSafeCode,
     this.shadowJournalBlockReason,
+    this.observedEmptyTerminalRead = false,
   }) : assert(retainedUnprojectedBacklog >= 0);
 
   final CloudSyncRunStatus status;
@@ -239,6 +240,14 @@ class CloudSyncRunResult {
   final CloudFailureCategory? failureCategory;
   final String? failureSafeCode;
   final CloudShadowJournalBlockReason? shadowJournalBlockReason;
+
+  /// True only when this run durably journaled a terminal CloudKit page and
+  /// every server page observed during the pull contained zero changes.
+  ///
+  /// This is intentionally independent of [CloudSyncRunCounters.fetched],
+  /// which counts newly inserted journal rows and can be zero for a nonempty
+  /// duplicate page.
+  final bool observedEmptyTerminalRead;
 }
 
 CloudProtectedPageLeaseTransport? _protectedLeaseTransportFor(
@@ -420,6 +429,7 @@ class CloudSyncEngine {
     final runNumber = ++_runSerial;
     CloudCoordinatorLeaseFence? leaseFence;
     var counters = const CloudSyncRunCounters();
+    var observedEmptyTerminalRead = false;
     _emit(CloudSyncEventType.runStarted, at: startedAt, trigger: trigger);
 
     try {
@@ -640,6 +650,7 @@ class CloudSyncEngine {
           shadowJournalRejectedEntries: pullResult.rejectedEntries,
         );
         pullSucceeded = pullResult.succeeded;
+        observedEmptyTerminalRead = pullResult.observedEmptyTerminalRead;
         final previousFailure = degradedFailure;
         final previousFailureSafeCode = degradedFailureSafeCode;
         if (pullResult.failureCategory != null) {
@@ -825,6 +836,7 @@ class CloudSyncEngine {
           finishedAt: finishedAt,
           failureCategory: CloudFailureCategory.cancelled,
           shadowJournalBlockReason: shadowJournalBlockReason,
+          observedEmptyTerminalRead: observedEmptyTerminalRead,
         );
       }
 
@@ -870,6 +882,7 @@ class CloudSyncEngine {
         failureCategory: completionFailureCategory,
         failureSafeCode: completionFailureSafeCode,
         shadowJournalBlockReason: shadowJournalBlockReason,
+        observedEmptyTerminalRead: observedEmptyTerminalRead,
       );
     } on CloudSyncFailure catch (error) {
       final finishedAt = _clock();
@@ -889,6 +902,7 @@ class CloudSyncEngine {
         finishedAt: finishedAt,
         failureCategory: error.category,
         failureSafeCode: error.safeCode,
+        observedEmptyTerminalRead: observedEmptyTerminalRead,
       );
     } catch (_) {
       final finishedAt = _clock();
@@ -907,6 +921,7 @@ class CloudSyncEngine {
         startedAt: startedAt,
         finishedAt: finishedAt,
         failureCategory: CloudFailureCategory.unknown,
+        observedEmptyTerminalRead: observedEmptyTerminalRead,
       );
     } finally {
       try {
@@ -977,6 +992,8 @@ class CloudSyncEngine {
 
     var fetched = 0;
     var sawSuccessfulPage = false;
+    var sawServerChanges = false;
+    var observedTerminalPage = false;
     var semanticCounters = const CloudSyncRunCounters();
     var semanticProcessedEntries = 0;
     CloudFailureCategory? pageBlockingFailureCategory;
@@ -1207,6 +1224,8 @@ class CloudSyncEngine {
         batch,
         previousCheckpointReference: checkpoint.fetchedToken,
       );
+      sawServerChanges = sawServerChanges || batch.changes.isNotEmpty;
+      observedTerminalPage = observedTerminalPage || !batch.hasMore;
       fetched += inserted;
       sawSuccessfulPage = true;
       _emit(CloudSyncEventType.fetchCompleted, at: _clock(), count: inserted);
@@ -1276,6 +1295,8 @@ class CloudSyncEngine {
       journalUsage: journalUsage,
       semanticCounters: semanticCounters,
       semanticProcessedEntries: semanticProcessedEntries,
+      observedEmptyTerminalRead:
+          sawSuccessfulPage && !sawServerChanges && observedTerminalPage,
     );
   }
 
@@ -2683,6 +2704,7 @@ class CloudSyncEngine {
     CloudFailureCategory? failureCategory,
     String? failureSafeCode,
     CloudShadowJournalBlockReason? shadowJournalBlockReason,
+    bool observedEmptyTerminalRead = false,
   }) async {
     final result = CloudSyncRunResult(
       status: status,
@@ -2696,6 +2718,7 @@ class CloudSyncEngine {
           ? null
           : cloudSyncV2SafeFailureCodeForCandidate(failureSafeCode),
       shadowJournalBlockReason: shadowJournalBlockReason,
+      observedEmptyTerminalRead: observedEmptyTerminalRead,
     );
     try {
       await _store.recordRun(
@@ -2765,6 +2788,7 @@ class _PullResult {
     this.journalBlockReason,
     this.semanticCounters = const CloudSyncRunCounters(),
     this.semanticProcessedEntries = 0,
+    this.observedEmptyTerminalRead = false,
   }) : journalUsage = journalUsage ?? CloudShadowJournalUsage.empty;
 
   final int fetched;
@@ -2776,6 +2800,7 @@ class _PullResult {
   final CloudShadowJournalBlockReason? journalBlockReason;
   final CloudSyncRunCounters semanticCounters;
   final int semanticProcessedEntries;
+  final bool observedEmptyTerminalRead;
 }
 
 class _InboxApplyResult {

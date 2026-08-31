@@ -1,6 +1,8 @@
 import 'dart:convert';
 
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report_file.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,13 +28,18 @@ CloudSyncSemanticPullZoneReport _zone(
   int semanticUnsupportedServiceQuarantined = 0,
   int semanticStageQuarantined = 1,
   int retried = 0,
+  CloudSyncRunStatus status = CloudSyncRunStatus.completed,
+  CloudFailureCategory? failureCategory,
+  String? failureSafeCode,
+  CloudSyncSkipReason? skipReason,
+  bool observedEmptyTerminalRead = false,
   Map<String, int> diagnosticCounts = const {
     'canonical_chat_relation_unavailable': 1,
     'native_ready': 1,
   },
 }) => CloudSyncSemanticPullZoneReport(
   zoneLabel: label,
-  status: CloudSyncRunStatus.completed,
+  status: status,
   fetched: fetched,
   applied: applied,
   deferred: deferred,
@@ -52,7 +59,60 @@ CloudSyncSemanticPullZoneReport _zone(
   semanticStageQuarantined: semanticStageQuarantined,
   retried: retried,
   elapsedMilliseconds: 5,
+  observedEmptyTerminalRead: observedEmptyTerminalRead,
+  failureCategory: failureCategory,
+  failureSafeCode: failureSafeCode,
+  skipReason: skipReason,
   diagnosticCounts: diagnosticCounts,
+);
+
+CloudSyncSemanticPullZoneReport _cleanZone(
+  String label, {
+  CloudSyncRunStatus status = CloudSyncRunStatus.completed,
+  CloudFailureCategory? failureCategory,
+  String? failureSafeCode,
+  CloudSyncSkipReason? skipReason,
+  bool observedEmptyTerminalRead = true,
+  int retainedUnprojected = 0,
+  int deferred = 0,
+  int quarantined = 0,
+  int preflightQuarantined = 0,
+  int preflightUnsupportedRecordType = 0,
+  int preflightMalformedMetadata = 0,
+  int preflightOversizedRecord = 0,
+  int preflightInvalidChangeShape = 0,
+  int preflightUnknown = 0,
+  int startupQuarantined = 0,
+  int postFetchQuarantined = 0,
+  int tombstoneQuarantined = 0,
+  int semanticUnsupportedServiceQuarantined = 0,
+  int semanticStageQuarantined = 0,
+  int retried = 0,
+}) => _zone(
+  label,
+  fetched: 0,
+  applied: 0,
+  deferred: deferred,
+  quarantined: quarantined,
+  preflightQuarantined: preflightQuarantined,
+  preflightUnsupportedRecordType: preflightUnsupportedRecordType,
+  preflightMalformedMetadata: preflightMalformedMetadata,
+  preflightOversizedRecord: preflightOversizedRecord,
+  preflightInvalidChangeShape: preflightInvalidChangeShape,
+  preflightUnknown: preflightUnknown,
+  startupQuarantined: startupQuarantined,
+  postFetchQuarantined: postFetchQuarantined,
+  tombstoneQuarantined: tombstoneQuarantined,
+  retainedUnprojected: retainedUnprojected,
+  semanticUnsupportedServiceQuarantined: semanticUnsupportedServiceQuarantined,
+  semanticStageQuarantined: semanticStageQuarantined,
+  retried: retried,
+  status: status,
+  failureCategory: failureCategory,
+  failureSafeCode: failureSafeCode,
+  skipReason: skipReason,
+  observedEmptyTerminalRead: observedEmptyTerminalRead,
+  diagnosticCounts: const {},
 );
 
 CloudSyncSemanticPullReport _report(
@@ -63,6 +123,7 @@ CloudSyncSemanticPullReport _report(
   int chatFetched = 1,
   int chatRetainedUnprojected = 0,
   Map<String, int>? chatDiagnosticCounts,
+  Iterable<CloudSyncSemanticPullZoneReport>? zoneReports,
 }) => CloudSyncSemanticPullReport(
   timestampUtc: timestamp,
   platform: 'windows',
@@ -72,18 +133,23 @@ CloudSyncSemanticPullReport _report(
   changeLimit: changeLimit,
   outboxCountBefore: 0,
   outboxCountAfter: outboxCountAfter,
-  zones: [
-    _zone(
-      'chats',
-      fetched: chatFetched,
-      retainedUnprojected: chatRetainedUnprojected,
-      diagnosticCounts:
-          chatDiagnosticCounts ??
-          const {'canonical_chat_relation_unavailable': 1, 'native_ready': 1},
-    ),
-    _zone('messages'),
-    _zone('attachments'),
-  ],
+  zones:
+      zoneReports ??
+      [
+        _zone(
+          'chats',
+          fetched: chatFetched,
+          retainedUnprojected: chatRetainedUnprojected,
+          diagnosticCounts:
+              chatDiagnosticCounts ??
+              const {
+                'canonical_chat_relation_unavailable': 1,
+                'native_ready': 1,
+              },
+        ),
+        _zone('messages'),
+        _zone('attachments'),
+      ],
 );
 
 void main() {
@@ -110,13 +176,17 @@ void main() {
 
     expect(file.path, contains('obcs2-semantic-'));
     final json = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-    expect(json['schemaVersion'], 4);
+    expect(json['schemaVersion'], 5);
     expect(json['tombstoneSemanticDeletesEnabled'], isFalse);
     expect(json['tombstoneReadOnlyAcknowledgementsEnabled'], isTrue);
     expect(json['retainedUnprojectedEvidencePreserved'], isTrue);
     expect(json, isNot(contains('tombstonesEnabled')));
     final zones = json['zones'] as List<dynamic>;
     expect((zones.first as Map<String, dynamic>)['retainedUnprojected'], 3);
+    expect(
+      (zones.first as Map<String, dynamic>)['observedEmptyTerminalRead'],
+      isFalse,
+    );
     expect(
       (zones.first as Map<String, dynamic>)['semanticDiagnostics'],
       <String, dynamic>{
@@ -149,6 +219,174 @@ void main() {
         ),
       ),
     );
+  });
+
+  test(
+    'rejects terminal-empty evidence when fetched rows are nonzero',
+    () async {
+      final writer = CloudSyncSemanticPullReportFileWriter(
+        privateReportDirectory: reports.path,
+        trustedStorageRoot: root.path,
+      );
+
+      await expectLater(
+        writer.write(
+          _report(
+            DateTime.utc(2026, 8, 29, 1, 2, 3),
+            zoneReports: [
+              _zone('chats', fetched: 1, observedEmptyTerminalRead: true),
+              _zone('messages'),
+              _zone('attachments'),
+            ],
+          ),
+        ),
+        throwsA(
+          isA<CloudSyncSemanticPullReportFileException>().having(
+            (error) => error.safeCode,
+            'safeCode',
+            'cloud_sync_semantic_report_zone_invalid',
+          ),
+        ),
+      );
+    },
+  );
+
+  test('evaluates the three-zone drain and projection gates', () {
+    final clean = _report(
+      DateTime.utc(2026, 8, 29, 1, 2, 3),
+      zoneReports: [
+        _cleanZone('chats'),
+        _cleanZone('messages'),
+        _cleanZone('attachments'),
+      ],
+    );
+    expect(clean.hasExactThreeZoneStructure, isTrue);
+    expect(clean.allZonesObservedEmptyTerminalRead, isTrue);
+    expect(clean.safeToContinueDrain, isTrue);
+    expect(clean.projectionComplete, isTrue);
+
+    final retainedProjection = _report(
+      DateTime.utc(2026, 8, 29, 1, 2, 4),
+      zoneReports: [
+        _cleanZone('chats'),
+        _cleanZone(
+          'messages',
+          status: CloudSyncRunStatus.degraded,
+          failureCategory: CloudFailureCategory.dependency,
+          failureSafeCode: 'retained_projection_incomplete',
+          retainedUnprojected: 1,
+        ),
+        _cleanZone('attachments'),
+      ],
+    );
+    expect(retainedProjection.hasExactThreeZoneStructure, isTrue);
+    expect(retainedProjection.allZonesObservedEmptyTerminalRead, isTrue);
+    expect(retainedProjection.safeToContinueDrain, isTrue);
+    expect(retainedProjection.projectionComplete, isFalse);
+
+    final mixedDegraded = _report(
+      DateTime.utc(2026, 8, 29, 1, 2, 5),
+      zoneReports: [
+        _cleanZone('chats'),
+        _cleanZone(
+          'messages',
+          status: CloudSyncRunStatus.degraded,
+          failureCategory: CloudFailureCategory.network,
+          failureSafeCode: 'network',
+        ),
+        _cleanZone('attachments'),
+      ],
+    );
+    expect(mixedDegraded.hasExactThreeZoneStructure, isTrue);
+    expect(mixedDegraded.safeToContinueDrain, isFalse);
+
+    final quarantined = _report(
+      DateTime.utc(2026, 8, 29, 1, 2, 6),
+      zoneReports: [
+        _cleanZone('chats'),
+        _zone('messages', quarantined: 1),
+        _cleanZone('attachments'),
+      ],
+    );
+    expect(quarantined.hasExactThreeZoneStructure, isTrue);
+    expect(quarantined.safeToContinueDrain, isFalse);
+
+    final outboxMoved = _report(
+      DateTime.utc(2026, 8, 29, 1, 2, 7),
+      outboxCountAfter: 1,
+      zoneReports: [
+        _cleanZone('chats'),
+        _cleanZone('messages'),
+        _cleanZone('attachments'),
+      ],
+    );
+    expect(outboxMoved.hasExactThreeZoneStructure, isTrue);
+    expect(outboxMoved.safeToContinueDrain, isFalse);
+
+    final invalidStructure = _report(
+      DateTime.utc(2026, 8, 29, 1, 2, 8),
+      zoneReports: [
+        _cleanZone('chats'),
+        _cleanZone('chats'),
+        _cleanZone('attachments'),
+      ],
+    );
+    expect(invalidStructure.hasExactThreeZoneStructure, isFalse);
+    expect(invalidStructure.allZonesObservedEmptyTerminalRead, isFalse);
+    expect(invalidStructure.safeToContinueDrain, isFalse);
+    expect(invalidStructure.projectionComplete, isFalse);
+  });
+
+  test('rejects every unsafe zone condition independently', () {
+    final unsafeZones = <String, CloudSyncSemanticPullZoneReport>{
+      'completed-with-failure': _cleanZone(
+        'messages',
+        failureCategory: CloudFailureCategory.network,
+        failureSafeCode: 'network',
+      ),
+      'skip': _cleanZone(
+        'messages',
+        skipReason: CloudSyncSkipReason.pullBackoffActive,
+      ),
+      'deferred': _cleanZone('messages', deferred: 1),
+      'quarantined': _cleanZone('messages', quarantined: 1),
+      'preflight-total': _cleanZone('messages', preflightQuarantined: 1),
+      'preflight-unsupported': _cleanZone(
+        'messages',
+        preflightUnsupportedRecordType: 1,
+      ),
+      'preflight-malformed': _cleanZone(
+        'messages',
+        preflightMalformedMetadata: 1,
+      ),
+      'preflight-oversized': _cleanZone(
+        'messages',
+        preflightOversizedRecord: 1,
+      ),
+      'preflight-shape': _cleanZone('messages', preflightInvalidChangeShape: 1),
+      'preflight-unknown': _cleanZone('messages', preflightUnknown: 1),
+      'startup-quarantine': _cleanZone('messages', startupQuarantined: 1),
+      'post-fetch-quarantine': _cleanZone('messages', postFetchQuarantined: 1),
+      'tombstone-quarantine': _cleanZone('messages', tombstoneQuarantined: 1),
+      'unsupported-service': _cleanZone(
+        'messages',
+        semanticUnsupportedServiceQuarantined: 1,
+      ),
+      'semantic-stage': _cleanZone('messages', semanticStageQuarantined: 1),
+      'retry': _cleanZone('messages', retried: 1),
+    };
+
+    for (final entry in unsafeZones.entries) {
+      final candidate = _report(
+        DateTime.utc(2026, 8, 29, 2),
+        zoneReports: [
+          _cleanZone('chats'),
+          entry.value,
+          _cleanZone('attachments'),
+        ],
+      );
+      expect(candidate.safeToContinueDrain, isFalse, reason: entry.key);
+    }
   });
 
   test('accepts the four-page 200-record contract', () async {

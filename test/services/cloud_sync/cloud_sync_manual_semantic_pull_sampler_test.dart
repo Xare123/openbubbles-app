@@ -203,7 +203,7 @@ void main() {
           FakeCloudInboxApplier(),
     );
 
-    await sampler.runConfirmed();
+    final report = await sampler.runConfirmed();
 
     expect(events.first, 'ensure-auth');
     expect(events[1], 'pause-native-writers');
@@ -214,6 +214,15 @@ void main() {
     expect(events.last, 'resume-native-writers');
     expect(nativeWriterPause.pauseCalls, 1);
     expect(nativeWriterPause.resumeCalls, 1);
+    expect(report.zones.map((zone) => zone.observedEmptyTerminalRead), [
+      true,
+      true,
+      true,
+    ]);
+    expect(report.hasExactThreeZoneStructure, isTrue);
+    expect(report.allZonesObservedEmptyTerminalRead, isTrue);
+    expect(report.safeToContinueDrain, isTrue);
+    expect(report.projectionComplete, isTrue);
   });
 
   test('native writer pause failure performs no semantic work', () async {
@@ -703,6 +712,7 @@ void main() {
         semanticStageQuarantined: 0,
         retried: 0,
         elapsedMilliseconds: 1,
+        observedEmptyTerminalRead: true,
         diagnosticCounts: const {'native_quarantined_unsupported_service': 1},
       );
 
@@ -718,6 +728,7 @@ void main() {
       expect(json['semanticDiagnostics'], <String, int>{
         'native_quarantined_unsupported_service': 1,
       });
+      expect(json['observedEmptyTerminalRead'], isTrue);
       expect(json.toString(), isNot(contains('service-name')));
       expect(json.toString(), isNot(contains('record-id')));
       expect(json.toString(), isNot(contains('message-body')));

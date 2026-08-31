@@ -11,6 +11,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_s
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_protector_health.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_drain_controller.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report_file.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/objectbox_cloud_sync_preflight.dart';
@@ -29,6 +30,7 @@ Future<void> main(List<String> arguments) async {
   if (!CloudSyncDevGate.manualSemanticPullEnabled) {
     throw StateError('cloud_sync_semantic_pull_disabled');
   }
+  final operation = CloudSyncV2WindowsHarnessOperation.parse(arguments);
 
   fs.configureCloudSyncV2WindowsDevProfile();
   var stage = 'profile-configured';
@@ -50,7 +52,7 @@ Future<void> main(List<String> arguments) async {
     stage = 'database-ready';
     await _writeHarnessStatus(state: 'initializing', stage: stage);
 
-    runApp(CloudSyncV2WindowsHarness(runOnce: arguments.contains('run-once')));
+    runApp(CloudSyncV2WindowsHarness(operation: operation));
     await _writeHarnessStatus(state: 'running', stage: 'ui-started');
   } catch (error, stackTrace) {
     await _writeHarnessStatus(
@@ -63,6 +65,30 @@ Future<void> main(List<String> arguments) async {
     );
     rethrow;
   }
+}
+
+enum CloudSyncV2WindowsHarnessOperation {
+  interactive,
+  runOnce,
+  drain;
+
+  static CloudSyncV2WindowsHarnessOperation parse(List<String> arguments) {
+    if (arguments.isEmpty) return interactive;
+    if (arguments.length != 1) {
+      throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
+    }
+    return switch (arguments.single) {
+      'run-once' => runOnce,
+      'drain' => drain,
+      _ => throw StateError('cloud_sync_windows_dev_launch_mode_invalid'),
+    };
+  }
+}
+
+enum _CloudSyncV2WindowsHarnessResumeOperation {
+  initialize,
+  semanticPull,
+  semanticDrain,
 }
 
 Future<void> _harnessStatusWriteTail = Future<void>.value();
@@ -141,9 +167,9 @@ String _sanitizeHarnessDetail(String value, {int maxLength = 1000}) {
 }
 
 class CloudSyncV2WindowsHarness extends StatefulWidget {
-  const CloudSyncV2WindowsHarness({super.key, required this.runOnce});
+  const CloudSyncV2WindowsHarness({super.key, required this.operation});
 
-  final bool runOnce;
+  final CloudSyncV2WindowsHarnessOperation operation;
 
   @override
   State<CloudSyncV2WindowsHarness> createState() =>
@@ -160,11 +186,14 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
   api.VerifyBody? _smsVerificationBody;
   List<api.TrustedPhoneNumber> _smsPhoneOptions = const [];
   CloudSyncProductionSemanticPullAdapter? _adapter;
+  CloudSyncSemanticPullReportFileWriter? _reportWriter;
+  CloudSyncSemanticDrainController? _drainController;
   CloudSyncSemanticPullReport? _report;
   String _status = 'Opening the isolated Windows profile...';
   String _runtimeStage = 'initializing';
   bool _needsTwoFactor = false;
   bool _busy = true;
+  _CloudSyncV2WindowsHarnessResumeOperation? _resumeAfterTwoFactor;
 
   Future<void> _setRuntimeStage(
     String stage, {
@@ -182,6 +211,8 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
   }
 
   Future<void> _initialize() async {
+    _resumeAfterTwoFactor =
+        _CloudSyncV2WindowsHarnessResumeOperation.initialize;
     try {
       // Main has already bound the process-global DPAPI keystore to this exact
       // isolated profile. Keep this composition CloudKit-only: do not invoke
@@ -298,13 +329,26 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         architecture: ffi.Abi.current().toString(),
         buildCommit: _buildIdentifier(),
       );
+      _reportWriter = CloudSyncSemanticPullReportFileWriter(
+        privateReportDirectory: path.join(
+          fs.appDocDir.path,
+          'cloud-sync-v2',
+          'reports',
+        ),
+        trustedStorageRoot: fs.appDocDir.path,
+      );
+      _drainController = CloudSyncSemanticDrainController.production(
+        sampler: _adapter!.sampler,
+        reportWriter: _reportWriter!,
+      );
       if (!mounted) return;
       setState(() {
         _busy = false;
         _status = 'Ready. The Store app must remain closed while this runs.';
       });
       await _setRuntimeStage('cloudkit-client-ready', state: 'ready');
-      if (widget.runOnce) await _runSemanticPull();
+      _resumeAfterTwoFactor = null;
+      await _runRequestedLaunchOperation();
     } catch (error) {
       if (cloudSyncV2SafeFailureCode(error) ==
           'cloud_sync_native_auth_refresh_session_missing') {
@@ -316,6 +360,17 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         }
       }
       _showFailure(error);
+    }
+  }
+
+  Future<void> _runRequestedLaunchOperation() async {
+    switch (widget.operation) {
+      case CloudSyncV2WindowsHarnessOperation.interactive:
+        return;
+      case CloudSyncV2WindowsHarnessOperation.runOnce:
+        await _runSemanticPull();
+      case CloudSyncV2WindowsHarnessOperation.drain:
+        await _runSemanticDrain();
     }
   }
 
@@ -425,7 +480,18 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         _status = 'SMS verification succeeded. Resuming the pull...';
       });
       await _setRuntimeStage('sms-2fa-verified', state: 'running');
-      await _runSemanticPull();
+      final resumeOperation = _resumeAfterTwoFactor;
+      _resumeAfterTwoFactor = null;
+      switch (resumeOperation) {
+        case _CloudSyncV2WindowsHarnessResumeOperation.initialize:
+          await _initialize();
+        case _CloudSyncV2WindowsHarnessResumeOperation.semanticPull:
+          await _runSemanticPull();
+        case _CloudSyncV2WindowsHarnessResumeOperation.semanticDrain:
+          await _runSemanticDrain();
+        case null:
+          await _initialize();
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -444,7 +510,10 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
 
   Future<void> _runSemanticPull() async {
     final adapter = _adapter;
-    if (adapter == null || _busy) return;
+    final reportWriter = _reportWriter;
+    if (adapter == null || reportWriter == null || _busy) return;
+    _resumeAfterTwoFactor =
+        _CloudSyncV2WindowsHarnessResumeOperation.semanticPull;
     setState(() {
       _busy = true;
       _status = 'Running one bounded, read-only semantic pull...';
@@ -452,14 +521,7 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
     await _setRuntimeStage('semantic-pull', state: 'running');
     try {
       final report = await adapter.sampler.runConfirmed();
-      final reportFile = await CloudSyncSemanticPullReportFileWriter(
-        privateReportDirectory: path.join(
-          fs.appDocDir.path,
-          'cloud-sync-v2',
-          'reports',
-        ),
-        trustedStorageRoot: fs.appDocDir.path,
-      ).write(report);
+      final reportFile = await reportWriter.write(report);
       final fetched = report.zones.fold<int>(
         0,
         (sum, zone) => sum + zone.fetched,
@@ -487,6 +549,64 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
             'fetched=$fetched applied=$applied retained=$retained '
             'report=${path.basename(reportFile.path)}',
       );
+      _resumeAfterTwoFactor = null;
+    } catch (error) {
+      if (cloudSyncV2SafeFailureCode(error) ==
+          'cloud_sync_native_auth_refresh_session_missing') {
+        try {
+          if (await _prepareSmsTwoFactor()) return;
+        } catch (_) {
+          _showFailure(StateError('cloud_sync_windows_dev_2fa_request_failed'));
+          return;
+        }
+      }
+      _showFailure(error);
+    }
+  }
+
+  Future<void> _runSemanticDrain() async {
+    final controller = _drainController;
+    if (controller == null || _busy) return;
+    _resumeAfterTwoFactor =
+        _CloudSyncV2WindowsHarnessResumeOperation.semanticDrain;
+    setState(() {
+      _busy = true;
+      _status = 'Draining bounded CloudKit history in one read-only session...';
+    });
+    await _setRuntimeStage('semantic-drain', state: 'running');
+    try {
+      final result = await controller.drainConfirmedAndPersist();
+      final reportReference = result.persistedReportReference;
+      final reportName = reportReference is File
+          ? path.basename(reportReference.path)
+          : 'persisted';
+      final terminalStage = result.reachedPassLimit
+          ? 'semantic-drain-pass-limit'
+          : result.projectionComplete
+          ? 'semantic-drain-complete'
+          : 'semantic-drain-remote-complete-projection-partial';
+      if (!mounted) return;
+      setState(() {
+        _report = result.lastReport;
+        _busy = false;
+        _status = result.reachedPassLimit
+            ? 'Paused safely after ${result.passes} passes. Resume the drain '
+                  'to continue. Report $reportName'
+            : result.projectionComplete
+            ? 'Remote history and local projection are current after '
+                  '${result.passes} passes. Report $reportName'
+            : 'Remote history is current after ${result.passes} passes; local '
+                  'projection still has retained evidence. Report $reportName';
+      });
+      await _setRuntimeStage(
+        terminalStage,
+        state: 'finished',
+        detail:
+            'passes=${result.passes} remote_drained=${result.remoteDrained} '
+            'projection_complete=${result.projectionComplete} '
+            'pass_limit=${result.reachedPassLimit} report=$reportName',
+      );
+      _resumeAfterTwoFactor = null;
     } catch (error) {
       if (cloudSyncV2SafeFailureCode(error) ==
           'cloud_sync_native_auth_refresh_session_missing') {
@@ -503,6 +623,7 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
 
   void _showFailure(Object error) {
     if (!mounted) return;
+    _resumeAfterTwoFactor = null;
     unawaited(
       _writeHarnessStatus(
         state: 'failed',
@@ -530,6 +651,8 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
 
   @override
   void dispose() {
+    final controller = _drainController;
+    if (controller != null) unawaited(controller.dispose());
     _twoFactorController.dispose();
     super.dispose();
   }
