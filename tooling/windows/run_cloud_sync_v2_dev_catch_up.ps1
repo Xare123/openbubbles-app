@@ -186,8 +186,8 @@ for ($run = 1; $run -le $MaximumRuns; $run++) {
 
     if ($summary.Fetched -eq 0) {
         Write-Host (
-            'CloudKit catch-up reached the current server head after {0} ' +
-            'run(s): fetched={1}, applied={2}, retained={3}, build={4}.' -f
+            ('CloudKit catch-up reached the current server head after {0} ' +
+                'run(s): fetched={1}, applied={2}, retained={3}, build={4}.') -f
             $run,
             $totalFetched,
             $totalApplied,
@@ -199,8 +199,8 @@ for ($run = 1; $run -le $MaximumRuns; $run++) {
 }
 
 throw (
-    'CloudKit catch-up reached its {0}-run safety limit after fetching {1} ' +
-    'record(s). Durable tokens were preserved; rerun to continue.' -f
+    ('CloudKit catch-up reached its {0}-run safety limit after fetching {1} ' +
+        'record(s). Durable tokens were preserved; rerun to continue.') -f
     $MaximumRuns,
     $totalFetched
 )
