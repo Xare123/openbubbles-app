@@ -22,6 +22,7 @@ typedef CloudSyncClock = DateTime Function();
 typedef CloudSyncUuidFactory = String Function();
 
 const _readOnlyCanaryRetainableDependencySafeCodes = <String>{
+  ...CloudSyncV2DecoderSafeFailureCodes.readOnlyCanaryRetainableDependencies,
   'canonical_attachment_owner_unavailable',
   'canonical_chat_alias_owner_ambiguous',
   'canonical_message_chat_alias_ambiguous',

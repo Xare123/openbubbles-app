@@ -120,6 +120,7 @@ void main() {
 
   test('exposes reviewed semantic barrier codes', () {
     const codes = <String>{
+      ...CloudSyncV2DecoderSafeFailureCodes.all,
       'canonical_attachment_owner_unavailable',
       'canonical_chat_alias_owner_ambiguous',
       'canonical_chat_alias_conflict',
@@ -128,7 +129,6 @@ void main() {
       'canonical_message_reply_parent_unavailable',
       'canonical_reaction_parent_unavailable',
       'checkpoint_pending_page_unresolved',
-      'decoder_message_chat_reference_invalid',
       'preflight_invalid_change_shape',
       'preflight_malformed_metadata',
       'preflight_oversized_record',
@@ -153,6 +153,20 @@ void main() {
       'unsupported_semantic_persistence_lane',
     };
     for (final code in codes) {
+      expect(cloudSyncV2SafeFailureCodeForCandidate(code), code);
+    }
+  });
+
+  test('decoder Canary-retainable codes are reviewed report codes', () {
+    expect(
+      CloudSyncV2DecoderSafeFailureCodes.all,
+      containsAll(
+        CloudSyncV2DecoderSafeFailureCodes.readOnlyCanaryRetainableDependencies,
+      ),
+    );
+    for (final code
+        in CloudSyncV2DecoderSafeFailureCodes
+            .readOnlyCanaryRetainableDependencies) {
       expect(cloudSyncV2SafeFailureCodeForCandidate(code), code);
     }
   });

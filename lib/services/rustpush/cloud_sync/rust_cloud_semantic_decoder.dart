@@ -7,6 +7,7 @@ import 'cloud_inbox_applier.dart';
 import 'cloud_merge_policy.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_semantic_diagnostics.dart';
 
 final class CloudTombstoneIdentity {
@@ -494,7 +495,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     if (populated != 1) {
       throw const CloudSemanticDecodeFailure(
         CloudFailureCategory.malformedRecord,
-        safeCode: 'decoder_payload_lane_count_invalid',
+        safeCode: CloudSyncV2DecoderSafeFailureCodes.payloadLaneCountInvalid,
       );
     }
     return switch (kind) {
@@ -563,7 +564,8 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         (value.attachmentLogicalKeyHash == null)) {
       throw const CloudSemanticDecodeFailure(
         CloudFailureCategory.malformedRecord,
-        safeCode: 'decoder_text_run_attachment_shape_invalid',
+        safeCode:
+            CloudSyncV2DecoderSafeFailureCodes.textRunAttachmentShapeInvalid,
       );
     }
     return CloudSemanticTextRun(
@@ -635,7 +637,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         )) {
       throw const CloudSemanticDecodeFailure(
         CloudFailureCategory.malformedRecord,
-        safeCode: 'decoder_chat_shape_invalid',
+        safeCode: CloudSyncV2DecoderSafeFailureCodes.chatShapeInvalid,
       );
     }
     return CloudChatEntityPayload(
@@ -723,7 +725,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         !_replyShapeMatches(payload)) {
       throw const CloudSemanticDecodeFailure(
         CloudFailureCategory.dependency,
-        safeCode: 'decoder_message_shape_unsupported',
+        safeCode: CloudSyncV2DecoderSafeFailureCodes.messageShapeUnsupported,
       );
     }
     final chatIdAliasCandidates = payload.chatIdAliasCandidates
@@ -749,7 +751,8 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         serviceCandidates.single.keyHash != payload.chatAliasKeyHash) {
       throw const CloudSemanticDecodeFailure(
         CloudFailureCategory.malformedRecord,
-        safeCode: 'decoder_message_chat_reference_invalid',
+        safeCode:
+            CloudSyncV2DecoderSafeFailureCodes.messageChatReferenceInvalid,
       );
     }
     return CloudMessageEntityPayload(
@@ -857,7 +860,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
                 payload.associatedEmoji == null))) {
       throw const CloudSemanticDecodeFailure(
         CloudFailureCategory.dependency,
-        safeCode: 'decoder_reaction_shape_unsupported',
+        safeCode: CloudSyncV2DecoderSafeFailureCodes.reactionShapeUnsupported,
       );
     }
     final baseType = switch (reactionKind) {
@@ -914,7 +917,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
             !_protectedReference.hasMatch(payload.protectedLocalReference!))) {
       throw const CloudSemanticDecodeFailure(
         CloudFailureCategory.dependency,
-        safeCode: 'decoder_attachment_shape_unsupported',
+        safeCode: CloudSyncV2DecoderSafeFailureCodes.attachmentShapeUnsupported,
       );
     }
     return CloudAttachmentEntityPayload(

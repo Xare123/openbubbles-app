@@ -478,6 +478,21 @@ void main() {
     },
   );
 
+  test('reports a fixed code for an unsupported reaction shape', () async {
+    final entry = _entry();
+    bindings.result = _readyReaction(
+      entry,
+      reactionKind: frb.CloudSyncTransientReactionKind.emoji,
+      removed: false,
+    );
+
+    await _expectFailure(
+      decoder().decode(entry),
+      CloudFailureCategory.dependency,
+      safeCode: 'decoder_reaction_shape_unsupported',
+    );
+  });
+
   test(
     'defers every incomplete attachment owner identity combination',
     () async {

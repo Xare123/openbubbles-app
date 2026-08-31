@@ -4,7 +4,37 @@ import 'cloud_sync_semantic_pull_report_file.dart';
 import 'cloudkit_operation_interlock.dart';
 import 'cloudkit_writer_authority.dart';
 
+abstract final class CloudSyncV2DecoderSafeFailureCodes {
+  static const attachmentShapeUnsupported =
+      'decoder_attachment_shape_unsupported';
+  static const chatShapeInvalid = 'decoder_chat_shape_invalid';
+  static const messageChatReferenceInvalid =
+      'decoder_message_chat_reference_invalid';
+  static const messageShapeUnsupported = 'decoder_message_shape_unsupported';
+  static const payloadLaneCountInvalid = 'decoder_payload_lane_count_invalid';
+  static const reactionShapeUnsupported = 'decoder_reaction_shape_unsupported';
+  static const textRunAttachmentShapeInvalid =
+      'decoder_text_run_attachment_shape_invalid';
+
+  static const all = <String>{
+    attachmentShapeUnsupported,
+    chatShapeInvalid,
+    messageChatReferenceInvalid,
+    messageShapeUnsupported,
+    payloadLaneCountInvalid,
+    reactionShapeUnsupported,
+    textRunAttachmentShapeInvalid,
+  };
+
+  static const readOnlyCanaryRetainableDependencies = <String>{
+    attachmentShapeUnsupported,
+    messageShapeUnsupported,
+    reactionShapeUnsupported,
+  };
+}
+
 const _cloudSyncV2SafeFailureCodes = <String>{
+  ...CloudSyncV2DecoderSafeFailureCodes.all,
   'cloud_attachment_account_changed',
   'cloud_attachment_integrity_mismatch',
   'cloud_attachment_native_result_invalid',
@@ -197,7 +227,6 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloudkit_writer_v2_readback_failed',
   'cloudkit_writer_v2_restore_precondition_failed',
   'coordinator_active',
-  'decoder_message_chat_reference_invalid',
   'legacy_sync_active',
   'legacy_cloudkit_blocked_by_v2_writer',
   'logout_active',

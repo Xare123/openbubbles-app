@@ -423,7 +423,8 @@ void main() {
       store.retainedEntries.addAll([failed, successful]);
       decoder.failures[failed.change.changeId] =
           const CloudSemanticDecodeFailure(
-            CloudFailureCategory.malformedRecord,
+            CloudFailureCategory.dependency,
+            safeCode: 'decoder_reaction_shape_unsupported',
           );
       applier = TransactionalCloudInboxApplier(
         decoder: decoder,

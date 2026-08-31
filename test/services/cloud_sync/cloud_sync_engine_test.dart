@@ -5,6 +5,7 @@ import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_cancellation
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_observability.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_store.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_shadow_journal_budget.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_testing.dart';
@@ -2202,6 +2203,50 @@ void main() {
     },
   );
 
+  for (final safeCode
+      in CloudSyncV2DecoderSafeFailureCodes
+          .readOnlyCanaryRetainableDependencies) {
+    test(
+      'guarded Canary retains deterministic decoder dependency $safeCode',
+      () async {
+        transport.enqueueFetchBatch(
+          CloudFetchBatch(
+            scope: scope,
+            changes: [testChange(1), testChange(2)],
+            batchId: 'canary-decoder-dependency-page',
+            generation: 1,
+            nextToken: 'canary-decoder-dependency-token',
+            hasMore: false,
+          ),
+        );
+        applier.resultsBySequence[1] = CloudInboxApplyResult.retryable(
+          failureCategory: CloudFailureCategory.dependency,
+          safeCode: safeCode,
+        );
+
+        final result = await engine(
+          flags: const CloudSyncFeatureFlags(
+            readOnlyFetch: true,
+            semanticApply: true,
+          ),
+          retainKnownDependencyDeferralsForReadOnlySemanticCanary: true,
+        ).synchronize(trigger: CloudSyncTrigger.manual);
+
+        expect(result.status, CloudSyncRunStatus.degraded);
+        expect(result.failureCategory, CloudFailureCategory.dependency);
+        expect(result.failureSafeCode, 'retained_projection_incomplete');
+        expect(result.counters.retainedUnprojected, 1);
+        expect(result.counters.retried, 0);
+        expect(result.counters.applied, 1);
+        expect(applier.appliedSequences, [1, 2]);
+        expect((await store.readCheckpoint(scope)).pendingBatchId, isNull);
+        final entries = await store.inboxEntries(scope);
+        expect(entries[0].status, CloudInboxStatus.retainedUnprojected);
+        expect(entries[1].status, CloudInboxStatus.applied);
+      },
+    );
+  }
+
   test(
     'guarded Canary retains a reviewed native deferral and continues the page',
     () async {
@@ -2248,7 +2293,7 @@ void main() {
   );
 
   test(
-    'Canary flag disabled keeps retryable dependency as page barrier',
+    'Canary flag disabled keeps decoder dependency as page barrier',
     () async {
       transport.enqueueFetchBatch(
         CloudFetchBatch(
@@ -2262,7 +2307,7 @@ void main() {
       );
       applier.resultsBySequence[1] = const CloudInboxApplyResult.retryable(
         failureCategory: CloudFailureCategory.dependency,
-        safeCode: 'canonical_message_chat_unavailable',
+        safeCode: 'decoder_reaction_shape_unsupported',
       );
 
       final result = await engine(
