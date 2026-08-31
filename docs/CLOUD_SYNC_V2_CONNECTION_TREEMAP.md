@@ -128,8 +128,10 @@ flowchart LR
   K -- No --> H[Host or GCE Rust, Dart, and ObjectBox tests]
   H --> R[Protection, decode, projection, checkpoint, and report proof]
   K -- Yes --> W[Private-profile Windows V2 development process]
-  W --> P[Repeat the existing writer-paused semantic pull in guarded no-build mode]
-  P --> Z[Redacted report only]
+  W --> P[Repeat bounded writer-paused pages in guarded no-build mode]
+  P --> E{All three zones fetched zero?}
+  E -- No --> P
+  E -- Yes --> Z[Current server head reached; redacted report only]
   N[Dart code changed] --> D[Windows hot reload]
   D --> W
   V[Rust or bridge code changed] --> B[Incremental Windows DLL rebuild and restart]
@@ -155,6 +157,18 @@ conversion, ObjectBox projection, and report logic remain host or GCE tests.
 GCE must never become a live CloudKit client because that would require
 exporting the Windows profile's credentials, identity, and PCS state. Android
 Canary remains the final release proof, not the everyday edit/retry loop.
+
+Initial catch-up is not one unbounded fetch. The Windows wrapper
+[`run_cloud_sync_v2_dev_catch_up.ps1`](../tooling/windows/run_cloud_sync_v2_dev_catch_up.ps1)
+repeats the existing four-page, 50-change-per-page semantic run, validates a
+fresh schema-v4 content-free report and every no-write/outbox tripwire after
+each invocation, and stops only when chats, messages, and attachments all
+report zero fetched changes. Each invocation commits its opaque fetched token
+durably, so interruption or the 50-run safety ceiling leaves a resumable state
+instead of an in-memory all-history transaction. Contract tests cover valid
+aggregation, a remote-write flag, a nonzero outbox, and a missing zone. Live
+qualification remains pending until the current bridge diagnostic rebuild is
+complete.
 
 ### Two progress clocks
 
@@ -205,7 +219,7 @@ show fetched, retained, and projected counts separately.
 | Network or server failure | Preserve prior token, record bounded backoff, honor server retry-after, and retry later. | Implemented. |
 | Throttling | Honor bounded retry-after and do not spin or clear state. | Implemented. |
 | Missing chat/message dependency | In the developer-only read-only Canary, a recognized dependency code may immediately become `retainedUnprojected`; ordinary sync requires the bounded attempt-and-age policy. Keep protected evidence and retry ordered projection after the parent or parser repair exists. | Implemented and compile-time/configuration gated away from write-capable sync. |
-| Typed message-to-chat route | Preserve each canonical chat GUID owner. Exact canonical ownership is considered first and must agree with every present route-specific proof. When exact ownership is absent, an authenticated-service direct composite `chatID` (`<service>;-;<cid>`) may fall back only to the one-to-one `serviceIdentifier` owner; an authenticated-service group composite (`<service>;+;<gid>`) may fall back only to one validated current `groupId` owner whose projected chat has group style 43. A bare `chatID` is ambiguous and must be adjudicated by exact ownership plus chat style, a unique style-45 service owner, or a unique style-43 current-group owner. Disagreement, duplicate current-group owners, a foreign or structurally invalid composite, or a direct-style current-group owner is a conflict or malformed record. `originalGroupId`, legacy aliases, and `msgProto4.groupId` remain diagnostic-only and can neither select nor veto an owner. | `strong2`/`claim2` storage plus route-kind selection is unit-proven, including bare and composite direct/group variants, collisions, cross-route disagreement, malformed composites, foreign service prefixes, and all weak proofs agreeing. Signed Windows ARM64 replays proved 186 exact GUID owners across two bounded pages; the latest pre-route replay retained four unresolved records safely. A signed route-kind replay remains pending. Legacy `alias1` rows remain preserved but non-authoritative. |
+| Typed message-to-chat route | Preserve each canonical chat GUID owner. Exact canonical ownership is considered first and must agree with every present route-specific proof. When exact ownership is absent, an authenticated-service direct composite `chatID` (`<service>;-;<cid>`) may fall back only to the one-to-one `serviceIdentifier` owner; an authenticated-service group composite (`<service>;+;<gid>`) may fall back only to one validated current `groupId` owner whose projected chat has group style 43. A bare `chatID` is ambiguous and must be adjudicated by exact ownership plus chat style, a unique style-45 service owner, or a unique style-43 current-group owner. Disagreement, duplicate current-group owners, a foreign or structurally invalid composite, or a direct-style current-group owner is a conflict or malformed record. `originalGroupId`, legacy aliases, and `msgProto4.groupId` remain diagnostic-only and can neither select nor veto an owner. | `LIVE-PROVEN ON SIGNED WINDOWS ARM64`: route-kind selection is unit-proven across bare and composite direct/group variants, collisions, disagreement, malformed composites, and foreign service prefixes. The first signed route replay applied 56 of 59 decoder-ready messages: 46 through the unique current `groupId` owner and 10 through exact GUID ownership. Three unavailable routes remained retained, no route conflict was reported, remote saves/deletes stayed disabled, and the outbox remained `0 -> 0`. Legacy `alias1` rows remain preserved but non-authoritative. |
 | Malformed or unsupported record | Persist a fixed content-free reason. Retain or quarantine according to whether a future parser can safely repair it; never guess identity or deletion. | Implemented, but every new reason needs an explicit repairability classification. |
 | Tombstone in read-only Canary | Retain as unprojected evidence. Do not delete a local message and do not issue a remote delete. | Implemented and write-gated. |
 | Process death after fetch | Recover/rollback the native page lease, replay the durable journal, and keep the previous token until the journal is terminal. | Implemented and crash-tested. |
@@ -372,8 +386,10 @@ CloudKit while this sequence is active:
    release scope;
 2. reproject attachment metadata after each newly proven parent message and
    keep bodies requiring unimplemented media credentials explicitly retained;
-3. run Rust tests on GCE, the complete CloudKit Dart suite, and a second clean
-   signed Windows pull with no retry barriers and unchanged no-write tripwires;
+3. use the guarded Windows catch-up wrapper to continue bounded pages until all
+   three zones return zero fetched changes, while checking replay/idempotency
+   and unchanged no-write tripwires after every durable page group; rebuild
+   Windows only when the mapped Dart/Rust boundary changes;
 4. freeze one candidate SHA and qualify an in-place Android Canary;
 5. design token-expiry reset and attachment-body materialization as separate
    reviewed changes after text/history projection is stable.
@@ -418,5 +434,44 @@ closed if they disagree, if a current group ID has multiple owners, if it
 points to a direct-style chat, or if a composite carries a foreign service
 prefix. `originalGroupId`, legacy aliases, and `msgProto4.groupId` remain
 unable to select a chat even when all three agree. Seventy-four focused adapter
-tests and the 1,016-test Cloud Sync suite pass; a signed replay of this revision
-is the next live gate.
+tests and the 1,016-test Cloud Sync suite pass. Exact source commit
+`115ee3432d1e4a6087857f23e2f654e4d5713d53` then passed the full GCE producer,
+binding-reproducibility, Dart, Rust, rustpush, protector, native-library,
+GitHub-hosted signing, runner-deregistration, and VM-deletion gates in run
+`33386865466`.
+
+The signed Windows ARM64 route replay completed after a 104.0-second rebuild.
+It fetched 100 message changes and applied 56 of the 59 decoder-ready records:
+46 used `canonical_message_chat_reference_current_group_id`, 10 used
+`canonical_message_chat_reference_exact_guid`, and three unavailable routes
+remained retained. No route-conflict diagnostic appeared. Remote saves, remote
+deletes, automatic triggers, and tombstone semantic deletes remained disabled,
+and the outbox stayed `0 -> 0`. The durable message backlog is still 144,
+including 21 retained malformed decoder records and 98 retained unsupported-
+service records; attachment projection also remains dependency-limited. The
+local harness report labels the checkout dirty because unrelated pre-existing
+worktree edits were present, so the exact-SHA GCE result remains the clean
+source qualification and Android must be built from that exact committed SHA.
+
+The deterministic decoder-retention repair at source commit
+`3366f1fc6979dcb45ca09557f3f1dcdf66e9addf` then passed bridge
+reproducibility, the full Dart suite, Rust, rustpush, the protector harness,
+Canary APK/native-library verification, GitHub-hosted signing, runner
+deregistration, and VM deletion in GCE run `33389976371`. The local Windows
+ARM64 fast loop rebuilt that revision in 44.5 seconds. Its first semantic pull
+reported zero retries and retained the unsupported reaction shape under its
+exact safe code instead of collapsing it to an unknown failure. A no-build
+follow-up completed in 13.2 seconds with all remote-write/delete tripwires
+still disabled and the outbox unchanged at `0 -> 0`.
+
+That no-build replay applied eight of 39 decoder-ready iMessage records. Seven
+resolved by exact GUID and one by the current group ID. The other 31 all used
+bare `chatID` syntax and had no exact, raw-service, current-group, lineage, or
+`msgProto4` owner. They showed no collision, conflict, or retry. The next
+mapped experiment is therefore observational: for a bare `chatID`, derive the
+service-qualified direct-CID alias (`iMessage;-;<bare>`) inside the native
+authenticated boundary and report only whether it maps to zero, one style-45,
+multiple, or wrong-style owners. It must not select an owner until live replay
+proves the interpretation and disagreement rules are reviewed. SMS, MMS, and
+RCS rows remain preserved evidence but are outside iMessage projection and
+release-completion counts.

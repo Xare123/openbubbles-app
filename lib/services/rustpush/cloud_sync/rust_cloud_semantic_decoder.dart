@@ -765,6 +765,9 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       chatIdExactGuidLogicalKeyHash: _requireExternalDigest(
         payload.chatIdExactGuidLogicalKeyHash,
       ),
+      chatIdBareDirectServiceIdentifierAliasKeyHash: _optionalExternalDigest(
+        payload.chatIdBareDirectServiceIdentifierAliasKeyHash,
+      ),
       chatIdAliasCandidates: chatIdAliasCandidates,
       msgProto4GroupIdAliasKeyHash: _optionalExternalDigest(
         payload.msgProto4GroupIdAliasKeyHash,

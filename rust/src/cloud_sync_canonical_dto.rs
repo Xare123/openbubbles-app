@@ -1347,6 +1347,7 @@ pub(crate) struct CloudCanonicalMessagePayload {
     chat_identifier: String,
     chat_alias_key_hash: CloudCanonicalHash,
     chat_id_exact_guid_logical_key_hash: CloudCanonicalHash,
+    chat_id_bare_direct_service_identifier_alias_key_hash: Option<CloudCanonicalHash>,
     chat_id_alias_candidates: Vec<CloudCanonicalAlias>,
     msg_proto_4_group_id: Option<String>,
     msg_proto_4_group_id_alias_key_hash: Option<CloudCanonicalHash>,
@@ -1377,6 +1378,7 @@ impl CloudCanonicalMessagePayload {
         chat_identifier: String,
         chat_alias_key_hash: CloudCanonicalHash,
         chat_id_exact_guid_logical_key_hash: CloudCanonicalHash,
+        chat_id_bare_direct_service_identifier_alias_key_hash: Option<CloudCanonicalHash>,
         chat_id_alias_candidates: Vec<CloudCanonicalAlias>,
         msg_proto_4_group_id: Option<String>,
         msg_proto_4_group_id_alias_key_hash: Option<CloudCanonicalHash>,
@@ -1550,6 +1552,7 @@ impl CloudCanonicalMessagePayload {
             chat_identifier,
             chat_alias_key_hash,
             chat_id_exact_guid_logical_key_hash,
+            chat_id_bare_direct_service_identifier_alias_key_hash,
             chat_id_alias_candidates,
             msg_proto_4_group_id,
             msg_proto_4_group_id_alias_key_hash,
@@ -1646,6 +1649,13 @@ impl CloudCanonicalMessagePayload {
 
     pub(crate) fn chat_id_exact_guid_logical_key_hash(&self) -> &CloudCanonicalHash {
         &self.chat_id_exact_guid_logical_key_hash
+    }
+
+    pub(crate) fn chat_id_bare_direct_service_identifier_alias_key_hash(
+        &self,
+    ) -> Option<&CloudCanonicalHash> {
+        self.chat_id_bare_direct_service_identifier_alias_key_hash
+            .as_ref()
     }
 
     pub(crate) fn chat_id_alias_candidates(&self) -> &[CloudCanonicalAlias] {
@@ -2386,6 +2396,7 @@ mod tests {
             "iMessage;-;synthetic".to_owned(),
             chat_alias_key_hash,
             hash('G'),
+            None,
             chat_id_alias_candidates,
             msg_proto_4_group_id,
             msg_proto_4_group_id_alias_key_hash,
@@ -2418,6 +2429,7 @@ mod tests {
             "iMessage;-;synthetic".to_owned(),
             hash('A'),
             hash('G'),
+            None,
             message_chat_alias_candidates(),
             None,
             None,
@@ -2522,6 +2534,7 @@ mod tests {
             "iMessage;-;synthetic".to_owned(),
             hash('A'),
             hash('G'),
+            None,
             message_chat_alias_candidates(),
             None,
             None,
@@ -3004,6 +3017,7 @@ mod tests {
             "iMessage;-;synthetic".to_owned(),
             hash('A'),
             hash('G'),
+            None,
             message_chat_alias_candidates(),
             None,
             None,
@@ -3068,6 +3082,7 @@ mod tests {
             "iMessage;-;synthetic".to_owned(),
             hash('A'),
             hash('G'),
+            None,
             message_chat_alias_candidates(),
             None,
             None,

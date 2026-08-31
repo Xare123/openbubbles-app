@@ -1251,6 +1251,9 @@ pub struct CloudSyncTransientMessagePayload {
     pub chat_alias_key_hash: String,
     pub chat_identifier: String,
     pub chat_id_exact_guid_logical_key_hash: String,
+    /// Diagnostic-only service-qualified direct-CID candidate for a bare
+    /// message chatID. It is not authoritative owner evidence.
+    pub chat_id_bare_direct_service_identifier_alias_key_hash: Option<String>,
     pub chat_id_alias_candidates: Vec<CloudSyncTransientChatAlias>,
     pub msg_proto_4_group_id_alias_key_hash: Option<String>,
     pub sender_handle: String,
@@ -3046,6 +3049,7 @@ mod cloudkit_repair_digest_tests {
             chat_identifier: "chat".to_owned(),
             chat_id_exact_guid_logical_key_hash: "ccccccccccccccccccccccccccccccccccccccccccc"
                 .to_owned(),
+            chat_id_bare_direct_service_identifier_alias_key_hash: None,
             chat_id_alias_candidates: vec![
                 CloudSyncTransientChatAlias {
                     kind: CloudSyncTransientChatAliasKind::ServiceIdentifier,
@@ -3447,6 +3451,9 @@ fn map_cloud_sync_transient_payload(
                     .chat_id_exact_guid_logical_key_hash()
                     .value()
                     .to_owned(),
+                chat_id_bare_direct_service_identifier_alias_key_hash: payload
+                    .chat_id_bare_direct_service_identifier_alias_key_hash()
+                    .map(|value| value.value().to_owned()),
                 chat_id_alias_candidates: payload
                     .chat_id_alias_candidates()
                     .iter()

@@ -1488,6 +1488,22 @@ fn validate_canonical_identity_bindings(
             {
                 return Err(CloudCanonicalValidationFailure::InvalidPayload);
             }
+            let expected_bare_direct_service_identifier_hash = if payload.service()
+                == CloudCanonicalService::IMessage
+                && !payload.chat_identifier().contains(';')
+            {
+                Some(hasher.canonical_alias_key_hash(
+                    CloudCanonicalAliasKind::ChatServiceIdentifier,
+                    &format!("iMessage;-;{}", payload.chat_identifier()),
+                )?)
+            } else {
+                None
+            };
+            if payload.chat_id_bare_direct_service_identifier_alias_key_hash()
+                != expected_bare_direct_service_identifier_hash.as_ref()
+            {
+                return Err(CloudCanonicalValidationFailure::InvalidPayload);
+            }
             for (candidate, expected_kind) in payload
                 .chat_id_alias_candidates()
                 .iter()
@@ -2224,6 +2240,7 @@ mod tests {
                 chat_identifier.to_owned(),
                 chat_alias_hash,
                 chat_id_exact_guid_logical_key_hash,
+                None,
                 chat_id_alias_candidates,
                 None,
                 None,
@@ -2307,6 +2324,7 @@ mod tests {
                 chat_identifier.to_owned(),
                 chat_alias_hash,
                 exact_guid_hash,
+                None,
                 alias_candidates,
                 proto_4_group_id,
                 proto_4_group_id_hash,
@@ -2314,6 +2332,63 @@ mod tests {
                 1,
                 0,
                 CloudCanonicalService::IMessage,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Value("body".to_owned()),
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalKnownMessageFlags::default(),
+                CloudCanonicalMessageAssociation::None,
+                None,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+            )
+            .unwrap(),
+        ));
+        let logical_hash = hasher
+            .canonical_entity_key_hash(CloudCanonicalEntityKind::Message, "message-guid")
+            .unwrap();
+        upsert_mutation(
+            CloudCanonicalEntityKind::Message,
+            logical_hash,
+            None,
+            payload,
+        )
+    }
+
+    fn bare_message_mutation_with_direct_candidate(
+        hasher: &CloudSemanticIdentifierHasher,
+        service: CloudCanonicalService,
+        direct_candidate: Option<CloudCanonicalHash>,
+    ) -> CloudCanonicalMutation {
+        let chat_identifier = "bare-direct-cid";
+        let chat_alias_hash = hasher
+            .canonical_alias_key_hash(
+                CloudCanonicalAliasKind::ChatServiceIdentifier,
+                chat_identifier,
+            )
+            .unwrap();
+        let exact_guid_hash = hasher
+            .canonical_entity_key_hash(CloudCanonicalEntityKind::Chat, chat_identifier)
+            .unwrap();
+        let payload = CloudCanonicalPayload::Message(Box::new(
+            CloudCanonicalMessagePayload::new(
+                "message-guid".to_owned(),
+                chat_identifier.to_owned(),
+                chat_alias_hash,
+                exact_guid_hash,
+                direct_candidate,
+                message_chat_alias_candidates(hasher, chat_identifier, None),
+                None,
+                None,
+                "sender@example.invalid".to_owned(),
+                1,
+                0,
+                service,
                 CloudCanonicalField::Absent,
                 CloudCanonicalField::Value("body".to_owned()),
                 CloudCanonicalField::Absent,
@@ -2667,6 +2742,72 @@ mod tests {
                     None,
                     None,
                     Some((group_id.to_owned(), wrong_group_domain_hash)),
+                ),
+                &hasher,
+            ),
+            Err(CloudCanonicalValidationFailure::InvalidPayload)
+        );
+    }
+
+    #[test]
+    fn bare_direct_diagnostic_hash_is_recomputed_and_i_message_only() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"bare-direct-diagnostic-test").unwrap();
+        let valid_hash = hasher
+            .canonical_alias_key_hash(
+                CloudCanonicalAliasKind::ChatServiceIdentifier,
+                "iMessage;-;bare-direct-cid",
+            )
+            .unwrap();
+        assert_eq!(
+            validate_canonical_identity_bindings(
+                &bare_message_mutation_with_direct_candidate(
+                    &hasher,
+                    CloudCanonicalService::IMessage,
+                    Some(valid_hash.clone()),
+                ),
+                &hasher,
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            validate_canonical_identity_bindings(
+                &bare_message_mutation_with_direct_candidate(
+                    &hasher,
+                    CloudCanonicalService::IMessage,
+                    None,
+                ),
+                &hasher,
+            ),
+            Err(CloudCanonicalValidationFailure::InvalidPayload)
+        );
+        assert_eq!(
+            validate_canonical_identity_bindings(
+                &bare_message_mutation_with_direct_candidate(
+                    &hasher,
+                    CloudCanonicalService::IMessage,
+                    Some(CloudCanonicalHash::new(digest('z')).unwrap()),
+                ),
+                &hasher,
+            ),
+            Err(CloudCanonicalValidationFailure::InvalidPayload)
+        );
+        assert_eq!(
+            validate_canonical_identity_bindings(
+                &bare_message_mutation_with_direct_candidate(
+                    &hasher,
+                    CloudCanonicalService::Sms,
+                    None,
+                ),
+                &hasher,
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            validate_canonical_identity_bindings(
+                &bare_message_mutation_with_direct_candidate(
+                    &hasher,
+                    CloudCanonicalService::Sms,
+                    Some(valid_hash),
                 ),
                 &hasher,
             ),

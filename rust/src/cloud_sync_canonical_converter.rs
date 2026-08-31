@@ -2367,6 +2367,19 @@ pub(crate) fn convert_message(
         Ok(value) => value,
         Err(error) => return validation_quarantine(error),
     };
+    let chat_id_bare_direct_service_identifier_alias_key_hash =
+        if service == CloudCanonicalService::IMessage && !message.chat_id.contains(';') {
+            let qualified_direct_identifier = format!("iMessage;-;{}", message.chat_id);
+            match context.hasher.canonical_alias_key_hash(
+                CloudCanonicalAliasKind::ChatServiceIdentifier,
+                &qualified_direct_identifier,
+            ) {
+                Ok(value) => Some(value),
+                Err(error) => return validation_quarantine(error),
+            }
+        } else {
+            None
+        };
     let mut chat_id_alias_candidates =
         Vec::with_capacity(CLOUD_CANONICAL_MESSAGE_CHAT_ALIAS_KINDS.len());
     for kind in CLOUD_CANONICAL_MESSAGE_CHAT_ALIAS_KINDS {
@@ -2443,6 +2456,7 @@ pub(crate) fn convert_message(
         message.chat_id.clone(),
         chat_alias_hash,
         chat_id_exact_guid_logical_key_hash,
+        chat_id_bare_direct_service_identifier_alias_key_hash,
         chat_id_alias_candidates,
         msg_proto_4_group_id,
         msg_proto_4_group_id_alias_key_hash,
@@ -4155,6 +4169,10 @@ mod tests {
                 .canonical_entity_key_hash(CloudCanonicalEntityKind::Chat, &message.chat_id)
                 .unwrap()
         );
+        assert_eq!(
+            payload.chat_id_bare_direct_service_identifier_alias_key_hash(),
+            None
+        );
         assert_eq!(payload.chat_id_alias_candidates().len(), 4);
         for (candidate, expected_kind) in payload
             .chat_id_alias_candidates()
@@ -4179,6 +4197,68 @@ mod tests {
                     )
                     .unwrap()
             )
+        );
+    }
+
+    #[test]
+    fn bare_message_chat_id_exposes_only_a_qualified_direct_diagnostic_hash() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut message = normal_message(Some("hello"));
+        message.chat_id = "bare-direct-cid".to_owned();
+        let outcome = convert_message(
+            &context(&hasher, "server-message-bare-direct-candidate", None),
+            &message_presence(),
+            &message,
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+            panic!("bare message chat reference should convert");
+        };
+        let Some(CloudCanonicalPayload::Message(payload)) = mutation.payload() else {
+            panic!("message payload expected");
+        };
+        assert_eq!(
+            payload.chat_id_bare_direct_service_identifier_alias_key_hash(),
+            Some(
+                &hasher
+                    .canonical_alias_key_hash(
+                        CloudCanonicalAliasKind::ChatServiceIdentifier,
+                        "iMessage;-;bare-direct-cid",
+                    )
+                    .unwrap()
+            )
+        );
+        assert_eq!(
+            payload
+                .chat_id_alias_candidates()
+                .first()
+                .map(CloudCanonicalAlias::key_hash),
+            Some(
+                &hasher
+                    .canonical_alias_key_hash(
+                        CloudCanonicalAliasKind::ChatServiceIdentifier,
+                        "bare-direct-cid",
+                    )
+                    .unwrap()
+            )
+        );
+
+        let mut sms = normal_message(Some("hello"));
+        sms.service = "SMS".to_owned();
+        sms.chat_id = "bare-sms-cid".to_owned();
+        let sms_outcome = convert_message(
+            &context(&hasher, "server-message-bare-sms", None),
+            &message_presence(),
+            &sms,
+        );
+        let CloudCanonicalConversionOutcome::Ready(sms_mutation) = sms_outcome else {
+            panic!("bare SMS message should retain its existing conversion");
+        };
+        let Some(CloudCanonicalPayload::Message(sms_payload)) = sms_mutation.payload() else {
+            panic!("SMS message payload expected");
+        };
+        assert_eq!(
+            sms_payload.chat_id_bare_direct_service_identifier_alias_key_hash(),
+            None
         );
     }
 

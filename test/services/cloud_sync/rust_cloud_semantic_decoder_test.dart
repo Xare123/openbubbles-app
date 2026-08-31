@@ -97,6 +97,27 @@ void main() {
     expect(payload.chatIdentifier, 'SMS;-;+19492476163');
   });
 
+  test('maps the diagnostic-only qualified direct CID digest', () async {
+    final entry = _entry();
+    bindings.result = _readyMessage(
+      entry,
+      payload: frb.CloudSyncTransientPayload(
+        message: _messagePayload(
+          chatIdentifier: 'bare-direct-cid',
+          chatIdBareDirectServiceIdentifierAliasKeyHash: _bareDirectHash,
+        ),
+      ),
+    );
+
+    final payload =
+        (await decoder().decode(entry)).payload! as CloudMessageEntityPayload;
+    expect(payload.chatIdentifier, 'bare-direct-cid');
+    expect(
+      payload.chatIdBareDirectServiceIdentifierAliasKeyHash,
+      _bareDirectHash,
+    );
+  });
+
   test('maps every currently representable native payload lane', () async {
     final entry = _entry();
     final cases =
@@ -967,6 +988,7 @@ const _changeId = 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
 const _recordHash = 'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD';
 const _messageHash = 'MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM';
 const _chatHash = 'HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH';
+const _bareDirectHash = 'JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ';
 const _reactionHash = 'QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ';
 const _attachmentHash = 'TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT';
 const _groupPhotoHash = 'GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG';
@@ -1141,6 +1163,7 @@ frb.CloudSyncTransientMessagePayload _messagePayload({
       frb.CloudSyncTransientService.iMessage,
   String chatIdentifier = 'iMessage;-;chat',
   String chatIdExactGuidLogicalKeyHash = _chatHash,
+  String? chatIdBareDirectServiceIdentifierAliasKeyHash,
   List<frb.CloudSyncTransientChatAlias>? chatIdAliasCandidates,
   String? msgProto4GroupIdAliasKeyHash,
   int createdAtMillis = 1787385600000,
@@ -1194,6 +1217,8 @@ frb.CloudSyncTransientMessagePayload _messagePayload({
   chatAliasKeyHash: _chatHash,
   chatIdentifier: chatIdentifier,
   chatIdExactGuidLogicalKeyHash: chatIdExactGuidLogicalKeyHash,
+  chatIdBareDirectServiceIdentifierAliasKeyHash:
+      chatIdBareDirectServiceIdentifierAliasKeyHash,
   chatIdAliasCandidates:
       chatIdAliasCandidates ??
       const [

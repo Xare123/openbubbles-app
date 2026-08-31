@@ -162,6 +162,7 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
     required this.chatAliasKeyHash,
     required this.chatIdentifier,
     this.chatIdExactGuidLogicalKeyHash,
+    this.chatIdBareDirectServiceIdentifierAliasKeyHash,
     Iterable<CloudSemanticChatAlias> chatIdAliasCandidates = const [],
     this.msgProto4GroupIdAliasKeyHash,
     required this.body,
@@ -234,6 +235,9 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
                   CloudSemanticChatAliasKind.values,
                 ))) ||
         (chatIdExactGuidLogicalKeyHash?.isEmpty ?? false) ||
+        (chatIdBareDirectServiceIdentifierAliasKeyHash?.isEmpty ?? false) ||
+        (chatIdBareDirectServiceIdentifierAliasKeyHash != null &&
+            !hasTypedReferences) ||
         (msgProto4GroupIdAliasKeyHash?.isEmpty ?? false) ||
         (msgProto4GroupIdAliasKeyHash != null && !hasTypedReferences)) {
       throw ArgumentError('cloud_message_payload_chat_reference_invalid');
@@ -299,6 +303,7 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
   final String chatAliasKeyHash;
   final String chatIdentifier;
   final String? chatIdExactGuidLogicalKeyHash;
+  final String? chatIdBareDirectServiceIdentifierAliasKeyHash;
   final List<CloudSemanticChatAlias> chatIdAliasCandidates;
   final String? msgProto4GroupIdAliasKeyHash;
   final String? body;
