@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
@@ -269,6 +270,7 @@ void main() {
         kind: CloudKitOperationKind.v2SemanticRead,
         action: () => provider.prepareReadAuthenticationUnderNativeWriterPause(
           BigInt.from(17),
+          _authSnapshot(first),
         ),
       );
       await warmStarted.future;
@@ -280,6 +282,56 @@ void main() {
       expect(binding.pausedWarmCalls, 1);
       expect(binding.pauseTokens, <BigInt>[BigInt.from(17)]);
       expect(binding.calls, 1);
+    },
+  );
+
+  test(
+    'promoted identity mismatch performs no paused native authentication',
+    () async {
+      final activeClient = Object();
+      final binding = _FakeNativeAuthBinding();
+      final provider = CloudSyncProductionAuthSnapshotProvider(
+        readActiveClient: () => activeClient,
+        nativeAuthBinding: binding,
+        privateStorageDirectory: 'private-storage',
+      );
+
+      final snapshot = await interlock.runExclusive(
+        kind: CloudKitOperationKind.v2SemanticRead,
+        action: () => provider.prepareReadAuthenticationUnderNativeWriterPause(
+          BigInt.from(19),
+          _authSnapshot(Object()),
+        ),
+      );
+
+      expect(snapshot, isNull);
+      expect(binding.calls, 1);
+      expect(binding.pausedWarmCalls, 0);
+    },
+  );
+
+  test(
+    'paused read authentication remains available without a promoted snapshot',
+    () async {
+      final client = Object();
+      final binding = _FakeNativeAuthBinding();
+      final provider = CloudSyncProductionAuthSnapshotProvider(
+        readActiveClient: () => client,
+        nativeAuthBinding: binding,
+        privateStorageDirectory: 'private-storage',
+      );
+
+      final snapshot = await interlock.runExclusive(
+        kind: CloudKitOperationKind.v2SemanticRead,
+        action: () => provider.prepareReadAuthenticationUnderNativeWriterPause(
+          BigInt.from(20),
+        ),
+      );
+
+      expect(snapshot, isNotNull);
+      expect(binding.pausedWarmCalls, 1);
+      expect(binding.pausedWarmedClients.single, same(client));
+      expect(binding.calls, 2);
     },
   );
 
@@ -297,8 +349,10 @@ void main() {
 
       final snapshot = await interlock.runExclusive(
         kind: CloudKitOperationKind.v2SemanticRead,
-        action: () =>
-            provider.prepareReadAuthenticationUnderNativeWriterPause(token),
+        action: () => provider.prepareReadAuthenticationUnderNativeWriterPause(
+          token,
+          _authSnapshot(client),
+        ),
       );
 
       expect(snapshot, isNotNull);
@@ -313,9 +367,10 @@ void main() {
   test(
     'semantic read authentication rejects invalid pause tokens before capture',
     () async {
+      final client = Object();
       final binding = _FakeNativeAuthBinding();
       final provider = CloudSyncProductionAuthSnapshotProvider(
-        readActiveClient: Object.new,
+        readActiveClient: () => client,
         nativeAuthBinding: binding,
         privateStorageDirectory: 'private-storage',
       );
@@ -330,7 +385,10 @@ void main() {
           interlock.runExclusive(
             kind: CloudKitOperationKind.v2SemanticRead,
             action: () =>
-                provider.prepareReadAuthenticationUnderNativeWriterPause(token),
+                provider.prepareReadAuthenticationUnderNativeWriterPause(
+                  token,
+                  _authSnapshot(client),
+                ),
           ),
           throwsA(
             isA<StateError>().having(
@@ -373,15 +431,19 @@ void main() {
   test(
     'semantic read authentication requires the semantic interlock',
     () async {
+      final client = Object();
       final binding = _FakeNativeAuthBinding();
       final provider = CloudSyncProductionAuthSnapshotProvider(
-        readActiveClient: Object.new,
+        readActiveClient: () => client,
         nativeAuthBinding: binding,
         privateStorageDirectory: 'private-storage',
       );
 
       await expectLater(
-        provider.prepareReadAuthenticationUnderNativeWriterPause(BigInt.one),
+        provider.prepareReadAuthenticationUnderNativeWriterPause(
+          BigInt.one,
+          _authSnapshot(client),
+        ),
         throwsA(
           isA<CloudKitOperationInterlockException>().having(
             (error) => error.safeCode,
@@ -393,8 +455,11 @@ void main() {
       await expectLater(
         interlock.runExclusive(
           kind: CloudKitOperationKind.v2ShadowRead,
-          action: () => provider
-              .prepareReadAuthenticationUnderNativeWriterPause(BigInt.one),
+          action: () =>
+              provider.prepareReadAuthenticationUnderNativeWriterPause(
+                BigInt.one,
+                _authSnapshot(client),
+              ),
         ),
         throwsA(
           isA<CloudKitOperationInterlockException>().having(
@@ -814,6 +879,15 @@ final class _FakeNativeAuthBinding implements CloudSyncNativeAuthBinding {
     );
   }
 }
+
+CloudSyncNativeAuthSnapshot _authSnapshot(Object client) =>
+    CloudSyncNativeAuthSnapshot.fromNative(
+      nativeSessionId: _nativeSession,
+      accountFingerprint: _accountFingerprint,
+      protectedStoreIdentity:
+          'obcs2.store.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      cloudMessagesClient: client,
+    );
 
 const _nativeSession = 'NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN';
 const _accountFingerprint = 'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF';

@@ -93,7 +93,7 @@ CloudSyncManualSemanticPullSampler _sampler({
   required CloudSyncShadowPreflightReader readPreflight,
   required CloudSyncNativeAuthSnapshotReader readAuthSnapshot,
   CloudSyncEnsuredAuthSnapshotReader? ensureAuthSnapshot,
-  CloudSyncPausedPreparedAuthSnapshotReader? prepareAuthSnapshot,
+  CloudSyncSemanticPausedPreparedAuthSnapshotReader? prepareAuthSnapshot,
   required CloudSyncSemanticStoreFactory createStore,
   required CloudSyncSemanticRawTransportFactory createRawTransport,
   required CloudSyncSemanticInboxApplierFactory createInboxApplier,
@@ -106,7 +106,7 @@ CloudSyncManualSemanticPullSampler _sampler({
   readPreflight: readPreflight,
   ensureAuthSnapshot: ensureAuthSnapshot ?? () async => _auth(),
   prepareAuthSnapshot:
-      prepareAuthSnapshot ?? (pauseToken) => readAuthSnapshot(),
+      prepareAuthSnapshot ?? (pauseToken, expectedAuth) => readAuthSnapshot(),
   readAuthSnapshot: readAuthSnapshot,
   createStore: createStore,
   createRawTransport: createRawTransport,
@@ -150,7 +150,7 @@ void main() {
         events.add('preflight');
         return _readyState();
       },
-      prepareAuthSnapshot: (pauseToken) async {
+      prepareAuthSnapshot: (pauseToken, expectedAuth) async {
         expect(pauseToken, same(nativeWriterPause.token));
         events.add('prepare-auth');
         return _auth();
@@ -310,7 +310,7 @@ void main() {
           return _auth();
         },
         readPreflight: () async => _readyState(),
-        prepareAuthSnapshot: (pauseToken) async {
+        prepareAuthSnapshot: (pauseToken, expectedAuth) async {
           prepareCalls++;
           if (prepareCalls == 1) throw StateError(safeCode);
           return _auth();
@@ -371,7 +371,7 @@ void main() {
       nativeWriterPause: nativeWriterPause,
       ensureAuthSnapshot: () async => _auth(client: _nativeClientA),
       readPreflight: () async => _readyState(),
-      prepareAuthSnapshot: (pauseToken) async => _auth(
+      prepareAuthSnapshot: (pauseToken, expectedAuth) async => _auth(
         session: 'session-b',
         fingerprint: _accountFingerprintB,
         client: _nativeClientB,
@@ -447,7 +447,7 @@ void main() {
         return _auth();
       },
       readPreflight: () async => _readyState(),
-      prepareAuthSnapshot: (pauseToken) async {
+      prepareAuthSnapshot: (pauseToken, expectedAuth) async {
         prepareCalls++;
         throw StateError('cloud_sync_native_auth_messages_container_failed');
       },
@@ -488,7 +488,7 @@ void main() {
         return _auth();
       },
       readPreflight: () async => _readyState(),
-      prepareAuthSnapshot: (pauseToken) async {
+      prepareAuthSnapshot: (pauseToken, expectedAuth) async {
         prepareCalls++;
         throw StateError('cloud_sync_native_auth_credentials_rejected');
       },
@@ -611,7 +611,7 @@ void main() {
         operationFenceStore: fenceStore,
         readPreflight: () async => _readyState(),
         readAuthSnapshot: () async => _auth(),
-        prepareAuthSnapshot: (pauseToken) async {
+        prepareAuthSnapshot: (pauseToken, expectedAuth) async {
           await expectLater(
             competing.runExclusive(
               kind: CloudKitOperationKind.legacyReadWrite,

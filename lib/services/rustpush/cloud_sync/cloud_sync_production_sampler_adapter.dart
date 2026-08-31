@@ -817,7 +817,10 @@ final class CloudSyncProductionAuthSnapshotProvider {
   }
 
   Future<CloudSyncNativeAuthSnapshot?>
-  prepareReadAuthenticationUnderNativeWriterPause(Object pauseToken) async {
+  prepareReadAuthenticationUnderNativeWriterPause(
+    Object pauseToken, [
+    CloudSyncNativeAuthSnapshot? expectedAuth,
+  ]) async {
     CloudKitOperationInterlock.requireActive(
       CloudKitOperationKind.v2SemanticRead,
     );
@@ -827,7 +830,10 @@ final class CloudSyncProductionAuthSnapshotProvider {
       throw StateError('cloud_sync_native_auth_writer_pause_scope_failed');
     }
     final before = await capture();
-    if (before == null) return null;
+    if (before == null ||
+        (expectedAuth != null && !expectedAuth.sameIdentity(before))) {
+      return null;
+    }
     await _nativeAuthBinding.warmReadAuthenticationUnderWriterPause(
       cloudMessagesClient: before.cloudMessagesClient,
       pauseToken: pauseToken,

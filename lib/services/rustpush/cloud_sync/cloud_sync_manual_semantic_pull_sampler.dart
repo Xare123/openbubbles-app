@@ -28,6 +28,11 @@ typedef CloudSyncSemanticDiagnosticSnapshotReader =
     Map<String, int> Function(CloudSyncScope scope);
 typedef CloudSyncPausedPreparedAuthSnapshotReader =
     Future<CloudSyncNativeAuthSnapshot?> Function(Object pauseToken);
+typedef CloudSyncSemanticPausedPreparedAuthSnapshotReader =
+    Future<CloudSyncNativeAuthSnapshot?> Function(
+      Object pauseToken,
+      CloudSyncNativeAuthSnapshot expectedAuth,
+    );
 typedef CloudSyncEnsuredAuthSnapshotReader =
     Future<CloudSyncNativeAuthSnapshot?> Function();
 
@@ -106,7 +111,7 @@ final class CloudSyncManualSemanticPullSampler {
 
   final CloudSyncShadowPreflightReader _readPreflight;
   final CloudSyncEnsuredAuthSnapshotReader _ensureAuthSnapshot;
-  final CloudSyncPausedPreparedAuthSnapshotReader _prepareAuthSnapshot;
+  final CloudSyncSemanticPausedPreparedAuthSnapshotReader _prepareAuthSnapshot;
   final CloudSyncNativeAuthSnapshotReader _readAuthSnapshot;
   final CloudSyncSemanticStoreFactory _createStore;
   final CloudSyncSemanticRawTransportFactory _createRawTransport;
@@ -189,9 +194,11 @@ final class CloudSyncManualSemanticPullSampler {
     Object pauseToken,
     CloudSyncNativeAuthSnapshot ensuredAuth,
   ) async {
+    await _requireSameAuth(ensuredAuth);
     final before = await _readPreflight();
     _validatePreflight(before);
-    final auth = await _prepareAuthSnapshot(pauseToken);
+    await _requireSameAuth(ensuredAuth);
+    final auth = await _prepareAuthSnapshot(pauseToken, ensuredAuth);
     if (auth == null) throw StateError('account_unavailable');
     if (!ensuredAuth.sameIdentity(auth)) {
       throw StateError('account_changed');
