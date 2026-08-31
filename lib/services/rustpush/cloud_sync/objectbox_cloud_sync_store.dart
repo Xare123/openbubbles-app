@@ -19,6 +19,7 @@ import 'cloud_sync_store.dart';
 class ObjectBoxCloudSyncStore
     implements
         CloudSyncStore,
+        CloudRetainedUnprojectedBacklogStore,
         CloudUnknownInboxBarrierRecoveryStore,
         CloudSyncUnknownOutcomeLeasingStore,
         CloudSyncOutboxPresenceStore,
@@ -746,6 +747,37 @@ class ObjectBoxCloudSyncStore
       return const <CloudInboxEntry>[];
     }
     return <CloudInboxEntry>[_inboxFromEntity(scope, entity)];
+  }
+
+  @override
+  Future<int> readRetainedUnprojectedInboxCount(CloudSyncScope scope) async {
+    return _store.runInTransaction(TxMode.read, () {
+      final scopeKey = _scopeKey(scope);
+      final checkpoint = _findCheckpointByKeyLocked(scopeKey);
+      if (checkpoint == null) return 0;
+      _validateCheckpointScope(checkpoint, scope);
+      final query = _inbox
+          .query(
+            CloudInboxChangeEntity_.scopeKey
+                .equals(scopeKey)
+                .and(
+                  CloudInboxChangeEntity_.generation.equals(
+                    checkpoint.generation,
+                  ),
+                )
+                .and(
+                  CloudInboxChangeEntity_.status.equals(
+                    _inboxStatusToInt(CloudInboxStatus.retainedUnprojected),
+                  ),
+                ),
+          )
+          .build();
+      try {
+        return query.count();
+      } finally {
+        query.close();
+      }
+    });
   }
 
   @override

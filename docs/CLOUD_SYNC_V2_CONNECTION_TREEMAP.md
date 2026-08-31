@@ -118,6 +118,39 @@ A passing downstream job never erases an upstream audit failure. Any source
 change creates a new candidate SHA and restarts qualification. Failed GCE runs
 are allowed to execute their cleanup path, but their APKs are never installed.
 
+### Fast iteration split
+
+```mermaid
+flowchart LR
+  I[New observation or fixture] --> K{Requires live Apple identity?}
+  K -- No --> H[Host or GCE Rust, Dart, and ObjectBox tests]
+  H --> R[Protection, decode, projection, checkpoint, and report proof]
+  K -- Yes --> W[Private-profile Windows V2 development process]
+  W --> P[Repeat the existing writer-paused semantic pull]
+  P --> Z[Redacted report only]
+  N[Dart code changed] --> D[Windows hot reload]
+  D --> W
+  V[Rust or bridge code changed] --> B[Incremental Windows DLL rebuild and restart]
+  B --> W
+  Q[Frozen release candidate] --> C[Build and qualify Android Canary APK]
+  C --> L[Final live Pixel proof]
+  X[Standalone GCE live client] -. rejected .-> K
+```
+
+The live development boundary must own the exact in-process
+`CloudMessagesClient`, revocable read-auth generation, cached PCS configuration,
+platform secret storage, and writer-pause capability. Windows already provides
+current-user DPAPI protection and the production semantic path admits Windows
+x64 and ARM64, so a separately identifiable Windows V2 development build can
+provide the fast loop without a phone. It must use a private profile and must
+never open the Store app's profile concurrently. Dart changes may hot reload;
+Rust or bridge changes require an incremental Windows DLL rebuild and process
+restart, but no Android APK. Synthetic records, checkpoint state, canonical
+conversion, ObjectBox projection, and report logic remain host or GCE tests.
+GCE must never become a live CloudKit client because that would require
+exporting the Windows profile's credentials, identity, and PCS state. Android
+Canary remains the final release proof, not the everyday edit/retry loop.
+
 ### Two progress clocks
 
 The implementation intentionally has two different progress clocks. They must
@@ -153,7 +186,7 @@ show fetched, retained, and projected counts separately.
 | Legacy unknown-row retry | [`CloudUnknownInboxBarrierRecoveryStore`](../lib/services/rustpush/cloud_sync/cloud_sync_store.dart#L290), [`ObjectBoxCloudSyncStore.requeueUnknownInboxBarrier`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart#L974) | Reopen only the first unresolved current-generation save in the still-pending batch, only if it predates the fixed migration cutoff. Preserve retry history, protected reference, digest, checkpoint, and token. Reject tombstones and preflight failures. | `TEST-PROVEN`; bounded one-time migration, not a general fallback |
 | Retained projection repair | [`TransactionalCloudInboxApplier.reprojectRetainedUnprojected`](../lib/services/rustpush/cloud_sync/cloud_inbox_applier.dart#L894), [`CloudRetainedProjectionStoreGateway`](../lib/services/rustpush/cloud_sync/cloud_inbox_applier.dart#L797) | Candidate selection is scope- and generation-bound. A retained row becomes applied only in the same transaction that commits its complete canonical projection; failures rotate fairly without changing token or source evidence. | `TEST-PROVEN`; exercised live with unresolved rows remaining |
 | Cursor promotion | [`_promotePendingFetchedTokenIfTerminalLocked`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart#L2456) | Promote the pending token only when every sequence exists and is terminal. `retainedUnprojected` may release fetch progress but remains repairable and never counts as fully applied. | `TEST-PROVEN`; exercised live |
-| Honest Canary completion | [`cloudSyncV2SemanticCanaryPresentation`](../lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart#L46), [`cloud_sync_semantic_canary_presentation_test.dart`](../test/services/cloud_sync/cloud_sync_semantic_canary_presentation_test.dart) | Sum retained rows across all zones. Report `Complete` only when the original three-zone/status/quarantine/retry/write-tripwire gates pass and retained count is zero; otherwise report `Partial` or `Stopped Safely` with separate fetched, applied, and retained totals. | `REPAIRED; FOCUSED TESTS PENDING REGENERATED BINDINGS` |
+| Honest Canary completion | [`CloudRetainedUnprojectedBacklogStore`](../lib/services/rustpush/cloud_sync/cloud_sync_store.dart#L290), [`ObjectBoxCloudSyncStore.readRetainedUnprojectedInboxCount`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart#L752), [`CloudSyncManualSemanticPullSampler`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart#L285), [`cloudSyncV2SemanticCanaryPresentation`](../lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart#L46) | Read the current-generation durable retained backlog after repair attempts, then sum it across all zones. A zero per-run transition count is insufficient. Report `Complete` only when the original three-zone/status/quarantine/retry/write-tripwire gates pass and durable retained count is zero; otherwise report `Partial` or `Stopped Safely` with separate fetched, applied, and retained totals. | `REPAIRED; OBJECTBOX CI AND LIVE PROOF PENDING` |
 | Token-expiry reset | [`CloudSyncStore.rebootstrapAfterReset`](../lib/services/rustpush/cloud_sync/cloud_sync_store.dart#L150), [`ObjectBoxCloudSyncStore.rebootstrapAfterReset`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart#L1312) | Obtain an account-bound remote-reset proof, quiesce the coordinator, atomically fence old evidence, increment generation, and restart from no token. The coordinator must also prove how unresolved old-generation saves and tombstones remain repairable or are reconciled by the full refetch. | `GAP / POLICY DECISION`: durable primitive exists, but production orchestration has no caller and current-generation reprojection cannot consume generation-zero evidence |
 | No-write exit tripwire | [`CloudSyncManualSemanticPullSampler._runConfirmedUnderInterlock`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart#L194) | Remote confirmations remain zero, outbox count is unchanged, active identity is revalidated, native operations quiesce, and writers resume. | `LIVE-PROVEN` |
 

@@ -132,6 +132,8 @@ void main() {
       'preflight_unsupported_record_type',
       'retained_projection_incomplete',
       'retained_projection_authorization_changed',
+      'retained_unprojected_backlog_read_failed',
+      'retained_unprojected_backlog_store_unavailable',
       'messages_cloud_tombstone_projection_unavailable',
       'semantic_parent_missing',
       'unsupported_semantic_cloud_zone',

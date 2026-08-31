@@ -1353,12 +1353,14 @@ void main() {
         maximumDeferredAge: const Duration(days: 3),
         leaseFence: fence,
       );
+      expect(await store.readRetainedUnprojectedInboxCount(scope), 1);
       final partial = await store.readCheckpoint(scope);
       expect(partial.lastAppliedSequence, 0);
       expect(partial.fetchedToken, isNull);
       expect(partial.pendingBatchId, 'read-only-tombstone-page');
 
       await reopen();
+      expect(await store.readRetainedUnprojectedInboxCount(scope), 1);
       final durableRows = objectBox.box<CloudInboxChangeEntity>().getAll()
         ..sort(
           (left, right) => left.fetchSequence.compareTo(right.fetchSequence),
@@ -1391,6 +1393,7 @@ void main() {
       expect(completed.fetchedToken, 'read-only-tombstone-token');
       expect(completed.pendingBatchId, isNull);
       expect(completed.hasUnmarkedPendingInbox, isFalse);
+      expect(await store.readRetainedUnprojectedInboxCount(scope), 1);
     },
   );
 

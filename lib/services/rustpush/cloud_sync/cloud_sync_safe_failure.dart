@@ -210,6 +210,8 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'preflight_unsupported_record_type',
   'retained_projection_authorization_changed',
   'retained_projection_incomplete',
+  'retained_unprojected_backlog_read_failed',
+  'retained_unprojected_backlog_store_unavailable',
   'rustpush_not_ready',
   'semantic_parent_missing',
   'storage_unavailable',

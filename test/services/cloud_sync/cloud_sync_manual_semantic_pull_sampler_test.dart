@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:bluebubbles/app/layouts/settings/pages/misc/troubleshoot_panel.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
@@ -63,6 +64,15 @@ CloudFetchedChange _change(String id) => CloudFetchedChange(
   protectedSystemFieldsReference: 'protected:system-$id',
   encryptedPayloadReference: 'protected:payload-$id',
   payloadSha256: 'payload-$id',
+);
+
+CloudFetchedChange _tombstone(String id) => CloudFetchedChange(
+  changeId: id,
+  recordIdHash: 'record-$id',
+  type: CloudChangeType.delete,
+  encryptedServerRecordId: 'protected:server-$id',
+  protectedSystemFieldsReference: 'protected:system-$id',
+  isTombstone: true,
 );
 
 CloudSyncSemanticPullZoneReport _zoneReport({
@@ -221,7 +231,8 @@ void main() {
       },
       readAuthSnapshot: () async => _auth(),
       createStore: (scope) async => InMemoryCloudSyncStore(),
-      createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
+      createRawTransport: (auth, scope, pauseToken) async =>
+          FakeCloudSyncTransport(),
       createInboxApplier: (auth, scope, generation) async =>
           FakeCloudInboxApplier(),
     );
@@ -255,7 +266,8 @@ void main() {
         readPreflight: () async => _readyState(),
         readAuthSnapshot: () async => _auth(),
         createStore: (scope) async => InMemoryCloudSyncStore(),
-        createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
+        createRawTransport: (auth, scope, pauseToken) async =>
+            FakeCloudSyncTransport(),
         createInboxApplier: (auth, scope, generation) async =>
             FakeCloudInboxApplier(),
       );
@@ -281,7 +293,8 @@ void main() {
       readPreflight: () async => throw StateError('preflight-failed'),
       readAuthSnapshot: () async => _auth(),
       createStore: (scope) async => InMemoryCloudSyncStore(),
-      createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
+      createRawTransport: (auth, scope, pauseToken) async =>
+          FakeCloudSyncTransport(),
       createInboxApplier: (auth, scope, generation) async =>
           FakeCloudInboxApplier(),
     );
@@ -301,7 +314,8 @@ void main() {
       readPreflight: () async => throw StateError('preflight-failed'),
       readAuthSnapshot: () async => _auth(),
       createStore: (scope) async => InMemoryCloudSyncStore(),
-      createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
+      createRawTransport: (auth, scope, pauseToken) async =>
+          FakeCloudSyncTransport(),
       createInboxApplier: (auth, scope, generation) async =>
           FakeCloudInboxApplier(),
     );
@@ -336,7 +350,8 @@ void main() {
         },
         readAuthSnapshot: () async => _auth(),
         createStore: (scope) async => InMemoryCloudSyncStore(),
-        createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
+        createRawTransport: (auth, scope, pauseToken) async =>
+            FakeCloudSyncTransport(),
         createInboxApplier: (auth, scope, generation) async =>
             FakeCloudInboxApplier(),
       );
@@ -367,7 +382,8 @@ void main() {
           readPreflight: () async => _readyState(),
           readAuthSnapshot: () async => _auth(),
           createStore: (scope) async => InMemoryCloudSyncStore(),
-          createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
+          createRawTransport: (auth, scope, pauseToken) async =>
+              FakeCloudSyncTransport(),
           createInboxApplier: (auth, scope, generation) async =>
               FakeCloudInboxApplier(),
         );
@@ -397,7 +413,8 @@ void main() {
       ),
       readAuthSnapshot: () async => _auth(client: _nativeClientB),
       createStore: (scope) async => InMemoryCloudSyncStore(),
-      createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
+      createRawTransport: (auth, scope, pauseToken) async =>
+          FakeCloudSyncTransport(),
       createInboxApplier: (auth, scope, generation) async =>
           FakeCloudInboxApplier(),
     );
@@ -432,7 +449,8 @@ void main() {
       },
       readAuthSnapshot: () async => _auth(),
       createStore: (scope) async => InMemoryCloudSyncStore(),
-      createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
+      createRawTransport: (auth, scope, pauseToken) async =>
+          FakeCloudSyncTransport(),
       createInboxApplier: (auth, scope, generation) async =>
           FakeCloudInboxApplier(),
     );
@@ -472,7 +490,8 @@ void main() {
       },
       readAuthSnapshot: () async => _auth(),
       createStore: (scope) async => InMemoryCloudSyncStore(),
-      createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
+      createRawTransport: (auth, scope, pauseToken) async =>
+          FakeCloudSyncTransport(),
       createInboxApplier: (auth, scope, generation) async =>
           FakeCloudInboxApplier(),
     );
@@ -513,7 +532,8 @@ void main() {
       },
       readAuthSnapshot: () async => _auth(),
       createStore: (scope) async => InMemoryCloudSyncStore(),
-      createRawTransport: (auth, scope, pauseToken) async => FakeCloudSyncTransport(),
+      createRawTransport: (auth, scope, pauseToken) async =>
+          FakeCloudSyncTransport(),
       createInboxApplier: (auth, scope, generation) async =>
           FakeCloudInboxApplier(),
     );
@@ -648,7 +668,8 @@ void main() {
           return _auth();
         },
         createStore: (scope) async => InMemoryCloudSyncStore(),
-        createRawTransport: (snapshot, scope, pauseToken) async => FakeCloudSyncTransport(),
+        createRawTransport: (snapshot, scope, pauseToken) async =>
+            FakeCloudSyncTransport(),
         createInboxApplier: (auth, scope, generation) async =>
             FakeCloudInboxApplier(),
       );
@@ -911,6 +932,122 @@ void main() {
         transports.values.map((transport) => transport.fetchCallCount),
         countsAfterRun,
       );
+    },
+  );
+
+  test(
+    'durable retained tombstone keeps a no-change follow-up report Partial',
+    () async {
+      final stores = <String, InMemoryCloudSyncStore>{};
+      final transports = <String, FakeCloudSyncTransport>{};
+      final fetchCounts = <String, int>{};
+      final appliers = <_ReadOnlyTombstoneFakeCloudInboxApplier>[];
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async =>
+            stores.putIfAbsent(scope.zone, InMemoryCloudSyncStore.new),
+        createRawTransport: (auth, scope, pauseToken) async {
+          return transports.putIfAbsent(scope.zone, () {
+            final transport = FakeCloudSyncTransport();
+            transport.fetchHandler =
+                (requestedScope, previousToken, generation, limit) async {
+                  final fetchCount = fetchCounts.update(
+                    requestedScope.zone,
+                    (value) => value + 1,
+                    ifAbsent: () => 1,
+                  );
+                  if (requestedScope.zone == 'messageManateeZone' &&
+                      previousToken == null) {
+                    return CloudFetchBatch(
+                      scope: requestedScope,
+                      changes: [_tombstone('retained-message-tombstone')],
+                      batchId: 'retained-message-tombstone-page',
+                      generation: generation,
+                      nextToken: 'after-retained-message-tombstone',
+                      hasMore: false,
+                    );
+                  }
+                  return CloudFetchBatch(
+                    scope: requestedScope,
+                    changes: const [],
+                    batchId: 'empty-${requestedScope.zone}-$fetchCount',
+                    generation: generation,
+                    nextToken: previousToken,
+                    hasMore: false,
+                  );
+                };
+            return transport;
+          });
+        },
+        createInboxApplier: (auth, scope, generation) async {
+          final applier = _ReadOnlyTombstoneFakeCloudInboxApplier();
+          appliers.add(applier);
+          return applier;
+        },
+      );
+
+      final firstReport = await sampler.runConfirmed();
+      final firstMessageZone = firstReport.zones.singleWhere(
+        (zone) => zone.zoneLabel == 'messages',
+      );
+      expect(firstMessageZone.status, CloudSyncRunStatus.completed);
+      expect(firstMessageZone.tombstoneReadOnlyAcknowledged, 1);
+      expect(firstMessageZone.retainedUnprojected, 1);
+      expect(
+        cloudSyncV2SemanticCanaryPresentation(firstReport).outcome,
+        CloudSyncV2SemanticCanaryOutcome.partial,
+      );
+
+      final secondReport = await sampler.runConfirmed();
+      final secondMessageZone = secondReport.zones.singleWhere(
+        (zone) => zone.zoneLabel == 'messages',
+      );
+      expect(secondMessageZone.status, CloudSyncRunStatus.completed);
+      expect(secondMessageZone.fetched, 0);
+      expect(secondMessageZone.tombstoneReadOnlyAcknowledged, 0);
+      expect(secondMessageZone.retainedUnprojected, 1);
+      final secondPresentation = cloudSyncV2SemanticCanaryPresentation(
+        secondReport,
+      );
+      expect(
+        secondPresentation.outcome,
+        CloudSyncV2SemanticCanaryOutcome.partial,
+      );
+      expect(secondPresentation.title, 'Cloud Sync V2 Partial');
+
+      final messageScope = CloudSyncScope(
+        accountFingerprint: _accountFingerprintA,
+        container: CloudSyncManualSemanticPullSampler.container,
+        database: CloudSyncManualSemanticPullSampler.database,
+        zone: 'messageManateeZone',
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      final messageStore = stores['messageManateeZone']!;
+      final durableRows = await messageStore.inboxEntries(messageScope);
+      expect(durableRows, hasLength(1));
+      expect(durableRows.single.status, CloudInboxStatus.retainedUnprojected);
+      expect(durableRows.single.change.isTombstone, isTrue);
+      expect(
+        durableRows.single.change.encryptedServerRecordId,
+        'protected:server-retained-message-tombstone',
+      );
+      expect(
+        await messageStore.readRetainedUnprojectedInboxCount(messageScope),
+        1,
+      );
+      expect(
+        appliers.fold<int>(0, (total, applier) => total + applier.applyCalls),
+        1,
+      );
+      expect(
+        transports.values.every((transport) => transport.pushCallCount == 0),
+        isTrue,
+      );
+      expect(firstReport.remoteWriteTripwiresIntact, isTrue);
+      expect(secondReport.remoteWriteTripwiresIntact, isTrue);
     },
   );
 
@@ -1562,6 +1699,25 @@ final class _RecordingFlushableObserver implements FlushableCloudSyncObserver {
 
   @override
   Future<void> flush() async => flushed = true;
+}
+
+final class _ReadOnlyTombstoneFakeCloudInboxApplier
+    implements CloudInboxApplier, CloudReadOnlyTombstoneAcknowledgementPolicy {
+  int applyCalls = 0;
+
+  @override
+  bool get readOnlyTombstoneAcknowledgementsEnabled => true;
+
+  @override
+  Future<CloudInboxApplyResult> apply(
+    CloudInboxEntry entry, {
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) async {
+    applyCalls++;
+    return entry.change.isTombstone
+        ? const CloudInboxApplyResult.tombstoneReadOnlyAcknowledged()
+        : const CloudInboxApplyResult.applied();
+  }
 }
 
 final class _RecordingNativeWriterPause implements CloudSyncNativeWriterPause {

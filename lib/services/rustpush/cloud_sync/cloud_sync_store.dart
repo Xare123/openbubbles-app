@@ -287,6 +287,15 @@ abstract interface class CloudSyncStore {
   Future<void> recordRun(CloudSyncRunRecord run);
 }
 
+/// Read-only capability for reporting the current durable semantic backlog.
+///
+/// This is a state snapshot, not the number of rows newly retained by the
+/// current run. Implementations must scope it to the active checkpoint
+/// generation and must not project, delete, or mutate retained rows.
+abstract interface class CloudRetainedUnprojectedBacklogStore {
+  Future<int> readRetainedUnprojectedInboxCount(CloudSyncScope scope);
+}
+
 /// Narrow, local-only migration surface for retrying an unknown semantic
 /// quarantine created by an older decoder build.
 ///

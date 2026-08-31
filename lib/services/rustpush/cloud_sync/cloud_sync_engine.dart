@@ -197,16 +197,22 @@ class CloudSyncRunResult {
     required this.counters,
     required this.startedAt,
     required this.finishedAt,
+    this.retainedUnprojectedBacklog = 0,
     this.skipReason,
     this.failureCategory,
     this.failureSafeCode,
     this.shadowJournalBlockReason,
-  });
+  }) : assert(retainedUnprojectedBacklog >= 0);
 
   final CloudSyncRunStatus status;
   final CloudSyncRunCounters counters;
   final DateTime startedAt;
   final DateTime finishedAt;
+
+  /// Current-generation durable backlog at the end of a semantic run.
+  /// Unlike [CloudSyncRunCounters.retainedUnprojected], this is not limited to
+  /// rows transitioned during this run.
+  final int retainedUnprojectedBacklog;
   final CloudSyncSkipReason? skipReason;
   final CloudFailureCategory? failureCategory;
   final String? failureSafeCode;
@@ -800,6 +806,11 @@ class CloudSyncEngine {
         );
       }
 
+      // Completion is a durable-state claim. A per-run transition counter can
+      // be zero even while an earlier retained row still awaits projection.
+      final retainedUnprojectedBacklog =
+          await _readRetainedUnprojectedBacklog();
+
       _emit(
         CloudSyncEventType.runCompleted,
         at: finishedAt,
@@ -815,6 +826,7 @@ class CloudSyncEngine {
         counters: counters,
         startedAt: startedAt,
         finishedAt: finishedAt,
+        retainedUnprojectedBacklog: retainedUnprojectedBacklog,
         failureCategory: degradedFailure,
         failureSafeCode: degradedFailureSafeCode,
         shadowJournalBlockReason: shadowJournalBlockReason,
@@ -2627,6 +2639,7 @@ class CloudSyncEngine {
     required CloudSyncRunCounters counters,
     required DateTime startedAt,
     required DateTime finishedAt,
+    int retainedUnprojectedBacklog = 0,
     CloudSyncSkipReason? skipReason,
     CloudFailureCategory? failureCategory,
     String? failureSafeCode,
@@ -2637,6 +2650,7 @@ class CloudSyncEngine {
       counters: counters,
       startedAt: startedAt,
       finishedAt: finishedAt,
+      retainedUnprojectedBacklog: retainedUnprojectedBacklog,
       skipReason: skipReason,
       failureCategory: failureCategory,
       failureSafeCode: failureCategory == null
@@ -2664,6 +2678,32 @@ class CloudSyncEngine {
       // Diagnostic retention must never delay IDS or change sync correctness.
     }
     return result;
+  }
+
+  Future<int> _readRetainedUnprojectedBacklog() async {
+    if (!config.flags.semanticApply) return 0;
+    final backlogStore = _store;
+    if (backlogStore is! CloudRetainedUnprojectedBacklogStore) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.localStorage,
+        safeCode: 'retained_unprojected_backlog_store_unavailable',
+      );
+    }
+    try {
+      final count = await (backlogStore as CloudRetainedUnprojectedBacklogStore)
+          .readRetainedUnprojectedInboxCount(scope);
+      if (count < 0) {
+        throw const FormatException('negative retained backlog');
+      }
+      return count;
+    } on CloudSyncFailure {
+      rethrow;
+    } catch (_) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.localStorage,
+        safeCode: 'retained_unprojected_backlog_read_failed',
+      );
+    }
   }
 
   String _configuredModeName() {

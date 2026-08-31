@@ -56,6 +56,9 @@ final class CloudSyncSemanticPullZoneReport {
   final int postFetchQuarantined;
   final int tombstoneQuarantined;
   final int tombstoneReadOnlyAcknowledged;
+
+  /// Current-generation durable backlog at the end of the zone run, not only
+  /// rows newly retained during that run.
   final int retainedUnprojected;
   final int semanticUnsupportedServiceQuarantined;
   final int semanticStageQuarantined;

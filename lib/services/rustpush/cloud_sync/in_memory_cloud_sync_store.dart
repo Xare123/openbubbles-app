@@ -12,6 +12,7 @@ import 'cloud_sync_store.dart';
 class InMemoryCloudSyncStore
     implements
         CloudSyncStore,
+        CloudRetainedUnprojectedBacklogStore,
         CloudSyncUnknownOutcomeLeasingStore,
         CloudSyncOutboxPresenceStore {
   final Lock _lock = Lock();
@@ -227,6 +228,22 @@ class InMemoryCloudSyncStore
         return const <CloudInboxEntry>[];
       }
       return <CloudInboxEntry>[entry];
+    });
+  }
+
+  @override
+  Future<int> readRetainedUnprojectedInboxCount(CloudSyncScope scope) {
+    return _lock.synchronized(() async {
+      final checkpoint = _checkpoints[scope.storageKey];
+      if (checkpoint == null) return 0;
+      final generation = checkpoint.generation;
+      return (_inbox[scope.storageKey]?.values ?? const <CloudInboxEntry>[])
+          .where(
+            (entry) =>
+                entry.generation == generation &&
+                entry.status == CloudInboxStatus.retainedUnprojected,
+          )
+          .length;
     });
   }
 
