@@ -20517,6 +20517,10 @@ impl SseDecode for crate::api::api::CloudSyncTransientMessagePayload {
         let mut var_canonicalGuid = <String>::sse_decode(deserializer);
         let mut var_chatAliasKeyHash = <String>::sse_decode(deserializer);
         let mut var_chatIdentifier = <String>::sse_decode(deserializer);
+        let mut var_chatIdExactGuidLogicalKeyHash = <String>::sse_decode(deserializer);
+        let mut var_chatIdAliasCandidates =
+            <Vec<crate::api::api::CloudSyncTransientChatAlias>>::sse_decode(deserializer);
+        let mut var_msgProto4GroupIdAliasKeyHash = <Option<String>>::sse_decode(deserializer);
         let mut var_senderHandle = <String>::sse_decode(deserializer);
         let mut var_createdAtMillis = <i64>::sse_decode(deserializer);
         let mut var_error = <i64>::sse_decode(deserializer);
@@ -20574,6 +20578,9 @@ impl SseDecode for crate::api::api::CloudSyncTransientMessagePayload {
             canonical_guid: var_canonicalGuid,
             chat_alias_key_hash: var_chatAliasKeyHash,
             chat_identifier: var_chatIdentifier,
+            chat_id_exact_guid_logical_key_hash: var_chatIdExactGuidLogicalKeyHash,
+            chat_id_alias_candidates: var_chatIdAliasCandidates,
+            msg_proto_4_group_id_alias_key_hash: var_msgProto4GroupIdAliasKeyHash,
             sender_handle: var_senderHandle,
             created_at_millis: var_createdAtMillis,
             error: var_error,
@@ -23972,7 +23979,6 @@ impl SseDecode for Option<i32> {
     }
 }
 
-
 impl SseDecode for Option<crate::api::api::IMessagePosterRecord> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -24346,7 +24352,6 @@ impl SseDecode for Option<u32> {
         }
     }
 }
-
 
 impl SseDecode for Option<crate::api::api::UpdateAccountFinish> {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -25622,7 +25627,6 @@ impl SseDecode for (String, crate::api::api::SyncStatus) {
         return (var_field0, var_field1);
     }
 }
-
 
 impl SseDecode for (String, crate::api::api::UpdateAccountFinish) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -29827,6 +29831,13 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientMessag
             self.canonical_guid.into_into_dart().into_dart(),
             self.chat_alias_key_hash.into_into_dart().into_dart(),
             self.chat_identifier.into_into_dart().into_dart(),
+            self.chat_id_exact_guid_logical_key_hash
+                .into_into_dart()
+                .into_dart(),
+            self.chat_id_alias_candidates.into_into_dart().into_dart(),
+            self.msg_proto_4_group_id_alias_key_hash
+                .into_into_dart()
+                .into_dart(),
             self.sender_handle.into_into_dart().into_dart(),
             self.created_at_millis.into_into_dart().into_dart(),
             self.error.into_into_dart().into_dart(),
@@ -36333,6 +36344,12 @@ impl SseEncode for crate::api::api::CloudSyncTransientMessagePayload {
         <String>::sse_encode(self.canonical_guid, serializer);
         <String>::sse_encode(self.chat_alias_key_hash, serializer);
         <String>::sse_encode(self.chat_identifier, serializer);
+        <String>::sse_encode(self.chat_id_exact_guid_logical_key_hash, serializer);
+        <Vec<crate::api::api::CloudSyncTransientChatAlias>>::sse_encode(
+            self.chat_id_alias_candidates,
+            serializer,
+        );
+        <Option<String>>::sse_encode(self.msg_proto_4_group_id_alias_key_hash, serializer);
         <String>::sse_encode(self.sender_handle, serializer);
         <i64>::sse_encode(self.created_at_millis, serializer);
         <i64>::sse_encode(self.error, serializer);
@@ -38973,7 +38990,6 @@ impl SseEncode for Option<i32> {
     }
 }
 
-
 impl SseEncode for Option<crate::api::api::IMessagePosterRecord> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -39293,7 +39309,6 @@ impl SseEncode for Option<u32> {
         }
     }
 }
-
 
 impl SseEncode for Option<crate::api::api::UpdateAccountFinish> {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -40330,7 +40345,6 @@ impl SseEncode for (String, crate::api::api::SyncStatus) {
         <crate::api::api::SyncStatus>::sse_encode(self.1, serializer);
     }
 }
-
 
 impl SseEncode for (String, crate::api::api::UpdateAccountFinish) {
     // Codec=Sse (Serialization based), see doc to use other codecs

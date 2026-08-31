@@ -295,6 +295,12 @@ void main() {
   });
 
   test('reaction is deferred until its parent exists', () async {
+    final diagnostics = <String>[];
+    applier = TransactionalCloudInboxApplier(
+      decoder: decoder,
+      store: store,
+      diagnosticRecorder: diagnostics.add,
+    );
     final inbox = entry(1);
     decodeUpsert(
       inbox,
@@ -309,6 +315,7 @@ void main() {
     final result = await _apply(applier, inbox);
     expect(result.disposition, CloudInboxApplyDisposition.deferred);
     expect(result.safeCode, 'semantic_parent_missing');
+    expect(diagnostics, ['semantic_parent_missing']);
     expect(store.transaction.appliedChanges, isEmpty);
     expect(store.transaction.entityApplyCount, 0);
   });

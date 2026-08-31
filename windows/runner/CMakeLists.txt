@@ -6,12 +6,21 @@ project(runner LANGUAGES CXX)
 # work.
 #
 # Any new source files that you add to the application should be added here.
+if(OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS)
+  set(OPENBUBBLES_PLUGIN_REGISTRANT "cloud_sync_v2_plugin_registrant.cc")
+else()
+  set(
+    OPENBUBBLES_PLUGIN_REGISTRANT
+    "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
+  )
+endif()
+
 add_executable(${BINARY_NAME} WIN32
   "flutter_window.cpp"
   "main.cpp"
   "utils.cpp"
   "win32_window.cpp"
-  "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
+  "${OPENBUBBLES_PLUGIN_REGISTRANT}"
   "Runner.rc"
   "runner.exe.manifest"
 )

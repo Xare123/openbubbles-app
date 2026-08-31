@@ -37,7 +37,8 @@ use crate::{
         CloudCanonicalMutationKind, CloudCanonicalParentReference, CloudCanonicalPayload,
         CloudCanonicalProtectedReference, CloudCanonicalReactionKind, CloudCanonicalReplyReference,
         CloudCanonicalService, CloudCanonicalSnapshot, CloudCanonicalTextRun,
-        CloudCanonicalTombstone, CloudCanonicalValidationFailure, CLOUD_CANONICAL_SCHEMA_VERSION,
+        CloudCanonicalTombstone, CloudCanonicalValidationFailure,
+        CLOUD_CANONICAL_MESSAGE_CHAT_ALIAS_KINDS, CLOUD_CANONICAL_SCHEMA_VERSION,
     },
     cloud_sync_semantic_decoder::CloudSemanticIdentifierHasher,
 };
@@ -1956,26 +1957,6 @@ fn convert_chat_internal(
             );
         }
     }
-    // A message's `chatID` is not guaranteed to equal the chat record's
-    // `cid`. Direct messages normally use the chat `guid`, while historical
-    // group migrations can leave it pointing at `gid`, `ogid`, or a legacy
-    // group identifier. Hash every exact wire identity in the same
-    // service-identifier domain used by message records so the Dart
-    // projection can join them without persisting or normalizing plaintext.
-    for value in [
-        chat.guid.as_str(),
-        chat.group_id.as_str(),
-        chat.original_group_id.as_str(),
-        chat.chat_identifier.as_str(),
-    ] {
-        if let Err(error) = add_alias(CloudCanonicalAliasKind::ChatServiceIdentifier, value) {
-            return chat_diagnostic(
-                diagnostic,
-                CloudChatDiagnosticCode::AliasHash,
-                validation_quarantine(error),
-            );
-        }
-    }
     if let Some(properties) = properties {
         for legacy in &properties.legacy_group_identifiers {
             if legacy.is_empty() {
@@ -1987,17 +1968,14 @@ fn convert_chat_internal(
                     ),
                 );
             }
-            for kind in [
-                CloudCanonicalAliasKind::ChatLegacyGroupIdentifier,
-                CloudCanonicalAliasKind::ChatServiceIdentifier,
-            ] {
-                if let Err(error) = add_alias(kind, legacy) {
-                    return chat_diagnostic(
-                        diagnostic,
-                        CloudChatDiagnosticCode::AliasHash,
-                        validation_quarantine(error),
-                    );
-                }
+            if let Err(error) =
+                add_alias(CloudCanonicalAliasKind::ChatLegacyGroupIdentifier, legacy)
+            {
+                return chat_diagnostic(
+                    diagnostic,
+                    CloudChatDiagnosticCode::AliasHash,
+                    validation_quarantine(error),
+                );
             }
         }
     }
@@ -2382,6 +2360,36 @@ pub(crate) fn convert_message(
         Ok(value) => value,
         Err(error) => return validation_quarantine(error),
     };
+    let chat_id_exact_guid_logical_key_hash = match context
+        .hasher
+        .canonical_entity_key_hash(CloudCanonicalEntityKind::Chat, &message.chat_id)
+    {
+        Ok(value) => value,
+        Err(error) => return validation_quarantine(error),
+    };
+    let mut chat_id_alias_candidates =
+        Vec::with_capacity(CLOUD_CANONICAL_MESSAGE_CHAT_ALIAS_KINDS.len());
+    for kind in CLOUD_CANONICAL_MESSAGE_CHAT_ALIAS_KINDS {
+        let key_hash = match context
+            .hasher
+            .canonical_alias_key_hash(kind, &message.chat_id)
+        {
+            Ok(value) => value,
+            Err(error) => return validation_quarantine(error),
+        };
+        chat_id_alias_candidates.push(CloudCanonicalAlias::new(kind, key_hash));
+    }
+    let msg_proto_4_group_id = proto_4.and_then(|value| value.group_id.clone());
+    let msg_proto_4_group_id_alias_key_hash = match msg_proto_4_group_id.as_deref() {
+        Some(group_id) => match context
+            .hasher
+            .canonical_alias_key_hash(CloudCanonicalAliasKind::ChatGroupId, group_id)
+        {
+            Ok(value) => Some(value),
+            Err(error) => return validation_quarantine(error),
+        },
+        None => None,
+    };
     let logical_hash_result = match association.reaction() {
         Some((_, parent, _)) => context.hasher.canonical_reaction_key_hash(
             &message.guid,
@@ -2434,6 +2442,10 @@ pub(crate) fn convert_message(
         message.guid.clone(),
         message.chat_id.clone(),
         chat_alias_hash,
+        chat_id_exact_guid_logical_key_hash,
+        chat_id_alias_candidates,
+        msg_proto_4_group_id,
+        msg_proto_4_group_id_alias_key_hash,
         message.sender.clone(),
         created_at_millis,
         message.error,
@@ -2541,22 +2553,20 @@ pub(crate) fn convert_attachment(
     presence: &CloudRawRecordPresence,
     attachment: &AttachmentMeta,
 ) -> CloudCanonicalConversionOutcome {
-    if let Err(reason) = require_present(presence, &["cm", "lqa"]) {
+    if let Err(reason) = require_present(presence, &["cm"]) {
         return CloudCanonicalConversionOutcome::Quarantined(reason);
     }
-    for field in ["aguid", "tb", "ig"] {
-        match presence.nested_field("cm", field) {
-            CloudNestedPresence::Present => {}
-            CloudNestedPresence::Unavailable => {
-                return CloudCanonicalConversionOutcome::Deferred(
-                    CloudCanonicalDeferredReason::NestedPresenceUnavailable,
-                )
-            }
-            _ => {
-                return CloudCanonicalConversionOutcome::Quarantined(
-                    CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
-                )
-            }
+    match presence.nested_field("cm", "aguid") {
+        CloudNestedPresence::Present => {}
+        CloudNestedPresence::Unavailable => {
+            return CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::NestedPresenceUnavailable,
+            )
+        }
+        _ => {
+            return CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
+            )
         }
     }
     if attachment.guid.is_empty() {
@@ -2580,6 +2590,14 @@ pub(crate) fn convert_attachment(
                 return CloudCanonicalConversionOutcome::Quarantined(reason);
             }
         }
+    }
+    // `lqa` is the CloudKit asset/download capability, not the attachment's
+    // logical identity. Preserve records that cannot yet be materialized
+    // rather than misclassifying them as malformed identity.
+    if presence.field("lqa") != CloudRawFieldPresence::PresentWithValue {
+        return CloudCanonicalConversionOutcome::Deferred(
+            CloudCanonicalDeferredReason::UnsupportedMediaCredentials,
+        );
     }
     if attachment.is_sticker {
         return CloudCanonicalConversionOutcome::Deferred(
@@ -2639,20 +2657,53 @@ pub(crate) fn convert_attachment(
         Ok(value) => value,
         Err(outcome) => return outcome,
     };
-    let total_bytes = if attachment.total_bytes < 0 {
-        return CloudCanonicalConversionOutcome::Deferred(
-            CloudCanonicalDeferredReason::UnsupportedNegativeAttachmentSize,
-        );
-    } else if attachment.total_bytes == 0 {
-        // The native MMCS materializer deliberately rejects zero-byte
-        // requests. Retain the protected source until that path is proven
-        // rather than projecting metadata for an attachment that this build
-        // can never materialize.
-        return CloudCanonicalConversionOutcome::Deferred(
-            CloudCanonicalDeferredReason::UnsupportedMediaCredentials,
-        );
-    } else {
-        CloudCanonicalField::Value(attachment.total_bytes as u64)
+    let total_bytes = match presence.nested_field("cm", "tb") {
+        CloudNestedPresence::Present if attachment.total_bytes < 0 => {
+            return CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::UnsupportedNegativeAttachmentSize,
+            )
+        }
+        CloudNestedPresence::Present if attachment.total_bytes == 0 => {
+            // The native MMCS materializer deliberately rejects zero-byte
+            // requests. Retain the protected source until that path is proven
+            // rather than projecting metadata for an attachment that this
+            // build can never materialize.
+            return CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::UnsupportedMediaCredentials,
+            );
+        }
+        CloudNestedPresence::Present => CloudCanonicalField::Value(attachment.total_bytes as u64),
+        CloudNestedPresence::Unavailable => {
+            return CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::NestedPresenceUnavailable,
+            )
+        }
+        CloudNestedPresence::Absent => {
+            // Size is materialization metadata. Do not fabricate serde's
+            // numeric default when Apple omitted it.
+            return CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::UnsupportedMediaCredentials,
+            );
+        }
+        CloudNestedPresence::OuterAbsent | CloudNestedPresence::OuterWithoutValue => {
+            return CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRecord,
+            )
+        }
+    };
+    let is_outgoing = match presence.nested_field("cm", "ig") {
+        CloudNestedPresence::Present => CloudCanonicalField::Value(attachment.is_outgoing),
+        CloudNestedPresence::Absent => CloudCanonicalField::Absent,
+        CloudNestedPresence::Unavailable => {
+            return CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::NestedPresenceUnavailable,
+            )
+        }
+        CloudNestedPresence::OuterAbsent | CloudNestedPresence::OuterWithoutValue => {
+            return CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRecord,
+            )
+        }
     };
     let payload = match CloudCanonicalAttachmentPayload::new(
         canonical_guid,
@@ -2663,7 +2714,7 @@ pub(crate) fn convert_attachment(
         mime_type,
         transfer_name,
         total_bytes,
-        CloudCanonicalField::Value(attachment.is_outgoing),
+        is_outgoing,
         CloudCanonicalField::Absent,
     ) {
         Ok(value) => value,
@@ -2903,8 +2954,20 @@ mod tests {
     }
 
     fn attachment_presence() -> CloudRawRecordPresence {
-        let mut presence = raw_presence(&["cm", "lqa"]);
-        capture_keys(&mut presence, "cm", &["aguid", "tb", "ig"]);
+        attachment_presence_with(&["aguid", "tb", "ig"], true)
+    }
+
+    fn attachment_presence_with(
+        nested_fields: &[&str],
+        include_asset: bool,
+    ) -> CloudRawRecordPresence {
+        let top_level_fields = if include_asset {
+            &["cm", "lqa"][..]
+        } else {
+            &["cm"][..]
+        };
+        let mut presence = raw_presence(top_level_fields);
+        capture_keys(&mut presence, "cm", nested_fields);
         presence
     }
 
@@ -3134,22 +3197,37 @@ mod tests {
             mutation.envelope().entity_kind(),
             CloudCanonicalEntityKind::Chat
         );
-        for wire_identity in [
-            "chat-guid-direct",
-            "chat-direct",
-            "chat-direct-original",
-            "iMessage;-;+15555550100",
-        ] {
-            let expected = hasher
+        let service_aliases: Vec<_> = mutation
+            .envelope()
+            .aliases()
+            .iter()
+            .filter(|alias| alias.kind() == CloudCanonicalAliasKind::ChatServiceIdentifier)
+            .collect();
+        assert_eq!(service_aliases.len(), 1);
+        assert_eq!(
+            service_aliases[0].key_hash(),
+            &hasher
                 .canonical_alias_key_hash(
                     CloudCanonicalAliasKind::ChatServiceIdentifier,
-                    wire_identity,
+                    "iMessage;-;+15555550100",
                 )
-                .expect("service alias hash");
-            assert!(mutation.envelope().aliases().iter().any(|alias| {
-                alias.kind() == CloudCanonicalAliasKind::ChatServiceIdentifier
-                    && alias.key_hash() == &expected
-            }));
+                .expect("service alias hash")
+        );
+        for (kind, wire_identity) in [
+            (CloudCanonicalAliasKind::ChatGroupId, "chat-direct"),
+            (
+                CloudCanonicalAliasKind::ChatOriginalGroupId,
+                "chat-direct-original",
+            ),
+        ] {
+            let expected = hasher
+                .canonical_alias_key_hash(kind, wire_identity)
+                .expect("typed alias hash");
+            assert!(mutation
+                .envelope()
+                .aliases()
+                .iter()
+                .any(|alias| alias.kind() == kind && alias.key_hash() == &expected));
         }
         let Some(CloudCanonicalPayload::Chat(payload)) = mutation.payload() else {
             panic!("chat payload expected");
@@ -3162,6 +3240,52 @@ mod tests {
             payload.group_version_state(),
             crate::cloud_sync_canonical_dto::CloudCanonicalFieldState::Absent
         );
+    }
+
+    #[test]
+    fn chat_conversion_keeps_legacy_lineage_out_of_service_identifier_domain() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut chat = group_chat();
+        chat.properties
+            .as_mut()
+            .expect("group properties")
+            .legacy_group_identifiers = vec!["legacy-group".to_owned()];
+        let mut presence = chat_required_presence(true);
+        capture_keys(&mut presence, "prop", &["pv"]);
+        let outcome = convert_chat(
+            &context(&hasher, "server-chat-typed-lineage", None),
+            &presence,
+            &chat,
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+            panic!("chat with typed legacy lineage should convert");
+        };
+        let service_aliases: Vec<_> = mutation
+            .envelope()
+            .aliases()
+            .iter()
+            .filter(|alias| alias.kind() == CloudCanonicalAliasKind::ChatServiceIdentifier)
+            .collect();
+        assert_eq!(service_aliases.len(), 1);
+        assert_eq!(
+            service_aliases[0].key_hash(),
+            &hasher
+                .canonical_alias_key_hash(
+                    CloudCanonicalAliasKind::ChatServiceIdentifier,
+                    &chat.chat_identifier,
+                )
+                .unwrap()
+        );
+        let legacy_hash = hasher
+            .canonical_alias_key_hash(
+                CloudCanonicalAliasKind::ChatLegacyGroupIdentifier,
+                "legacy-group",
+            )
+            .unwrap();
+        assert!(mutation.envelope().aliases().iter().any(|alias| {
+            alias.kind() == CloudCanonicalAliasKind::ChatLegacyGroupIdentifier
+                && alias.key_hash() == &legacy_hash
+        }));
     }
 
     #[test]
@@ -4007,6 +4131,58 @@ mod tests {
     }
 
     #[test]
+    fn message_chat_references_are_domain_separated_and_proto4_group_is_typed() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let mut message = normal_message(Some("hello"));
+        message.msg_proto_4 = Some(GZipWrapper(MessageProto4 {
+            group_id: Some("corroborating-group".to_owned()),
+            ..Default::default()
+        }));
+        let outcome = convert_message(
+            &context(&hasher, "server-message-chat-references", None),
+            &message_presence(),
+            &message,
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+            panic!("message chat references should convert");
+        };
+        let Some(CloudCanonicalPayload::Message(payload)) = mutation.payload() else {
+            panic!("message payload expected");
+        };
+        assert_eq!(
+            payload.chat_id_exact_guid_logical_key_hash(),
+            &hasher
+                .canonical_entity_key_hash(CloudCanonicalEntityKind::Chat, &message.chat_id)
+                .unwrap()
+        );
+        assert_eq!(payload.chat_id_alias_candidates().len(), 4);
+        for (candidate, expected_kind) in payload
+            .chat_id_alias_candidates()
+            .iter()
+            .zip(CLOUD_CANONICAL_MESSAGE_CHAT_ALIAS_KINDS)
+        {
+            assert_eq!(candidate.kind(), expected_kind);
+            assert_eq!(
+                candidate.key_hash(),
+                &hasher
+                    .canonical_alias_key_hash(expected_kind, &message.chat_id)
+                    .unwrap()
+            );
+        }
+        assert_eq!(
+            payload.msg_proto_4_group_id_alias_key_hash(),
+            Some(
+                &hasher
+                    .canonical_alias_key_hash(
+                        CloudCanonicalAliasKind::ChatGroupId,
+                        "corroborating-group",
+                    )
+                    .unwrap()
+            )
+        );
+    }
+
+    #[test]
     fn explicit_zero_association_sentinel_accepts_only_standalone_shape() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let mut standalone = normal_message(Some("hello"));
@@ -4595,6 +4771,119 @@ mod tests {
     }
 
     #[test]
+    fn missing_or_empty_attachment_guid_stays_quarantined() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let attachment = AttachmentMeta {
+            guid: "standalone-attachment-guid".to_owned(),
+            total_bytes: 42,
+            ..Default::default()
+        };
+        assert_eq!(
+            convert_attachment(
+                &context(&hasher, "server-missing-attachment-guid", None),
+                &attachment_presence_with(&["tb", "ig"], true),
+                &attachment,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRequiredIdentity
+            )
+        );
+
+        assert_eq!(
+            convert_attachment(
+                &context(&hasher, "server-empty-attachment-guid", None),
+                &attachment_presence(),
+                &AttachmentMeta {
+                    guid: String::new(),
+                    total_bytes: 42,
+                    ..Default::default()
+                },
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedRequiredIdentity
+            )
+        );
+    }
+
+    #[test]
+    fn missing_attachment_size_is_deferred_without_fabrication() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let attachment = AttachmentMeta {
+            guid: "standalone-attachment-guid".to_owned(),
+            total_bytes: 42,
+            ..Default::default()
+        };
+        assert_eq!(
+            convert_attachment(
+                &context(&hasher, "server-missing-attachment-size", None),
+                &attachment_presence_with(&["aguid", "ig"], true),
+                &attachment,
+            ),
+            CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::UnsupportedMediaCredentials
+            )
+        );
+    }
+
+    #[test]
+    fn missing_outgoing_flag_is_preserved_as_absent() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let outcome = convert_attachment(
+            &context(&hasher, "server-missing-outgoing-flag", None),
+            &attachment_presence_with(&["aguid", "tb"], true),
+            &AttachmentMeta {
+                guid: "standalone-attachment-guid".to_owned(),
+                total_bytes: 42,
+                is_outgoing: false,
+                ..Default::default()
+            },
+        );
+        let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+            panic!("attachment without ig should convert");
+        };
+        let Some(CloudCanonicalPayload::Attachment(payload)) = mutation.payload() else {
+            panic!("attachment payload expected");
+        };
+        assert_eq!(payload.is_outgoing(), &CloudCanonicalField::Absent);
+    }
+
+    #[test]
+    fn missing_or_valueless_asset_is_deferred_not_malformed_identity() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let attachment = AttachmentMeta {
+            guid: "standalone-attachment-guid".to_owned(),
+            total_bytes: 42,
+            ..Default::default()
+        };
+        let missing = attachment_presence_with(&["aguid", "tb", "ig"], false);
+        assert_eq!(
+            convert_attachment(
+                &context(&hasher, "server-missing-asset", None),
+                &missing,
+                &attachment,
+            ),
+            CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::UnsupportedMediaCredentials
+            )
+        );
+
+        let mut valueless = attachment_presence();
+        valueless
+            .fields
+            .insert("lqa".to_owned(), CloudRawFieldPresence::PresentWithoutValue);
+        assert_eq!(
+            convert_attachment(
+                &context(&hasher, "server-valueless-asset", None),
+                &valueless,
+                &attachment,
+            ),
+            CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::UnsupportedMediaCredentials
+            )
+        );
+    }
+
+    #[test]
     fn valid_inline_metadata_remains_deferred_without_a_native_inline_body_path() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let mut attachment = AttachmentMeta {
@@ -4611,6 +4900,31 @@ mod tests {
             convert_attachment(
                 &context(&hasher, "server-inline-attachment", None),
                 &attachment_presence(),
+                &attachment,
+            ),
+            CloudCanonicalConversionOutcome::Deferred(
+                CloudCanonicalDeferredReason::UnsupportedMediaCredentials
+            )
+        );
+    }
+
+    #[test]
+    fn valid_inline_metadata_without_asset_remains_deferred() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
+        let attachment = AttachmentMeta {
+            guid: "standalone-inline-guid".to_owned(),
+            total_bytes: 42,
+            user_info: Some(MMCSAttachmentMeta {
+                inline_attachment: Some("ia-0".to_owned()),
+                message_part: Some("0".to_owned()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            convert_attachment(
+                &context(&hasher, "server-inline-without-asset", None),
+                &attachment_presence_with(&["aguid", "tb", "ig"], false),
                 &attachment,
             ),
             CloudCanonicalConversionOutcome::Deferred(

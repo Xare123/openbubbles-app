@@ -10,11 +10,13 @@ use keystore::software::SoftwareEncryptor;
 #[cfg(not(target_os = "android"))]
 use keystore::software::SoftwareKeystore;
 use keystore::{
-    init_keystore, keystore, AesKeystoreKey, EcCurve, EcKeystoreKey, EncryptMode,
-    KeystoreAccessRules, KeystoreDigest, KeystoreEncryptKey, KeystorePadding, RsaKey,
+    init_keystore, keystore, try_init_keystore, AesKeystoreKey, EcCurve, EcKeystoreKey,
+    EncryptMode, KeystoreAccessRules, KeystoreDigest, KeystoreEncryptKey, KeystoreError,
+    KeystorePadding, KeystorePublicKey, RsaKey,
 };
 use log::{debug, error, info, warn};
 pub use mpsc::Sender;
+use openssl::{ec::EcKey as OpenSslEcKey, rsa::Rsa as OpenSslRsa};
 pub use plist::Value;
 use plist::{Data, Dictionary};
 use prost::Message as prostMessage;
@@ -137,10 +139,55 @@ lazy_static! {
     };
 }
 
+#[cfg(target_os = "windows")]
+static WINDOWS_PROTECTED_KEYSTORE_PROFILE: OnceLock<PathBuf> = OnceLock::new();
+#[cfg(target_os = "windows")]
+static WINDOWS_PROTECTED_KEYSTORE_INITIALIZATION: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+
+#[cfg(target_os = "windows")]
+fn initialize_windows_protected_keystore(directory: &std::path::Path) -> anyhow::Result<()> {
+    let canonical_directory = fs::canonicalize(directory)
+        .map_err(|_| anyhow!("Windows protected keystore directory is unavailable"))?;
+    let _initialization_guard = WINDOWS_PROTECTED_KEYSTORE_INITIALIZATION
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .map_err(|_| anyhow!("Windows protected keystore initialization lock was poisoned"))?;
+    if let Some(bound_directory) = WINDOWS_PROTECTED_KEYSTORE_PROFILE.get() {
+        if bound_directory == &canonical_directory {
+            return Ok(());
+        }
+        return Err(anyhow!(
+            "Windows protected keystore is already bound to another profile"
+        ));
+    }
+
+    let opened = open_windows_keystore(&canonical_directory.join("keystore.plist"))?;
+    let writer = opened.writer;
+    try_init_keystore(SoftwareKeystore {
+        state: std::sync::RwLock::new(opened.state),
+        update_state: Box::new(move |state| {
+            writer
+                .write_state(state)
+                .expect("Windows protected keystore persistence failed");
+        }),
+        encryptor: opened.encryptor,
+    })
+    .map_err(|_| anyhow!("A different process-global keystore is already initialized"))?;
+    WINDOWS_PROTECTED_KEYSTORE_PROFILE
+        .set(canonical_directory)
+        .map_err(|_| anyhow!("Windows protected keystore profile binding failed"))?;
+    Ok(())
+}
+
 pub fn do_first_time_init(path: String) {
     let dir = PathBuf::from_str(&path).unwrap();
 
     init_logger(&dir);
+
+    #[cfg(target_os = "windows")]
+    if let Err(error) = initialize_windows_protected_keystore(&dir) {
+        error!("Windows protected keystore initialization failed: {error}");
+    }
 }
 
 /// Protects one Cloud Sync V2 value at rest.
@@ -1203,6 +1250,9 @@ pub struct CloudSyncTransientMessagePayload {
     pub canonical_guid: String,
     pub chat_alias_key_hash: String,
     pub chat_identifier: String,
+    pub chat_id_exact_guid_logical_key_hash: String,
+    pub chat_id_alias_candidates: Vec<CloudSyncTransientChatAlias>,
+    pub msg_proto_4_group_id_alias_key_hash: Option<String>,
     pub sender_handle: String,
     pub created_at_millis: i64,
     pub error: i64,
@@ -2994,6 +3044,27 @@ mod cloudkit_repair_digest_tests {
             canonical_guid: "guid".to_owned(),
             chat_alias_key_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
             chat_identifier: "chat".to_owned(),
+            chat_id_exact_guid_logical_key_hash: "ccccccccccccccccccccccccccccccccccccccccccc"
+                .to_owned(),
+            chat_id_alias_candidates: vec![
+                CloudSyncTransientChatAlias {
+                    kind: CloudSyncTransientChatAliasKind::ServiceIdentifier,
+                    key_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
+                },
+                CloudSyncTransientChatAlias {
+                    kind: CloudSyncTransientChatAliasKind::GroupId,
+                    key_hash: "ddddddddddddddddddddddddddddddddddddddddddd".to_owned(),
+                },
+                CloudSyncTransientChatAlias {
+                    kind: CloudSyncTransientChatAliasKind::OriginalGroupId,
+                    key_hash: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_owned(),
+                },
+                CloudSyncTransientChatAlias {
+                    kind: CloudSyncTransientChatAliasKind::LegacyGroupIdentifier,
+                    key_hash: "fffffffffffffffffffffffffffffffffffffffffff".to_owned(),
+                },
+            ],
+            msg_proto_4_group_id_alias_key_hash: None,
             sender_handle: "sender".to_owned(),
             created_at_millis: 1,
             error: 2,
@@ -3372,6 +3443,21 @@ fn map_cloud_sync_transient_payload(
                 canonical_guid: payload.guid().to_owned(),
                 chat_alias_key_hash: payload.chat_alias_key_hash().value().to_owned(),
                 chat_identifier: payload.chat_identifier().to_owned(),
+                chat_id_exact_guid_logical_key_hash: payload
+                    .chat_id_exact_guid_logical_key_hash()
+                    .value()
+                    .to_owned(),
+                chat_id_alias_candidates: payload
+                    .chat_id_alias_candidates()
+                    .iter()
+                    .map(|alias| CloudSyncTransientChatAlias {
+                        kind: map_cloud_sync_transient_chat_alias_kind(alias.kind()),
+                        key_hash: alias.key_hash().value().to_owned(),
+                    })
+                    .collect(),
+                msg_proto_4_group_id_alias_key_hash: payload
+                    .msg_proto_4_group_id_alias_key_hash()
+                    .map(|value| value.value().to_owned()),
                 sender_handle: payload.sender_handle().to_owned(),
                 created_at_millis: payload.created_at_millis(),
                 error: payload.error(),
@@ -4248,6 +4334,54 @@ fn persist_migrated_plist_state<T: serde::Serialize>(
     persist_login_state_file(directory, file_name, &encoded)
 }
 
+fn import_migrated_rsa_key(
+    handle: &str,
+    bits: u16,
+    private_key: &[u8],
+    access_rules: KeystoreAccessRules,
+) -> Result<(), KeystoreError> {
+    match RsaKey::import(handle, bits, private_key, access_rules) {
+        Ok(_) => Ok(()),
+        Err(KeystoreError::KeyAlreadyExists) => {
+            let incoming_public =
+                OpenSslRsa::private_key_from_der(private_key)?.public_key_to_der()?;
+            let existing_public = RsaKey(handle.to_owned()).get_public_key()?;
+            if incoming_public == existing_public {
+                Ok(())
+            } else {
+                Err(KeystoreError::KeystoreError(format!(
+                    "existing RSA migration key does not match {handle}"
+                )))
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn import_migrated_ec_key(
+    handle: &str,
+    curve: EcCurve,
+    private_key: &[u8],
+    access_rules: KeystoreAccessRules,
+) -> Result<(), KeystoreError> {
+    match EcKeystoreKey::import(handle, curve, private_key, access_rules) {
+        Ok(_) => Ok(()),
+        Err(KeystoreError::KeyAlreadyExists) => {
+            let incoming_public =
+                OpenSslEcKey::private_key_from_der(private_key)?.public_key_to_der()?;
+            let existing_public = EcKeystoreKey(handle.to_owned()).get_public_key()?;
+            if incoming_public == existing_public {
+                Ok(())
+            } else {
+                Err(KeystoreError::KeystoreError(format!(
+                    "existing EC migration key does not match {handle}"
+                )))
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
 fn migrate(dir: &std::path::Path) -> bool {
     let hw_config_path = dir.join("hw_info.plist");
 
@@ -4259,7 +4393,7 @@ fn migrate(dir: &std::path::Path) -> bool {
                     if let Some(private) = item.get_mut("private") {
                         if let Value::Data(cert) = private {
                             let handle = format!("activation:{}", config.get_serial_number());
-                            RsaKey::import(
+                            import_migrated_rsa_key(
                                 &handle,
                                 1024,
                                 cert,
@@ -4303,7 +4437,7 @@ fn migrate(dir: &std::path::Path) -> bool {
                 if let Some(private) = item.get_mut("private") {
                     if let Value::Data(cert) = private {
                         let handle = format!("ids:{user_id}");
-                        RsaKey::import(
+                        import_migrated_rsa_key(
                             &handle,
                             2048,
                             cert,
@@ -4355,7 +4489,7 @@ fn migrate(dir: &std::path::Path) -> bool {
                 if let Some(private) = item.get_mut("signing_key") {
                     if let Value::Data(cert) = private {
                         let handle = format!("keychain:signing:{mid}");
-                        EcKeystoreKey::import(
+                        import_migrated_ec_key(
                             &handle,
                             EcCurve::P384,
                             &cert,
@@ -4373,7 +4507,7 @@ fn migrate(dir: &std::path::Path) -> bool {
                 if let Some(private) = item.get_mut("encryption_key") {
                     if let Value::Data(cert) = private {
                         let handle = format!("keychain:encryption:{mid}");
-                        EcKeystoreKey::import(
+                        import_migrated_ec_key(
                             &handle,
                             EcCurve::P384,
                             &cert,
@@ -4673,27 +4807,18 @@ impl SharedPushState {
         #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
         let dir = requested_dir;
         let path = dir.to_string_lossy().into_owned();
+        #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
         let keystore = dir.join("keystore.plist");
 
         #[cfg(target_os = "windows")]
         {
-            let opened = match open_windows_keystore(&keystore) {
-                Ok(opened) => opened,
+            match initialize_windows_protected_keystore(&dir) {
+                Ok(()) => {}
                 Err(error) => {
                     error!("Windows protected keystore restore failed: {error}");
                     return None;
                 }
-            };
-            let writer = opened.writer;
-            init_keystore(SoftwareKeystore {
-                state: std::sync::RwLock::new(opened.state),
-                update_state: Box::new(move |state| {
-                    writer
-                        .write_state(state)
-                        .expect("Windows protected keystore persistence failed");
-                }),
-                encryptor: opened.encryptor,
-            });
+            }
         }
 
         #[cfg(all(not(target_os = "android"), not(target_os = "windows")))]
@@ -7260,6 +7385,7 @@ static CLOUDKIT_STATE_FILE_WRITE_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock
 
 #[cfg(any(target_os = "android", target_os = "windows", test))]
 #[derive(Default)]
+#[frb(ignore)]
 struct CloudKitLoginLifecycle {
     generation: u64,
     admissions: HashMap<usize, u64>,
@@ -7594,6 +7720,10 @@ pub async fn cloud_sync_ensure_read_authentication(
         .token_provider
         .cloudkit_read_authentication_is_warm()
         .await
+        && cloud_messages_client
+            .validated_native_account_identifier()
+            .await
+            .is_ok()
     {
         return Ok(());
     }
@@ -7606,19 +7736,25 @@ pub async fn cloud_sync_ensure_read_authentication(
             .map_err(|_| anyhow!("cloud_sync_native_auth_refresh_writer_busy"))?;
         let lifecycle_gate = cloudkit_read_authentication_lifecycle_gate(&canonical_directory)?;
         let _lifecycle_guard = lifecycle_gate.lock().await;
+        let (persisted_account_identifier, _) = cloud_messages_client
+            .validated_persisted_native_account_identifiers()
+            .await
+            .map_err(|_| anyhow!("cloud_sync_native_auth_identity_mismatch"))?;
+        let account_before_refresh = cloud_messages_client
+            .validated_native_account_identifier()
+            .await
+            .ok();
         if cloud_messages_client
             .client
             .token_provider
             .cloudkit_read_authentication_is_warm()
             .await
+            && account_before_refresh
+                .as_ref()
+                .is_some_and(|account| account == &persisted_account_identifier)
         {
             return Ok(());
         }
-
-        let account_before = cloud_messages_client
-            .validated_native_account_identifier()
-            .await
-            .map_err(|_| anyhow!("cloud_sync_native_auth_identity_mismatch"))?;
 
         let gsa = plist::from_file::<_, GSAConfig>(canonical_directory.join("gsa.plist"))
             .map_err(|_| anyhow!("cloud_sync_native_auth_refresh_session_missing"))?;
@@ -7649,7 +7785,11 @@ pub async fn cloud_sync_ensure_read_authentication(
             .validated_native_account_identifier()
             .await
             .map_err(|_| anyhow!("cloud_sync_native_auth_identity_mismatch"))?;
-        if account_after_refresh != account_before {
+        if account_after_refresh != persisted_account_identifier
+            || account_before_refresh
+                .as_ref()
+                .is_some_and(|account| account != &account_after_refresh)
+        {
             return Err(anyhow!("cloud_sync_native_auth_account_changed"));
         }
 
@@ -8257,6 +8397,31 @@ mod cloudkit_read_authentication_cache_tests {
 
         std::fs::remove_dir_all(&directory).expect("remove reset failure test directory");
     }
+
+    #[test]
+    fn two_factor_state_requires_a_fresh_authenticated_login() {
+        assert!(two_factor_verification_authorizes_fresh_login(
+            &LoginState::NeedsLogin
+        ));
+        assert!(two_factor_verification_authorizes_fresh_login(
+            &LoginState::LoggedIn
+        ));
+        assert!(!two_factor_verification_authorizes_fresh_login(
+            &LoginState::NeedsDevice2FA
+        ));
+        assert!(two_factor_fresh_login_is_authenticated(
+            &LoginState::LoggedIn,
+            true
+        ));
+        assert!(!two_factor_fresh_login_is_authenticated(
+            &LoginState::LoggedIn,
+            false
+        ));
+        assert!(!two_factor_fresh_login_is_authenticated(
+            &LoginState::NeedsLogin,
+            true
+        ));
+    }
 }
 
 pub async fn do_login(
@@ -8588,8 +8753,15 @@ pub async fn send_2fa_to_devices(
     Option<String>,
 )> {
     let account = state.lock().await;
-    let spd = account.spd.as_ref().unwrap();
-    let dsid = spd["DsPrsId"].as_unsigned_integer().unwrap();
+    let spd = account
+        .spd
+        .as_ref()
+        .ok_or_else(|| anyhow!("Trusted-device 2FA session is unavailable"))?;
+    let dsid = spd
+        .get("DsPrsId")
+        .and_then(Value::as_unsigned_integer)
+        .filter(|value| *value != 0)
+        .ok_or_else(|| anyhow!("Trusted-device 2FA account is unavailable"))?;
     drop(account);
 
     let client_session =
@@ -9363,6 +9535,29 @@ pub async fn circle_setup_clique(
     .await
 }
 
+fn two_factor_verification_authorizes_fresh_login(state: &LoginState) -> bool {
+    matches!(state, LoginState::NeedsLogin | LoginState::LoggedIn)
+}
+
+fn two_factor_fresh_login_is_authenticated(state: &LoginState, has_pet: bool) -> bool {
+    matches!(state, LoginState::LoggedIn) && has_pet
+}
+
+#[cfg(target_os = "windows")]
+fn is_cloud_sync_windows_dev_profile(path: &str) -> bool {
+    canonical_cloudkit_state_directory(&PathBuf::from(path))
+        .ok()
+        .and_then(|directory| {
+            fs::read_to_string(directory.join(".openbubbles-cloud-sync-v2-windows-dev")).ok()
+        })
+        .is_some_and(|marker| marker == "openbubbles-cloud-sync-v2-windows-dev-profile:v1")
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_cloud_sync_windows_dev_profile(_path: &str) -> bool {
+    false
+}
+
 pub async fn verify_2fa(
     path: String,
     client: &mut CircleClientSession<DefaultAnisetteProvider>,
@@ -9374,7 +9569,7 @@ pub async fn verify_2fa(
     code: String,
 ) -> anyhow::Result<(LoginState, Option<IDSUser>)> {
     #[cfg(target_os = "android")]
-    let mut login_state = {
+    let verification_state = {
         client.send_code(&code).await?;
 
         let proximity_result = tokio::time::timeout(Duration::from_secs(10), async {
@@ -9417,24 +9612,49 @@ pub async fn verify_2fa(
     };
 
     #[cfg(not(target_os = "android"))]
-    let mut login_state = {
+    let verification_state = {
         // The code shown by Apple's normal trusted-device prompt can be
         // verified directly without waiting on an unavailable BLE exchange.
         account.lock().await.verify_2fa(code).await?
     };
 
+    if !two_factor_verification_authorizes_fresh_login(&verification_state) {
+        return Err(anyhow!(
+            "Trusted-device verification did not authorize a fresh login"
+        ));
+    }
+
+    // Apple can populate the SPD token dictionary before reporting that 2FA
+    // is still required. Those pre-verification tokens are not authenticated
+    // CloudKit authority. Always perform a fresh SRP exchange after the code
+    // is accepted and require an explicit logged-in response with a PET.
+    let login_state = {
+        let mut locked = account.lock().await;
+        let username = locked
+            .username
+            .clone()
+            .ok_or_else(|| anyhow!("Trusted-device verification account is unavailable"))?;
+        let hashed_password = locked
+            .hashed_password
+            .clone()
+            .ok_or_else(|| anyhow!("Trusted-device verification credential is unavailable"))?;
+        locked.login_email_pass(&username, &hashed_password).await?
+    };
+    if !two_factor_fresh_login_is_authenticated(
+        &login_state,
+        account.lock().await.get_pet().is_some(),
+    ) {
+        return Err(anyhow!(
+            "Trusted-device verification did not produce a post-verification login"
+        ));
+    }
+
     let mut user = None;
-    let pet = account.lock().await.get_pet();
-    if let Some(pet) = pet {
+    if !is_cloud_sync_windows_dev_profile(&path) {
         let identity = do_login(path, &account, None, os_config).await?;
         user = Some(identity);
-
-        // who needs extra steps when you have a PET, amirite?
-        info!("Trusted-device verification produced a PET");
-        if matches!(login_state, LoginState::NeedsExtraStep(_)) {
-            login_state = LoginState::LoggedIn;
-        }
     }
+    info!("Trusted-device verification completed a fresh authenticated login");
 
     Ok((login_state, user))
 }
@@ -9469,20 +9689,35 @@ pub async fn verify_2fa_sms(
     code: String,
 ) -> anyhow::Result<(LoginState, Option<IDSUser>)> {
     let mut account = account_mut.lock().await;
-    let mut login_state = account.verify_sms_2fa(code, body.clone()).await?;
+    let verification_state = account.verify_sms_2fa(code, body.clone()).await?;
+    if !two_factor_verification_authorizes_fresh_login(&verification_state) {
+        return Err(anyhow!("SMS verification did not authorize a fresh login"));
+    }
+
+    let username = account
+        .username
+        .clone()
+        .ok_or_else(|| anyhow!("SMS verification account is unavailable"))?;
+    let hashed_password = account
+        .hashed_password
+        .clone()
+        .ok_or_else(|| anyhow!("SMS verification credential is unavailable"))?;
+    let login_state = account
+        .login_email_pass(&username, &hashed_password)
+        .await?;
+    if !two_factor_fresh_login_is_authenticated(&login_state, account.get_pet().is_some()) {
+        return Err(anyhow!(
+            "SMS verification did not produce a post-verification login"
+        ));
+    }
 
     let mut user = None;
-    if let Some(pet) = account.get_pet() {
-        drop(account);
+    drop(account);
+    if !is_cloud_sync_windows_dev_profile(&path) {
         let identity = do_login(path, &account_mut, None, config).await?;
         user = Some(identity);
-
-        // who needs extra steps when you have a PET, amirite?
-        info!("SMS verification produced a PET");
-        if matches!(login_state, LoginState::NeedsExtraStep(_)) {
-            login_state = LoginState::LoggedIn;
-        }
     }
+    info!("SMS verification completed a fresh authenticated login");
 
     Ok((login_state, user))
 }

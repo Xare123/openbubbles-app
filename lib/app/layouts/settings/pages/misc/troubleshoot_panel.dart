@@ -84,13 +84,22 @@ CloudSyncV2SemanticCanaryPresentation cloudSyncV2SemanticCanaryPresentation(
   );
   const expectedZones = <String>{"chats", "messages", "attachments"};
   final reportedZones = report.zones.map((zone) => zone.zoneLabel).toSet();
-  final existingCompletionGatesPassed =
+  final zoneStructureIntact =
       report.zones.length == expectedZones.length &&
       reportedZones.length == expectedZones.length &&
-      reportedZones.containsAll(expectedZones) &&
-      report.zones.every(
-        (zone) => zone.status == CloudSyncRunStatus.completed,
-      ) &&
+      reportedZones.containsAll(expectedZones);
+  final allZonesCompleted = report.zones.every(
+    (zone) => zone.status == CloudSyncRunStatus.completed,
+  );
+  final allZonesReadWithoutBlockingFailure = report.zones.every(
+    (zone) =>
+        zone.status == CloudSyncRunStatus.completed ||
+        (zone.status == CloudSyncRunStatus.degraded &&
+            zone.failureSafeCode == 'retained_projection_incomplete'),
+  );
+  final readCompletionGatesPassed =
+      zoneStructureIntact &&
+      allZonesReadWithoutBlockingFailure &&
       deferred == 0 &&
       quarantined == 0 &&
       unsupportedServiceQuarantined == 0 &&
@@ -100,14 +109,16 @@ CloudSyncV2SemanticCanaryPresentation cloudSyncV2SemanticCanaryPresentation(
   final totals =
       "Fetched $fetched, applied $applied, retained-unprojected $retainedUnprojected, read-only tombstones acknowledged $tombstoneReadOnlyAcknowledged, deferred $deferred, quarantined $quarantined (unsupported service $unsupportedServiceQuarantined, tombstone failures $tombstoneQuarantined), retried $retried.";
 
-  if (existingCompletionGatesPassed && retainedUnprojected == 0) {
+  if (readCompletionGatesPassed &&
+      allZonesCompleted &&
+      retainedUnprojected == 0) {
     return CloudSyncV2SemanticCanaryPresentation(
       outcome: CloudSyncV2SemanticCanaryOutcome.complete,
       title: "Cloud Sync V2 Complete",
       message: "$totals No CloudKit uploads or deletes occurred.",
     );
   }
-  if (existingCompletionGatesPassed) {
+  if (readCompletionGatesPassed && retainedUnprojected > 0) {
     final retainedLabel = retainedUnprojected == 1
         ? "record remains retained and has not"
         : "records remain retained and have not";

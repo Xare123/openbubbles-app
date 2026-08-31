@@ -401,7 +401,11 @@ fn validate_cloud_message(message: &CloudMessage) -> Result<(), CloudSyncOutboun
     }
     // The first canary is plain text only. An attributed body is a separate
     // NSKeyedArchiver/styling payload and must not enter this encoder yet.
-    if proto.attributed_body.as_ref().is_some_and(|value| !value.is_empty()) {
+    if proto
+        .attributed_body
+        .as_ref()
+        .is_some_and(|value| !value.is_empty())
+    {
         return Err(CloudSyncOutboundFailure::UnsupportedMessage);
     }
     if proto.unk1 != 1

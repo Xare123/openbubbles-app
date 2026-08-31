@@ -51,6 +51,13 @@ pub(crate) enum CloudCanonicalAliasKind {
     ChatLegacyGroupIdentifier,
 }
 
+pub(crate) const CLOUD_CANONICAL_MESSAGE_CHAT_ALIAS_KINDS: [CloudCanonicalAliasKind; 4] = [
+    CloudCanonicalAliasKind::ChatServiceIdentifier,
+    CloudCanonicalAliasKind::ChatGroupId,
+    CloudCanonicalAliasKind::ChatOriginalGroupId,
+    CloudCanonicalAliasKind::ChatLegacyGroupIdentifier,
+];
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum CloudCanonicalService {
     IMessage,
@@ -1339,6 +1346,10 @@ pub(crate) struct CloudCanonicalMessagePayload {
     guid: String,
     chat_identifier: String,
     chat_alias_key_hash: CloudCanonicalHash,
+    chat_id_exact_guid_logical_key_hash: CloudCanonicalHash,
+    chat_id_alias_candidates: Vec<CloudCanonicalAlias>,
+    msg_proto_4_group_id: Option<String>,
+    msg_proto_4_group_id_alias_key_hash: Option<CloudCanonicalHash>,
     sender_handle: String,
     created_at_millis: i64,
     error: i64,
@@ -1365,6 +1376,10 @@ impl CloudCanonicalMessagePayload {
         guid: String,
         chat_identifier: String,
         chat_alias_key_hash: CloudCanonicalHash,
+        chat_id_exact_guid_logical_key_hash: CloudCanonicalHash,
+        chat_id_alias_candidates: Vec<CloudCanonicalAlias>,
+        msg_proto_4_group_id: Option<String>,
+        msg_proto_4_group_id_alias_key_hash: Option<CloudCanonicalHash>,
         sender_handle: String,
         created_at_millis: i64,
         error: i64,
@@ -1386,6 +1401,34 @@ impl CloudCanonicalMessagePayload {
     ) -> Result<Self, CloudCanonicalValidationFailure> {
         validate_identifier(&guid)?;
         validate_identifier(&chat_identifier)?;
+        if chat_id_alias_candidates.len() != CLOUD_CANONICAL_MESSAGE_CHAT_ALIAS_KINDS.len() {
+            return Err(CloudCanonicalValidationFailure::InvalidPayload);
+        }
+        let mut candidate_hashes = HashSet::with_capacity(chat_id_alias_candidates.len());
+        for (candidate, expected_kind) in chat_id_alias_candidates
+            .iter()
+            .zip(CLOUD_CANONICAL_MESSAGE_CHAT_ALIAS_KINDS)
+        {
+            if candidate.kind() != expected_kind
+                || !candidate_hashes.insert(candidate.key_hash().value())
+            {
+                return Err(CloudCanonicalValidationFailure::InvalidPayload);
+            }
+        }
+        if chat_id_alias_candidates
+            .first()
+            .is_none_or(|candidate| candidate.key_hash() != &chat_alias_key_hash)
+        {
+            return Err(CloudCanonicalValidationFailure::InvalidPayload);
+        }
+        match (
+            msg_proto_4_group_id.as_deref(),
+            msg_proto_4_group_id_alias_key_hash.as_ref(),
+        ) {
+            (Some(group_id), Some(_)) => validate_identifier(group_id)?,
+            (None, None) => {}
+            _ => return Err(CloudCanonicalValidationFailure::InvalidPayload),
+        }
         if !sender_handle.is_empty() {
             validate_identifier(&sender_handle)?;
         }
@@ -1451,6 +1494,8 @@ impl CloudCanonicalMessagePayload {
             .len()
             .checked_add(chat_identifier.len())
             .ok_or(CloudCanonicalValidationFailure::CollectionLimit)?
+            .checked_add(msg_proto_4_group_id.as_ref().map_or(0, String::len))
+            .ok_or(CloudCanonicalValidationFailure::CollectionLimit)?
             .checked_add(sender_handle.len())
             .ok_or(CloudCanonicalValidationFailure::CollectionLimit)?;
         for field in [
@@ -1504,6 +1549,10 @@ impl CloudCanonicalMessagePayload {
             guid,
             chat_identifier,
             chat_alias_key_hash,
+            chat_id_exact_guid_logical_key_hash,
+            chat_id_alias_candidates,
+            msg_proto_4_group_id,
+            msg_proto_4_group_id_alias_key_hash,
             sender_handle,
             created_at_millis,
             error,
@@ -1593,6 +1642,22 @@ impl CloudCanonicalMessagePayload {
 
     pub(crate) fn chat_alias_key_hash(&self) -> &CloudCanonicalHash {
         &self.chat_alias_key_hash
+    }
+
+    pub(crate) fn chat_id_exact_guid_logical_key_hash(&self) -> &CloudCanonicalHash {
+        &self.chat_id_exact_guid_logical_key_hash
+    }
+
+    pub(crate) fn chat_id_alias_candidates(&self) -> &[CloudCanonicalAlias] {
+        &self.chat_id_alias_candidates
+    }
+
+    pub(crate) fn msg_proto_4_group_id(&self) -> Option<&str> {
+        self.msg_proto_4_group_id.as_deref()
+    }
+
+    pub(crate) fn msg_proto_4_group_id_alias_key_hash(&self) -> Option<&CloudCanonicalHash> {
+        self.msg_proto_4_group_id_alias_key_hash.as_ref()
     }
 
     pub(crate) fn sender_handle(&self) -> &str {
@@ -2302,6 +2367,49 @@ mod tests {
         .expect("body")
     }
 
+    fn message_chat_alias_candidates() -> Vec<CloudCanonicalAlias> {
+        CLOUD_CANONICAL_MESSAGE_CHAT_ALIAS_KINDS
+            .into_iter()
+            .zip(['A', 'B', 'C', 'D'])
+            .map(|(kind, value)| CloudCanonicalAlias::new(kind, hash(value)))
+            .collect()
+    }
+
+    fn minimal_message_payload_with_references(
+        chat_alias_key_hash: CloudCanonicalHash,
+        chat_id_alias_candidates: Vec<CloudCanonicalAlias>,
+        msg_proto_4_group_id: Option<String>,
+        msg_proto_4_group_id_alias_key_hash: Option<CloudCanonicalHash>,
+    ) -> Result<CloudCanonicalMessagePayload, CloudCanonicalValidationFailure> {
+        CloudCanonicalMessagePayload::new(
+            "message-guid".to_owned(),
+            "iMessage;-;synthetic".to_owned(),
+            chat_alias_key_hash,
+            hash('G'),
+            chat_id_alias_candidates,
+            msg_proto_4_group_id,
+            msg_proto_4_group_id_alias_key_hash,
+            "mailto:synthetic@example.invalid".to_owned(),
+            1,
+            0,
+            CloudCanonicalService::IMessage,
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Value("body".to_owned()),
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Absent,
+            CloudCanonicalKnownMessageFlags::default(),
+            CloudCanonicalMessageAssociation::None,
+            None,
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Absent,
+            CloudCanonicalField::Absent,
+        )
+    }
+
     fn message_payload(
         association: CloudCanonicalMessageAssociation,
     ) -> CloudCanonicalMessagePayload {
@@ -2309,6 +2417,10 @@ mod tests {
             format!("message-{SENTINEL}"),
             "iMessage;-;synthetic".to_owned(),
             hash('A'),
+            hash('G'),
+            message_chat_alias_candidates(),
+            None,
+            None,
             "mailto:synthetic@example.invalid".to_owned(),
             123,
             0,
@@ -2344,12 +2456,75 @@ mod tests {
     }
 
     #[test]
+    fn message_chat_alias_candidates_are_exact_ordered_and_duplicate_free() {
+        assert!(minimal_message_payload_with_references(
+            hash('A'),
+            message_chat_alias_candidates(),
+            None,
+            None,
+        )
+        .is_ok());
+
+        let mut wrong_order = message_chat_alias_candidates();
+        wrong_order.swap(0, 1);
+        assert_eq!(
+            minimal_message_payload_with_references(hash('B'), wrong_order, None, None),
+            Err(CloudCanonicalValidationFailure::InvalidPayload)
+        );
+
+        let mut duplicate_hash = message_chat_alias_candidates();
+        duplicate_hash[3] = CloudCanonicalAlias::new(
+            CloudCanonicalAliasKind::ChatLegacyGroupIdentifier,
+            hash('A'),
+        );
+        assert_eq!(
+            minimal_message_payload_with_references(hash('A'), duplicate_hash, None, None),
+            Err(CloudCanonicalValidationFailure::InvalidPayload)
+        );
+
+        let mut missing_kind = message_chat_alias_candidates();
+        missing_kind.pop();
+        assert_eq!(
+            minimal_message_payload_with_references(hash('A'), missing_kind, None, None),
+            Err(CloudCanonicalValidationFailure::InvalidPayload)
+        );
+    }
+
+    #[test]
+    fn message_proto4_group_id_requires_paired_nonempty_provenance() {
+        assert!(minimal_message_payload_with_references(
+            hash('A'),
+            message_chat_alias_candidates(),
+            Some("group-id".to_owned()),
+            Some(hash('H')),
+        )
+        .is_ok());
+        for (group_id, group_hash) in [
+            (Some("group-id".to_owned()), None),
+            (None, Some(hash('H'))),
+            (Some(String::new()), Some(hash('H'))),
+        ] {
+            assert!(minimal_message_payload_with_references(
+                hash('A'),
+                message_chat_alias_candidates(),
+                group_id,
+                group_hash,
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
     fn aggregate_transient_payload_bytes_are_bounded() {
         let maximum_single_field = "x".repeat(MAX_TEXT_BYTES);
         let result = CloudCanonicalMessagePayload::new(
             "message-guid".to_owned(),
             "iMessage;-;synthetic".to_owned(),
             hash('A'),
+            hash('G'),
+            message_chat_alias_candidates(),
+            None,
+            None,
             "mailto:synthetic@example.invalid".to_owned(),
             1,
             0,
@@ -2828,6 +3003,10 @@ mod tests {
             "reaction-guid".to_owned(),
             "iMessage;-;synthetic".to_owned(),
             hash('A'),
+            hash('G'),
+            message_chat_alias_candidates(),
+            None,
+            None,
             "mailto:synthetic@example.invalid".to_owned(),
             1,
             0,
@@ -2888,6 +3067,10 @@ mod tests {
             "message-guid".to_owned(),
             "iMessage;-;synthetic".to_owned(),
             hash('A'),
+            hash('G'),
+            message_chat_alias_candidates(),
+            None,
+            None,
             String::new(),
             1,
             0,

@@ -343,12 +343,15 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     if (result.failureCode case final failure?) {
       throw CloudSemanticDecodeFailure(_failureCategory(failure));
     }
-    if (result.deferredReason != null) {
+    if (result.deferredReason case final deferredReason?) {
       // Native deferred reasons describe deterministic record shapes that this
       // build cannot yet project (stickers, scheduling, extension payloads,
       // etc.). Keep them in the bounded dependency lane so a newer converter
       // can recover them before the protected source is explicitly retained.
-      throw const CloudSemanticDecodeFailure(CloudFailureCategory.dependency);
+      throw CloudSemanticDecodeFailure(
+        CloudFailureCategory.dependency,
+        safeCode: _deferredSafeCode(deferredReason),
+      );
     }
     if (result.quarantineReason != null) {
       throw CloudSemanticDecodeFailure(switch (result.quarantineReason!) {
@@ -723,6 +726,32 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         safeCode: 'decoder_message_shape_unsupported',
       );
     }
+    final chatIdAliasCandidates = payload.chatIdAliasCandidates
+        .map(
+          (candidate) => CloudSemanticChatAlias(
+            kind: _chatAliasKind(candidate.kind),
+            keyHash: _requireExternalDigest(candidate.keyHash),
+          ),
+        )
+        .toList(growable: false);
+    final candidateKinds = chatIdAliasCandidates
+        .map((candidate) => candidate.kind)
+        .toSet();
+    final serviceCandidates = chatIdAliasCandidates.where(
+      (candidate) =>
+          candidate.kind == CloudSemanticChatAliasKind.serviceIdentifier,
+    );
+    if (chatIdAliasCandidates.length !=
+            CloudSemanticChatAliasKind.values.length ||
+        candidateKinds.length != CloudSemanticChatAliasKind.values.length ||
+        !candidateKinds.containsAll(CloudSemanticChatAliasKind.values) ||
+        serviceCandidates.length != 1 ||
+        serviceCandidates.single.keyHash != payload.chatAliasKeyHash) {
+      throw const CloudSemanticDecodeFailure(
+        CloudFailureCategory.malformedRecord,
+        safeCode: 'decoder_message_chat_reference_invalid',
+      );
+    }
     return CloudMessageEntityPayload(
       logicalEntityKeyHash: _requireExternalDigest(
         payload.logicalEntityKeyHash,
@@ -730,6 +759,13 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       canonicalGuid: payload.canonicalGuid,
       chatAliasKeyHash: _requireExternalDigest(payload.chatAliasKeyHash),
       chatIdentifier: payload.chatIdentifier,
+      chatIdExactGuidLogicalKeyHash: _requireExternalDigest(
+        payload.chatIdExactGuidLogicalKeyHash,
+      ),
+      chatIdAliasCandidates: chatIdAliasCandidates,
+      msgProto4GroupIdAliasKeyHash: _optionalExternalDigest(
+        payload.msgProto4GroupIdAliasKeyHash,
+      ),
       body: payload.body,
       senderHandle: payload.senderHandle,
       createdAt: _dateTime(payload.createdAtMillis),
@@ -1103,6 +1139,10 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         (match) => '${match.group(1)}_${match.group(2)}',
       )
       .toLowerCase();
+
+  static String _deferredSafeCode(
+    frb_api.CloudSyncTransientDeferredReason reason,
+  ) => 'native_deferred_${_safeCodeSegment(reason.name)}';
 
   CloudFailureCategory _failureCategory(
     frb_api.CloudSyncTransientFailureCode value,

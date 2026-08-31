@@ -266,15 +266,36 @@ void main() {
       await _expectFailure(decoder().decode(entry), item.value);
     }
 
-    for (final reason in frb.CloudSyncTransientDeferredReason.values) {
+    const deferredSafeCodes = <frb.CloudSyncTransientDeferredReason, String>{
+      frb.CloudSyncTransientDeferredReason.nestedPresenceUnavailable:
+          'native_deferred_nested_presence_unavailable',
+      frb.CloudSyncTransientDeferredReason.unprovenEditTimestamp:
+          'native_deferred_unproven_edit_timestamp',
+      frb.CloudSyncTransientDeferredReason.unsupportedExtensionPayload:
+          'native_deferred_unsupported_extension_payload',
+      frb.CloudSyncTransientDeferredReason.unsupportedMediaCredentials:
+          'native_deferred_unsupported_media_credentials',
+      frb.CloudSyncTransientDeferredReason.unsupportedGroupPhoto:
+          'native_deferred_unsupported_group_photo',
+      frb.CloudSyncTransientDeferredReason.unsupportedSticker:
+          'native_deferred_unsupported_sticker',
+      frb.CloudSyncTransientDeferredReason.unsupportedScheduling:
+          'native_deferred_unsupported_scheduling',
+      frb.CloudSyncTransientDeferredReason.unsupportedOffGridMetadata:
+          'native_deferred_unsupported_off_grid_metadata',
+      frb.CloudSyncTransientDeferredReason.unsupportedNegativeAttachmentSize:
+          'native_deferred_unsupported_negative_attachment_size',
+    };
+    for (final item in deferredSafeCodes.entries) {
       bindings.result = frb.CloudSyncTransientDecodeResult(
         protectedSourceReference: _sourceReference,
         generation: BigInt.from(entry.generation),
-        deferredReason: reason,
+        deferredReason: item.key,
       );
       await _expectFailure(
         decoder().decode(entry),
         CloudFailureCategory.dependency,
+        safeCode: item.value,
       );
     }
 
@@ -1104,6 +1125,9 @@ frb.CloudSyncTransientMessagePayload _messagePayload({
   frb.CloudSyncTransientService service =
       frb.CloudSyncTransientService.iMessage,
   String chatIdentifier = 'iMessage;-;chat',
+  String chatIdExactGuidLogicalKeyHash = _chatHash,
+  List<frb.CloudSyncTransientChatAlias>? chatIdAliasCandidates,
+  String? msgProto4GroupIdAliasKeyHash,
   int createdAtMillis = 1787385600000,
   int error = 0,
   frb.CloudSyncTransientFieldState subjectState =
@@ -1154,6 +1178,28 @@ frb.CloudSyncTransientMessagePayload _messagePayload({
   canonicalGuid: canonicalGuid,
   chatAliasKeyHash: _chatHash,
   chatIdentifier: chatIdentifier,
+  chatIdExactGuidLogicalKeyHash: chatIdExactGuidLogicalKeyHash,
+  chatIdAliasCandidates:
+      chatIdAliasCandidates ??
+      const [
+        frb.CloudSyncTransientChatAlias(
+          kind: frb.CloudSyncTransientChatAliasKind.serviceIdentifier,
+          keyHash: _chatHash,
+        ),
+        frb.CloudSyncTransientChatAlias(
+          kind: frb.CloudSyncTransientChatAliasKind.groupId,
+          keyHash: _chatHash,
+        ),
+        frb.CloudSyncTransientChatAlias(
+          kind: frb.CloudSyncTransientChatAliasKind.originalGroupId,
+          keyHash: _chatHash,
+        ),
+        frb.CloudSyncTransientChatAlias(
+          kind: frb.CloudSyncTransientChatAliasKind.legacyGroupIdentifier,
+          keyHash: _chatHash,
+        ),
+      ],
+  msgProto4GroupIdAliasKeyHash: msgProto4GroupIdAliasKeyHash,
   senderHandle: 'sender@example.invalid',
   createdAtMillis: createdAtMillis,
   error: error,
@@ -1298,17 +1344,23 @@ CloudSemanticFieldState _chatFieldState(
 
 Future<void> _expectFailure(
   Future<Object?> future,
-  CloudFailureCategory category,
-) => expectLater(
-  future,
-  throwsA(
-    isA<CloudSemanticDecodeFailure>().having(
-      (failure) => failure.category,
-      'category',
-      category,
-    ),
-  ),
-);
+  CloudFailureCategory category, {
+  String? safeCode,
+}) {
+  var matcher = isA<CloudSemanticDecodeFailure>().having(
+    (failure) => failure.category,
+    'category',
+    category,
+  );
+  if (safeCode != null) {
+    matcher = matcher.having(
+      (failure) => failure.safeCode,
+      'safeCode',
+      safeCode,
+    );
+  }
+  return expectLater(future, throwsA(matcher));
+}
 
 final class _Bindings implements RustCloudSemanticDecodeBindings {
   final requests = <RustCloudSemanticDecodeRequest>[];

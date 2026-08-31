@@ -3,6 +3,18 @@ project(bluebubbles_app LANGUAGES CXX)
 
 set(BINARY_NAME "bluebubbles_app")
 
+# The dedicated Cloud Sync V2 development target does not initialize media.
+# Its launcher sets this process-local flag so the Windows edit/test loop does
+# not require the large, separately audited ANGLE/libmpv runtime. Normal app
+# builds leave the flag unset and retain the fail-closed native-media gate.
+set(OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS OFF)
+if(
+  DEFINED ENV{OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS}
+  AND "$ENV{OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS}" STREQUAL "1"
+)
+  set(OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS ON)
+endif()
+
 # CMake reports the ARM64 host processor even when Visual Studio is generating
 # an x64 target. Plugins such as ObjectBox use CMAKE_SYSTEM_PROCESSOR to select
 # their runtime archive, so normalize it to the requested generator platform.
@@ -54,8 +66,41 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 add_subdirectory("runner")
 
 # Generated plugin build rules, which manage building the plugins and adding
-# them to the application.
-include(flutter/generated_plugins.cmake)
+# them to the application. The Cloud Sync V2 harness needs only ObjectBox and
+# the Rust bridge. Excluding every unrelated plugin here keeps media, WebView,
+# printing, recording, and their native toolchains out of the private harness;
+# normal application builds continue to use Flutter's complete generated list.
+if(OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS)
+  set(FLUTTER_PLUGIN_LIST
+    app_links
+    bitsdojo_window_windows
+    objectbox_flutter_libs
+  )
+  set(FLUTTER_FFI_PLUGIN_LIST
+    rust_lib_bluebubbles
+  )
+  set(PLUGIN_BUNDLED_LIBRARIES)
+
+  foreach(plugin ${FLUTTER_PLUGIN_LIST})
+    add_subdirectory(
+      flutter/ephemeral/.plugin_symlinks/${plugin}/windows
+      plugins/${plugin}
+    )
+    target_link_libraries(${BINARY_NAME} PRIVATE ${plugin}_plugin)
+    list(APPEND PLUGIN_BUNDLED_LIBRARIES $<TARGET_FILE:${plugin}_plugin>)
+    list(APPEND PLUGIN_BUNDLED_LIBRARIES ${${plugin}_bundled_libraries})
+  endforeach()
+
+  foreach(ffi_plugin ${FLUTTER_FFI_PLUGIN_LIST})
+    add_subdirectory(
+      flutter/ephemeral/.plugin_symlinks/${ffi_plugin}/windows
+      plugins/${ffi_plugin}
+    )
+    list(APPEND PLUGIN_BUNDLED_LIBRARIES ${${ffi_plugin}_bundled_libraries})
+  endforeach()
+else()
+  include(flutter/generated_plugins.cmake)
+endif()
 
 # media_kit_libs_windows_video 1.0.10 bundles an isolated debug-runtime
 # cluster from its ANGLE archive. None of these files is imported by libmpv,
@@ -80,10 +125,12 @@ endforeach()
 # NuGet targets, but neither declares it as a Flutter bundled library. The
 # post-build copy reaches the normal runner directory but not an explicit
 # install/package prefix, so add the target-architecture loader directly.
-string(TOLOWER "${CMAKE_GENERATOR_PLATFORM}" WEBVIEW2_ARCH_DIRECTORY)
-list(APPEND PLUGIN_BUNDLED_LIBRARIES
-  "${CMAKE_BINARY_DIR}/packages/Microsoft.Web.WebView2/build/native/${WEBVIEW2_ARCH_DIRECTORY}/WebView2Loader.dll"
-)
+if(NOT OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS)
+  string(TOLOWER "${CMAKE_GENERATOR_PLATFORM}" WEBVIEW2_ARCH_DIRECTORY)
+  list(APPEND PLUGIN_BUNDLED_LIBRARIES
+    "${CMAKE_BINARY_DIR}/packages/Microsoft.Web.WebView2/build/native/${WEBVIEW2_ARCH_DIRECTORY}/WebView2Loader.dll"
+  )
+endif()
 
 
 # === Installation ===
@@ -106,26 +153,28 @@ endif()
 set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
 
-if(
-  NOT media_kit_libs_windows_video_portable_evidence_files
-  OR NOT media_kit_libs_windows_video_angle_license_directory
-)
-  message(
-    FATAL_ERROR
-    "The local architecture-aware media package did not expose its required "
-    "portable provenance and license inventory."
+if(NOT OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS)
+  if(
+    NOT media_kit_libs_windows_video_portable_evidence_files
+    OR NOT media_kit_libs_windows_video_angle_license_directory
+  )
+    message(
+      FATAL_ERROR
+      "The local architecture-aware media package did not expose its required "
+      "portable provenance and license inventory."
+    )
+  endif()
+  install(
+    FILES ${media_kit_libs_windows_video_portable_evidence_files}
+    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/native-media"
+    COMPONENT Runtime
+  )
+  install(
+    DIRECTORY "${media_kit_libs_windows_video_angle_license_directory}/"
+    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/native-media/angle-licenses"
+    COMPONENT Runtime
   )
 endif()
-install(
-  FILES ${media_kit_libs_windows_video_portable_evidence_files}
-  DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/native-media"
-  COMPONENT Runtime
-)
-install(
-  DIRECTORY "${media_kit_libs_windows_video_angle_license_directory}/"
-  DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/native-media/angle-licenses"
-  COMPONENT Runtime
-)
 
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)

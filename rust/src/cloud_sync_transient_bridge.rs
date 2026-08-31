@@ -24,7 +24,7 @@ use crate::{
     cloud_sync_canonical_dto::{
         CloudCanonicalAliasKind, CloudCanonicalEntityKind, CloudCanonicalHash,
         CloudCanonicalMessageAssociation, CloudCanonicalMutation, CloudCanonicalPayload,
-        CloudCanonicalValidationFailure,
+        CloudCanonicalValidationFailure, CLOUD_CANONICAL_MESSAGE_CHAT_ALIAS_KINDS,
     },
     cloud_sync_native_fetch::{
         cloud_sync_unprotect_raw_envelope, CloudNativeFailureCategory, CloudNativeProtectionScope,
@@ -245,6 +245,11 @@ pub(crate) enum CloudTransientBridgeFailure {
 fn decoder_failure_at(stage: &'static str) -> CloudTransientBridgeFailure {
     warn!("CloudKit V2 transient decoder stage={stage}");
     CloudTransientBridgeFailure::DecoderFailure
+}
+
+fn malformed_record_at(stage: &'static str) -> CloudTransientBridgeFailure {
+    warn!("CloudKit V2 transient decoder stage={stage}");
+    CloudTransientBridgeFailure::MalformedRecord
 }
 
 pub(crate) enum CloudTransientDecodeOutcome {
@@ -662,7 +667,7 @@ fn validate_nested_protobuf(
 ) -> Result<(), CloudTransientBridgeFailure> {
     match catch_unwind(AssertUnwindSafe(|| (field.decode)(value))) {
         Ok(Ok(())) => Ok(()),
-        Ok(Err(())) => Err(decoder_failure_at(field.decoder_stage)),
+        Ok(Err(())) => Err(malformed_record_at(field.decoder_stage)),
         Err(_) => Err(decoder_failure_at("nested_protobuf_panic")),
     }
 }
@@ -1448,22 +1453,20 @@ fn validate_canonical_identity_bindings(
                     return Err(CloudCanonicalValidationFailure::InvalidPayload);
                 }
             }
-            for value in [
-                payload.guid(),
-                payload.group_id(),
-                payload.original_group_id(),
+            let expected_service_identifier = hasher.canonical_alias_key_hash(
+                CloudCanonicalAliasKind::ChatServiceIdentifier,
                 payload.chat_identifier(),
-            ] {
-                let expected_alias_hash = hasher.canonical_alias_key_hash(
-                    CloudCanonicalAliasKind::ChatServiceIdentifier,
-                    value,
-                )?;
-                if !mutation.envelope().aliases().iter().any(|alias| {
-                    alias.kind() == CloudCanonicalAliasKind::ChatServiceIdentifier
-                        && alias.key_hash() == &expected_alias_hash
-                }) {
-                    return Err(CloudCanonicalValidationFailure::InvalidPayload);
-                }
+            )?;
+            let service_identifiers: Vec<_> = mutation
+                .envelope()
+                .aliases()
+                .iter()
+                .filter(|alias| alias.kind() == CloudCanonicalAliasKind::ChatServiceIdentifier)
+                .collect();
+            if service_identifiers.len() != 1
+                || service_identifiers[0].key_hash() != &expected_service_identifier
+            {
+                return Err(CloudCanonicalValidationFailure::InvalidPayload);
             }
             hasher.canonical_entity_key_hash(CloudCanonicalEntityKind::Chat, payload.guid())?
         }
@@ -1474,6 +1477,43 @@ fn validate_canonical_identity_bindings(
             )?;
             if payload.chat_alias_key_hash() != &expected_alias_hash {
                 return Err(CloudCanonicalValidationFailure::InvalidPayload);
+            }
+            let expected_exact_guid_hash = hasher.canonical_entity_key_hash(
+                CloudCanonicalEntityKind::Chat,
+                payload.chat_identifier(),
+            )?;
+            if payload.chat_id_exact_guid_logical_key_hash() != &expected_exact_guid_hash
+                || payload.chat_id_alias_candidates().len()
+                    != CLOUD_CANONICAL_MESSAGE_CHAT_ALIAS_KINDS.len()
+            {
+                return Err(CloudCanonicalValidationFailure::InvalidPayload);
+            }
+            for (candidate, expected_kind) in payload
+                .chat_id_alias_candidates()
+                .iter()
+                .zip(CLOUD_CANONICAL_MESSAGE_CHAT_ALIAS_KINDS)
+            {
+                let expected_candidate_hash =
+                    hasher.canonical_alias_key_hash(expected_kind, payload.chat_identifier())?;
+                if candidate.kind() != expected_kind
+                    || candidate.key_hash() != &expected_candidate_hash
+                {
+                    return Err(CloudCanonicalValidationFailure::InvalidPayload);
+                }
+            }
+            match (
+                payload.msg_proto_4_group_id(),
+                payload.msg_proto_4_group_id_alias_key_hash(),
+            ) {
+                (Some(group_id), Some(group_id_hash)) => {
+                    let expected_group_id_hash = hasher
+                        .canonical_alias_key_hash(CloudCanonicalAliasKind::ChatGroupId, group_id)?;
+                    if group_id_hash != &expected_group_id_hash {
+                        return Err(CloudCanonicalValidationFailure::InvalidPayload);
+                    }
+                }
+                (None, None) => {}
+                _ => return Err(CloudCanonicalValidationFailure::InvalidPayload),
             }
             if let Some(reply) = payload.reply() {
                 let expected_reply_parent = hasher.canonical_entity_key_hash(
@@ -2133,26 +2173,60 @@ mod tests {
         CloudCanonicalMutation::new(envelope, Some(snapshot), Some(payload), None).unwrap()
     }
 
+    fn message_chat_alias_candidates(
+        hasher: &CloudSemanticIdentifierHasher,
+        chat_identifier: &str,
+        service_identifier_override: Option<CloudCanonicalHash>,
+    ) -> Vec<CloudCanonicalAlias> {
+        CLOUD_CANONICAL_MESSAGE_CHAT_ALIAS_KINDS
+            .into_iter()
+            .map(|kind| {
+                let key_hash = if kind == CloudCanonicalAliasKind::ChatServiceIdentifier {
+                    service_identifier_override.clone().unwrap_or_else(|| {
+                        hasher
+                            .canonical_alias_key_hash(kind, chat_identifier)
+                            .unwrap()
+                    })
+                } else {
+                    hasher
+                        .canonical_alias_key_hash(kind, chat_identifier)
+                        .unwrap()
+                };
+                CloudCanonicalAlias::new(kind, key_hash)
+            })
+            .collect()
+    }
+
     fn message_payload(
         hasher: &CloudSemanticIdentifierHasher,
         guid: &str,
         chat_alias_hash: Option<CloudCanonicalHash>,
         association: CloudCanonicalMessageAssociation,
     ) -> CloudCanonicalPayload {
+        let chat_identifier = "iMessage;-;+15555550100";
         let chat_alias_hash = chat_alias_hash.unwrap_or_else(|| {
             hasher
                 .canonical_alias_key_hash(
                     CloudCanonicalAliasKind::ChatServiceIdentifier,
-                    "iMessage;-;+15555550100",
+                    chat_identifier,
                 )
                 .unwrap()
         });
+        let chat_id_alias_candidates =
+            message_chat_alias_candidates(hasher, chat_identifier, Some(chat_alias_hash.clone()));
+        let chat_id_exact_guid_logical_key_hash = hasher
+            .canonical_entity_key_hash(CloudCanonicalEntityKind::Chat, chat_identifier)
+            .unwrap();
         let is_reaction = association.is_reaction();
         CloudCanonicalPayload::Message(Box::new(
             CloudCanonicalMessagePayload::new(
                 guid.to_owned(),
-                "iMessage;-;+15555550100".to_owned(),
+                chat_identifier.to_owned(),
                 chat_alias_hash,
+                chat_id_exact_guid_logical_key_hash,
+                chat_id_alias_candidates,
+                None,
+                None,
                 "sender@example.invalid".to_owned(),
                 1,
                 0,
@@ -2196,6 +2270,70 @@ mod tests {
                 .canonical_entity_key_hash(CloudCanonicalEntityKind::Message, "message-guid")
                 .unwrap()
         });
+        upsert_mutation(
+            CloudCanonicalEntityKind::Message,
+            logical_hash,
+            None,
+            payload,
+        )
+    }
+
+    fn message_mutation_with_chat_reference_overrides(
+        hasher: &CloudSemanticIdentifierHasher,
+        exact_guid_hash_override: Option<CloudCanonicalHash>,
+        alias_candidates_override: Option<Vec<CloudCanonicalAlias>>,
+        proto_4_group_reference: Option<(String, CloudCanonicalHash)>,
+    ) -> CloudCanonicalMutation {
+        let chat_identifier = "iMessage;-;+15555550100";
+        let chat_alias_hash = hasher
+            .canonical_alias_key_hash(
+                CloudCanonicalAliasKind::ChatServiceIdentifier,
+                chat_identifier,
+            )
+            .unwrap();
+        let exact_guid_hash = exact_guid_hash_override.unwrap_or_else(|| {
+            hasher
+                .canonical_entity_key_hash(CloudCanonicalEntityKind::Chat, chat_identifier)
+                .unwrap()
+        });
+        let alias_candidates = alias_candidates_override
+            .unwrap_or_else(|| message_chat_alias_candidates(hasher, chat_identifier, None));
+        let (proto_4_group_id, proto_4_group_id_hash) = proto_4_group_reference
+            .map(|(group_id, key_hash)| (Some(group_id), Some(key_hash)))
+            .unwrap_or((None, None));
+        let payload = CloudCanonicalPayload::Message(Box::new(
+            CloudCanonicalMessagePayload::new(
+                "message-guid".to_owned(),
+                chat_identifier.to_owned(),
+                chat_alias_hash,
+                exact_guid_hash,
+                alias_candidates,
+                proto_4_group_id,
+                proto_4_group_id_hash,
+                "sender@example.invalid".to_owned(),
+                1,
+                0,
+                CloudCanonicalService::IMessage,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Value("body".to_owned()),
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalKnownMessageFlags::default(),
+                CloudCanonicalMessageAssociation::None,
+                None,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+            )
+            .unwrap(),
+        ));
+        let logical_hash = hasher
+            .canonical_entity_key_hash(CloudCanonicalEntityKind::Message, "message-guid")
+            .unwrap();
         upsert_mutation(
             CloudCanonicalEntityKind::Message,
             logical_hash,
@@ -2315,12 +2453,6 @@ mod tests {
             (CloudCanonicalAliasKind::ChatGroupId, "group-id"),
             (
                 CloudCanonicalAliasKind::ChatOriginalGroupId,
-                "original-group-id",
-            ),
-            (CloudCanonicalAliasKind::ChatServiceIdentifier, "group-id"),
-            (CloudCanonicalAliasKind::ChatServiceIdentifier, "chat-guid"),
-            (
-                CloudCanonicalAliasKind::ChatServiceIdentifier,
                 "original-group-id",
             ),
             (
@@ -2453,6 +2585,89 @@ mod tests {
         assert_eq!(
             validate_canonical_identity_bindings(
                 &message_mutation(&hasher, None, Some(wrong_chat_alias_hash)),
+                &hasher,
+            ),
+            Err(CloudCanonicalValidationFailure::InvalidPayload)
+        );
+    }
+
+    #[test]
+    fn canonical_message_chat_reference_candidates_and_group_provenance_are_recomputed() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"message-chat-reference-test").unwrap();
+        assert_eq!(
+            validate_canonical_identity_bindings(
+                &message_mutation_with_chat_reference_overrides(&hasher, None, None, None),
+                &hasher,
+            ),
+            Ok(())
+        );
+
+        let wrong_exact_guid_hash = CloudCanonicalHash::new(digest('x')).unwrap();
+        assert_eq!(
+            validate_canonical_identity_bindings(
+                &message_mutation_with_chat_reference_overrides(
+                    &hasher,
+                    Some(wrong_exact_guid_hash),
+                    None,
+                    None,
+                ),
+                &hasher,
+            ),
+            Err(CloudCanonicalValidationFailure::InvalidPayload)
+        );
+
+        let mut wrong_domain_candidates =
+            message_chat_alias_candidates(&hasher, "iMessage;-;+15555550100", None);
+        wrong_domain_candidates[1] = CloudCanonicalAlias::new(
+            CloudCanonicalAliasKind::ChatGroupId,
+            hasher
+                .canonical_alias_key_hash(
+                    CloudCanonicalAliasKind::ChatOriginalGroupId,
+                    "iMessage;-;+15555550100",
+                )
+                .unwrap(),
+        );
+        assert_eq!(
+            validate_canonical_identity_bindings(
+                &message_mutation_with_chat_reference_overrides(
+                    &hasher,
+                    None,
+                    Some(wrong_domain_candidates),
+                    None,
+                ),
+                &hasher,
+            ),
+            Err(CloudCanonicalValidationFailure::InvalidPayload)
+        );
+
+        let group_id = "corroborating-group";
+        let valid_group_hash = hasher
+            .canonical_alias_key_hash(CloudCanonicalAliasKind::ChatGroupId, group_id)
+            .unwrap();
+        assert_eq!(
+            validate_canonical_identity_bindings(
+                &message_mutation_with_chat_reference_overrides(
+                    &hasher,
+                    None,
+                    None,
+                    Some((group_id.to_owned(), valid_group_hash)),
+                ),
+                &hasher,
+            ),
+            Ok(())
+        );
+
+        let wrong_group_domain_hash = hasher
+            .canonical_alias_key_hash(CloudCanonicalAliasKind::ChatOriginalGroupId, group_id)
+            .unwrap();
+        assert_eq!(
+            validate_canonical_identity_bindings(
+                &message_mutation_with_chat_reference_overrides(
+                    &hasher,
+                    None,
+                    None,
+                    Some((group_id.to_owned(), wrong_group_domain_hash)),
+                ),
                 &hasher,
             ),
             Err(CloudCanonicalValidationFailure::InvalidPayload)
@@ -3144,9 +3359,52 @@ mod tests {
 
         assert_eq!(
             validate_nested_protobuf(&[0x80], spec),
-            Err(CloudTransientBridgeFailure::DecoderFailure)
+            Err(CloudTransientBridgeFailure::MalformedRecord)
         );
         assert!(validate_nested_protobuf(&MessageProto::default().encode_to_vec(), spec).is_ok());
+    }
+
+    #[test]
+    fn v2_nested_message_proto_classifies_deterministic_schema_failures_as_malformed() {
+        let spec = GzipFieldSpec::required("msgProto", "message_proto", decode_message_proto);
+
+        for malformed in [
+            vec![0x08, 0x80],
+            vec![0x0a, 0x01, 0x00],
+            vec![0x12, 0x01, 0xff],
+        ] {
+            assert_eq!(
+                validate_nested_protobuf(&malformed, spec),
+                Err(CloudTransientBridgeFailure::MalformedRecord)
+            );
+        }
+    }
+
+    #[test]
+    fn v2_nested_message_proto_accepts_unknown_fields_after_bounded_gzip() {
+        use flate2::{write::GzEncoder, Compression};
+        use std::io::Write;
+
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+        encoder.write_all(&[0xa2, 0x06, 0x02, 0xaa, 0xbb]).unwrap();
+        let compressed = encoder.finish().unwrap();
+        let inflated = bounded_gunzip(&compressed).unwrap();
+        let spec = GzipFieldSpec::required("msgProto", "message_proto", decode_message_proto);
+
+        assert_eq!(validate_nested_protobuf(&inflated, spec), Ok(()));
+    }
+
+    #[test]
+    fn v2_nested_protobuf_panic_remains_an_internal_decoder_failure() {
+        fn panic_decoder(_: &[u8]) -> Result<(), ()> {
+            panic!("injected nested protobuf panic")
+        }
+
+        let spec = GzipFieldSpec::required("msgProto", "message_proto", panic_decoder);
+        assert_eq!(
+            validate_nested_protobuf(&[], spec),
+            Err(CloudTransientBridgeFailure::DecoderFailure)
+        );
     }
 
     #[test]
@@ -3161,7 +3419,7 @@ mod tests {
             assert!(validate_nested_protobuf(&[], spec).is_ok());
             assert_eq!(
                 validate_nested_protobuf(&[0x80], spec),
-                Err(CloudTransientBridgeFailure::DecoderFailure)
+                Err(CloudTransientBridgeFailure::MalformedRecord)
             );
         }
     }

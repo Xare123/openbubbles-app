@@ -993,7 +993,11 @@ void main() {
       final firstMessageZone = firstReport.zones.singleWhere(
         (zone) => zone.zoneLabel == 'messages',
       );
-      expect(firstMessageZone.status, CloudSyncRunStatus.completed);
+      expect(firstMessageZone.status, CloudSyncRunStatus.degraded);
+      expect(
+        firstMessageZone.failureSafeCode,
+        'retained_projection_incomplete',
+      );
       expect(firstMessageZone.tombstoneReadOnlyAcknowledged, 1);
       expect(firstMessageZone.retainedUnprojected, 1);
       expect(
@@ -1005,7 +1009,11 @@ void main() {
       final secondMessageZone = secondReport.zones.singleWhere(
         (zone) => zone.zoneLabel == 'messages',
       );
-      expect(secondMessageZone.status, CloudSyncRunStatus.completed);
+      expect(secondMessageZone.status, CloudSyncRunStatus.degraded);
+      expect(
+        secondMessageZone.failureSafeCode,
+        'retained_projection_incomplete',
+      );
       expect(secondMessageZone.fetched, 0);
       expect(secondMessageZone.tombstoneReadOnlyAcknowledged, 0);
       expect(secondMessageZone.retainedUnprojected, 1);
@@ -1180,7 +1188,8 @@ void main() {
       final attachmentZone = report.zones.singleWhere(
         (zone) => zone.zoneLabel == 'attachments',
       );
-      expect(attachmentZone.status, CloudSyncRunStatus.completed);
+      expect(attachmentZone.status, CloudSyncRunStatus.degraded);
+      expect(attachmentZone.failureSafeCode, 'retained_projection_incomplete');
       expect(attachmentZone.retainedUnprojected, 1);
       expect(attachmentZone.deferred, 0);
       expect(attachmentZone.quarantined, 0);

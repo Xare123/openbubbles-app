@@ -341,6 +341,7 @@ final class ObjectBoxCloudSemanticStoreGateway
   static const int _maximumEditPartsBytes = 256 * 1024;
   static const int _projectionCandidateQueryPageSize = 64;
   static const int _nullDateSentinel = -9223372036854775808;
+  static const String _legacyChatAliasBindingPrefix = 'semantic-chat-alias1:';
   static final RegExp _safeCodePattern = RegExp(r'^[a-z0-9][a-z0-9_-]{0,95}$');
   static final RegExp _base64UrlDigestPattern = RegExp(r'^[A-Za-z0-9_-]{43}$');
   static final RegExp _lowerHexDigestPattern = RegExp(r'^[0-9a-f]{64}$');
@@ -944,7 +945,11 @@ final class ObjectBoxCloudSemanticStoreGateway
         .build();
     try {
       final rows = query.find();
+      var hasAuthoritativeAlias = false;
       for (final row in rows) {
+        if (row.bindingKey.startsWith(_legacyChatAliasBindingPrefix)) {
+          continue;
+        }
         if (row.scopeKey != context.scopeKey ||
             row.accountFingerprint != context.entry.scope.accountFingerprint ||
             row.container != context.entry.scope.container ||
@@ -983,14 +988,15 @@ final class ObjectBoxCloudSemanticStoreGateway
               canonicalGuid: canonicalGuid,
             );
         final expectedBindingKey =
-            'semantic-chat-alias1:${sha256.convert(utf8.encode('${context.entry.scope.storageKey}\u001f${context.entry.generation}\u001f${row.service}\u001f${CloudSemanticChatAliasKind.serviceIdentifier.name}\u001f${row.aliasKeyHash}')).toString()}';
+            'semantic-chat-strong2:${sha256.convert(utf8.encode('${context.entry.scope.storageKey}\u001f${context.entry.generation}\u001f${row.service}\u001f${CloudSemanticChatAliasKind.serviceIdentifier.name}\u001f${row.aliasKeyHash}')).toString()}';
         if (row.bindingKey != expectedBindingKey ||
             row.canonicalGuidHash != expectedGuidHash ||
             row.canonicalGuidLookupHash != expectedLookupHash) {
           throw _failure('projection_repair_alias_ownership_invalid');
         }
+        hasAuthoritativeAlias = true;
       }
-      return rows.isNotEmpty;
+      return hasAuthoritativeAlias;
     } finally {
       query.close();
     }

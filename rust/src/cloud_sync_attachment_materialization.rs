@@ -22,7 +22,8 @@ use prost::Message as _;
 use rustpush::{
     cloud_messages::CloudMessagesClient,
     cloudkit::{classify_cloudkit_failure, CloudKitFailureClass},
-    cloudkit_operation_gate::CloudKitReadAuthenticationPermit, cloudkit_proto::Record,
+    cloudkit_operation_gate::CloudKitReadAuthenticationPermit,
+    cloudkit_proto::Record,
     DefaultAnisetteProvider, PushError,
 };
 use sha2::{Digest as _, Sha256};
@@ -37,9 +38,8 @@ use crate::{
     },
     cloud_sync_protector,
     cloud_sync_transient_bridge::{
-        bind_envelope, cloud_sync_decode_transient_record_cached_only,
-        CloudTransientBridgeFailure, CloudTransientDecodeOutcome, CloudTransientDecodeRequest,
-        CloudTransientExpectedChangeKind,
+        bind_envelope, cloud_sync_decode_transient_record_cached_only, CloudTransientBridgeFailure,
+        CloudTransientDecodeOutcome, CloudTransientDecodeRequest, CloudTransientExpectedChangeKind,
     },
 };
 
@@ -956,23 +956,19 @@ async fn cloud_sync_materialize_attachment_body_inner(
     )
     .map_err(map_decode_failure)?;
 
-    let mutation =
-        match cloud_sync_decode_transient_record_cached_only(
-            cloud_messages_client,
-            read_authentication_permit,
-            decode_request.clone(),
-        )
-        .await
-        {
-            CloudTransientDecodeOutcome::Ready(mutation) => mutation,
-            CloudTransientDecodeOutcome::Failure(failure) => {
-                return Err(map_decode_failure(failure))
-            }
-            CloudTransientDecodeOutcome::Deferred(_)
-            | CloudTransientDecodeOutcome::Quarantined(_) => {
-                return Err(CloudNativeAttachmentMaterializationFailure::SourceUnusable)
-            }
-        };
+    let mutation = match cloud_sync_decode_transient_record_cached_only(
+        cloud_messages_client,
+        read_authentication_permit,
+        decode_request.clone(),
+    )
+    .await
+    {
+        CloudTransientDecodeOutcome::Ready(mutation) => mutation,
+        CloudTransientDecodeOutcome::Failure(failure) => return Err(map_decode_failure(failure)),
+        CloudTransientDecodeOutcome::Deferred(_) | CloudTransientDecodeOutcome::Quarantined(_) => {
+            return Err(CloudNativeAttachmentMaterializationFailure::SourceUnusable)
+        }
+    };
     let envelope = mutation.envelope();
     if envelope.entity_kind() != CloudCanonicalEntityKind::Attachment
         || envelope.mutation_kind() != CloudCanonicalMutationKind::Upsert
@@ -999,8 +995,7 @@ async fn cloud_sync_materialize_attachment_body_inner(
     if canonical_bytes != request.expected_bytes {
         return Err(CloudNativeAttachmentMaterializationFailure::SourceUnusable);
     }
-    if destination_canonical_guid_sha256(&canonical_guid)
-        != request.expected_canonical_guid_sha256
+    if destination_canonical_guid_sha256(&canonical_guid) != request.expected_canonical_guid_sha256
     {
         return Err(CloudNativeAttachmentMaterializationFailure::ProtectedReferenceMismatch);
     }
@@ -1163,14 +1158,16 @@ mod tests {
         code: rustpush::cloudkit_proto::response_operation::result::error::server::Code,
     ) -> PushError {
         PushError::CloudKitError(rustpush::cloudkit_proto::response_operation::Result {
-            error: Some(rustpush::cloudkit_proto::response_operation::result::Error {
-                server_error: Some(
-                    rustpush::cloudkit_proto::response_operation::result::error::Server {
-                        r#type: Some(code as i32),
-                    },
-                ),
-                ..Default::default()
-            }),
+            error: Some(
+                rustpush::cloudkit_proto::response_operation::result::Error {
+                    server_error: Some(
+                        rustpush::cloudkit_proto::response_operation::result::error::Server {
+                            r#type: Some(code as i32),
+                        },
+                    ),
+                    ..Default::default()
+                },
+            ),
             ..Default::default()
         })
     }
@@ -1179,14 +1176,16 @@ mod tests {
         code: rustpush::cloudkit_proto::response_operation::result::error::client::Code,
     ) -> PushError {
         PushError::CloudKitError(rustpush::cloudkit_proto::response_operation::Result {
-            error: Some(rustpush::cloudkit_proto::response_operation::result::Error {
-                client_error: Some(
-                    rustpush::cloudkit_proto::response_operation::result::error::Client {
-                        r#type: Some(code as i32),
-                    },
-                ),
-                ..Default::default()
-            }),
+            error: Some(
+                rustpush::cloudkit_proto::response_operation::result::Error {
+                    client_error: Some(
+                        rustpush::cloudkit_proto::response_operation::result::error::Client {
+                            r#type: Some(code as i32),
+                        },
+                    ),
+                    ..Default::default()
+                },
+            ),
             ..Default::default()
         })
     }
@@ -1432,14 +1431,7 @@ mod tests {
             ),
             Ok(4)
         );
-        ensure_app_attachment_file(
-            &documents,
-            "attachment-guid",
-            "photo.jpg",
-            &body,
-            4,
-        )
-        .unwrap();
+        ensure_app_attachment_file(&documents, "attachment-guid", "photo.jpg", &body, 4).unwrap();
         remove_completed_cache_pair(&body, &manifest).unwrap();
 
         let app_file = documents

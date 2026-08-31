@@ -301,7 +301,10 @@ void main() {
       presentation,
       contains('report.zones.length == expectedZones.length'),
     );
-    expect(presentation, contains('existingCompletionGatesPassed'));
+    expect(presentation, contains('zoneStructureIntact'));
+    expect(presentation, contains('allZonesReadWithoutBlockingFailure'));
+    expect(presentation, contains('readCompletionGatesPassed'));
+    expect(presentation, contains('retained_projection_incomplete'));
     expect(presentation, contains('deferred == 0'));
     expect(presentation, contains('quarantined == 0'));
     expect(presentation, contains('unsupportedServiceQuarantined == 0'));

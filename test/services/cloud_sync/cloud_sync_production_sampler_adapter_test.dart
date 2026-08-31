@@ -177,6 +177,7 @@ void main() {
       expect(binding.calls, 2);
       expect(binding.ensuredClients.single, same(client));
       expect(binding.ensureStorageDirectories, <String>['private-storage']);
+      expect(binding.operationOrder, <String>['ensure', 'capture', 'capture']);
     },
   );
 
@@ -208,7 +209,7 @@ void main() {
 
       expect(await pending, isNull);
       expect(binding.ensureCalls, 1);
-      expect(binding.calls, 1);
+      expect(binding.calls, 0);
     },
   );
 
@@ -814,6 +815,7 @@ final class _FakeNativeAuthBinding implements CloudSyncNativeAuthBinding {
   final List<Object> ensuredClients = [];
   final List<String> ensureStorageDirectories = [];
   final List<BigInt> pauseTokens = [];
+  final List<String> operationOrder = [];
 
   @override
   Future<void> ensureReadAuthentication({
@@ -821,6 +823,7 @@ final class _FakeNativeAuthBinding implements CloudSyncNativeAuthBinding {
     required String privateStorageDirectory,
   }) async {
     ensureCalls++;
+    operationOrder.add('ensure');
     ensuredClients.add(cloudMessagesClient);
     ensureStorageDirectories.add(privateStorageDirectory);
     final started = ensureStarted;
@@ -835,6 +838,7 @@ final class _FakeNativeAuthBinding implements CloudSyncNativeAuthBinding {
     required Object cloudMessagesClient,
   }) async {
     warmCalls++;
+    operationOrder.add('warm');
     warmedClients.add(cloudMessagesClient);
     final started = warmStarted;
     if (started != null && !started.isCompleted) {
@@ -849,6 +853,7 @@ final class _FakeNativeAuthBinding implements CloudSyncNativeAuthBinding {
     required BigInt pauseToken,
   }) async {
     pausedWarmCalls++;
+    operationOrder.add('paused-warm');
     pausedWarmedClients.add(cloudMessagesClient);
     pauseTokens.add(pauseToken);
     final started = warmStarted;
@@ -864,6 +869,7 @@ final class _FakeNativeAuthBinding implements CloudSyncNativeAuthBinding {
     required String privateStorageDirectory,
   }) async {
     calls++;
+    operationOrder.add('capture');
     clients.add(cloudMessagesClient);
     await blocker?.future;
     if (captureResults.isNotEmpty) {

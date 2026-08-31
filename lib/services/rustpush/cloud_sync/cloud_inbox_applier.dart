@@ -161,6 +161,9 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
     required this.canonicalGuid,
     required this.chatAliasKeyHash,
     required this.chatIdentifier,
+    this.chatIdExactGuidLogicalKeyHash,
+    Iterable<CloudSemanticChatAlias> chatIdAliasCandidates = const [],
+    this.msgProto4GroupIdAliasKeyHash,
     required this.body,
     required this.senderHandle,
     this.createdAt,
@@ -195,7 +198,8 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
     Iterable<CloudSemanticMessageEdit> edits = const [],
     this.retractedPartsState = CloudSemanticFieldState.absent,
     Iterable<int> retractedParts = const [],
-  }) : attributedBodies = List.unmodifiable(attributedBodies),
+  }) : chatIdAliasCandidates = List.unmodifiable(chatIdAliasCandidates),
+       attributedBodies = List.unmodifiable(attributedBodies),
        decodedExtensionPayload = decodedExtensionPayload == null
            ? null
            : Uint8List.fromList(decodedExtensionPayload),
@@ -209,6 +213,39 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
     }
     if (chatAliasKeyHash.isEmpty) {
       throw ArgumentError('cloud_message_payload_chat_key_invalid');
+    }
+    final candidateKinds = <CloudSemanticChatAliasKind>{};
+    final candidateKeys = <(CloudSemanticChatAliasKind, String)>{};
+    for (final candidate in this.chatIdAliasCandidates) {
+      if (candidate.keyHash.isEmpty ||
+          !candidateKinds.add(candidate.kind) ||
+          !candidateKeys.add((candidate.kind, candidate.keyHash))) {
+        throw ArgumentError('cloud_message_payload_chat_candidates_invalid');
+      }
+    }
+    final hasTypedReferences = this.chatIdAliasCandidates.isNotEmpty;
+    if (hasTypedReferences != (chatIdExactGuidLogicalKeyHash != null) ||
+        (hasTypedReferences &&
+            (this.chatIdAliasCandidates.length !=
+                    CloudSemanticChatAliasKind.values.length ||
+                candidateKinds.length !=
+                    CloudSemanticChatAliasKind.values.length ||
+                !candidateKinds.containsAll(
+                  CloudSemanticChatAliasKind.values,
+                ))) ||
+        (chatIdExactGuidLogicalKeyHash?.isEmpty ?? false) ||
+        (msgProto4GroupIdAliasKeyHash?.isEmpty ?? false) ||
+        (msgProto4GroupIdAliasKeyHash != null && !hasTypedReferences)) {
+      throw ArgumentError('cloud_message_payload_chat_reference_invalid');
+    }
+    if (hasTypedReferences) {
+      final serviceIdentifierCandidate = this.chatIdAliasCandidates.singleWhere(
+        (candidate) =>
+            candidate.kind == CloudSemanticChatAliasKind.serviceIdentifier,
+      );
+      if (serviceIdentifierCandidate.keyHash != chatAliasKeyHash) {
+        throw ArgumentError('cloud_message_payload_chat_reference_invalid');
+      }
     }
     _validateSemanticField(subjectState, subject, 'subject');
     _validateSemanticField(bodyState, body, 'body');
@@ -261,6 +298,9 @@ final class CloudMessageEntityPayload extends CloudSemanticEntityPayload {
   final String canonicalGuid;
   final String chatAliasKeyHash;
   final String chatIdentifier;
+  final String? chatIdExactGuidLogicalKeyHash;
+  final List<CloudSemanticChatAlias> chatIdAliasCandidates;
+  final String? msgProto4GroupIdAliasKeyHash;
   final String? body;
   final String senderHandle;
   final DateTime? createdAt;
@@ -1355,6 +1395,7 @@ class TransactionalCloudInboxApplier
     );
 
     if (decision.action == CloudMergeAction.defer) {
+      _recordDiagnostic('semantic_parent_missing');
       return const CloudInboxApplyResult.deferred(
         safeCode: 'semantic_parent_missing',
       );

@@ -21,6 +21,25 @@ import 'cloudkit_operation_interlock.dart';
 typedef CloudSyncClock = DateTime Function();
 typedef CloudSyncUuidFactory = String Function();
 
+const _readOnlyCanaryRetainableDependencySafeCodes = <String>{
+  'canonical_attachment_owner_unavailable',
+  'canonical_chat_alias_owner_ambiguous',
+  'canonical_message_chat_alias_ambiguous',
+  'canonical_message_chat_unavailable',
+  'canonical_message_reply_parent_unavailable',
+  'canonical_reaction_parent_unavailable',
+  'native_deferred_nested_presence_unavailable',
+  'native_deferred_unproven_edit_timestamp',
+  'native_deferred_unsupported_extension_payload',
+  'native_deferred_unsupported_media_credentials',
+  'native_deferred_unsupported_group_photo',
+  'native_deferred_unsupported_sticker',
+  'native_deferred_unsupported_scheduling',
+  'native_deferred_unsupported_off_grid_metadata',
+  'native_deferred_unsupported_negative_attachment_size',
+  'semantic_parent_missing',
+};
+
 class CloudSyncFeatureFlags {
   const CloudSyncFeatureFlags({
     this.readOnlyFetch = true,
@@ -98,7 +117,9 @@ class CloudSyncEngineConfig {
   final DateTime? unknownInboxBarrierRecoveryCutoff;
 
   /// Lets the developer-only, read-only semantic Canary preserve a known
-  /// dependency-blocked source row without pinning its fetched page.
+  /// dependency-blocked source row without pinning its fetched page. Both
+  /// deferred and retryable dependency outcomes are eligible because adapters
+  /// may surface the same missing-owner condition through either disposition.
   ///
   /// This is deliberately unavailable to ordinary or write-capable syncs.
   final bool retainKnownDependencyDeferralsForReadOnlySemanticCanary;
@@ -808,8 +829,24 @@ class CloudSyncEngine {
 
       // Completion is a durable-state claim. A per-run transition counter can
       // be zero even while an earlier retained row still awaits projection.
-      final retainedUnprojectedBacklog =
-          await _readRetainedUnprojectedBacklog();
+      // Once another failure has already made this run degraded, however, a
+      // secondary diagnostic read must not replace that primary cause.
+      var retainedUnprojectedBacklog = counters.retainedUnprojected;
+      try {
+        retainedUnprojectedBacklog = await _readRetainedUnprojectedBacklog();
+      } on CloudSyncFailure {
+        if (degradedFailure == null && shadowJournalBlockReason == null) {
+          rethrow;
+        }
+      }
+      final projectionIncomplete =
+          config.flags.semanticApply && retainedUnprojectedBacklog > 0;
+      final completionFailureCategory =
+          degradedFailure ??
+          (projectionIncomplete ? CloudFailureCategory.dependency : null);
+      final completionFailureSafeCode =
+          degradedFailureSafeCode ??
+          (projectionIncomplete ? 'retained_projection_incomplete' : null);
 
       _emit(
         CloudSyncEventType.runCompleted,
@@ -820,15 +857,17 @@ class CloudSyncEngine {
       return await _finishRun(
         runId: 'run-$runNumber-${startedAt.microsecondsSinceEpoch}',
         trigger: trigger,
-        status: degradedFailure == null && shadowJournalBlockReason == null
+        status:
+            completionFailureCategory == null &&
+                shadowJournalBlockReason == null
             ? CloudSyncRunStatus.completed
             : CloudSyncRunStatus.degraded,
         counters: counters,
         startedAt: startedAt,
         finishedAt: finishedAt,
         retainedUnprojectedBacklog: retainedUnprojectedBacklog,
-        failureCategory: degradedFailure,
-        failureSafeCode: degradedFailureSafeCode,
+        failureCategory: completionFailureCategory,
+        failureSafeCode: completionFailureSafeCode,
         shadowJournalBlockReason: shadowJournalBlockReason,
       );
     } on CloudSyncFailure catch (error) {
@@ -1385,13 +1424,9 @@ class CloudSyncEngine {
                   category == CloudFailureCategory.dependency);
           if (terminalBoundApplies &&
               _shouldRetainDeferredInboxEntry(entry, result, now)) {
-            final immediateCanaryRetention =
-                config
-                    .retainKnownDependencyDeferralsForReadOnlySemanticCanary &&
-                result.disposition == CloudInboxApplyDisposition.deferred &&
-                result.failureCategory == CloudFailureCategory.dependency &&
-                cloudSyncV2SafeFailureCodeForCandidate(result.safeCode) !=
-                    'cloud_sync_unknown_failure';
+            final immediateCanaryRetention = _isKnownCanaryRetainableDependency(
+              result,
+            );
             if (!result.inboxStatusPersisted) {
               await _store.markInboxRetainedUnprojected(
                 scope,
@@ -1547,11 +1582,7 @@ class CloudSyncEngine {
     CloudInboxApplyResult result,
     DateTime now,
   ) {
-    if (config.retainKnownDependencyDeferralsForReadOnlySemanticCanary &&
-        result.disposition == CloudInboxApplyDisposition.deferred &&
-        result.failureCategory == CloudFailureCategory.dependency &&
-        cloudSyncV2SafeFailureCodeForCandidate(result.safeCode) !=
-            'cloud_sync_unknown_failure') {
+    if (_isKnownCanaryRetainableDependency(result)) {
       return true;
     }
     final age = now.difference(entry.createdAt);
@@ -1559,6 +1590,13 @@ class CloudSyncEngine {
         !age.isNegative &&
         age >= config.maximumDeferredAge;
   }
+
+  bool _isKnownCanaryRetainableDependency(CloudInboxApplyResult result) =>
+      config.retainKnownDependencyDeferralsForReadOnlySemanticCanary &&
+      (result.disposition == CloudInboxApplyDisposition.deferred ||
+          result.disposition == CloudInboxApplyDisposition.retryable) &&
+      result.failureCategory == CloudFailureCategory.dependency &&
+      _readOnlyCanaryRetainableDependencySafeCodes.contains(result.safeCode);
 
   Future<CloudSyncRunCounters> _flushOutbox({
     required int runNumber,

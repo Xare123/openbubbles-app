@@ -663,7 +663,9 @@ void main() {
         ),
       ).synchronize(trigger: CloudSyncTrigger.manual);
 
-      expect(result.status, CloudSyncRunStatus.completed);
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.failureCategory, CloudFailureCategory.dependency);
+      expect(result.failureSafeCode, 'retained_projection_incomplete');
       expect(result.counters.retainedUnprojected, 1);
       expect(result.counters.applied, 2);
       expect(transport.observedFetchTokens, [null, 'after-retained-token']);
@@ -766,8 +768,9 @@ void main() {
         trigger: CloudSyncTrigger.startup,
       );
 
-      expect(result.status, CloudSyncRunStatus.completed);
-      expect(result.failureCategory, isNull);
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.failureCategory, CloudFailureCategory.dependency);
+      expect(result.failureSafeCode, 'retained_projection_incomplete');
       expect(result.counters.retainedUnprojected, 1);
       expect(transport.fetchCallCount, 1);
       expect(transport.pushCallCount, 0);
@@ -2096,11 +2099,13 @@ void main() {
 
       expect(
         first.status,
-        CloudSyncRunStatus.completed,
+        CloudSyncRunStatus.degraded,
         reason:
             'failure=${first.failureCategory} safeCode=${first.failureSafeCode}',
       );
       expect(first.counters.retainedUnprojected, 1);
+      expect(first.failureCategory, CloudFailureCategory.dependency);
+      expect(first.failureSafeCode, 'retained_projection_incomplete');
       expect(first.counters.quarantined, 0);
       expect(first.counters.applied, 1);
       expect(transport.observedFetchTokens, [null, 'canary-parent-page']);
@@ -2123,10 +2128,12 @@ void main() {
 
       expect(
         second.status,
-        CloudSyncRunStatus.completed,
+        CloudSyncRunStatus.degraded,
         reason:
             'failure=${second.failureCategory} safeCode=${second.failureSafeCode}',
       );
+      expect(second.failureCategory, CloudFailureCategory.dependency);
+      expect(second.failureSafeCode, 'retained_projection_incomplete');
       expect(second.counters.applied, 1);
       expect(retainedApplier.reprojectCalls, 2);
       expect(transport.observedFetchTokens, [
@@ -2142,6 +2149,210 @@ void main() {
       );
     },
   );
+
+  test(
+    'guarded Canary evaluates all 50 rows after a known retryable dependency',
+    () async {
+      final changes = List.generate(50, (index) => testChange(index + 1));
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: changes,
+          batchId: 'canary-retryable-dependency-page',
+          generation: 1,
+          nextToken: 'canary-retryable-dependency-token',
+          hasMore: false,
+        ),
+      );
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.retryable(
+        failureCategory: CloudFailureCategory.dependency,
+        safeCode: 'canonical_message_chat_alias_ambiguous',
+      );
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+        ),
+        retainKnownDependencyDeferralsForReadOnlySemanticCanary: true,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.failureCategory, CloudFailureCategory.dependency);
+      expect(result.failureSafeCode, 'retained_projection_incomplete');
+      expect(result.counters.retainedUnprojected, 1);
+      expect(result.counters.retried, 0);
+      expect(result.counters.applied, 49);
+      expect((await store.readCheckpoint(scope)).pendingBatchId, isNull);
+      expect(
+        (await store.readCheckpoint(scope)).fetchedToken,
+        'canary-retryable-dependency-token',
+      );
+      final entries = await store.inboxEntries(scope);
+      expect(entries, hasLength(50));
+      expect(entries[0].status, CloudInboxStatus.retainedUnprojected);
+      expect(
+        entries.skip(1),
+        everyElement(
+          predicate<CloudInboxEntry>(
+            (entry) => entry.status == CloudInboxStatus.applied,
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
+    'guarded Canary retains a reviewed native deferral and continues the page',
+    () async {
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1), testChange(2), testChange(3)],
+          batchId: 'canary-native-deferred-page',
+          generation: 1,
+          nextToken: 'canary-native-deferred-token',
+          hasMore: false,
+        ),
+      );
+      applier.resultsBySequence[2] = const CloudInboxApplyResult.deferred(
+        failureCategory: CloudFailureCategory.dependency,
+        safeCode: 'native_deferred_unsupported_media_credentials',
+      );
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+        ),
+        retainKnownDependencyDeferralsForReadOnlySemanticCanary: true,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.failureCategory, CloudFailureCategory.dependency);
+      expect(result.failureSafeCode, 'retained_projection_incomplete');
+      expect(result.counters.retainedUnprojected, 1);
+      expect(result.counters.retried, 0);
+      expect(result.counters.applied, 2);
+      expect(applier.appliedSequences, [1, 2, 3]);
+      expect((await store.readCheckpoint(scope)).pendingBatchId, isNull);
+      expect(
+        (await store.readCheckpoint(scope)).fetchedToken,
+        'canary-native-deferred-token',
+      );
+      final entries = await store.inboxEntries(scope);
+      expect(entries[0].status, CloudInboxStatus.applied);
+      expect(entries[1].status, CloudInboxStatus.retainedUnprojected);
+      expect(entries[2].status, CloudInboxStatus.applied);
+    },
+  );
+
+  test(
+    'Canary flag disabled keeps retryable dependency as page barrier',
+    () async {
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1), testChange(2)],
+          batchId: 'ordinary-retryable-dependency-page',
+          generation: 1,
+          nextToken: 'ordinary-retryable-dependency-token',
+          hasMore: false,
+        ),
+      );
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.retryable(
+        failureCategory: CloudFailureCategory.dependency,
+        safeCode: 'canonical_message_chat_unavailable',
+      );
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+        ),
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.counters.retried, 1);
+      expect(result.counters.retainedUnprojected, 0);
+      expect(applier.appliedSequences, [1]);
+      expect((await store.readCheckpoint(scope)).pendingBatchId, isNotNull);
+    },
+  );
+
+  test(
+    'Canary does not retain a dependency with a merely diagnostic-safe code',
+    () async {
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1), testChange(2)],
+          batchId: 'unreviewed-dependency-code-page',
+          generation: 1,
+          nextToken: 'unreviewed-dependency-code-token',
+          hasMore: false,
+        ),
+      );
+      applier.resultsBySequence[1] = const CloudInboxApplyResult.retryable(
+        failureCategory: CloudFailureCategory.dependency,
+        safeCode: 'checkpoint_pending_page_unresolved',
+      );
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+        ),
+        retainKnownDependencyDeferralsForReadOnlySemanticCanary: true,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.counters.retried, 1);
+      expect(result.counters.retainedUnprojected, 0);
+      expect(applier.appliedSequences, [1]);
+      expect((await store.readCheckpoint(scope)).pendingBatchId, isNotNull);
+    },
+  );
+
+  for (final category in const <CloudFailureCategory>[
+    CloudFailureCategory.network,
+    CloudFailureCategory.authorization,
+    CloudFailureCategory.localStorage,
+  ]) {
+    test(
+      'Canary does not retain retryable ${category.name} failures',
+      () async {
+        transport.enqueueFetchBatch(
+          CloudFetchBatch(
+            scope: scope,
+            changes: [testChange(1), testChange(2)],
+            batchId: 'nondependency-${category.name}-page',
+            generation: 1,
+            nextToken: 'nondependency-${category.name}-token',
+            hasMore: false,
+          ),
+        );
+        applier.resultsBySequence[1] = CloudInboxApplyResult.retryable(
+          failureCategory: category,
+          safeCode: 'canonical_message_chat_unavailable',
+        );
+
+        final result = await engine(
+          flags: const CloudSyncFeatureFlags(
+            readOnlyFetch: true,
+            semanticApply: true,
+          ),
+          retainKnownDependencyDeferralsForReadOnlySemanticCanary: true,
+        ).synchronize(trigger: CloudSyncTrigger.manual);
+
+        expect(result.status, CloudSyncRunStatus.degraded);
+        expect(result.counters.retried, 1);
+        expect(result.counters.retainedUnprojected, 0);
+        expect(applier.appliedSequences, [1]);
+        expect((await store.readCheckpoint(scope)).pendingBatchId, isNotNull);
+      },
+    );
+  }
 
   test(
     'persistent dependency failures retain evidence after attempt and age bounds',
@@ -2199,6 +2410,53 @@ void main() {
     await restarted.synchronize(trigger: CloudSyncTrigger.startup);
     expect(transport.fetchCallCount, 1);
   });
+
+  test('backlog read failure preserves an existing degraded cause', () async {
+    store = _FailingRetainedBacklogReadStore();
+    transport.enqueueFetchFailure(
+      CloudSyncFailure(
+        category: CloudFailureCategory.network,
+        safeCode: 'fetch_timeout',
+      ),
+    );
+
+    final result = await engine().synchronize(trigger: CloudSyncTrigger.manual);
+
+    expect(result.status, CloudSyncRunStatus.degraded);
+    expect(result.failureCategory, CloudFailureCategory.network);
+    expect(result.failureSafeCode, 'fetch_timeout');
+    expect(result.retainedUnprojectedBacklog, 0);
+    expect((store as _FailingRetainedBacklogReadStore).readCalls, 1);
+  });
+
+  test(
+    'backlog read failure prevents an otherwise successful completion',
+    () async {
+      store = _FailingRetainedBacklogReadStore();
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          batchId: 'successful-page-before-backlog-read-failure',
+          generation: 1,
+          changes: const [],
+          nextToken: 'durable-token',
+          hasMore: false,
+        ),
+      );
+
+      final result = await engine().synchronize(
+        trigger: CloudSyncTrigger.manual,
+      );
+
+      expect(result.status, CloudSyncRunStatus.failed);
+      expect(result.failureCategory, CloudFailureCategory.localStorage);
+      expect(
+        result.failureSafeCode,
+        'retained_unprojected_backlog_read_failed',
+      );
+      expect((store as _FailingRetainedBacklogReadStore).readCalls, 1);
+    },
+  );
 
   test(
     'explicit read-only manual run can probe through durable pull backoff',
@@ -3659,6 +3917,16 @@ class _RecoveryTrackingStore extends InMemoryCloudSyncStore {
   }) {
     recoverExpiredOutboxLeaseCalls++;
     return super.recoverExpiredOutboxLeases(scope, now: now);
+  }
+}
+
+class _FailingRetainedBacklogReadStore extends InMemoryCloudSyncStore {
+  int readCalls = 0;
+
+  @override
+  Future<int> readRetainedUnprojectedInboxCount(CloudSyncScope scope) async {
+    readCalls++;
+    throw StateError('simulated_retained_backlog_read_failure');
   }
 }
 

@@ -4,7 +4,7 @@ title: Cloud Sync V2 Connection Treemap and Recovery State Machine
 description: Source-linked end-to-end model for safely authenticating, fetching, decoding, journaling, projecting, recovering, and validating Messages in iCloud data.
 resource: openbubbles-app
 tags: [openbubbles, cloudkit, messages-in-icloud, architecture, recovery, canary]
-timestamp: 2026-08-30
+timestamp: 2026-08-31
 ---
 
 # Cloud Sync V2 connection treemap and recovery state machine
@@ -70,7 +70,9 @@ flowchart TD
   E1 --> E2[Lookup exact cached PCS zone config]
   E2 --> E3[Unwrap record key and decrypt fields]
   E3 --> E4[Validate raw presence and canonicalize]
-  E4 --> E5[Project chat aliases before messages]
+  E4 --> E4A[Resolve an ownership-proven exact message chat GUID first]
+  E4A --> E4B[Otherwise require the strong service identifier binding]
+  E4B --> E5[Keep group lineage and msgProto4 diagnostic-only]
   E5 --> E6[Project messages before reactions and attachments]
   E6 --> E7[Persist applied, retained, retryable, or quarantined state]
   E7 --> E7A[Measure the durable retained backlog after repair attempts]
@@ -126,7 +128,7 @@ flowchart LR
   K -- No --> H[Host or GCE Rust, Dart, and ObjectBox tests]
   H --> R[Protection, decode, projection, checkpoint, and report proof]
   K -- Yes --> W[Private-profile Windows V2 development process]
-  W --> P[Repeat the existing writer-paused semantic pull]
+  W --> P[Repeat the existing writer-paused semantic pull in guarded no-build mode]
   P --> Z[Redacted report only]
   N[Dart code changed] --> D[Windows hot reload]
   D --> W
@@ -145,7 +147,10 @@ x64 and ARM64, so a separately identifiable Windows V2 development build can
 provide the fast loop without a phone. It must use a private profile and must
 never open the Store app's profile concurrently. Dart changes may hot reload;
 Rust or bridge changes require an incremental Windows DLL rebuild and process
-restart, but no Android APK. Synthetic records, checkpoint state, canonical
+restart, but an unchanged signed build may use `-SkipBuild` only when its latest
+report proves the current source fingerprint and its native DLL signature is
+still valid. That guarded path completed in 17 seconds on 2026-08-31, with no
+Android APK. Synthetic records, checkpoint state, canonical
 conversion, ObjectBox projection, and report logic remain host or GCE tests.
 GCE must never become a live CloudKit client because that would require
 exporting the Windows profile's credentials, identity, and PCS state. Android
@@ -176,17 +181,17 @@ show fetched, retained, and projected counts separately.
 | Manual admission | [`troubleshoot_panel.dart`](../lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart#L436), [`rustpush_service.dart`](../lib/services/rustpush/rustpush_service.dart#L7448) | User-confirmed Canary entry only; no automatic semantic pull. | `LIVE-PROVEN` |
 | Process and database exclusion | [`CloudKitOperationInterlock.runExclusive`](../lib/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart#L91), [`CloudSyncManualSemanticPullSampler.runConfirmed`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart#L135) | One CloudKit owner, durable fence, bounded heartbeat, and writer resume in `finally`. | `TEST-PROVEN`; exercised live |
 | Account-bound read authentication | [`CloudSyncProductionAuthSnapshotProvider`](../lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart#L775), [`cloud_sync_ensure_read_authentication`](../rust/src/api/api.rs#L7520) | Restore or refresh only the active client's revocable read credential; reject a raced session replacement. | `TEST-PROVEN`; persisted restore exercised live |
-| Writer-pause capability | [`prepareReadAuthenticationUnderNativeWriterPause`](../lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart#L826), [`NativeProtectedCloudSyncTransport.fetchChanges`](../lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart#L810), [`cloud_sync_warm_read_authentication_under_writer_pause`](../rust/src/api/api.rs#L319) | Exact positive 64-bit token, active interlock, and same client/account before and after warmup. An unbound fetch is legal only for the non-projecting shadow lane; a bound fetch is legal only for the semantic lane. | `REPAIRED; RE-AUDIT, CI, AND LIVE PROOF PENDING` |
-| Exact PCS-zone warmup | [`warm_semantic_read_zone_encryption_configs`](../rustpush/src/imessage/cloud_messages.rs#L2201), [`get_cached_zone_encryption_config_exact`](../rustpush/src/icloud/cloudkit.rs#L3579) | Lookup only `chatManateeZone`, `messageManateeZone`, and `attachmentManateeZone` on the read-auth container. Never create a zone or use the general container. | `REPAIRED; LIVE PROOF PENDING` |
-| Capability-bound protected fetch | [`cloud_sync_fetch_protected_page_under_writer_pause`](../rust/src/api/api.rs#L2190), [`sync_records_page_for_read_authentication`](../rustpush/src/imessage/cloud_messages.rs#L2388), [`CloudSyncEngine._pullChangesWhileStoreExclusive`](../lib/services/rustpush/cloud_sync/cloud_sync_engine.dart#L898) | Semantic fetch must acquire the exact active writer-pause capability, use only the permit-validated cached read-auth container, and hold it through the remote page read. Previous token and generation remain opaque; page, record, byte, and time limits remain enforced. The separate unbound entry point is restricted at composition and transport boundaries to the compile-gated, non-projecting shadow diagnostic. | `REPAIRED; RE-AUDIT, CI, AND LIVE PROOF PENDING` |
+| Writer-pause capability | [`prepareReadAuthenticationUnderNativeWriterPause`](../lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart#L826), [`NativeProtectedCloudSyncTransport.fetchChanges`](../lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart#L810), [`cloud_sync_warm_read_authentication_under_writer_pause`](../rust/src/api/api.rs#L319) | Exact positive 64-bit token, active interlock, and same client/account before and after warmup. An unbound fetch is legal only for the non-projecting shadow lane; a bound fetch is legal only for the semantic lane. | `TEST-PROVEN; LIVE-PROVEN ON SIGNED WINDOWS ARM64 HARNESS` |
+| Exact PCS-zone warmup | [`warm_semantic_read_zone_encryption_configs`](../rustpush/src/imessage/cloud_messages.rs#L2201), [`get_cached_zone_encryption_config_exact`](../rustpush/src/icloud/cloudkit.rs#L3579) | Lookup only `chatManateeZone`, `messageManateeZone`, and `attachmentManateeZone` on the read-auth container. Never create a zone or use the general container. | `LIVE-PROVEN` across all three exact zones |
+| Capability-bound protected fetch | [`cloud_sync_fetch_protected_page_under_writer_pause`](../rust/src/api/api.rs#L2190), [`sync_records_page_for_read_authentication`](../rustpush/src/imessage/cloud_messages.rs#L2388), [`CloudSyncEngine._pullChangesWhileStoreExclusive`](../lib/services/rustpush/cloud_sync/cloud_sync_engine.dart#L898) | Semantic fetch must acquire the exact active writer-pause capability, use only the permit-validated cached read-auth container, and hold it through the remote page read. Previous token and generation remain opaque; page, record, byte, and time limits remain enforced. The separate unbound entry point is restricted at composition and transport boundaries to the compile-gated, non-projecting shadow diagnostic. | `TEST-PROVEN; LIVE-PROVEN` for bounded 200-record windows per zone |
 | Page adoption and crash recovery | [`CloudProtectedPageLeaseLifecycle`](../lib/services/rustpush/cloud_sync/cloud_protected_page_lease_lifecycle.dart#L11), [`journalFetchedBatch`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart#L104) | Protect page before Dart exposure; atomically journal before committing the native page lease. | `TEST-PROVEN`; live reports show admitted pages |
-| Same-capability protected decode | [`RustCloudSemanticDecoder`](../lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart#L577), [`cloud_sync_decode_protected_change`](../rust/src/api/api.rs#L3545), [`cloud_sync_decode_transient_record_cached_only`](../rust/src/cloud_sync_transient_bridge.rs#L1605) | Decode uses the same writer-pause permit and exact cached read-auth container/PCS key as fetch preparation. | `REPAIRED; LIVE PROOF PENDING` |
+| Same-capability protected decode | [`RustCloudSemanticDecoder`](../lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart#L577), [`cloud_sync_decode_protected_change`](../rust/src/api/api.rs#L3545), [`cloud_sync_decode_transient_record_cached_only`](../rust/src/cloud_sync_transient_bridge.rs#L1605) | Decode uses the same writer-pause permit and exact cached read-auth container/PCS key as fetch preparation. Deterministic nested-protobuf schema failures are malformed retained evidence; actual panics remain internal decoder failures. | `TEST-PROVEN; LIVE-PROVEN` without a page retry barrier |
 | Canonical conversion | [`cloud_sync_canonical_converter.rs`](../rust/src/cloud_sync_canonical_converter.rs), [`parse_associated_parent`](../rust/src/cloud_sync_canonical_dto.rs#L2023) | Preserve wire presence, reject malformed identity, and do not invent clear/delete semantics. | `TEST-PROVEN`; representative records decoded live |
 | Ordered local projection | [`TransactionalCloudInboxApplier`](../lib/services/rustpush/cloud_sync/cloud_inbox_applier.dart#L866), [`ObjectBoxCanonicalSemanticEntityAdapter`](../lib/services/rustpush/cloud_sync/objectbox_canonical_semantic_entity_adapter.dart#L204), [`ObjectBoxCloudSemanticStoreGateway`](../lib/services/rustpush/cloud_sync/objectbox_cloud_semantic_store_gateway.dart#L305) | One local transaction records canonical state, replay metadata, record mapping, and terminal inbox state. Chat aliases precede messages; messages precede reactions and attachments. | `LIVE-PROVEN`, with remaining unsupported fields/attachments retained |
 | Legacy unknown-row retry | [`CloudUnknownInboxBarrierRecoveryStore`](../lib/services/rustpush/cloud_sync/cloud_sync_store.dart#L290), [`ObjectBoxCloudSyncStore.requeueUnknownInboxBarrier`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart#L974) | Reopen only the first unresolved current-generation save in the still-pending batch, only if it predates the fixed migration cutoff. Preserve retry history, protected reference, digest, checkpoint, and token. Reject tombstones and preflight failures. | `TEST-PROVEN`; bounded one-time migration, not a general fallback |
 | Retained projection repair | [`TransactionalCloudInboxApplier.reprojectRetainedUnprojected`](../lib/services/rustpush/cloud_sync/cloud_inbox_applier.dart#L894), [`CloudRetainedProjectionStoreGateway`](../lib/services/rustpush/cloud_sync/cloud_inbox_applier.dart#L797) | Candidate selection is scope- and generation-bound. A retained row becomes applied only in the same transaction that commits its complete canonical projection; failures rotate fairly without changing token or source evidence. | `TEST-PROVEN`; exercised live with unresolved rows remaining |
 | Cursor promotion | [`_promotePendingFetchedTokenIfTerminalLocked`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart#L2456) | Promote the pending token only when every sequence exists and is terminal. `retainedUnprojected` may release fetch progress but remains repairable and never counts as fully applied. | `TEST-PROVEN`; exercised live |
-| Honest Canary completion | [`CloudRetainedUnprojectedBacklogStore`](../lib/services/rustpush/cloud_sync/cloud_sync_store.dart#L290), [`ObjectBoxCloudSyncStore.readRetainedUnprojectedInboxCount`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart#L752), [`CloudSyncManualSemanticPullSampler`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart#L285), [`cloudSyncV2SemanticCanaryPresentation`](../lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart#L46) | Read the current-generation durable retained backlog after repair attempts, then sum it across all zones. A zero per-run transition count is insufficient. Report `Complete` only when the original three-zone/status/quarantine/retry/write-tripwire gates pass and durable retained count is zero; otherwise report `Partial` or `Stopped Safely` with separate fetched, applied, and retained totals. | `REPAIRED; OBJECTBOX CI AND LIVE PROOF PENDING` |
+| Honest Canary completion | [`CloudRetainedUnprojectedBacklogStore`](../lib/services/rustpush/cloud_sync/cloud_sync_store.dart#L290), [`ObjectBoxCloudSyncStore.readRetainedUnprojectedInboxCount`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart#L752), [`CloudSyncManualSemanticPullSampler`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart#L285), [`cloudSyncV2SemanticCanaryPresentation`](../lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart#L46) | Read the current-generation durable retained backlog after repair attempts, then sum it across all zones. A zero per-run transition count is insufficient. Report `Complete` only when the original three-zone/status/quarantine/retry/write-tripwire gates pass and durable retained count is zero; a completed read with retained evidence is degraded/`Partial`, while a blocking failure is `Stopped Safely`. | `TEST-PROVEN; LIVE-PROVEN` |
 | Token-expiry reset | [`CloudSyncStore.rebootstrapAfterReset`](../lib/services/rustpush/cloud_sync/cloud_sync_store.dart#L150), [`ObjectBoxCloudSyncStore.rebootstrapAfterReset`](../lib/services/rustpush/cloud_sync/objectbox_cloud_sync_store.dart#L1312) | Obtain an account-bound remote-reset proof, quiesce the coordinator, atomically fence old evidence, increment generation, and restart from no token. The coordinator must also prove how unresolved old-generation saves and tombstones remain repairable or are reconciled by the full refetch. | `GAP / POLICY DECISION`: durable primitive exists, but production orchestration has no caller and current-generation reprojection cannot consume generation-zero evidence |
 | No-write exit tripwire | [`CloudSyncManualSemanticPullSampler._runConfirmedUnderInterlock`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart#L194) | Remote confirmations remain zero, outbox count is unchanged, active identity is revalidated, native operations quiesce, and writers resume. | `LIVE-PROVEN` |
 
@@ -200,6 +205,7 @@ show fetched, retained, and projected counts separately.
 | Network or server failure | Preserve prior token, record bounded backoff, honor server retry-after, and retry later. | Implemented. |
 | Throttling | Honor bounded retry-after and do not spin or clear state. | Implemented. |
 | Missing chat/message dependency | In the developer-only read-only Canary, a recognized dependency code may immediately become `retainedUnprojected`; ordinary sync requires the bounded attempt-and-age policy. Keep protected evidence and retry ordered projection after the parent or parser repair exists. | Implemented and compile-time/configuration gated away from write-capable sync. |
+| Shared typed chat lineage alias | Preserve each canonical chat GUID owner. `serviceIdentifier` remains an owner-independent strong one-to-one binding. Each fully proven `groupId`, `originalGroupId`, or legacy alias is stored as an owner-specific claim, so shared lineage never overwrites or merges chats. An exact `chatID == Chat.guid` match with current ownership proof is decisive; otherwise only the strong `serviceIdentifier` binding may select a chat. A disagreement between those two strong paths is a conflict. Group lineage and `msgProto4.groupId` remain content-free diagnostics and can neither select nor veto an owner. | `strong2`/`claim2` is test-proven. A signed Windows ARM64 replay proved 109 exact GUID owners and projected all 109 after removing the invalid corroborator veto. The stricter weak-evidence fallback is unit-proven and awaits a signed replay. Legacy `alias1` rows remain preserved but non-authoritative. |
 | Malformed or unsupported record | Persist a fixed content-free reason. Retain or quarantine according to whether a future parser can safely repair it; never guess identity or deletion. | Implemented, but every new reason needs an explicit repairability classification. |
 | Tombstone in read-only Canary | Retain as unprojected evidence. Do not delete a local message and do not issue a remote delete. | Implemented and write-gated. |
 | Process death after fetch | Recover/rollback the native page lease, replay the durable journal, and keep the previous token until the journal is terminal. | Implemented and crash-tested. |
@@ -361,12 +367,36 @@ enabling writes.
 Do not broaden scope to FaceTime, Find My, Windows ARM, SMS/RCS, or outbound
 CloudKit while this sequence is active:
 
-1. close the transport fallback and durable-retained-report audit findings;
-2. freeze one candidate SHA, independently re-audit the complete chain, and
-   run focused tests plus one full GCE chain test;
-3. build and sign one Canary from that same SHA;
-4. install in place and capture one live semantic-pull report whose retained
-   count matches durable state across a second idempotent pull;
-5. if live proof succeeds, design the token-expiry reset coordinator as a
-   separate reviewed change;
-6. only then widen attachment materialization and automatic scheduling.
+1. classify the remaining non-projectable iMessage records without weakening
+   exact ownership; keep the separately identified SMS/MMS backlog out of this
+   release scope;
+2. reproject attachment metadata after each newly proven parent message and
+   keep bodies requiring unimplemented media credentials explicitly retained;
+3. run Rust tests on GCE, the complete CloudKit Dart suite, and a second clean
+   signed Windows pull with no retry barriers and unchanged no-write tripwires;
+4. freeze one candidate SHA and qualify an in-place Android Canary;
+5. design token-expiry reset and attachment-body materialization as separate
+   reviewed changes after text/history projection is stable.
+
+### Latest bounded live proof
+
+The signed Windows ARM64 harness completed a clean rebuild in 99.7 seconds on
+2026-08-31 after bridge regeneration. Its first replay projected 143 chats but
+retained all 110 decoder-ready messages. Content-free cardinality diagnostics
+then proved the actual precedence defect: 109 messages had one exact,
+ownership-proven `chatID == Chat.guid` owner, while `msgProto4.groupId` resolved
+to no `CloudChat.gid` owner for all 110 and incorrectly erased those exact
+matches during intersection.
+
+The first repair made exact GUID ownership decisive. The next signed Windows
+ARM64 replay built incrementally in 40.1 seconds, projected all 109 exactly
+proven messages, and consequently projected six attachment records. A static
+follow-up audit then found that a unique weak group-lineage claim could still
+select a chat when exact proof was absent. The resolver is now stricter: only
+exact GUID ownership or the one-to-one strong `serviceIdentifier` binding may
+select a chat, disagreement is a conflict, and group lineage plus
+`msgProto4.groupId` are diagnostic-only. Unit tests cover exact precedence,
+strong fallback, strong-path disagreement, and weak-only failure; a signed
+replay of this stricter boundary remains pending. Remote saves, remote deletes,
+automatic triggers, and tombstone semantic deletes remained disabled, and the
+outbox stayed `0 -> 0` throughout the last signed replay.

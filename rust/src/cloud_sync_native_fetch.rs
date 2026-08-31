@@ -24,8 +24,8 @@ use rustpush::{
         CloudMessageRecordKind, CloudMessageRecordPage, CloudMessageRecordPageChange,
         CloudMessageRecordSystemFields, CloudMessagesClient,
     },
-    cloudkit_operation_gate::CloudKitReadAuthenticationPermit,
     cloudkit::{classify_cloudkit_failure, CloudKitFailureClass},
+    cloudkit_operation_gate::CloudKitReadAuthenticationPermit,
     CloudKitProtocolError, DefaultAnisetteProvider, PushError,
 };
 use sha2::{Digest, Sha256};
@@ -3166,9 +3166,7 @@ async fn cloud_sync_fetch_protected_page_with_store(
     if read_authentication_permit.is_some()
         && !matches!(
             request.stream,
-            CloudNativeStream::Chats
-                | CloudNativeStream::Messages
-                | CloudNativeStream::Attachments
+            CloudNativeStream::Chats | CloudNativeStream::Messages | CloudNativeStream::Attachments
         )
     {
         return CloudNativeProtectedFetchOutcome::Failure(CloudNativeFetchFailure::new(

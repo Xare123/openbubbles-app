@@ -817,15 +817,17 @@ final class CloudSyncProductionAuthSnapshotProvider {
     CloudKitOperationInterlock.requireActive(
       CloudKitOperationKind.v2SemanticRead,
     );
-    final before = await capture();
-    if (before == null) return null;
+    final client = _readActiveClient();
+    if (client == null) return null;
     await _nativeAuthBinding.ensureReadAuthentication(
-      cloudMessagesClient: before.cloudMessagesClient,
+      cloudMessagesClient: client,
       privateStorageDirectory: privateStorageDirectory,
     );
-    if (!identical(before.cloudMessagesClient, _readActiveClient())) {
+    if (!identical(client, _readActiveClient())) {
       return null;
     }
+    final before = await capture();
+    if (before == null) return null;
     final after = await capture();
     return before.sameIdentity(after) ? after : null;
   }
