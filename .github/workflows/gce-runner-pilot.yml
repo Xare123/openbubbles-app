@@ -226,6 +226,11 @@ jobs:
           flutter-version: 3.44.8
           cache: true
 
+      - name: Trust Flutter SDK checkout
+        if: ${{ env.VALIDATION_MODE != 'rustpush-only' }}
+        shell: bash
+        run: git config --global --add safe.directory "$FLUTTER_ROOT"
+
       - name: Set up Java
         if: ${{ env.VALIDATION_MODE != 'rustpush-only' }}
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -296,7 +301,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git config --global --add safe.directory "$FLUTTER_ROOT"
           flutter pub get
           bash ./tooling/android/patch_pub_cache_cargokit.sh
 
