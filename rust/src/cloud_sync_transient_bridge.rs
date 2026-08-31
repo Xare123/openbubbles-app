@@ -2616,14 +2616,14 @@ mod tests {
             Err(CloudCanonicalValidationFailure::InvalidPayload)
         );
 
-        let mut wrong_domain_candidates =
+        let mut wrong_candidate_hashes =
             message_chat_alias_candidates(&hasher, "iMessage;-;+15555550100", None);
-        wrong_domain_candidates[1] = CloudCanonicalAlias::new(
+        wrong_candidate_hashes[1] = CloudCanonicalAlias::new(
             CloudCanonicalAliasKind::ChatGroupId,
             hasher
                 .canonical_alias_key_hash(
                     CloudCanonicalAliasKind::ChatOriginalGroupId,
-                    "iMessage;-;+15555550100",
+                    "different-chat-reference",
                 )
                 .unwrap(),
         );
@@ -2632,7 +2632,7 @@ mod tests {
                 &message_mutation_with_chat_reference_overrides(
                     &hasher,
                     None,
-                    Some(wrong_domain_candidates),
+                    Some(wrong_candidate_hashes),
                     None,
                 ),
                 &hasher,
@@ -3655,7 +3655,7 @@ mod tests {
         assert!(validate_nested_protobuf(&valid, spec).is_ok());
         assert_eq!(
             validate_nested_protobuf(&[0x80], spec),
-            Err(CloudTransientBridgeFailure::DecoderFailure)
+            Err(CloudTransientBridgeFailure::MalformedRecord)
         );
         assert!(validate_nested_protobuf(&valid, spec).is_ok());
     }
