@@ -20518,6 +20518,8 @@ impl SseDecode for crate::api::api::CloudSyncTransientMessagePayload {
         let mut var_chatAliasKeyHash = <String>::sse_decode(deserializer);
         let mut var_chatIdentifier = <String>::sse_decode(deserializer);
         let mut var_chatIdExactGuidLogicalKeyHash = <String>::sse_decode(deserializer);
+        let mut var_chatIdBareDirectServiceIdentifierAliasKeyHash =
+            <Option<String>>::sse_decode(deserializer);
         let mut var_chatIdAliasCandidates =
             <Vec<crate::api::api::CloudSyncTransientChatAlias>>::sse_decode(deserializer);
         let mut var_msgProto4GroupIdAliasKeyHash = <Option<String>>::sse_decode(deserializer);
@@ -20579,6 +20581,8 @@ impl SseDecode for crate::api::api::CloudSyncTransientMessagePayload {
             chat_alias_key_hash: var_chatAliasKeyHash,
             chat_identifier: var_chatIdentifier,
             chat_id_exact_guid_logical_key_hash: var_chatIdExactGuidLogicalKeyHash,
+            chat_id_bare_direct_service_identifier_alias_key_hash:
+                var_chatIdBareDirectServiceIdentifierAliasKeyHash,
             chat_id_alias_candidates: var_chatIdAliasCandidates,
             msg_proto_4_group_id_alias_key_hash: var_msgProto4GroupIdAliasKeyHash,
             sender_handle: var_senderHandle,
@@ -29837,6 +29841,9 @@ impl flutter_rust_bridge::IntoDart for crate::api::api::CloudSyncTransientMessag
             self.chat_id_exact_guid_logical_key_hash
                 .into_into_dart()
                 .into_dart(),
+            self.chat_id_bare_direct_service_identifier_alias_key_hash
+                .into_into_dart()
+                .into_dart(),
             self.chat_id_alias_candidates.into_into_dart().into_dart(),
             self.msg_proto_4_group_id_alias_key_hash
                 .into_into_dart()
@@ -36348,6 +36355,10 @@ impl SseEncode for crate::api::api::CloudSyncTransientMessagePayload {
         <String>::sse_encode(self.chat_alias_key_hash, serializer);
         <String>::sse_encode(self.chat_identifier, serializer);
         <String>::sse_encode(self.chat_id_exact_guid_logical_key_hash, serializer);
+        <Option<String>>::sse_encode(
+            self.chat_id_bare_direct_service_identifier_alias_key_hash,
+            serializer,
+        );
         <Vec<crate::api::api::CloudSyncTransientChatAlias>>::sse_encode(
             self.chat_id_alias_candidates,
             serializer,

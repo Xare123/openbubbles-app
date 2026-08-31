@@ -4141,6 +4141,10 @@ class CloudSyncTransientMessagePayload {
   final String chatAliasKeyHash;
   final String chatIdentifier;
   final String chatIdExactGuidLogicalKeyHash;
+
+  /// Diagnostic-only service-qualified direct-CID candidate for a bare
+  /// message chatID. It is not authoritative owner evidence.
+  final String? chatIdBareDirectServiceIdentifierAliasKeyHash;
   final List<CloudSyncTransientChatAlias> chatIdAliasCandidates;
   final String? msgProto4GroupIdAliasKeyHash;
   final String senderHandle;
@@ -4186,6 +4190,7 @@ class CloudSyncTransientMessagePayload {
     required this.chatAliasKeyHash,
     required this.chatIdentifier,
     required this.chatIdExactGuidLogicalKeyHash,
+    this.chatIdBareDirectServiceIdentifierAliasKeyHash,
     required this.chatIdAliasCandidates,
     this.msgProto4GroupIdAliasKeyHash,
     required this.senderHandle,
@@ -4233,6 +4238,7 @@ class CloudSyncTransientMessagePayload {
       chatAliasKeyHash.hashCode ^
       chatIdentifier.hashCode ^
       chatIdExactGuidLogicalKeyHash.hashCode ^
+      chatIdBareDirectServiceIdentifierAliasKeyHash.hashCode ^
       chatIdAliasCandidates.hashCode ^
       msgProto4GroupIdAliasKeyHash.hashCode ^
       senderHandle.hashCode ^
@@ -4283,6 +4289,8 @@ class CloudSyncTransientMessagePayload {
           chatIdentifier == other.chatIdentifier &&
           chatIdExactGuidLogicalKeyHash ==
               other.chatIdExactGuidLogicalKeyHash &&
+          chatIdBareDirectServiceIdentifierAliasKeyHash ==
+              other.chatIdBareDirectServiceIdentifierAliasKeyHash &&
           chatIdAliasCandidates == other.chatIdAliasCandidates &&
           msgProto4GroupIdAliasKeyHash == other.msgProto4GroupIdAliasKeyHash &&
           senderHandle == other.senderHandle &&

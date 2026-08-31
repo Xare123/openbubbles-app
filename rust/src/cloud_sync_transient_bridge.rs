@@ -24,7 +24,8 @@ use crate::{
     cloud_sync_canonical_dto::{
         CloudCanonicalAliasKind, CloudCanonicalEntityKind, CloudCanonicalHash,
         CloudCanonicalMessageAssociation, CloudCanonicalMutation, CloudCanonicalPayload,
-        CloudCanonicalValidationFailure, CLOUD_CANONICAL_MESSAGE_CHAT_ALIAS_KINDS,
+        CloudCanonicalService, CloudCanonicalValidationFailure,
+        CLOUD_CANONICAL_MESSAGE_CHAT_ALIAS_KINDS,
     },
     cloud_sync_native_fetch::{
         cloud_sync_unprotect_raw_envelope, CloudNativeFailureCategory, CloudNativeProtectionScope,

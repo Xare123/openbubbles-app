@@ -17094,69 +17094,72 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   dco_decode_cloud_sync_transient_message_payload(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 43)
-      throw Exception('unexpected arr length: expect 43 but see ${arr.length}');
+    if (arr.length != 44)
+      throw Exception('unexpected arr length: expect 44 but see ${arr.length}');
     return CloudSyncTransientMessagePayload(
       logicalEntityKeyHash: dco_decode_String(arr[0]),
       canonicalGuid: dco_decode_String(arr[1]),
       chatAliasKeyHash: dco_decode_String(arr[2]),
       chatIdentifier: dco_decode_String(arr[3]),
       chatIdExactGuidLogicalKeyHash: dco_decode_String(arr[4]),
-      chatIdAliasCandidates: dco_decode_list_cloud_sync_transient_chat_alias(
+      chatIdBareDirectServiceIdentifierAliasKeyHash: dco_decode_opt_String(
         arr[5],
       ),
-      msgProto4GroupIdAliasKeyHash: dco_decode_opt_String(arr[6]),
-      senderHandle: dco_decode_String(arr[7]),
-      createdAtMillis: dco_decode_i_64(arr[8]),
-      error: dco_decode_i_64(arr[9]),
-      service: dco_decode_cloud_sync_transient_service(arr[10]),
-      subjectState: dco_decode_cloud_sync_transient_field_state(arr[11]),
-      subject: dco_decode_opt_String(arr[12]),
-      bodyState: dco_decode_cloud_sync_transient_field_state(arr[13]),
-      body: dco_decode_opt_String(arr[14]),
-      attributedBodiesState: dco_decode_cloud_sync_transient_field_state(
-        arr[15],
+      chatIdAliasCandidates: dco_decode_list_cloud_sync_transient_chat_alias(
+        arr[6],
       ),
-      attributedBodies: dco_decode_list_cloud_sync_transient_attributed_body(
+      msgProto4GroupIdAliasKeyHash: dco_decode_opt_String(arr[7]),
+      senderHandle: dco_decode_String(arr[8]),
+      createdAtMillis: dco_decode_i_64(arr[9]),
+      error: dco_decode_i_64(arr[10]),
+      service: dco_decode_cloud_sync_transient_service(arr[11]),
+      subjectState: dco_decode_cloud_sync_transient_field_state(arr[12]),
+      subject: dco_decode_opt_String(arr[13]),
+      bodyState: dco_decode_cloud_sync_transient_field_state(arr[14]),
+      body: dco_decode_opt_String(arr[15]),
+      attributedBodiesState: dco_decode_cloud_sync_transient_field_state(
         arr[16],
       ),
-      balloonBundleIdState: dco_decode_cloud_sync_transient_field_state(
+      attributedBodies: dco_decode_list_cloud_sync_transient_attributed_body(
         arr[17],
       ),
-      balloonBundleId: dco_decode_opt_String(arr[18]),
-      effectState: dco_decode_cloud_sync_transient_field_state(arr[19]),
-      effect: dco_decode_opt_String(arr[20]),
-      readAtMillisState: dco_decode_cloud_sync_transient_field_state(arr[21]),
-      readAtMillis: dco_decode_opt_box_autoadd_i_64(arr[22]),
-      deliveredAtMillisState: dco_decode_cloud_sync_transient_field_state(
-        arr[23],
+      balloonBundleIdState: dco_decode_cloud_sync_transient_field_state(
+        arr[18],
       ),
-      deliveredAtMillis: dco_decode_opt_box_autoadd_i_64(arr[24]),
-      knownFlags: dco_decode_cloud_sync_transient_known_message_flags(arr[25]),
+      balloonBundleId: dco_decode_opt_String(arr[19]),
+      effectState: dco_decode_cloud_sync_transient_field_state(arr[20]),
+      effect: dco_decode_opt_String(arr[21]),
+      readAtMillisState: dco_decode_cloud_sync_transient_field_state(arr[22]),
+      readAtMillis: dco_decode_opt_box_autoadd_i_64(arr[23]),
+      deliveredAtMillisState: dco_decode_cloud_sync_transient_field_state(
+        arr[24],
+      ),
+      deliveredAtMillis: dco_decode_opt_box_autoadd_i_64(arr[25]),
+      knownFlags: dco_decode_cloud_sync_transient_known_message_flags(arr[26]),
       associationKind: dco_decode_cloud_sync_transient_association_kind(
-        arr[26],
+        arr[27],
       ),
       reactionKind:
           dco_decode_opt_box_autoadd_cloud_sync_transient_reaction_kind(
-            arr[27],
+            arr[28],
           ),
-      reactionRemoved: dco_decode_bool(arr[28]),
-      reactionParentLogicalKeyHash: dco_decode_opt_String(arr[29]),
-      reactionParentCanonicalGuid: dco_decode_opt_String(arr[30]),
-      reactionParentPart: dco_decode_opt_box_autoadd_u_32(arr[31]),
-      associatedRangeLocation: dco_decode_opt_box_autoadd_u_32(arr[32]),
-      associatedRangeLength: dco_decode_opt_box_autoadd_u_32(arr[33]),
-      replyParentLogicalKeyHash: dco_decode_opt_String(arr[34]),
-      replyParentCanonicalGuid: dco_decode_opt_String(arr[35]),
-      replyParentPart: dco_decode_opt_String(arr[36]),
-      editsState: dco_decode_cloud_sync_transient_field_state(arr[37]),
-      edits: dco_decode_list_cloud_sync_transient_message_edit(arr[38]),
-      retractedPartsState: dco_decode_cloud_sync_transient_field_state(arr[39]),
-      retractedParts: dco_decode_list_prim_u_32_strict(arr[40]),
+      reactionRemoved: dco_decode_bool(arr[29]),
+      reactionParentLogicalKeyHash: dco_decode_opt_String(arr[30]),
+      reactionParentCanonicalGuid: dco_decode_opt_String(arr[31]),
+      reactionParentPart: dco_decode_opt_box_autoadd_u_32(arr[32]),
+      associatedRangeLocation: dco_decode_opt_box_autoadd_u_32(arr[33]),
+      associatedRangeLength: dco_decode_opt_box_autoadd_u_32(arr[34]),
+      replyParentLogicalKeyHash: dco_decode_opt_String(arr[35]),
+      replyParentCanonicalGuid: dco_decode_opt_String(arr[36]),
+      replyParentPart: dco_decode_opt_String(arr[37]),
+      editsState: dco_decode_cloud_sync_transient_field_state(arr[38]),
+      edits: dco_decode_list_cloud_sync_transient_message_edit(arr[39]),
+      retractedPartsState: dco_decode_cloud_sync_transient_field_state(arr[40]),
+      retractedParts: dco_decode_list_prim_u_32_strict(arr[41]),
       associatedEmojiState: dco_decode_cloud_sync_transient_field_state(
-        arr[41],
+        arr[42],
       ),
-      associatedEmoji: dco_decode_opt_String(arr[42]),
+      associatedEmoji: dco_decode_opt_String(arr[43]),
     );
   }
 
@@ -26717,6 +26720,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_chatAliasKeyHash = sse_decode_String(deserializer);
     var var_chatIdentifier = sse_decode_String(deserializer);
     var var_chatIdExactGuidLogicalKeyHash = sse_decode_String(deserializer);
+    var var_chatIdBareDirectServiceIdentifierAliasKeyHash =
+        sse_decode_opt_String(deserializer);
     var var_chatIdAliasCandidates =
         sse_decode_list_cloud_sync_transient_chat_alias(deserializer);
     var var_msgProto4GroupIdAliasKeyHash = sse_decode_opt_String(deserializer);
@@ -26795,6 +26800,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       chatAliasKeyHash: var_chatAliasKeyHash,
       chatIdentifier: var_chatIdentifier,
       chatIdExactGuidLogicalKeyHash: var_chatIdExactGuidLogicalKeyHash,
+      chatIdBareDirectServiceIdentifierAliasKeyHash:
+          var_chatIdBareDirectServiceIdentifierAliasKeyHash,
       chatIdAliasCandidates: var_chatIdAliasCandidates,
       msgProto4GroupIdAliasKeyHash: var_msgProto4GroupIdAliasKeyHash,
       senderHandle: var_senderHandle,
@@ -37801,6 +37808,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.chatAliasKeyHash, serializer);
     sse_encode_String(self.chatIdentifier, serializer);
     sse_encode_String(self.chatIdExactGuidLogicalKeyHash, serializer);
+    sse_encode_opt_String(
+      self.chatIdBareDirectServiceIdentifierAliasKeyHash,
+      serializer,
+    );
     sse_encode_list_cloud_sync_transient_chat_alias(
       self.chatIdAliasCandidates,
       serializer,
