@@ -30,6 +30,7 @@ void main() {
   }) => RustCloudSemanticDecoder(
     readAuthSnapshot: readAuthSnapshot ?? (() async => currentAuth),
     storageDirectory: r'C:\private\cloud-sync',
+    nativeWriterPauseToken: BigInt.from(7),
     bindings: bindings,
     tombstoneIdentityResolver: tombstoneResolver,
     diagnosticRecorder: diagnosticRecorder,
@@ -49,11 +50,33 @@ void main() {
     expect(decoded.payload, isA<CloudMessageEntityPayload>());
     final request = bindings.requests.single;
     expect(request.authSnapshot, same(auth));
+    expect(request.nativeWriterPauseToken, BigInt.from(7));
     expect(request.protectedStoreIdentity, _storeIdentity);
     expect(request.nativeStream, 'messages');
     expect(request.entry.change.recordIdHash, _recordHash);
     expect(request.entry.change.payloadSha256, _payloadSha);
     expect(request.entry.change.encryptedPayloadReference, _sourceReference);
+  });
+
+  test('rejects an invalid native writer-pause token before decoding', () {
+    for (final token in [BigInt.zero, BigInt.one << 64]) {
+      expect(
+        () => RustCloudSemanticDecoder(
+          readAuthSnapshot: () async => currentAuth,
+          storageDirectory: r'C:\private\cloud-sync',
+          nativeWriterPauseToken: token,
+          bindings: bindings,
+        ),
+        throwsA(
+          isA<ArgumentError>().having(
+            (error) => error.message,
+            'message',
+            'cloud_semantic_decoder_writer_pause_token_invalid',
+          ),
+        ),
+      );
+    }
+    expect(bindings.requests, isEmpty);
   });
 
   test('maps the exact native SMS service without iMessage aliasing', () async {
@@ -209,6 +232,8 @@ void main() {
     final cases = <frb.CloudSyncTransientFailureCode, CloudFailureCategory>{
       frb.CloudSyncTransientFailureCode.invalidRequest:
           CloudFailureCategory.malformedRecord,
+      frb.CloudSyncTransientFailureCode.readAuthenticationScope:
+          CloudFailureCategory.authorization,
       frb.CloudSyncTransientFailureCode.activeAccountMismatch:
           CloudFailureCategory.authorization,
       frb.CloudSyncTransientFailureCode.warmAuthenticationRequired:

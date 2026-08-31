@@ -2014,6 +2014,68 @@ mod tests {
     }
 
     #[test]
+    fn cached_only_semantic_decode_cannot_fall_back_to_general_cloudkit_state() {
+        let source = include_str!("cloud_sync_transient_bridge.rs");
+        let wrapper_start = source
+            .find("pub(crate) async fn cloud_sync_decode_transient_record_cached_only")
+            .expect("cached-only semantic wrapper");
+        let enum_start = source[wrapper_start..]
+            .find("enum CloudTransientPcsAccess")
+            .expect("PCS access enum");
+        let wrapper = &source[wrapper_start..wrapper_start + enum_start];
+        assert!(wrapper.contains("CloudTransientPcsAccess::CachedOnly"));
+        assert!(wrapper.contains("Some(read_authentication_permit)"));
+
+        let implementation_start = source
+            .find("async fn cloud_sync_decode_transient_record_with_pcs_access")
+            .expect("semantic PCS implementation");
+        let following_function = source[implementation_start..]
+            .find("\n#[cfg(test)]")
+            .expect("following test module");
+        let implementation =
+            &source[implementation_start..implementation_start + following_function];
+        let container_match_start = implementation
+            .find("let container_result = match pcs_access")
+            .expect("container access match");
+        let zone_match_start = implementation
+            .find("let zone_key_result = match pcs_access")
+            .expect("zone access match");
+        let container_match = &implementation[container_match_start..zone_match_start];
+        let cached_container_arm = container_match
+            .split("CloudTransientPcsAccess::CachedOnly =>")
+            .nth(1)
+            .expect("cached container arm");
+        assert!(
+            cached_container_arm.contains("get_cached_container_for_read_authentication(permit)")
+        );
+        let zone_key_end = implementation[zone_match_start..]
+            .find("let zone_key = match zone_key_result")
+            .expect("zone key result handling");
+        let zone_match = &implementation[zone_match_start..zone_match_start + zone_key_end];
+        let cached_zone_arm = zone_match
+            .split("CloudTransientPcsAccess::CachedOnly =>")
+            .nth(1)
+            .expect("cached zone arm");
+        assert!(cached_zone_arm.contains("get_cached_zone_encryption_config_exact(&zone)"));
+
+        for forbidden in [
+            "get_container_lookup_only",
+            "get_container_for_read_authentication",
+            ".get_container()",
+            "get_zone_encryption_config_lookup_only",
+            "get_zone_encryption_config_sev_lookup_only",
+            "get_zone_encryption_config_allow_create",
+            "sync_keychain",
+            "ZoneSaveOperation",
+        ] {
+            assert!(
+                !cached_container_arm.contains(forbidden) && !cached_zone_arm.contains(forbidden),
+                "cached-only arm must not contain {forbidden}"
+            );
+        }
+    }
+
+    #[test]
     fn private_change_types_match_create_update_and_delete_shapes() {
         assert!(valid_upsert_change_type(Some(1)));
         assert!(valid_upsert_change_type(Some(2)));

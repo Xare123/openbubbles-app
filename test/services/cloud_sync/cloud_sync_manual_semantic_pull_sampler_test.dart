@@ -20,6 +20,13 @@ const _accountFingerprintB = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
 final _nativeClientA = Object();
 final _nativeClientB = Object();
 
+typedef _TestSemanticInboxApplierFactory =
+    Future<CloudInboxApplier> Function(
+      CloudSyncNativeAuthSnapshot authSnapshot,
+      CloudSyncScope scope,
+      int generation,
+    );
+
 CloudSyncShadowPreflightState _readyState({int outboxCount = 0}) =>
     CloudSyncShadowPreflightState(
       platformSupported: true,
@@ -96,7 +103,8 @@ CloudSyncManualSemanticPullSampler _sampler({
   CloudSyncSemanticPausedPreparedAuthSnapshotReader? prepareAuthSnapshot,
   required CloudSyncSemanticStoreFactory createStore,
   required CloudSyncSemanticRawTransportFactory createRawTransport,
-  required CloudSyncSemanticInboxApplierFactory createInboxApplier,
+  required _TestSemanticInboxApplierFactory createInboxApplier,
+  void Function(Object pauseToken)? onInboxPauseToken,
   required CloudSyncStore operationFenceStore,
   CloudSyncNativeWriterPause? nativeWriterPause,
   bool enabled = true,
@@ -110,7 +118,10 @@ CloudSyncManualSemanticPullSampler _sampler({
   readAuthSnapshot: readAuthSnapshot,
   createStore: createStore,
   createRawTransport: createRawTransport,
-  createInboxApplier: createInboxApplier,
+  createInboxApplier: (auth, scope, generation, pauseToken) {
+    onInboxPauseToken?.call(pauseToken);
+    return createInboxApplier(auth, scope, generation);
+  },
   nativeWriterPause: nativeWriterPause ?? _RecordingNativeWriterPause(),
   operationFenceStore: operationFenceStore,
   privateStorageDirectory: privateStorageDirectory.path,
@@ -172,6 +183,10 @@ void main() {
         };
         return transport;
       },
+      onInboxPauseToken: (pauseToken) {
+        expect(pauseToken, same(nativeWriterPause.token));
+        events.add('inbox-pause-token');
+      },
       createInboxApplier: (auth, scope, generation) async =>
           FakeCloudInboxApplier(),
     );
@@ -182,6 +197,7 @@ void main() {
     expect(events[1], 'pause-native-writers');
     expect(events[2], 'preflight');
     expect(events, contains('prepare-auth'));
+    expect(events, contains('inbox-pause-token'));
     expect(events.last, 'resume-native-writers');
     expect(nativeWriterPause.pauseCalls, 1);
     expect(nativeWriterPause.resumeCalls, 1);

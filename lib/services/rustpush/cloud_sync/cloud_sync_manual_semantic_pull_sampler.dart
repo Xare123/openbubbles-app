@@ -23,6 +23,7 @@ typedef CloudSyncSemanticInboxApplierFactory =
       CloudSyncNativeAuthSnapshot authSnapshot,
       CloudSyncScope scope,
       int generation,
+      Object nativeWriterPauseToken,
     );
 typedef CloudSyncSemanticDiagnosticSnapshotReader =
     Map<String, int> Function(CloudSyncScope scope);
@@ -221,6 +222,7 @@ final class CloudSyncManualSemanticPullSampler {
         auth,
         scope,
         checkpoint.generation,
+        pauseToken,
       );
       final config = _config();
       await _repairAppliedProjections(

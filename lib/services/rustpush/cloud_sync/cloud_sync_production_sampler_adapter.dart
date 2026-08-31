@@ -245,6 +245,7 @@ String cloudSyncNativeAuthBridgeSafeCode(Object error) {
     'cloud_sync_native_auth_messages_container_failed',
     'cloud_sync_native_auth_keychain_container_failed',
     'cloud_sync_native_auth_security_container_failed',
+    'cloud_sync_native_auth_pcs_zones_failed',
     'cloud_sync_native_auth_cloudkit_token_failed',
     'cloud_sync_native_auth_credentials_unavailable',
     'cloud_sync_native_auth_credentials_rejected',
@@ -530,7 +531,12 @@ final class CloudSyncProductionSemanticPullAdapter {
             protectedStoreIdentity: snapshot.protectedStoreIdentity,
             bindings: transportBindings,
           ),
-      createInboxApplier: (snapshot, scope, generation) async {
+      createInboxApplier: (snapshot, scope, generation, pauseToken) async {
+        if (pauseToken is! BigInt ||
+            pauseToken <= BigInt.zero ||
+            pauseToken.bitLength > 64) {
+          throw StateError('cloud_sync_native_auth_writer_pause_scope_failed');
+        }
         final diagnostics = CloudSyncSemanticDiagnosticCollector();
         diagnosticCollectors[scope.zone] = diagnostics;
         final identityRegistry = TransientCloudCanonicalIdentityRegistry();
@@ -572,6 +578,7 @@ final class CloudSyncProductionSemanticPullAdapter {
           decoder: RustCloudSemanticDecoder(
             readAuthSnapshot: authProvider.capture,
             storageDirectory: privateStorageDirectory,
+            nativeWriterPauseToken: pauseToken,
             bindings: semanticDecodeBindings,
             diagnosticRecorder: diagnostics.record,
           ),

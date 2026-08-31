@@ -171,6 +171,7 @@ void main() {
       'cloud_sync_native_auth_identity_mismatch',
       'cloud_sync_native_auth_keychain_container_failed',
       'cloud_sync_native_auth_messages_container_failed',
+      'cloud_sync_native_auth_pcs_zones_failed',
       'cloud_sync_native_auth_metadata_invalid',
       'cloud_sync_native_auth_refresh_credentials_rejected',
       'cloud_sync_native_auth_refresh_failed',

@@ -231,6 +231,7 @@ enum CloudSyncReadAuthWarmFailure {
     MessagesContainer,
     KeychainContainer,
     SecurityContainer,
+    PcsZones,
     CloudKitToken,
     CredentialsUnavailable,
     CredentialsRejected,
@@ -244,6 +245,7 @@ impl CloudSyncReadAuthWarmFailure {
             Self::MessagesContainer => "cloud_sync_native_auth_messages_container_failed",
             Self::KeychainContainer => "cloud_sync_native_auth_keychain_container_failed",
             Self::SecurityContainer => "cloud_sync_native_auth_security_container_failed",
+            Self::PcsZones => "cloud_sync_native_auth_pcs_zones_failed",
             Self::CloudKitToken => "cloud_sync_native_auth_cloudkit_token_failed",
             Self::CredentialsUnavailable => "cloud_sync_native_auth_credentials_unavailable",
             Self::CredentialsRejected => "cloud_sync_native_auth_credentials_rejected",
@@ -360,6 +362,15 @@ async fn cloud_sync_warm_read_authentication_inner(
                     classify_cloud_sync_read_authentication_failure(
                         error,
                         CloudSyncReadAuthWarmFailure::SecurityContainer,
+                    )
+                })?;
+            cloud_messages_client
+                .warm_semantic_read_zone_encryption_configs(permit)
+                .await
+                .map_err(|error| {
+                    classify_cloud_sync_read_authentication_failure(
+                        error,
+                        CloudSyncReadAuthWarmFailure::PcsZones,
                     )
                 })?;
         } else {
@@ -552,6 +563,35 @@ mod cloud_sync_read_authentication_tests {
             CloudSyncReadAuthWarmFailure::WriterPauseScope.safe_code(),
             "cloud_sync_native_auth_writer_pause_scope_failed"
         );
+        assert_eq!(
+            CloudSyncReadAuthWarmFailure::PcsZones.safe_code(),
+            "cloud_sync_native_auth_pcs_zones_failed"
+        );
+    }
+
+    #[test]
+    fn semantic_pcs_warmup_is_inside_the_writer_pause_permit_branch() {
+        let source = include_str!("api.rs");
+        let function_start = source
+            .find("async fn cloud_sync_warm_read_authentication_inner")
+            .expect("read-authentication warmup");
+        let function_end = source[function_start..]
+            .find("\n#[cfg(test)]")
+            .expect("following test module");
+        let function = &source[function_start..function_start + function_end];
+        let permit_branch_start = function
+            .find("if let Some(permit) = read_authentication_permit")
+            .expect("writer-pause permit branch");
+        let general_branch_start = function[permit_branch_start..]
+            .find("} else {")
+            .map(|offset| permit_branch_start + offset)
+            .expect("general authentication branch");
+        let permit_branch = &function[permit_branch_start..general_branch_start];
+        let general_branch = &function[general_branch_start..];
+
+        assert!(permit_branch.contains("warm_semantic_read_zone_encryption_configs(permit)"));
+        assert!(permit_branch.contains("CloudSyncReadAuthWarmFailure::PcsZones"));
+        assert!(!general_branch.contains("warm_semantic_read_zone_encryption_configs"));
     }
 
     #[tokio::test]
@@ -1004,6 +1044,7 @@ pub enum CloudSyncTransientQuarantineReason {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CloudSyncTransientFailureCode {
     InvalidRequest,
+    ReadAuthenticationScope,
     ActiveAccountMismatch,
     WarmAuthenticationRequired,
     ScopeMismatch,
@@ -3503,6 +3544,7 @@ fn is_cloud_sync_protected_source_reference(value: &str) -> bool {
 #[allow(clippy::too_many_arguments)]
 pub async fn cloud_sync_decode_protected_change(
     cloud_messages_client: &Arc<CloudMessagesClient<DefaultAnisetteProvider>>,
+    native_writer_pause_token: u64,
     storage_directory: String,
     expected_account_fingerprint: String,
     expected_protected_store_identity: String,
@@ -3526,7 +3568,7 @@ pub async fn cloud_sync_decode_protected_change(
 ) -> CloudSyncTransientDecodeResult {
     use crate::cloud_sync_native_fetch::CloudNativeStream;
     use crate::cloud_sync_transient_bridge::{
-        cloud_sync_decode_transient_record, CloudTransientDecodeOutcome,
+        cloud_sync_decode_transient_record_cached_only, CloudTransientDecodeOutcome,
         CloudTransientDecodeRequest, CloudTransientExpectedChangeKind,
         CloudTransientTombstoneMapping,
     };
@@ -3593,7 +3635,18 @@ pub async fn cloud_sync_decode_protected_change(
         }
     };
 
-    match cloud_sync_decode_transient_record(cloud_messages_client, request).await {
+    let permit = match acquire_cloudkit_read_authentication(native_writer_pause_token) {
+        Ok(permit) => permit,
+        Err(_) => {
+            failure_result.failure_code =
+                Some(CloudSyncTransientFailureCode::ReadAuthenticationScope);
+            return failure_result;
+        }
+    };
+
+    match cloud_sync_decode_transient_record_cached_only(cloud_messages_client, &permit, request)
+        .await
+    {
         CloudTransientDecodeOutcome::Ready(mutation) => {
             let envelope = mutation.envelope();
             let source_matches = protected_source_reference.as_deref()
@@ -3790,6 +3843,27 @@ mod cloud_sync_protected_bridge_contract_tests {
         is_cloud_sync_protected_reference, is_cloud_sync_protected_source_reference,
         CloudSyncTransientFailureCode,
     };
+
+    #[test]
+    fn semantic_decode_is_bound_to_the_native_pause_and_cached_read_auth() {
+        let source = include_str!("api.rs");
+        let method_start = source
+            .find("pub async fn cloud_sync_decode_protected_change")
+            .expect("semantic decode method");
+        let following_method = source[method_start..]
+            .find("pub async fn cloud_sync_materialize_attachment_body")
+            .expect("following attachment method");
+        let method = &source[method_start..method_start + following_method];
+        let compact_method = method.split_whitespace().collect::<Vec<_>>().join(" ");
+
+        assert!(method.contains("native_writer_pause_token: u64"));
+        assert!(compact_method
+            .contains("acquire_cloudkit_read_authentication(native_writer_pause_token)"));
+        assert!(compact_method.contains(
+            "cloud_sync_decode_transient_record_cached_only(cloud_messages_client, &permit, request)"
+        ));
+        assert!(!method.contains("cloud_sync_decode_transient_record("));
+    }
 
     #[test]
     fn outbound_capabilities_require_exact_bounded_formats() {

@@ -34,6 +34,7 @@ abstract interface class CloudTombstoneIdentityResolver {
 final class RustCloudSemanticDecodeRequest {
   const RustCloudSemanticDecodeRequest({
     required this.authSnapshot,
+    required this.nativeWriterPauseToken,
     required this.storageDirectory,
     required this.entry,
     required this.protectedStoreIdentity,
@@ -42,6 +43,7 @@ final class RustCloudSemanticDecodeRequest {
   });
 
   final CloudSyncNativeAuthSnapshot authSnapshot;
+  final BigInt nativeWriterPauseToken;
   final String storageDirectory;
   final CloudInboxEntry entry;
   final String protectedStoreIdentity;
@@ -76,6 +78,7 @@ final class FrbRustCloudSemanticDecodeBindings
     final tombstone = request.tombstoneIdentity;
     return _api.crateApiApiCloudSyncDecodeProtectedChange(
       cloudMessagesClient: client,
+      nativeWriterPauseToken: request.nativeWriterPauseToken,
       storageDirectory: request.storageDirectory,
       expectedAccountFingerprint: entry.scope.accountFingerprint,
       expectedProtectedStoreIdentity: request.protectedStoreIdentity,
@@ -117,12 +120,14 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
   factory RustCloudSemanticDecoder({
     required CloudSyncNativeAuthSnapshotReader readAuthSnapshot,
     required String storageDirectory,
+    required BigInt nativeWriterPauseToken,
     RustCloudSemanticDecodeBindings? bindings,
     CloudTombstoneIdentityResolver? tombstoneIdentityResolver,
     CloudSyncSemanticDiagnosticRecorder? diagnosticRecorder,
   }) => RustCloudSemanticDecoder._(
     readAuthSnapshot,
     _validateStorageDirectory(storageDirectory),
+    _validateNativeWriterPauseToken(nativeWriterPauseToken),
     bindings ?? FrbRustCloudSemanticDecodeBindings(),
     tombstoneIdentityResolver,
     diagnosticRecorder,
@@ -131,6 +136,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
   RustCloudSemanticDecoder._(
     this._readAuthSnapshot,
     this._storageDirectory,
+    this._nativeWriterPauseToken,
     this._bindings,
     this._tombstoneIdentityResolver,
     this._diagnosticRecorder,
@@ -147,6 +153,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
 
   final CloudSyncNativeAuthSnapshotReader _readAuthSnapshot;
   final String _storageDirectory;
+  final BigInt _nativeWriterPauseToken;
   final RustCloudSemanticDecodeBindings _bindings;
   final CloudTombstoneIdentityResolver? _tombstoneIdentityResolver;
   final CloudSyncSemanticDiagnosticRecorder? _diagnosticRecorder;
@@ -182,6 +189,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     final result = await _bindings.decode(
       RustCloudSemanticDecodeRequest(
         authSnapshot: auth,
+        nativeWriterPauseToken: _nativeWriterPauseToken,
         storageDirectory: _storageDirectory,
         entry: entry,
         protectedStoreIdentity: auth.protectedStoreIdentity,
@@ -961,6 +969,13 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     return value;
   }
 
+  static BigInt _validateNativeWriterPauseToken(BigInt value) {
+    if (value <= BigInt.zero || value.bitLength > 64) {
+      throw ArgumentError('cloud_semantic_decoder_writer_pause_token_invalid');
+    }
+    return value;
+  }
+
   String _requireExternalDigest(String value) {
     if (!_externalDigest.hasMatch(value)) {
       throw const CloudSemanticDecodeFailure(
@@ -1096,6 +1111,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     frb_api.CloudSyncTransientFailureCode.malformedRecord ||
     frb_api.CloudSyncTransientFailureCode.oversizedRecord =>
       CloudFailureCategory.malformedRecord,
+    frb_api.CloudSyncTransientFailureCode.readAuthenticationScope ||
     frb_api.CloudSyncTransientFailureCode.activeAccountMismatch ||
     frb_api.CloudSyncTransientFailureCode.warmAuthenticationRequired =>
       CloudFailureCategory.authorization,
