@@ -162,8 +162,10 @@ Initial catch-up is not one unbounded fetch. The Windows wrapper
 [`run_cloud_sync_v2_dev_catch_up.ps1`](../tooling/windows/run_cloud_sync_v2_dev_catch_up.ps1)
 repeats the existing four-page, 50-change-per-page semantic run, validates a
 fresh schema-v4 content-free report and every no-write/outbox tripwire after
-each invocation, and stops only when chats, messages, and attachments all
-report zero fetched changes. Each invocation commits its opaque fetched token
+each invocation, and stops only after two consecutive all-zone zero-fetch
+runs, with no projection work and an unchanged retained backlog on the second.
+This distinction matters because an empty remote page can still repair retained
+rows. Each invocation commits its opaque fetched token
 durably, so interruption or the 50-run safety ceiling leaves a resumable state
 instead of an in-memory all-history transaction. Contract tests cover valid
 aggregation, a remote-write flag, a nonzero outbox, and a missing zone. Live

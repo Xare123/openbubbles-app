@@ -87,6 +87,40 @@ try {
         throw 'Valid report counters were not summarized exactly.'
     }
 
+    $stableSummary = [pscustomobject]@{
+        Fetched = 0
+        Applied = 0
+        Retained = 12
+    }
+    $acceptedWithoutPrior = Test-StableCatchUpHead `
+        -Summary $stableSummary `
+        -PreviousZeroFetchRetained $null
+    $acceptedStable = Test-StableCatchUpHead `
+        -Summary $stableSummary `
+        -PreviousZeroFetchRetained 12
+    if ($acceptedWithoutPrior -or -not $acceptedStable) {
+        throw 'Stable-head detection did not require a prior matching zero run.'
+    }
+    $stableSummary.Applied = 1
+    if (Test-StableCatchUpHead `
+            -Summary $stableSummary `
+            -PreviousZeroFetchRetained 12) {
+        throw 'Stable-head detection accepted a repair-active run.'
+    }
+    $stableSummary.Applied = 0
+    $stableSummary.Fetched = 1
+    if (Test-StableCatchUpHead `
+            -Summary $stableSummary `
+            -PreviousZeroFetchRetained 12) {
+        throw 'Stable-head detection accepted newly fetched changes.'
+    }
+    $stableSummary.Fetched = 0
+    if (Test-StableCatchUpHead `
+            -Summary $stableSummary `
+            -PreviousZeroFetchRetained 11) {
+        throw 'Stable-head detection accepted a changing retained backlog.'
+    }
+
     $payload.remoteSavesEnabled = $true
     [System.IO.File]::WriteAllText(
         $reportPath,

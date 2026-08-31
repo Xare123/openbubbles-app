@@ -130,6 +130,18 @@ function Read-VerifiedCatchUpReport {
     }
 }
 
+function Test-StableCatchUpHead {
+    param(
+        [Parameter(Mandatory)][object] $Summary,
+        [AllowNull()][object] $PreviousZeroFetchRetained
+    )
+
+    return $Summary.Fetched -eq 0 -and
+        $Summary.Applied -eq 0 -and
+        $null -ne $PreviousZeroFetchRetained -and
+        $Summary.Retained -eq [int]$PreviousZeroFetchRetained
+}
+
 if ($MyInvocation.InvocationName -eq '.') {
     return
 }
@@ -146,6 +158,7 @@ if (-not (Test-Path -LiteralPath $reportDirectory -PathType Container)) {
 
 $totalFetched = 0
 $totalApplied = 0
+$previousZeroFetchRetained = $null
 for ($run = 1; $run -le $MaximumRuns; $run++) {
     $before = Get-LatestSemanticReport -ReportDirectory $reportDirectory
     $parameters = @{
@@ -184,10 +197,13 @@ for ($run = 1; $run -le $MaximumRuns; $run++) {
         $zoneText
     )
 
-    if ($summary.Fetched -eq 0) {
+    if (Test-StableCatchUpHead `
+            -Summary $summary `
+            -PreviousZeroFetchRetained $previousZeroFetchRetained) {
         Write-Host (
-            ('CloudKit catch-up reached the current server head after {0} ' +
-                'run(s): fetched={1}, applied={2}, retained={3}, build={4}.') -f
+            ('CloudKit catch-up reached a stable current server head after ' +
+                '{0} run(s): fetched={1}, applied={2}, retained={3}, ' +
+                'build={4}.') -f
             $run,
             $totalFetched,
             $totalApplied,
@@ -195,6 +211,12 @@ for ($run = 1; $run -le $MaximumRuns; $run++) {
             $summary.BuildCommit
         )
         exit 0
+    }
+    if ($summary.Fetched -eq 0) {
+        $previousZeroFetchRetained = $summary.Retained
+    }
+    else {
+        $previousZeroFetchRetained = $null
     }
 }
 
