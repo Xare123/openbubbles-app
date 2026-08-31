@@ -206,6 +206,7 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'canonical_message_reply_parent_unavailable',
   'canonical_reaction_parent_unavailable',
   'checkpoint_pending_page_unresolved',
+  'fetch_page_exceeds_requested_limit',
   'fetch_timeout',
   'generation_mismatch',
   'http-authorization',

@@ -148,9 +148,16 @@ class CloudSyncEngineConfig {
       throw ArgumentError('cloud_sync_config_inbox_entries_invalid');
     }
     if (minimumInboxEntriesReservedForFetch < 0 ||
-        minimumInboxEntriesReservedForFetch > maximumInboxEntriesPerRun ||
         (minimumInboxEntriesReservedForFetch > 0 &&
-            minimumInboxEntriesReservedForFetch < maximumBatchSize)) {
+            (minimumInboxEntriesReservedForFetch < maximumBatchSize ||
+                minimumInboxEntriesReservedForFetch >=
+                    maximumInboxEntriesPerRun ||
+                !flags.readOnlyFetch ||
+                !flags.semanticApply ||
+                flags.saves ||
+                flags.deletions ||
+                flags.profiles ||
+                flags.notificationHints))) {
       throw ArgumentError('cloud_sync_config_fetch_inbox_reserve_invalid');
     }
     if (maximumOutboxBatchesPerRun <= 0 ||
@@ -985,6 +992,18 @@ class CloudSyncEngine {
     );
   }
 
+  Future<void> _rollbackRejectedFetchedBatch(CloudFetchBatch batch) async {
+    final lifecycle = _protectedPageLeaseLifecycle;
+    if (lifecycle != null) {
+      await lifecycle.rollbackUnjournaledPage(batch);
+      return;
+    }
+    final leaseReference = batch.protectedPageLeaseReference;
+    if (leaseReference == null) return;
+    final transport = _protectedLeaseTransportFor(_transport);
+    await transport?.rollbackProtectedPageLease(leaseReference);
+  }
+
   Future<_PullResult> _pullChangesWhileStoreExclusive({
     required CloudSyncTrigger trigger,
     CloudSyncCancellationToken? cancellationToken,
@@ -1078,6 +1097,13 @@ class CloudSyncEngine {
       page < config.maximumFetchPagesPerRun && !_isCancelled(cancellationToken);
       page++
     ) {
+      final fetchLimit = config.flags.semanticApply
+          ? min(
+              config.maximumBatchSize,
+              maximumInboxEntries - semanticProcessedEntries,
+            )
+          : config.maximumBatchSize;
+      if (fetchLimit <= 0) break;
       CloudFetchBatch batch;
       while (true) {
         await _renewCoordinatorLeaseOrThrow();
@@ -1087,7 +1113,7 @@ class CloudSyncEngine {
                 scope,
                 previousToken: checkpoint.fetchedToken,
                 generation: checkpoint.generation,
-                limit: config.maximumBatchSize,
+                limit: fetchLimit,
               )
               .timeout(
                 config.fetchOperationTimeout,
@@ -1147,12 +1173,23 @@ class CloudSyncEngine {
           );
         }
       }
-      _requireMatchingScope(batch.scope);
-      if (batch.generation != checkpoint.generation) {
-        throw CloudSyncFailure(
-          category: CloudFailureCategory.localStorage,
-          safeCode: 'generation_mismatch',
-        );
+      try {
+        _requireMatchingScope(batch.scope);
+        if (batch.changes.length > fetchLimit) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.malformedRecord,
+            safeCode: 'fetch_page_exceeds_requested_limit',
+          );
+        }
+        if (batch.generation != checkpoint.generation) {
+          throw CloudSyncFailure(
+            category: CloudFailureCategory.localStorage,
+            safeCode: 'generation_mismatch',
+          );
+        }
+      } catch (_) {
+        await _rollbackRejectedFetchedBatch(batch);
+        rethrow;
       }
       if (authenticationRefreshUsed) {
         await _store.resumePausedOutbox(
@@ -1176,11 +1213,7 @@ class CloudSyncEngine {
       await _renewCoordinatorLeaseOrThrow(force: true);
       if (batch.protectedPageLeaseReference != null &&
           _protectedPageLeaseLifecycle == null) {
-        if (_transport case CloudProtectedPageLeaseTransport transport) {
-          await transport.rollbackProtectedPageLease(
-            batch.protectedPageLeaseReference!,
-          );
-        }
+        await _rollbackRejectedFetchedBatch(batch);
         throw CloudSyncFailure(
           category: CloudFailureCategory.localStorage,
           safeCode: 'protected_page_lease_lifecycle_unavailable',
@@ -1207,7 +1240,7 @@ class CloudSyncEngine {
           journalUsage = admission.usage;
           final blockReason = admission.blockReason;
           if (blockReason != null) {
-            await _protectedPageLeaseLifecycle?.rollbackUnjournaledPage(batch);
+            await _rollbackRejectedFetchedBatch(batch);
             _emitShadowJournalBlocked(
               blockReason,
               usage: admission.usage,
@@ -1240,7 +1273,7 @@ class CloudSyncEngine {
           );
         }
       } catch (_) {
-        await _protectedPageLeaseLifecycle?.rollbackUnjournaledPage(batch);
+        await _rollbackRejectedFetchedBatch(batch);
         rethrow;
       }
       await _protectedPageLeaseLifecycle?.commitJournaledPage(

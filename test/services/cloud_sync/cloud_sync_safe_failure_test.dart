@@ -129,6 +129,7 @@ void main() {
       'canonical_message_reply_parent_unavailable',
       'canonical_reaction_parent_unavailable',
       'checkpoint_pending_page_unresolved',
+      'fetch_page_exceeds_requested_limit',
       'preflight_invalid_change_shape',
       'preflight_malformed_metadata',
       'preflight_oversized_record',

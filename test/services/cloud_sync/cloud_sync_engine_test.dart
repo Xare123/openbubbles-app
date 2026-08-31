@@ -953,7 +953,6 @@ void main() {
       final result = await engine(
         batchSize: 1,
         maximumInboxEntriesPerRun: 1,
-        minimumInboxEntriesReservedForFetch: 1,
       ).synchronize(trigger: CloudSyncTrigger.startup);
 
       expect(result.status, CloudSyncRunStatus.degraded);
@@ -1185,6 +1184,222 @@ void main() {
   );
 
   test(
+    'startup inbox work shrinks the reserved fetch request to exact capacity',
+    () async {
+      await seedGeneralJournal(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1)],
+          batchId: 'startup-before-reserved-fetch',
+          generation: 1,
+          nextToken: 'startup-before-reserved-fetch-token',
+          hasMore: true,
+        ),
+        now: clock.value,
+      );
+      final retainedApplier = _RetainedProjectionEngineApplier(
+        onReproject: (_, _, _, limit) async {
+          expect(limit, 2);
+          return const CloudRetainedProjectionResult(
+            examined: 2,
+            reprojected: 0,
+            retained: 2,
+            hasRemaining: true,
+          );
+        },
+      );
+      transport.fetchHandler =
+          (requestedScope, previousToken, generation, limit) async {
+            expect(previousToken, 'startup-before-reserved-fetch-token');
+            expect(limit, 1);
+            return CloudFetchBatch(
+              scope: requestedScope,
+              changes: const [],
+              batchId: 'terminal-after-startup-capacity',
+              generation: generation,
+              nextToken: previousToken,
+              hasMore: false,
+            );
+          };
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          saves: false,
+        ),
+        batchSize: 2,
+        maximumInboxEntriesPerRun: 4,
+        minimumInboxEntriesReservedForFetch: 2,
+        inboxApplierOverride: retainedApplier,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.degraded);
+      expect(result.failureSafeCode, 'retained_projection_incomplete');
+      expect(result.counters.applied, 1);
+      expect(transport.fetchCallCount, 1);
+    },
+  );
+
+  test(
+    'short nonterminal page shrinks the next request to exact capacity',
+    () async {
+      transport.fetchHandler =
+          (requestedScope, previousToken, generation, limit) async {
+            if (transport.fetchCallCount == 1) {
+              expect(previousToken, isNull);
+              expect(limit, 2);
+              return CloudFetchBatch(
+                scope: requestedScope,
+                changes: [testChange(1)],
+                batchId: 'short-first-page',
+                generation: generation,
+                nextToken: 'short-first-page-token',
+                hasMore: true,
+              );
+            }
+            expect(previousToken, 'short-first-page-token');
+            expect(limit, 1);
+            return CloudFetchBatch(
+              scope: requestedScope,
+              changes: [testChange(2)],
+              batchId: 'bounded-second-page',
+              generation: generation,
+              nextToken: 'bounded-second-page-token',
+              hasMore: false,
+            );
+          };
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          saves: false,
+        ),
+        batchSize: 2,
+        maximumInboxEntriesPerRun: 2,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.completed);
+      expect(result.counters.applied, 2);
+      expect(transport.fetchCallCount, 2);
+    },
+  );
+
+  test(
+    'transport page cannot exceed exact remaining semantic capacity',
+    () async {
+      store = _ProtectedRecoveryTrackingStore();
+      final events = <String>[];
+      transport = _RecoveryOrderedProtectedWriteTransport(events: events);
+      const leaseReference = 'obcs2.lease.11111111111111111111111111111111';
+      transport.fetchHandler =
+          (requestedScope, previousToken, generation, limit) async {
+            expect(limit, 1);
+            return CloudFetchBatch(
+              scope: requestedScope,
+              changes: [testChange(1), testChange(2)],
+              batchId: 'over-limit-page',
+              generation: generation,
+              nextToken: 'over-limit-token',
+              hasMore: false,
+              protectedPageLeaseReference: leaseReference,
+            );
+          };
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          saves: false,
+        ),
+        batchSize: 2,
+        maximumInboxEntriesPerRun: 1,
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.failed);
+      expect(result.failureCategory, CloudFailureCategory.malformedRecord);
+      expect(result.failureSafeCode, 'fetch_page_exceeds_requested_limit');
+      expect((await store.readCheckpoint(scope)).fetchedToken, isNull);
+      expect(events, contains('rollback:$leaseReference'));
+    },
+  );
+
+  test(
+    'scope-mismatched protected page is rolled back before journaling',
+    () async {
+      store = _ProtectedRecoveryTrackingStore();
+      final events = <String>[];
+      transport = _RecoveryOrderedProtectedWriteTransport(events: events);
+      const leaseReference = 'obcs2.lease.22222222222222222222222222222222';
+      transport.fetchHandler =
+          (requestedScope, previousToken, generation, limit) async {
+            return CloudFetchBatch(
+              scope: testScope(account: testAccountFingerprintB),
+              changes: [testChange(1)],
+              batchId: 'scope-mismatched-protected-page',
+              generation: generation,
+              nextToken: 'scope-mismatched-token',
+              hasMore: false,
+              protectedPageLeaseReference: leaseReference,
+            );
+          };
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          saves: false,
+        ),
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.failed);
+      expect(result.failureCategory, CloudFailureCategory.authorization);
+      expect(result.failureSafeCode, 'cloud_sync_unknown_failure');
+      expect((await store.readCheckpoint(scope)).fetchedToken, isNull);
+      expect(events, contains('rollback:$leaseReference'));
+    },
+  );
+
+  test(
+    'generation-mismatched provider page without lifecycle rolls back',
+    () async {
+      final events = <String>[];
+      final protectedTransport = _RecoveryOrderedProtectedWriteTransport(
+        events: events,
+      );
+      transport = _ProtectedLeaseProviderTransport(protectedTransport);
+      const leaseReference = 'obcs2.lease.33333333333333333333333333333333';
+      transport.fetchHandler =
+          (requestedScope, previousToken, generation, limit) async {
+            return CloudFetchBatch(
+              scope: requestedScope,
+              changes: [testChange(1)],
+              batchId: 'generation-mismatched-protected-page',
+              generation: generation + 1,
+              nextToken: 'generation-mismatched-token',
+              hasMore: false,
+              protectedPageLeaseReference: leaseReference,
+            );
+          };
+
+      final result = await engine(
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          saves: false,
+        ),
+      ).synchronize(trigger: CloudSyncTrigger.manual);
+
+      expect(result.status, CloudSyncRunStatus.failed);
+      expect(result.failureCategory, CloudFailureCategory.localStorage);
+      expect(result.failureSafeCode, 'generation_mismatch');
+      expect((await store.readCheckpoint(scope)).fetchedToken, isNull);
+      expect(events, contains('rollback:$leaseReference'));
+    },
+  );
+
+  test(
     'retained reprojection failure fails closed before transport and releases lease',
     () async {
       final retainedApplier = _RetainedProjectionEngineApplier(
@@ -1283,55 +1498,57 @@ void main() {
     },
   );
 
-  test(
-    'semantic inbox cap is shared across startup and post-fetch phases',
-    () async {
-      await seedGeneralJournal(
-        CloudFetchBatch(
-          scope: scope,
-          changes: [testChange(1)],
-          batchId: 'batch-cap-preexisting',
-          generation: 1,
-          nextToken: 'cap-preexisting-token',
-          hasMore: false,
-        ),
-        now: clock.value,
-      );
-      transport.enqueueFetchBatch(
-        CloudFetchBatch(
-          scope: scope,
-          changes: [testChange(2), testChange(3)],
-          batchId: 'batch-cap-new',
-          generation: 1,
-          nextToken: 'cap-new-token',
-          hasMore: false,
-        ),
-      );
-      final observer = MemoryCloudSyncObserver();
+  test('semantic inbox cap bounds fetch after startup processing', () async {
+    await seedGeneralJournal(
+      CloudFetchBatch(
+        scope: scope,
+        changes: [testChange(1)],
+        batchId: 'batch-cap-preexisting',
+        generation: 1,
+        nextToken: 'cap-preexisting-token',
+        hasMore: false,
+      ),
+      now: clock.value,
+    );
+    transport.fetchHandler =
+        (requestedScope, previousToken, generation, limit) async {
+          expect(previousToken, 'cap-preexisting-token');
+          expect(limit, 1);
+          return CloudFetchBatch(
+            scope: requestedScope,
+            changes: [testChange(2)],
+            batchId: 'batch-cap-new',
+            generation: generation,
+            nextToken: 'cap-new-token',
+            hasMore: true,
+          );
+        };
+    final observer = MemoryCloudSyncObserver();
 
-      final result = await engine(
-        maximumInboxEntriesPerRun: 2,
-        observer: observer,
-      ).synchronize(trigger: CloudSyncTrigger.manual);
+    final result = await engine(
+      maximumInboxEntriesPerRun: 2,
+      observer: observer,
+    ).synchronize(trigger: CloudSyncTrigger.manual);
 
-      expect(result.status, CloudSyncRunStatus.degraded);
-      expect(result.failureCategory, CloudFailureCategory.dependency);
-      expect(result.counters.applied, 2);
-      expect(applier.appliedSequences, [1, 2]);
-      expect(transport.fetchCallCount, 1);
-      final entries = await store.inboxEntries(scope);
-      expect(entries.map((entry) => entry.status), [
-        CloudInboxStatus.applied,
-        CloudInboxStatus.applied,
-        CloudInboxStatus.pending,
-      ]);
-      final inboxEvents = observer.events
-          .where((event) => event.type == CloudSyncEventType.inboxApplied)
-          .toList();
-      expect(inboxEvents, hasLength(1));
-      expect(inboxEvents.single.count, 2);
-    },
-  );
+    expect(result.status, CloudSyncRunStatus.completed);
+    expect(result.failureCategory, isNull);
+    expect(result.counters.applied, 2);
+    expect(applier.appliedSequences, [1, 2]);
+    expect(transport.fetchCallCount, 1);
+    final entries = await store.inboxEntries(scope);
+    expect(entries.map((entry) => entry.status), [
+      CloudInboxStatus.applied,
+      CloudInboxStatus.applied,
+    ]);
+    final checkpoint = await store.readCheckpoint(scope);
+    expect(checkpoint.fetchedToken, 'cap-new-token');
+    expect(checkpoint.pendingBatchId, isNull);
+    final inboxEvents = observer.events
+        .where((event) => event.type == CloudSyncEventType.inboxApplied)
+        .toList();
+    expect(inboxEvents, hasLength(1));
+    expect(inboxEvents.single.count, 2);
+  });
 
   test(
     'retained preflight permits fetch while conflict remains a barrier',
@@ -2714,11 +2931,18 @@ void main() {
   });
 
   test('fresh fetch reserve holds at least one complete transport page', () {
+    const readOnlySemanticFlags = CloudSyncFeatureFlags(
+      readOnlyFetch: true,
+      semanticApply: true,
+      saves: false,
+      deletions: false,
+    );
     expect(
       () => CloudSyncEngineConfig(
         maximumBatchSize: 2,
         maximumInboxEntriesPerRun: 4,
         minimumInboxEntriesReservedForFetch: 1,
+        flags: readOnlySemanticFlags,
       ),
       throwsArgumentError,
     );
@@ -2727,6 +2951,25 @@ void main() {
         maximumBatchSize: 2,
         maximumInboxEntriesPerRun: 4,
         minimumInboxEntriesReservedForFetch: 5,
+        flags: readOnlySemanticFlags,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => CloudSyncEngineConfig(
+        maximumBatchSize: 2,
+        maximumInboxEntriesPerRun: 4,
+        minimumInboxEntriesReservedForFetch: 4,
+        flags: readOnlySemanticFlags,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => CloudSyncEngineConfig(
+        maximumBatchSize: 2,
+        maximumInboxEntriesPerRun: 4,
+        minimumInboxEntriesReservedForFetch: -1,
+        flags: readOnlySemanticFlags,
       ),
       throwsArgumentError,
     );
@@ -2735,9 +2978,66 @@ void main() {
         maximumBatchSize: 2,
         maximumInboxEntriesPerRun: 4,
         minimumInboxEntriesReservedForFetch: 2,
+        flags: readOnlySemanticFlags,
       ),
       returnsNormally,
     );
+    expect(
+      () => CloudSyncEngineConfig(
+        maximumBatchSize: 2,
+        maximumInboxEntriesPerRun: 4,
+        minimumInboxEntriesReservedForFetch: 2,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => CloudSyncEngineConfig(
+        maximumBatchSize: 2,
+        maximumInboxEntriesPerRun: 4,
+        minimumInboxEntriesReservedForFetch: 2,
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          saves: true,
+        ),
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => CloudSyncEngineConfig(
+        maximumBatchSize: 2,
+        maximumInboxEntriesPerRun: 4,
+        minimumInboxEntriesReservedForFetch: 2,
+        flags: const CloudSyncFeatureFlags(
+          readOnlyFetch: true,
+          semanticApply: true,
+          deletions: true,
+        ),
+      ),
+      throwsArgumentError,
+    );
+    for (final flags in const [
+      CloudSyncFeatureFlags(
+        readOnlyFetch: true,
+        semanticApply: true,
+        profiles: true,
+      ),
+      CloudSyncFeatureFlags(
+        readOnlyFetch: true,
+        semanticApply: true,
+        notificationHints: true,
+      ),
+    ]) {
+      expect(
+        () => CloudSyncEngineConfig(
+          maximumBatchSize: 2,
+          maximumInboxEntriesPerRun: 4,
+          minimumInboxEntriesReservedForFetch: 2,
+          flags: flags,
+        ),
+        throwsArgumentError,
+      );
+    }
   });
 
   test('Canary dependency retention rejects non-semantic or write configs', () {
@@ -4263,7 +4563,9 @@ class _RecoveryOrderedProtectedWriteTransport extends FakeCloudSyncTransport
   Future<void> acknowledgeCommittedPageLease(String leaseReference) async {}
 
   @override
-  Future<void> rollbackProtectedPageLease(String leaseReference) async {}
+  Future<void> rollbackProtectedPageLease(String leaseReference) async {
+    events.add('rollback:$leaseReference');
+  }
 
   @override
   Future<int> retireProtectedReferences(Set<String> references) async => 0;
@@ -4302,6 +4604,14 @@ class _RecoveryOrderedProtectedWriteTransport extends FakeCloudSyncTransport
       operations: operations,
     );
   }
+}
+
+final class _ProtectedLeaseProviderTransport extends FakeCloudSyncTransport
+    implements CloudProtectedPageLeaseTransportProvider {
+  _ProtectedLeaseProviderTransport(this.protectedPageLeaseTransport);
+
+  @override
+  final CloudProtectedPageLeaseTransport protectedPageLeaseTransport;
 }
 
 class _CountingCoordinatorRenewalStore extends InMemoryCloudSyncStore {
