@@ -30,7 +30,9 @@ Future<void> main(List<String> arguments) async {
   if (!CloudSyncDevGate.manualSemanticPullEnabled) {
     throw StateError('cloud_sync_semantic_pull_disabled');
   }
-  final operation = CloudSyncV2WindowsHarnessOperation.parse(arguments);
+  final launch = CloudSyncV2WindowsHarnessLaunch.parse(arguments);
+  _harnessLaunchId = launch.launchId;
+  final operation = launch.operation;
 
   fs.configureCloudSyncV2WindowsDevProfile();
   var stage = 'profile-configured';
@@ -73,16 +75,91 @@ enum CloudSyncV2WindowsHarnessOperation {
   drain;
 
   static CloudSyncV2WindowsHarnessOperation parse(List<String> arguments) {
-    if (arguments.isEmpty) return interactive;
-    if (arguments.length != 1) {
-      throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
-    }
-    return switch (arguments.single) {
-      'run-once' => runOnce,
-      'drain' => drain,
-      _ => throw StateError('cloud_sync_windows_dev_launch_mode_invalid'),
-    };
+    return CloudSyncV2WindowsHarnessLaunch.parse(arguments).operation;
   }
+}
+
+final class CloudSyncV2WindowsHarnessLaunch {
+  const CloudSyncV2WindowsHarnessLaunch({
+    required this.operation,
+    required this.launchId,
+  });
+
+  static const launchIdArgumentPrefix = '--launch-id=';
+  static final RegExp _launchIdPattern = RegExp(r'^[a-f0-9]{32}$');
+
+  final CloudSyncV2WindowsHarnessOperation operation;
+  final String launchId;
+
+  static bool isValidLaunchId(String value) => _launchIdPattern.hasMatch(value);
+
+  static CloudSyncV2WindowsHarnessLaunch parse(List<String> arguments) {
+    var operation = CloudSyncV2WindowsHarnessOperation.interactive;
+    var operationSeen = false;
+    String? launchId;
+    for (final argument in arguments) {
+      switch (argument) {
+        case 'run-once':
+          if (operationSeen) {
+            throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
+          }
+          operation = CloudSyncV2WindowsHarnessOperation.runOnce;
+          operationSeen = true;
+        case 'drain':
+          if (operationSeen) {
+            throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
+          }
+          operation = CloudSyncV2WindowsHarnessOperation.drain;
+          operationSeen = true;
+        default:
+          if (!argument.startsWith(launchIdArgumentPrefix) ||
+              launchId != null) {
+            throw StateError('cloud_sync_windows_dev_launch_mode_invalid');
+          }
+          final candidate = argument.substring(launchIdArgumentPrefix.length);
+          if (!isValidLaunchId(candidate)) {
+            throw StateError('cloud_sync_windows_dev_launch_id_invalid');
+          }
+          launchId = candidate;
+      }
+    }
+    if (launchId == null) {
+      throw StateError('cloud_sync_windows_dev_launch_id_missing');
+    }
+    return CloudSyncV2WindowsHarnessLaunch(
+      operation: operation,
+      launchId: launchId,
+    );
+  }
+}
+
+final class CloudSyncV2WindowsHarnessTerminalStatus {
+  const CloudSyncV2WindowsHarnessTerminalStatus({
+    required this.state,
+    required this.stage,
+  });
+
+  final String state;
+  final String stage;
+}
+
+CloudSyncV2WindowsHarnessTerminalStatus
+cloudSyncV2WindowsHarnessDrainTerminalStatus({
+  required bool reachedPassLimit,
+  required bool projectionComplete,
+}) {
+  if (reachedPassLimit) {
+    return const CloudSyncV2WindowsHarnessTerminalStatus(
+      state: 'resumable',
+      stage: 'semantic-drain-pass-limit',
+    );
+  }
+  return CloudSyncV2WindowsHarnessTerminalStatus(
+    state: 'finished',
+    stage: projectionComplete
+        ? 'semantic-drain-complete'
+        : 'semantic-drain-remote-complete-projection-partial',
+  );
 }
 
 enum _CloudSyncV2WindowsHarnessResumeOperation {
@@ -93,6 +170,38 @@ enum _CloudSyncV2WindowsHarnessResumeOperation {
 
 Future<void> _harnessStatusWriteTail = Future<void>.value();
 var _harnessStatusTemporarySequence = 0;
+late final String _harnessLaunchId;
+
+Map<String, Object?> cloudSyncV2WindowsHarnessStatusPayload({
+  required String launchId,
+  required int processId,
+  required String state,
+  required String stage,
+  required DateTime updatedUtc,
+  String? safeCode,
+  String? errorType,
+  String? detail,
+  String? stack,
+}) {
+  if (!CloudSyncV2WindowsHarnessLaunch.isValidLaunchId(launchId)) {
+    throw StateError('cloud_sync_windows_dev_launch_id_invalid');
+  }
+  if (processId <= 0 || !updatedUtc.isUtc) {
+    throw StateError('cloud_sync_windows_dev_status_identity_invalid');
+  }
+  return <String, Object?>{
+    'version': 'cloud-sync-v2-windows-harness-status-v2',
+    'launch_id': launchId,
+    'process_id': processId,
+    'state': state,
+    'stage': stage,
+    'updated_utc': updatedUtc.toIso8601String(),
+    if (safeCode != null) 'safe_code': safeCode,
+    if (errorType != null) 'error_type': errorType,
+    if (detail != null) 'detail': detail,
+    if (stack != null) 'stack': stack,
+  };
+}
 
 Future<void> _writeHarnessStatus({
   required String state,
@@ -131,16 +240,17 @@ Future<void> _writeHarnessStatusNow({
   final temporary = File(
     '${target.path}.$pid.${_harnessStatusTemporarySequence++}.tmp',
   );
-  final payload = <String, Object?>{
-    'version': 'cloud-sync-v2-windows-harness-status-v1',
-    'state': state,
-    'stage': stage,
-    'updated_utc': DateTime.now().toUtc().toIso8601String(),
-    if (safeCode != null) 'safe_code': safeCode,
-    if (errorType != null) 'error_type': errorType,
-    if (detail != null) 'detail': detail,
-    if (stack != null) 'stack': stack,
-  };
+  final payload = cloudSyncV2WindowsHarnessStatusPayload(
+    launchId: _harnessLaunchId,
+    processId: pid,
+    state: state,
+    stage: stage,
+    updatedUtc: DateTime.now().toUtc(),
+    safeCode: safeCode,
+    errorType: errorType,
+    detail: detail,
+    stack: stack,
+  );
   await temporary.writeAsString(jsonEncode(payload), flush: true);
   if (await target.exists()) await target.delete();
   await temporary.rename(target.path);
@@ -580,11 +690,10 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
       final reportName = reportReference is File
           ? path.basename(reportReference.path)
           : 'persisted';
-      final terminalStage = result.reachedPassLimit
-          ? 'semantic-drain-pass-limit'
-          : result.projectionComplete
-          ? 'semantic-drain-complete'
-          : 'semantic-drain-remote-complete-projection-partial';
+      final terminalStatus = cloudSyncV2WindowsHarnessDrainTerminalStatus(
+        reachedPassLimit: result.reachedPassLimit,
+        projectionComplete: result.projectionComplete,
+      );
       if (!mounted) return;
       setState(() {
         _report = result.lastReport;
@@ -599,8 +708,8 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
                   'projection still has retained evidence. Report $reportName';
       });
       await _setRuntimeStage(
-        terminalStage,
-        state: 'finished',
+        terminalStatus.stage,
+        state: terminalStatus.state,
         detail:
             'passes=${result.passes} remote_drained=${result.remoteDrained} '
             'projection_complete=${result.projectionComplete} '

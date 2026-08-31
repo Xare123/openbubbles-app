@@ -20,7 +20,8 @@ param(
     [ValidateRange(30, 3600)]
     [int] $RunOnceTimeoutSeconds = 600,
     [ValidateRange(60, 7200)]
-    [int] $DrainTimeoutSeconds = 3600
+    [int] $DrainTimeoutSeconds = 3600,
+    [switch] $FunctionsOnlyForTest
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,6 +42,51 @@ function Get-Sha256Hex {
     }
     finally {
         $sha256.Dispose()
+    }
+}
+
+function New-CryptographicLaunchId {
+    $bytes = New-Object byte[] 16
+    $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $generator.GetBytes($bytes)
+        return ([System.BitConverter]::ToString($bytes)).Replace(
+            '-',
+            ''
+        ).ToLowerInvariant()
+    }
+    finally {
+        $generator.Dispose()
+    }
+}
+
+function Enter-ProfileScopedLauncherLock {
+    param([Parameter(Mandatory)][string] $ProfilePath)
+
+    $canonicalProfile = (
+        [System.IO.Path]::GetFullPath($ProfilePath).TrimEnd('\')
+    ).ToUpperInvariant()
+    $profileHash = Get-Sha256Hex -Value $canonicalProfile
+    $mutexName = "Local\OpenBubblesCloudSyncV2Launcher-$profileHash"
+    $mutex = [System.Threading.Mutex]::new($false, $mutexName)
+    $acquired = $false
+    try {
+        try {
+            $acquired = $mutex.WaitOne(0)
+        }
+        catch [System.Threading.AbandonedMutexException] {
+            $acquired = $true
+        }
+        if (-not $acquired) {
+            throw "Another Cloud Sync V2 launcher already owns this profile."
+        }
+        return $mutex
+    }
+    catch {
+        if (-not $acquired) {
+            $mutex.Dispose()
+        }
+        throw
     }
 }
 
@@ -166,7 +212,9 @@ function Read-FreshHarnessStatus {
     param(
         [Parameter(Mandatory)][string] $StatusPath,
         [Parameter(Mandatory)][datetime] $LaunchStartedUtc,
-        [Parameter(Mandatory)][datetime] $BaselineWriteUtc
+        [Parameter(Mandatory)][datetime] $BaselineWriteUtc,
+        [Parameter(Mandatory)][string] $ExpectedLaunchId,
+        [Parameter(Mandatory)][int] $ExpectedProcessId
     )
 
     try {
@@ -179,11 +227,38 @@ function Read-FreshHarnessStatus {
         }
         $payload = Get-Content -LiteralPath $StatusPath -Raw | ConvertFrom-Json
         $updatedProperty = $payload.PSObject.Properties['updated_utc']
+        $versionProperty = $payload.PSObject.Properties['version']
+        $launchIdProperty = $payload.PSObject.Properties['launch_id']
+        $processIdProperty = $payload.PSObject.Properties['process_id']
         $stateProperty = $payload.PSObject.Properties['state']
         $stageProperty = $payload.PSObject.Properties['stage']
-        if ($null -eq $updatedProperty -or
+        if ($null -eq $versionProperty -or
+            $null -eq $launchIdProperty -or
+            $null -eq $processIdProperty -or
+            $null -eq $updatedProperty -or
             $null -eq $stateProperty -or
             $null -eq $stageProperty) {
+            return $null
+        }
+        if ([string]$versionProperty.Value -ne
+                'cloud-sync-v2-windows-harness-status-v2' -or
+            -not [System.String]::Equals(
+                [string]$launchIdProperty.Value,
+                $ExpectedLaunchId,
+                [System.StringComparison]::Ordinal
+            )) {
+            return $null
+        }
+        try {
+            $statusProcessId = [System.Convert]::ToInt32(
+                $processIdProperty.Value,
+                [System.Globalization.CultureInfo]::InvariantCulture
+            )
+        }
+        catch {
+            return $null
+        }
+        if ($statusProcessId -ne $ExpectedProcessId) {
             return $null
         }
         $updatedUtc = [DateTimeOffset]::Parse(
@@ -271,6 +346,9 @@ function Wait-HarnessOperation {
         [Parameter(Mandatory)][string] $StatusPath,
         [Parameter(Mandatory)][datetime] $LaunchStartedUtc,
         [Parameter(Mandatory)][datetime] $BaselineWriteUtc,
+        [Parameter(Mandatory)][string] $ExpectedLaunchId,
+        [Parameter(Mandatory)][ValidateSet('run-once', 'drain')]
+        [string] $ExpectedOperation,
         [Parameter(Mandatory)][int] $TimeoutSeconds
     )
 
@@ -279,17 +357,44 @@ function Wait-HarnessOperation {
         $status = Read-FreshHarnessStatus `
             -StatusPath $StatusPath `
             -LaunchStartedUtc $LaunchStartedUtc `
-            -BaselineWriteUtc $BaselineWriteUtc
+            -BaselineWriteUtc $BaselineWriteUtc `
+            -ExpectedLaunchId $ExpectedLaunchId `
+            -ExpectedProcessId $Process.Id
         if ($null -ne $status) {
             if ($status.state -eq 'finished') {
+                $acceptedFinishedStage = if ($ExpectedOperation -eq 'drain') {
+                    $status.stage -in @(
+                        'semantic-drain-complete',
+                        'semantic-drain-remote-complete-projection-partial'
+                    )
+                }
+                else {
+                    $status.stage -eq 'semantic-pull'
+                }
                 Stop-ExactLaunchedHarness `
                     -Process $Process `
                     -ExpectedExecutable $ExpectedExecutable
+                if (-not $acceptedFinishedStage) {
+                    throw "Cloud Sync V2 Windows harness reported an invalid terminal stage."
+                }
                 Write-Host (
                     "Cloud Sync V2 Windows harness finished at stage {0}." -f
                     $status.stage
                 )
                 return
+            }
+            if ($status.state -eq 'resumable') {
+                Stop-ExactLaunchedHarness `
+                    -Process $Process `
+                    -ExpectedExecutable $ExpectedExecutable
+                if ($ExpectedOperation -ne 'drain' -or
+                    $status.stage -ne 'semantic-drain-pass-limit') {
+                    throw "Cloud Sync V2 Windows harness reported an invalid resumable stage."
+                }
+                throw (
+                    "Cloud Sync V2 Windows drain reached its safe pass limit " +
+                    "and remains resumable."
+                )
             }
             if ($status.state -eq 'failed') {
                 Stop-ExactLaunchedHarness `
@@ -317,10 +422,18 @@ function Wait-HarnessOperation {
         Start-Sleep -Milliseconds 500
     }
 
-    Stop-ExactLaunchedHarness `
-        -Process $Process `
-        -ExpectedExecutable $ExpectedExecutable
-    throw "Timed out waiting for the Windows harness terminal status."
+    $Process.Refresh()
+    if ($Process.HasExited) {
+        throw "The Windows harness exited before recording a terminal status."
+    }
+    throw (
+        "Timed out waiting for the Windows harness terminal status; " +
+        "the harness remains running."
+    )
+}
+
+if ($FunctionsOnlyForTest) {
+    return
 }
 
 $profile = Join-Path $env:APPDATA "OpenBubbles\cloudkit-v2-dev"
@@ -400,7 +513,12 @@ $arguments = @(
     "--dart-define=OPENBUBBLES_BUILD_COMMIT=$buildIdentifier"
 )
 
+$launcherLock = Enter-ProfileScopedLauncherLock -ProfilePath $profile
+$launcherLockOwned = $true
+$repositoryLocationPushed = $false
+try {
 Push-Location $repo
+$repositoryLocationPushed = $true
 $previousHarnessMode = $env:OPENBUBBLES_CLOUD_SYNC_V2_WINDOWS_HARNESS
 $previousProcessPath = $env:Path
 $previousFlutterRoot = $env:FLUTTER_ROOT
@@ -436,6 +554,10 @@ try {
         "$NuGetRoot;$(Join-Path $CargoHome 'bin');" +
         "$safeExistingPath;$PerlBin;$llvmBin"
     )
+    # A timeout or waiting-user return deliberately leaves the exact harness
+    # alive. Reject that process before touching its build artifacts, then
+    # repeat the same check immediately before this invocation launches.
+    Stop-StoreOpenBubbles -StoreExecutable $storeExecutable
     if (-not $SkipBuild) {
         & $flutter @arguments
         if ($LASTEXITCODE -ne 0) {
@@ -500,16 +622,19 @@ try {
         throw "The Windows harness Rust library signature is not valid."
     }
 
+    $launchId = New-CryptographicLaunchId
+    $harnessArguments = @("--launch-id=$launchId")
+    if ($RunOnce) {
+        $harnessArguments = @("run-once") + $harnessArguments
+    }
+    elseif ($Drain) {
+        $harnessArguments = @("drain") + $harnessArguments
+    }
     $startParameters = @{
         FilePath = $runner
         WorkingDirectory = $runnerDirectory
         PassThru = $true
-    }
-    if ($RunOnce) {
-        $startParameters.ArgumentList = @("run-once")
-    }
-    elseif ($Drain) {
-        $startParameters.ArgumentList = @("drain")
+        ArgumentList = $harnessArguments
     }
     $statusPath = Join-Path $profile "cloud-sync-v2\windows-harness-status.json"
     $statusBaselineWriteUtc = [datetime]::MinValue
@@ -544,6 +669,8 @@ try {
             -StatusPath $statusPath `
             -LaunchStartedUtc $launchStartedUtc `
             -BaselineWriteUtc $statusBaselineWriteUtc `
+            -ExpectedLaunchId $launchId `
+            -ExpectedOperation $(if ($Drain) { 'drain' } else { 'run-once' }) `
             -TimeoutSeconds $operationTimeoutSeconds
     }
 }
@@ -584,4 +711,20 @@ finally {
         }
     }
     Pop-Location
+    $repositoryLocationPushed = $false
+}
+}
+finally {
+    if ($repositoryLocationPushed) {
+        Pop-Location
+    }
+    if ($launcherLockOwned) {
+        try {
+            $launcherLock.ReleaseMutex()
+        }
+        finally {
+            $launcherLock.Dispose()
+            $launcherLockOwned = $false
+        }
+    }
 }

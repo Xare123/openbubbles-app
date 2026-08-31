@@ -39,7 +39,54 @@ continue under a new account.
 | `LIVE-PROVEN` | A content-free report or device trace has exercised the boundary on the Pixel. |
 | `TEST-PROVEN` | Focused source-contract or behavioral tests cover the boundary, but current-device proof is incomplete. |
 | `REPAIRED; LIVE PROOF PENDING` | Source contains the intended repair; generated bindings, signed APK, or device proof remains. |
+| `IN REPAIR` | A concrete counterexample invalidated the prior candidate and the replacement has not passed every gate yet. |
 | `GAP / POLICY DECISION` | The safe behavior is not wired end to end or needs an explicit product decision. |
+
+## Live investigation board
+
+This table is the current control surface. Every failed assumption changes the
+affected node here before another live run; every candidate must pass the next
+listed falsification test before its status advances.
+
+| Node | Current evidence | Status | Next falsification test |
+| --- | --- | --- | --- |
+| Windows private profile and identity | The isolated `cloudkit-v2-dev` profile and marker are present. Its latest content-free report is schema v4 from an older dirty build, so it cannot qualify schema-v5 drain behavior. | `LIVE-PROVEN` profile; candidate unqualified | Build the corrected exact SHA from the clean detached Windows worktree while reusing only the isolated profile and shared compile cache. |
+| Apple network path | On the current military Wi-Fi, the PC reached `gateway.icloud.com:443`, the APNS bag endpoint, and the same APNS courier host on TCP 5223 and 443. The committed rustpush revision tries 5223 then 443 with bounded timeouts. GitHub SSH 22 was blocked, so source submodules use a command-local HTTPS rewrite only. | `TEST-PROVEN`; live active APNS port not yet recorded | Record the selected APNS port and a successful CloudKit request from the signed Windows harness without logging credentials or content. |
+| Session-wide no-write boundary | Independent audit disproved the first controller design: one-shot sampler calls resumed native writers between reports, before terminal-empty acceptance. The replacement holds one operation interlock and one native-writer pause across every pass, report persistence, and terminal decision. Every controller construction now requires an explicit session runner; the unsafe one-shot fallback is gone. The durable fence renews throughout the session. Exit settles an in-flight renewal and checks the actual operation state, while same-kind nested work is rejected immediately after fence loss. Sixty-six focused tests pass, targeted analysis is clean, and the post-fix independent audit found no P0-P3 issue. | `TEST-PROVEN`; GCE/live pending | Full Dart/Rust/GCE qualification on the frozen replacement SHA. |
+| Drain termination and launcher identity | The 16-pass outcome is now distinct resumable non-success. Every status is bound to a cryptographic launch ID and exact Dart PID, launchers are profile-serialized, and timeout or identity mismatch leaves the active exact process running. A later invocation rejects that retained harness before touching build artifacts and rechecks immediately before launch. The focused Dart and PowerShell behavioral suites pass; independent audit found no P0-P3 issue. | `TEST-PROVEN`; live pending | Exercise exact status identity and either terminal-empty or resumable-cap behavior in the signed Windows harness. |
+| Remote-ingestion head | Engine evidence now distinguishes a durably journaled terminal empty server page from a duplicate nonempty page that inserts zero rows. No schema-v5 live drain report exists yet. | `REPAIRED; LIVE PROOF PENDING` | Run one guarded Windows drain until all exact zones prove terminal-empty or the hard cap returns resumable. |
+| Exact local projection | Earlier signed replays restored many chats/messages, but the durable backlog still includes unsupported-service and malformed decoder evidence. Thirty-one observed iMessage records used unresolved bare `chatID` syntax. | `LIVE-PROVEN` partial | After remote catch-up, run the content-free direct-CID cardinality diagnostic; promote no route until a unique style-45 interpretation and disagreement rules are proven. |
+| Candidate qualification | GCE run `33407697832` tested source `8d30f9610`: bindings, full Dart, Rust, rustpush, protector, native APK verification, and runner/VM cleanup all passed in about 24.5 minutes. It remains baseline toolchain/performance evidence only because the audit invalidated that source after dispatch. The replacement has passed focused host tests and a no-findings post-fix audit. | `TEST-PROVEN`; GCE pending | Freeze the corrected SHA, then rerun the same full T2D-32 gate. |
+
+### Investigation checkpoint: session and launcher safety
+
+The 2026-08-31 controller/launcher checkpoint closed five concrete
+counterexamples before another live request:
+
+1. native writers no longer reopen between bounded drain passes;
+2. the database fence heartbeat remains active for the whole confirmed session;
+3. an in-flight renewal is settled and its concrete operation state is checked
+   before success can escape (the earlier post-Zone static check was ineffective);
+4. disposal closes admission and cannot start a later pass after the current
+   persisted report; and
+5. pass-limit, timeout, stale status, and concurrent-launch outcomes cannot be
+   mistaken for a successful exact-process drain, and a retained timeout/2FA
+   process blocks rebuilding its executable or DLL;
+6. no controller construction can silently replace a confirmed session with
+   repeated one-shot pulls; and
+7. same-kind nested interlock work checks the concrete lost-fence state before
+   entering its action.
+
+Evidence at this checkpoint is 66 focused session/launcher Dart tests, 140
+focused engine/report/mutation/composition tests, a clean targeted analyzer,
+the PowerShell launcher behavioral suite, and `git diff --check`. The engine
+batch includes the explicit duplicate-nonempty-page counterexample. This is
+host proof only. The candidate remains unqualified until a fresh independent
+audit, the full GCE matrix, and the signed isolated Windows profile all pass on
+one exact commit. The broad local suite is not treated as evidence because this
+shell lacks `objectbox.dll`; the pinned GCE image is the full-suite authority.
+The bounded post-fix audit found no remaining P0-P3 issue in the session,
+interlock, harness, or launcher diff.
 
 ## End-to-end treemap
 
@@ -83,7 +130,8 @@ flowchart TD
   F1 --> F2[Quiesce protected native operations]
   F2 --> F3[Verify no remote writes and unchanged outbox]
   F3 --> F4[Persist content-free report]
-  F4 --> F5[Resume native writers]
+  F4 --> F4A[Accept terminal empty or resumable cap while pause remains held]
+  F4A --> F5[Resume native writers]
 
   D2 -. token expired .-> R[Generation-scoped rebootstrap]
   R -. currently unwired .-> D1
@@ -128,7 +176,7 @@ flowchart LR
   K -- No --> H[Host or GCE Rust, Dart, and ObjectBox tests]
   H --> R[Protection, decode, projection, checkpoint, and report proof]
   K -- Yes --> W[Private-profile Windows V2 development process]
-  W --> P[Run up to 16 bounded writer-paused passes in one process]
+  W --> P[Hold one interlock and writer pause across up to 16 bounded passes]
   P --> R1[Persist each schema-v5 content-free report before deciding]
   R1 --> S1{Exact zones and every safety gate pass?}
   S1 -- No --> S2[Stop safely; preserve report and durable checkpoints]
@@ -177,13 +225,18 @@ report before inspecting it, and stops immediately on any status, quarantine,
 retry, zone-shape, or outbox inconsistency. It declares remote catch-up only
 when all three zones prove an empty terminal read. A 16-pass ceiling bounds one
 session to 3,200 observed changes per zone and exits as explicitly resumable,
-not complete. ObjectBox checkpoints remain the only cursor state. Local
+not complete. One operation interlock and one native-writer pause enclose the
+whole loop, including report persistence and terminal acceptance; reopening
+writers between one-shot reports is not a valid drain. ObjectBox checkpoints
+remain the only cursor state. Local
 projection completeness is reported separately because a terminal remote head
 may still contain retained evidence awaiting a safe parser or dependency
 repair. Focused engine, sampler, report, and controller tests cover duplicate
 nonempty pages, terminal evidence, persistence ordering, unsafe-report abort,
-overlap, disposal, and the resumable ceiling. Signed Windows live qualification
-remains pending.
+overlap, disposal, and the resumable ceiling. The Windows launcher must also
+bind status to its exact launch ID and PID, serialize profile launches, treat
+the pass cap as non-success, and never force-kill an active native operation on
+timeout. Signed Windows live qualification remains pending.
 
 ### Two progress clocks
 
@@ -208,7 +261,7 @@ show fetched, retained, and projected counts separately.
 | Boundary | Current source | Required invariant | Status |
 | --- | --- | --- | --- |
 | Manual admission | [`troubleshoot_panel.dart`](../lib/app/layouts/settings/pages/misc/troubleshoot_panel.dart#L436), [`rustpush_service.dart`](../lib/services/rustpush/rustpush_service.dart#L7448) | User-confirmed Canary entry only; no automatic semantic pull. | `LIVE-PROVEN` |
-| Process and database exclusion | [`CloudKitOperationInterlock.runExclusive`](../lib/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart#L91), [`CloudSyncManualSemanticPullSampler.runConfirmed`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart#L135) | One CloudKit owner, durable fence, bounded heartbeat, and writer resume in `finally`. | `TEST-PROVEN`; exercised live |
+| Process and database exclusion | [`CloudKitOperationInterlock.runExclusive`](../lib/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart), [`CloudSyncManualSemanticPullSampler.runConfirmedSession`](../lib/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart) | One CloudKit owner, durable renewing fence, one native-writer pause across all reports/decisions, settlement of any in-flight renewal before exit, direct final fence-state validation, and writer resume in `finally`. | `TEST-PROVEN`; session replacement not yet live-qualified |
 | Account-bound read authentication | [`CloudSyncProductionAuthSnapshotProvider`](../lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart#L775), [`cloud_sync_ensure_read_authentication`](../rust/src/api/api.rs#L7520) | Restore or refresh only the active client's revocable read credential; reject a raced session replacement. | `TEST-PROVEN`; persisted restore exercised live |
 | Writer-pause capability | [`prepareReadAuthenticationUnderNativeWriterPause`](../lib/services/rustpush/cloud_sync/cloud_sync_production_sampler_adapter.dart#L826), [`NativeProtectedCloudSyncTransport.fetchChanges`](../lib/services/rustpush/cloud_sync/native_protected_cloud_sync_transport.dart#L810), [`cloud_sync_warm_read_authentication_under_writer_pause`](../rust/src/api/api.rs#L319) | Exact positive 64-bit token, active interlock, and same client/account before and after warmup. An unbound fetch is legal only for the non-projecting shadow lane; a bound fetch is legal only for the semantic lane. | `TEST-PROVEN; LIVE-PROVEN ON SIGNED WINDOWS ARM64 HARNESS` |
 | Exact PCS-zone warmup | [`warm_semantic_read_zone_encryption_configs`](../rustpush/src/imessage/cloud_messages.rs#L2201), [`get_cached_zone_encryption_config_exact`](../rustpush/src/icloud/cloudkit.rs#L3579) | Lookup only `chatManateeZone`, `messageManateeZone`, and `attachmentManateeZone` on the read-auth container. Never create a zone or use the general container. | `LIVE-PROVEN` across all three exact zones |

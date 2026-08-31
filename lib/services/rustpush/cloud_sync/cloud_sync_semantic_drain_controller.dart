@@ -2,10 +2,15 @@ import 'cloud_sync_manual_semantic_pull_sampler.dart';
 import 'cloud_sync_semantic_pull_report.dart';
 import 'cloud_sync_semantic_pull_report_file.dart';
 
-typedef CloudSyncConfirmedSemanticPullRun =
-    Future<CloudSyncSemanticPullReport> Function();
 typedef CloudSyncSemanticPullReportPersist =
     Future<Object> Function(CloudSyncSemanticPullReport report);
+typedef CloudSyncSemanticDrainSessionRun =
+    Future<CloudSyncSemanticDrainResult> Function(
+      Future<CloudSyncSemanticDrainResult> Function(
+        CloudSyncConfirmedSemanticPullPass runPass,
+      )
+      action,
+    );
 
 /// Content-free result of a bounded, in-process semantic catch-up drain.
 ///
@@ -38,19 +43,19 @@ final class CloudSyncSemanticDrainResult {
 /// checkpoints rather than from a controller-owned cursor.
 final class CloudSyncSemanticDrainController {
   factory CloudSyncSemanticDrainController({
-    required CloudSyncConfirmedSemanticPullRun runConfirmed,
     required CloudSyncSemanticPullReportPersist persistReport,
+    required CloudSyncSemanticDrainSessionRun runSession,
     int maximumPasses = defaultMaximumPasses,
   }) => CloudSyncSemanticDrainController._(
-    runConfirmed,
     persistReport,
     maximumPasses,
+    runSession,
   );
 
   CloudSyncSemanticDrainController._(
-    this._runConfirmed,
     this._persistReport,
     this.maximumPasses,
+    this._runSession,
   );
 
   factory CloudSyncSemanticDrainController.production({
@@ -59,16 +64,16 @@ final class CloudSyncSemanticDrainController {
     int maximumPasses = defaultMaximumPasses,
   }) {
     return CloudSyncSemanticDrainController(
-      runConfirmed: sampler.runConfirmed,
       persistReport: reportWriter.write,
       maximumPasses: maximumPasses,
+      runSession: (action) => sampler.runConfirmedSession(action),
     );
   }
 
   static const defaultMaximumPasses = 16;
 
-  final CloudSyncConfirmedSemanticPullRun _runConfirmed;
   final CloudSyncSemanticPullReportPersist _persistReport;
+  final CloudSyncSemanticDrainSessionRun _runSession;
   final int maximumPasses;
   Future<CloudSyncSemanticDrainResult>? _inFlight;
   Future<void>? _disposeFuture;
@@ -87,7 +92,7 @@ final class CloudSyncSemanticDrainController {
     if (_inFlight != null) {
       throw StateError('cloud_sync_semantic_drain_controller_active');
     }
-    if (maximumPasses < 1) {
+    if (maximumPasses < 1 || maximumPasses > defaultMaximumPasses) {
       throw StateError('cloud_sync_semantic_drain_pass_limit_invalid');
     }
 
@@ -99,9 +104,17 @@ final class CloudSyncSemanticDrainController {
     return operation;
   }
 
-  Future<CloudSyncSemanticDrainResult> _drain() async {
+  Future<CloudSyncSemanticDrainResult> _drain() =>
+      _runSession(_drainWithinConfirmedSession);
+
+  Future<CloudSyncSemanticDrainResult> _drainWithinConfirmedSession(
+    CloudSyncConfirmedSemanticPullPass runPass,
+  ) async {
     for (var pass = 1; pass <= maximumPasses; pass++) {
-      final report = await _runConfirmed();
+      if (_admissionClosed) {
+        throw StateError('cloud_sync_semantic_drain_cancelled');
+      }
+      final report = await runPass();
       final persistedReference = await _persistReport(report);
 
       // Persistence deliberately precedes every safety decision.
@@ -119,6 +132,9 @@ final class CloudSyncSemanticDrainController {
           projectionComplete: report.projectionComplete,
           reachedPassLimit: !remoteDrained,
         );
+      }
+      if (_admissionClosed) {
+        throw StateError('cloud_sync_semantic_drain_cancelled');
       }
     }
 

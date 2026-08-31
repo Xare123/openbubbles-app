@@ -9,7 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   test('returns after one persisted terminal-empty read', () async {
     final events = <String>[];
-    final controller = CloudSyncSemanticDrainController(
+    final controller = _controller(
       runConfirmed: () async {
         events.add('run');
         return report(terminalEmpty: true);
@@ -33,7 +33,7 @@ void main() {
 
   test('continues in one process until a later terminal-empty read', () async {
     var runs = 0;
-    final controller = CloudSyncSemanticDrainController(
+    final controller = _controller(
       runConfirmed: () async {
         runs++;
         return report(terminalEmpty: runs == 2, fetched: runs == 1 ? 50 : 0);
@@ -51,10 +51,50 @@ void main() {
   });
 
   test(
+    'persists and decides while the confirmed session remains held',
+    () async {
+      final events = <String>[];
+      var runs = 0;
+      final controller = _controller(
+        runConfirmed: () async => throw StateError('outside-session'),
+        runSession: (action) async {
+          events.add('session-enter');
+          final result = await action(() async {
+            runs++;
+            events.add('pass-$runs');
+            return report(
+              terminalEmpty: runs == 2,
+              fetched: runs == 1 ? 50 : 0,
+            );
+          });
+          events.add('session-exit');
+          return result;
+        },
+        persistReport: (_) async {
+          events.add('persist-$runs');
+          return 'report-$runs';
+        },
+      );
+
+      final result = await controller.drainConfirmedAndPersist();
+
+      expect(result.remoteDrained, isTrue);
+      expect(events, [
+        'session-enter',
+        'pass-1',
+        'persist-1',
+        'pass-2',
+        'persist-2',
+        'session-exit',
+      ]);
+    },
+  );
+
+  test(
     'persists an unsafe report before aborting with a fixed error',
     () async {
       final events = <String>[];
-      final controller = CloudSyncSemanticDrainController(
+      final controller = _controller(
         runConfirmed: () async {
           events.add('run');
           return report(outboxAfter: 1);
@@ -81,7 +121,7 @@ void main() {
 
   test('reports a safely resumable pass-limit outcome', () async {
     var runs = 0;
-    final controller = CloudSyncSemanticDrainController(
+    final controller = _controller(
       maximumPasses: 2,
       runConfirmed: () async {
         runs++;
@@ -102,7 +142,7 @@ void main() {
   test(
     'reports remote drain independently from partial local projection',
     () async {
-      final controller = CloudSyncSemanticDrainController(
+      final controller = _controller(
         runConfirmed: () async =>
             report(terminalEmpty: true, retainedUnprojected: 3),
         persistReport: (_) async => 'report',
@@ -118,7 +158,7 @@ void main() {
 
   test('does not inspect or repeat a report when persistence fails', () async {
     var runs = 0;
-    final controller = CloudSyncSemanticDrainController(
+    final controller = _controller(
       runConfirmed: () async {
         runs++;
         return report(terminalEmpty: true);
@@ -132,7 +172,7 @@ void main() {
 
   test('does not persist when the confirmed run fails', () async {
     var persists = 0;
-    final controller = CloudSyncSemanticDrainController(
+    final controller = _controller(
       runConfirmed: () async => throw StateError('run-failure'),
       persistReport: (_) async {
         persists++;
@@ -146,7 +186,7 @@ void main() {
 
   test('rejects overlapping drains', () async {
     final release = Completer<void>();
-    final controller = CloudSyncSemanticDrainController(
+    final controller = _controller(
       runConfirmed: () async {
         await release.future;
         return report(terminalEmpty: true);
@@ -172,7 +212,7 @@ void main() {
   test('dispose closes admission and waits for the active drain', () async {
     final entered = Completer<void>();
     final release = Completer<void>();
-    final controller = CloudSyncSemanticDrainController(
+    final controller = _controller(
       runConfirmed: () async {
         entered.complete();
         await release.future;
@@ -206,29 +246,125 @@ void main() {
     await controller.dispose();
   });
 
-  test('rejects an invalid pass limit before starting a run', () async {
+  test(
+    'dispose never admits another pass after the active report persists',
+    () async {
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      var runs = 0;
+      final controller = _controller(
+        runConfirmed: () async {
+          runs++;
+          if (runs == 1) {
+            entered.complete();
+            await release.future;
+          }
+          return report(fetched: 50);
+        },
+        persistReport: (_) async => 'report-$runs',
+      );
+
+      final running = controller.drainConfirmedAndPersist();
+      await entered.future;
+      final disposal = controller.dispose();
+      release.complete();
+
+      await expectLater(
+        running,
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'cloud_sync_semantic_drain_cancelled',
+          ),
+        ),
+      );
+      await disposal;
+      expect(runs, 1);
+      expect(controller.isActive, isFalse);
+    },
+  );
+
+  test('dispose before session admission performs no confirmed pass', () async {
+    final sessionEntered = Completer<void>();
+    final releaseSession = Completer<void>();
     var runs = 0;
-    final controller = CloudSyncSemanticDrainController(
-      maximumPasses: 0,
+    final controller = _controller(
       runConfirmed: () async {
         runs++;
         return report(terminalEmpty: true);
       },
+      runSession: (action) async {
+        sessionEntered.complete();
+        await releaseSession.future;
+        return action(() async {
+          runs++;
+          return report(terminalEmpty: true);
+        });
+      },
       persistReport: (_) async => 'report',
     );
 
-    expect(
-      controller.drainConfirmedAndPersist,
+    final running = controller.drainConfirmedAndPersist();
+    await sessionEntered.future;
+    final disposal = controller.dispose();
+    releaseSession.complete();
+
+    await expectLater(
+      running,
       throwsA(
         isA<StateError>().having(
           (error) => error.message,
           'message',
-          'cloud_sync_semantic_drain_pass_limit_invalid',
+          'cloud_sync_semantic_drain_cancelled',
         ),
       ),
     );
+    await disposal;
     expect(runs, 0);
   });
+
+  for (final invalidPassLimit in [0, 17]) {
+    test(
+      'rejects invalid pass limit $invalidPassLimit before starting a run',
+      () async {
+        var runs = 0;
+        final controller = _controller(
+          maximumPasses: invalidPassLimit,
+          runConfirmed: () async {
+            runs++;
+            return report(terminalEmpty: true);
+          },
+          persistReport: (_) async => 'report',
+        );
+
+        expect(
+          controller.drainConfirmedAndPersist,
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              'cloud_sync_semantic_drain_pass_limit_invalid',
+            ),
+          ),
+        );
+        expect(runs, 0);
+      },
+    );
+  }
+}
+
+CloudSyncSemanticDrainController _controller({
+  required CloudSyncConfirmedSemanticPullPass runConfirmed,
+  required CloudSyncSemanticPullReportPersist persistReport,
+  int maximumPasses = CloudSyncSemanticDrainController.defaultMaximumPasses,
+  CloudSyncSemanticDrainSessionRun? runSession,
+}) {
+  return CloudSyncSemanticDrainController(
+    persistReport: persistReport,
+    maximumPasses: maximumPasses,
+    runSession: runSession ?? ((action) => action(runConfirmed)),
+  );
 }
 
 CloudSyncSemanticPullReport report({

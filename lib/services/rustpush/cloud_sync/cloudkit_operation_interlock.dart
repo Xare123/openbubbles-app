@@ -197,6 +197,11 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
           'cloudkit_interlock_mode_violation',
         );
       }
+      if (inherited.fenceLost) {
+        throw const CloudKitOperationInterlockException(
+          'cloudkit_interlock_fence_lost',
+        );
+      }
       return action();
     }
 
@@ -266,8 +271,20 @@ final class CloudKitOperationInterlock implements CloudKitOperationExclusion {
         action,
         zoneValues: <Object, Object>{_zoneLeaseKey: operation},
       );
+      // Stop new renewals and settle any renewal already in flight before the
+      // final ownership check. Otherwise a late rejected renewal could mark
+      // the fence lost only after this method had committed to returning a
+      // successful result.
+      heartbeat.cancel();
+      heartbeat = null;
+      await renewalInFlight;
+      renewalInFlight = null;
       isolateReservation.requireOwned();
-      throwIfActiveFenceLost();
+      if (operation.fenceLost) {
+        throw const CloudKitOperationInterlockException(
+          'cloudkit_interlock_fence_lost',
+        );
+      }
       return result;
     } finally {
       heartbeat?.cancel();

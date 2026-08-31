@@ -307,6 +307,75 @@ void main() {
     );
   });
 
+  test('same-kind nested work cannot enter after fence loss', () async {
+    final rejectingStore = _RejectingRenewalStore();
+    final fencedInterlock = CloudKitOperationInterlock(
+      privateStorageDirectory: temporaryDirectory.path,
+      fenceStore: rejectingStore,
+      leaseDuration: const Duration(milliseconds: 100),
+      heartbeatInterval: const Duration(milliseconds: 5),
+    );
+    var nestedEntered = false;
+
+    await expectLater(
+      fencedInterlock.runExclusive(
+        kind: CloudKitOperationKind.v2ShadowRead,
+        action: () async {
+          await Future<void>.delayed(const Duration(milliseconds: 30));
+          await fencedInterlock.runExclusive(
+            kind: CloudKitOperationKind.v2ShadowRead,
+            action: () async {
+              nestedEntered = true;
+            },
+          );
+        },
+      ),
+      throwsA(
+        isA<CloudKitOperationInterlockException>().having(
+          (error) => error.safeCode,
+          'safeCode',
+          'cloudkit_interlock_fence_lost',
+        ),
+      ),
+    );
+    expect(nestedEntered, isFalse);
+  });
+
+  test('an in-flight rejected renewal fails session exit closed', () async {
+    final controlledStore = _ControlledRenewalStore();
+    final fencedInterlock = CloudKitOperationInterlock(
+      privateStorageDirectory: temporaryDirectory.path,
+      fenceStore: controlledStore,
+      leaseDuration: const Duration(milliseconds: 100),
+      heartbeatInterval: const Duration(milliseconds: 5),
+    );
+    final allowActionToFinish = Completer<void>();
+
+    final operation = fencedInterlock.runExclusive(
+      kind: CloudKitOperationKind.v2ShadowRead,
+      action: () async {
+        await controlledStore.renewalStarted.future;
+        await allowActionToFinish.future;
+        return 'must-not-return';
+      },
+    );
+    await controlledStore.renewalStarted.future;
+    allowActionToFinish.complete();
+    await Future<void>.delayed(Duration.zero);
+    controlledStore.renewalResult.complete(false);
+
+    await expectLater(
+      operation,
+      throwsA(
+        isA<CloudKitOperationInterlockException>().having(
+          (error) => error.safeCode,
+          'safeCode',
+          'cloudkit_interlock_fence_lost',
+        ),
+      ),
+    );
+  });
+
   test('constructor rejects a missing storage directory', () {
     final missing =
         '${temporaryDirectory.path}${Platform.pathSeparator}missing';
@@ -346,6 +415,22 @@ final class _RejectingRenewalStore extends InMemoryCloudSyncStore {
     required DateTime now,
     required Duration leaseDuration,
   }) async => false;
+}
+
+final class _ControlledRenewalStore extends InMemoryCloudSyncStore {
+  final renewalStarted = Completer<void>();
+  final renewalResult = Completer<bool>();
+
+  @override
+  Future<bool> renewCoordinatorLease(
+    CloudSyncScope scope, {
+    required CloudCoordinatorLeaseFence leaseFence,
+    required DateTime now,
+    required Duration leaseDuration,
+  }) {
+    if (!renewalStarted.isCompleted) renewalStarted.complete();
+    return renewalResult.future;
+  }
 }
 
 final class _RejectingAcquisitionStore extends InMemoryCloudSyncStore {

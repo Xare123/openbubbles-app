@@ -225,6 +225,121 @@ void main() {
     expect(report.projectionComplete, isTrue);
   });
 
+  test(
+    'confirmed session keeps one native pause through inter-pass decisions',
+    () async {
+      final events = <String>[];
+      final nativeWriterPause = _RecordingNativeWriterPause(events: events);
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        nativeWriterPause: nativeWriterPause,
+        readPreflight: () async => _readyState(),
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async => InMemoryCloudSyncStore(),
+        createRawTransport: (auth, scope, pauseToken) async {
+          final transport = FakeCloudSyncTransport();
+          transport.fetchHandler = (scope, token, generation, limit) async {
+            return CloudFetchBatch(
+              scope: scope,
+              changes: const [],
+              batchId: 'empty-${scope.zone}',
+              generation: generation,
+              nextToken: null,
+              hasMore: false,
+            );
+          };
+          return transport;
+        },
+        createInboxApplier: (auth, scope, generation) async =>
+            FakeCloudInboxApplier(),
+      );
+
+      final reports = await sampler.runConfirmedSession((runPass) async {
+        events.add('session-action-start');
+        final first = await runPass();
+        events.add('persist-and-inspect-first');
+        expect(nativeWriterPause.resumeCalls, 0);
+        final second = await runPass();
+        events.add('terminal-decision');
+        expect(nativeWriterPause.resumeCalls, 0);
+        return [first, second];
+      });
+
+      expect(reports, hasLength(2));
+      expect(nativeWriterPause.pauseCalls, 1);
+      expect(nativeWriterPause.resumeCalls, 1);
+      expect(events.first, 'pause-native-writers');
+      expect(
+        events.indexOf('persist-and-inspect-first'),
+        lessThan(events.indexOf('terminal-decision')),
+      );
+      expect(events.last, 'resume-native-writers');
+      expect(sampler.isActive, isFalse);
+    },
+  );
+
+  test(
+    'session never replays a completed pass after later auth rejection',
+    () async {
+      var prepareCalls = 0;
+      var persistedPasses = 0;
+      final nativeWriterPause = _RecordingNativeWriterPause();
+      final sampler = _sampler(
+        privateStorageDirectory: privateStorageDirectory,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        nativeWriterPause: nativeWriterPause,
+        readPreflight: () async => _readyState(),
+        prepareAuthSnapshot: (pauseToken, expectedAuth) async {
+          prepareCalls++;
+          if (prepareCalls == 2) {
+            throw StateError('cloud_sync_native_auth_credentials_rejected');
+          }
+          return _auth();
+        },
+        readAuthSnapshot: () async => _auth(),
+        createStore: (scope) async => InMemoryCloudSyncStore(),
+        createRawTransport: (auth, scope, pauseToken) async {
+          final transport = FakeCloudSyncTransport();
+          transport.fetchHandler = (scope, token, generation, limit) async {
+            return CloudFetchBatch(
+              scope: scope,
+              changes: const [],
+              batchId: 'empty-${scope.zone}',
+              generation: generation,
+              nextToken: null,
+              hasMore: false,
+            );
+          };
+          return transport;
+        },
+        createInboxApplier: (auth, scope, generation) async =>
+            FakeCloudInboxApplier(),
+      );
+
+      await expectLater(
+        sampler.runConfirmedSession((runPass) async {
+          await runPass();
+          persistedPasses++;
+          return runPass();
+        }),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'cloud_sync_native_auth_credentials_rejected',
+          ),
+        ),
+      );
+
+      expect(persistedPasses, 1);
+      expect(prepareCalls, 2);
+      expect(nativeWriterPause.pauseCalls, 1);
+      expect(nativeWriterPause.resumeCalls, 1);
+      expect(sampler.isActive, isFalse);
+    },
+  );
+
   test('native writer pause failure performs no semantic work', () async {
     var preflightCalls = 0;
     final nativeWriterPause = _RecordingNativeWriterPause(

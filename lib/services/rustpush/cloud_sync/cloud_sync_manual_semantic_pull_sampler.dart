@@ -37,6 +37,10 @@ typedef CloudSyncSemanticPausedPreparedAuthSnapshotReader =
     );
 typedef CloudSyncEnsuredAuthSnapshotReader =
     Future<CloudSyncNativeAuthSnapshot?> Function();
+typedef CloudSyncConfirmedSemanticPullPass =
+    Future<CloudSyncSemanticPullReport> Function();
+typedef CloudSyncConfirmedSemanticPullSessionAction<T> =
+    Future<T> Function(CloudSyncConfirmedSemanticPullPass runPass);
 
 /// Native exclusion for every CloudKit-capable writer workflow.
 ///
@@ -133,7 +137,19 @@ final class CloudSyncManualSemanticPullSampler {
 
   CloudSyncFeatureFlags get debugFlags => _config().flags;
 
-  Future<CloudSyncSemanticPullReport> runConfirmed() async {
+  Future<CloudSyncSemanticPullReport> runConfirmed() =>
+      runConfirmedSession((runPass) => runPass());
+
+  /// Runs one or more confirmed reads under one operation interlock and one
+  /// native-writer pause.
+  ///
+  /// The session action may persist and inspect each returned report before it
+  /// requests another pass. This keeps writers paused through the terminal
+  /// empty-read decision instead of reopening a mutation window between
+  /// otherwise safe one-shot reads.
+  Future<T> runConfirmedSession<T>(
+    CloudSyncConfirmedSemanticPullSessionAction<T> action,
+  ) async {
     if (!_enabled) throw StateError('cloud_sync_semantic_pull_disabled');
     if (_active) throw StateError('cloud_sync_semantic_pull_active');
     _active = true;
@@ -147,6 +163,7 @@ final class CloudSyncManualSemanticPullSampler {
             authenticationAttempt < 2;
             authenticationAttempt++
           ) {
+            var completedPass = false;
             try {
               final ensuredAuth = await _ensureAuthSnapshot();
               if (ensuredAuth == null) throw StateError('account_unavailable');
@@ -159,16 +176,51 @@ final class CloudSyncManualSemanticPullSampler {
                 rethrow;
               }
               try {
-                return await _runConfirmedUnderInterlock(
-                  pauseToken,
-                  ensuredAuth,
-                );
+                var passActive = false;
+                var sessionClosed = false;
+                Future<CloudSyncSemanticPullReport> runPass() async {
+                  if (sessionClosed) {
+                    throw StateError('cloud_sync_semantic_pull_session_closed');
+                  }
+                  if (passActive) {
+                    throw StateError(
+                      'cloud_sync_semantic_pull_session_pass_active',
+                    );
+                  }
+                  passActive = true;
+                  try {
+                    final report = await _runConfirmedUnderInterlock(
+                      pauseToken,
+                      ensuredAuth,
+                    );
+                    completedPass = true;
+                    return report;
+                  } finally {
+                    passActive = false;
+                  }
+                }
+
+                try {
+                  final result = await action(runPass);
+                  if (passActive) {
+                    throw StateError(
+                      'cloud_sync_semantic_pull_session_pass_unawaited',
+                    );
+                  }
+                  return result;
+                } finally {
+                  sessionClosed = true;
+                  while (passActive) {
+                    await Future<void>.delayed(Duration.zero);
+                  }
+                }
               } finally {
                 await _nativeWriterPause.resume(pauseToken);
                 pauseMayRemainActive = false;
               }
             } catch (error) {
               if (authenticationAttempt == 0 &&
+                  !completedPass &&
                   _isRefreshableReadAuthenticationFailure(error)) {
                 continue;
               }
