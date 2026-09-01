@@ -60,7 +60,7 @@ env:
   BUILD_FLAVOR: ${{ inputs.flavor || 'beta' }}
   VALIDATION_MODE: ${{ inputs.validation_mode || 'full' }}
   SOURCE_REF: ${{ inputs.source_ref || github.sha }}
-  TRUSTED_SOURCE_BRANCH: agent/cloudkit-v2-checkpoint-repair
+  TRUSTED_SOURCE_BRANCH: agent/cloudkit-v2-auth-refresh-repair
 
 jobs:
   create-runner:
