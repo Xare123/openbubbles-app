@@ -101,6 +101,10 @@ void main() {
         file.readAsStringSync(),
         isNot(contains('These functions are ignored')),
       );
+      expect(
+        file.readAsStringSync(),
+        contains("part 'api.freezed.dart';\n\nclass Fixture {}"),
+      );
     },
   );
 
@@ -168,6 +172,22 @@ void main() {
       final misplacedResult = _runNormalizer(misplaced, 'Normalize');
       expect(misplacedResult.exitCode, isNot(0));
       expect(misplaced.readAsBytesSync(), orderedEquals(beforeMisplaced));
+
+      final noncanonicalSpacing =
+          File('${directory.path}${Platform.pathSeparator}spacing.dart')
+            ..writeAsStringSync(
+              <String>[
+                '// generated fixture',
+                "part 'api.freezed.dart';",
+                '',
+                '',
+                'class Fixture {}',
+              ].join('\n'),
+            );
+      final beforeSpacing = noncanonicalSpacing.readAsBytesSync();
+      final spacingResult = _runNormalizer(noncanonicalSpacing, 'Verify');
+      expect(spacingResult.exitCode, isNot(0));
+      expect(noncanonicalSpacing.readAsBytesSync(), orderedEquals(beforeSpacing));
     },
   );
 }

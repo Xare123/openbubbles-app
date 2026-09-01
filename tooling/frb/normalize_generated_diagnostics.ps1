@@ -67,9 +67,10 @@ $source = $utf8Strict.GetString(
 $sourceSha256 = Get-Sha256 -Bytes $rawBytes
 
 # These are the five known FRB informational diagnostic classes emitted in the
-# generated Dart prologue. The payload is deliberately constrained to a comma-
-# separated list of Rust identifiers rendered in backticks. No free-form suffix
-# is accepted, so a changed diagnostic fails closed instead of being removed.
+# generated Dart prologue. Four are invariant and the owner-type notice is
+# Windows-only for this source. The payload is deliberately constrained to a
+# comma-separated list of Rust identifiers rendered in backticks. No free-form
+# suffix is accepted, so a changed diagnostic fails closed instead of removal.
 $symbolListPattern = '(?<symbols>`[A-Za-z_][A-Za-z0-9_]*`(?:, `[A-Za-z_][A-Za-z0-9_]*`)*)'
 $allowlistedDiagnostics = @(
     [pscustomobject]@{
@@ -183,6 +184,23 @@ while ($cursor -lt $lineRecords.Count) {
     break
 }
 
+if ($cursor -ge $lineRecords.Count) {
+    throw 'Generated Dart prologue has no declaration after its anchor'
+}
+$anchorEol = $lineRecords[$partLineIndices[0]].Eol
+if ([string]::IsNullOrEmpty($anchorEol)) {
+    throw 'Generated Dart prologue anchor has no line ending'
+}
+$prologueRegionIndices = @(
+    for (
+        $index = $partLineIndices[0] + 1;
+        $index -lt $cursor;
+        $index++
+    ) {
+        $index
+    }
+)
+
 $diagnosticLines = [System.Collections.Generic.List[object]]::new()
 for ($index = 0; $index -lt $lineRecords.Count; $index++) {
     $line = $lineRecords[$index].Text
@@ -215,6 +233,10 @@ if ($Mode -eq 'Verify') {
     if ($diagnosticLines.Count -ne 0) {
         throw "Found $($diagnosticLines.Count) unnormalized allowlisted FRB diagnostic comment(s)"
     }
+    if ($prologueRegionIndices.Count -ne 1 -or
+        $lineRecords[$prologueRegionIndices[0]].Text.Length -ne 0) {
+        throw 'Generated Dart prologue spacing is not canonical'
+    }
 
     [pscustomobject]@{
         GeneratedDart = $GeneratedDart
@@ -236,10 +258,17 @@ $removeIndices = [System.Collections.Generic.HashSet[int]]::new()
 foreach ($diagnosticLine in $diagnosticLines) {
     [void]$removeIndices.Add($diagnosticLine.Index)
 }
+foreach ($regionIndex in $prologueRegionIndices) {
+    [void]$removeIndices.Add($regionIndex)
+}
 
 $builder = [System.Text.StringBuilder]::new()
 for ($index = 0; $index -lt $lineRecords.Count; $index++) {
-    if (-not $removeIndices.Contains($index)) {
+    if ($index -eq $partLineIndices[0]) {
+        [void]$builder.Append($lineRecords[$index].Text)
+        [void]$builder.Append($lineRecords[$index].Eol)
+        [void]$builder.Append($anchorEol)
+    } elseif (-not $removeIndices.Contains($index)) {
         [void]$builder.Append($lineRecords[$index].Text)
         [void]$builder.Append($lineRecords[$index].Eol)
     }
