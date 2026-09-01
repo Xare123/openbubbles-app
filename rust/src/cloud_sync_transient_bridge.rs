@@ -36,6 +36,8 @@ use crate::{
     cloud_sync_semantic_identity::CloudSemanticIdentifierHasher,
 };
 use flate2::bufread::GzDecoder;
+#[cfg(all(target_os = "windows", debug_assertions))]
+use log::info;
 use log::warn;
 use prost::Message as _;
 use rustpush::{
@@ -1994,6 +1996,18 @@ async fn cloud_sync_decode_transient_record_with_pcs_access(
                 Ok(value) => value,
                 Err(failure) => return CloudTransientDecodeOutcome::Failure(failure),
             };
+            #[cfg(all(target_os = "windows", debug_assertions))]
+            {
+                let identity_matches =
+                    crate::cloud_sync_outbound::deterministic_message_record_name(
+                        &message.guid,
+                        &container.user_id,
+                    )
+                    .is_ok_and(|expected| envelope.record_name() == Some(expected.as_str()));
+                info!(
+                    "CloudKit V2 record identity oracle algorithm=apple_hmac_sha256_lower_hex match={identity_matches}"
+                );
+            }
             let converted = convert_message(&context, &presence, &message);
             if matches!(
                 &converted,

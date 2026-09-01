@@ -1,0 +1,148 @@
+name: CloudKit V2 Windows identity oracle DLL
+
+on:
+  push:
+    branches:
+      - agent/cloudkit-v2-record-identity-oracle-ci
+    paths:
+      - "rust/**"
+      - "rustpush/**"
+      - ".github/workflows/cloudkit-v2-windows-identity-oracle.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudkit-v2-windows-identity-oracle-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-arm64-debug-dll:
+    name: Build ARM64 debug oracle DLL
+    runs-on: windows-11-arm
+    timeout-minutes: 75
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Require native ARM64 runner
+        shell: pwsh
+        run: |
+          $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+          if ($architecture -ne [System.Runtime.InteropServices.Architecture]::Arm64) {
+            throw "Expected a native ARM64 runner, received $architecture."
+          }
+
+      - name: Set up Rust target
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          targets: aarch64-pc-windows-msvc
+
+      - name: Set up pinned Protocol Buffers compiler
+        shell: pwsh
+        run: |
+          $version = "29.5"
+          $expectedHash = "633d3e555fc97f0a1f55b4adb03256cd94b8059e51e7abbae98ff39e58a9dfa5"
+          $archive = Join-Path $env:RUNNER_TEMP "protoc-$version-win64.zip"
+          $destination = Join-Path $env:RUNNER_TOOL_CACHE "protoc\$version\x64"
+          Invoke-WebRequest `
+            "https://github.com/protocolbuffers/protobuf/releases/download/v$version/protoc-$version-win64.zip" `
+            -OutFile $archive
+          $actualHash = (
+            Get-FileHash $archive -Algorithm SHA256
+          ).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) {
+            throw "protoc archive checksum mismatch."
+          }
+          Expand-Archive -Path $archive -DestinationPath $destination -Force
+          "$destination\bin" |
+            Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & "$destination\bin\protoc.exe" --version
+
+      - name: Set up test FairPlay certificates
+        shell: pwsh
+        run: |
+          $destination = "rustpush\certs\fairplay"
+          New-Item -ItemType Directory -Force -Path $destination | Out-Null
+          $certificateNames = @(
+            "4056631661436364584235346952193",
+            "4056631661436364584235346952194",
+            "4056631661436364584235346952195",
+            "4056631661436364584235346952196",
+            "4056631661436364584235346952197",
+            "4056631661436364584235346952198",
+            "4056631661436364584235346952199",
+            "4056631661436364584235346952200",
+            "4056631661436364584235346952201",
+            "4056631661436364584235346952208"
+          )
+          foreach ($name in $certificateNames) {
+            Copy-Item `
+              "rustpush\certs\legacy-fairplay\fairplay.pem" `
+              "$destination\$name.pem"
+            Copy-Item `
+              "rustpush\certs\legacy-fairplay\fairplay.crt" `
+              "$destination\$name.crt"
+          }
+
+      - name: Test deterministic record identity
+        shell: pwsh
+        env:
+          CARGO_BUILD_JOBS: "4"
+          CARGO_TERM_COLOR: never
+        run: >-
+          cargo test --locked --manifest-path rust/Cargo.toml
+          -p rust_lib_bluebubbles --target aarch64-pc-windows-msvc
+          deterministic_message_record_name
+
+      - name: Build debug Rust DLL
+        shell: pwsh
+        env:
+          CARGO_BUILD_JOBS: "4"
+          CARGO_TERM_COLOR: never
+        run: >-
+          cargo build --locked --manifest-path rust/Cargo.toml
+          -p rust_lib_bluebubbles --target aarch64-pc-windows-msvc
+
+      - name: Verify ARM64 DLL
+        id: artifact
+        shell: pwsh
+        run: |
+          $dll = "rust\target\aarch64-pc-windows-msvc\debug\rust_lib_bluebubbles.dll"
+          if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) {
+            throw "The ARM64 debug Rust DLL was not produced."
+          }
+          $stream = [System.IO.File]::OpenRead($dll)
+          try {
+            $reader = [System.IO.BinaryReader]::new($stream)
+            $stream.Position = 0x3c
+            $stream.Position = $reader.ReadInt32()
+            if ($reader.ReadUInt32() -ne 0x00004550) {
+              throw "The Rust library is not a PE image."
+            }
+            $machine = $reader.ReadUInt16()
+          }
+          finally {
+            $stream.Dispose()
+          }
+          if ($machine -ne 0xaa64) {
+            throw ("Expected ARM64 Rust DLL, received PE machine 0x{0:x4}." -f $machine)
+          }
+          $hash = (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath "$dll.sha256" `
+            -Value "$hash  rust_lib_bluebubbles.dll" `
+            -Encoding ascii
+          "dll=$dll" >> $env:GITHUB_OUTPUT
+
+      - name: Upload short-lived content-free DLL
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cloudkit-v2-record-identity-oracle-arm64-${{ github.sha }}
+          path: |
+            ${{ steps.artifact.outputs.dll }}
+            ${{ steps.artifact.outputs.dll }}.sha256
+          if-no-files-found: error
+          retention-days: 1

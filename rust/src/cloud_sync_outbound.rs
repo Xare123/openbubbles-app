@@ -7,6 +7,7 @@
 use std::{path::PathBuf, time::UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use hmac::{Hmac, Mac};
 use prost::Message;
 use rustpush::{
     cloud_messages::{
@@ -49,6 +50,8 @@ const ORDINARY_OUTBOUND_FLAG_BITS: i64 = MessageFlags::IS_FINISHED.bits()
     | MessageFlags::WAS_DATA_DETECTED.bits();
 const CLOUD_SYNC_SCOPE_SEPARATOR: char = '\u{001f}';
 
+type HmacSha256 = Hmac<Sha256>;
+
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub(crate) enum CloudSyncOutboundFailure {
     #[error("outbound message is unsupported")]
@@ -73,6 +76,29 @@ pub(crate) struct NativeProtectedOutboundStage {
     pub(crate) protected_server_record_reference: String,
     pub(crate) server_record_id_hash: String,
     pub(crate) lease_reference: String,
+}
+
+/// Reproduces Apple's `CKRecordUtilities.recordNameUsingSalt:guid:`.
+///
+/// The GUID is the HMAC data, the Messages container-scoped CloudKit user ID
+/// is the key, and the complete SHA-256 result is lowercase hexadecimal. The
+/// inputs are consumed exactly as UTF-8; no case folding, normalization,
+/// delimiter, prefix, or truncation is applied.
+pub(crate) fn deterministic_message_record_name(
+    guid: &str,
+    container_scoped_user_id: &str,
+) -> Result<String, CloudSyncOutboundFailure> {
+    validate_identifier(guid)?;
+    validate_identifier(container_scoped_user_id)?;
+    let mut mac = HmacSha256::new_from_slice(container_scoped_user_id.as_bytes())
+        .map_err(|_| CloudSyncOutboundFailure::MalformedMessage)?;
+    mac.update(guid.as_bytes());
+    Ok(mac
+        .finalize()
+        .into_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
 }
 
 pub(crate) fn stage_outbound_message(
@@ -503,6 +529,34 @@ mod tests {
                 ..Default::default()
             })),
         }
+    }
+
+    #[test]
+    fn deterministic_message_record_name_matches_apple_hmac_fixture() {
+        assert_eq!(
+            deterministic_message_record_name("g", "s").unwrap(),
+            "87b9a0ff78dc9814142bc0cac043d115d5d33f400a09096c6b347f94cba58073"
+        );
+        assert_eq!(
+            deterministic_message_record_name("G", "s").unwrap(),
+            "e6aa3d01b90420f8b0e7a70604239ed1a5c7a92ee1461a36622314df8f63283c"
+        );
+        assert_eq!(
+            deterministic_message_record_name("g", "S").unwrap(),
+            "da032b0e5ccac56cd97518b25698239a875843c9f0a1885c140f8929f23ee661"
+        );
+    }
+
+    #[test]
+    fn deterministic_message_record_name_rejects_missing_inputs() {
+        assert_eq!(
+            deterministic_message_record_name("", "salt"),
+            Err(CloudSyncOutboundFailure::MalformedMessage)
+        );
+        assert_eq!(
+            deterministic_message_record_name("guid", ""),
+            Err(CloudSyncOutboundFailure::MalformedMessage)
+        );
     }
 
     #[test]
