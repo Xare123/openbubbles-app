@@ -74,6 +74,7 @@ $symbolListPattern = '(?<symbols>`[A-Za-z_][A-Za-z0-9_]*`(?:, `[A-Za-z_][A-Za-z0
 $allowlistedDiagnostics = @(
     [pscustomobject]@{
         Name = 'not-public'
+        Required = $true
         Pattern = [regex]::new(
             '^// These functions are ignored because they are not marked as `pub`: ' +
             $symbolListPattern + '$'
@@ -81,6 +82,7 @@ $allowlistedDiagnostics = @(
     }
     [pscustomobject]@{
         Name = 'generic-arguments'
+        Required = $true
         Pattern = [regex]::new(
             '^// These functions are ignored because they have generic arguments: ' +
             $symbolListPattern + '$'
@@ -88,6 +90,7 @@ $allowlistedDiagnostics = @(
     }
     [pscustomobject]@{
         Name = 'unused-types'
+        Required = $true
         Pattern = [regex]::new(
             '^// These types are ignored because they are not used by any `pub` functions: ' +
             $symbolListPattern + '$'
@@ -95,6 +98,7 @@ $allowlistedDiagnostics = @(
     }
     [pscustomobject]@{
         Name = 'undefined-trait'
+        Required = $true
         Pattern = [regex]::new(
             '^// These function are ignored because they are on traits that is not defined in current crate \(put an empty `\#\[frb\]` on it to unignore\): ' +
             $symbolListPattern + '$'
@@ -102,6 +106,9 @@ $allowlistedDiagnostics = @(
     }
     [pscustomobject]@{
         Name = 'owner-type'
+        # FRB emits this notice on Windows but omits it on Linux for the same
+        # source. Zero or one is therefore the exact cross-platform contract.
+        Required = $false
         Pattern = [regex]::new(
             '^// These functions are ignored \(category: IgnoreBecauseOwnerTyShouldIgnore\): ' +
             $symbolListPattern + '$'
@@ -219,8 +226,9 @@ if ($Mode -eq 'Verify') {
 
 foreach ($spec in $allowlistedDiagnostics) {
     $count = @($diagnosticLines | Where-Object { $_.Name -eq $spec.Name }).Count
-    if ($count -ne 1) {
-        throw "Expected exactly one allowlisted FRB diagnostic '$($spec.Name)', found $count"
+    if ($count -gt 1 -or ($spec.Required -and $count -ne 1)) {
+        $expectation = if ($spec.Required) { 'exactly one' } else { 'zero or one' }
+        throw "Expected $expectation allowlisted FRB diagnostic '$($spec.Name)', found $count"
     }
 }
 

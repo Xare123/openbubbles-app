@@ -62,7 +62,20 @@ void main() {
       RegExp(r'^        Name = ', multiLine: true).allMatches(script).length,
       5,
     );
-    expect(script, contains('Expected exactly one allowlisted FRB diagnostic'));
+    expect(
+      RegExp(r'^        Required = \$true$', multiLine: true)
+          .allMatches(script)
+          .length,
+      4,
+    );
+    expect(
+      RegExp(r'^        Required = \$false$', multiLine: true)
+          .allMatches(script)
+          .length,
+      1,
+    );
+    expect(script, contains("Name = 'owner-type'"));
+    expect(script, contains("'zero or one'"));
     expect(script, contains('Test-ByteArrayEqual'));
     expect(script, contains('Final normalized Dart bytes do not match'));
     expect(script, isNot(contains('ExpectedMinimumCount')));
@@ -91,6 +104,20 @@ void main() {
     },
   );
 
+  test('normalizer accepts Linux omission of owner-type notice', () {
+    final directory = Directory.systemTemp.createTempSync(
+      'frb-generated-diagnostics-linux-contract-',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final file = File('${directory.path}${Platform.pathSeparator}api.dart')
+      ..writeAsStringSync(_fixture(_diagnostics.sublist(0, 4)));
+
+    final normalize = _runNormalizer(file, 'Normalize');
+    expect(normalize.exitCode, 0, reason: _resultOutput(normalize));
+    final verify = _runNormalizer(file, 'Verify');
+    expect(verify.exitCode, 0, reason: _resultOutput(verify));
+  });
+
   test(
     'normalizer fails closed on missing, duplicate, and unexpected variants',
     () {
@@ -100,7 +127,7 @@ void main() {
       addTearDown(() => directory.deleteSync(recursive: true));
 
       final fixtures = <String, List<String>>{
-        'missing': _diagnostics.sublist(0, _diagnostics.length - 1),
+        'missing-required': _diagnostics.sublist(1),
         'duplicate': <String>[..._diagnostics, _diagnostics.first],
         'unexpected': <String>[
           ..._diagnostics,
