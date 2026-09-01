@@ -30,8 +30,8 @@ use sha2::{Digest as _, Sha256};
 
 use crate::{
     cloud_sync_canonical_dto::{
-        CloudCanonicalEntityKind, CloudCanonicalHash, CloudCanonicalMutationKind,
-        CloudCanonicalPayload, CloudCanonicalProtectedReference,
+        CloudCanonicalEntityKind, CloudCanonicalHash, CloudCanonicalMutation,
+        CloudCanonicalMutationKind, CloudCanonicalPayload, CloudCanonicalProtectedReference,
     },
     cloud_sync_native_fetch::{
         cloud_sync_unprotect_raw_envelope, CloudNativeProtectionScope, CloudNativeStream,
@@ -464,6 +464,22 @@ fn map_decode_failure(
         }
         CloudTransientBridgeFailure::DecoderFailure => {
             CloudNativeAttachmentMaterializationFailure::DecoderFailure
+        }
+    }
+}
+
+fn require_attachment_mutation(
+    outcome: CloudTransientDecodeOutcome,
+) -> Result<Box<CloudCanonicalMutation>, CloudNativeAttachmentMaterializationFailure> {
+    match outcome {
+        CloudTransientDecodeOutcome::Ready(mutation) => Ok(mutation),
+        CloudTransientDecodeOutcome::Failure(failure) => Err(map_decode_failure(failure)),
+        // SMS/RCS projections, deferred records, and quarantined records are
+        // never attachment capabilities. Keep every one outside the MMCS path.
+        CloudTransientDecodeOutcome::OutOfScopeService(_)
+        | CloudTransientDecodeOutcome::Deferred(_)
+        | CloudTransientDecodeOutcome::Quarantined(_) => {
+            Err(CloudNativeAttachmentMaterializationFailure::SourceUnusable)
         }
     }
 }
@@ -956,19 +972,14 @@ async fn cloud_sync_materialize_attachment_body_inner(
     )
     .map_err(map_decode_failure)?;
 
-    let mutation = match cloud_sync_decode_transient_record_cached_only(
-        cloud_messages_client,
-        read_authentication_permit,
-        decode_request.clone(),
-    )
-    .await
-    {
-        CloudTransientDecodeOutcome::Ready(mutation) => mutation,
-        CloudTransientDecodeOutcome::Failure(failure) => return Err(map_decode_failure(failure)),
-        CloudTransientDecodeOutcome::Deferred(_) | CloudTransientDecodeOutcome::Quarantined(_) => {
-            return Err(CloudNativeAttachmentMaterializationFailure::SourceUnusable)
-        }
-    };
+    let mutation = require_attachment_mutation(
+        cloud_sync_decode_transient_record_cached_only(
+            cloud_messages_client,
+            read_authentication_permit,
+            decode_request.clone(),
+        )
+        .await,
+    )?;
     let envelope = mutation.envelope();
     if envelope.entity_kind() != CloudCanonicalEntityKind::Attachment
         || envelope.mutation_kind() != CloudCanonicalMutationKind::Upsert
@@ -1210,6 +1221,18 @@ mod tests {
             map_download_failure(&PushError::CloudKitError(Default::default())),
             CloudNativeAttachmentMaterializationFailure::DecoderFailure
         );
+    }
+
+    #[test]
+    fn out_of_scope_services_cannot_enter_attachment_materialization() {
+        use crate::cloud_sync_canonical_converter::CloudCanonicalOutOfScopeService;
+
+        assert!(matches!(
+            require_attachment_mutation(CloudTransientDecodeOutcome::OutOfScopeService(
+                CloudCanonicalOutOfScopeService::SmsFamily,
+            )),
+            Err(CloudNativeAttachmentMaterializationFailure::SourceUnusable)
+        ));
     }
 
     #[test]

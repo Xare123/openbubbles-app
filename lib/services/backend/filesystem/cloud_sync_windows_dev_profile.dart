@@ -18,13 +18,14 @@ abstract final class CloudSyncWindowsDevProfile {
       'openbubbles-cloud-sync-v2-windows-dev-profile:v1';
 
   static Directory expectedDirectory({Map<String, String>? environment}) {
+    final windows = path.windows;
     final appData = (environment ?? Platform.environment)['APPDATA']?.trim();
-    if (appData == null || appData.isEmpty || !path.isAbsolute(appData)) {
+    if (appData == null || appData.isEmpty || !windows.isAbsolute(appData)) {
       throw StateError('cloud_sync_windows_dev_appdata_unavailable');
     }
     return Directory(
-      path.normalize(path.join(appData, 'OpenBubbles', directoryName)),
-    ).absolute;
+      windows.normalize(windows.join(appData, 'OpenBubbles', directoryName)),
+    );
   }
 
   static bool isExpectedDirectory(

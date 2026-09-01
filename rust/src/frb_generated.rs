@@ -24065,6 +24065,7 @@ impl SseDecode for Option<i32> {
     }
 }
 
+
 impl SseDecode for Option<crate::api::api::IMessagePosterRecord> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -24438,6 +24439,7 @@ impl SseDecode for Option<u32> {
         }
     }
 }
+
 
 impl SseDecode for Option<crate::api::api::UpdateAccountFinish> {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -25713,6 +25715,7 @@ impl SseDecode for (String, crate::api::api::SyncStatus) {
         return (var_field0, var_field1);
     }
 }
+
 
 impl SseDecode for (String, crate::api::api::UpdateAccountFinish) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -39181,6 +39184,7 @@ impl SseEncode for Option<i32> {
     }
 }
 
+
 impl SseEncode for Option<crate::api::api::IMessagePosterRecord> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -39500,6 +39504,7 @@ impl SseEncode for Option<u32> {
         }
     }
 }
+
 
 impl SseEncode for Option<crate::api::api::UpdateAccountFinish> {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -40536,6 +40541,7 @@ impl SseEncode for (String, crate::api::api::SyncStatus) {
         <crate::api::api::SyncStatus>::sse_encode(self.1, serializer);
     }
 }
+
 
 impl SseEncode for (String, crate::api::api::UpdateAccountFinish) {
     // Codec=Sse (Serialization based), see doc to use other codecs

@@ -156,14 +156,12 @@ String cloudSyncV2WindowsAuthProbeSafeCode(String stage) {
   }
 }
 
-File cloudSyncV2WindowsAuthProbeStatusFile({
-  Map<String, String>? environment,
-}) {
+File cloudSyncV2WindowsAuthProbeStatusFile({Map<String, String>? environment}) {
   final profile = CloudSyncWindowsDevProfile.expectedDirectory(
     environment: environment,
   );
   return File(
-    path.join(profile.path, cloudSyncV2WindowsAuthProbeStatusFileName),
+    path.windows.join(profile.path, cloudSyncV2WindowsAuthProbeStatusFileName),
   );
 }
 
