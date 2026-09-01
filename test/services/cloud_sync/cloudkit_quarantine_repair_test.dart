@@ -89,6 +89,33 @@ void main() {
     },
   );
 
+  test('rejects out-of-scope service as a repair source category', () {
+    expect(
+      () => CloudKitV2QuarantineRepairRequest(
+        scope: scope,
+        persistenceLane: CloudSyncPersistenceLane.semanticV2,
+        generation: request.generation,
+        changeIdHash: request.changeIdHash,
+        correction: const CloudKitV2ConverterCorrection(
+          converterRevision: 'cloud-canonical-converter-r3',
+          correctionName: 'out-of-scope-service-reclassification',
+          expectedOriginalTerminalSafeCode: 'semantic_out_of_scope_sms_family',
+          expectedOriginalQuarantineReason:
+              CloudFailureCategory.outOfScopeService,
+        ),
+        leaseFence: leaseFence,
+      ),
+      throwsA(
+        isA<ArgumentError>().having(
+          (error) => error.message,
+          'message',
+          'cloudkit_quarantine_repair_correction_invalid',
+        ),
+      ),
+    );
+    expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 0);
+  });
+
   test(
     'repairs quarantine and advances its applied checkpoint atomically',
     () async {
@@ -555,6 +582,7 @@ void main() {
       final receiptBox = store.box<CloudKitV2QuarantineRepairReceiptEntity>();
       for (final invalidCategory in <String>[
         CloudFailureCategory.unknown.name,
+        CloudFailureCategory.outOfScopeService.name,
         'unrecognized_persisted_category',
       ]) {
         final receipt = receiptBox.getAll().single
@@ -583,6 +611,24 @@ void main() {
       }
     },
   );
+
+  test('does not create an out-of-scope-service failure receipt', () async {
+    adapter.applyFailureCategory = CloudFailureCategory.outOfScopeService;
+    final before = _controlState(store);
+
+    final result = await gateway.repair(
+      request: request,
+      testOnlyCapability: _Decoder(_decoded(scope, request.changeIdHash, 7)),
+    );
+
+    expect(result.disposition, CloudKitV2QuarantineRepairDisposition.retryable);
+    expect(result.failureCategory, CloudFailureCategory.localStorage);
+    expect(result.safeCode, 'quarantine_repair_receipt_binding_invalid');
+    expect(store.box<CloudKitV2QuarantineRepairReceiptEntity>().count(), 0);
+    expect(store.box<CloudSemanticSnapshotEntity>().count(), 0);
+    expect(store.box<CloudRecordMapEntity>().count(), 0);
+    expect(_controlState(store), before);
+  });
 
   test(
     'rejects body, sender, timestamp, and flag content mismatches',
@@ -1551,6 +1597,7 @@ final class _Adapter implements CloudCanonicalSemanticEntityAdapter {
   int applyCalls = 0;
   bool parentExists = false;
   bool failAfterMetadataWrite = false;
+  CloudFailureCategory? applyFailureCategory;
   final Set<String> existingEntityKeys = <String>{};
 
   @override
@@ -1583,6 +1630,13 @@ final class _Adapter implements CloudCanonicalSemanticEntityAdapter {
     required CloudSemanticSnapshot snapshot,
   }) {
     applyCalls++;
+    final category = applyFailureCategory;
+    if (category != null) {
+      throw CloudSyncFailure(
+        category: category,
+        safeCode: 'test_canonical_apply_failed',
+      );
+    }
     if (failAfterMetadataWrite) {
       final row = store.box<CloudInboxChangeEntity>().getAll().single
         ..retryCount = 99;

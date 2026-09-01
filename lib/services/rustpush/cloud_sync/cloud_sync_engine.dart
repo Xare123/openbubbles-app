@@ -1492,6 +1492,32 @@ class CloudSyncEngine {
           );
           canApplyNextSequence = true;
           break;
+        case CloudInboxApplyDisposition.outOfScopeService:
+          if (entry.change.isTombstone ||
+              preflightFailure != null ||
+              result.failureCategory !=
+                  CloudFailureCategory.outOfScopeService ||
+              result.outOfScopeService == null ||
+              result.safeCode != result.outOfScopeService!.safeCode) {
+            throw CloudSyncFailure(
+              category: CloudFailureCategory.localStorage,
+              safeCode: 'out_of_scope_service_disposition_invalid',
+            );
+          }
+          if (!result.inboxStatusPersisted) {
+            await _store.markInboxRetainedUnprojected(
+              scope,
+              sequence: entry.sequence,
+              category: CloudFailureCategory.outOfScopeService,
+              now: now,
+              maximumDeferredAttempts: config.maximumDeferredAttempts,
+              maximumDeferredAge: config.maximumDeferredAge,
+              leaseFence: _requireActiveLeaseFence(),
+            );
+          }
+          counters = counters.add(retainedUnprojected: 1);
+          canApplyNextSequence = true;
+          break;
         case CloudInboxApplyDisposition.deferred:
         case CloudInboxApplyDisposition.retryable:
           final category =

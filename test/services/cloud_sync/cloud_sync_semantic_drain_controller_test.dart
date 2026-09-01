@@ -2,9 +2,13 @@ import 'dart:async';
 
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_engine.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_semantic_pull_sampler.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_drain_controller.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report_file.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:universal_io/io.dart';
 
 void main() {
   test('returns after one persisted terminal-empty read', () async {
@@ -118,6 +122,91 @@ void main() {
       expect(events, ['run', 'persist']);
     },
   );
+
+  test(
+    'production writer retains an unsafe outbox report before abort',
+    () async {
+      final root = await Directory.systemTemp.createTemp('obcs2-drain-report-');
+      addTearDown(() => root.delete(recursive: true));
+      final reports = Directory('${root.path}${Platform.pathSeparator}reports');
+      final writer = CloudSyncSemanticPullReportFileWriter(
+        privateReportDirectory: reports.path,
+        trustedStorageRoot: root.path,
+      );
+      final controller = _controller(
+        runConfirmed: () async => report(outboxAfter: 1),
+        persistReport: writer.write,
+      );
+
+      await expectLater(
+        controller.drainConfirmedAndPersist(),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'cloud_sync_semantic_drain_unsafe_report',
+          ),
+        ),
+      );
+      expect(await reports.list(followLinks: false).length, 1);
+    },
+  );
+
+  test(
+    'persists then preserves the exact safe code from a failed zone',
+    () async {
+      final events = <String>[];
+      final controller = _controller(
+        runConfirmed: () async {
+          events.add('run');
+          return report(
+            status: CloudSyncRunStatus.failed,
+            failureCategory: CloudFailureCategory.authorization,
+            failureSafeCode: 'native_auth_unavailable',
+          );
+        },
+        persistReport: (_) async {
+          events.add('persist');
+          return 'report';
+        },
+      );
+
+      await expectLater(
+        controller.drainConfirmedAndPersist(),
+        throwsA(
+          isA<CloudSyncSemanticDrainUnsafeReportException>().having(
+            (error) => error.safeCode,
+            'safeCode',
+            'native_auth_unavailable',
+          ),
+        ),
+      );
+      expect(events, ['run', 'persist']);
+    },
+  );
+
+  test('does not let a failed-zone code mask a retry tripwire', () async {
+    final controller = _controller(
+      runConfirmed: () async => report(
+        status: CloudSyncRunStatus.failed,
+        failureCategory: CloudFailureCategory.authorization,
+        failureSafeCode: 'native_auth_unavailable',
+        retried: 1,
+      ),
+      persistReport: (_) async => 'report',
+    );
+
+    await expectLater(
+      controller.drainConfirmedAndPersist(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'cloud_sync_semantic_drain_unsafe_report',
+        ),
+      ),
+    );
+  });
 
   test('reports a safely resumable pass-limit outcome', () async {
     var runs = 0;
@@ -246,6 +335,59 @@ void main() {
     await controller.dispose();
   });
 
+  test('dispose waits for the in-flight confirmed catch-up', () async {
+    final enteredCatchUp = Completer<void>();
+    final releaseCatchUp = Completer<void>();
+    var legacySessionCalls = 0;
+    final terminalReport = report(terminalEmpty: true);
+    final controller = _controller(
+      runConfirmed: () async =>
+          throw StateError('legacy-confirmed-run-must-not-start'),
+      persistReport: (_) async =>
+          throw StateError('legacy-report-persist-must-not-start'),
+      runSession: (action) async {
+        legacySessionCalls++;
+        return action(
+          () async => throw StateError('legacy-session-pass-must-not-start'),
+        );
+      },
+      runCatchUp: () async {
+        enteredCatchUp.complete();
+        await releaseCatchUp.future;
+        return CloudSyncConfirmedCatchUpResult(
+          remotePasses: 1,
+          lastRemoteReport: terminalReport,
+          lastRemoteReportReference: 'terminal-remote-report',
+          remoteDrained: true,
+          reachedRemotePassLimit: false,
+        );
+      },
+    );
+
+    final running = controller.drainConfirmedAndPersist();
+    await enteredCatchUp.future;
+    var disposed = false;
+    final disposal = controller.dispose().then((_) => disposed = true);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(disposed, isFalse);
+    expect(controller.isActive, isTrue);
+    expect(controller.isDisposed, isTrue);
+    expect(legacySessionCalls, 0);
+
+    releaseCatchUp.complete();
+    final result = await running;
+    await disposal;
+
+    expect(disposed, isTrue);
+    expect(controller.isActive, isFalse);
+    expect(result.remoteDrained, isTrue);
+    expect(result.persistedReportReference, 'terminal-remote-report');
+    expect(result.projectionSweepAttempted, isFalse);
+    expect(legacySessionCalls, 0);
+    await controller.dispose();
+  });
+
   test(
     'dispose never admits another pass after the active report persists',
     () async {
@@ -359,11 +501,13 @@ CloudSyncSemanticDrainController _controller({
   required CloudSyncSemanticPullReportPersist persistReport,
   int maximumPasses = CloudSyncSemanticDrainController.defaultMaximumPasses,
   CloudSyncSemanticDrainSessionRun? runSession,
+  CloudSyncSemanticCatchUpRun? runCatchUp,
 }) {
   return CloudSyncSemanticDrainController(
     persistReport: persistReport,
     maximumPasses: maximumPasses,
     runSession: runSession ?? ((action) => action(runConfirmed)),
+    runCatchUp: runCatchUp,
   );
 }
 
@@ -372,6 +516,10 @@ CloudSyncSemanticPullReport report({
   int fetched = 0,
   int retainedUnprojected = 0,
   int outboxAfter = 0,
+  CloudSyncRunStatus status = CloudSyncRunStatus.completed,
+  CloudFailureCategory? failureCategory,
+  String? failureSafeCode,
+  int retried = 0,
 }) {
   return CloudSyncSemanticPullReport(
     timestampUtc: DateTime.utc(2026, 8, 31),
@@ -386,7 +534,7 @@ CloudSyncSemanticPullReport report({
       for (final label in CloudSyncSemanticPullReport.expectedZoneLabels)
         CloudSyncSemanticPullZoneReport(
           zoneLabel: label,
-          status: CloudSyncRunStatus.completed,
+          status: status,
           fetched: terminalEmpty ? 0 : fetched,
           applied: 0,
           deferred: 0,
@@ -404,9 +552,12 @@ CloudSyncSemanticPullReport report({
           retainedUnprojected: retainedUnprojected,
           semanticUnsupportedServiceQuarantined: 0,
           semanticStageQuarantined: 0,
-          retried: 0,
+          retried: retried,
           elapsedMilliseconds: 1,
           observedEmptyTerminalRead: terminalEmpty,
+          diagnosticCounts: const {'retained_backlog_summary_ready': 1},
+          failureCategory: failureCategory,
+          failureSafeCode: failureSafeCode,
         ),
     ],
   );

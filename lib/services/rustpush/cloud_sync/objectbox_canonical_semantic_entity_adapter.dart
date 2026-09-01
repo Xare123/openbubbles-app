@@ -1222,6 +1222,8 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
     attachment.metadata ??= <String, dynamic>{};
     attachment.metadata![cloudAttachmentV2MetadataKey] =
         cloudAttachmentV2MetadataVersion;
+    attachment.metadata![cloudAttachmentV2BodyCapabilityKey] =
+        payload.bodyCapability.metadataValue;
     if (owner != null) attachment.message.target = owner;
     attachment.uti = _applyNullableStringField(
       state: payload.utiState,
@@ -2678,7 +2680,16 @@ final class ObjectBoxCanonicalSemanticEntityAdapter
       kind: kind,
       logicalEntityKeyHash: logicalEntityKeyHash,
     );
-    if (value == null || !_isValidCanonicalGuid(value)) return null;
+    if (value == null) return null;
+    if (!_isValidCanonicalGuid(value)) {
+      // A present-but-invalid transient identity is malformed input, not a
+      // missing dependency. Treating both states as "unavailable" leaves the
+      // same row retrying forever and hides the failed cross-boundary contract.
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.malformedRecord,
+        safeCode: 'canonical_identity_guid_invalid',
+      );
+    }
     return value;
   }
 

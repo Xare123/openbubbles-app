@@ -1,8 +1,10 @@
 import 'dart:typed_data';
 
+import 'cloud_attachment_provenance.dart';
 import 'cloud_merge_policy.dart';
 import 'cloud_sync_semantic_diagnostics.dart';
 import 'cloud_sync_models.dart';
+import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_store.dart';
 import 'cloud_sync_transport.dart';
 
@@ -456,6 +458,7 @@ final class CloudAttachmentEntityPayload extends CloudSemanticEntityPayload {
     required this.ownerPart,
     required this.fileName,
     required this.mimeType,
+    required this.bodyCapability,
     required this.protectedLocalReference,
     this.utiState = CloudSemanticFieldState.absent,
     this.uti,
@@ -520,6 +523,7 @@ final class CloudAttachmentEntityPayload extends CloudSemanticEntityPayload {
   final String? fileName;
   final CloudSemanticFieldState mimeTypeState;
   final String? mimeType;
+  final CloudAttachmentBodyCapability bodyCapability;
   final CloudSemanticFieldState totalBytesState;
   final int? totalBytes;
   final CloudSemanticFieldState isOutgoingState;
@@ -794,6 +798,18 @@ class CloudSemanticDecodeFailure implements Exception {
   final String? safeCode;
 }
 
+/// A successful, content-free native classification that deliberately has no
+/// canonical mutation. This is separate from [CloudSemanticDecodeFailure] so
+/// an unknown or malformed service can never be mistaken for an allowed
+/// out-of-scope record.
+final class CloudSemanticOutOfScopeServiceDisposition implements Exception {
+  const CloudSemanticOutOfScopeServiceDisposition(this.service);
+
+  final CloudSemanticOutOfScopeService service;
+
+  String get safeCode => service.safeCode;
+}
+
 /// Transactional gateway to the app's canonical local message store.
 ///
 /// The future ObjectBox adapter must commit the semantic mutation and replay
@@ -864,6 +880,33 @@ abstract interface class CloudRetainedProjectionStoreGateway {
     required CloudInboxEntry entry,
     required CloudCoordinatorLeaseFence leaseFence,
   });
+
+  /// Reclassifies exactly one retained save after the current native decoder
+  /// proves it is an intentionally unsupported service. The row remains
+  /// retained and terminal, no replay or canonical entity is written, and the
+  /// exact-applied checkpoint floor must not advance.
+  Future<void> recordRetainedProjectionOutOfScopeService({
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
+  });
+}
+
+/// Sequence-bounded retained-save reader used only after the same native
+/// writer-pause session has persisted a terminal remote-head report.
+///
+/// Candidate selection must be ordered strictly by fetch sequence and must
+/// exclude tombstones. Failure rotation timestamps are deliberately ignored
+/// so one sweep can prove that every save in its immutable bound was examined
+/// at most once.
+abstract interface class CloudRetainedProjectionWindowStoreGateway {
+  Future<List<CloudInboxEntry>> readRetainedProjectionWindow({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int afterFetchSequence,
+    required int throughFetchSequence,
+    required int limit,
+  });
 }
 
 abstract interface class CloudSemanticStoreTransaction {
@@ -913,6 +956,7 @@ class TransactionalCloudInboxApplier
         CloudInboxApplier,
         CloudAppliedProjectionRepairer,
         CloudRetainedProjectionReprocessor,
+        CloudRetainedProjectionWindowReprocessor,
         CloudReadOnlyTombstoneAcknowledgementPolicy {
   const TransactionalCloudInboxApplier({
     required this._decoder,
@@ -944,16 +988,20 @@ class TransactionalCloudInboxApplier
   }) async {
     final retainedStore = _store;
     final registrar = _identityRegistrar;
-    if (retainedStore is! CloudRetainedProjectionStoreGateway ||
-        registrar == null) {
-      return const CloudRetainedProjectionResult(
-        examined: 0,
-        reprojected: 0,
-        retained: 0,
+    if (retainedStore is! CloudRetainedProjectionStoreGateway) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.localStorage,
+        safeCode: 'retained_projection_store_unavailable',
       );
     }
     final projectionStore =
         retainedStore as CloudRetainedProjectionStoreGateway;
+    if (registrar == null) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'retained_projection_registrar_unavailable',
+      );
+    }
     if (generation <= 0 || limit <= 0 || limit > 4096) {
       throw ArgumentError('cloud_retained_projection_request_invalid');
     }
@@ -964,13 +1012,144 @@ class TransactionalCloudInboxApplier
       leaseFence: leaseFence,
       limit: limit,
     );
-    var reprojected = 0;
+    final counts = await _reprojectRetainedCandidates(
+      scope: scope,
+      generation: generation,
+      leaseFence: leaseFence,
+      projectionStore: projectionStore,
+      registrar: registrar,
+      candidates: candidates,
+    );
+    // A row proven out of scope remains physically retained but disappears
+    // from the eligible candidate query. Re-read the fenced candidate surface
+    // instead of inferring work from the physical retained count.
+    final hasRemaining =
+        (await projectionStore.readRetainedProjectionCandidates(
+          scope: scope,
+          generation: generation,
+          leaseFence: leaseFence,
+          limit: 1,
+        )).isNotEmpty;
+    if (hasRemaining) {
+      _recordDiagnostic('retained_projection_has_remaining');
+    }
+    return CloudRetainedProjectionResult(
+      examined: counts.examined,
+      reprojected: counts.reprojected,
+      retained: counts.retained,
+      hasRemaining: hasRemaining,
+    );
+  }
+
+  @override
+  Future<CloudRetainedProjectionWindowResult> reprojectRetainedSaveWindow({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int afterFetchSequence,
+    required int throughFetchSequence,
+    required int limit,
+  }) async {
+    final retainedStore = _store;
+    final registrar = _identityRegistrar;
+    if (retainedStore is! CloudRetainedProjectionStoreGateway ||
+        retainedStore is! CloudRetainedProjectionWindowStoreGateway) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.localStorage,
+        safeCode: 'retained_projection_window_store_unavailable',
+      );
+    }
+    if (registrar == null) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.dependency,
+        safeCode: 'retained_projection_registrar_unavailable',
+      );
+    }
+    if (generation <= 0 ||
+        afterFetchSequence < 0 ||
+        throughFetchSequence < afterFetchSequence ||
+        limit <= 0 ||
+        limit > 4096) {
+      throw ArgumentError('cloud_retained_projection_window_invalid');
+    }
+
+    final projectionStore =
+        retainedStore as CloudRetainedProjectionStoreGateway;
+    final windowStore =
+        retainedStore as CloudRetainedProjectionWindowStoreGateway;
+    final candidates = await windowStore.readRetainedProjectionWindow(
+      scope: scope,
+      generation: generation,
+      leaseFence: leaseFence,
+      afterFetchSequence: afterFetchSequence,
+      throughFetchSequence: throughFetchSequence,
+      limit: limit,
+    );
+    var lastSequence = afterFetchSequence;
     for (final entry in candidates) {
       if (entry.scope != scope ||
           entry.generation != generation ||
           entry.status != CloudInboxStatus.retainedUnprojected ||
           entry.change.type != CloudChangeType.save ||
-          entry.change.isTombstone) {
+          entry.change.isTombstone ||
+          entry.sequence <= lastSequence ||
+          entry.sequence > throughFetchSequence) {
+        throw CloudSyncFailure(
+          category: CloudFailureCategory.localStorage,
+          safeCode: 'retained_projection_window_candidate_invalid',
+        );
+      }
+      lastSequence = entry.sequence;
+    }
+
+    final counts = await _reprojectRetainedCandidates(
+      scope: scope,
+      generation: generation,
+      leaseFence: leaseFence,
+      projectionStore: projectionStore,
+      registrar: registrar,
+      candidates: candidates,
+    );
+    var hasMoreWithinBound = false;
+    if (candidates.length == limit) {
+      hasMoreWithinBound = (await windowStore.readRetainedProjectionWindow(
+        scope: scope,
+        generation: generation,
+        leaseFence: leaseFence,
+        afterFetchSequence: lastSequence,
+        throughFetchSequence: throughFetchSequence,
+        limit: 1,
+      )).isNotEmpty;
+    }
+    if (hasMoreWithinBound) {
+      _recordDiagnostic('retained_projection_window_has_more');
+    }
+    return CloudRetainedProjectionWindowResult(
+      examined: counts.examined,
+      reprojected: counts.reprojected,
+      retained: counts.retained,
+      lastExaminedSequence: lastSequence,
+      hasMoreWithinBound: hasMoreWithinBound,
+    );
+  }
+
+  Future<_CloudRetainedProjectionBatchCounts> _reprojectRetainedCandidates({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required CloudRetainedProjectionStoreGateway projectionStore,
+    required CloudTransientCanonicalIdentityRegistrar registrar,
+    required List<CloudInboxEntry> candidates,
+  }) async {
+    var reprojected = 0;
+    for (final entry in candidates) {
+      _recordDiagnostic('retained_projection_examined');
+      if (entry.scope != scope ||
+          entry.generation != generation ||
+          entry.status != CloudInboxStatus.retainedUnprojected ||
+          entry.change.type != CloudChangeType.save ||
+          entry.change.isTombstone ||
+          entry.lastFailure == CloudFailureCategory.outOfScopeService) {
         throw CloudSyncFailure(
           category: CloudFailureCategory.localStorage,
           safeCode: 'retained_projection_candidate_invalid',
@@ -980,9 +1159,36 @@ class TransactionalCloudInboxApplier
       final CloudDecodedMutation decoded;
       try {
         decoded = await _decoder.decode(entry);
+      } on CloudSemanticOutOfScopeServiceDisposition catch (disposition) {
+        _recordDiagnostic(disposition.safeCode);
+        if (entry.lastFailure != CloudFailureCategory.unsupportedService) {
+          _recordDiagnostic(
+            'retained_projection_out_of_scope_previous_failure_rejected',
+          );
+          await projectionStore.recordRetainedProjectionFailure(
+            entry: entry,
+            leaseFence: leaseFence,
+          );
+          _recordDiagnostic('retained_projection_retained');
+          await Future<void>.delayed(Duration.zero);
+          continue;
+        }
+        await projectionStore.recordRetainedProjectionOutOfScopeService(
+          entry: entry,
+          leaseFence: leaseFence,
+        );
+        _recordDiagnostic('retained_projection_out_of_scope_service');
+        await Future<void>.delayed(Duration.zero);
+        continue;
       } on CloudSemanticDecodeFailure catch (failure) {
         _recordDiagnostic(
           'retained_projection_decoder_${_safeCodeSegment(failure.category.name)}',
+        );
+        _recordDiagnostic(
+          cloudSyncV2SafeFailureCodeForCandidate(
+            failure.safeCode ??
+                'decoder_${_safeCodeSegment(failure.category.name)}',
+          ),
         );
         if (failure.category == CloudFailureCategory.authorization) {
           throw CloudSyncFailure(
@@ -995,6 +1201,7 @@ class TransactionalCloudInboxApplier
           entry: entry,
           leaseFence: leaseFence,
         );
+        _recordDiagnostic('retained_projection_retained');
         await Future<void>.delayed(Duration.zero);
         continue;
       } catch (_) {
@@ -1003,6 +1210,7 @@ class TransactionalCloudInboxApplier
           entry: entry,
           leaseFence: leaseFence,
         );
+        _recordDiagnostic('retained_projection_retained');
         await Future<void>.delayed(Duration.zero);
         continue;
       }
@@ -1023,6 +1231,7 @@ class TransactionalCloudInboxApplier
           entry: entry,
           leaseFence: leaseFence,
         );
+        _recordDiagnostic('retained_projection_retained');
         await Future<void>.delayed(Duration.zero);
         continue;
       }
@@ -1072,20 +1281,23 @@ class TransactionalCloudInboxApplier
         _recordDiagnostic('retained_projection_reprojected');
       } on CloudSyncFailure catch (failure) {
         _recordDiagnostic(
-          failure.safeCode ??
-              'retained_projection_${_safeCodeSegment(failure.category.name)}',
+          failure.safeCode == null
+              ? 'retained_projection_${_safeCodeSegment(failure.category.name)}'
+              : cloudSyncV2SafeFailureCodeForCandidate(failure.safeCode),
         );
         if (failure.category == CloudFailureCategory.authorization) rethrow;
         await projectionStore.recordRetainedProjectionFailure(
           entry: entry,
           leaseFence: leaseFence,
         );
+        _recordDiagnostic('retained_projection_retained');
       } catch (_) {
         _recordDiagnostic('retained_projection_unknown');
         await projectionStore.recordRetainedProjectionFailure(
           entry: entry,
           leaseFence: leaseFence,
         );
+        _recordDiagnostic('retained_projection_retained');
       } finally {
         identityLease?.release();
       }
@@ -1094,21 +1306,10 @@ class TransactionalCloudInboxApplier
       // replay remains ordered without monopolizing Flutter's UI isolate.
       await Future<void>.delayed(Duration.zero);
     }
-    final retained = candidates.length - reprojected;
-    var hasRemaining = retained > 0;
-    if (!hasRemaining && candidates.length == limit) {
-      hasRemaining = (await projectionStore.readRetainedProjectionCandidates(
-        scope: scope,
-        generation: generation,
-        leaseFence: leaseFence,
-        limit: 1,
-      )).isNotEmpty;
-    }
-    return CloudRetainedProjectionResult(
+    return _CloudRetainedProjectionBatchCounts(
       examined: candidates.length,
       reprojected: reprojected,
-      retained: retained,
-      hasRemaining: hasRemaining,
+      retained: candidates.length - reprojected,
     );
   }
 
@@ -1153,6 +1354,10 @@ class TransactionalCloudInboxApplier
       final CloudDecodedMutation decoded;
       try {
         decoded = await _decoder.decode(entry);
+      } on CloudSemanticOutOfScopeServiceDisposition catch (disposition) {
+        _recordDiagnostic(disposition.safeCode);
+        await Future<void>.delayed(Duration.zero);
+        continue;
       } on CloudSemanticDecodeFailure catch (failure) {
         _recordDiagnostic(
           'projection_repair_decoder_${_safeCodeSegment(failure.category.name)}',
@@ -1230,6 +1435,11 @@ class TransactionalCloudInboxApplier
     final CloudDecodedMutation decoded;
     try {
       decoded = await _decoder.decode(entry);
+    } on CloudSemanticOutOfScopeServiceDisposition catch (disposition) {
+      _recordDiagnostic(disposition.safeCode);
+      return CloudInboxApplyResult.outOfScopeService(
+        outOfScopeService: disposition.service,
+      );
     } on CloudSemanticDecodeFailure catch (failure) {
       final safeCode =
           failure.safeCode ??
@@ -1520,4 +1730,16 @@ class TransactionalCloudInboxApplier
     }
     return 'semantic_conflict';
   }
+}
+
+final class _CloudRetainedProjectionBatchCounts {
+  const _CloudRetainedProjectionBatchCounts({
+    required this.examined,
+    required this.reprojected,
+    required this.retained,
+  });
+
+  final int examined;
+  final int reprojected;
+  final int retained;
 }

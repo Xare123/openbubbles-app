@@ -12,6 +12,9 @@ import 'cloud_sync_store.dart';
 import 'objectbox_canonical_semantic_entity_adapter.dart';
 import 'objectbox_cloud_semantic_store_gateway.dart';
 
+bool _isQuarantineRepairFailureCategory(CloudFailureCategory category) =>
+    category != CloudFailureCategory.outOfScopeService;
+
 /// The only converter correction currently admitted to the repair lane.
 ///
 /// Add a new named value only with a separately reviewed converter change.
@@ -115,6 +118,9 @@ final class CloudKitV2QuarantineRepairRequest {
         !_safeCodePattern.hasMatch(correction.correctionName) ||
         !_safeCodePattern.hasMatch(
           correction.expectedOriginalTerminalSafeCode,
+        ) ||
+        !_isQuarantineRepairFailureCategory(
+          correction.expectedOriginalQuarantineReason,
         ) ||
         persistenceLane != scope.persistenceLane ||
         leaseFence.ownerId.isEmpty ||
@@ -721,6 +727,13 @@ final class CloudKitV2QuarantineRepairGateway {
     required String safeCode,
     CloudInboxEntry? expectedEntry,
   }) async {
+    if (!_isQuarantineRepairFailureCategory(category)) {
+      return _retryableResult(
+        context,
+        category: CloudFailureCategory.localStorage,
+        safeCode: 'quarantine_repair_receipt_binding_invalid',
+      );
+    }
     if (category.isRetryable) {
       CloudKitV2QuarantineRepairReceiptEntity? existing;
       try {
@@ -886,11 +899,17 @@ final class CloudKitV2QuarantineRepairGateway {
     _RepairContext context, {
     required CloudFailureCategory category,
     required String safeCode,
-  }) => CloudKitV2QuarantineRepairResult.retryable(
-    context.repairKey,
-    failureCategory: category,
-    safeCode: safeCode,
-  );
+  }) {
+    if (!_isQuarantineRepairFailureCategory(category)) {
+      category = CloudFailureCategory.localStorage;
+      safeCode = 'quarantine_repair_receipt_binding_invalid';
+    }
+    return CloudKitV2QuarantineRepairResult.retryable(
+      context.repairKey,
+      failureCategory: category,
+      safeCode: safeCode,
+    );
+  }
 
   CloudKitV2QuarantineRepairReceiptEntity? _findReceipt(
     _RepairContext context,
@@ -1995,6 +2014,8 @@ final class CloudKitV2QuarantineRepairGateway {
         receipt.serverRecordIdHash.isEmpty ||
         receipt.originalPayloadSha256 == null ||
         receipt.originalQuarantineReason == null ||
+        receipt.originalQuarantineReason ==
+            CloudFailureCategory.outOfScopeService.name ||
         receipt.originalTerminalSafeCode == null ||
         receipt.evidenceDigestVersion !=
             _CloudKitV2RepairEvidenceDigest.version ||
@@ -2041,7 +2062,10 @@ final class CloudKitV2QuarantineRepairGateway {
   static CloudFailureCategory? _failureCategory(String? value) {
     if (value == null) return null;
     for (final category in CloudFailureCategory.values) {
-      if (category.name == value) return category;
+      if (category.name == value &&
+          _isQuarantineRepairFailureCategory(category)) {
+        return category;
+      }
     }
     return CloudFailureCategory.unknown;
   }
@@ -2050,6 +2074,7 @@ final class CloudKitV2QuarantineRepairGateway {
       CloudFailureCategory.values.any(
         (category) =>
             category.name == value &&
+            _isQuarantineRepairFailureCategory(category) &&
             category != CloudFailureCategory.unknown &&
             !category.isRetryable,
       );

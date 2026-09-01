@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_manual_shadow_sampler.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
@@ -79,22 +80,95 @@ void main() {
     expect(bindings.requests, isEmpty);
   });
 
-  test('maps the exact native SMS service without iMessage aliasing', () async {
-    final entry = _entry();
-    bindings.result = _readyMessage(
-      entry,
-      payload: frb.CloudSyncTransientPayload(
-        message: _messagePayload(
-          service: frb.CloudSyncTransientService.sms,
-          chatIdentifier: 'SMS;-;+19492476163',
+  test(
+    'rejects a forged ready SMS payload without typed native proof',
+    () async {
+      final entry = _entry();
+      bindings.result = _readyMessage(
+        entry,
+        payload: frb.CloudSyncTransientPayload(
+          message: _messagePayload(
+            service: frb.CloudSyncTransientService.sms,
+            chatIdentifier: 'SMS;-;+19492476163',
+          ),
         ),
-      ),
+      );
+
+      await _expectFailure(
+        decoder().decode(entry),
+        CloudFailureCategory.conflict,
+      );
+    },
+  );
+
+  test(
+    'maps only typed exact native SMS-family and RCS dispositions',
+    () async {
+      final entry = _entry();
+      const cases =
+          <
+            frb.CloudSyncTransientOutOfScopeService,
+            CloudSemanticOutOfScopeService
+          >{
+            frb.CloudSyncTransientOutOfScopeService.smsFamily:
+                CloudSemanticOutOfScopeService.smsFamily,
+            frb.CloudSyncTransientOutOfScopeService.rcs:
+                CloudSemanticOutOfScopeService.rcs,
+          };
+
+      for (final item in cases.entries) {
+        bindings.result = _outOfScope(entry, item.key);
+        await expectLater(
+          decoder().decode(entry),
+          throwsA(
+            isA<CloudSemanticOutOfScopeServiceDisposition>()
+                .having(
+                  (disposition) => disposition.service,
+                  'service',
+                  item.value,
+                )
+                .having(
+                  (disposition) => disposition.safeCode,
+                  'safeCode',
+                  item.value.safeCode,
+                ),
+          ),
+        );
+      }
+    },
+  );
+
+  test('out-of-scope proof stays behind source and auth fences', () async {
+    final entry = _entry();
+    bindings.result = _outOfScope(
+      entry,
+      frb.CloudSyncTransientOutOfScopeService.smsFamily,
+      generation: BigInt.from(entry.generation + 1),
+    );
+    await _expectFailure(
+      decoder().decode(entry),
+      CloudFailureCategory.conflict,
     );
 
-    final payload =
-        (await decoder().decode(entry)).payload! as CloudMessageEntityPayload;
-    expect(payload.service, CloudSemanticService.sms);
-    expect(payload.chatIdentifier, 'SMS;-;+19492476163');
+    bindings.result = _outOfScope(
+      entry,
+      frb.CloudSyncTransientOutOfScopeService.smsFamily,
+      protectedSourceReference: 'obcs2.ref.${'X' * 43}',
+    );
+    await _expectFailure(
+      decoder().decode(entry),
+      CloudFailureCategory.conflict,
+    );
+
+    bindings.result = _outOfScope(
+      entry,
+      frb.CloudSyncTransientOutOfScopeService.smsFamily,
+    );
+    bindings.afterDecode = () => currentAuth = _auth(Object());
+    await _expectFailure(
+      decoder().decode(entry),
+      CloudFailureCategory.conflict,
+    );
   });
 
   test('maps the diagnostic-only qualified direct CID digest', () async {
@@ -197,6 +271,27 @@ void main() {
       expect(decoded.payload.runtimeType, item.$4);
       expect(decoded.payload!.toString(), isNot(contains('Transient')));
     }
+  });
+
+  test('preserves metadata-only attachment body capability', () async {
+    final entry = _entry();
+    bindings.result = _readyAttachment(
+      entry,
+      payload: frb.CloudSyncTransientPayload(
+        attachment: _attachmentPayload(
+          materializationCapability: frb
+              .CloudSyncTransientAttachmentMaterializationCapability
+              .metadataOnlyUnsupportedMediaCredentials,
+        ),
+      ),
+    );
+
+    final decoded = await decoder().decode(entry);
+    final payload = decoded.payload! as CloudAttachmentEntityPayload;
+    expect(
+      payload.bodyCapability,
+      CloudAttachmentBodyCapability.metadataOnlyUnsupportedMediaCredentials,
+    );
   });
 
   test(
@@ -428,6 +523,17 @@ void main() {
           frb.CloudSyncTransientDeferredReason.nestedPresenceUnavailable,
     );
 
+    await _expectFailure(
+      decoder().decode(entry),
+      CloudFailureCategory.conflict,
+    );
+
+    bindings.result = frb.CloudSyncTransientDecodeResult(
+      protectedSourceReference: _sourceReference,
+      generation: BigInt.from(entry.generation),
+      outOfScopeService: frb.CloudSyncTransientOutOfScopeService.smsFamily,
+      failureCode: frb.CloudSyncTransientFailureCode.decoderFailure,
+    );
     await _expectFailure(
       decoder().decode(entry),
       CloudFailureCategory.conflict,
@@ -916,6 +1022,29 @@ void main() {
     },
   );
 
+  test('rejects out-of-scope disposition for a tombstone entry', () async {
+    final entry = _entry(tombstone: true);
+    final resolver = _TombstoneResolver(
+      CloudTombstoneIdentity(
+        scope: entry.scope,
+        generation: entry.generation,
+        changeId: entry.change.changeId,
+        serverRecordIdHash: entry.change.recordIdHash,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: _messageHash,
+      ),
+    );
+    bindings.result = _outOfScope(
+      entry,
+      frb.CloudSyncTransientOutOfScopeService.smsFamily,
+    );
+
+    await _expectFailure(
+      decoder(tombstoneResolver: resolver).decode(entry),
+      CloudFailureCategory.conflict,
+    );
+  });
+
   test(
     'rejects stale tombstone resolver output before native decode',
     () async {
@@ -1051,6 +1180,17 @@ frb.CloudSyncTransientDecodeResult _readyMessage(
   mutationKind: frb.CloudSyncTransientMutationKind.upsert,
   snapshot: snapshot ?? _snapshot(),
   payload: payload ?? frb.CloudSyncTransientPayload(message: _messagePayload()),
+);
+
+frb.CloudSyncTransientDecodeResult _outOfScope(
+  CloudInboxEntry entry,
+  frb.CloudSyncTransientOutOfScopeService service, {
+  BigInt? generation,
+  String? protectedSourceReference,
+}) => frb.CloudSyncTransientDecodeResult(
+  protectedSourceReference: protectedSourceReference ?? _sourceReference,
+  generation: generation ?? BigInt.from(entry.generation),
+  outOfScopeService: service,
 );
 
 frb.CloudSyncTransientDecodeResult _readyChat(
@@ -1341,6 +1481,9 @@ frb.CloudSyncTransientAttachmentPayload _attachmentPayload({
   frb.CloudSyncTransientFieldState isOutgoingState =
       frb.CloudSyncTransientFieldState.absent,
   bool? isOutgoing,
+  frb.CloudSyncTransientAttachmentMaterializationCapability
+      materializationCapability =
+      frb.CloudSyncTransientAttachmentMaterializationCapability.materializable,
   frb.CloudSyncTransientFieldState protectedLocalReferenceState =
       frb.CloudSyncTransientFieldState.value,
   String? protectedLocalReference = _attachmentReference,
@@ -1360,6 +1503,7 @@ frb.CloudSyncTransientAttachmentPayload _attachmentPayload({
   totalBytes: totalBytes,
   isOutgoingState: isOutgoingState,
   isOutgoing: isOutgoing,
+  materializationCapability: materializationCapability,
   protectedLocalReferenceState: protectedLocalReferenceState,
   protectedLocalReference: protectedLocalReference,
 );

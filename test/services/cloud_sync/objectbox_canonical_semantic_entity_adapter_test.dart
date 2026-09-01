@@ -146,6 +146,45 @@ void main() {
     },
   );
 
+  test('classifies a present invalid canonical identity as malformed', () {
+    const invalidHash = 'invalid-identity-hash';
+    resolver.put(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.message,
+      logicalEntityKeyHash: invalidHash,
+      canonicalGuid: 'message\u0001guid',
+    );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+    );
+
+    expect(
+      () => adapter.validateOwnershipEvidence(
+        scope: scope,
+        generation: generation,
+        kind: CloudEntityKind.message,
+        logicalEntityKeyHash: invalidHash,
+      ),
+      throwsA(
+        isA<CloudSyncFailure>()
+            .having(
+              (failure) => failure.category,
+              'category',
+              CloudFailureCategory.malformedRecord,
+            )
+            .having(
+              (failure) => failure.safeCode,
+              'safeCode',
+              'canonical_identity_guid_invalid',
+            ),
+      ),
+    );
+  });
+
   test('creates a chat and replays the same payload idempotently', () {
     final adapter = _newAdapter(
       store: store,
@@ -4502,6 +4541,8 @@ void main() {
     expect(attachment.ckRecordId, isNull);
     expect(attachment.metadata, <String, dynamic>{
       cloudAttachmentV2MetadataKey: cloudAttachmentV2MetadataVersion,
+      cloudAttachmentV2BodyCapabilityKey:
+          CloudAttachmentBodyCapability.materializable.metadataValue,
     });
     expect(attachment.bytes, isNull);
     expect(attachment.sourcePath, isNull);
@@ -4644,7 +4685,59 @@ void main() {
     expect(attachment.ckRecordId, isNull);
     expect(attachment.metadata, <String, dynamic>{
       cloudAttachmentV2MetadataKey: cloudAttachmentV2MetadataVersion,
+      cloudAttachmentV2BodyCapabilityKey:
+          CloudAttachmentBodyCapability.materializable.metadataValue,
     });
+  });
+
+  test('metadata-only attachment can never enter a body download lane', () {
+    resolver.put(
+      scope: scope,
+      generation: generation,
+      kind: CloudEntityKind.attachment,
+      logicalEntityKeyHash: 'metadata-only-attachment-hash',
+      canonicalGuid: 'metadata-only-attachment-guid',
+    );
+    final adapter = _newAdapter(
+      store: store,
+      activeScopeProvider: () => activeScope,
+      resolver: resolver,
+      semanticApplyEnabled: true,
+      allowAttachmentMetadataUpserts: true,
+    );
+
+    adapter.applyEntity(
+      scope: scope,
+      generation: generation,
+      payload: _attachmentPayload(
+        logicalEntityKeyHash: 'metadata-only-attachment-hash',
+        canonicalGuid: 'metadata-only-attachment-guid',
+        ownerLogicalKeyHash: null,
+        ownerCanonicalGuid: null,
+        ownerPart: null,
+        bodyCapability: CloudAttachmentBodyCapability
+            .metadataOnlyUnsupportedMediaCredentials,
+        protectedLocalReference: 'protected:metadata-only',
+      ),
+      snapshot: _snapshot(
+        CloudEntityKind.attachment,
+        'metadata-only-attachment-hash',
+      ),
+    );
+
+    final attachment = store.box<Attachment>().getAll().single;
+    expect(attachment.metadata, <String, dynamic>{
+      cloudAttachmentV2MetadataKey: cloudAttachmentV2MetadataVersion,
+      cloudAttachmentV2BodyCapabilityKey: CloudAttachmentBodyCapability
+          .metadataOnlyUnsupportedMediaCredentials
+          .metadataValue,
+    });
+    expect(
+      cloudAttachmentDownloadLaneFor(attachment.metadata),
+      CloudAttachmentDownloadLane.unavailable,
+    );
+    expect(attachment.bytes, isNull);
+    expect(attachment.sourcePath, isNull);
   });
 
   test('rolls back owner and resolver identity mismatches', () {
@@ -5222,6 +5315,8 @@ CloudAttachmentEntityPayload _attachmentPayload({
   CloudSemanticFieldState fileNameState = CloudSemanticFieldState.value,
   String? mimeType = 'application/octet-stream',
   CloudSemanticFieldState? mimeTypeState,
+  CloudAttachmentBodyCapability bodyCapability =
+      CloudAttachmentBodyCapability.materializable,
   int? totalBytes,
   CloudSemanticFieldState totalBytesState = CloudSemanticFieldState.absent,
   bool? isOutgoing,
@@ -5241,6 +5336,7 @@ CloudAttachmentEntityPayload _attachmentPayload({
   fileName: fileName,
   mimeTypeState: mimeTypeState,
   mimeType: mimeType,
+  bodyCapability: bodyCapability,
   totalBytesState: totalBytesState,
   totalBytes: totalBytes,
   isOutgoingState: isOutgoingState,

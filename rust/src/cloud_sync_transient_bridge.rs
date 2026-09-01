@@ -19,7 +19,7 @@ use crate::{
     cloud_sync_canonical_converter::{
         convert_attachment, convert_chat_with_diagnostic, convert_message, convert_tombstone,
         CloudCanonicalConversionContext, CloudCanonicalConversionOutcome,
-        CloudCanonicalQuarantineReason, CloudRawRecordPresence,
+        CloudCanonicalOutOfScopeService, CloudCanonicalQuarantineReason, CloudRawRecordPresence,
     },
     cloud_sync_canonical_dto::{
         CloudCanonicalAliasKind, CloudCanonicalEntityKind, CloudCanonicalHash,
@@ -255,6 +255,7 @@ fn malformed_record_at(stage: &'static str) -> CloudTransientBridgeFailure {
 
 pub(crate) enum CloudTransientDecodeOutcome {
     Ready(Box<CloudCanonicalMutation>),
+    OutOfScopeService(CloudCanonicalOutOfScopeService),
     Deferred(crate::cloud_sync_canonical_converter::CloudCanonicalDeferredReason),
     Quarantined(CloudCanonicalQuarantineReason),
     Failure(CloudTransientBridgeFailure),
@@ -264,6 +265,10 @@ impl std::fmt::Debug for CloudTransientDecodeOutcome {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Ready(_) => formatter.write_str("CloudTransientDecodeOutcome::Ready(redacted)"),
+            Self::OutOfScopeService(service) => formatter
+                .debug_tuple("CloudTransientDecodeOutcome::OutOfScopeService")
+                .field(service)
+                .finish(),
             Self::Deferred(reason) => formatter
                 .debug_tuple("CloudTransientDecodeOutcome::Deferred")
                 .field(reason)
@@ -1633,6 +1638,9 @@ fn normalize_conversion(
             } else {
                 CloudTransientDecodeOutcome::Ready(mutation)
             }
+        }
+        CloudCanonicalConversionOutcome::OutOfScopeService(service) => {
+            CloudTransientDecodeOutcome::OutOfScopeService(service)
         }
         CloudCanonicalConversionOutcome::Deferred(reason) => {
             CloudTransientDecodeOutcome::Deferred(reason)

@@ -41,6 +41,37 @@ typedef CloudSyncConfirmedSemanticPullPass =
     Future<CloudSyncSemanticPullReport> Function();
 typedef CloudSyncConfirmedSemanticPullSessionAction<T> =
     Future<T> Function(CloudSyncConfirmedSemanticPullPass runPass);
+typedef CloudSyncSemanticSessionReportPersist =
+    Future<Object> Function(CloudSyncSemanticPullReport report);
+
+final class CloudSyncConfirmedCatchUpResult {
+  const CloudSyncConfirmedCatchUpResult({
+    required this.remotePasses,
+    required this.lastRemoteReport,
+    required this.lastRemoteReportReference,
+    required this.remoteDrained,
+    required this.reachedRemotePassLimit,
+    this.projectionReport,
+    this.projectionReportReference,
+  });
+
+  final int remotePasses;
+  final CloudSyncSemanticPullReport lastRemoteReport;
+  final Object lastRemoteReportReference;
+  final bool remoteDrained;
+  final bool reachedRemotePassLimit;
+  final CloudSyncSemanticPullReport? projectionReport;
+  final Object? projectionReportReference;
+
+  CloudSyncSemanticPullReport get latestReport =>
+      projectionReport ?? lastRemoteReport;
+
+  Object get latestReportReference =>
+      projectionReportReference ?? lastRemoteReportReference;
+
+  bool get retainedSaveProjectionComplete =>
+      latestReport.retainedSaveProjectionComplete;
+}
 
 /// Native exclusion for every CloudKit-capable writer workflow.
 ///
@@ -108,6 +139,9 @@ final class CloudSyncManualSemanticPullSampler {
   static const pageLimit = 4;
   static const changeLimit = 50;
   static const projectionRepairLimit = 256;
+  static const retainedProjectionSweepBatchSize = 256;
+  static const maximumRetainedProjectionSweepBatches = 4096;
+  static const maximumConfirmedRemotePasses = 16;
   static const _maximumFetchTimeout = Duration(seconds: 45);
   static final _journalBudget = CloudShadowJournalBudget(
     maximumEntriesPerScope: 512,
@@ -140,6 +174,100 @@ final class CloudSyncManualSemanticPullSampler {
   Future<CloudSyncSemanticPullReport> runConfirmed() =>
       runConfirmedSession((runPass) => runPass());
 
+  /// Proves remote head, persists that proof, and then performs one exact
+  /// local-only sweep of every retained save that existed at the proof bound.
+  ///
+  /// The complete operation uses one auth admission, one operation interlock,
+  /// and one native-writer pause. The sweep never constructs a CloudKit
+  /// transport and never enters [CloudSyncEngine.synchronize].
+  Future<CloudSyncConfirmedCatchUpResult> runConfirmedCatchUpAndPersist({
+    required CloudSyncSemanticSessionReportPersist persistReport,
+    int maximumRemotePasses = maximumConfirmedRemotePasses,
+    int projectionBatchSize = retainedProjectionSweepBatchSize,
+  }) {
+    if (maximumRemotePasses < 1 ||
+        maximumRemotePasses > maximumConfirmedRemotePasses) {
+      throw ArgumentError('cloud_sync_semantic_remote_pass_limit_invalid');
+    }
+    if (projectionBatchSize < 1 || projectionBatchSize > 4096) {
+      throw ArgumentError('cloud_sync_projection_sweep_batch_size_invalid');
+    }
+    return _runConfirmedSessionWithContext(
+      (session) => _catchUpWithinConfirmedSession(
+        session: session,
+        persistReport: persistReport,
+        maximumRemotePasses: maximumRemotePasses,
+        projectionBatchSize: projectionBatchSize,
+      ),
+    );
+  }
+
+  Future<CloudSyncConfirmedCatchUpResult> _catchUpWithinConfirmedSession({
+    required _CloudSyncConfirmedSessionContext session,
+    required CloudSyncSemanticSessionReportPersist persistReport,
+    required int maximumRemotePasses,
+    required int projectionBatchSize,
+  }) async {
+    for (var pass = 1; pass <= maximumRemotePasses; pass++) {
+      final report = await session.runRemotePass();
+      // Persistence deliberately precedes every safety and completion claim.
+      final reportReference = await persistReport(report);
+      if (!report.safeToContinueDrain) {
+        final safeCode = report.unambiguousRejectedZoneFailureSafeCode;
+        if (safeCode != null) {
+          throw StateError(safeCode);
+        }
+        throw StateError('cloud_sync_semantic_drain_unsafe_report');
+      }
+      if (!report.allZonesObservedEmptyTerminalRead) {
+        if (pass == maximumRemotePasses) {
+          return CloudSyncConfirmedCatchUpResult(
+            remotePasses: pass,
+            lastRemoteReport: report,
+            lastRemoteReportReference: reportReference,
+            remoteDrained: false,
+            reachedRemotePassLimit: true,
+          );
+        }
+        continue;
+      }
+
+      if (!report.hasRetainedSaveBacklog) {
+        return CloudSyncConfirmedCatchUpResult(
+          remotePasses: pass,
+          lastRemoteReport: report,
+          lastRemoteReportReference: reportReference,
+          remoteDrained: true,
+          reachedRemotePassLimit: false,
+        );
+      }
+
+      final proof = await _capturePersistedRemoteHeadProof(
+        session: session,
+        report: report,
+      );
+      final projectionReport = await _sweepRetainedSavesAtHead(
+        session: session,
+        proof: proof,
+        batchSize: projectionBatchSize,
+      );
+      final projectionReference = await persistReport(projectionReport);
+      if (!projectionReport.safeToPersistProjectionSweep) {
+        throw StateError('cloud_sync_projection_sweep_unsafe_report');
+      }
+      return CloudSyncConfirmedCatchUpResult(
+        remotePasses: pass,
+        lastRemoteReport: report,
+        lastRemoteReportReference: reportReference,
+        remoteDrained: true,
+        reachedRemotePassLimit: false,
+        projectionReport: projectionReport,
+        projectionReportReference: projectionReference,
+      );
+    }
+    throw StateError('cloud_sync_semantic_remote_pass_limit_unreachable');
+  }
+
   /// Runs one or more confirmed reads under one operation interlock and one
   /// native-writer pause.
   ///
@@ -149,6 +277,12 @@ final class CloudSyncManualSemanticPullSampler {
   /// otherwise safe one-shot reads.
   Future<T> runConfirmedSession<T>(
     CloudSyncConfirmedSemanticPullSessionAction<T> action,
+  ) => _runConfirmedSessionWithContext(
+    (session) => action(session.runRemotePass),
+  );
+
+  Future<T> _runConfirmedSessionWithContext<T>(
+    Future<T> Function(_CloudSyncConfirmedSessionContext session) action,
   ) async {
     if (!_enabled) throw StateError('cloud_sync_semantic_pull_disabled');
     if (_active) throw StateError('cloud_sync_semantic_pull_active');
@@ -201,7 +335,14 @@ final class CloudSyncManualSemanticPullSampler {
                 }
 
                 try {
-                  final result = await action(runPass);
+                  final result = await action(
+                    _CloudSyncConfirmedSessionContext(
+                      runRemotePass: runPass,
+                      pauseToken: pauseToken,
+                      ensuredAuth: ensuredAuth,
+                      nonce: Object(),
+                    ),
+                  );
                   if (passActive) {
                     throw StateError(
                       'cloud_sync_semantic_pull_session_pass_unawaited',
@@ -315,6 +456,11 @@ final class CloudSyncManualSemanticPullSampler {
         if (result.counters.confirmed != 0) {
           throw StateError('cloud_sync_semantic_remote_write_tripwire');
         }
+        final diagnosticCounts = await _diagnosticCountsForReport(
+          scope: scope,
+          store: store,
+          retainedBacklog: result.retainedUnprojectedBacklog,
+        );
         reports.add(
           CloudSyncSemanticPullZoneReport(
             zoneLabel: _zoneLabel(zone),
@@ -346,8 +492,7 @@ final class CloudSyncManualSemanticPullSampler {
                 .difference(result.startedAt)
                 .inMilliseconds,
             observedEmptyTerminalRead: result.observedEmptyTerminalRead,
-            diagnosticCounts:
-                _readDiagnosticCounts?.call(scope) ?? const <String, int>{},
+            diagnosticCounts: diagnosticCounts,
             failureCategory: result.failureCategory,
             failureSafeCode: result.failureSafeCode,
             skipReason: result.skipReason,
@@ -382,10 +527,356 @@ final class CloudSyncManualSemanticPullSampler {
     );
   }
 
+  Future<_CloudSyncPersistedRemoteHeadProof> _capturePersistedRemoteHeadProof({
+    required _CloudSyncConfirmedSessionContext session,
+    required CloudSyncSemanticPullReport report,
+  }) async {
+    if (!report.safeToContinueDrain ||
+        !report.allZonesObservedEmptyTerminalRead ||
+        report.mode != CloudSyncSemanticReportMode.readOnlyCloudKit) {
+      throw StateError('cloud_sync_remote_head_proof_unavailable');
+    }
+    await _requireSameAuth(session.ensuredAuth);
+    final bounds = <String, _CloudSyncRemoteHeadZoneBound>{};
+    for (final zone in zones) {
+      final scope = CloudSyncScope(
+        accountFingerprint: session.ensuredAuth.accountFingerprint,
+        container: container,
+        database: database,
+        zone: zone,
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      final store = await _createStore(scope);
+      final checkpoint = await store.readCheckpoint(scope);
+      if (checkpoint.scope != scope ||
+          checkpoint.generation <= 0 ||
+          checkpoint.fetchedSequence < 0 ||
+          checkpoint.pendingBatchId != null ||
+          checkpoint.hasUnmarkedPendingInbox) {
+        throw StateError('cloud_sync_remote_head_checkpoint_unstable');
+      }
+      bounds[zone] = _CloudSyncRemoteHeadZoneBound(
+        scope: scope,
+        generation: checkpoint.generation,
+        throughFetchSequence: checkpoint.fetchedSequence,
+      );
+    }
+    await _requireSameAuth(session.ensuredAuth);
+    return _CloudSyncPersistedRemoteHeadProof(
+      sessionNonce: session.nonce,
+      pauseToken: session.pauseToken,
+      auth: session.ensuredAuth,
+      bounds: bounds,
+    );
+  }
+
+  Future<CloudSyncSemanticPullReport> _sweepRetainedSavesAtHead({
+    required _CloudSyncConfirmedSessionContext session,
+    required _CloudSyncPersistedRemoteHeadProof proof,
+    required int batchSize,
+  }) async {
+    if (!identical(proof.sessionNonce, session.nonce) ||
+        proof.pauseToken != session.pauseToken ||
+        !proof.auth.sameIdentity(session.ensuredAuth) ||
+        proof.bounds.length != zones.length) {
+      throw StateError('cloud_sync_projection_sweep_proof_invalid');
+    }
+    await _requireSameAuth(proof.auth);
+    final before = await _readPreflight();
+    _validatePreflight(before);
+    final reports = <CloudSyncSemanticPullZoneReport>[];
+
+    for (final zone in zones) {
+      final bound = proof.bounds[zone];
+      if (bound == null || bound.scope.zone != zone) {
+        throw StateError('cloud_sync_projection_sweep_bound_missing');
+      }
+      await _requireSameAuth(proof.auth);
+      final startedAt = DateTime.now().toUtc();
+      final store = await _createStore(bound.scope);
+      await _validateProjectionSweepCheckpoint(store, bound);
+      final inboxApplier = await _createInboxApplier(
+        proof.auth,
+        bound.scope,
+        bound.generation,
+        session.pauseToken,
+      );
+      if (inboxApplier is! CloudRetainedProjectionWindowReprocessor) {
+        throw StateError('cloud_sync_projection_sweep_applier_unavailable');
+      }
+      final projectionSweeper =
+          inboxApplier as CloudRetainedProjectionWindowReprocessor;
+      final diagnosticsBefore =
+          _readDiagnosticCounts?.call(bound.scope) ?? const <String, int>{};
+      final leaseFence = await store.tryAcquireCoordinatorLease(
+        bound.scope,
+        ownerId:
+            'manual-semantic-sweep-${proof.auth.nativeSessionId}-${identityHashCode(session.nonce)}-$zone',
+        now: DateTime.now().toUtc(),
+        leaseDuration: _config().coordinatorLeaseDuration,
+      );
+      if (leaseFence == null) {
+        throw StateError('cloud_sync_projection_sweep_lease_unavailable');
+      }
+
+      var cursor = 0;
+      var batches = 0;
+      var examined = 0;
+      var reprojected = 0;
+      var retained = 0;
+      try {
+        while (cursor < bound.throughFetchSequence) {
+          if (batches >= maximumRetainedProjectionSweepBatches) {
+            throw StateError('cloud_sync_projection_sweep_batch_limit');
+          }
+          await _requireSameAuth(proof.auth);
+          await _validateProjectionSweepCheckpoint(store, bound);
+          final renewed = await store.renewCoordinatorLease(
+            bound.scope,
+            leaseFence: leaseFence,
+            now: DateTime.now().toUtc(),
+            leaseDuration: _config().coordinatorLeaseDuration,
+          );
+          if (!renewed) {
+            throw StateError('cloud_sync_projection_sweep_lease_lost');
+          }
+          final result = await projectionSweeper.reprojectRetainedSaveWindow(
+            scope: bound.scope,
+            generation: bound.generation,
+            leaseFence: leaseFence,
+            afterFetchSequence: cursor,
+            throughFetchSequence: bound.throughFetchSequence,
+            limit: batchSize,
+          );
+          batches++;
+          if (result.examined < 0 ||
+              result.examined > batchSize ||
+              result.reprojected < 0 ||
+              result.retained < 0 ||
+              result.examined != result.reprojected + result.retained ||
+              result.lastExaminedSequence < cursor ||
+              result.lastExaminedSequence > bound.throughFetchSequence ||
+              (result.examined == 0 &&
+                  (result.lastExaminedSequence != cursor ||
+                      result.hasMoreWithinBound)) ||
+              (result.examined > 0 && result.lastExaminedSequence <= cursor)) {
+            throw StateError('cloud_sync_projection_sweep_result_invalid');
+          }
+          examined += result.examined;
+          reprojected += result.reprojected;
+          retained += result.retained;
+          cursor = result.lastExaminedSequence;
+          if (!result.hasMoreWithinBound) break;
+        }
+      } finally {
+        await store.releaseCoordinatorLease(
+          bound.scope,
+          leaseFence: leaseFence,
+        );
+      }
+      await _requireSameAuth(proof.auth);
+      await _validateProjectionSweepCheckpoint(store, bound);
+      final diagnosticsAfter =
+          _readDiagnosticCounts?.call(bound.scope) ?? const <String, int>{};
+      final backlogStore = store is CloudRetainedUnprojectedBacklogStore
+          ? store as CloudRetainedUnprojectedBacklogStore
+          : null;
+      final retainedBacklog = backlogStore != null
+          ? await backlogStore.readRetainedUnprojectedInboxCount(bound.scope)
+          : 0;
+      final diagnosticCounts = await _diagnosticCountsForReport(
+        scope: bound.scope,
+        store: store,
+        retainedBacklog: retainedBacklog,
+        projectionDiagnosticsOverride: _positiveDiagnosticDelta(
+          diagnosticsBefore,
+          diagnosticsAfter,
+        ),
+      );
+      // If the typed summary cannot be read, every retained row remains
+      // blocking. Only an exact durable out-of-scope count may be subtracted.
+      final hasTypedBacklogSummary =
+          diagnosticCounts['retained_backlog_summary_ready'] == 1 &&
+          !diagnosticCounts.containsKey(
+            'retained_backlog_summary_unavailable',
+          ) &&
+          !diagnosticCounts.containsKey('retained_backlog_summary_mismatch');
+      final blockingRetainedSaves = hasTypedBacklogSummary
+          ? diagnosticCounts['retained_backlog_blocking_saves'] ?? 0
+          : retainedBacklog;
+      final incomplete = blockingRetainedSaves > 0;
+      reports.add(
+        CloudSyncSemanticPullZoneReport(
+          zoneLabel: _zoneLabel(zone),
+          status: incomplete
+              ? CloudSyncRunStatus.degraded
+              : CloudSyncRunStatus.completed,
+          fetched: 0,
+          applied: reprojected,
+          deferred: 0,
+          quarantined: 0,
+          preflightQuarantined: 0,
+          preflightUnsupportedRecordType: 0,
+          preflightMalformedMetadata: 0,
+          preflightOversizedRecord: 0,
+          preflightInvalidChangeShape: 0,
+          preflightUnknown: 0,
+          startupQuarantined: 0,
+          postFetchQuarantined: 0,
+          tombstoneQuarantined: 0,
+          tombstoneReadOnlyAcknowledged: 0,
+          retainedUnprojected: retainedBacklog,
+          semanticUnsupportedServiceQuarantined: 0,
+          semanticStageQuarantined: 0,
+          retried: 0,
+          elapsedMilliseconds: DateTime.now()
+              .toUtc()
+              .difference(startedAt)
+              .inMilliseconds,
+          projectionExamined: examined,
+          projectionRetained: retained,
+          projectionBatches: batches,
+          diagnosticCounts: diagnosticCounts,
+          failureCategory: incomplete ? CloudFailureCategory.dependency : null,
+          failureSafeCode: incomplete ? 'retained_projection_incomplete' : null,
+        ),
+      );
+    }
+
+    await _requireSameAuth(proof.auth);
+    final after = await _readPreflight();
+    _validatePreflight(after);
+    if (after.outboxCount != before.outboxCount) {
+      throw StateError('cloud_sync_semantic_remote_write_tripwire');
+    }
+    return CloudSyncSemanticPullReport(
+      timestampUtc: DateTime.now().toUtc(),
+      platform: platform,
+      architecture: architecture,
+      buildCommit: buildCommit,
+      pageLimit: pageLimit,
+      changeLimit: changeLimit,
+      outboxCountBefore: before.outboxCount,
+      outboxCountAfter: after.outboxCount,
+      zones: reports,
+      mode: CloudSyncSemanticReportMode.retainedProjectionSweep,
+    );
+  }
+
+  Future<void> _validateProjectionSweepCheckpoint(
+    CloudSyncStore store,
+    _CloudSyncRemoteHeadZoneBound bound,
+  ) async {
+    final checkpoint = await store.readCheckpoint(bound.scope);
+    if (checkpoint.scope != bound.scope ||
+        checkpoint.generation != bound.generation ||
+        checkpoint.fetchedSequence != bound.throughFetchSequence ||
+        checkpoint.pendingBatchId != null ||
+        checkpoint.hasUnmarkedPendingInbox) {
+      throw StateError('cloud_sync_projection_sweep_checkpoint_changed');
+    }
+  }
+
+  static Map<String, int> _positiveDiagnosticDelta(
+    Map<String, int> before,
+    Map<String, int> after,
+  ) {
+    final delta = <String, int>{};
+    for (final entry in after.entries) {
+      final difference = entry.value - (before[entry.key] ?? 0);
+      if (difference > 0) delta[entry.key] = difference;
+    }
+    return delta;
+  }
+
   Future<CloudSyncObserver> _createObserver(CloudSyncScope scope) async =>
       _observerFactory == null
       ? const NoopCloudSyncObserver()
       : _observerFactory(scope);
+
+  Future<Map<String, int>> _diagnosticCountsForReport({
+    required CloudSyncScope scope,
+    required CloudSyncStore store,
+    required int retainedBacklog,
+    Map<String, int>? projectionDiagnosticsOverride,
+  }) async {
+    final result = <String, int>{};
+    final projectionDiagnostics =
+        projectionDiagnosticsOverride ??
+        _readDiagnosticCounts?.call(scope) ??
+        const <String, int>{};
+    for (final entry in projectionDiagnostics.entries) {
+      result.update(
+        entry.key,
+        (count) => count + entry.value,
+        ifAbsent: () => entry.value,
+      );
+    }
+
+    if (store is! CloudRetainedUnprojectedBacklogSummaryStore) {
+      result['retained_backlog_summary_unavailable'] = 1;
+      return result;
+    }
+
+    final CloudRetainedUnprojectedBacklogSummary summary;
+    try {
+      summary = await (store as CloudRetainedUnprojectedBacklogSummaryStore)
+          .readRetainedUnprojectedInboxSummary(scope);
+    } catch (_) {
+      result['retained_backlog_summary_unavailable'] = 1;
+      return result;
+    }
+    result['retained_backlog_summary_ready'] = 1;
+    if (summary.total != retainedBacklog) {
+      result['retained_backlog_summary_mismatch'] = 1;
+    }
+    _putPositiveDiagnostic(result, 'retained_backlog_total', summary.total);
+    _putPositiveDiagnostic(result, 'retained_backlog_saves', summary.saves);
+    _putPositiveDiagnostic(
+      result,
+      'retained_backlog_out_of_scope_services',
+      summary.outOfScopeServices,
+    );
+    _putPositiveDiagnostic(
+      result,
+      'retained_backlog_blocking_saves',
+      summary.blockingSaves,
+    );
+    _putPositiveDiagnostic(
+      result,
+      'retained_backlog_tombstones',
+      summary.tombstones,
+    );
+    _putPositiveDiagnostic(
+      result,
+      'retained_backlog_unclassified',
+      summary.unclassified,
+    );
+    for (final entry in summary.byFailureCategory.entries) {
+      _putPositiveDiagnostic(
+        result,
+        'retained_backlog_failure_${_safeCategorySegment(entry.key)}',
+        entry.value,
+      );
+    }
+    return result;
+  }
+
+  static void _putPositiveDiagnostic(
+    Map<String, int> target,
+    String code,
+    int count,
+  ) {
+    if (count > 0) target[code] = count;
+  }
+
+  static String _safeCategorySegment(CloudFailureCategory category) => category
+      .name
+      .replaceAllMapped(
+        RegExp(r'([a-z0-9])([A-Z])'),
+        (match) => '${match.group(1)}_${match.group(2)}',
+      )
+      .toLowerCase();
 
   Future<void> _repairAppliedProjections({
     required CloudSyncNativeAuthSnapshot auth,
@@ -485,4 +976,44 @@ final class CloudSyncManualSemanticPullSampler {
     'attachmentManateeZone' => 'attachments',
     _ => throw StateError('unsupported_cloud_zone'),
   };
+}
+
+final class _CloudSyncConfirmedSessionContext {
+  const _CloudSyncConfirmedSessionContext({
+    required this.runRemotePass,
+    required this.pauseToken,
+    required this.ensuredAuth,
+    required this.nonce,
+  });
+
+  final CloudSyncConfirmedSemanticPullPass runRemotePass;
+  final Object pauseToken;
+  final CloudSyncNativeAuthSnapshot ensuredAuth;
+  final Object nonce;
+}
+
+final class _CloudSyncPersistedRemoteHeadProof {
+  _CloudSyncPersistedRemoteHeadProof({
+    required this.sessionNonce,
+    required this.pauseToken,
+    required this.auth,
+    required Map<String, _CloudSyncRemoteHeadZoneBound> bounds,
+  }) : bounds = Map.unmodifiable(bounds);
+
+  final Object sessionNonce;
+  final Object pauseToken;
+  final CloudSyncNativeAuthSnapshot auth;
+  final Map<String, _CloudSyncRemoteHeadZoneBound> bounds;
+}
+
+final class _CloudSyncRemoteHeadZoneBound {
+  const _CloudSyncRemoteHeadZoneBound({
+    required this.scope,
+    required this.generation,
+    required this.throughFetchSequence,
+  });
+
+  final CloudSyncScope scope;
+  final int generation;
+  final int throughFetchSequence;
 }

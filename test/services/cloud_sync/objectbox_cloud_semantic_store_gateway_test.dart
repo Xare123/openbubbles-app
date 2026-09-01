@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:bluebubbles/database/models.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -1339,6 +1340,7 @@ void main() {
                 ownerPart: 0,
                 fileName: 'photo.jpg',
                 mimeType: 'image/jpeg',
+                bodyCapability: CloudAttachmentBodyCapability.materializable,
                 protectedLocalReference: _protectedReference('A'),
               ),
               CloudSemanticSnapshot(
@@ -2415,6 +2417,280 @@ void main() {
       );
     },
   );
+
+  test(
+    'out-of-scope reclassification is durable and excludes only the exact row',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final retained = inboxBox.getAll().single
+        ..status = CloudInboxStatus.retainedUnprojected.index
+        ..retryCount = 2
+        ..failureCategory = CloudFailureCategory.unsupportedService.name
+        ..nextEligibleAtMs = 0
+        ..completedAtMs = now.millisecondsSinceEpoch;
+      inboxBox.put(retained);
+      final checkpointBox = objectBox.box<CloudSyncCheckpointEntity>();
+      final checkpointBefore = checkpointBox.getAll().single;
+      final fetchedSequenceBefore = checkpointBefore.fetchedSequence;
+      final appliedSequenceBefore = checkpointBefore.appliedSequence;
+      final mutationRevisionBefore = checkpointBefore.mutationRevisionCounter;
+
+      final candidates = await gateway.readRetainedProjectionCandidates(
+        scope: scope,
+        generation: entry.generation,
+        leaseFence: leaseFence,
+        limit: 8,
+      );
+      expect(candidates, hasLength(1));
+      expect(
+        candidates.single.lastFailure,
+        CloudFailureCategory.unsupportedService,
+      );
+
+      await gateway.recordRetainedProjectionOutOfScopeService(
+        entry: candidates.single,
+        leaseFence: leaseFence,
+      );
+
+      final reclassified = inboxBox.getAll().single;
+      expect(
+        reclassified.failureCategory,
+        CloudFailureCategory.outOfScopeService.name,
+      );
+      expect(reclassified.retryCount, 3);
+      expect(reclassified.nextEligibleAtMs, 0);
+      expect(reclassified.status, CloudInboxStatus.retainedUnprojected.index);
+      expect(
+        await gateway.readRetainedProjectionCandidates(
+          scope: scope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          limit: 8,
+        ),
+        isEmpty,
+      );
+      expect(
+        await gateway.readRetainedProjectionWindow(
+          scope: scope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          afterFetchSequence: 0,
+          throughFetchSequence: entry.sequence,
+          limit: 8,
+        ),
+        isEmpty,
+      );
+      final checkpointAfter = checkpointBox.getAll().single;
+      expect(checkpointAfter.fetchedSequence, fetchedSequenceBefore);
+      expect(checkpointAfter.appliedSequence, appliedSequenceBefore);
+      expect(checkpointAfter.mutationRevisionCounter, mutationRevisionBefore);
+      expect(objectBox.box<CloudSyncRunEntity>().count(), 0);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 0);
+      expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 0);
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+
+      objectBox.close();
+      objectBox = await openStore(directory: directory.path);
+      adapter = _ObjectBoxTestCanonicalAdapter(objectBox)
+        ..activeScope = scope
+        ..activeGeneration = entry.generation
+        ..existingEntities.add((CloudEntityKind.chat, _digestValue('H')));
+      gateway = ObjectBoxCloudSemanticStoreGateway(
+        store: objectBox,
+        canonicalAdapter: adapter,
+        clock: () => now,
+      );
+      expect(
+        objectBox.box<CloudInboxChangeEntity>().getAll().single.failureCategory,
+        CloudFailureCategory.outOfScopeService.name,
+      );
+      expect(
+        await gateway.readRetainedProjectionCandidates(
+          scope: scope,
+          generation: entry.generation,
+          leaseFence: leaseFence,
+          limit: 8,
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'out-of-scope reclassification rejects forged caller and durable categories',
+    () async {
+      final entry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: entry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final retained = inboxBox.getAll().single
+        ..status = CloudInboxStatus.retainedUnprojected.index
+        ..retryCount = 4
+        ..failureCategory = CloudFailureCategory.unsupportedService.name
+        ..nextEligibleAtMs = 0
+        ..completedAtMs = now.millisecondsSinceEpoch;
+      inboxBox.put(retained);
+
+      for (final callerCategory in <CloudFailureCategory?>[
+        null,
+        CloudFailureCategory.dependency,
+        CloudFailureCategory.malformedRecord,
+        CloudFailureCategory.outOfScopeService,
+      ]) {
+        final forged = entry.copyWith(
+          status: CloudInboxStatus.retainedUnprojected,
+          lastFailure: callerCategory,
+          completedAt: now,
+        );
+        await expectLater(
+          gateway.recordRetainedProjectionOutOfScopeService(
+            entry: forged,
+            leaseFence: leaseFence,
+          ),
+          throwsA(
+            _failureCode('retained_projection_out_of_scope_entry_invalid'),
+          ),
+        );
+      }
+
+      final claimedUnsupported = entry.copyWith(
+        status: CloudInboxStatus.retainedUnprojected,
+        lastFailure: CloudFailureCategory.unsupportedService,
+        completedAt: now,
+      );
+      for (final durableCategory in <CloudFailureCategory?>[
+        null,
+        CloudFailureCategory.dependency,
+        CloudFailureCategory.malformedRecord,
+        CloudFailureCategory.outOfScopeService,
+      ]) {
+        final durable = inboxBox.getAll().single
+          ..failureCategory = durableCategory?.name;
+        inboxBox.put(durable);
+        await expectLater(
+          gateway.recordRetainedProjectionOutOfScopeService(
+            entry: claimedUnsupported,
+            leaseFence: leaseFence,
+          ),
+          throwsA(_failureCode('retained_projection_out_of_scope_row_invalid')),
+        );
+        final preserved = inboxBox.getAll().single;
+        expect(preserved.failureCategory, durableCategory?.name);
+        expect(preserved.retryCount, 4);
+      }
+
+      expect(objectBox.box<CloudSyncRunEntity>().count(), 0);
+      expect(objectBox.box<CloudSemanticSnapshotEntity>().count(), 0);
+      expect(objectBox.box<CloudRecordMapEntity>().count(), 0);
+      expect(objectBox.box<CloudSemanticReplayEntity>().count(), 0);
+      expect(objectBox.box<CloudOutboxOperationEntity>().count(), 0);
+    },
+  );
+
+  test(
+    'sequence-bounded retained window is ordered and excludes tombstones and terminal rows',
+    () async {
+      final firstEntry = _entry(scope: scope);
+      _seedDurableFence(
+        objectBox,
+        entry: firstEntry,
+        leaseFence: leaseFence,
+        now: now,
+      );
+      final inboxBox = objectBox.box<CloudInboxChangeEntity>();
+      final first = inboxBox.getAll().single
+        ..status = CloudInboxStatus.retainedUnprojected.index
+        ..completedAtMs = now.millisecondsSinceEpoch;
+      final tombstone =
+          _copyInbox(
+              first,
+              changeKey: _scopedDigest(
+                scope,
+                'change',
+                _indexedDigest('bounded-tombstone-change'),
+              ),
+            )
+            ..changeIdHash = _indexedDigest('bounded-tombstone-change')
+            ..serverRecordIdHash = _indexedDigest('bounded-tombstone-record')
+            ..fetchSequence = 2
+            ..isTombstone = true;
+      final third =
+          _copyInbox(
+              first,
+              changeKey: _scopedDigest(
+                scope,
+                'change',
+                _indexedDigest('bounded-third-change'),
+              ),
+            )
+            ..changeIdHash = _indexedDigest('bounded-third-change')
+            ..serverRecordIdHash = _indexedDigest('bounded-third-record')
+            ..fetchSequence = 3;
+      final terminal =
+          _copyInbox(
+              first,
+              changeKey: _scopedDigest(
+                scope,
+                'change',
+                _indexedDigest('bounded-terminal-change'),
+              ),
+            )
+            ..changeIdHash = _indexedDigest('bounded-terminal-change')
+            ..serverRecordIdHash = _indexedDigest('bounded-terminal-record')
+            ..fetchSequence = 4
+            ..status = CloudInboxStatus.applied.index;
+      final fifth =
+          _copyInbox(
+              first,
+              changeKey: _scopedDigest(
+                scope,
+                'change',
+                _indexedDigest('bounded-fifth-change'),
+              ),
+            )
+            ..changeIdHash = _indexedDigest('bounded-fifth-change')
+            ..serverRecordIdHash = _indexedDigest('bounded-fifth-record')
+            ..fetchSequence = 5;
+      inboxBox.putMany([first, tombstone, third, terminal, fifth]);
+      final checkpointBox = objectBox.box<CloudSyncCheckpointEntity>();
+      final checkpoint = checkpointBox.getAll().single
+        ..fetchedSequence = 5
+        ..appliedSequence = 0;
+      checkpointBox.put(checkpoint);
+
+      final middleWindow = await gateway.readRetainedProjectionWindow(
+        scope: scope,
+        generation: firstEntry.generation,
+        leaseFence: leaseFence,
+        afterFetchSequence: 1,
+        throughFetchSequence: 4,
+        limit: 8,
+      );
+      expect(middleWindow.map((entry) => entry.sequence), [3]);
+
+      final limitedWindow = await gateway.readRetainedProjectionWindow(
+        scope: scope,
+        generation: firstEntry.generation,
+        leaseFence: leaseFence,
+        afterFetchSequence: 0,
+        throughFetchSequence: 5,
+        limit: 2,
+      );
+      expect(limitedWindow.map((entry) => entry.sequence), [1, 3]);
+    },
+  );
 }
 
 CloudSyncScope _scope({String? account, String zone = 'messageManateeZone'}) {
@@ -2993,6 +3269,7 @@ _CrossZoneAttachmentFixture _prepareCrossZoneAttachmentFixture(
     ownerPart: 1,
     fileName: 'report.pdf',
     mimeType: 'application/pdf',
+    bodyCapability: CloudAttachmentBodyCapability.materializable,
     protectedLocalReference: _protectedReference('A'),
   );
   final snapshot = CloudSemanticSnapshot(

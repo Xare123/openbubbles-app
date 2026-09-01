@@ -1600,6 +1600,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_box_autoadd_cloud_sync_transient_mutation_kind(dynamic raw);
 
   @protected
+  CloudSyncTransientOutOfScopeService
+  dco_decode_box_autoadd_cloud_sync_transient_out_of_scope_service(dynamic raw);
+
+  @protected
   CloudSyncTransientPayload dco_decode_box_autoadd_cloud_sync_transient_payload(
     dynamic raw,
   );
@@ -2102,6 +2106,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   dco_decode_cloud_sync_transient_association_kind(dynamic raw);
 
   @protected
+  CloudSyncTransientAttachmentMaterializationCapability
+  dco_decode_cloud_sync_transient_attachment_materialization_capability(
+    dynamic raw,
+  );
+
+  @protected
   CloudSyncTransientAttachmentPayload
   dco_decode_cloud_sync_transient_attachment_payload(dynamic raw);
 
@@ -2178,6 +2188,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CloudSyncTransientMutationKind dco_decode_cloud_sync_transient_mutation_kind(
     dynamic raw,
   );
+
+  @protected
+  CloudSyncTransientOutOfScopeService
+  dco_decode_cloud_sync_transient_out_of_scope_service(dynamic raw);
 
   @protected
   CloudSyncTransientPayload dco_decode_cloud_sync_transient_payload(
@@ -2967,6 +2981,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncTransientMutationKind?
   dco_decode_opt_box_autoadd_cloud_sync_transient_mutation_kind(dynamic raw);
+
+  @protected
+  CloudSyncTransientOutOfScopeService?
+  dco_decode_opt_box_autoadd_cloud_sync_transient_out_of_scope_service(
+    dynamic raw,
+  );
 
   @protected
   CloudSyncTransientPayload?
@@ -5084,6 +5104,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncTransientOutOfScopeService
+  sse_decode_box_autoadd_cloud_sync_transient_out_of_scope_service(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncTransientPayload sse_decode_box_autoadd_cloud_sync_transient_payload(
     SseDeserializer deserializer,
   );
@@ -5726,6 +5752,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  CloudSyncTransientAttachmentMaterializationCapability
+  sse_decode_cloud_sync_transient_attachment_materialization_capability(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   CloudSyncTransientAttachmentPayload
   sse_decode_cloud_sync_transient_attachment_payload(
     SseDeserializer deserializer,
@@ -5806,6 +5838,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   CloudSyncTransientMutationKind sse_decode_cloud_sync_transient_mutation_kind(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncTransientOutOfScopeService
+  sse_decode_cloud_sync_transient_out_of_scope_service(
     SseDeserializer deserializer,
   );
 
@@ -6725,6 +6763,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   CloudSyncTransientMutationKind?
   sse_decode_opt_box_autoadd_cloud_sync_transient_mutation_kind(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  CloudSyncTransientOutOfScopeService?
+  sse_decode_opt_box_autoadd_cloud_sync_transient_out_of_scope_service(
     SseDeserializer deserializer,
   );
 
@@ -9222,6 +9266,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_cloud_sync_transient_out_of_scope_service(
+    CloudSyncTransientOutOfScopeService self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_cloud_sync_transient_payload(
     CloudSyncTransientPayload self,
     SseSerializer serializer,
@@ -10012,6 +10062,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_cloud_sync_transient_attachment_materialization_capability(
+    CloudSyncTransientAttachmentMaterializationCapability self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_cloud_sync_transient_attachment_payload(
     CloudSyncTransientAttachmentPayload self,
     SseSerializer serializer,
@@ -10110,6 +10166,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_cloud_sync_transient_mutation_kind(
     CloudSyncTransientMutationKind self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_cloud_sync_transient_out_of_scope_service(
+    CloudSyncTransientOutOfScopeService self,
     SseSerializer serializer,
   );
 
@@ -11192,6 +11254,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_cloud_sync_transient_mutation_kind(
     CloudSyncTransientMutationKind? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_cloud_sync_transient_out_of_scope_service(
+    CloudSyncTransientOutOfScopeService? self,
     SseSerializer serializer,
   );
 

@@ -813,7 +813,7 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
           : 'persisted';
       final terminalStatus = cloudSyncV2WindowsHarnessDrainTerminalStatus(
         reachedPassLimit: result.reachedPassLimit,
-        projectionComplete: result.projectionComplete,
+        projectionComplete: result.retainedSaveProjectionComplete,
       );
       if (!mounted) return;
       setState(() {
@@ -822,11 +822,15 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         _status = result.reachedPassLimit
             ? 'Paused safely after ${result.passes} passes. Resume the drain '
                   'to continue. Report $reportName'
-            : result.projectionComplete
-            ? 'Remote history and local projection are current after '
-                  '${result.passes} passes. Report $reportName'
-            : 'Remote history is current after ${result.passes} passes; local '
-                  'projection still has retained evidence. Report $reportName';
+            : result.retainedSaveProjectionComplete
+            ? 'Remote history is current and every retained iMessage save is '
+                  'projected after ${result.passes} passes. Report $reportName'
+            : result.projectionSweepAttempted
+            ? 'Remote history is current; one exact local sweep examined every '
+                  'retained save, but some still need protocol repairs. '
+                  'Report $reportName'
+            : 'Remote history is current; no retained-save sweep was needed. '
+                  'Report $reportName';
       });
       await _setRuntimeStage(
         terminalStatus.stage,
@@ -834,6 +838,9 @@ class _CloudSyncV2WindowsHarnessState extends State<CloudSyncV2WindowsHarness> {
         detail:
             'passes=${result.passes} remote_drained=${result.remoteDrained} '
             'projection_complete=${result.projectionComplete} '
+            'retained_save_projection_complete='
+            '${result.retainedSaveProjectionComplete} '
+            'projection_sweep_attempted=${result.projectionSweepAttempted} '
             'pass_limit=${result.reachedPassLimit} report=$reportName',
       );
       _resumeAfterTwoFactor = null;

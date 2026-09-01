@@ -13,6 +13,7 @@ class InMemoryCloudSyncStore
     implements
         CloudSyncStore,
         CloudRetainedUnprojectedBacklogStore,
+        CloudRetainedUnprojectedBacklogSummaryStore,
         CloudSyncUnknownOutcomeLeasingStore,
         CloudSyncOutboxPresenceStore {
   final Lock _lock = Lock();
@@ -244,6 +245,55 @@ class InMemoryCloudSyncStore
                 entry.status == CloudInboxStatus.retainedUnprojected,
           )
           .length;
+    });
+  }
+
+  @override
+  Future<CloudRetainedUnprojectedBacklogSummary>
+  readRetainedUnprojectedInboxSummary(CloudSyncScope scope) {
+    return _lock.synchronized(() async {
+      final checkpoint = _checkpoints[scope.storageKey];
+      if (checkpoint == null) {
+        return CloudRetainedUnprojectedBacklogSummary(
+          total: 0,
+          saves: 0,
+          tombstones: 0,
+          unclassified: 0,
+        );
+      }
+      final rows =
+          (_inbox[scope.storageKey]?.values ?? const <CloudInboxEntry>[])
+              .where(
+                (entry) =>
+                    entry.generation == checkpoint.generation &&
+                    entry.status == CloudInboxStatus.retainedUnprojected,
+              )
+              .toList(growable: false);
+      final categories = <CloudFailureCategory, int>{};
+      var tombstones = 0;
+      var unclassified = 0;
+      var outOfScopeServices = 0;
+      for (final row in rows) {
+        if (row.change.isTombstone) tombstones++;
+        final category = row.lastFailure;
+        if (category == null) {
+          unclassified++;
+        } else {
+          categories.update(category, (count) => count + 1, ifAbsent: () => 1);
+          if (category == CloudFailureCategory.outOfScopeService &&
+              !row.change.isTombstone) {
+            outOfScopeServices++;
+          }
+        }
+      }
+      return CloudRetainedUnprojectedBacklogSummary(
+        total: rows.length,
+        saves: rows.length - tombstones,
+        tombstones: tombstones,
+        unclassified: unclassified,
+        outOfScopeServices: outOfScopeServices,
+        byFailureCategory: categories,
+      );
     });
   }
 
@@ -1506,6 +1556,12 @@ class InMemoryCloudSyncStore
     // Never let the tombstone shape override a conflict/unknown classification
     // recovered from an older build; those remain causal barriers.
     if (entry.change.isTombstone && category == null) return true;
+    if (category == CloudFailureCategory.outOfScopeService) {
+      return entry.change.type == CloudChangeType.save &&
+          !entry.change.isTombstone &&
+          entry.change.preflightFailure == null &&
+          entry.change.preflightCode == null;
+    }
     if (category == CloudFailureCategory.malformedRecord ||
         category == CloudFailureCategory.unsupportedService) {
       return true;

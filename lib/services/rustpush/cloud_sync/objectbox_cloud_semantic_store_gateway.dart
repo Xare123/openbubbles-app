@@ -306,7 +306,8 @@ final class ObjectBoxCloudSemanticStoreGateway
     implements
         CloudSemanticStoreGateway,
         CloudAppliedProjectionRepairStoreGateway,
-        CloudRetainedProjectionStoreGateway {
+        CloudRetainedProjectionStoreGateway,
+        CloudRetainedProjectionWindowStoreGateway {
   ObjectBoxCloudSemanticStoreGateway({
     required Store store,
     required CloudCanonicalSemanticEntityAdapter canonicalAdapter,
@@ -427,6 +428,59 @@ final class ObjectBoxCloudSemanticStoreGateway
     }
   }
 
+  @override
+  Future<void> recordRetainedProjectionOutOfScopeService({
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) {
+    try {
+      if (entry.change.type != CloudChangeType.save ||
+          entry.change.isTombstone ||
+          entry.lastFailure != CloudFailureCategory.unsupportedService) {
+        throw _failure('retained_projection_out_of_scope_entry_invalid');
+      }
+      ObjectBoxCloudSemanticFence.validateEntryContext(
+        entry: entry,
+        leaseFence: leaseFence,
+        expectedInboxStatus: CloudInboxStatus.retainedUnprojected,
+      );
+      _store.runInTransaction(TxMode.write, () {
+        final sampledAtMs = _clock().toUtc().millisecondsSinceEpoch;
+        final durable = ObjectBoxCloudSemanticFence.validateLocked(
+          store: _store,
+          entry: entry,
+          leaseFence: leaseFence,
+          nowMs: sampledAtMs,
+          expectedInboxStatus: CloudInboxStatus.retainedUnprojected,
+          canonicalAdapter: _canonicalAdapter,
+        );
+        final row = durable.inbox;
+        if (row.changeType != CloudChangeType.save.name ||
+            row.isTombstone ||
+            row.failureCategory !=
+                CloudFailureCategory.unsupportedService.name) {
+          throw _failure('retained_projection_out_of_scope_row_invalid');
+        }
+        final updatedAtMs = sampledAtMs > row.updatedAtMs
+            ? sampledAtMs
+            : row.updatedAtMs + 1;
+        row
+          ..retryCount += 1
+          ..failureCategory = CloudFailureCategory.outOfScopeService.name
+          ..nextEligibleAtMs = 0
+          ..updatedAtMs = updatedAtMs;
+        _inbox.put(row);
+      });
+      return Future<void>.value();
+    } on CloudSyncFailure catch (failure) {
+      return Future<void>.error(failure);
+    } catch (_) {
+      return Future<void>.error(
+        _failure('retained_projection_out_of_scope_record_failed'),
+      );
+    }
+  }
+
   Future<T> _writeSemanticTransaction<T>({
     required CloudInboxEntry entry,
     required CloudCoordinatorLeaseFence leaseFence,
@@ -530,6 +584,15 @@ final class ObjectBoxCloudSemanticStoreGateway
                           CloudChangeType.save.name,
                         ),
                       )
+                      .and(
+                        CloudInboxChangeEntity_.failureCategory
+                            .notEquals(
+                              CloudFailureCategory.outOfScopeService.name,
+                            )
+                            .or(
+                              CloudInboxChangeEntity_.failureCategory.isNull(),
+                            ),
+                      )
                       .and(CloudInboxChangeEntity_.isTombstone.equals(false)),
                 )
                 ..order(CloudInboxChangeEntity_.updatedAtMs)
@@ -538,6 +601,81 @@ final class ObjectBoxCloudSemanticStoreGateway
       try {
         // Apply the caller's bound in native ObjectBox before materializing
         // rows on Flutter's isolate.
+        query.limit = limit;
+        final candidates = <CloudInboxEntry>[];
+        for (final row in query.find()) {
+          final entry = _retainedEntryFromEntity(scope, row);
+          ObjectBoxCloudSemanticFence.validateLocked(
+            store: _store,
+            entry: entry,
+            leaseFence: leaseFence,
+            nowMs: _clock().toUtc().millisecondsSinceEpoch,
+            expectedInboxStatus: CloudInboxStatus.retainedUnprojected,
+            canonicalAdapter: _canonicalAdapter,
+          );
+          candidates.add(entry);
+          if (candidates.length == limit) break;
+        }
+        return List<CloudInboxEntry>.unmodifiable(candidates);
+      } finally {
+        query.close();
+      }
+    });
+  }
+
+  @override
+  Future<List<CloudInboxEntry>> readRetainedProjectionWindow({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int afterFetchSequence,
+    required int throughFetchSequence,
+    required int limit,
+  }) async {
+    if (generation <= 0 ||
+        afterFetchSequence < 0 ||
+        throughFetchSequence < afterFetchSequence ||
+        throughFetchSequence > 0x7FFFFFFFFFFFFFFE ||
+        limit <= 0 ||
+        limit > 4096) {
+      throw ArgumentError('retained_projection_window_request_invalid');
+    }
+
+    return _store.runInTransaction(TxMode.read, () {
+      final scopeKey =
+          'scope2:${_SemanticTransactionContext._digest(scope.storageKey)}';
+      final query = (_inbox.query(
+        CloudInboxChangeEntity_.scopeKey
+            .equals(scopeKey)
+            .and(CloudInboxChangeEntity_.generation.equals(generation))
+            .and(
+              CloudInboxChangeEntity_.status.equals(
+                CloudInboxStatus.retainedUnprojected.index,
+              ),
+            )
+            .and(
+              CloudInboxChangeEntity_.changeType.equals(
+                CloudChangeType.save.name,
+              ),
+            )
+            .and(
+              CloudInboxChangeEntity_.failureCategory
+                  .notEquals(CloudFailureCategory.outOfScopeService.name)
+                  .or(CloudInboxChangeEntity_.failureCategory.isNull()),
+            )
+            .and(CloudInboxChangeEntity_.isTombstone.equals(false))
+            .and(
+              CloudInboxChangeEntity_.fetchSequence.greaterThan(
+                afterFetchSequence,
+              ),
+            )
+            .and(
+              CloudInboxChangeEntity_.fetchSequence.lessThan(
+                throughFetchSequence + 1,
+              ),
+            ),
+      )..order(CloudInboxChangeEntity_.fetchSequence)).build();
+      try {
         query.limit = limit;
         final candidates = <CloudInboxEntry>[];
         for (final row in query.find()) {

@@ -291,6 +291,12 @@ void main() {
     );
     expect(
       hasCloudAttachmentV2Provenance(<String, dynamic>{
+        cloudAttachmentV2MetadataKey: cloudAttachmentV2LegacyMetadataVersion,
+      }),
+      isTrue,
+    );
+    expect(
+      hasCloudAttachmentV2Provenance(<String, dynamic>{
         cloudAttachmentV2MetadataKey: true,
       }),
       isFalse,
@@ -310,10 +316,39 @@ void main() {
       expect(
         cloudAttachmentDownloadLaneFor(<String, dynamic>{
           cloudAttachmentV2MetadataKey: cloudAttachmentV2MetadataVersion,
+          cloudAttachmentV2BodyCapabilityKey:
+              CloudAttachmentBodyCapability.materializable.metadataValue,
           'cloud': 'legacy-source',
           'rustpush': 'ids-source',
         }),
         CloudAttachmentDownloadLane.cloudSyncV2,
+      );
+      expect(
+        cloudAttachmentDownloadLaneFor(<String, dynamic>{
+          cloudAttachmentV2MetadataKey: cloudAttachmentV2LegacyMetadataVersion,
+          'cloud': 'legacy-source',
+          'rustpush': 'ids-source',
+        }),
+        CloudAttachmentDownloadLane.cloudSyncV2,
+      );
+      expect(
+        cloudAttachmentDownloadLaneFor(<String, dynamic>{
+          cloudAttachmentV2MetadataKey: cloudAttachmentV2MetadataVersion,
+          cloudAttachmentV2BodyCapabilityKey: CloudAttachmentBodyCapability
+              .metadataOnlyUnsupportedMediaCredentials
+              .metadataValue,
+          'cloud': 'legacy-source',
+          'rustpush': 'ids-source',
+        }),
+        CloudAttachmentDownloadLane.unavailable,
+      );
+      expect(
+        cloudAttachmentDownloadLaneFor(<String, dynamic>{
+          cloudAttachmentV2MetadataKey: cloudAttachmentV2MetadataVersion,
+          'cloud': 'legacy-source',
+          'rustpush': 'ids-source',
+        }),
+        CloudAttachmentDownloadLane.unavailable,
       );
       expect(
         cloudAttachmentDownloadLaneFor(<String, dynamic>{
@@ -346,6 +381,8 @@ void main() {
   test('V2 download queue and failure cleanup preserve native ownership', () {
     final v2 = <String, dynamic>{
       cloudAttachmentV2MetadataKey: cloudAttachmentV2MetadataVersion,
+      cloudAttachmentV2BodyCapabilityKey:
+          CloudAttachmentBodyCapability.materializable.metadataValue,
     };
     final legacy = <String, dynamic>{'cloud': 'legacy-source'};
 

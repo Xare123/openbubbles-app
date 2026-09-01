@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_merge_policy.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
@@ -105,6 +106,7 @@ void main() {
         ownerPart: 0,
         fileName: 'attachment.bin',
         mimeType: 'application/octet-stream',
+        bodyCapability: CloudAttachmentBodyCapability.materializable,
         protectedLocalReference: 'protected:attachment',
       ),
       CloudEntityKind.sharedProfile => CloudProfileEntityPayload(
@@ -351,7 +353,256 @@ void main() {
     },
   );
 
+  test(
+    'returns a typed out-of-scope result without canonical mutation',
+    () async {
+      final inbox = entry(1);
+      decoder.outOfScopeServices[inbox.change.changeId] =
+          CloudSemanticOutOfScopeService.smsFamily;
+      final diagnostics = <String>[];
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        diagnosticRecorder: diagnostics.add,
+      );
+
+      final result = await _apply(applier, inbox);
+
+      expect(result.disposition, CloudInboxApplyDisposition.outOfScopeService);
+      expect(result.failureCategory, CloudFailureCategory.outOfScopeService);
+      expect(
+        result.outOfScopeService,
+        CloudSemanticOutOfScopeService.smsFamily,
+      );
+      expect(result.safeCode, 'semantic_out_of_scope_sms_family');
+      expect(store.transactionCount, 0);
+      expect(store.transaction.entityApplyCount, 0);
+      expect(store.transaction.appliedChanges, isEmpty);
+      expect(diagnostics, ['semantic_out_of_scope_sms_family']);
+    },
+  );
+
+  test(
+    'historical unsupported service is reclassified once and leaves no candidate',
+    () async {
+      final inbox = retainedEntry(
+        1,
+      ).copyWith(lastFailure: CloudFailureCategory.unsupportedService);
+      store.retainedEntries.add(inbox);
+      decoder.outOfScopeServices[inbox.change.changeId] =
+          CloudSemanticOutOfScopeService.rcs;
+      final diagnostics = <String>[];
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        identityRegistrar: _IdentityRegistrar(),
+        diagnosticRecorder: diagnostics.add,
+      );
+
+      final result = await applier.reprojectRetainedUnprojected(
+        scope: scope,
+        generation: 3,
+        leaseFence: _testLeaseFence,
+        limit: 256,
+      );
+
+      expect(result.examined, 1);
+      expect(result.reprojected, 0);
+      expect(result.retained, 1);
+      expect(result.hasRemaining, isFalse);
+      expect(
+        store.retainedEntries.single.lastFailure,
+        CloudFailureCategory.outOfScopeService,
+      );
+      expect(store.retainedEntries.single.attemptCount, 1);
+      expect(store.retainedFailureRecordCount, 1);
+      expect(store.retainedTransactionCount, 0);
+      expect(store.transaction.entityApplyCount, 0);
+      expect(diagnostics, [
+        'retained_projection_examined',
+        'semantic_out_of_scope_rcs',
+        'retained_projection_out_of_scope_service',
+      ]);
+    },
+  );
+
+  test('out-of-scope proof cannot erase other retained failure debt', () async {
+    final inbox = retainedEntry(
+      1,
+    ).copyWith(lastFailure: CloudFailureCategory.dependency);
+    store.retainedEntries.add(inbox);
+    decoder.outOfScopeServices[inbox.change.changeId] =
+        CloudSemanticOutOfScopeService.smsFamily;
+    applier = TransactionalCloudInboxApplier(
+      decoder: decoder,
+      store: store,
+      identityRegistrar: _IdentityRegistrar(),
+    );
+
+    final result = await applier.reprojectRetainedUnprojected(
+      scope: scope,
+      generation: 3,
+      leaseFence: _testLeaseFence,
+      limit: 256,
+    );
+
+    expect(result.examined, 1);
+    expect(result.reprojected, 0);
+    expect(result.retained, 1);
+    expect(result.hasRemaining, isTrue);
+    expect(
+      store.retainedEntries.single.lastFailure,
+      CloudFailureCategory.dependency,
+    );
+    expect(store.retainedEntries.single.attemptCount, 1);
+    expect(store.transaction.entityApplyCount, 0);
+  });
+
+  test(
+    'sequence-bounded sweep attempts each retained save once and skips tombstones',
+    () async {
+      final failed = retainedEntry(1);
+      final tombstone = retainedEntry(2, tombstone: true);
+      final third = retainedEntry(3);
+      final fourth = retainedEntry(4);
+      final outsideBound = retainedEntry(5);
+      store.retainedEntries.addAll([
+        failed,
+        tombstone,
+        third,
+        fourth,
+        outsideBound,
+      ]);
+      decoder.failures[failed.change.changeId] =
+          const CloudSemanticDecodeFailure(
+            CloudFailureCategory.malformedRecord,
+            safeCode: 'decoder_message_shape_invalid',
+          );
+      decodeUpsert(third, message(key: 'third-message-key'));
+      decodeUpsert(fourth, message(key: 'fourth-message-key'));
+      decodeUpsert(outsideBound, message(key: 'outside-message-key'));
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        identityRegistrar: _IdentityRegistrar(),
+      );
+
+      final firstWindow = await applier.reprojectRetainedSaveWindow(
+        scope: scope,
+        generation: 3,
+        leaseFence: _testLeaseFence,
+        afterFetchSequence: 0,
+        throughFetchSequence: 4,
+        limit: 2,
+      );
+
+      expect(firstWindow.examined, 2);
+      expect(firstWindow.reprojected, 1);
+      expect(firstWindow.retained, 1);
+      expect(firstWindow.lastExaminedSequence, 3);
+      expect(firstWindow.hasMoreWithinBound, isTrue);
+
+      final secondWindow = await applier.reprojectRetainedSaveWindow(
+        scope: scope,
+        generation: 3,
+        leaseFence: _testLeaseFence,
+        afterFetchSequence: firstWindow.lastExaminedSequence,
+        throughFetchSequence: 4,
+        limit: 2,
+      );
+
+      expect(secondWindow.examined, 1);
+      expect(secondWindow.reprojected, 1);
+      expect(secondWindow.retained, 0);
+      expect(secondWindow.lastExaminedSequence, 4);
+      expect(secondWindow.hasMoreWithinBound, isFalse);
+      expect(store.retainedEntries[0].attemptCount, 1);
+      expect(
+        store.retainedEntries[0].status,
+        CloudInboxStatus.retainedUnprojected,
+      );
+      expect(
+        store.retainedEntries[1].status,
+        CloudInboxStatus.retainedUnprojected,
+      );
+      expect(store.retainedEntries[2].status, CloudInboxStatus.applied);
+      expect(store.retainedEntries[3].status, CloudInboxStatus.applied);
+      expect(
+        store.retainedEntries[4].status,
+        CloudInboxStatus.retainedUnprojected,
+      );
+      expect(decoder.decodeCalls, 3);
+      expect(store.retainedFailureRecordCount, 1);
+      expect(store.retainedTransactionCount, 2);
+    },
+  );
+
+  test(
+    'sequence-bounded sweep rejects unordered candidates before decoding',
+    () async {
+      final first = retainedEntry(1);
+      final second = retainedEntry(2);
+      store
+        ..retainedEntries.addAll([first, second])
+        ..projectionWindowOverride = [second, first];
+      applier = TransactionalCloudInboxApplier(
+        decoder: decoder,
+        store: store,
+        identityRegistrar: _IdentityRegistrar(),
+      );
+
+      await expectLater(
+        applier.reprojectRetainedSaveWindow(
+          scope: scope,
+          generation: 3,
+          leaseFence: _testLeaseFence,
+          afterFetchSequence: 0,
+          throughFetchSequence: 2,
+          limit: 2,
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'retained_projection_window_candidate_invalid',
+          ),
+        ),
+      );
+
+      expect(decoder.decodeCalls, 0);
+      expect(store.retainedTransactionCount, 0);
+      expect(store.retainedFailureRecordCount, 0);
+    },
+  );
+
+  test('retained replay fails closed without an identity registrar', () async {
+    store.retainedEntries.add(retainedEntry(1));
+
+    await expectLater(
+      applier.reprojectRetainedUnprojected(
+        scope: scope,
+        generation: 3,
+        leaseFence: _testLeaseFence,
+        limit: 256,
+      ),
+      throwsA(
+        isA<CloudSyncFailure>()
+            .having(
+              (failure) => failure.category,
+              'category',
+              CloudFailureCategory.dependency,
+            )
+            .having(
+              (failure) => failure.safeCode,
+              'safeCode',
+              'retained_projection_registrar_unavailable',
+            ),
+      ),
+    );
+  });
+
   test('reports retained backlog beyond a fully successful window', () async {
+    final diagnostics = <String>[];
     final first = retainedEntry(1);
     final second = retainedEntry(2);
     decodeUpsert(first, message(key: 'first-message-key'));
@@ -361,6 +612,7 @@ void main() {
       decoder: decoder,
       store: store,
       identityRegistrar: _IdentityRegistrar(),
+      diagnosticRecorder: diagnostics.add,
     );
 
     final result = await applier.reprojectRetainedUnprojected(
@@ -374,6 +626,11 @@ void main() {
     expect(result.reprojected, 1);
     expect(result.retained, 0);
     expect(result.hasRemaining, isTrue);
+    expect(diagnostics, <String>[
+      'retained_projection_examined',
+      'retained_projection_reprojected',
+      'retained_projection_has_remaining',
+    ]);
     expect(store.retainedEntries[0].status, CloudInboxStatus.applied);
     expect(
       store.retainedEntries[1].status,
@@ -382,15 +639,18 @@ void main() {
   });
 
   test('retained decode failure leaves the source row retained', () async {
+    final diagnostics = <String>[];
     final inbox = retainedEntry(1);
     store.retainedEntries.add(inbox);
     decoder.failures[inbox.change.changeId] = const CloudSemanticDecodeFailure(
       CloudFailureCategory.malformedRecord,
+      safeCode: 'decoder_chat_shape_invalid',
     );
     applier = TransactionalCloudInboxApplier(
       decoder: decoder,
       store: store,
       identityRegistrar: _IdentityRegistrar(),
+      diagnosticRecorder: diagnostics.add,
     );
 
     final result = await applier.reprojectRetainedUnprojected(
@@ -412,6 +672,13 @@ void main() {
     expect(store.retainedFailureRecordCount, 1);
     expect(store.retainedTransactionCount, 0);
     expect(store.transaction.appliedChanges, isEmpty);
+    expect(diagnostics, <String>[
+      'retained_projection_examined',
+      'retained_projection_decoder_malformed_record',
+      'decoder_chat_shape_invalid',
+      'retained_projection_retained',
+      'retained_projection_has_remaining',
+    ]);
   });
 
   test(
@@ -1311,11 +1578,16 @@ void main() {
 class _Decoder implements CloudSemanticDecoder {
   final values = <String, CloudDecodedMutation>{};
   final failures = <String, CloudSemanticDecodeFailure>{};
+  final outOfScopeServices = <String, CloudSemanticOutOfScopeService>{};
   int decodeCalls = 0;
 
   @override
   Future<CloudDecodedMutation> decode(CloudInboxEntry entry) async {
     decodeCalls++;
+    final outOfScopeService = outOfScopeServices[entry.change.changeId];
+    if (outOfScopeService != null) {
+      throw CloudSemanticOutOfScopeServiceDisposition(outOfScopeService);
+    }
     final failure = failures[entry.change.changeId];
     if (failure != null) throw failure;
     return values[entry.change.changeId]!;
@@ -1357,6 +1629,7 @@ class _MemorySemanticStore
     implements
         CloudSemanticStoreGateway,
         CloudRetainedProjectionStoreGateway,
+        CloudRetainedProjectionWindowStoreGateway,
         CloudAppliedProjectionRepairStoreGateway {
   _MemorySemanticStore({required CloudSyncScope scope, required int generation})
     : transaction = _MemoryTransaction(scope, generation);
@@ -1364,6 +1637,7 @@ class _MemorySemanticStore
   final _MemoryTransaction transaction;
   final retainedEntries = <CloudInboxEntry>[];
   final appliedEntries = <CloudInboxEntry>[];
+  List<CloudInboxEntry>? projectionWindowOverride;
   CloudSyncFailure? failure;
   int transactionCount = 0;
   int retainedTransactionCount = 0;
@@ -1398,6 +1672,7 @@ class _MemorySemanticStore
                   entry.scope == scope &&
                   entry.generation == generation &&
                   entry.status == CloudInboxStatus.retainedUnprojected &&
+                  entry.lastFailure != CloudFailureCategory.outOfScopeService &&
                   entry.change.type == CloudChangeType.save &&
                   !entry.change.isTombstone,
             )
@@ -1408,6 +1683,35 @@ class _MemorySemanticStore
                 ? attempts
                 : left.sequence.compareTo(right.sequence);
           });
+    return candidates.take(limit).toList();
+  }
+
+  @override
+  Future<List<CloudInboxEntry>> readRetainedProjectionWindow({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int afterFetchSequence,
+    required int throughFetchSequence,
+    required int limit,
+  }) async {
+    final override = projectionWindowOverride;
+    if (override != null) return override.take(limit).toList();
+    final candidates =
+        retainedEntries
+            .where(
+              (entry) =>
+                  entry.scope == scope &&
+                  entry.generation == generation &&
+                  entry.status == CloudInboxStatus.retainedUnprojected &&
+                  entry.lastFailure != CloudFailureCategory.outOfScopeService &&
+                  entry.change.type == CloudChangeType.save &&
+                  !entry.change.isTombstone &&
+                  entry.sequence > afterFetchSequence &&
+                  entry.sequence <= throughFetchSequence,
+            )
+            .toList()
+          ..sort((left, right) => left.sequence.compareTo(right.sequence));
     return candidates.take(limit).toList();
   }
 
@@ -1429,6 +1733,28 @@ class _MemorySemanticStore
     retainedFailureRecordCount++;
     retainedEntries[index] = retainedEntries[index].copyWith(
       attemptCount: retainedEntries[index].attemptCount + 1,
+    );
+  }
+
+  @override
+  Future<void> recordRetainedProjectionOutOfScopeService({
+    required CloudInboxEntry entry,
+    required CloudCoordinatorLeaseFence leaseFence,
+  }) async {
+    final index = retainedEntries.indexWhere(
+      (candidate) => candidate.change.changeId == entry.change.changeId,
+    );
+    if (index < 0 ||
+        retainedEntries[index].status != CloudInboxStatus.retainedUnprojected) {
+      throw CloudSyncFailure(
+        category: CloudFailureCategory.conflict,
+        safeCode: 'retained_projection_row_changed',
+      );
+    }
+    retainedFailureRecordCount++;
+    retainedEntries[index] = retainedEntries[index].copyWith(
+      attemptCount: retainedEntries[index].attemptCount + 1,
+      lastFailure: CloudFailureCategory.outOfScopeService,
     );
   }
 

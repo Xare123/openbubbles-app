@@ -28,6 +28,16 @@ typedef _TestSemanticInboxApplierFactory =
       int generation,
     );
 
+typedef _RetainedProjectionWindowCallback =
+    Future<CloudRetainedProjectionWindowResult> Function(
+      CloudSyncScope scope,
+      int generation,
+      CloudCoordinatorLeaseFence leaseFence,
+      int afterFetchSequence,
+      int throughFetchSequence,
+      int limit,
+    );
+
 CloudSyncShadowPreflightState _readyState({int outboxCount = 0}) =>
     CloudSyncShadowPreflightState(
       platformSupported: true,
@@ -142,6 +152,112 @@ CloudSyncManualSemanticPullSampler _sampler({
   fetchTimeoutOverrideForTest: fetchTimeout,
   observerFactory: observerFactory,
 );
+
+CloudSyncScope _semanticScope(String zone) => CloudSyncScope(
+  accountFingerprint: _accountFingerprintA,
+  container: CloudSyncManualSemanticPullSampler.container,
+  database: CloudSyncManualSemanticPullSampler.database,
+  zone: zone,
+  persistenceLane: CloudSyncPersistenceLane.semantic,
+);
+
+Future<void> _seedRetainedSaves(
+  InMemoryCloudSyncStore store,
+  CloudSyncScope scope, {
+  required int count,
+}) async {
+  final now = DateTime.now().toUtc();
+  final checkpoint = await store.readCheckpoint(scope);
+  final leaseFence = await store.tryAcquireCoordinatorLease(
+    scope,
+    ownerId: 'seed-retained-${scope.zone}',
+    now: now,
+    leaseDuration: const Duration(minutes: 5),
+  );
+  expect(leaseFence, isNotNull);
+  try {
+    await store.journalFetchedBatch(
+      CloudFetchBatch(
+        scope: scope,
+        changes: [
+          for (var index = 1; index <= count; index++)
+            _change('retained-${scope.zone}-$index'),
+        ],
+        batchId: 'seed-retained-${scope.zone}',
+        generation: checkpoint.generation,
+        nextToken: 'seed-retained-token-${scope.zone}',
+        hasMore: false,
+      ),
+      now: now,
+      leaseFence: leaseFence!,
+      expectedGeneration: checkpoint.generation,
+      expectedFetchedToken: checkpoint.fetchedToken,
+    );
+    for (var sequence = 1; sequence <= count; sequence++) {
+      await store.markInboxRetainedUnprojected(
+        scope,
+        sequence: sequence,
+        category: CloudFailureCategory.malformedRecord,
+        now: now,
+        maximumDeferredAttempts: 8,
+        maximumDeferredAge: const Duration(days: 3),
+        leaseFence: leaseFence,
+      );
+    }
+  } finally {
+    await store.releaseCoordinatorLease(scope, leaseFence: leaseFence!);
+  }
+  final seededCheckpoint = await store.readCheckpoint(scope);
+  expect(seededCheckpoint.fetchedSequence, count);
+  expect(seededCheckpoint.pendingBatchId, isNull);
+  expect(seededCheckpoint.hasUnmarkedPendingInbox, isFalse);
+}
+
+CloudSyncManualSemanticPullSampler _catchUpSampler({
+  required Directory privateStorageDirectory,
+  required Map<String, InMemoryCloudSyncStore> stores,
+  required CloudSyncStore operationFenceStore,
+  required CloudSyncNativeWriterPause nativeWriterPause,
+  required _RetainedProjectionWindowCallback onReprojectWindow,
+  void Function()? onEnsureAuth,
+  void Function()? onPrepareAuth,
+  void Function(CloudSyncScope scope)? onCreateRawTransport,
+}) {
+  return _sampler(
+    privateStorageDirectory: privateStorageDirectory,
+    readPreflight: () async => _readyState(),
+    ensureAuthSnapshot: () async {
+      onEnsureAuth?.call();
+      return _auth();
+    },
+    prepareAuthSnapshot: (pauseToken, expectedAuth) async {
+      onPrepareAuth?.call();
+      return _auth();
+    },
+    readAuthSnapshot: () async => _auth(),
+    createStore: (scope) async => stores[scope.zone]!,
+    createRawTransport: (auth, scope, pauseToken) async {
+      onCreateRawTransport?.call(scope);
+      final transport = FakeCloudSyncTransport();
+      transport.fetchHandler =
+          (requestedScope, previousToken, generation, limit) async {
+            return CloudFetchBatch(
+              scope: requestedScope,
+              changes: const [],
+              batchId: 'terminal-empty-${requestedScope.zone}',
+              generation: generation,
+              nextToken: previousToken,
+              hasMore: false,
+            );
+          };
+      return transport;
+    },
+    createInboxApplier: (auth, scope, generation) async =>
+        _RetainedProjectionWindowFakeApplier(onReproject: onReprojectWindow),
+    operationFenceStore: operationFenceStore,
+    nativeWriterPause: nativeWriterPause,
+  );
+}
 
 void main() {
   late Directory privateStorageDirectory;
@@ -334,6 +450,362 @@ void main() {
 
       expect(persistedPasses, 1);
       expect(prepareCalls, 2);
+      expect(nativeWriterPause.pauseCalls, 1);
+      expect(nativeWriterPause.resumeCalls, 1);
+      expect(sampler.isActive, isFalse);
+    },
+  );
+
+  test(
+    'confirmed catch-up persists terminal head before one local-only sweep session',
+    () async {
+      final stores = <String, InMemoryCloudSyncStore>{
+        for (final zone in CloudSyncManualSemanticPullSampler.zones)
+          zone: InMemoryCloudSyncStore(),
+      };
+      final chatScope = _semanticScope('chatManateeZone');
+      await _seedRetainedSaves(stores[chatScope.zone]!, chatScope, count: 1);
+      final events = <String>[];
+      final persistedModes = <CloudSyncSemanticReportMode>[];
+      final operationFenceStore = InMemoryCloudSyncStore();
+      final nativeWriterPause = _RecordingNativeWriterPause(events: events);
+      var ensureAuthCalls = 0;
+      var prepareAuthCalls = 0;
+      var rawTransportFactoryCalls = 0;
+      var sweepCalls = 0;
+      var terminalHeadPersisted = false;
+
+      final sampler = _catchUpSampler(
+        privateStorageDirectory: privateStorageDirectory,
+        stores: stores,
+        operationFenceStore: operationFenceStore,
+        nativeWriterPause: nativeWriterPause,
+        onEnsureAuth: () {
+          ensureAuthCalls++;
+          events.add('ensure-auth');
+        },
+        onPrepareAuth: () {
+          prepareAuthCalls++;
+          events.add('prepare-auth');
+        },
+        onCreateRawTransport: (scope) {
+          rawTransportFactoryCalls++;
+          events.add('transport:${scope.zone}');
+        },
+        onReprojectWindow:
+            (
+              scope,
+              generation,
+              leaseFence,
+              afterFetchSequence,
+              throughFetchSequence,
+              limit,
+            ) async {
+              CloudKitOperationInterlock.requireActive(
+                CloudKitOperationKind.v2SemanticRead,
+              );
+              sweepCalls++;
+              events.add('sweep:${scope.zone}');
+              expect(scope, chatScope);
+              expect(generation, 1);
+              expect(afterFetchSequence, 0);
+              expect(throughFetchSequence, 1);
+              expect(limit, 1);
+              expect(terminalHeadPersisted, isTrue);
+              expect(rawTransportFactoryCalls, 3);
+              expect(ensureAuthCalls, 1);
+              expect(prepareAuthCalls, 1);
+              expect(nativeWriterPause.pauseCalls, 1);
+              expect(nativeWriterPause.resumeCalls, 0);
+              return const CloudRetainedProjectionWindowResult(
+                examined: 1,
+                reprojected: 0,
+                retained: 1,
+                lastExaminedSequence: 1,
+                hasMoreWithinBound: false,
+              );
+            },
+      );
+
+      final result = await sampler.runConfirmedCatchUpAndPersist(
+        projectionBatchSize: 1,
+        persistReport: (report) async {
+          persistedModes.add(report.mode);
+          events.add('persist:${report.mode.wireName}');
+          if (report.mode == CloudSyncSemanticReportMode.readOnlyCloudKit) {
+            terminalHeadPersisted = true;
+            expect(report.allZonesObservedEmptyTerminalRead, isTrue);
+            expect(report.hasRetainedSaveBacklog, isTrue);
+            return 'remote-head-report';
+          }
+          expect(sweepCalls, 1);
+          return 'projection-sweep-report';
+        },
+      );
+
+      expect(persistedModes, const [
+        CloudSyncSemanticReportMode.readOnlyCloudKit,
+        CloudSyncSemanticReportMode.retainedProjectionSweep,
+      ]);
+      expect(
+        events.indexOf(
+          'persist:${CloudSyncSemanticReportMode.readOnlyCloudKit.wireName}',
+        ),
+        lessThan(events.indexOf('sweep:chatManateeZone')),
+      );
+      expect(
+        events.indexOf('sweep:chatManateeZone'),
+        lessThan(
+          events.indexOf(
+            'persist:${CloudSyncSemanticReportMode.retainedProjectionSweep.wireName}',
+          ),
+        ),
+      );
+      expect(rawTransportFactoryCalls, 3);
+      expect(ensureAuthCalls, 1);
+      expect(prepareAuthCalls, 1);
+      expect(nativeWriterPause.pauseCalls, 1);
+      expect(nativeWriterPause.resumeCalls, 1);
+      expect(events.last, 'resume-native-writers');
+      expect(result.remotePasses, 1);
+      expect(result.remoteDrained, isTrue);
+      expect(result.lastRemoteReportReference, 'remote-head-report');
+      expect(result.projectionReport, isNotNull);
+      expect(result.projectionReportReference, 'projection-sweep-report');
+      expect(sampler.isActive, isFalse);
+    },
+  );
+
+  test(
+    'checkpoint change aborts the local sweep before projection evidence',
+    () async {
+      final stores = <String, InMemoryCloudSyncStore>{
+        for (final zone in CloudSyncManualSemanticPullSampler.zones)
+          zone: InMemoryCloudSyncStore(),
+      };
+      final chatScope = _semanticScope('chatManateeZone');
+      final chatStore = stores[chatScope.zone]!;
+      await _seedRetainedSaves(chatStore, chatScope, count: 1);
+      final persistedModes = <CloudSyncSemanticReportMode>[];
+      final nativeWriterPause = _RecordingNativeWriterPause();
+      var rawTransportFactoryCalls = 0;
+
+      final sampler = _catchUpSampler(
+        privateStorageDirectory: privateStorageDirectory,
+        stores: stores,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        nativeWriterPause: nativeWriterPause,
+        onCreateRawTransport: (_) => rawTransportFactoryCalls++,
+        onReprojectWindow:
+            (
+              scope,
+              generation,
+              leaseFence,
+              afterFetchSequence,
+              throughFetchSequence,
+              limit,
+            ) async {
+              final checkpoint = await chatStore.readCheckpoint(scope);
+              await chatStore.journalFetchedBatch(
+                CloudFetchBatch(
+                  scope: scope,
+                  changes: [_change('checkpoint-changed-during-sweep')],
+                  batchId: 'checkpoint-changed-during-sweep',
+                  generation: generation,
+                  nextToken: 'checkpoint-changed-token',
+                  hasMore: false,
+                ),
+                now: DateTime.now().toUtc(),
+                leaseFence: leaseFence,
+                expectedGeneration: generation,
+                expectedFetchedToken: checkpoint.fetchedToken,
+              );
+              return const CloudRetainedProjectionWindowResult(
+                examined: 1,
+                reprojected: 0,
+                retained: 1,
+                lastExaminedSequence: 1,
+                hasMoreWithinBound: false,
+              );
+            },
+      );
+
+      await expectLater(
+        sampler.runConfirmedCatchUpAndPersist(
+          projectionBatchSize: 1,
+          persistReport: (report) async {
+            persistedModes.add(report.mode);
+            return 'report-${persistedModes.length}';
+          },
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'cloud_sync_projection_sweep_checkpoint_changed',
+          ),
+        ),
+      );
+
+      expect(persistedModes, const [
+        CloudSyncSemanticReportMode.readOnlyCloudKit,
+      ]);
+      expect(rawTransportFactoryCalls, 3);
+      expect(nativeWriterPause.pauseCalls, 1);
+      expect(nativeWriterPause.resumeCalls, 1);
+      expect(sampler.isActive, isFalse);
+    },
+  );
+
+  test('lease loss aborts a later local projection window safely', () async {
+    final stores = <String, InMemoryCloudSyncStore>{
+      for (final zone in CloudSyncManualSemanticPullSampler.zones)
+        zone: InMemoryCloudSyncStore(),
+    };
+    final chatScope = _semanticScope('chatManateeZone');
+    final chatStore = stores[chatScope.zone]!;
+    await _seedRetainedSaves(chatStore, chatScope, count: 2);
+    final persistedModes = <CloudSyncSemanticReportMode>[];
+    final nativeWriterPause = _RecordingNativeWriterPause();
+    var sweepCalls = 0;
+    var rawTransportFactoryCalls = 0;
+
+    final sampler = _catchUpSampler(
+      privateStorageDirectory: privateStorageDirectory,
+      stores: stores,
+      operationFenceStore: InMemoryCloudSyncStore(),
+      nativeWriterPause: nativeWriterPause,
+      onCreateRawTransport: (_) => rawTransportFactoryCalls++,
+      onReprojectWindow:
+          (
+            scope,
+            generation,
+            leaseFence,
+            afterFetchSequence,
+            throughFetchSequence,
+            limit,
+          ) async {
+            sweepCalls++;
+            expect(sweepCalls, 1);
+            expect(afterFetchSequence, 0);
+            expect(throughFetchSequence, 2);
+            expect(limit, 1);
+            await chatStore.releaseCoordinatorLease(
+              scope,
+              leaseFence: leaseFence,
+            );
+            return const CloudRetainedProjectionWindowResult(
+              examined: 1,
+              reprojected: 0,
+              retained: 1,
+              lastExaminedSequence: 1,
+              hasMoreWithinBound: true,
+            );
+          },
+    );
+
+    await expectLater(
+      sampler.runConfirmedCatchUpAndPersist(
+        projectionBatchSize: 1,
+        persistReport: (report) async {
+          persistedModes.add(report.mode);
+          return 'report-${persistedModes.length}';
+        },
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'cloud_sync_projection_sweep_lease_lost',
+        ),
+      ),
+    );
+
+    expect(persistedModes, const [
+      CloudSyncSemanticReportMode.readOnlyCloudKit,
+    ]);
+    expect(sweepCalls, 1);
+    expect(rawTransportFactoryCalls, 3);
+    expect(nativeWriterPause.pauseCalls, 1);
+    expect(nativeWriterPause.resumeCalls, 1);
+    final replacementLease = await chatStore.tryAcquireCoordinatorLease(
+      chatScope,
+      ownerId: 'post-sweep-lease-loss',
+      now: DateTime.now().toUtc(),
+      leaseDuration: const Duration(minutes: 1),
+    );
+    expect(replacementLease, isNotNull);
+    await chatStore.releaseCoordinatorLease(
+      chatScope,
+      leaseFence: replacementLease!,
+    );
+    expect(sampler.isActive, isFalse);
+  });
+
+  test(
+    'projection report persistence is required before catch-up returns',
+    () async {
+      final stores = <String, InMemoryCloudSyncStore>{
+        for (final zone in CloudSyncManualSemanticPullSampler.zones)
+          zone: InMemoryCloudSyncStore(),
+      };
+      final chatScope = _semanticScope('chatManateeZone');
+      await _seedRetainedSaves(stores[chatScope.zone]!, chatScope, count: 1);
+      final persistedModes = <CloudSyncSemanticReportMode>[];
+      final nativeWriterPause = _RecordingNativeWriterPause();
+      var sweepCalls = 0;
+
+      final sampler = _catchUpSampler(
+        privateStorageDirectory: privateStorageDirectory,
+        stores: stores,
+        operationFenceStore: InMemoryCloudSyncStore(),
+        nativeWriterPause: nativeWriterPause,
+        onReprojectWindow:
+            (
+              scope,
+              generation,
+              leaseFence,
+              afterFetchSequence,
+              throughFetchSequence,
+              limit,
+            ) async {
+              sweepCalls++;
+              return const CloudRetainedProjectionWindowResult(
+                examined: 1,
+                reprojected: 0,
+                retained: 1,
+                lastExaminedSequence: 1,
+                hasMoreWithinBound: false,
+              );
+            },
+      );
+
+      await expectLater(
+        sampler.runConfirmedCatchUpAndPersist(
+          projectionBatchSize: 1,
+          persistReport: (report) async {
+            persistedModes.add(report.mode);
+            if (report.mode ==
+                CloudSyncSemanticReportMode.retainedProjectionSweep) {
+              throw StateError('projection-report-persist-failed');
+            }
+            return 'remote-head-report';
+          },
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'projection-report-persist-failed',
+          ),
+        ),
+      );
+
+      expect(persistedModes, const [
+        CloudSyncSemanticReportMode.readOnlyCloudKit,
+        CloudSyncSemanticReportMode.retainedProjectionSweep,
+      ]);
+      expect(sweepCalls, 1);
       expect(nativeWriterPause.pauseCalls, 1);
       expect(nativeWriterPause.resumeCalls, 1);
       expect(sampler.isActive, isFalse);
@@ -1127,6 +1599,22 @@ void main() {
       expect(firstMessageZone.tombstoneReadOnlyAcknowledged, 1);
       expect(firstMessageZone.retainedUnprojected, 1);
       expect(
+        firstMessageZone.diagnosticCounts,
+        containsPair('retained_backlog_summary_ready', 1),
+      );
+      expect(
+        firstMessageZone.diagnosticCounts,
+        containsPair('retained_backlog_total', 1),
+      );
+      expect(
+        firstMessageZone.diagnosticCounts,
+        containsPair('retained_backlog_tombstones', 1),
+      );
+      expect(
+        firstMessageZone.diagnosticCounts,
+        containsPair('retained_backlog_unclassified', 1),
+      );
+      expect(
         cloudSyncV2SemanticCanaryPresentation(firstReport).outcome,
         CloudSyncV2SemanticCanaryOutcome.partial,
       );
@@ -1143,6 +1631,18 @@ void main() {
       expect(secondMessageZone.fetched, 0);
       expect(secondMessageZone.tombstoneReadOnlyAcknowledged, 0);
       expect(secondMessageZone.retainedUnprojected, 1);
+      expect(
+        secondMessageZone.diagnosticCounts,
+        containsPair('retained_backlog_summary_ready', 1),
+      );
+      expect(
+        secondMessageZone.diagnosticCounts,
+        containsPair('retained_backlog_total', 1),
+      );
+      expect(
+        secondMessageZone.diagnosticCounts,
+        containsPair('retained_backlog_tombstones', 1),
+      );
       final secondPresentation = cloudSyncV2SemanticCanaryPresentation(
         secondReport,
       );
@@ -1958,4 +2458,28 @@ final class _RetainedProjectionFakeApplier extends FakeCloudInboxApplier
       retained: 0,
     );
   }
+}
+
+final class _RetainedProjectionWindowFakeApplier extends FakeCloudInboxApplier
+    implements CloudRetainedProjectionWindowReprocessor {
+  _RetainedProjectionWindowFakeApplier({required this.onReproject});
+
+  final _RetainedProjectionWindowCallback onReproject;
+
+  @override
+  Future<CloudRetainedProjectionWindowResult> reprojectRetainedSaveWindow({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int afterFetchSequence,
+    required int throughFetchSequence,
+    required int limit,
+  }) => onReproject(
+    scope,
+    generation,
+    leaseFence,
+    afterFetchSequence,
+    throughFetchSequence,
+    limit,
+  );
 }

@@ -18,8 +18,46 @@ void main() {
   test('invalid diagnostic input cannot interrupt semantic projection', () {
     final diagnostics = CloudSyncSemanticDiagnosticCollector();
 
-    diagnostics.record('message body or identifier');
+    for (final candidate in const <String>[
+      'message body or identifier',
+      '1234567890',
+      'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      'protected_reference_not_reviewed',
+    ]) {
+      diagnostics.record(candidate);
+    }
 
-    expect(diagnostics.snapshot(), <String, int>{'diagnostic_code_invalid': 1});
+    expect(diagnostics.snapshot(), <String, int>{'diagnostic_code_invalid': 4});
+  });
+
+  test('accepts only reviewed fixed and typed diagnostic families', () {
+    final diagnostics = CloudSyncSemanticDiagnosticCollector();
+
+    for (final code in const <String>[
+      'canonical_identity_guid_invalid',
+      'canonical_message_chat_candidate_original_group_id_unique',
+      'decoder_malformed_record',
+      'native_quarantined_malformed_record',
+      'retained_backlog_failure_dependency',
+    ]) {
+      diagnostics.record(code);
+    }
+
+    expect(diagnostics.snapshot().keys, <String>[
+      'canonical_identity_guid_invalid',
+      'canonical_message_chat_candidate_original_group_id_unique',
+      'decoder_malformed_record',
+      'native_quarantined_malformed_record',
+      'retained_backlog_failure_dependency',
+    ]);
+  });
+
+  test('persisted snapshots reject syntactically valid unreviewed keys', () {
+    expect(
+      () => CloudSyncSemanticDiagnosticCollector.validatedSnapshot(const {
+        'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee': 1,
+      }),
+      throwsArgumentError,
+    );
   });
 }

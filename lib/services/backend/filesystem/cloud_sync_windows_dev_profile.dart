@@ -31,14 +31,22 @@ abstract final class CloudSyncWindowsDevProfile {
     Directory directory, {
     Map<String, String>? environment,
   }) {
-    final expected = path.normalize(
-      expectedDirectory(environment: environment).absolute.path,
-    );
+    final expectedDirectoryValue = expectedDirectory(environment: environment);
+    final expected = path.normalize(expectedDirectoryValue.absolute.path);
     final candidate = path.normalize(directory.absolute.path);
     if (expected.toLowerCase() != candidate.toLowerCase()) return false;
+    if (!_hasOnlyPlainDirectoryAncestors(expected) ||
+        !_hasOnlyPlainDirectoryAncestors(candidate)) {
+      return false;
+    }
     try {
-      final resolved = path.normalize(directory.resolveSymbolicLinksSync());
-      return expected.toLowerCase() == resolved.toLowerCase();
+      final resolvedExpected = path.normalize(
+        expectedDirectoryValue.resolveSymbolicLinksSync(),
+      );
+      final resolvedCandidate = path.normalize(
+        directory.resolveSymbolicLinksSync(),
+      );
+      return resolvedExpected.toLowerCase() == resolvedCandidate.toLowerCase();
     } catch (_) {
       return false;
     }
@@ -46,12 +54,44 @@ abstract final class CloudSyncWindowsDevProfile {
 
   static bool hasValidMarker(Directory directory) {
     try {
+      if (!_hasOnlyPlainDirectoryAncestors(directory.absolute.path)) {
+        return false;
+      }
       final marker = File(path.join(directory.path, markerFileName));
-      final expectedMarker = path.normalize(marker.absolute.path);
+      if (FileSystemEntity.typeSync(marker.path, followLinks: false) !=
+          FileSystemEntityType.file) {
+        return false;
+      }
+      final resolvedDirectory = path.normalize(
+        directory.resolveSymbolicLinksSync(),
+      );
+      final expectedMarker = path.normalize(
+        path.join(resolvedDirectory, markerFileName),
+      );
       final resolvedMarker = path.normalize(marker.resolveSymbolicLinksSync());
       return marker.existsSync() &&
           expectedMarker.toLowerCase() == resolvedMarker.toLowerCase() &&
           marker.readAsStringSync() == markerContents;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static bool _hasOnlyPlainDirectoryAncestors(String value) {
+    try {
+      final absolute = path.normalize(path.absolute(value));
+      final root = path.rootPrefix(absolute);
+      if (root.isEmpty) return false;
+      var current = root;
+      final relative = path.relative(absolute, from: root);
+      for (final component in path.split(relative)) {
+        current = path.join(current, component);
+        if (FileSystemEntity.typeSync(current, followLinks: false) !=
+            FileSystemEntityType.directory) {
+          return false;
+        }
+      }
+      return true;
     } catch (_) {
       return false;
     }

@@ -8,6 +8,7 @@ import 'package:bluebubbles/utils/logger/logger.dart';
 import 'cloud_operation_identity.dart';
 import 'cloud_sync_models.dart';
 import 'cloud_sync_outbound_staging.dart';
+import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_store.dart';
 import 'cloud_sync_transport.dart';
 import 'cloud_sync_write_transport.dart';
@@ -1738,7 +1739,7 @@ final class FrbNativeProtectedCloudSyncBindings
   ) {
     return NativeProtectedFailure(
       category: _failureCategory(failure.category),
-      safeCode: _safeCode(failure.safeCode),
+      safeCode: cloudSyncV2ProtectedTransportSafeCode(failure.safeCode),
       retryAfterSeconds: failure.retryAfterSeconds?.toInt(),
     );
   }
@@ -1788,46 +1789,65 @@ final class FrbNativeProtectedCloudSyncBindings
     frb_api.CloudSyncProtectedFailureCategory.unknown =>
       NativeProtectedFailureCategory.unknown,
   };
-
-  String _safeCode(frb_api.CloudSyncProtectedSafeCode code) => switch (code) {
-    frb_api.CloudSyncProtectedSafeCode.invalidScope => 'invalid_scope',
-    frb_api.CloudSyncProtectedSafeCode.invalidRequest => 'invalid_request',
-    frb_api.CloudSyncProtectedSafeCode.invalidCheckpoint =>
-      'invalid_checkpoint',
-    frb_api.CloudSyncProtectedSafeCode.checkpointContextMismatch =>
-      'checkpoint_context_mismatch',
-    frb_api.CloudSyncProtectedSafeCode.oversizedPage => 'oversized_page',
-    frb_api.CloudSyncProtectedSafeCode.oversizedRecord => 'oversized_record',
-    frb_api.CloudSyncProtectedSafeCode.protectionFailed => 'protection_failed',
-    frb_api.CloudSyncProtectedSafeCode.localStoreFailed => 'local_store_failed',
-    frb_api.CloudSyncProtectedSafeCode.fetchDeadline => 'fetch_deadline',
-    frb_api.CloudSyncProtectedSafeCode.network => 'network',
-    frb_api.CloudSyncProtectedSafeCode.cloudKitThrottled =>
-      'cloudkit_throttled',
-    frb_api.CloudSyncProtectedSafeCode.cloudKitServer => 'cloudkit_server',
-    frb_api.CloudSyncProtectedSafeCode.cloudKitAuthorization =>
-      'cloudkit_authorization',
-    frb_api.CloudSyncProtectedSafeCode.cloudKitConflict => 'cloudkit_conflict',
-    frb_api.CloudSyncProtectedSafeCode.cloudKitResetRequired =>
-      'cloudkit_reset_required',
-    frb_api.CloudSyncProtectedSafeCode.cloudKitPermanent =>
-      'cloudkit_permanent',
-    frb_api.CloudSyncProtectedSafeCode.cloudKitUnknown => 'cloudkit_unknown',
-    frb_api.CloudSyncProtectedSafeCode.httpAuthorization =>
-      'http_authorization',
-    frb_api.CloudSyncProtectedSafeCode.httpTimeout => 'http_timeout',
-    frb_api.CloudSyncProtectedSafeCode.httpThrottled => 'http_throttled',
-    frb_api.CloudSyncProtectedSafeCode.httpServer => 'http_server',
-    frb_api.CloudSyncProtectedSafeCode.httpUnknown => 'http_unknown',
-    frb_api.CloudSyncProtectedSafeCode.pcsUnavailable => 'pcs_unavailable',
-    frb_api.CloudSyncProtectedSafeCode.malformedResponse =>
-      'malformed_response',
-    frb_api.CloudSyncProtectedSafeCode.continuationNoProgress =>
-      'continuation_no_progress',
-    frb_api.CloudSyncProtectedSafeCode.readAuthenticationScope =>
-      'read_authentication_scope',
-    frb_api.CloudSyncProtectedSafeCode.nativeAuthUnavailable =>
-      'native_auth_unavailable',
-    frb_api.CloudSyncProtectedSafeCode.unknown => 'unknown',
-  };
 }
+
+String cloudSyncV2ProtectedTransportSafeCode(
+  frb_api.CloudSyncProtectedSafeCode code,
+) => switch (code) {
+  frb_api.CloudSyncProtectedSafeCode.invalidScope =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.invalidScope,
+  frb_api.CloudSyncProtectedSafeCode.invalidRequest =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.invalidRequest,
+  frb_api.CloudSyncProtectedSafeCode.invalidCheckpoint =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.invalidCheckpoint,
+  frb_api.CloudSyncProtectedSafeCode.checkpointContextMismatch =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.checkpointContextMismatch,
+  frb_api.CloudSyncProtectedSafeCode.oversizedPage =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.oversizedPage,
+  frb_api.CloudSyncProtectedSafeCode.oversizedRecord =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.oversizedRecord,
+  frb_api.CloudSyncProtectedSafeCode.protectionFailed =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.protectionFailed,
+  frb_api.CloudSyncProtectedSafeCode.localStoreFailed =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.localStoreFailed,
+  frb_api.CloudSyncProtectedSafeCode.fetchDeadline =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.fetchDeadline,
+  frb_api.CloudSyncProtectedSafeCode.network =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.network,
+  frb_api.CloudSyncProtectedSafeCode.cloudKitThrottled =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.cloudKitThrottled,
+  frb_api.CloudSyncProtectedSafeCode.cloudKitServer =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.cloudKitServer,
+  frb_api.CloudSyncProtectedSafeCode.cloudKitAuthorization =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.cloudKitAuthorization,
+  frb_api.CloudSyncProtectedSafeCode.cloudKitConflict =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.cloudKitConflict,
+  frb_api.CloudSyncProtectedSafeCode.cloudKitResetRequired =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.cloudKitResetRequired,
+  frb_api.CloudSyncProtectedSafeCode.cloudKitPermanent =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.cloudKitPermanent,
+  frb_api.CloudSyncProtectedSafeCode.cloudKitUnknown =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.cloudKitUnknown,
+  frb_api.CloudSyncProtectedSafeCode.httpAuthorization =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.httpAuthorization,
+  frb_api.CloudSyncProtectedSafeCode.httpTimeout =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.httpTimeout,
+  frb_api.CloudSyncProtectedSafeCode.httpThrottled =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.httpThrottled,
+  frb_api.CloudSyncProtectedSafeCode.httpServer =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.httpServer,
+  frb_api.CloudSyncProtectedSafeCode.httpUnknown =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.httpUnknown,
+  frb_api.CloudSyncProtectedSafeCode.pcsUnavailable =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.pcsUnavailable,
+  frb_api.CloudSyncProtectedSafeCode.malformedResponse =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.malformedResponse,
+  frb_api.CloudSyncProtectedSafeCode.continuationNoProgress =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.continuationNoProgress,
+  frb_api.CloudSyncProtectedSafeCode.readAuthenticationScope =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.readAuthenticationScope,
+  frb_api.CloudSyncProtectedSafeCode.nativeAuthUnavailable =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.nativeAuthUnavailable,
+  frb_api.CloudSyncProtectedSafeCode.unknown =>
+    CloudSyncV2ProtectedTransportSafeFailureCodes.unknown,
+};

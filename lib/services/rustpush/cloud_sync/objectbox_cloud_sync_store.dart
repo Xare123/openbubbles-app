@@ -20,6 +20,7 @@ class ObjectBoxCloudSyncStore
     implements
         CloudSyncStore,
         CloudRetainedUnprojectedBacklogStore,
+        CloudRetainedUnprojectedBacklogSummaryStore,
         CloudUnknownInboxBarrierRecoveryStore,
         CloudSyncUnknownOutcomeLeasingStore,
         CloudSyncOutboxPresenceStore,
@@ -778,6 +779,97 @@ class ObjectBoxCloudSyncStore
         query.close();
       }
     });
+  }
+
+  @override
+  Future<CloudRetainedUnprojectedBacklogSummary>
+  readRetainedUnprojectedInboxSummary(CloudSyncScope scope) async {
+    return _store.runInTransaction(TxMode.read, () {
+      final scopeKey = _scopeKey(scope);
+      final checkpoint = _findCheckpointByKeyLocked(scopeKey);
+      if (checkpoint == null) {
+        return CloudRetainedUnprojectedBacklogSummary(
+          total: 0,
+          saves: 0,
+          tombstones: 0,
+          unclassified: 0,
+        );
+      }
+      _validateCheckpointScope(checkpoint, scope);
+      final total = _countRetainedUnprojectedLocked(
+        scopeKey: scopeKey,
+        generation: checkpoint.generation,
+      );
+      final tombstones = _countRetainedUnprojectedLocked(
+        scopeKey: scopeKey,
+        generation: checkpoint.generation,
+        tombstone: true,
+      );
+      final saves = _countRetainedUnprojectedLocked(
+        scopeKey: scopeKey,
+        generation: checkpoint.generation,
+        tombstone: false,
+      );
+      final outOfScopeServices = _countRetainedUnprojectedLocked(
+        scopeKey: scopeKey,
+        generation: checkpoint.generation,
+        tombstone: false,
+        failureCategory: CloudFailureCategory.outOfScopeService.name,
+      );
+      final categories = <CloudFailureCategory, int>{};
+      var classified = 0;
+      for (final category in CloudFailureCategory.values) {
+        final count = _countRetainedUnprojectedLocked(
+          scopeKey: scopeKey,
+          generation: checkpoint.generation,
+          failureCategory: category.name,
+        );
+        if (count > 0) {
+          categories[category] = count;
+          classified += count;
+        }
+      }
+      return CloudRetainedUnprojectedBacklogSummary(
+        total: total,
+        saves: saves,
+        tombstones: tombstones,
+        unclassified: total - classified,
+        outOfScopeServices: outOfScopeServices,
+        byFailureCategory: categories,
+      );
+    });
+  }
+
+  int _countRetainedUnprojectedLocked({
+    required String scopeKey,
+    required int generation,
+    bool? tombstone,
+    String? failureCategory,
+  }) {
+    var condition = CloudInboxChangeEntity_.scopeKey
+        .equals(scopeKey)
+        .and(CloudInboxChangeEntity_.generation.equals(generation))
+        .and(
+          CloudInboxChangeEntity_.status.equals(
+            _inboxStatusToInt(CloudInboxStatus.retainedUnprojected),
+          ),
+        );
+    if (tombstone != null) {
+      condition = condition.and(
+        CloudInboxChangeEntity_.isTombstone.equals(tombstone),
+      );
+    }
+    if (failureCategory != null) {
+      condition = condition.and(
+        CloudInboxChangeEntity_.failureCategory.equals(failureCategory),
+      );
+    }
+    final query = _inbox.query(condition).build();
+    try {
+      return query.count();
+    } finally {
+      query.close();
+    }
   }
 
   @override
@@ -2717,6 +2809,12 @@ class ObjectBoxCloudSyncStore
     // Never let the tombstone shape override a conflict/unknown classification
     // recovered from an older build; those remain causal barriers.
     if (entry.change.isTombstone && category == null) return true;
+    if (category == CloudFailureCategory.outOfScopeService) {
+      return entry.change.type == CloudChangeType.save &&
+          !entry.change.isTombstone &&
+          entry.change.preflightFailure == null &&
+          entry.change.preflightCode == null;
+    }
     if (category == CloudFailureCategory.malformedRecord ||
         category == CloudFailureCategory.unsupportedService) {
       return true;

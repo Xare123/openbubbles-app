@@ -137,22 +137,33 @@ final class CloudSyncSemanticPullReportFileWriter {
     }
     if (report.pageLimit != 4 ||
         report.changeLimit != 50 ||
-        report.outboxCountBefore != 0 ||
-        report.outboxCountAfter != 0) {
+        report.outboxCountBefore < 0 ||
+        report.outboxCountBefore > maximumDiagnosticCount ||
+        report.outboxCountAfter < 0 ||
+        report.outboxCountAfter > maximumDiagnosticCount) {
       return 'cloud_sync_semantic_report_read_only_invariant_invalid';
     }
-    if (report.zones.length != _supportedZoneLabels.length) {
+    // Missing or duplicate supported zones are unsafe runtime evidence, not an
+    // unsafe serialization shape. Persist up to the expected count so the
+    // controller can stop on, and retain, the exact diagnostic report.
+    if (report.zones.length > _supportedZoneLabels.length) {
       return 'cloud_sync_semantic_report_zone_count_invalid';
     }
-    final labels = <String>{};
     final maximumZoneRecords = report.pageLimit * report.changeLimit;
     for (final zone in report.zones) {
+      final projectionSweep =
+          report.mode == CloudSyncSemanticReportMode.retainedProjectionSweep;
+      final maximumApplied = projectionSweep
+          ? maximumDiagnosticCount
+          : maximumZoneRecords;
+      final maximumElapsedMilliseconds = projectionSweep
+          ? 30 * 60 * 1000
+          : 10 * 60 * 1000;
       if (!_supportedZoneLabels.contains(zone.zoneLabel) ||
-          !labels.add(zone.zoneLabel) ||
           zone.fetched < 0 ||
           zone.fetched > maximumZoneRecords ||
           zone.applied < 0 ||
-          zone.applied > maximumZoneRecords ||
+          zone.applied > maximumApplied ||
           zone.deferred < 0 ||
           zone.deferred > maximumZoneRecords ||
           zone.quarantined < 0 ||
@@ -187,7 +198,22 @@ final class CloudSyncSemanticPullReportFileWriter {
           zone.retried > maximumZoneRecords ||
           (zone.observedEmptyTerminalRead && zone.fetched != 0) ||
           zone.elapsedMilliseconds < 0 ||
-          zone.elapsedMilliseconds > 10 * 60 * 1000 ||
+          zone.elapsedMilliseconds > maximumElapsedMilliseconds ||
+          zone.projectionExamined < 0 ||
+          zone.projectionExamined > maximumDiagnosticCount ||
+          zone.projectionRetained < 0 ||
+          zone.projectionRetained > zone.projectionExamined ||
+          zone.projectionBatches < 0 ||
+          zone.projectionBatches > 4096 ||
+          (!projectionSweep &&
+              (zone.projectionExamined != 0 ||
+                  zone.projectionRetained != 0 ||
+                  zone.projectionBatches != 0)) ||
+          (projectionSweep &&
+              (zone.fetched != 0 ||
+                  zone.observedEmptyTerminalRead ||
+                  zone.projectionExamined !=
+                      zone.applied + zone.projectionRetained)) ||
           // Diagnostic events are not record counters. A single fetched chat
           // can emit several alias diagnostics, and same-generation projection
           // repair can inspect more rows than the one-page fetch limit. The

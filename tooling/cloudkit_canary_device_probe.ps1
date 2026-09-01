@@ -493,7 +493,7 @@ function Assert-SemanticReportContract {
         'zones'
     )
     Assert-ExactPropertyNames -Value $Report -Expected $topLevelProperties -Code 'report_schema_properties_invalid'
-    Assert-ReportIntegerRange -Value $Report.schemaVersion -Minimum 4 -Maximum 4 -Code 'report_schema_version_invalid'
+    Assert-ReportIntegerRange -Value $Report.schemaVersion -Minimum 6 -Maximum 6 -Code 'report_schema_version_invalid'
     if ($Report.platform -isnot [string] -or
         $Report.architecture -isnot [string] -or
         $Report.platform -cne 'android' -or
@@ -576,6 +576,10 @@ function Assert-SemanticReportContract {
         'semanticStageQuarantined',
         'retried',
         'elapsedMilliseconds',
+        'observedEmptyTerminalRead',
+        'projectionExamined',
+        'projectionRetained',
+        'projectionBatches',
         'semanticDiagnostics',
         'failureCategory',
         'failureSafeCode',
@@ -593,7 +597,7 @@ function Assert-SemanticReportContract {
         $actualZones.Add($zone.zone)
         if ($null -eq $zone.status) { Fail-Probe 'report_zone_status_invalid' }
         Assert-NullableEnumValue -Value $zone.status -Allowed @('completed', 'degraded', 'skipped', 'cancelled', 'failed') -Code 'report_zone_status_invalid'
-        Assert-NullableEnumValue -Value $zone.failureCategory -Allowed @('network', 'throttled', 'server', 'authorization', 'pcsUnavailable', 'malformedRecord', 'conflict', 'dependency', 'localStorage', 'cancelled', 'unknown', 'unsupportedService') -Code 'report_failure_category_invalid'
+        Assert-NullableEnumValue -Value $zone.failureCategory -Allowed @('network', 'throttled', 'server', 'authorization', 'pcsUnavailable', 'malformedRecord', 'conflict', 'dependency', 'localStorage', 'cancelled', 'unknown', 'unsupportedService', 'outOfScopeService') -Code 'report_failure_category_invalid'
         Assert-NullableEnumValue -Value $zone.skipReason -Allowed @('localRunActive', 'coordinatorLeaseUnavailable', 'pullBackoffActive', 'featureDisabled') -Code 'report_skip_reason_invalid'
         if ($null -eq $zone.failureSafeCode) {
             if ($null -ne $zone.failureCategory) { Fail-Probe 'report_failure_code_invalid' }
@@ -608,6 +612,10 @@ function Assert-SemanticReportContract {
         }
         Assert-ReportIntegerRange -Value $zone.retainedUnprojected -Minimum 0 -Maximum 65535 -Code 'report_zone_counter_invalid'
         Assert-ReportIntegerRange -Value $zone.elapsedMilliseconds -Minimum 0 -Maximum 600000 -Code 'report_zone_elapsed_invalid'
+        if ($zone.observedEmptyTerminalRead -isnot [bool]) { Fail-Probe 'report_terminal_read_invalid' }
+        Assert-ReportIntegerRange -Value $zone.projectionExamined -Minimum 0 -Maximum 0 -Code 'report_projection_counter_invalid'
+        Assert-ReportIntegerRange -Value $zone.projectionRetained -Minimum 0 -Maximum 0 -Code 'report_projection_counter_invalid'
+        Assert-ReportIntegerRange -Value $zone.projectionBatches -Minimum 0 -Maximum 0 -Code 'report_projection_counter_invalid'
 
         Assert-ExactPropertyNames -Value $zone.preflightReasons -Expected @('unsupportedRecordType', 'malformedMetadata', 'oversizedRecord', 'invalidChangeShape', 'unknown') -Code 'report_preflight_properties_invalid'
         foreach ($property in $zone.preflightReasons.PSObject.Properties) {

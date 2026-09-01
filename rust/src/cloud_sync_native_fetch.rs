@@ -1932,6 +1932,8 @@ pub(crate) enum CloudNativeSafeCode {
     PcsUnavailable,
     MalformedResponse,
     ContinuationNoProgress,
+    ReadAuthenticationScope,
+    NativeAuthUnavailable,
     Unknown,
 }
 
@@ -3113,7 +3115,55 @@ fn map_fetch_failure(error: &PushError) -> CloudNativeFetchFailure {
             CloudNativeFailureCategory::Authorization,
             CloudNativeSafeCode::CloudKitAuthorization,
         ),
+        PushError::AnisetteError(error) => match error {
+            rustpush::AnisetteError::ReqwestError(error) => {
+                if error.is_timeout() || error.is_connect() {
+                    (
+                        CloudNativeFailureCategory::Network,
+                        CloudNativeSafeCode::Network,
+                    )
+                } else {
+                    match error.status().map(|status| status.as_u16()) {
+                        Some(408) => (
+                            CloudNativeFailureCategory::Network,
+                            CloudNativeSafeCode::NativeAuthUnavailable,
+                        ),
+                        Some(429) => (
+                            CloudNativeFailureCategory::Throttled,
+                            CloudNativeSafeCode::NativeAuthUnavailable,
+                        ),
+                        Some(500..=599) => (
+                            CloudNativeFailureCategory::Server,
+                            CloudNativeSafeCode::NativeAuthUnavailable,
+                        ),
+                        _ => (
+                            CloudNativeFailureCategory::Authorization,
+                            CloudNativeSafeCode::NativeAuthUnavailable,
+                        ),
+                    }
+                }
+            }
+            rustpush::AnisetteError::WsError(_)
+            | rustpush::AnisetteError::ProvisioningSocketClosed => (
+                CloudNativeFailureCategory::Network,
+                CloudNativeSafeCode::NativeAuthUnavailable,
+            ),
+            rustpush::AnisetteError::ProvisioningServerError(_) => (
+                CloudNativeFailureCategory::Server,
+                CloudNativeSafeCode::NativeAuthUnavailable,
+            ),
+            _ => (
+                CloudNativeFailureCategory::Authorization,
+                CloudNativeSafeCode::NativeAuthUnavailable,
+            ),
+        },
+        PushError::CloudKitSemanticOperationDenied => (
+            CloudNativeFailureCategory::Authorization,
+            CloudNativeSafeCode::ReadAuthenticationScope,
+        ),
         PushError::PCSRecordKeyMissing
+        | PushError::PCSKeyIdMismatch
+        | PushError::PCSDecryptionFailed
         | PushError::MasterKeyNotFound
         | PushError::NotInClique
         | PushError::ShareKeyNotFound(_)
@@ -3121,7 +3171,11 @@ fn map_fetch_failure(error: &PushError) -> CloudNativeFetchFailure {
             CloudNativeFailureCategory::PcsUnavailable,
             CloudNativeSafeCode::PcsUnavailable,
         ),
-        PushError::ProtobufError(_) | PushError::JsonError(_) => (
+        PushError::PCSCiphertextMalformed
+        | PushError::BadMsg
+        | PushError::PlistError(_)
+        | PushError::ProtobufError(_)
+        | PushError::JsonError(_) => (
             CloudNativeFailureCategory::MalformedRecord,
             CloudNativeSafeCode::MalformedResponse,
         ),
@@ -4346,6 +4400,60 @@ mod tests {
 
         assert_ne!(token_expired, warm_auth);
         for rendered in [format!("{token_expired:?}"), format!("{warm_auth:?}")] {
+            assert!(!rendered.contains("private-message-sentinel"));
+            assert!(!rendered.contains("dsid-sentinel"));
+            assert!(!rendered.contains("token-sentinel"));
+        }
+    }
+
+    #[test]
+    fn known_semantic_read_failures_do_not_collapse_to_bare_unknown() {
+        let cases = [
+            (
+                PushError::AnisetteError(rustpush::AnisetteError::AnisetteNotProvisioned),
+                CloudNativeFailureCategory::Authorization,
+                CloudNativeSafeCode::NativeAuthUnavailable,
+            ),
+            (
+                PushError::AnisetteError(rustpush::AnisetteError::ProvisioningServerError(
+                    "private-message-sentinel".to_owned(),
+                )),
+                CloudNativeFailureCategory::Server,
+                CloudNativeSafeCode::NativeAuthUnavailable,
+            ),
+            (
+                PushError::CloudKitSemanticOperationDenied,
+                CloudNativeFailureCategory::Authorization,
+                CloudNativeSafeCode::ReadAuthenticationScope,
+            ),
+            (
+                PushError::BadMsg,
+                CloudNativeFailureCategory::MalformedRecord,
+                CloudNativeSafeCode::MalformedResponse,
+            ),
+            (
+                PushError::PCSCiphertextMalformed,
+                CloudNativeFailureCategory::MalformedRecord,
+                CloudNativeSafeCode::MalformedResponse,
+            ),
+            (
+                PushError::PCSKeyIdMismatch,
+                CloudNativeFailureCategory::PcsUnavailable,
+                CloudNativeSafeCode::PcsUnavailable,
+            ),
+            (
+                PushError::PCSDecryptionFailed,
+                CloudNativeFailureCategory::PcsUnavailable,
+                CloudNativeSafeCode::PcsUnavailable,
+            ),
+        ];
+
+        for (error, expected_category, expected_safe_code) in cases {
+            let failure = map_fetch_failure(&error);
+            assert_eq!(failure.category(), expected_category);
+            assert_eq!(failure.safe_code(), expected_safe_code);
+            assert_ne!(failure.safe_code(), CloudNativeSafeCode::Unknown);
+            let rendered = format!("{failure:?}");
             assert!(!rendered.contains("private-message-sentinel"));
             assert!(!rendered.contains("dsid-sentinel"));
             assert!(!rendered.contains("token-sentinel"));

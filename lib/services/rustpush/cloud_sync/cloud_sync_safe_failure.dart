@@ -33,8 +33,211 @@ abstract final class CloudSyncV2DecoderSafeFailureCodes {
   };
 }
 
+/// Fixed failures for the typed out-of-scope disposition and its fenced
+/// retained-row reclassification. Diagnostic-only counters remain in the
+/// semantic diagnostic vocabulary and are not admitted here.
+abstract final class CloudSyncV2OutOfScopeServiceSafeFailureCodes {
+  static const semanticSmsFamily = 'semantic_out_of_scope_sms_family';
+  static const semanticRcs = 'semantic_out_of_scope_rcs';
+  static const dispositionInvalid = 'out_of_scope_service_disposition_invalid';
+  static const retainedEntryInvalid =
+      'retained_projection_out_of_scope_entry_invalid';
+  static const retainedRowInvalid =
+      'retained_projection_out_of_scope_row_invalid';
+  static const retainedRecordFailed =
+      'retained_projection_out_of_scope_record_failed';
+
+  static const all = <String>{
+    semanticSmsFamily,
+    semanticRcs,
+    dispositionInvalid,
+    retainedEntryInvalid,
+    retainedRowInvalid,
+    retainedRecordFailed,
+  };
+}
+
+/// Fixed, content-free codes emitted by the protected native transport.
+///
+/// The transport and persisted-report allowlist share this vocabulary so a
+/// reviewed native failure cannot be silently rewritten to the generic unknown
+/// code at the Dart reporting boundary.
+abstract final class CloudSyncV2ProtectedTransportSafeFailureCodes {
+  static const invalidScope = 'invalid_scope';
+  static const invalidRequest = 'invalid_request';
+  static const invalidCheckpoint = 'invalid_checkpoint';
+  static const checkpointContextMismatch = 'checkpoint_context_mismatch';
+  static const oversizedPage = 'oversized_page';
+  static const oversizedRecord = 'oversized_record';
+  static const protectionFailed = 'protection_failed';
+  static const localStoreFailed = 'local_store_failed';
+  static const fetchDeadline = 'fetch_deadline';
+  static const network = 'network';
+  static const cloudKitThrottled = 'cloudkit_throttled';
+  static const cloudKitServer = 'cloudkit_server';
+  static const cloudKitAuthorization = 'cloudkit_authorization';
+  static const cloudKitConflict = 'cloudkit_conflict';
+  static const cloudKitResetRequired = 'cloudkit_reset_required';
+  static const cloudKitPermanent = 'cloudkit_permanent';
+  static const cloudKitUnknown = 'cloudkit_unknown';
+  static const httpAuthorization = 'http_authorization';
+  static const httpTimeout = 'http_timeout';
+  static const httpThrottled = 'http_throttled';
+  static const httpServer = 'http_server';
+  static const httpUnknown = 'http_unknown';
+  static const pcsUnavailable = 'pcs_unavailable';
+  static const malformedResponse = 'malformed_response';
+  static const continuationNoProgress = 'continuation_no_progress';
+  static const readAuthenticationScope = 'read_authentication_scope';
+  static const nativeAuthUnavailable = 'native_auth_unavailable';
+  static const unknown = 'unknown';
+
+  static const all = <String>{
+    invalidScope,
+    invalidRequest,
+    invalidCheckpoint,
+    checkpointContextMismatch,
+    oversizedPage,
+    oversizedRecord,
+    protectionFailed,
+    localStoreFailed,
+    fetchDeadline,
+    network,
+    cloudKitThrottled,
+    cloudKitServer,
+    cloudKitAuthorization,
+    cloudKitConflict,
+    cloudKitResetRequired,
+    cloudKitPermanent,
+    cloudKitUnknown,
+    httpAuthorization,
+    httpTimeout,
+    httpThrottled,
+    httpServer,
+    httpUnknown,
+    pcsUnavailable,
+    malformedResponse,
+    continuationNoProgress,
+    readAuthenticationScope,
+    nativeAuthUnavailable,
+    unknown,
+  };
+}
+
+/// Fixed, content-free failures emitted by the canonical ObjectBox projector.
+///
+/// Retained replay must preserve these exact branches. Collapsing one to the
+/// generic unknown code hides whether the blocker is identity ownership,
+/// parent ordering, an immutable-field conflict, or an unsupported shape.
+abstract final class CloudSyncV2CanonicalProjectionSafeFailureCodes {
+  static const all = <String>{
+    'canonical_attachment_owner_conflict',
+    'canonical_attachment_owner_unavailable',
+    'canonical_attachment_relation_conflict',
+    'canonical_attachment_size_invalid',
+    'canonical_chat_alias_conflict',
+    'canonical_chat_alias_unproven',
+    'canonical_chat_apply_disabled',
+    'canonical_chat_creation_unavailable',
+    'canonical_chat_display_name_clear_unverified',
+    'canonical_chat_participant_invalid',
+    'canonical_chat_relation_unavailable',
+    'canonical_chat_repair_shape_invalid',
+    'canonical_chat_repair_snapshot_mismatch',
+    'canonical_chat_repair_target_unavailable',
+    'canonical_chat_service_conflict',
+    'canonical_chat_shape_invalid',
+    'canonical_chat_style_conflict',
+    'canonical_dependency_scope_conflict',
+    'canonical_dependency_scope_stale',
+    'canonical_identity_guid_invalid',
+    'canonical_identity_mismatch',
+    'canonical_identity_owner_conflict',
+    'canonical_identity_owner_unproven',
+    'canonical_identity_unavailable',
+    'canonical_message_chat_alias_ambiguous',
+    'canonical_message_chat_alias_invalid',
+    'canonical_message_chat_alias_unproven',
+    'canonical_message_chat_conflict',
+    'canonical_message_chat_route_invalid',
+    'canonical_message_chat_unavailable',
+    'canonical_message_created_at_conflict',
+    'canonical_message_extension_decode_required',
+    'canonical_message_reply_parent_unavailable',
+    'canonical_message_sender_conflict',
+    'canonical_message_sender_invalid',
+    'canonical_message_shape_unsupported',
+    'canonical_message_text_range_invalid',
+    'canonical_payload_dto_incomplete',
+    'canonical_payload_snapshot_mismatch',
+    'canonical_reaction_created_at_conflict',
+    'canonical_reaction_parent_conflict',
+    'canonical_reaction_parent_unavailable',
+    'canonical_reaction_sender_conflict',
+    'canonical_reaction_shape_unsupported',
+    'canonical_scope_fence_rejected',
+    'canonical_tombstone_dto_incomplete',
+  };
+}
+
+/// Fixed, content-free failures emitted by the same-session remote-head proof
+/// and sequence-bounded local projection sweep.
+abstract final class CloudSyncV2ProjectionSweepSafeFailureCodes {
+  static const all = <String>{
+    'cloud_sync_remote_head_proof_unavailable',
+    'cloud_sync_remote_head_checkpoint_unstable',
+    'cloud_sync_projection_sweep_proof_invalid',
+    'cloud_sync_projection_sweep_bound_missing',
+    'cloud_sync_projection_sweep_applier_unavailable',
+    'cloud_sync_projection_sweep_lease_unavailable',
+    'cloud_sync_projection_sweep_batch_limit',
+    'cloud_sync_projection_sweep_lease_lost',
+    'cloud_sync_projection_sweep_result_invalid',
+    'cloud_sync_projection_sweep_checkpoint_changed',
+    'cloud_sync_projection_sweep_unsafe_report',
+    'cloud_sync_semantic_remote_pass_limit_unreachable',
+  };
+}
+
+/// Carries only a reviewed, content-free failure code from a persisted unsafe
+/// semantic-drain report to the outer diagnostic boundary.
+final class CloudSyncSemanticDrainUnsafeReportException implements Exception {
+  const CloudSyncSemanticDrainUnsafeReportException(this.safeCode);
+
+  final String safeCode;
+}
+
 const _cloudSyncV2SafeFailureCodes = <String>{
   ...CloudSyncV2DecoderSafeFailureCodes.all,
+  ...CloudSyncV2OutOfScopeServiceSafeFailureCodes.all,
+  ...CloudSyncV2ProtectedTransportSafeFailureCodes.all,
+  ...CloudSyncV2CanonicalProjectionSafeFailureCodes.all,
+  ...CloudSyncV2ProjectionSweepSafeFailureCodes.all,
+  'cloud_sync_unknown_failure',
+  'apply_network',
+  'apply_throttled',
+  'apply_server',
+  'apply_authorization',
+  'apply_pcs_unavailable',
+  'apply_malformed_record',
+  'apply_conflict',
+  'apply_dependency',
+  'apply_local_storage',
+  'apply_cancelled',
+  'apply_unknown',
+  'apply_unsupported_service',
+  'decoder_network',
+  'decoder_throttled',
+  'decoder_server',
+  'decoder_authorization',
+  'decoder_pcs_unavailable',
+  'decoder_malformed_record',
+  'decoder_conflict',
+  'decoder_dependency',
+  'decoder_local_storage',
+  'decoder_cancelled',
+  'decoder_unknown',
+  'decoder_unsupported_service',
   'cloud_attachment_account_changed',
   'cloud_attachment_integrity_mismatch',
   'cloud_attachment_native_result_invalid',
@@ -165,6 +368,7 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloud_sync_semantic_report_write_failed',
   'cloud_sync_semantic_report_zone_count_invalid',
   'cloud_sync_semantic_report_zone_invalid',
+  'cloud_sync_semantic_drain_unsafe_report',
   'cloud_sync_semantic_remote_write_tripwire',
   'cloudkit-authorization',
   'cloudkit-change-token-expired',
@@ -198,13 +402,7 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'cloudkit_interlock_required',
   'cloudkit_interlock_storage_unavailable',
   'cloudkit_interlock_unavailable',
-  'canonical_attachment_owner_unavailable',
   'canonical_chat_alias_owner_ambiguous',
-  'canonical_chat_alias_conflict',
-  'canonical_message_chat_alias_ambiguous',
-  'canonical_message_chat_unavailable',
-  'canonical_message_reply_parent_unavailable',
-  'canonical_reaction_parent_unavailable',
   'checkpoint_pending_page_unresolved',
   'fetch_page_exceeds_requested_limit',
   'fetch_timeout',
@@ -237,7 +435,6 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'local-storage',
   'malformed-response',
   'messages_cloud_tombstone_projection_unavailable',
-  'network',
   'native_deferred_nested_presence_unavailable',
   'native_deferred_unproven_edit_timestamp',
   'native_deferred_unsupported_extension_payload',
@@ -256,6 +453,8 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'preflight_unsupported_record_type',
   'retained_projection_authorization_changed',
   'retained_projection_incomplete',
+  'retained_projection_registrar_unavailable',
+  'retained_projection_store_unavailable',
   'retained_unprojected_backlog_read_failed',
   'retained_unprojected_backlog_store_unavailable',
   'rustpush_not_ready',
@@ -265,7 +464,6 @@ const _cloudSyncV2SafeFailureCodes = <String>{
   'unsupported_semantic_cloud_zone',
   'unsupported_semantic_persistence_lane',
   'unsupported_platform',
-  'unknown',
 };
 
 /// Returns only a fixed diagnostic code safe for logs and user-visible copy.
@@ -276,6 +474,7 @@ String cloudSyncV2SafeFailureCode(Object error) {
   final String? candidate = switch (error) {
     CloudSyncShadowReportFileException() => error.safeCode,
     CloudSyncSemanticPullReportFileException() => error.safeCode,
+    CloudSyncSemanticDrainUnsafeReportException() => error.safeCode,
     CloudSyncFailure() => error.safeCode,
     CloudKitOperationInterlockException() => error.safeCode,
     CloudKitWriterAuthorityFailure() => error.safeCode,

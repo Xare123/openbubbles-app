@@ -259,6 +259,24 @@ enum CloudFailureCategory {
   cancelled,
   unknown,
   unsupportedService,
+
+  /// The native decoder proved an exact service this build deliberately does
+  /// not project (currently SMS/MMS-family or RCS). The protected source is
+  /// retained, but this is not iMessage projection debt.
+  outOfScopeService,
+}
+
+/// Exact native service proof carried only in memory. This is deliberately a
+/// closed enum so a safe-code string can never authorize out-of-scope state.
+enum CloudSemanticOutOfScopeService { smsFamily, rcs }
+
+extension CloudSemanticOutOfScopeServiceBehavior
+    on CloudSemanticOutOfScopeService {
+  String get safeCode => switch (this) {
+    CloudSemanticOutOfScopeService.smsFamily =>
+      'semantic_out_of_scope_sms_family',
+    CloudSemanticOutOfScopeService.rcs => 'semantic_out_of_scope_rcs',
+  };
 }
 
 extension CloudFailureCategoryBehavior on CloudFailureCategory {
@@ -274,7 +292,8 @@ extension CloudFailureCategoryBehavior on CloudFailureCategory {
     CloudFailureCategory.conflict ||
     CloudFailureCategory.cancelled ||
     CloudFailureCategory.unknown ||
-    CloudFailureCategory.unsupportedService => false,
+    CloudFailureCategory.unsupportedService ||
+    CloudFailureCategory.outOfScopeService => false,
   };
 }
 
@@ -1138,6 +1157,7 @@ class CloudSyncRunRecord {
 enum CloudInboxApplyDisposition {
   applied,
   tombstoneReadOnlyAcknowledged,
+  outOfScopeService,
   deferred,
   retryable,
   quarantined,
@@ -1147,7 +1167,8 @@ class CloudInboxApplyResult {
   const CloudInboxApplyResult.applied({this.inboxStatusPersisted = false})
     : disposition = CloudInboxApplyDisposition.applied,
       failureCategory = null,
-      safeCode = null,
+      _safeCode = null,
+      outOfScopeService = null,
       retryAfter = null;
 
   /// A server-confirmed tombstone was deliberately retained as protected
@@ -1156,34 +1177,55 @@ class CloudInboxApplyResult {
   const CloudInboxApplyResult.tombstoneReadOnlyAcknowledged()
     : disposition = CloudInboxApplyDisposition.tombstoneReadOnlyAcknowledged,
       failureCategory = null,
-      safeCode = null,
+      _safeCode = null,
+      outOfScopeService = null,
+      retryAfter = null,
+      inboxStatusPersisted = false;
+
+  /// The native decoder proved an exact non-iMessage service. The engine must
+  /// retain the protected row with [CloudFailureCategory.outOfScopeService]
+  /// and must not create, update, or delete canonical message state.
+  const CloudInboxApplyResult.outOfScopeService({
+    required this.outOfScopeService,
+  })
+    : disposition = CloudInboxApplyDisposition.outOfScopeService,
+      failureCategory = CloudFailureCategory.outOfScopeService,
+      _safeCode = null,
       retryAfter = null,
       inboxStatusPersisted = false;
 
   const CloudInboxApplyResult.deferred({
     this.failureCategory = CloudFailureCategory.dependency,
-    this.safeCode,
+    String? safeCode,
     this.retryAfter,
   }) : disposition = CloudInboxApplyDisposition.deferred,
+       _safeCode = safeCode,
+       outOfScopeService = null,
        inboxStatusPersisted = false;
 
   const CloudInboxApplyResult.retryable({
     required this.failureCategory,
-    this.safeCode,
+    String? safeCode,
     this.retryAfter,
   }) : disposition = CloudInboxApplyDisposition.retryable,
+       _safeCode = safeCode,
+       outOfScopeService = null,
        inboxStatusPersisted = false;
 
   const CloudInboxApplyResult.quarantined({
     required this.failureCategory,
-    this.safeCode,
+    String? safeCode,
     this.inboxStatusPersisted = false,
   }) : disposition = CloudInboxApplyDisposition.quarantined,
+       _safeCode = safeCode,
+       outOfScopeService = null,
        retryAfter = null;
 
   final CloudInboxApplyDisposition disposition;
   final CloudFailureCategory? failureCategory;
-  final String? safeCode;
+  final CloudSemanticOutOfScopeService? outOfScopeService;
+  final String? _safeCode;
+  String? get safeCode => outOfScopeService?.safeCode ?? _safeCode;
   final Duration? retryAfter;
 
   /// True only when the semantic gateway committed the canonical mutation,

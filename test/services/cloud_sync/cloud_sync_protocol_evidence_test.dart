@@ -58,6 +58,24 @@ void main() {
     expect(json['failure'], 'unsupportedService');
   });
 
+  test('accepts the appended out-of-scope-service failure label', () {
+    expect(
+      CloudFailureCategory.values.last,
+      CloudFailureCategory.outOfScopeService,
+    );
+    final record = CloudSyncProtocolEvidenceRecord.fromEvent(
+      _event(failureCategory: CloudFailureCategory.outOfScopeService),
+      zoneLabel: 'messageManateeZone',
+      streamKindLabel: 'messages',
+      platform: 'android',
+      architecture: 'arm64',
+      buildCommit: 'abc123',
+    );
+
+    final json = jsonDecode(record.toJsonLine()) as Map<String, dynamic>;
+    expect(json['failure'], 'outOfScopeService');
+  });
+
   test('rejects invalid metadata and numeric ranges with fixed safe codes', () {
     CloudSyncProtocolEvidenceRecord build({
       String zone = 'messageManateeZone',

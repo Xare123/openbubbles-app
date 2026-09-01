@@ -143,6 +143,87 @@ lazy_static! {
 static WINDOWS_PROTECTED_KEYSTORE_PROFILE: OnceLock<PathBuf> = OnceLock::new();
 #[cfg(target_os = "windows")]
 static WINDOWS_PROTECTED_KEYSTORE_INITIALIZATION: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+#[cfg(target_os = "windows")]
+const CLOUD_SYNC_WINDOWS_AUTH_PROBE_MARKER: &str = ".openbubbles-cloud-sync-v2-windows-auth-probe";
+#[cfg(target_os = "windows")]
+const CLOUD_SYNC_WINDOWS_AUTH_PROBE_MARKER_CONTENTS: &str =
+    "openbubbles-cloud-sync-v2-windows-auth-probe:v1";
+
+fn is_cloud_sync_windows_auth_probe_identifier(value: &str) -> bool {
+    value.len() == 32
+        && value
+            .as_bytes()
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+}
+
+#[cfg(target_os = "windows")]
+fn cloud_sync_windows_auth_probe_lexical_path(
+    path: PathBuf,
+    unavailable_message: &'static str,
+) -> anyhow::Result<PathBuf> {
+    if !path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::CurDir | std::path::Component::ParentDir
+            )
+        })
+    {
+        return Err(anyhow!(unavailable_message));
+    }
+    Ok(path)
+}
+
+#[cfg(target_os = "windows")]
+fn normalized_cloud_sync_windows_auth_probe_path(path: &std::path::Path) -> Option<String> {
+    let path = path.to_str()?.replace('/', "\\");
+    let path = if let Some(path) = path.strip_prefix("\\\\?\\UNC\\") {
+        format!("\\\\{path}")
+    } else {
+        path.strip_prefix("\\\\?\\").unwrap_or(&path).to_owned()
+    };
+    Some(path.trim_end_matches('\\').to_lowercase())
+}
+
+#[cfg(target_os = "windows")]
+fn cloud_sync_windows_auth_probe_paths_equal(
+    left: &std::path::Path,
+    right: &std::path::Path,
+) -> bool {
+    normalized_cloud_sync_windows_auth_probe_path(left)
+        .zip(normalized_cloud_sync_windows_auth_probe_path(right))
+        .is_some_and(|(left, right)| left == right)
+}
+
+#[cfg(target_os = "windows")]
+fn ensure_no_cloud_sync_windows_auth_probe_reparse_ancestors(
+    path: &std::path::Path,
+) -> anyhow::Result<()> {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    let mut current = Some(path);
+    while let Some(candidate) = current {
+        match fs::symlink_metadata(candidate) {
+            Ok(metadata) => {
+                if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                    return Err(anyhow!(
+                        "Cloud Sync Windows authentication probe path contains a reparse point"
+                    ));
+                }
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(_) => {
+                return Err(anyhow!(
+                    "Cloud Sync Windows authentication probe path metadata is unavailable"
+                ));
+            }
+        }
+        current = candidate.parent();
+    }
+    Ok(())
+}
 
 #[cfg(target_os = "windows")]
 fn initialize_windows_protected_keystore(directory: &std::path::Path) -> anyhow::Result<()> {
@@ -1090,6 +1171,12 @@ pub enum CloudSyncTransientQuarantineReason {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CloudSyncTransientOutOfScopeService {
+    SmsFamily,
+    Rcs,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CloudSyncTransientFailureCode {
     InvalidRequest,
     ReadAuthenticationScope,
@@ -1294,6 +1381,14 @@ pub struct CloudSyncTransientMessagePayload {
     pub associated_emoji: Option<String>,
 }
 
+/// Content-free statement of whether the native build can materialize an
+/// attachment body from the protected source that produced its metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CloudSyncTransientAttachmentMaterializationCapability {
+    Materializable,
+    MetadataOnlyUnsupportedMediaCredentials,
+}
+
 #[derive(Clone)]
 pub struct CloudSyncTransientAttachmentPayload {
     pub logical_entity_key_hash: String,
@@ -1311,6 +1406,7 @@ pub struct CloudSyncTransientAttachmentPayload {
     pub total_bytes: Option<u64>,
     pub is_outgoing_state: CloudSyncTransientFieldState,
     pub is_outgoing: Option<bool>,
+    pub materialization_capability: CloudSyncTransientAttachmentMaterializationCapability,
     pub protected_local_reference_state: CloudSyncTransientFieldState,
     pub protected_local_reference: Option<String>,
 }
@@ -1341,7 +1437,8 @@ pub struct CloudSyncTransientTombstone {
 }
 
 /// A bounded, single-record D1 result. Exactly one of `mutation`,
-/// `deferred_reason`, `quarantine_reason`, and `failure_code` is populated.
+/// `out_of_scope_service`, `deferred_reason`, `quarantine_reason`, and
+/// `failure_code` is populated.
 /// The optional source capability is echoed only after it passes the native
 /// protected-reference grammar.
 #[derive(Clone)]
@@ -1354,6 +1451,7 @@ pub struct CloudSyncTransientDecodeResult {
     pub snapshot: Option<CloudSyncTransientSnapshot>,
     pub payload: Option<CloudSyncTransientPayload>,
     pub tombstone: Option<CloudSyncTransientTombstone>,
+    pub out_of_scope_service: Option<CloudSyncTransientOutOfScopeService>,
     pub deferred_reason: Option<CloudSyncTransientDeferredReason>,
     pub quarantine_reason: Option<CloudSyncTransientQuarantineReason>,
     pub failure_code: Option<CloudSyncTransientFailureCode>,
@@ -2135,6 +2233,8 @@ fn map_cloud_sync_protected_safe_code(
         Native::PcsUnavailable => CloudSyncProtectedSafeCode::PcsUnavailable,
         Native::MalformedResponse => CloudSyncProtectedSafeCode::MalformedResponse,
         Native::ContinuationNoProgress => CloudSyncProtectedSafeCode::ContinuationNoProgress,
+        Native::ReadAuthenticationScope => CloudSyncProtectedSafeCode::ReadAuthenticationScope,
+        Native::NativeAuthUnavailable => CloudSyncProtectedSafeCode::NativeAuthUnavailable,
         Native::Unknown => CloudSyncProtectedSafeCode::Unknown,
     }
 }
@@ -2550,6 +2650,42 @@ fn map_cloud_sync_transient_field_state(
         Canonical::Absent => CloudSyncTransientFieldState::Absent,
         Canonical::Value => CloudSyncTransientFieldState::Value,
         Canonical::ExplicitClear => CloudSyncTransientFieldState::ExplicitClear,
+    }
+}
+
+fn map_cloud_sync_transient_attachment_materialization_capability(
+    capability: crate::cloud_sync_canonical_dto::CloudCanonicalAttachmentMaterializationCapability,
+) -> CloudSyncTransientAttachmentMaterializationCapability {
+    use crate::cloud_sync_canonical_dto::CloudCanonicalAttachmentMaterializationCapability as Canonical;
+    match capability {
+        Canonical::Materializable => {
+            CloudSyncTransientAttachmentMaterializationCapability::Materializable
+        }
+        Canonical::MetadataOnlyUnsupportedMediaCredentials => {
+            CloudSyncTransientAttachmentMaterializationCapability::MetadataOnlyUnsupportedMediaCredentials
+        }
+    }
+}
+
+#[cfg(test)]
+mod cloud_sync_transient_attachment_materialization_capability_tests {
+    use super::*;
+    use crate::cloud_sync_canonical_dto::CloudCanonicalAttachmentMaterializationCapability as Canonical;
+
+    #[test]
+    fn maps_both_content_free_attachment_materialization_capabilities() {
+        assert_eq!(
+            map_cloud_sync_transient_attachment_materialization_capability(
+                Canonical::Materializable
+            ),
+            CloudSyncTransientAttachmentMaterializationCapability::Materializable
+        );
+        assert_eq!(
+            map_cloud_sync_transient_attachment_materialization_capability(
+                Canonical::MetadataOnlyUnsupportedMediaCredentials
+            ),
+            CloudSyncTransientAttachmentMaterializationCapability::MetadataOnlyUnsupportedMediaCredentials
+        );
     }
 }
 
@@ -3553,6 +3689,10 @@ fn map_cloud_sync_transient_payload(
                     payload.is_outgoing().state(),
                 ),
                 is_outgoing: payload.is_outgoing().value().copied(),
+                materialization_capability:
+                    map_cloud_sync_transient_attachment_materialization_capability(
+                        payload.materialization_capability(),
+                    ),
                 protected_local_reference_state: map_cloud_sync_transient_field_state(
                     payload.verified_local_file_reference().state(),
                 ),
@@ -3679,6 +3819,7 @@ fn cloud_sync_transient_empty_result(
         snapshot: None,
         payload: None,
         tombstone: None,
+        out_of_scope_service: None,
         deferred_reason: None,
         quarantine_reason: None,
         failure_code: None,
@@ -3866,10 +4007,24 @@ pub async fn cloud_sync_decode_protected_change(
                 snapshot,
                 payload,
                 tombstone,
+                out_of_scope_service: None,
                 deferred_reason: None,
                 quarantine_reason: None,
                 failure_code: None,
             }
+        }
+        CloudTransientDecodeOutcome::OutOfScopeService(service) => {
+            let mut result =
+                cloud_sync_transient_empty_result(protected_source_reference, generation);
+            result.out_of_scope_service = Some(match service {
+                crate::cloud_sync_canonical_converter::CloudCanonicalOutOfScopeService::SmsFamily => {
+                    CloudSyncTransientOutOfScopeService::SmsFamily
+                }
+                crate::cloud_sync_canonical_converter::CloudCanonicalOutOfScopeService::Rcs => {
+                    CloudSyncTransientOutOfScopeService::Rcs
+                }
+            });
+            result
         }
         CloudTransientDecodeOutcome::Deferred(reason) => {
             let mut result =
@@ -4574,6 +4729,40 @@ fn migrate(dir: &std::path::Path) -> bool {
     false
 }
 
+fn validate_cloud_sync_windows_auth_probe_legacy_gsa(account: &Dictionary) -> anyhow::Result<()> {
+    let Some(Value::String(username)) = account.get("username") else {
+        return Err(anyhow!(
+            "Cloud Sync Windows authentication probe account identifier is missing"
+        ));
+    };
+    if username.trim().is_empty() || username.len() > 320 {
+        return Err(anyhow!(
+            "Cloud Sync Windows authentication probe account identifier is malformed"
+        ));
+    }
+    let Some(Value::Data(password)) = account.get("password") else {
+        return Err(anyhow!(
+            "Cloud Sync Windows authentication probe password digest is missing"
+        ));
+    };
+    if password.len() != 32 {
+        return Err(anyhow!(
+            "Cloud Sync Windows authentication probe password digest is malformed"
+        ));
+    }
+    if account.contains_key("encrypted_password") {
+        return Err(anyhow!(
+            "Cloud Sync Windows authentication probe GSA state is ambiguous"
+        ));
+    }
+    if !matches!(account.get("postdata_done"), Some(Value::Boolean(true))) {
+        return Err(anyhow!(
+            "Cloud Sync Windows authentication probe postdata state is unavailable"
+        ));
+    }
+    Ok(())
+}
+
 fn migrate_gsa_state_locked(directory: &std::path::Path) -> anyhow::Result<()> {
     let gsa_path = directory.join("gsa.plist");
     let Ok(mut account) = plist::from_file::<_, Dictionary>(&gsa_path) else {
@@ -4582,6 +4771,9 @@ fn migrate_gsa_state_locked(directory: &std::path::Path) -> anyhow::Result<()> {
     let Some(Value::Data(password)) = account.remove("password") else {
         return Ok(());
     };
+    if password.len() != 32 {
+        return Err(anyhow!("GSA password digest is malformed"));
+    }
     account.insert(
         "encrypted_password".to_string(),
         Value::Data(GSAConfig::encrypt(&password)?.into()),
@@ -4597,6 +4789,58 @@ fn migrate_gsa_state_locked(directory: &std::path::Path) -> anyhow::Result<()> {
     plist::to_writer_xml(&mut encoded, &account)?;
     persist_login_state_file(&directory, "gsa.plist", &encoded)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod cloud_sync_windows_auth_probe_tests {
+    use super::{
+        is_cloud_sync_windows_auth_probe_identifier,
+        validate_cloud_sync_windows_auth_probe_legacy_gsa, Dictionary, Value,
+    };
+
+    fn legacy_gsa(password_len: usize) -> Dictionary {
+        let mut account = Dictionary::new();
+        account.insert(
+            "username".to_owned(),
+            Value::String("person@example.com".to_owned()),
+        );
+        account.insert("password".to_owned(), Value::Data(vec![7; password_len]));
+        account.insert("postdata_done".to_owned(), Value::Boolean(true));
+        account
+    }
+
+    #[test]
+    fn accepts_one_complete_sha256_legacy_gsa_record() {
+        assert!(validate_cloud_sync_windows_auth_probe_legacy_gsa(&legacy_gsa(32)).is_ok());
+        assert!(is_cloud_sync_windows_auth_probe_identifier(
+            "0123456789abcdef0123456789abcdef"
+        ));
+    }
+
+    #[test]
+    fn rejects_malformed_or_ambiguous_legacy_gsa_records() {
+        assert!(validate_cloud_sync_windows_auth_probe_legacy_gsa(&legacy_gsa(31)).is_err());
+
+        let mut ambiguous = legacy_gsa(32);
+        ambiguous.insert("encrypted_password".to_owned(), Value::Data(vec![8; 60]));
+        assert!(validate_cloud_sync_windows_auth_probe_legacy_gsa(&ambiguous).is_err());
+
+        let mut missing_postdata = legacy_gsa(32);
+        missing_postdata.remove("postdata_done");
+        assert!(validate_cloud_sync_windows_auth_probe_legacy_gsa(&missing_postdata).is_err());
+
+        let mut empty_account = legacy_gsa(32);
+        empty_account.insert("username".to_owned(), Value::String(" ".to_owned()));
+        assert!(validate_cloud_sync_windows_auth_probe_legacy_gsa(&empty_account).is_err());
+
+        for identifier in [
+            "0123456789abcdef",
+            "0123456789ABCDEF0123456789ABCDEF",
+            "0123456789abcdef0123456789abcdeg",
+        ] {
+            assert!(!is_cloud_sync_windows_auth_probe_identifier(identifier));
+        }
+    }
 }
 
 #[frb(sync)]
@@ -9108,6 +9352,49 @@ fn cloud_sync_failure_category(error: &PushError) -> (CloudSyncRawFailureCategor
         PushError::TooManyRequests => {
             (CloudSyncRawFailureCategory::Throttled, "cloudkit-throttled")
         }
+        PushError::AnisetteError(error) => match error {
+            rustpush::AnisetteError::ReqwestError(error) => {
+                if error.is_timeout() || error.is_connect() {
+                    (CloudSyncRawFailureCategory::Network, "network")
+                } else {
+                    match error.status().map(|status| status.as_u16()) {
+                        Some(408) => (
+                            CloudSyncRawFailureCategory::Network,
+                            "native-auth-unavailable",
+                        ),
+                        Some(429) => (
+                            CloudSyncRawFailureCategory::Throttled,
+                            "native-auth-unavailable",
+                        ),
+                        Some(500..=599) => (
+                            CloudSyncRawFailureCategory::Server,
+                            "native-auth-unavailable",
+                        ),
+                        _ => (
+                            CloudSyncRawFailureCategory::Authorization,
+                            "native-auth-unavailable",
+                        ),
+                    }
+                }
+            }
+            rustpush::AnisetteError::WsError(_)
+            | rustpush::AnisetteError::ProvisioningSocketClosed => (
+                CloudSyncRawFailureCategory::Network,
+                "native-auth-unavailable",
+            ),
+            rustpush::AnisetteError::ProvisioningServerError(_) => (
+                CloudSyncRawFailureCategory::Server,
+                "native-auth-unavailable",
+            ),
+            _ => (
+                CloudSyncRawFailureCategory::Authorization,
+                "native-auth-unavailable",
+            ),
+        },
+        PushError::CloudKitSemanticOperationDenied => (
+            CloudSyncRawFailureCategory::Authorization,
+            "read-authentication-scope",
+        ),
         PushError::UnauthorizedAccountError
         | PushError::TokenMissing
         | PushError::CloudKitWarmAuthenticationRequired
@@ -9128,6 +9415,8 @@ fn cloud_sync_failure_category(error: &PushError) -> (CloudSyncRawFailureCategor
             "pcs-unavailable",
         ),
         PushError::PCSCiphertextMalformed
+        | PushError::BadMsg
+        | PushError::PlistError(_)
         | PushError::ProtobufError(_)
         | PushError::JsonError(_) => (
             CloudSyncRawFailureCategory::MalformedRecord,
@@ -9179,6 +9468,42 @@ mod cloud_sync_failure_mapping_tests {
             (CloudSyncRawFailureCategory::Throttled, "http-throttled",)
         );
         assert_eq!(cloud_sync_retry_after_seconds(&error), Some(901));
+    }
+
+    #[test]
+    fn raw_semantic_failures_have_specific_content_free_codes() {
+        let cases = [
+            (
+                PushError::AnisetteError(rustpush::AnisetteError::AnisetteNotProvisioned),
+                CloudSyncRawFailureCategory::Authorization,
+                "native-auth-unavailable",
+            ),
+            (
+                PushError::AnisetteError(rustpush::AnisetteError::ProvisioningServerError(
+                    "private-message-sentinel".to_owned(),
+                )),
+                CloudSyncRawFailureCategory::Server,
+                "native-auth-unavailable",
+            ),
+            (
+                PushError::CloudKitSemanticOperationDenied,
+                CloudSyncRawFailureCategory::Authorization,
+                "read-authentication-scope",
+            ),
+            (
+                PushError::BadMsg,
+                CloudSyncRawFailureCategory::MalformedRecord,
+                "malformed-response",
+            ),
+        ];
+
+        for (error, expected_category, expected_safe_code) in cases {
+            let (category, safe_code) = cloud_sync_failure_category(&error);
+            assert_eq!(category, expected_category);
+            assert_eq!(safe_code, expected_safe_code);
+            assert_ne!(safe_code, "unknown");
+            assert!(!safe_code.contains("private-message-sentinel"));
+        }
     }
 }
 
@@ -9576,23 +9901,158 @@ fn is_cloud_sync_windows_dev_profile(_path: &str) -> bool {
     false
 }
 
+/// Initializes and migrates only a disposable Windows authentication probe.
+///
+/// This entry point deliberately does not initialize logging, ObjectBox,
+/// CloudKit, Keychain, or any message service. The distinct probe marker keeps
+/// it from mutating the ordinary isolated development profile.
+#[frb(sync)]
+pub fn prepare_cloud_sync_windows_auth_probe(path: String) -> anyhow::Result<()> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = path;
+        return Err(anyhow!(
+            "Cloud Sync Windows authentication probe requires Windows"
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let requested_directory = cloud_sync_windows_auth_probe_lexical_path(
+            PathBuf::from_str(&path)
+                .map_err(|_| anyhow!("Cloud Sync Windows authentication probe path is invalid"))?,
+            "Cloud Sync Windows authentication probe path is invalid",
+        )?;
+        let local_app_data = cloud_sync_windows_auth_probe_lexical_path(
+            PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or_else(|| {
+                anyhow!("Cloud Sync Windows authentication probe root is unavailable")
+            })?),
+            "Cloud Sync Windows authentication probe root is unavailable",
+        )?;
+        let process_app_data = cloud_sync_windows_auth_probe_lexical_path(
+            PathBuf::from(std::env::var_os("APPDATA").ok_or_else(|| {
+                anyhow!("Cloud Sync Windows authentication probe process root is unavailable")
+            })?),
+            "Cloud Sync Windows authentication probe process root is unavailable",
+        )?;
+        let probe_identifier = process_app_data
+            .file_name()
+            .and_then(|value| value.to_str())
+            .filter(|value| is_cloud_sync_windows_auth_probe_identifier(value))
+            .ok_or_else(|| anyhow!("Cloud Sync Windows authentication probe root is invalid"))?;
+        let expected_probe_root = local_app_data
+            .join("OpenBubbles")
+            .join("CloudSyncV2AuthProbes");
+        let expected_process_app_data = expected_probe_root.join(probe_identifier);
+        if !cloud_sync_windows_auth_probe_paths_equal(&process_app_data, &expected_process_app_data)
+        {
+            return Err(anyhow!(
+                "Cloud Sync Windows authentication probe process root is invalid"
+            ));
+        }
+        let expected_requested_directory = expected_process_app_data
+            .join("OpenBubbles")
+            .join("cloudkit-v2-dev");
+        if !cloud_sync_windows_auth_probe_paths_equal(
+            &requested_directory,
+            &expected_requested_directory,
+        ) {
+            return Err(anyhow!(
+                "Cloud Sync Windows authentication probe profile is outside the process root"
+            ));
+        }
+        for candidate in [
+            local_app_data.as_path(),
+            expected_probe_root.as_path(),
+            process_app_data.as_path(),
+            requested_directory.as_path(),
+        ] {
+            ensure_no_cloud_sync_windows_auth_probe_reparse_ancestors(candidate)?;
+        }
+
+        let probe_root = fs::canonicalize(&expected_probe_root)
+            .map_err(|_| anyhow!("Cloud Sync Windows authentication probe root is unavailable"))?;
+        let process_app_data = fs::canonicalize(&process_app_data).map_err(|_| {
+            anyhow!("Cloud Sync Windows authentication probe process root is unavailable")
+        })?;
+        if process_app_data.parent() != Some(probe_root.as_path()) {
+            return Err(anyhow!(
+                "Cloud Sync Windows authentication probe escaped its dedicated root"
+            ));
+        }
+        let canonical_directory = fs::canonicalize(&requested_directory).map_err(|_| {
+            anyhow!("Cloud Sync Windows authentication probe directory is unavailable")
+        })?;
+        let expected_directory = fs::canonicalize(&expected_requested_directory).map_err(|_| {
+            anyhow!("Cloud Sync Windows authentication probe profile is unavailable")
+        })?;
+        if canonical_directory != expected_directory {
+            return Err(anyhow!(
+                "Cloud Sync Windows authentication probe profile is outside the process root"
+            ));
+        }
+        for candidate in [
+            probe_root.as_path(),
+            process_app_data.as_path(),
+            canonical_directory.as_path(),
+        ] {
+            ensure_no_cloud_sync_windows_auth_probe_reparse_ancestors(candidate)?;
+        }
+        let marker =
+            fs::read_to_string(canonical_directory.join(CLOUD_SYNC_WINDOWS_AUTH_PROBE_MARKER))
+                .map_err(|_| {
+                    anyhow!("Cloud Sync Windows authentication probe marker is unavailable")
+                })?;
+        if marker != CLOUD_SYNC_WINDOWS_AUTH_PROBE_MARKER_CONTENTS {
+            return Err(anyhow!(
+                "Cloud Sync Windows authentication probe marker is invalid"
+            ));
+        }
+        for forbidden in [
+            "cloudkit.plist",
+            "keychain.plist",
+            "objectbox",
+            "cloud-sync-v2",
+        ] {
+            if canonical_directory.join(forbidden).exists() {
+                return Err(anyhow!(
+                    "Cloud Sync Windows authentication probe contains forbidden state"
+                ));
+            }
+        }
+
+        let legacy = plist::from_file::<_, Dictionary>(canonical_directory.join("gsa.plist"))
+            .map_err(|_| {
+                anyhow!("Cloud Sync Windows authentication probe GSA state is unreadable")
+            })?;
+        validate_cloud_sync_windows_auth_probe_legacy_gsa(&legacy)?;
+
+        initialize_windows_protected_keystore(&canonical_directory)?;
+        let _state_write_guard = cloudkit_state_file_write_guard()?;
+        migrate_gsa_state_locked(&canonical_directory)?;
+
+        let migrated = plist::from_file::<_, GSAConfig>(canonical_directory.join("gsa.plist"))
+            .map_err(|_| anyhow!("Cloud Sync Windows authentication probe GSA migration failed"))?;
+        if migrated.get_password()?.len() != 32 {
+            return Err(anyhow!(
+                "Cloud Sync Windows authentication probe password digest is malformed"
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[cfg(target_os = "windows")]
 async fn cloud_sync_windows_consume_login_admission(
     path: &str,
     account: &Arc<Mutex<AppleAccount<DefaultAnisetteProvider>>>,
 ) -> anyhow::Result<()> {
-    let canonical_directory =
-        canonical_cloudkit_state_directory(&PathBuf::from(path))?;
+    let canonical_directory = canonical_cloudkit_state_directory(&PathBuf::from(path))?;
     let lifecycle_gate = cloudkit_read_authentication_lifecycle_gate(&canonical_directory)?;
     let _lifecycle_guard = lifecycle_gate.lock().await;
     let account_key = Arc::as_ptr(account) as usize;
-    let expected_generation =
-        cloudkit_login_validate_admission(&canonical_directory, account_key)?;
-    cloudkit_login_consume_admission(
-        &canonical_directory,
-        expected_generation,
-        account_key,
-    )
+    let expected_generation = cloudkit_login_validate_admission(&canonical_directory, account_key)?;
+    cloudkit_login_consume_admission(&canonical_directory, expected_generation, account_key)
 }
 
 #[cfg(not(target_os = "windows"))]

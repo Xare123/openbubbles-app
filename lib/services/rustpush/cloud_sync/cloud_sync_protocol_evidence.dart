@@ -226,6 +226,7 @@ final class CloudSyncProtocolEvidenceRecord {
     'cancelled',
     'unknown',
     'unsupportedService',
+    'outOfScopeService',
     'none',
   };
 

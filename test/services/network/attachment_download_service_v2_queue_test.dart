@@ -184,6 +184,8 @@ void main() {
 
 Map<String, dynamic> _v2Metadata() => <String, dynamic>{
   cloudAttachmentV2MetadataKey: cloudAttachmentV2MetadataVersion,
+  cloudAttachmentV2BodyCapabilityKey:
+      CloudAttachmentBodyCapability.materializable.metadataValue,
 };
 
 Attachment _attachment(String guid, Map<String, dynamic> metadata) =>

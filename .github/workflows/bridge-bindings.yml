@@ -147,6 +147,12 @@ jobs:
       - name: Run rustpush tests
         run: cargo test --manifest-path rustpush/Cargo.toml --lib --features remote-anisette-v3 -- --test-threads=1
 
+      # Cargo does not run unit tests inside dependency crates. Exercise the
+      # exact remote Anisette provider that production enables, including its
+      # pre-submission-only retry and request-redaction invariants.
+      - name: Run remote Anisette provider tests
+        run: cargo test --manifest-path rustpush/apple-private-apis/omnisette/Cargo.toml --lib --features remote-anisette-v3 'remote_anisette_v3::tests::' -- --test-threads=1
+
       # The protector harness is a separate crate and is deliberately
       # dependency-light so these security invariants can run on hosts where the
       # full application crate cannot build.

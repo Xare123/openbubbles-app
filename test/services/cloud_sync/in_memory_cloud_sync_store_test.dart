@@ -260,8 +260,82 @@ void main() {
         await store.readEligibleInbox(scope, now: testEpoch, limit: 1),
         isEmpty,
       );
+      final summary = await store.readRetainedUnprojectedInboxSummary(scope);
+      expect(summary.total, 1);
+      expect(summary.saves, 1);
+      expect(summary.tombstones, 0);
+      expect(summary.unclassified, 0);
+      expect(summary.byFailureCategory, <CloudFailureCategory, int>{
+        CloudFailureCategory.malformedRecord: 1,
+      });
     },
   );
+
+  test('out-of-scope retention accepts only clean save rows', () async {
+    await _journal(
+      store,
+      CloudFetchBatch(
+        scope: scope,
+        changes: [
+          testChange(1),
+          testChange(2, tombstone: true),
+          testChange(
+            3,
+            preflightFailure: CloudFailureCategory.unsupportedService,
+            preflightCode: CloudPreflightCode.unsupportedRecordType,
+          ),
+        ],
+        batchId: 'out-of-scope-shape-page',
+        generation: 1,
+        nextToken: 'out-of-scope-shape-token',
+        hasMore: false,
+      ),
+    );
+    final fence = (await store.tryAcquireCoordinatorLease(
+      scope,
+      ownerId: 'out-of-scope-shape-owner',
+      now: testEpoch,
+      leaseDuration: const Duration(minutes: 5),
+    ))!;
+
+    await store.markInboxRetainedUnprojected(
+      scope,
+      sequence: 1,
+      category: CloudFailureCategory.outOfScopeService,
+      now: testEpoch,
+      maximumDeferredAttempts: 8,
+      maximumDeferredAge: const Duration(days: 3),
+      leaseFence: fence,
+    );
+    for (final sequence in [2, 3]) {
+      await expectLater(
+        store.markInboxRetainedUnprojected(
+          scope,
+          sequence: sequence,
+          category: CloudFailureCategory.outOfScopeService,
+          now: testEpoch,
+          maximumDeferredAttempts: 8,
+          maximumDeferredAge: const Duration(days: 3),
+          leaseFence: fence,
+        ),
+        throwsA(
+          isA<CloudSyncFailure>().having(
+            (failure) => failure.safeCode,
+            'safeCode',
+            'inbox_retention_policy_rejected',
+          ),
+        ),
+      );
+    }
+
+    final entries = await store.inboxEntries(scope);
+    expect(entries[0].status, CloudInboxStatus.retainedUnprojected);
+    expect(entries[1].status, CloudInboxStatus.pending);
+    expect(entries[2].status, CloudInboxStatus.pending);
+    final summary = await store.readRetainedUnprojectedInboxSummary(scope);
+    expect(summary.outOfScopeServices, 1);
+    expect(summary.blockingSaves, 0);
+  });
 
   test(
     'retained terminal rows remain projection-unresolved during recovery',

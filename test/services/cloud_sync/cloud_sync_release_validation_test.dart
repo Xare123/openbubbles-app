@@ -1,3 +1,4 @@
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_merge_policy.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_shadow_journal_budget.dart';
@@ -206,6 +207,7 @@ void main() {
         ownerPart: 0,
         fileName: 'file',
         mimeType: null,
+        bodyCapability: CloudAttachmentBodyCapability.materializable,
         protectedLocalReference: 'protected-ref',
       ),
       redactedArgument('cloud_attachment_payload_owner_key_invalid'),
@@ -288,6 +290,7 @@ void main() {
         ownerPart: 0,
         fileName: 'file-sensitive.pdf',
         mimeType: 'application/pdf',
+        bodyCapability: CloudAttachmentBodyCapability.materializable,
         protectedLocalReference: 'protected-reference-sensitive',
       ),
       CloudReactionEntityPayload(

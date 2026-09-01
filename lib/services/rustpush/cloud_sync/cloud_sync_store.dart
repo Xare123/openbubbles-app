@@ -296,6 +296,68 @@ abstract interface class CloudRetainedUnprojectedBacklogStore {
   Future<int> readRetainedUnprojectedInboxCount(CloudSyncScope scope);
 }
 
+/// Content-free classification of the current-generation retained backlog.
+///
+/// Counts are derived exclusively from durable journal metadata. No record
+/// identifier, protected reference, account value, or message content crosses
+/// this boundary.
+final class CloudRetainedUnprojectedBacklogSummary {
+  CloudRetainedUnprojectedBacklogSummary({
+    required this.total,
+    required this.saves,
+    required this.tombstones,
+    required this.unclassified,
+    this.outOfScopeServices = 0,
+    Map<CloudFailureCategory, int> byFailureCategory =
+        const <CloudFailureCategory, int>{},
+  }) : byFailureCategory = Map<CloudFailureCategory, int>.unmodifiable(
+         byFailureCategory,
+       ) {
+    final classified = byFailureCategory.values.fold<int>(
+      0,
+      (sum, count) => sum + count,
+    );
+    final classifiedOutOfScope =
+        byFailureCategory[CloudFailureCategory.outOfScopeService] ?? 0;
+    if (total < 0 ||
+        saves < 0 ||
+        tombstones < 0 ||
+        unclassified < 0 ||
+        outOfScopeServices < 0 ||
+        outOfScopeServices > saves ||
+        outOfScopeServices != classifiedOutOfScope ||
+        byFailureCategory.values.any((count) => count <= 0) ||
+        saves + tombstones != total ||
+        classified + unclassified != total) {
+      throw ArgumentError('cloud_retained_backlog_summary_invalid');
+    }
+  }
+
+  final int total;
+  final int saves;
+  final int tombstones;
+
+  /// Exact SMS/MMS-family or RCS saves that remain preserved but are outside
+  /// this build's iMessage projection contract.
+  final int outOfScopeServices;
+
+  int get blockingSaves => saves - outOfScopeServices;
+
+  /// Rows whose durable failure category is absent or is not a current enum
+  /// value. The underlying label is intentionally never surfaced.
+  final int unclassified;
+  final Map<CloudFailureCategory, int> byFailureCategory;
+}
+
+/// Optional read-only capability for explaining retained projection debt.
+///
+/// Implementations must use the active checkpoint generation and must not
+/// project, delete, retry, or otherwise mutate journal rows.
+abstract interface class CloudRetainedUnprojectedBacklogSummaryStore {
+  Future<CloudRetainedUnprojectedBacklogSummary>
+  readRetainedUnprojectedInboxSummary(CloudSyncScope scope);
+}
+
 /// Narrow, local-only migration surface for retrying an unknown semantic
 /// quarantine created by an older decoder build.
 ///

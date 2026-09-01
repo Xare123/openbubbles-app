@@ -1729,6 +1729,14 @@ impl Debug for CloudCanonicalMessagePayload {
     }
 }
 
+/// Content-free statement of whether this build can materialize an attachment
+/// body from the protected source that produced the canonical metadata.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum CloudCanonicalAttachmentMaterializationCapability {
+    Materializable,
+    MetadataOnlyUnsupportedMediaCredentials,
+}
+
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct CloudCanonicalAttachmentPayload {
     canonical_guid: String,
@@ -1740,10 +1748,12 @@ pub(crate) struct CloudCanonicalAttachmentPayload {
     transfer_name: CloudCanonicalField<String>,
     total_bytes: CloudCanonicalField<u64>,
     is_outgoing: CloudCanonicalField<bool>,
+    materialization_capability: CloudCanonicalAttachmentMaterializationCapability,
     verified_local_file_reference: CloudCanonicalField<CloudCanonicalProtectedReference>,
 }
 
 impl CloudCanonicalAttachmentPayload {
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         canonical_guid: String,
@@ -1755,6 +1765,35 @@ impl CloudCanonicalAttachmentPayload {
         transfer_name: CloudCanonicalField<String>,
         total_bytes: CloudCanonicalField<u64>,
         is_outgoing: CloudCanonicalField<bool>,
+        verified_local_file_reference: CloudCanonicalField<CloudCanonicalProtectedReference>,
+    ) -> Result<Self, CloudCanonicalValidationFailure> {
+        Self::new_with_materialization_capability(
+            canonical_guid,
+            owner_message_guid,
+            owner_message_key_hash,
+            owner_part,
+            uti,
+            mime_type,
+            transfer_name,
+            total_bytes,
+            is_outgoing,
+            CloudCanonicalAttachmentMaterializationCapability::Materializable,
+            verified_local_file_reference,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_materialization_capability(
+        canonical_guid: String,
+        owner_message_guid: Option<String>,
+        owner_message_key_hash: Option<CloudCanonicalHash>,
+        owner_part: Option<u32>,
+        uti: CloudCanonicalField<String>,
+        mime_type: CloudCanonicalField<String>,
+        transfer_name: CloudCanonicalField<String>,
+        total_bytes: CloudCanonicalField<u64>,
+        is_outgoing: CloudCanonicalField<bool>,
+        materialization_capability: CloudCanonicalAttachmentMaterializationCapability,
         verified_local_file_reference: CloudCanonicalField<CloudCanonicalProtectedReference>,
     ) -> Result<Self, CloudCanonicalValidationFailure> {
         validate_identifier(&canonical_guid)?;
@@ -1790,6 +1829,7 @@ impl CloudCanonicalAttachmentPayload {
             transfer_name,
             total_bytes,
             is_outgoing,
+            materialization_capability,
             verified_local_file_reference,
         })
     }
@@ -1832,6 +1872,12 @@ impl CloudCanonicalAttachmentPayload {
 
     pub(crate) fn is_outgoing(&self) -> &CloudCanonicalField<bool> {
         &self.is_outgoing
+    }
+
+    pub(crate) fn materialization_capability(
+        &self,
+    ) -> CloudCanonicalAttachmentMaterializationCapability {
+        self.materialization_capability
     }
 
     pub(crate) fn verified_local_file_reference(
@@ -3007,6 +3053,35 @@ mod tests {
     }
 
     #[test]
+    fn attachment_materialization_capability_is_explicit_and_content_free() {
+        for capability in [
+            CloudCanonicalAttachmentMaterializationCapability::Materializable,
+            CloudCanonicalAttachmentMaterializationCapability::MetadataOnlyUnsupportedMediaCredentials,
+        ] {
+            let payload = CloudCanonicalAttachmentPayload::new_with_materialization_capability(
+                "attachment-guid".to_owned(),
+                None,
+                None,
+                None,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                CloudCanonicalField::Absent,
+                capability,
+                CloudCanonicalField::Absent,
+            )
+            .expect("attachment payload");
+
+            assert_eq!(payload.materialization_capability(), capability);
+            assert_eq!(
+                format!("{payload:?}"),
+                "CloudCanonicalAttachmentPayload(redacted)"
+            );
+        }
+    }
+
+    #[test]
     fn emoji_reaction_requires_transient_emoji_content() {
         let parent = || {
             CloudCanonicalParentReference::new("parent".to_owned(), Some(0), hash('P'), None, None)
@@ -3112,7 +3187,7 @@ mod tests {
     fn every_payload_and_metadata_debug_path_is_redacted() {
         let chat = chat_payload();
         let message = message_payload(CloudCanonicalMessageAssociation::None);
-        let attachment = CloudCanonicalAttachmentPayload::new(
+        let attachment = CloudCanonicalAttachmentPayload::new_with_materialization_capability(
             format!("attachment-{SENTINEL}"),
             None,
             None,
@@ -3122,6 +3197,7 @@ mod tests {
             CloudCanonicalField::Value(SENTINEL.to_owned()),
             CloudCanonicalField::ExplicitClear,
             CloudCanonicalField::Absent,
+            CloudCanonicalAttachmentMaterializationCapability::MetadataOnlyUnsupportedMediaCredentials,
             CloudCanonicalField::Absent,
         )
         .expect("attachment");

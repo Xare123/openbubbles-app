@@ -174,6 +174,24 @@ abstract interface class CloudRetainedProjectionReprocessor {
   });
 }
 
+/// Local-only, cursor-bounded replay for retained save rows that existed when
+/// the caller proved a terminal CloudKit head.
+///
+/// Unlike [CloudRetainedProjectionReprocessor], this capability never rotates
+/// failed rows back into the current sweep. A successful sweep therefore
+/// examines every retained save in the immutable sequence bound at most once,
+/// without constructing a transport or entering the engine fetch pipeline.
+abstract interface class CloudRetainedProjectionWindowReprocessor {
+  Future<CloudRetainedProjectionWindowResult> reprojectRetainedSaveWindow({
+    required CloudSyncScope scope,
+    required int generation,
+    required CloudCoordinatorLeaseFence leaseFence,
+    required int afterFetchSequence,
+    required int throughFetchSequence,
+    required int limit,
+  });
+}
+
 final class CloudRetainedProjectionResult {
   const CloudRetainedProjectionResult({
     required this.examined,
@@ -190,9 +208,34 @@ final class CloudRetainedProjectionResult {
   final int reprojected;
   final int retained;
 
-  /// True when at least one durable retained row still awaits projection,
-  /// including rows beyond this run's bounded candidate window.
+  /// True when at least one replayable retained save row still awaits local
+  /// projection, including rows beyond this run's bounded candidate window.
+  /// Non-save retained debt is accounted by the engine's full backlog read.
   final bool hasRemaining;
+}
+
+final class CloudRetainedProjectionWindowResult {
+  const CloudRetainedProjectionWindowResult({
+    required this.examined,
+    required this.reprojected,
+    required this.retained,
+    required this.lastExaminedSequence,
+    required this.hasMoreWithinBound,
+  }) : assert(examined >= 0),
+       assert(reprojected >= 0),
+       assert(retained >= 0),
+       assert(examined == reprojected + retained),
+       assert(lastExaminedSequence >= 0),
+       assert(examined > 0 || !hasMoreWithinBound);
+
+  final int examined;
+  final int reprojected;
+  final int retained;
+
+  /// Sequence cursor for the next window. It is content-free and is never
+  /// emitted in a persisted report.
+  final int lastExaminedSequence;
+  final bool hasMoreWithinBound;
 }
 
 /// Optional semantic policy exposed to the engine for legacy recovery only.

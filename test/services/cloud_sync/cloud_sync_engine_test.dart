@@ -2112,6 +2112,55 @@ void main() {
   );
 
   test(
+    'typed out-of-scope save advances the remote token but not the exact floor',
+    () async {
+      transport.enqueueFetchBatch(
+        CloudFetchBatch(
+          scope: scope,
+          changes: [testChange(1), testChange(2)],
+          batchId: 'out-of-scope-terminal-page',
+          generation: 1,
+          nextToken: 'out-of-scope-terminal-token',
+          hasMore: false,
+        ),
+      );
+      applier.resultsBySequence[1] =
+          const CloudInboxApplyResult.outOfScopeService(
+            outOfScopeService: CloudSemanticOutOfScopeService.smsFamily,
+          );
+      applier.resultsBySequence[2] = const CloudInboxApplyResult.applied();
+
+      final result = await engine().synchronize(
+        trigger: CloudSyncTrigger.manual,
+      );
+
+      expect(result.counters.retainedUnprojected, 1);
+      expect(result.counters.applied, 1);
+      expect(result.counters.quarantined, 0);
+      expect(result.counters.semanticUnsupportedServiceQuarantined, 0);
+      expect(result.counters.semanticStageQuarantined, 0);
+      final checkpoint = await store.readCheckpoint(scope);
+      expect(checkpoint.fetchedToken, 'out-of-scope-terminal-token');
+      expect(checkpoint.lastAppliedSequence, 0);
+      final entries = await store.inboxEntries(scope);
+      expect(entries.map((entry) => entry.status), [
+        CloudInboxStatus.retainedUnprojected,
+        CloudInboxStatus.applied,
+      ]);
+      expect(entries.first.lastFailure, CloudFailureCategory.outOfScopeService);
+      final summary = await store.readRetainedUnprojectedInboxSummary(scope);
+      expect(summary.total, 1);
+      expect(summary.saves, 1);
+      expect(summary.outOfScopeServices, 1);
+      expect(summary.blockingSaves, 0);
+      expect(summary.byFailureCategory, <CloudFailureCategory, int>{
+        CloudFailureCategory.outOfScopeService: 1,
+      });
+      expect(await store.outboxEntries(scope), isEmpty);
+    },
+  );
+
+  test(
     'deferred predecessor blocks later sequence until it succeeds',
     () async {
       await seedGeneralJournal(

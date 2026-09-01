@@ -1329,6 +1329,85 @@ void main() {
   });
 
   test(
+    'out-of-scope retention accepts only clean save rows across restart',
+    () async {
+      final scope = testScope(
+        persistenceLane: CloudSyncPersistenceLane.semantic,
+      );
+      await journal(
+        batch(
+          scope,
+          batchId: 'out-of-scope-shape-page',
+          token: 'out-of-scope-shape-token',
+          changes: [
+            testChange(1),
+            testChange(2, tombstone: true),
+            testChange(
+              3,
+              preflightFailure: CloudFailureCategory.unsupportedService,
+              preflightCode: CloudPreflightCode.unsupportedRecordType,
+            ),
+          ],
+        ),
+      );
+      final fence = coordinatorFences[scope.storageKey]!;
+
+      await store.markInboxRetainedUnprojected(
+        scope,
+        sequence: 1,
+        category: CloudFailureCategory.outOfScopeService,
+        now: testEpoch,
+        maximumDeferredAttempts: 8,
+        maximumDeferredAge: const Duration(days: 3),
+        leaseFence: fence,
+      );
+      for (final sequence in [2, 3]) {
+        await expectLater(
+          store.markInboxRetainedUnprojected(
+            scope,
+            sequence: sequence,
+            category: CloudFailureCategory.outOfScopeService,
+            now: testEpoch,
+            maximumDeferredAttempts: 8,
+            maximumDeferredAge: const Duration(days: 3),
+            leaseFence: fence,
+          ),
+          throwsA(
+            isA<CloudSyncFailure>().having(
+              (failure) => failure.safeCode,
+              'safeCode',
+              'inbox_retention_policy_rejected',
+            ),
+          ),
+        );
+      }
+
+      await reopen();
+      final entries =
+          objectBox
+              .box<CloudInboxChangeEntity>()
+              .getAll()
+              .where(
+                (row) => row.accountFingerprint == scope.accountFingerprint,
+              )
+              .toList()
+            ..sort(
+              (left, right) =>
+                  left.fetchSequence.compareTo(right.fetchSequence),
+            );
+      expect(entries[0].status, CloudInboxStatus.retainedUnprojected.index);
+      expect(entries[1].status, CloudInboxStatus.pending.index);
+      expect(entries[2].status, CloudInboxStatus.pending.index);
+      final summary = await store.readRetainedUnprojectedInboxSummary(scope);
+      expect(summary.outOfScopeServices, 1);
+      expect(summary.blockingSaves, 0);
+      expect(summary.byFailureCategory, <CloudFailureCategory, int>{
+        CloudFailureCategory.outOfScopeService: 1,
+      });
+    },
+  );
+
+  test(
     'retained tombstone survives reopen and promotes only a terminal page',
     () async {
       final scope = testScope(
@@ -1354,6 +1433,14 @@ void main() {
         leaseFence: fence,
       );
       expect(await store.readRetainedUnprojectedInboxCount(scope), 1);
+      final initialSummary = await store.readRetainedUnprojectedInboxSummary(
+        scope,
+      );
+      expect(initialSummary.total, 1);
+      expect(initialSummary.saves, 0);
+      expect(initialSummary.tombstones, 1);
+      expect(initialSummary.unclassified, 1);
+      expect(initialSummary.byFailureCategory, isEmpty);
       final partial = await store.readCheckpoint(scope);
       expect(partial.lastAppliedSequence, 0);
       expect(partial.fetchedToken, isNull);
@@ -1361,6 +1448,14 @@ void main() {
 
       await reopen();
       expect(await store.readRetainedUnprojectedInboxCount(scope), 1);
+      final reopenedSummary = await store.readRetainedUnprojectedInboxSummary(
+        scope,
+      );
+      expect(reopenedSummary.total, 1);
+      expect(reopenedSummary.saves, 0);
+      expect(reopenedSummary.tombstones, 1);
+      expect(reopenedSummary.unclassified, 1);
+      expect(reopenedSummary.byFailureCategory, isEmpty);
       final durableRows = objectBox.box<CloudInboxChangeEntity>().getAll()
         ..sort(
           (left, right) => left.fetchSequence.compareTo(right.fetchSequence),

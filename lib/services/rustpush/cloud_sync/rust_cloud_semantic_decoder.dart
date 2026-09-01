@@ -3,6 +3,7 @@ import 'package:bluebubbles/src/rust/frb_generated.dart' as frb_generated;
 import 'package:bluebubbles/src/rust/lib.dart' as frb_lib;
 import 'package:bluebubbles/utils/logger/logger.dart';
 
+import 'cloud_attachment_provenance.dart';
 import 'cloud_inbox_applier.dart';
 import 'cloud_merge_policy.dart';
 import 'cloud_sync_manual_shadow_sampler.dart';
@@ -240,16 +241,19 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         result.tombstone != null;
     return switch ((
       hasReadyField,
+      result.outOfScopeService,
       result.deferredReason,
       result.quarantineReason,
       result.failureCode,
     )) {
-      (true, null, null, null) => 'ready',
-      (false, final deferred?, null, null) =>
+      (true, null, null, null, null) => 'ready',
+      (false, final service?, null, null, null) =>
+        'out_of_scope_${_safeCodeSegment(service.name)}',
+      (false, null, final deferred?, null, null) =>
         'deferred_${_safeCodeSegment(deferred.name)}',
-      (false, null, final quarantine?, null) =>
+      (false, null, null, final quarantine?, null) =>
         'quarantined_${_safeCodeSegment(quarantine.name)}',
-      (false, null, null, final failure?) =>
+      (false, null, null, null, final failure?) =>
         'failure_${_safeCodeSegment(failure.name)}',
       _ => 'invalid_disposition_shape',
     };
@@ -268,6 +272,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
 
   static String _displayDisposition(String value) {
     for (final prefix in const <String>[
+      'out_of_scope_',
       'deferred_',
       'quarantined_',
       'failure_',
@@ -303,6 +308,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         result.tombstone != null;
     final dispositionCount =
         (hasReadyField ? 1 : 0) +
+        (result.outOfScopeService == null ? 0 : 1) +
         (result.deferredReason == null ? 0 : 1) +
         (result.quarantineReason == null ? 0 : 1) +
         (result.failureCode == null ? 0 : 1);
@@ -332,6 +338,7 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
         result.tombstone != null;
     final dispositionCount =
         (hasReadyField ? 1 : 0) +
+        (result.outOfScopeService == null ? 0 : 1) +
         (result.deferredReason == null ? 0 : 1) +
         (result.quarantineReason == null ? 0 : 1) +
         (result.failureCode == null ? 0 : 1);
@@ -343,6 +350,18 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     }
     if (result.failureCode case final failure?) {
       throw CloudSemanticDecodeFailure(_failureCategory(failure));
+    }
+    if (result.outOfScopeService case final service?) {
+      if (entry.change.type != CloudChangeType.save ||
+          entry.change.isTombstone) {
+        throw const CloudSemanticDecodeFailure(CloudFailureCategory.conflict);
+      }
+      throw CloudSemanticOutOfScopeServiceDisposition(switch (service) {
+        frb_api.CloudSyncTransientOutOfScopeService.smsFamily =>
+          CloudSemanticOutOfScopeService.smsFamily,
+        frb_api.CloudSyncTransientOutOfScopeService.rcs =>
+          CloudSemanticOutOfScopeService.rcs,
+      });
     }
     if (result.deferredReason case final deferredReason?) {
       // Native deferred reasons describe deterministic record shapes that this
@@ -620,6 +639,10 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
 
   CloudChatEntityPayload _chatPayload(frb_api.CloudSyncTransientPayload value) {
     final payload = value.chat;
+    if (payload != null &&
+        payload.service != frb_api.CloudSyncTransientService.iMessage) {
+      throw const CloudSemanticDecodeFailure(CloudFailureCategory.conflict);
+    }
     if (payload == null ||
         !_fieldStateMatches(payload.displayNameState, payload.displayName) ||
         !_fieldStateMatches(
@@ -687,6 +710,10 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     frb_api.CloudSyncTransientPayload value,
   ) {
     final payload = value.message;
+    if (payload != null &&
+        payload.service != frb_api.CloudSyncTransientService.iMessage) {
+      throw const CloudSemanticDecodeFailure(CloudFailureCategory.conflict);
+    }
     if (payload == null ||
         (payload.associationKind !=
                 frb_api.CloudSyncTransientAssociationKind.none &&
@@ -821,6 +848,10 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
     final parent = payload?.reactionParentLogicalKeyHash;
     final parentGuid = payload?.reactionParentCanonicalGuid;
     final reactionKind = payload?.reactionKind;
+    if (payload != null &&
+        payload.service != frb_api.CloudSyncTransientService.iMessage) {
+      throw const CloudSemanticDecodeFailure(CloudFailureCategory.conflict);
+    }
     if (payload == null ||
         parent == null ||
         parentGuid == null ||
@@ -937,6 +968,16 @@ final class RustCloudSemanticDecoder implements CloudSemanticDecoder {
       fileName: payload.fileName,
       mimeTypeState: _fieldState(payload.mimeTypeState),
       mimeType: payload.mimeType,
+      bodyCapability: switch (payload.materializationCapability) {
+        frb_api
+            .CloudSyncTransientAttachmentMaterializationCapability
+            .materializable =>
+          CloudAttachmentBodyCapability.materializable,
+        frb_api
+            .CloudSyncTransientAttachmentMaterializationCapability
+            .metadataOnlyUnsupportedMediaCredentials =>
+          CloudAttachmentBodyCapability.metadataOnlyUnsupportedMediaCredentials,
+      },
       totalBytesState: _fieldState(payload.totalBytesState),
       totalBytes: _boundedUnsignedInt64(payload.totalBytes),
       isOutgoingState: _fieldState(payload.isOutgoingState),

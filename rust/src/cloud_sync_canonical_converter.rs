@@ -28,7 +28,8 @@ use sha2::{Digest, Sha256};
 use crate::{
     cloud_sync_canonical_dto::{
         parse_associated_parent, parse_owned_attachment_guid, parse_reply_parent,
-        CloudCanonicalAlias, CloudCanonicalAliasKind, CloudCanonicalAttachmentPayload,
+        CloudCanonicalAlias, CloudCanonicalAliasKind,
+        CloudCanonicalAttachmentMaterializationCapability, CloudCanonicalAttachmentPayload,
         CloudCanonicalAttachmentReference, CloudCanonicalAttributedBody, CloudCanonicalChatPayload,
         CloudCanonicalChatStyle, CloudCanonicalDigest, CloudCanonicalEditPartSnapshot,
         CloudCanonicalEntityKind, CloudCanonicalEnvelope, CloudCanonicalField, CloudCanonicalHash,
@@ -801,9 +802,19 @@ pub(crate) enum CloudCanonicalQuarantineReason {
     MalformedRecord,
 }
 
+/// Exact service families intentionally outside the iMessage projection
+/// contract. These values are content-free and are emitted only after raw
+/// service presence and any nested service assertion agree exactly.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CloudCanonicalOutOfScopeService {
+    SmsFamily,
+    Rcs,
+}
+
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) enum CloudCanonicalConversionOutcome {
     Ready(Box<CloudCanonicalMutation>),
+    OutOfScopeService(CloudCanonicalOutOfScopeService),
     Deferred(CloudCanonicalDeferredReason),
     Quarantined(CloudCanonicalQuarantineReason),
 }
@@ -867,6 +878,10 @@ impl Debug for CloudCanonicalConversionOutcome {
             Self::Ready(_) => {
                 formatter.write_str("CloudCanonicalConversionOutcome::Ready(redacted)")
             }
+            Self::OutOfScopeService(service) => formatter
+                .debug_tuple("CloudCanonicalConversionOutcome::OutOfScopeService")
+                .field(service)
+                .finish(),
             Self::Deferred(reason) => formatter
                 .debug_tuple("CloudCanonicalConversionOutcome::Deferred")
                 .field(reason)
@@ -1740,7 +1755,50 @@ fn convert_chat_internal(
     }
     let service = match chat.service_name.as_str() {
         "iMessage" => CloudCanonicalService::IMessage,
-        "SMS" => CloudCanonicalService::Sms,
+        "SMS" => {
+            if [
+                &chat.guid,
+                &chat.chat_identifier,
+                &chat.group_id,
+                &chat.original_group_id,
+            ]
+            .iter()
+            .any(|value| value.is_empty())
+            {
+                return chat_diagnostic(
+                    diagnostic,
+                    CloudChatDiagnosticCode::EmptyRequiredIdentity,
+                    CloudCanonicalConversionOutcome::Quarantined(
+                        CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
+                    ),
+                );
+            }
+            return CloudCanonicalConversionOutcome::OutOfScopeService(
+                CloudCanonicalOutOfScopeService::SmsFamily,
+            );
+        }
+        "RCS" => {
+            if [
+                &chat.guid,
+                &chat.chat_identifier,
+                &chat.group_id,
+                &chat.original_group_id,
+            ]
+            .iter()
+            .any(|value| value.is_empty())
+            {
+                return chat_diagnostic(
+                    diagnostic,
+                    CloudChatDiagnosticCode::EmptyRequiredIdentity,
+                    CloudCanonicalConversionOutcome::Quarantined(
+                        CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
+                    ),
+                );
+            }
+            return CloudCanonicalConversionOutcome::OutOfScopeService(
+                CloudCanonicalOutOfScopeService::Rcs,
+            );
+        }
         _ => {
             return chat_diagnostic(
                 diagnostic,
@@ -2279,7 +2337,31 @@ pub(crate) fn convert_message(
     }
     let service = match message.service.as_str() {
         "iMessage" => CloudCanonicalService::IMessage,
-        "SMS" => CloudCanonicalService::Sms,
+        "SMS" | "RCS" => {
+            if message.guid.is_empty() || message.chat_id.is_empty() {
+                return CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
+                );
+            }
+            let expected_service = message.service.as_str();
+            if message
+                .msg_proto_4
+                .as_ref()
+                .and_then(|value| value.0.service.as_deref())
+                .is_some_and(|nested| nested != expected_service)
+            {
+                return CloudCanonicalConversionOutcome::Quarantined(
+                    CloudCanonicalQuarantineReason::UnsupportedService,
+                );
+            }
+            return CloudCanonicalConversionOutcome::OutOfScopeService(
+                if expected_service == "SMS" {
+                    CloudCanonicalOutOfScopeService::SmsFamily
+                } else {
+                    CloudCanonicalOutOfScopeService::Rcs
+                },
+            );
+        }
         _ => {
             return CloudCanonicalConversionOutcome::Quarantined(
                 CloudCanonicalQuarantineReason::UnsupportedService,
@@ -2588,17 +2670,18 @@ pub(crate) fn convert_attachment(
             CloudCanonicalQuarantineReason::MalformedRequiredIdentity,
         );
     }
+    let mut materialization_capability =
+        CloudCanonicalAttachmentMaterializationCapability::Materializable;
     if let Some(user_info) = attachment.user_info.as_ref() {
         match validate_attachment_user_info(user_info) {
             Ok(CloudAttachmentUserInfoKind::Mmcs) => {}
             // The native materializer currently reopens the protected record
             // and downloads its CloudKit/MMCS asset. It has no proven inline
-            // body path, so retain inline records until that separate path is
-            // implemented rather than projecting an unusable attachment.
+            // body path. Preserve the canonical metadata while making that
+            // body limitation explicit and content-free.
             Ok(CloudAttachmentUserInfoKind::Inline) => {
-                return CloudCanonicalConversionOutcome::Deferred(
-                    CloudCanonicalDeferredReason::UnsupportedMediaCredentials,
-                );
+                materialization_capability = CloudCanonicalAttachmentMaterializationCapability::
+                    MetadataOnlyUnsupportedMediaCredentials;
             }
             Err(reason) => {
                 return CloudCanonicalConversionOutcome::Quarantined(reason);
@@ -2606,12 +2689,11 @@ pub(crate) fn convert_attachment(
         }
     }
     // `lqa` is the CloudKit asset/download capability, not the attachment's
-    // logical identity. Preserve records that cannot yet be materialized
-    // rather than misclassifying them as malformed identity.
+    // logical identity. Its absence limits body materialization without
+    // suppressing otherwise valid canonical metadata.
     if presence.field("lqa") != CloudRawFieldPresence::PresentWithValue {
-        return CloudCanonicalConversionOutcome::Deferred(
-            CloudCanonicalDeferredReason::UnsupportedMediaCredentials,
-        );
+        materialization_capability = CloudCanonicalAttachmentMaterializationCapability::
+            MetadataOnlyUnsupportedMediaCredentials;
     }
     if attachment.is_sticker {
         return CloudCanonicalConversionOutcome::Deferred(
@@ -2679,12 +2761,11 @@ pub(crate) fn convert_attachment(
         }
         CloudNestedPresence::Present if attachment.total_bytes == 0 => {
             // The native MMCS materializer deliberately rejects zero-byte
-            // requests. Retain the protected source until that path is proven
-            // rather than projecting metadata for an attachment that this
-            // build can never materialize.
-            return CloudCanonicalConversionOutcome::Deferred(
-                CloudCanonicalDeferredReason::UnsupportedMediaCredentials,
-            );
+            // requests. Keep the observed zero without promoting this body to
+            // a materializable state.
+            materialization_capability = CloudCanonicalAttachmentMaterializationCapability::
+                MetadataOnlyUnsupportedMediaCredentials;
+            CloudCanonicalField::Value(0)
         }
         CloudNestedPresence::Present => CloudCanonicalField::Value(attachment.total_bytes as u64),
         CloudNestedPresence::Unavailable => {
@@ -2694,10 +2775,11 @@ pub(crate) fn convert_attachment(
         }
         CloudNestedPresence::Absent => {
             // Size is materialization metadata. Do not fabricate serde's
-            // numeric default when Apple omitted it.
-            return CloudCanonicalConversionOutcome::Deferred(
-                CloudCanonicalDeferredReason::UnsupportedMediaCredentials,
-            );
+            // numeric default when Apple omitted it, but retain the remaining
+            // canonical metadata.
+            materialization_capability = CloudCanonicalAttachmentMaterializationCapability::
+                MetadataOnlyUnsupportedMediaCredentials;
+            CloudCanonicalField::Absent
         }
         CloudNestedPresence::OuterAbsent | CloudNestedPresence::OuterWithoutValue => {
             return CloudCanonicalConversionOutcome::Quarantined(
@@ -2719,7 +2801,7 @@ pub(crate) fn convert_attachment(
             )
         }
     };
-    let payload = match CloudCanonicalAttachmentPayload::new(
+    let payload = match CloudCanonicalAttachmentPayload::new_with_materialization_capability(
         canonical_guid,
         owner_guid,
         owner_hash.clone(),
@@ -2729,6 +2811,7 @@ pub(crate) fn convert_attachment(
         transfer_name,
         total_bytes,
         is_outgoing,
+        materialization_capability,
         CloudCanonicalField::Absent,
     ) {
         Ok(value) => value,
@@ -2985,6 +3068,18 @@ mod tests {
         presence
     }
 
+    fn ready_attachment_payload(
+        outcome: CloudCanonicalConversionOutcome,
+    ) -> CloudCanonicalAttachmentPayload {
+        let CloudCanonicalConversionOutcome::Ready(mutation) = outcome else {
+            panic!("attachment should convert to a ready mutation");
+        };
+        let Some(CloudCanonicalPayload::Attachment(payload)) = mutation.payload() else {
+            panic!("attachment payload expected");
+        };
+        payload.as_ref().clone()
+    }
+
     fn attribute_dictionary(
         entries: impl IntoIterator<Item = (&'static str, StCollapsedValue)>,
     ) -> NSDictionaryTypedCoder {
@@ -3173,7 +3268,7 @@ mod tests {
         assert_eq!(diagnostic, None);
 
         let mut unsupported_chat = direct_chat();
-        unsupported_chat.service_name = "RCS".to_owned();
+        unsupported_chat.service_name = "FaceTime".to_owned();
         let unsupported_context = context(&hasher, "server-chat-diagnostic-service", None);
         let expected = convert_chat(&unsupported_context, &ready_presence, &unsupported_chat);
         let (instrumented, diagnostic) =
@@ -3844,48 +3939,30 @@ mod tests {
     }
 
     #[test]
-    fn sms_url_balloon_projects_independent_text_without_decoding_payload() {
+    fn sms_url_balloon_is_classified_outside_imessage_projection() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let mut message = normal_message(Some("https://example.com/sms-path"));
         message.service = "SMS".to_owned();
         message.msg_proto.0.balloon_bundle_id = Some(URL_BALLOON_PROVIDER.to_owned());
         message.msg_proto.0.payload_data = Some(vec![0x01, 0x02, 0x03]);
 
-        let outcome = convert_message(
-            &context(&hasher, "server-sms-url-balloon", None),
-            &message_presence(),
-            &message,
-        );
-        let payload = message_payload(&outcome);
         assert_eq!(
-            payload.text(),
-            &CloudCanonicalField::Value("https://example.com/sms-path".to_owned())
-        );
-        assert_eq!(
-            payload.balloon_bundle_id(),
-            &CloudCanonicalField::Value(URL_BALLOON_PROVIDER.to_owned())
-        );
-        assert_eq!(
-            payload.decoded_extension_payload(),
-            &CloudCanonicalField::Absent
+            convert_message(
+                &context(&hasher, "server-sms-url-balloon", None),
+                &message_presence(),
+                &message,
+            ),
+            CloudCanonicalConversionOutcome::OutOfScopeService(
+                CloudCanonicalOutOfScopeService::SmsFamily
+            )
         );
     }
 
     #[test]
-    fn unknown_and_contentless_sms_extension_payloads_remain_deferred() {
+    fn unknown_imessage_extension_payloads_remain_deferred() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
-        for (service, balloon_bundle_id) in [
-            ("iMessage", None),
-            ("iMessage", Some("com.example.UnknownBalloon")),
-            ("SMS", Some(URL_BALLOON_PROVIDER)),
-        ] {
-            let base_text = if service == "SMS" {
-                None
-            } else {
-                Some("base text")
-            };
-            let mut message = normal_message(base_text);
-            message.service = service.to_owned();
+        for balloon_bundle_id in [None, Some("com.example.UnknownBalloon")] {
+            let mut message = normal_message(Some("base text"));
             message.msg_proto.0.balloon_bundle_id = balloon_bundle_id.map(str::to_owned);
             message.msg_proto.0.payload_data = Some(vec![0x01]);
 
@@ -3898,7 +3975,7 @@ mod tests {
                 CloudCanonicalConversionOutcome::Deferred(
                     CloudCanonicalDeferredReason::UnsupportedExtensionPayload
                 ),
-                "service={service} balloon_bundle_id={balloon_bundle_id:?}"
+                "balloon_bundle_id={balloon_bundle_id:?}"
             );
         }
     }
@@ -4250,15 +4327,11 @@ mod tests {
             &message_presence(),
             &sms,
         );
-        let CloudCanonicalConversionOutcome::Ready(sms_mutation) = sms_outcome else {
-            panic!("bare SMS message should retain its existing conversion");
-        };
-        let Some(CloudCanonicalPayload::Message(sms_payload)) = sms_mutation.payload() else {
-            panic!("SMS message payload expected");
-        };
         assert_eq!(
-            sms_payload.chat_id_bare_direct_service_identifier_alias_key_hash(),
-            None
+            sms_outcome,
+            CloudCanonicalConversionOutcome::OutOfScopeService(
+                CloudCanonicalOutOfScopeService::SmsFamily
+            )
         );
     }
 
@@ -4623,44 +4696,40 @@ mod tests {
     }
 
     #[test]
-    fn sms_service_is_supported_for_chat_and_message_conversion() {
+    fn exact_sms_and_rcs_are_outside_imessage_projection() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
-        let mut chat = direct_chat();
-        chat.service_name = "SMS".to_owned();
-        let chat_outcome = convert_chat(
-            &context(&hasher, "server-sms-chat", None),
-            &chat_required_presence(false),
-            &chat,
-        );
-        let CloudCanonicalConversionOutcome::Ready(chat_mutation) = chat_outcome else {
-            panic!("SMS chat should convert");
-        };
-        let Some(CloudCanonicalPayload::Chat(chat_payload)) = chat_mutation.payload() else {
-            panic!("chat payload expected");
-        };
-        assert_eq!(chat_payload.service(), CloudCanonicalService::Sms);
+        for (service_name, expected) in [
+            ("SMS", CloudCanonicalOutOfScopeService::SmsFamily),
+            ("RCS", CloudCanonicalOutOfScopeService::Rcs),
+        ] {
+            let mut chat = direct_chat();
+            chat.service_name = service_name.to_owned();
+            assert_eq!(
+                convert_chat(
+                    &context(&hasher, "server-out-of-scope-chat", None),
+                    &chat_required_presence(false),
+                    &chat,
+                ),
+                CloudCanonicalConversionOutcome::OutOfScopeService(expected)
+            );
 
-        let mut message = normal_message(Some("hello"));
-        message.service = "SMS".to_owned();
-        let message_outcome = convert_message(
-            &context(&hasher, "server-sms-message", None),
-            &message_presence(),
-            &message,
-        );
-        let CloudCanonicalConversionOutcome::Ready(message_mutation) = message_outcome else {
-            panic!("SMS message should convert");
-        };
-        let Some(CloudCanonicalPayload::Message(message_payload)) = message_mutation.payload()
-        else {
-            panic!("message payload expected");
-        };
-        assert_eq!(message_payload.service(), CloudCanonicalService::Sms);
+            let mut message = normal_message(Some("hello"));
+            message.service = service_name.to_owned();
+            assert_eq!(
+                convert_message(
+                    &context(&hasher, "server-out-of-scope-message", None),
+                    &message_presence(),
+                    &message,
+                ),
+                CloudCanonicalConversionOutcome::OutOfScopeService(expected)
+            );
+        }
     }
 
     #[test]
-    fn unknown_rcs_and_facetime_services_remain_typed_quarantines() {
+    fn unknown_facetime_and_case_variant_services_remain_typed_quarantines() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
-        for service_name in ["RCS", "FaceTime", "carrier-extension", "sms"] {
+        for service_name in ["FaceTime", "carrier-extension", "sms", "rcs", ""] {
             let mut chat = direct_chat();
             chat.service_name = service_name.to_owned();
             assert_eq!(
@@ -4706,7 +4775,9 @@ mod tests {
                 &message_presence(),
                 &sms,
             ),
-            CloudCanonicalConversionOutcome::Ready(_)
+            CloudCanonicalConversionOutcome::OutOfScopeService(
+                CloudCanonicalOutOfScopeService::SmsFamily
+            )
         ));
 
         sms.msg_proto_4 = Some(GZipWrapper(MessageProto4 {
@@ -4718,6 +4789,38 @@ mod tests {
                 &context(&hasher, "server-sms-conflicting-proto4", None),
                 &message_presence(),
                 &sms,
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::UnsupportedService
+            )
+        );
+
+        let mut rcs = normal_message(Some("hello"));
+        rcs.service = "RCS".to_owned();
+        rcs.msg_proto_4 = Some(GZipWrapper(MessageProto4 {
+            service: Some("RCS".to_owned()),
+            ..Default::default()
+        }));
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-rcs-matching-proto4", None),
+                &message_presence(),
+                &rcs,
+            ),
+            CloudCanonicalConversionOutcome::OutOfScopeService(
+                CloudCanonicalOutOfScopeService::Rcs
+            )
+        );
+
+        rcs.msg_proto_4 = Some(GZipWrapper(MessageProto4 {
+            service: Some("SMS".to_owned()),
+            ..Default::default()
+        }));
+        assert_eq!(
+            convert_message(
+                &context(&hasher, "server-rcs-conflicting-proto4", None),
+                &message_presence(),
+                &rcs,
             ),
             CloudCanonicalConversionOutcome::Quarantined(
                 CloudCanonicalQuarantineReason::UnsupportedService
@@ -4816,10 +4919,14 @@ mod tests {
             CloudCanonicalConversionOutcome::Ready(_)
         ));
         assert!(!format!("{outcome:?}").contains(secret));
+        assert_eq!(
+            ready_attachment_payload(outcome).materialization_capability(),
+            CloudCanonicalAttachmentMaterializationCapability::Materializable
+        );
     }
 
     #[test]
-    fn zero_byte_mmcs_attachment_remains_deferred_until_materializable() {
+    fn zero_byte_mmcs_attachment_projects_metadata_only_without_fabricating_size() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let mut attachment = AttachmentMeta {
             guid: "standalone-zero-byte-guid".to_owned(),
@@ -4838,15 +4945,15 @@ mod tests {
             ..Default::default()
         });
 
+        let payload = ready_attachment_payload(convert_attachment(
+            &context(&hasher, "server-zero-byte-attachment", None),
+            &attachment_presence(),
+            &attachment,
+        ));
+        assert_eq!(payload.total_bytes(), &CloudCanonicalField::Value(0));
         assert_eq!(
-            convert_attachment(
-                &context(&hasher, "server-zero-byte-attachment", None),
-                &attachment_presence(),
-                &attachment,
-            ),
-            CloudCanonicalConversionOutcome::Deferred(
-                CloudCanonicalDeferredReason::UnsupportedMediaCredentials
-            )
+            payload.materialization_capability(),
+            CloudCanonicalAttachmentMaterializationCapability::MetadataOnlyUnsupportedMediaCredentials
         );
     }
 
@@ -4883,24 +4990,58 @@ mod tests {
                 CloudCanonicalQuarantineReason::MalformedRequiredIdentity
             )
         );
+
+        assert_eq!(
+            convert_attachment(
+                &context(&hasher, "server-malformed-owned-attachment-guid", None),
+                &attachment_presence_with(&["aguid", "tb", "ig"], false),
+                &AttachmentMeta {
+                    guid: "at_malformed".to_owned(),
+                    total_bytes: 42,
+                    ..Default::default()
+                },
+            ),
+            CloudCanonicalConversionOutcome::Quarantined(
+                CloudCanonicalQuarantineReason::MalformedParent
+            )
+        );
     }
 
     #[test]
-    fn missing_attachment_size_is_deferred_without_fabrication() {
+    fn missing_attachment_size_projects_metadata_only_without_fabrication() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let attachment = AttachmentMeta {
             guid: "standalone-attachment-guid".to_owned(),
             total_bytes: 42,
             ..Default::default()
         };
+        let payload = ready_attachment_payload(convert_attachment(
+            &context(&hasher, "server-missing-attachment-size", None),
+            &attachment_presence_with(&["aguid", "ig"], true),
+            &attachment,
+        ));
+        assert_eq!(payload.total_bytes(), &CloudCanonicalField::Absent);
+        assert_eq!(
+            payload.materialization_capability(),
+            CloudCanonicalAttachmentMaterializationCapability::MetadataOnlyUnsupportedMediaCredentials
+        );
+    }
+
+    #[test]
+    fn negative_attachment_size_remains_fail_closed() {
+        let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         assert_eq!(
             convert_attachment(
-                &context(&hasher, "server-missing-attachment-size", None),
-                &attachment_presence_with(&["aguid", "ig"], true),
-                &attachment,
+                &context(&hasher, "server-negative-attachment-size", None),
+                &attachment_presence_with(&["aguid", "tb", "ig"], false),
+                &AttachmentMeta {
+                    guid: "standalone-negative-size-guid".to_owned(),
+                    total_bytes: -1,
+                    ..Default::default()
+                },
             ),
             CloudCanonicalConversionOutcome::Deferred(
-                CloudCanonicalDeferredReason::UnsupportedMediaCredentials
+                CloudCanonicalDeferredReason::UnsupportedNegativeAttachmentSize
             )
         );
     }
@@ -4928,7 +5069,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_or_valueless_asset_is_deferred_not_malformed_identity() {
+    fn missing_or_valueless_asset_projects_metadata_only() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let attachment = AttachmentMeta {
             guid: "standalone-attachment-guid".to_owned(),
@@ -4936,35 +5077,33 @@ mod tests {
             ..Default::default()
         };
         let missing = attachment_presence_with(&["aguid", "tb", "ig"], false);
+        let missing_payload = ready_attachment_payload(convert_attachment(
+            &context(&hasher, "server-missing-asset", None),
+            &missing,
+            &attachment,
+        ));
         assert_eq!(
-            convert_attachment(
-                &context(&hasher, "server-missing-asset", None),
-                &missing,
-                &attachment,
-            ),
-            CloudCanonicalConversionOutcome::Deferred(
-                CloudCanonicalDeferredReason::UnsupportedMediaCredentials
-            )
+            missing_payload.materialization_capability(),
+            CloudCanonicalAttachmentMaterializationCapability::MetadataOnlyUnsupportedMediaCredentials
         );
 
         let mut valueless = attachment_presence();
         valueless
             .fields
             .insert("lqa".to_owned(), CloudRawFieldPresence::PresentWithoutValue);
+        let valueless_payload = ready_attachment_payload(convert_attachment(
+            &context(&hasher, "server-valueless-asset", None),
+            &valueless,
+            &attachment,
+        ));
         assert_eq!(
-            convert_attachment(
-                &context(&hasher, "server-valueless-asset", None),
-                &valueless,
-                &attachment,
-            ),
-            CloudCanonicalConversionOutcome::Deferred(
-                CloudCanonicalDeferredReason::UnsupportedMediaCredentials
-            )
+            valueless_payload.materialization_capability(),
+            CloudCanonicalAttachmentMaterializationCapability::MetadataOnlyUnsupportedMediaCredentials
         );
     }
 
     #[test]
-    fn valid_inline_metadata_remains_deferred_without_a_native_inline_body_path() {
+    fn valid_inline_metadata_projects_without_a_native_inline_body_path() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let mut attachment = AttachmentMeta {
             guid: "standalone-inline-guid".to_owned(),
@@ -4976,20 +5115,20 @@ mod tests {
             message_part: Some("0".to_owned()),
             ..Default::default()
         });
+        let payload = ready_attachment_payload(convert_attachment(
+            &context(&hasher, "server-inline-attachment", None),
+            &attachment_presence(),
+            &attachment,
+        ));
+        assert_eq!(payload.total_bytes(), &CloudCanonicalField::Value(42));
         assert_eq!(
-            convert_attachment(
-                &context(&hasher, "server-inline-attachment", None),
-                &attachment_presence(),
-                &attachment,
-            ),
-            CloudCanonicalConversionOutcome::Deferred(
-                CloudCanonicalDeferredReason::UnsupportedMediaCredentials
-            )
+            payload.materialization_capability(),
+            CloudCanonicalAttachmentMaterializationCapability::MetadataOnlyUnsupportedMediaCredentials
         );
     }
 
     #[test]
-    fn valid_inline_metadata_without_asset_remains_deferred() {
+    fn valid_inline_metadata_without_asset_projects_metadata_only() {
         let hasher = CloudSemanticIdentifierHasher::new(b"fixture-key").unwrap();
         let attachment = AttachmentMeta {
             guid: "standalone-inline-guid".to_owned(),
@@ -5001,15 +5140,14 @@ mod tests {
             }),
             ..Default::default()
         };
+        let payload = ready_attachment_payload(convert_attachment(
+            &context(&hasher, "server-inline-without-asset", None),
+            &attachment_presence_with(&["aguid", "tb", "ig"], false),
+            &attachment,
+        ));
         assert_eq!(
-            convert_attachment(
-                &context(&hasher, "server-inline-without-asset", None),
-                &attachment_presence_with(&["aguid", "tb", "ig"], false),
-                &attachment,
-            ),
-            CloudCanonicalConversionOutcome::Deferred(
-                CloudCanonicalDeferredReason::UnsupportedMediaCredentials
-            )
+            payload.materialization_capability(),
+            CloudCanonicalAttachmentMaterializationCapability::MetadataOnlyUnsupportedMediaCredentials
         );
     }
 

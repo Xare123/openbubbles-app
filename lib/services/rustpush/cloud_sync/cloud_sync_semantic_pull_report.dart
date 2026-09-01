@@ -4,6 +4,15 @@ import 'cloud_sync_observability.dart';
 import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_semantic_diagnostics.dart';
 
+enum CloudSyncSemanticReportMode {
+  readOnlyCloudKit('manual-semantic-read-only-cloudkit'),
+  retainedProjectionSweep('manual-semantic-local-projection-sweep');
+
+  const CloudSyncSemanticReportMode(this.wireName);
+
+  final String wireName;
+}
+
 /// Content-free result for one developer-confirmed local semantic projection.
 final class CloudSyncSemanticPullZoneReport {
   CloudSyncSemanticPullZoneReport({
@@ -29,6 +38,9 @@ final class CloudSyncSemanticPullZoneReport {
     required this.retried,
     required this.elapsedMilliseconds,
     this.observedEmptyTerminalRead = false,
+    this.projectionExamined = 0,
+    this.projectionRetained = 0,
+    this.projectionBatches = 0,
     Map<String, int> diagnosticCounts = const <String, int>{},
     this.failureCategory,
     String? failureSafeCode,
@@ -66,6 +78,9 @@ final class CloudSyncSemanticPullZoneReport {
   final int retried;
   final int elapsedMilliseconds;
   final bool observedEmptyTerminalRead;
+  final int projectionExamined;
+  final int projectionRetained;
+  final int projectionBatches;
   final Map<String, int> diagnosticCounts;
   final CloudFailureCategory? failureCategory;
   final String? failureSafeCode;
@@ -99,6 +114,9 @@ final class CloudSyncSemanticPullZoneReport {
     'retried': retried,
     'elapsedMilliseconds': elapsedMilliseconds,
     'observedEmptyTerminalRead': observedEmptyTerminalRead,
+    'projectionExamined': projectionExamined,
+    'projectionRetained': projectionRetained,
+    'projectionBatches': projectionBatches,
     'semanticDiagnostics': diagnosticCounts,
     'failureCategory': failureCategory?.name,
     'failureSafeCode': failureSafeCode,
@@ -117,9 +135,10 @@ final class CloudSyncSemanticPullReport {
     required this.outboxCountBefore,
     required this.outboxCountAfter,
     required Iterable<CloudSyncSemanticPullZoneReport> zones,
+    this.mode = CloudSyncSemanticReportMode.readOnlyCloudKit,
   }) : zones = List.unmodifiable(zones);
 
-  static const schemaVersion = 5;
+  static const schemaVersion = 6;
   static const expectedZoneLabels = <String>{
     'attachments',
     'chats',
@@ -134,6 +153,7 @@ final class CloudSyncSemanticPullReport {
   final int outboxCountBefore;
   final int outboxCountAfter;
   final List<CloudSyncSemanticPullZoneReport> zones;
+  final CloudSyncSemanticReportMode mode;
 
   bool get remoteWriteTripwiresIntact =>
       outboxCountBefore == 0 && outboxCountAfter == 0;
@@ -149,50 +169,119 @@ final class CloudSyncSemanticPullReport {
   /// contained no server changes. The fetched counter alone is insufficient:
   /// duplicate nonempty pages can insert zero new journal rows.
   bool get allZonesObservedEmptyTerminalRead =>
+      mode == CloudSyncSemanticReportMode.readOnlyCloudKit &&
       hasExactThreeZoneStructure &&
       zones.every(
         (zone) => zone.fetched == 0 && zone.observedEmptyTerminalRead,
       );
 
+  /// Returns a validated, content-free failure code only when a zone's status
+  /// tuple is what made an otherwise well-formed, read-only report unsafe.
+  /// Structural or tripwire failures deliberately retain the generic drain
+  /// failure code instead.
+  String? get unambiguousRejectedZoneFailureSafeCode {
+    if (!remoteWriteTripwiresIntact || !hasExactThreeZoneStructure) {
+      return null;
+    }
+    String? candidate;
+    for (final zone in zones) {
+      if (!_hasNoDrainTripwire(zone)) return null;
+      if (_hasAcceptedDrainStatus(zone)) continue;
+      final failureSafeCode = zone.failureSafeCode;
+      if (failureSafeCode == null ||
+          (candidate != null && candidate != failureSafeCode)) {
+        return null;
+      }
+      candidate = failureSafeCode;
+    }
+    return candidate;
+  }
+
   /// The drain may continue only through a clean read or the one explicitly
   /// non-destructive degraded state: retained rows awaiting local projection.
   bool get safeToContinueDrain {
-    if (!remoteWriteTripwiresIntact || !hasExactThreeZoneStructure) {
+    if (mode != CloudSyncSemanticReportMode.readOnlyCloudKit ||
+        !remoteWriteTripwiresIntact ||
+        !hasExactThreeZoneStructure) {
       return false;
     }
     for (final zone in zones) {
-      final acceptedStatus =
-          (zone.status == CloudSyncRunStatus.completed &&
-              zone.failureCategory == null &&
-              zone.failureSafeCode == null) ||
-          (zone.status == CloudSyncRunStatus.degraded &&
-              zone.failureCategory == CloudFailureCategory.dependency &&
-              zone.failureSafeCode == 'retained_projection_incomplete');
-      if (!acceptedStatus ||
-          zone.skipReason != null ||
-          zone.deferred != 0 ||
-          zone.quarantined != 0 ||
-          zone.preflightQuarantined != 0 ||
-          zone.preflightUnsupportedRecordType != 0 ||
-          zone.preflightMalformedMetadata != 0 ||
-          zone.preflightOversizedRecord != 0 ||
-          zone.preflightInvalidChangeShape != 0 ||
-          zone.preflightUnknown != 0 ||
-          zone.startupQuarantined != 0 ||
-          zone.postFetchQuarantined != 0 ||
-          zone.tombstoneQuarantined != 0 ||
-          zone.semanticUnsupportedServiceQuarantined != 0 ||
-          zone.semanticStageQuarantined != 0 ||
-          zone.retried != 0) {
+      if (!_hasAcceptedDrainStatus(zone) || !_hasNoDrainTripwire(zone)) {
         return false;
       }
     }
     return true;
   }
 
+  bool get safeToPersistProjectionSweep {
+    if (mode != CloudSyncSemanticReportMode.retainedProjectionSweep ||
+        !remoteWriteTripwiresIntact ||
+        !hasExactThreeZoneStructure) {
+      return false;
+    }
+    for (final zone in zones) {
+      if (!_hasAcceptedDrainStatus(zone) ||
+          !_hasNoDrainTripwire(zone) ||
+          zone.fetched != 0 ||
+          zone.observedEmptyTerminalRead ||
+          zone.projectionExamined != zone.applied + zone.projectionRetained ||
+          zone.projectionBatches < 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _hasAcceptedDrainStatus(CloudSyncSemanticPullZoneReport zone) =>
+      (zone.status == CloudSyncRunStatus.completed &&
+          zone.failureCategory == null &&
+          zone.failureSafeCode == null) ||
+      (zone.status == CloudSyncRunStatus.degraded &&
+          zone.failureCategory == CloudFailureCategory.dependency &&
+          zone.failureSafeCode == 'retained_projection_incomplete');
+
+  bool _hasNoDrainTripwire(CloudSyncSemanticPullZoneReport zone) =>
+      zone.skipReason == null &&
+      zone.deferred == 0 &&
+      zone.quarantined == 0 &&
+      zone.preflightQuarantined == 0 &&
+      zone.preflightUnsupportedRecordType == 0 &&
+      zone.preflightMalformedMetadata == 0 &&
+      zone.preflightOversizedRecord == 0 &&
+      zone.preflightInvalidChangeShape == 0 &&
+      zone.preflightUnknown == 0 &&
+      zone.startupQuarantined == 0 &&
+      zone.postFetchQuarantined == 0 &&
+      zone.tombstoneQuarantined == 0 &&
+      zone.semanticUnsupportedServiceQuarantined == 0 &&
+      zone.semanticStageQuarantined == 0 &&
+      zone.retried == 0 &&
+      zone.diagnosticCounts['retained_backlog_summary_ready'] == 1 &&
+      !zone.diagnosticCounts.containsKey('cloud_sync_unknown_failure') &&
+      !zone.diagnosticCounts.containsKey('diagnostic_code_invalid') &&
+      !zone.diagnosticCounts.containsKey(
+        'retained_backlog_summary_unavailable',
+      ) &&
+      !zone.diagnosticCounts.containsKey('retained_backlog_summary_mismatch');
+
   bool get projectionComplete =>
       hasExactThreeZoneStructure &&
       zones.every((zone) => zone.retainedUnprojected == 0);
+
+  bool get retainedSaveProjectionComplete =>
+      hasExactThreeZoneStructure &&
+      zones.every(
+        (zone) =>
+            zone.diagnosticCounts['retained_backlog_summary_ready'] == 1 &&
+            !zone.diagnosticCounts.containsKey(
+              'retained_backlog_blocking_saves',
+            ),
+      );
+
+  bool get hasRetainedSaveBacklog => zones.any(
+    (zone) =>
+        (zone.diagnosticCounts['retained_backlog_blocking_saves'] ?? 0) > 0,
+  );
 
   Map<String, Object?> toJson() => {
     'schemaVersion': schemaVersion,
@@ -200,7 +289,7 @@ final class CloudSyncSemanticPullReport {
     'platform': platform,
     'architecture': architecture,
     'buildCommit': buildCommit,
-    'mode': 'manual-semantic-read-only-cloudkit',
+    'mode': mode.wireName,
     'automaticTriggersEnabled': false,
     'remoteSavesEnabled': false,
     'remoteDeletesEnabled': false,

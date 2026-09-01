@@ -1,3 +1,4 @@
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_attachment_provenance.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_inbox_applier.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_merge_policy.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
@@ -87,6 +88,7 @@ CloudAttachmentEntityPayload _ownedAttachment() {
     ownerPart: 0,
     fileName: 'photo.jpg',
     mimeType: 'image/jpeg',
+    bodyCapability: CloudAttachmentBodyCapability.materializable,
     protectedLocalReference: 'protected:attachment',
   );
 }

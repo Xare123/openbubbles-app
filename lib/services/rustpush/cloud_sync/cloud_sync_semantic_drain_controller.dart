@@ -1,4 +1,5 @@
 import 'cloud_sync_manual_semantic_pull_sampler.dart';
+import 'cloud_sync_safe_failure.dart';
 import 'cloud_sync_semantic_pull_report.dart';
 import 'cloud_sync_semantic_pull_report_file.dart';
 
@@ -11,6 +12,8 @@ typedef CloudSyncSemanticDrainSessionRun =
       )
       action,
     );
+typedef CloudSyncSemanticCatchUpRun =
+    Future<CloudSyncConfirmedCatchUpResult> Function();
 
 /// Content-free result of a bounded, in-process semantic catch-up drain.
 ///
@@ -24,6 +27,8 @@ final class CloudSyncSemanticDrainResult {
     required this.persistedReportReference,
     required this.remoteDrained,
     required this.projectionComplete,
+    required this.retainedSaveProjectionComplete,
+    required this.projectionSweepAttempted,
     required this.reachedPassLimit,
   });
 
@@ -32,6 +37,8 @@ final class CloudSyncSemanticDrainResult {
   final Object persistedReportReference;
   final bool remoteDrained;
   final bool projectionComplete;
+  final bool retainedSaveProjectionComplete;
+  final bool projectionSweepAttempted;
   final bool reachedPassLimit;
 }
 
@@ -45,17 +52,20 @@ final class CloudSyncSemanticDrainController {
   factory CloudSyncSemanticDrainController({
     required CloudSyncSemanticPullReportPersist persistReport,
     required CloudSyncSemanticDrainSessionRun runSession,
+    CloudSyncSemanticCatchUpRun? runCatchUp,
     int maximumPasses = defaultMaximumPasses,
   }) => CloudSyncSemanticDrainController._(
     persistReport,
     maximumPasses,
     runSession,
+    runCatchUp,
   );
 
   CloudSyncSemanticDrainController._(
     this._persistReport,
     this.maximumPasses,
     this._runSession,
+    this._runCatchUp,
   );
 
   factory CloudSyncSemanticDrainController.production({
@@ -67,6 +77,10 @@ final class CloudSyncSemanticDrainController {
       persistReport: reportWriter.write,
       maximumPasses: maximumPasses,
       runSession: (action) => sampler.runConfirmedSession(action),
+      runCatchUp: () => sampler.runConfirmedCatchUpAndPersist(
+        persistReport: reportWriter.write,
+        maximumRemotePasses: maximumPasses,
+      ),
     );
   }
 
@@ -74,6 +88,7 @@ final class CloudSyncSemanticDrainController {
 
   final CloudSyncSemanticPullReportPersist _persistReport;
   final CloudSyncSemanticDrainSessionRun _runSession;
+  final CloudSyncSemanticCatchUpRun? _runCatchUp;
   final int maximumPasses;
   Future<CloudSyncSemanticDrainResult>? _inFlight;
   Future<void>? _disposeFuture;
@@ -104,8 +119,28 @@ final class CloudSyncSemanticDrainController {
     return operation;
   }
 
-  Future<CloudSyncSemanticDrainResult> _drain() =>
-      _runSession(_drainWithinConfirmedSession);
+  Future<CloudSyncSemanticDrainResult> _drain() {
+    final runCatchUp = _runCatchUp;
+    return runCatchUp == null
+        ? _runSession(_drainWithinConfirmedSession)
+        : _drainWithExactProjectionSweep(runCatchUp);
+  }
+
+  Future<CloudSyncSemanticDrainResult> _drainWithExactProjectionSweep(
+    CloudSyncSemanticCatchUpRun runCatchUp,
+  ) async {
+    final result = await runCatchUp();
+    return CloudSyncSemanticDrainResult(
+      passes: result.remotePasses,
+      lastReport: result.latestReport,
+      persistedReportReference: result.latestReportReference,
+      remoteDrained: result.remoteDrained,
+      projectionComplete: result.latestReport.projectionComplete,
+      retainedSaveProjectionComplete: result.retainedSaveProjectionComplete,
+      projectionSweepAttempted: result.projectionReport != null,
+      reachedPassLimit: result.reachedRemotePassLimit,
+    );
+  }
 
   Future<CloudSyncSemanticDrainResult> _drainWithinConfirmedSession(
     CloudSyncConfirmedSemanticPullPass runPass,
@@ -119,6 +154,13 @@ final class CloudSyncSemanticDrainController {
 
       // Persistence deliberately precedes every safety decision.
       if (!report.safeToContinueDrain) {
+        final zoneFailureSafeCode =
+            report.unambiguousRejectedZoneFailureSafeCode;
+        if (zoneFailureSafeCode != null) {
+          throw CloudSyncSemanticDrainUnsafeReportException(
+            zoneFailureSafeCode,
+          );
+        }
         throw StateError('cloud_sync_semantic_drain_unsafe_report');
       }
 
@@ -130,6 +172,8 @@ final class CloudSyncSemanticDrainController {
           persistedReportReference: persistedReference,
           remoteDrained: remoteDrained,
           projectionComplete: report.projectionComplete,
+          retainedSaveProjectionComplete: report.retainedSaveProjectionComplete,
+          projectionSweepAttempted: false,
           reachedPassLimit: !remoteDrained,
         );
       }

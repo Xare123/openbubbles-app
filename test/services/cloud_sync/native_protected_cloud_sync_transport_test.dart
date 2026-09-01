@@ -29,6 +29,16 @@ void main() {
     );
   });
 
+  test('every generated protected failure code is report allowlisted', () {
+    final mapped = frb_api.CloudSyncProtectedSafeCode.values
+        .map(cloudSyncV2ProtectedTransportSafeCode)
+        .toSet();
+    expect(mapped, CloudSyncV2ProtectedTransportSafeFailureCodes.all);
+    for (final code in mapped) {
+      expect(cloudSyncV2SafeFailureCodeForCandidate(code), code, reason: code);
+    }
+  });
+
   test(
     'maps only native hashes and protected references into one batch',
     () async {
@@ -88,28 +98,31 @@ void main() {
     },
   );
 
-  test('forwards the exact native writer-pause capability to protected fetch', () async {
-    bindings.fetchResult = _validEmptyFetchResult();
-    final pauseToken = BigInt.from(77);
-    final boundTransport = NativeProtectedCloudSyncTransport(
-      cloudMessagesClient: Object(),
-      storageDirectory: 'private-storage',
-      protectedStoreIdentity: _storeIdentity,
-      nativeWriterPauseToken: pauseToken,
-      bindings: bindings,
-    );
+  test(
+    'forwards the exact native writer-pause capability to protected fetch',
+    () async {
+      bindings.fetchResult = _validEmptyFetchResult();
+      final pauseToken = BigInt.from(77);
+      final boundTransport = NativeProtectedCloudSyncTransport(
+        cloudMessagesClient: Object(),
+        storageDirectory: 'private-storage',
+        protectedStoreIdentity: _storeIdentity,
+        nativeWriterPauseToken: pauseToken,
+        bindings: bindings,
+      );
 
-    await boundTransport.fetchChanges(
-      _semanticScope(),
-      previousToken: null,
-      generation: 1,
-      limit: 1,
-    );
+      await boundTransport.fetchChanges(
+        _semanticScope(),
+        previousToken: null,
+        generation: 1,
+        limit: 1,
+      );
 
-    expect(bindings.nativeWriterPauseToken, same(pauseToken));
-    expect(bindings.boundFetchCalls, 1);
-    expect(bindings.unboundFetchCalls, 0);
-  });
+      expect(bindings.nativeWriterPauseToken, same(pauseToken));
+      expect(bindings.boundFetchCalls, 1);
+      expect(bindings.unboundFetchCalls, 0);
+    },
+  );
 
   test('rejects an invalid native writer-pause capability before fetch', () {
     expect(

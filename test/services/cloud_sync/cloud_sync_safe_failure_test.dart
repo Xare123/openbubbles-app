@@ -1,4 +1,8 @@
+import 'dart:io';
+
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_models.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_safe_failure.dart';
+import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_diagnostics.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_semantic_pull_report_file.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloud_sync_shadow_report_file.dart';
 import 'package:bluebubbles/services/rustpush/cloud_sync/cloudkit_operation_interlock.dart';
@@ -39,6 +43,31 @@ void main() {
         const CloudKitOperationInterlockException('cloudkit_interlock_busy'),
       ),
       'cloudkit_interlock_busy',
+    );
+  });
+
+  test('preserves only reviewed semantic-drain zone failure codes', () {
+    expect(
+      cloudSyncV2SafeFailureCode(
+        const CloudSyncSemanticDrainUnsafeReportException(
+          'native_auth_unavailable',
+        ),
+      ),
+      'native_auth_unavailable',
+    );
+    expect(
+      cloudSyncV2SafeFailureCode(
+        const CloudSyncSemanticDrainUnsafeReportException(
+          'unreviewed-sensitive-value',
+        ),
+      ),
+      'cloud_sync_unknown_failure',
+    );
+    expect(
+      cloudSyncV2SafeFailureCode(
+        StateError('cloud_sync_semantic_drain_unsafe_report'),
+      ),
+      'cloud_sync_semantic_drain_unsafe_report',
     );
   });
 
@@ -122,6 +151,8 @@ void main() {
     const codes = <String>{
       ...CloudSyncV2DecoderSafeFailureCodes.all,
       'canonical_attachment_owner_unavailable',
+      'canonical_identity_guid_invalid',
+      'canonical_identity_unavailable',
       'canonical_chat_alias_owner_ambiguous',
       'canonical_chat_alias_conflict',
       'canonical_message_chat_alias_ambiguous',
@@ -169,6 +200,97 @@ void main() {
         in CloudSyncV2DecoderSafeFailureCodes
             .readOnlyCanaryRetainableDependencies) {
       expect(cloudSyncV2SafeFailureCodeForCandidate(code), code);
+    }
+  });
+
+  test('preserves retained replay dependency and category codes', () {
+    const codes = <String>{
+      'cloud_sync_unknown_failure',
+      'decoder_malformed_record',
+      'decoder_unsupported_service',
+      'retained_projection_registrar_unavailable',
+      'retained_projection_store_unavailable',
+    };
+    for (final code in codes) {
+      expect(cloudSyncV2SafeFailureCodeForCandidate(code), code);
+    }
+  });
+
+  test('preserves only bounded out-of-scope disposition failures', () {
+    final emitted = <String>{
+      ...CloudSemanticOutOfScopeService.values.map(
+        (service) => service.safeCode,
+      ),
+      ...RegExp(r"'(out_of_scope_service_disposition_invalid)'")
+          .allMatches(
+            File(
+              'lib/services/rustpush/cloud_sync/cloud_sync_engine.dart',
+            ).readAsStringSync(),
+          )
+          .map((match) => match.group(1)!),
+      ...RegExp(
+            r"'(retained_projection_out_of_scope_(?:entry_invalid|row_invalid|record_failed))'",
+          )
+          .allMatches(
+            File(
+              'lib/services/rustpush/cloud_sync/'
+              'objectbox_cloud_semantic_store_gateway.dart',
+            ).readAsStringSync(),
+          )
+          .map((match) => match.group(1)!),
+    };
+
+    expect(emitted, CloudSyncV2OutOfScopeServiceSafeFailureCodes.all);
+    for (final code in emitted) {
+      expect(cloudSyncV2SafeFailureCodeForCandidate(code), code, reason: code);
+    }
+    expect(
+      cloudSyncV2SafeFailureCodeForCandidate(
+        'semantic_out_of_scope_caller_controlled',
+      ),
+      'cloud_sync_unknown_failure',
+    );
+  });
+
+  test('preserves every fixed same-session projection sweep failure', () {
+    final source = File(
+      'lib/services/rustpush/cloud_sync/'
+      'cloud_sync_manual_semantic_pull_sampler.dart',
+    ).readAsStringSync();
+    final emitted = RegExp(
+      r"StateError\('(cloud_sync_(?:remote_head|projection_sweep|semantic_remote_pass_limit)_[a-z0-9_]+)'\)",
+    ).allMatches(source).map((match) => match.group(1)!).toSet();
+
+    expect(emitted, CloudSyncV2ProjectionSweepSafeFailureCodes.all);
+    for (final code in emitted) {
+      expect(cloudSyncV2SafeFailureCode(StateError(code)), code, reason: code);
+    }
+  });
+
+  test('preserves every fixed canonical projector failure without drift', () {
+    final source = File(
+      'lib/services/rustpush/cloud_sync/'
+      'objectbox_canonical_semantic_entity_adapter.dart',
+    ).readAsStringSync();
+    final emitted = RegExp(
+      r"safeCode:\s*'(canonical_[a-z0-9_]+)'",
+    ).allMatches(source).map((match) => match.group(1)!).toSet();
+
+    expect(emitted, CloudSyncV2CanonicalProjectionSafeFailureCodes.all);
+    for (final code in emitted) {
+      expect(cloudSyncV2SafeFailureCodeForCandidate(code), code, reason: code);
+      expect(
+        CloudSyncSemanticDiagnosticCodes.isReviewed(code),
+        isTrue,
+        reason: code,
+      );
+    }
+  });
+
+  test('preserves every protected native transport safe code', () {
+    expect(CloudSyncV2ProtectedTransportSafeFailureCodes.all, hasLength(28));
+    for (final code in CloudSyncV2ProtectedTransportSafeFailureCodes.all) {
+      expect(cloudSyncV2SafeFailureCodeForCandidate(code), code, reason: code);
     }
   });
 
